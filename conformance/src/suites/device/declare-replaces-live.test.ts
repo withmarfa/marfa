@@ -173,3 +173,46 @@ it("keeps what the server holds of a type it will not replace, says why, and fin
     "title",
   ]);
 });
+
+it("asks the server to replace each held type whose declared parents loop, and finishes the hydration", async () => {
+  const app = appName();
+  const own = `app.${app}.own`;
+  const first = `app.${app}.loopa`;
+  const second = `app.${app}.loopb`;
+  const changed = `app.${app}.beside`;
+  for (const id of [own, first, second, changed])
+    await register(id, { title: { type: "string" } });
+  const key = await keyWith("app-loops", {
+    types: { [`app.${app}.*`]: "write", "core.note": "read" },
+    permissions: ["schema.write"],
+  });
+  const device = await joined(
+    [
+      { id: own, parent: own, fields: { title: { type: "string" } } },
+      { id: first, parent: second, fields: { title: { type: "string" } } },
+      { id: second, parent: first, fields: { title: { type: "string" } } },
+      {
+        id: changed,
+        fields: { title: { type: "string" }, mood: { type: "string" } },
+      },
+    ],
+    key,
+  );
+  const report = value(await device.hydrate(["core.note"], "library"));
+  // A replaced half of the loop is now its other half's child.
+  for (const id of [first, second]) {
+    const tracked = ctx.trackedTypes.find((type) => type.id === id);
+    if (tracked) tracked.parent = (await client.getType(id)).data.parent;
+  }
+  expect(report.replaced_types).toContain(changed);
+  const refused = report.unreplaced_types.map((type) => type.id);
+  expect(refused).toContain(own);
+  expect(
+    [first, second].filter((id) => !refused.includes(id)),
+    "the server took both halves of a parent loop",
+  ).toHaveLength(1);
+  expect(value(await device.status()).hydration).toBe("complete");
+  expect(
+    Object.keys((await client.getType(changed)).data.fields).sort(),
+  ).toEqual(["mood", "title"]);
+});

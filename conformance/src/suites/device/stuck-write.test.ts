@@ -502,13 +502,14 @@ describe("a write that keeps meeting an environmental failure", () => {
     const row = (await queueOf(own)).find((write) => write.id === stuck.id);
     expect(row?.reason).toBe("failing_alone");
     expect(row?.last_failure?.status).toBe(500);
-    // A release sends it again, under a fresh key.
+    // The server may hold it under its key, so a release sends it again
+    // under that key.
     const keyBefore = row?.idempotency_key;
     expect((await own.device.release({ id: stuck.id })).ok).toBe(true);
     expect(
       (await queueOf(own)).find((write) => write.id === stuck.id)
         ?.idempotency_key,
-    ).not.toBe(keyBefore);
+    ).toBe(keyBefore);
   });
 
   it("shows a write whose connection dies every time as having had no answer", async () => {

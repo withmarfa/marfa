@@ -328,6 +328,7 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
     credential TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
+    contract INTEGER NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('in_flight', 'complete')),
     created_at TEXT NOT NULL,
     completed_at TEXT,

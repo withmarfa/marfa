@@ -268,6 +268,20 @@ When the server answers `422 idempotency_result_not_retained`, the server MUST N
 
 **Tests:** `compliance/idempotency-refusals.test.ts › answers 422 idempotency_result_not_retained, naming the first status, and writes nothing again`.
 
+### `errors/idem-contract-changed-status`
+
+When the server answers `422 idempotency_contract_changed`, the server MUST carry the status the first answer carried in `details.original_status`.
+
+**Reason:** a device learns whether the first attempt took effect, so it neither takes a write that applied for one that did not nor sends it again under a fresh key.
+
+**Tests:** `compliance/idempotency-refusals.test.ts › answers 422 idempotency_contract_changed, naming the first status, and writes nothing again`.
+
+### `errors/idem-contract-changed-nothing`
+
+When the server answers `422 idempotency_contract_changed`, the server MUST NOT run the write again.
+
+**Tests:** `compliance/idempotency-refusals.test.ts › answers 422 idempotency_contract_changed, naming the first status, and writes nothing again`.
+
 ## A path or method no operation serves
 
 ### `errors/unmatched-path`
@@ -805,6 +819,7 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `request_too_large`                  | 413                 | The request body is over the cap for its operation.                                                                                                                                                       |
 | `range_not_satisfiable`              | 416                 | A `Range` request asks for bytes the blob does not have. `Content-Range` names its size.                                                                                                                  |
 | `compatible_with_violation`          | 422                 | A `compatible_with` claim is invalid, or a change breaks another type's claim. `details.dependent_type_ids` names dependents whose claims the change would break.                                         |
+| `idempotency_contract_changed`       | 422                 | An `Idempotency-Key` repeats a request whose first answer was made under another contract version. `details.original_status` is the status it carried.                                                    |
 | `idempotency_key_reused`             | 422                 | An `Idempotency-Key` is sent with a different request than the one it first named.                                                                                                                        |
 | `idempotency_result_not_retained`    | 422                 | An `Idempotency-Key` repeats a request whose first answer was too large to keep. `details.original_status` is the status it carried.                                                                      |
 | `rate_limited`                       | 429                 | A credential, an address or an inbound endpoint is past a limit for its current window. `Retry-After` names the wait.                                                                                     |

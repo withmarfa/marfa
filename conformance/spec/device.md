@@ -5256,6 +5256,22 @@ When a hydration registers declared types, a device MUST register each parent be
 
 **Tests:** `device/save-before-sync.test.ts › registers a declared parent before its child, and fails a hydration whose registration meets a failing server`.
 
+### `device/hydrate-registers-referenced`
+
+When a hydration registers declared types, a device MUST register each type after every other declared type the instance does not hold that a column of its tables names in `type_constraints`.
+
+**Reason:** the server refuses a column naming a type it does not hold (`tables/item-unregistered`), so a type registered before the type its column names would be left unregistered.
+
+**Tests:** `device/save-before-sync-live.test.ts › registers a declared type after a type its table column names, though the declaration names it first`.
+
+### `device/hydrate-needs-cycle`
+
+If declared types the instance does not hold each need another of them registered first, as its parent or in a table column's `type_constraints`, then a device MUST refuse the hydration `invalid`, naming the types, before it registers any declared type.
+
+**Reason:** the server refuses each of them until it holds the others, so no order registers any of them.
+
+**Tests:** `device/save-before-sync-live.test.ts › refuses a hydration whose declared types each need the other registered first, naming them and registering neither`.
+
 ### `device/hydrate-register-fails`
 
 If the server answers a registration with a failure that clears on its own, then a device MUST fail the hydration rather than report the type as one the key may not register.
@@ -5306,7 +5322,7 @@ If the server refuses to replace a declared type, then a device MUST leave the t
 
 **Reason:** a key that may register a type may still not change its fields, and the rest of the slice does not depend on it.
 
-**Tests:** `device/declare-replaces.test.ts › keeps the server's definition of a type it refuses to replace, says why, and finishes the hydration`, `device/declare-replaces-live.test.ts › keeps what the server holds of a type it will not replace, says why, and finishes the hydration`.
+**Tests:** `device/declare-replaces.test.ts › keeps the server's definition of a type it refuses to replace, says why, and finishes the hydration`, `device/declare-replaces-live.test.ts › keeps what the server holds of a type it will not replace, says why, and finishes the hydration`, `› asks the server to replace each held type whose declared parents loop, and finishes the hydration`.
 
 ### `device/hydrate-replaced-said`
 

@@ -1632,6 +1632,44 @@ describe("a batch the drain cannot settle at once", () => {
     });
   });
 
+  it("sends a batch blocked conflict_unresolved as it went under a fresh key once a caller releases one of its writes", async () => {
+    const { item, row, proxy, device, first, second, batch } =
+      await twoWrites("conflicted");
+    // The server keeps a 409 under the key, which applied none of the batch.
+    proxy.replies.push({
+      forward: false,
+      status: 409,
+      body: JSON.stringify({
+        error: { code: "version_conflict", message: "The item moved." },
+      }),
+    });
+    const blocked = value(await device.drain());
+    expect(
+      [first, second].map((one) => told(blocked, one.id)[0]?.reason),
+    ).toEqual(["conflict_unresolved", "conflict_unresolved"]);
+
+    expect(value(await device.release({ id: second.id }))).toBeTruthy();
+    const fresh = (await queued(device, first.id)).idempotency_key;
+    expect(
+      fresh,
+      "a batch the server refused under its key went back out under it, so the server answers it from its record with the refusal that stopped it",
+    ).not.toBe(first.idempotency_key);
+    expect((await queued(device, second.id)).batched_with).toBe(first.id);
+    const again = value(await device.drain());
+    expect(
+      [first, second].map((one) =>
+        told(again, one.id).map((entry) => entry.verdict),
+      ),
+    ).toEqual([["accepted"], ["accepted"]]);
+    expect(proxy.sent).toEqual([
+      { key: first.idempotency_key, body: batch },
+      { key: fresh, body: batch },
+    ]);
+    expect(await serverRows(item)).toEqual({
+      [row]: { count: 2, note: "second" },
+    });
+  });
+
   it("judges no conflict from a fill made after a write was sent whose answer was lost, taking the write as its own", async () => {
     const type = await tableType();
     const item = await itemOf(type);

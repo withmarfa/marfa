@@ -116,6 +116,7 @@ codes! {
     RequestTooLarge = "request_too_large", 413;
     RangeNotSatisfiable = "range_not_satisfiable", 416;
     CompatibleWithViolation = "compatible_with_violation", 422;
+    IdempotencyContractChanged = "idempotency_contract_changed", 422;
     IdempotencyKeyReused = "idempotency_key_reused", 422;
     IdempotencyResultNotRetained = "idempotency_result_not_retained", 422;
     RateLimited = "rate_limited", 429;

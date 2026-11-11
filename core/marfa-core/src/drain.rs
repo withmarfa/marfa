@@ -539,8 +539,14 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
             Classified::Block(BlockedReason::CredentialRefused)
         }
         (422, "idempotency_key_reused") => Classified::Block(BlockedReason::KeySpent),
-        (422, "idempotency_result_not_retained") if first_succeeded(answer) => {
+        (422, "idempotency_result_not_retained" | "idempotency_contract_changed")
+            if first_succeeded(answer) =>
+        {
             Classified::Delivered
+        }
+        // A kept refusal applied none of the write.
+        (422, "idempotency_contract_changed") if first_refused(answer) => {
+            Classified::Block(BlockedReason::KeySpent)
         }
         (409, "ancestor_unavailable") => Classified::Block(BlockedReason::AncestorUnavailable),
         (409, "version_conflict") => Classified::Block(BlockedReason::ConflictUnresolved),
@@ -558,10 +564,17 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
 /// The server keeps the status of a first answer it could not keep whole
 /// (`errors/idem-not-retained-status`).
 fn first_succeeded(answer: &Answer) -> bool {
+    original_status(answer).is_some_and(|status| (200..300).contains(&status))
+}
+
+fn first_refused(answer: &Answer) -> bool {
+    original_status(answer).is_some_and(|status| (400..600).contains(&status))
+}
+
+fn original_status(answer: &Answer) -> Option<u64> {
     serde_json::from_str::<serde_json::Value>(&answer.body)
         .ok()
         .and_then(|body| body.pointer("/error/details/original_status")?.as_u64())
-        .is_some_and(|status| (200..300).contains(&status))
 }
 
 /// Only some doors answer with an item: tags, metadata and extensions answer
@@ -2761,6 +2774,9 @@ fn settle_success(
         #[cfg(debug_assertions)]
         crate::fault::gate("gate-drain-receipt");
         if !kept {
+            if !settled.replayed {
+                store::readmit_attempt(&tx, &row.idempotency_key)?;
+            }
             store::record_verdict(
                 &tx,
                 &row.id,

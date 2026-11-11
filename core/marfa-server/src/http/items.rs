@@ -216,7 +216,6 @@ where
         return Ok(finished(job(None, sent.uri, body).await?));
     };
     let fingerprint = idempotency::fingerprint(
-        app.contract(),
         sent.method.as_str(),
         &canonical_path(sent.uri.path()),
         sent.uri.query().unwrap_or_default(),

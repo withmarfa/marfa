@@ -125,18 +125,12 @@ pub enum Entry {
     Replay(Kept),
 }
 
-/// The credential is not part of it: the record is already its own.
-pub fn fingerprint(
-    contract: u32,
-    method: &str,
-    path: &str,
-    query: &str,
-    json: bool,
-    body: &[u8],
-) -> String {
+/// Neither the credential nor the contract is part of it: the record is
+/// already the credential's, and keeps the contract apart.
+pub fn fingerprint(method: &str, path: &str, query: &str, json: bool, body: &[u8]) -> String {
     let mut digest = Sha256::new();
     let head = format!(
-        "{contract}\n{method}\n{path}\n{query}\n{}\n",
+        "{method}\n{path}\n{query}\n{}\n",
         if json { "json" } else { "other" }
     );
     digest.update(head.as_bytes());
@@ -146,6 +140,7 @@ pub fn fingerprint(
 
 struct Held {
     fingerprint: String,
+    contract: u32,
     state: String,
     created_at: String,
     status: Option<u16>,
@@ -157,19 +152,20 @@ struct Held {
 fn held(tx: &Transaction<'_>, credential: &str, key: &str) -> Result<Option<Held>> {
     Ok(tx
         .query_row(
-            "SELECT fingerprint, state, created_at, response_status, response_content_type, \
-             response_body, requirements FROM idempotency_records \
+            "SELECT fingerprint, contract, state, created_at, response_status, \
+             response_content_type, response_body, requirements FROM idempotency_records \
              WHERE credential = ?1 AND idempotency_key = ?2",
             [credential, key],
             |row| {
                 Ok(Held {
                     fingerprint: row.get(0)?,
-                    state: row.get(1)?,
-                    created_at: row.get(2)?,
-                    status: row.get(3)?,
-                    content_type: row.get(4)?,
-                    body: row.get(5)?,
-                    requirements: row.get(6)?,
+                    contract: row.get(1)?,
+                    state: row.get(2)?,
+                    created_at: row.get(3)?,
+                    status: row.get(4)?,
+                    content_type: row.get(5)?,
+                    body: row.get(6)?,
+                    requirements: row.get(7)?,
                 })
             },
         )
@@ -183,6 +179,7 @@ fn elapsed_ms(from: &str, to: &str) -> Result<i64> {
 pub async fn enter(app: &App, caller: &Caller, key: &str, fingerprint: String) -> Result<Entry> {
     let credential = caller.credential_handle();
     let clock = app.clock.clone();
+    let contract = app.contract();
     let (who, named) = (credential.clone(), key.to_string());
     let taken = app
         .db
@@ -191,18 +188,15 @@ pub async fn enter(app: &App, caller: &Caller, key: &str, fingerprint: String) -
             let Some(record) = held(tx, &who, &named)? else {
                 tx.execute(
                     "INSERT INTO idempotency_records (credential, idempotency_key, fingerprint, \
-                     state, created_at) VALUES (?1, ?2, ?3, 'in_flight', ?4)",
-                    params![who, named, fingerprint, at],
+                     contract, state, created_at) VALUES (?1, ?2, ?3, ?4, 'in_flight', ?5)",
+                    params![who, named, fingerprint, contract, at],
                 )?;
                 return Ok(Err(at));
             };
             if record.fingerprint != fingerprint {
                 return Err(Refusal::new(
                     Code::IdempotencyKeyReused,
-                    format!(
-                        "Idempotency-Key \"{named}\" was already used for a different request, \
-                         or under another contract version"
-                    ),
+                    format!("Idempotency-Key \"{named}\" was already used for a different request"),
                 ));
             }
             if record.state == "complete" {
@@ -217,9 +211,9 @@ pub async fn enter(app: &App, caller: &Caller, key: &str, fingerprint: String) -
                 ));
             }
             tx.execute(
-                "UPDATE idempotency_records SET created_at = ?3 \
+                "UPDATE idempotency_records SET created_at = ?3, contract = ?5 \
                  WHERE credential = ?1 AND idempotency_key = ?2 AND created_at = ?4",
-                params![who, named, at, record.created_at],
+                params![who, named, at, record.created_at, contract],
             )?;
             Ok(Err(at))
         })
@@ -245,11 +239,24 @@ async fn replay(app: &App, caller: &Caller, key: &str, record: Held) -> Result<K
     let caller = caller.clone();
     let clock = app.clock.clone();
     let marked = app.read_only_handle();
+    let contract = app.contract();
     app.db
         .read(move |tx| {
             let at = clock.stamp();
             let caller = caller.current(tx, &at)?;
             authorize(tx, &caller, needs)?;
+            if record.contract != contract {
+                return Err(Refusal::new(
+                    Code::IdempotencyContractChanged,
+                    format!(
+                        "The response to Idempotency-Key \"{key}\" was made under contract \
+                         version {}, so it cannot be replayed under {contract}. The original \
+                         request was not repeated.",
+                        record.contract
+                    ),
+                )
+                .with_detail("original_status", status));
+            }
             let Some(body) = record.body else {
                 return Err(Refusal::new(
                     Code::IdempotencyResultNotRetained,
