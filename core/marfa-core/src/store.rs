@@ -5797,10 +5797,10 @@ const SELF_CLEARING: [&str; 2] = [
     crate::model::AWAITING_DEPENDENCY,
 ];
 
-/// The released row goes out under a fresh key; the spent one is kept so a
+/// The released row keeps its key unless the server holds an answer under it
+/// that refused the write (`fresh_key_on_release`); a spent key is kept so a
 /// late answer under it is not taken for an answer to the new attempt. A row
-/// write or an undo keeps its key unless blocked `key_spent`, and a row write
-/// releases every write of its batch, to go again as it went.
+/// write releases every write of its batch, to go again as it went.
 pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let Some((verdict, reason, kind, sent)) = conn
         .query_row(
@@ -5855,11 +5855,9 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
             [write],
         )?;
     }
-    // A row batch or an undo whose answer is unknown may be held under its key,
-    // and only that key keeps the server from applying it twice. `key_spent`
-    // says the server holds another request under it, so none of this one.
-    let rows = kind.parse::<WriteKind>()?.rows();
-    if !rows || reason.as_deref() == Some(BlockedReason::KeySpent.as_str()) {
+    let kind = kind.parse::<WriteKind>()?;
+    let rows = kind.rows();
+    if fresh_key_on_release(kind, verdict, reason.as_deref()) {
         crate::row_writes::spend_key(conn, &batch[0])?;
     }
     if rows {
@@ -5871,6 +5869,7 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         return Ok(true);
     }
     let released = queued_write(conn, id)?.expect("released row exists");
+    readmit_attempt(conn, &released)?;
     let original_fields = edit_fields(conn, &released)?;
     let mut excluded_attempts = HashSet::new();
     for witness in queued_writes(conn)?
@@ -5917,6 +5916,44 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         release(conn, &dependant)?;
     }
     Ok(true)
+}
+
+/// A dead write released before this one excluded this one's attempt from
+/// what could cover it; released, this one goes again after it, so an answer
+/// to it may cover it now, as one under a fresh key would.
+fn readmit_attempt(conn: &Connection, released: &QueuedWrite) -> Result<(), CoreError> {
+    for key in meta_keys(conn, "dead_effect/")? {
+        let Some(json) = meta_get(conn, &key)? else {
+            continue;
+        };
+        let Ok(mut effect) = serde_json::from_str::<DeadEffect>(&json) else {
+            continue;
+        };
+        if effect.excluded_attempts.remove(&released.idempotency_key) {
+            meta_set(conn, &key, &serde_json::to_string(&effect)?)?;
+        }
+    }
+    Ok(())
+}
+
+/// A write whose answer is unknown may be held applied under its key, and only
+/// that key keeps the server from applying it twice, undoing a change made
+/// since. A fresh key is safe only where the server holds an answer under the
+/// key that applied none of the write: `key_spent`, another request's answer,
+/// or, for a write of one operation, a `409` refusal the server keeps and
+/// would answer the key with again. A row batch's answer can apply some of
+/// its operations, so it keeps its key for anything but `key_spent`.
+fn fresh_key_on_release(kind: WriteKind, verdict: Option<Verdict>, reason: Option<&str>) -> bool {
+    if verdict != Some(Verdict::Blocked) {
+        return false;
+    }
+    match reason.and_then(|reason| reason.parse::<BlockedReason>().ok()) {
+        Some(BlockedReason::KeySpent) => true,
+        Some(BlockedReason::ConflictUnresolved | BlockedReason::AncestorUnavailable) => {
+            !kind.rows()
+        }
+        _ => false,
+    }
 }
 
 /// Read from `depends_on`, never the reason, which is prose.
@@ -10816,7 +10853,7 @@ mod tests {
         assert!(release(&conn, "dead").unwrap());
         let released = queued_write(&conn, "dead").unwrap().unwrap();
         assert_eq!(released.body, original.body);
-        assert_ne!(released.idempotency_key, original.idempotency_key);
+        assert_eq!(released.idempotency_key, original.idempotency_key);
         lay_waiting_writes_over(&conn, "held", &|_| Indexing::default()).unwrap();
         assert_eq!(
             item_by_id(&conn, "held").unwrap().unwrap().properties["title"],
@@ -10987,6 +11024,116 @@ mod tests {
         .unwrap();
         assert!(current_item_writes(&conn, "held").unwrap().is_empty());
     }
+    #[test]
+    fn a_released_write_keeps_its_key_unless_the_server_holds_a_refusal_under_it() {
+        let conn = conn();
+        // A write that met no answer the server keeps may be held applied
+        // under its key; one refused `409` or met `key_spent` is not.
+        let cases = [
+            ("blocked", Some(BlockedReason::FailingAlone), false),
+            ("blocked", Some(BlockedReason::CredentialRefused), false),
+            ("blocked", Some(BlockedReason::InstanceChanged), false),
+            ("dead", None, false),
+            ("blocked", Some(BlockedReason::KeySpent), true),
+            ("blocked", Some(BlockedReason::ConflictUnresolved), true),
+            ("blocked", Some(BlockedReason::AncestorUnavailable), true),
+        ];
+        for kind in WriteKind::ALL {
+            for (verdict, reason, fresh) in cases {
+                let id = format!("{kind}-{verdict}-{}", reason.map_or("none", |r| r.as_str()));
+                conn.execute(
+                    "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, verdict, reason, sent, queued_at)
+                     VALUES (?1, ?2, 'held', ?1, '{}', ?3, ?4, 1, '2026-01-01T00:00:00Z')",
+                    params![id, kind.as_str(), verdict, reason.map(BlockedReason::as_str)],
+                )
+                .unwrap();
+                assert!(release(&conn, &id).unwrap(), "{id} was not released");
+                let after = queued_write(&conn, &id).unwrap().unwrap();
+                let fresh = fresh && !(kind.rows() && reason != Some(BlockedReason::KeySpent));
+                assert_eq!(after.verdict, None, "{id}");
+                assert_eq!(
+                    after.idempotency_key != id,
+                    fresh,
+                    "{id} was released under {}: a write whose answer is unknown \
+                     goes again only under its key, and one the server refused \
+                     under its key only under a fresh one",
+                    after.idempotency_key
+                );
+                let spent: Vec<String> = conn
+                    .query_row("SELECT spent_keys FROM queue WHERE id = ?1", [&id], |row| {
+                        row.get::<_, Option<String>>(0)
+                    })
+                    .unwrap()
+                    .map(|json| serde_json::from_str(&json).unwrap())
+                    .unwrap_or_default();
+                assert_eq!(spent.contains(&id), fresh, "{id} spent {spent:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_release_cut_short_leaves_the_write_as_it_was_and_a_finished_one_under_its_key() {
+        let conn = conn();
+        conn.execute(
+            "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, verdict, reason, sent, queued_at)
+             VALUES ('aside', 'replace_metadata', 'held', 'first', '{\"tags\":[\"mine\"]}', 'blocked', 'failing_alone', 1, '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        let before = queued_write(&conn, "aside").unwrap().unwrap();
+        {
+            let tx = conn.unchecked_transaction().unwrap();
+            assert!(release(&tx, "aside").unwrap());
+        }
+        let after = queued_write(&conn, "aside").unwrap().unwrap();
+        assert_eq!(
+            (
+                after.verdict,
+                after.reason.as_deref(),
+                after.idempotency_key.as_str()
+            ),
+            (before.verdict, before.reason.as_deref(), "first"),
+            "a release that never committed moved the write"
+        );
+        assert!(meta_get(&conn, &effect_key("aside")).unwrap().is_none());
+
+        assert!(release(&conn, "aside").unwrap());
+        assert!(
+            !release(&conn, "aside").unwrap(),
+            "a write already released was released again"
+        );
+        let released = queued_write(&conn, "aside").unwrap().unwrap();
+        assert_eq!(
+            (released.verdict, released.idempotency_key.as_str()),
+            (None, "first")
+        );
+    }
+
+    #[test]
+    fn a_witness_released_under_its_key_may_cover_a_dead_write_released_before_it() {
+        let conn = effect_fixture();
+        conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,verdict,queued_at) VALUES ('witness','update_item','held','witness-key',?1,1,'dead','2026-01-01T00:00:01Z')", [r#"{"properties":{"title":"new","body":"new"},"properties_mode":"replace"}"#]).unwrap();
+        assert!(release(&conn, "dead").unwrap());
+        let excluded = |id: &str| {
+            let effect: DeadEffect =
+                serde_json::from_str(&meta_get(&conn, &effect_key(id)).unwrap().unwrap()).unwrap();
+            effect.excluded_attempts.contains("witness-key")
+        };
+        assert!(excluded("dead"), "the fixture did not exclude the witness");
+        assert!(release(&conn, "witness").unwrap());
+        assert_eq!(
+            queued_write(&conn, "witness")
+                .unwrap()
+                .unwrap()
+                .idempotency_key,
+            "witness-key"
+        );
+        assert!(
+            !excluded("dead"),
+            "a witness sent again after the dead write was still taken for one sent before it"
+        );
+    }
+
     #[test]
     fn partial_dead_edge_projection_keeps_only_unresolved_properties() {
         let conn = conn();

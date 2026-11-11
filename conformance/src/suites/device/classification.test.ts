@@ -1440,7 +1440,7 @@ describe("the ceiling, and releasing what it stopped", () => {
     if (!released.ok) return;
     expect(
       released.value,
-      "a release by reason took a write it does not name, and a dead write goes out again under a fresh key with nobody having asked for it",
+      "a release by reason took a write it does not name, and a dead write goes out again with nobody having asked for it",
     ).toBe(1);
     const after = await queueOf(harness);
     const now = (id: string) => after.find((row) => row.item_id === id);
@@ -1461,7 +1461,10 @@ describe("the ceiling, and releasing what it stopped", () => {
       [revived?.verdict, revived?.refusals],
       "a released dead write kept its verdict or the refusals that killed it, so it would die again at once",
     ).toEqual([null, 0]);
-    expect(revived?.idempotency_key).not.toBe(dead.idempotency_key);
+    expect(
+      revived?.idempotency_key,
+      "a released dead write went back out under a key the server holds nothing under, so a write it took would be written twice",
+    ).toBe(dead.idempotency_key);
     const sends = () =>
       server.requests.filter(
         (request) =>

@@ -128,7 +128,7 @@ When a caller queues a write, a device MUST give it an idempotency key at once a
 
 When a drain sends a write again that it sent before, a device MUST send it under the idempotency key it carried, unless a caller released it in between.
 
-**Reason:** an attempt whose answer the device never read may have taken effect, and only the same key lets the server answer the next attempt from its record. A release mints a fresh key for a write other than a row write or an undo (`queue-and-verdicts/release-fresh-key`), and for either only where the server holds another request under the key (`queue-and-verdicts/rows-release-key-spent`, `queue-and-verdicts/undo-release-key-spent`).
+**Reason:** an attempt whose answer the device never read may have taken effect, and only the same key lets the server answer the next attempt from its record. A release mints a fresh key only where the server holds an answer under the key that applied none of the write (`queue-and-verdicts/release-fresh-key`, `queue-and-verdicts/rows-release-key-spent`, `queue-and-verdicts/undo-release-key-spent`).
 
 **Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`, `device/grant-recovery.test.ts › keeps an edit blocked for $kind $level until its grant returns`, `device/versioned-deletes-live.test.ts › replays a lost delete answer without deleting a restored newer item`, `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
@@ -1630,11 +1630,19 @@ When a caller releases a write that is `dead`, or `blocked` for a reason other t
 
 ### `queue-and-verdicts/release-fresh-key`
 
-When a caller releases a write other than a `write_rows` or `undo_rows` write, a device MUST give it a fresh idempotency key.
+When a caller releases a write other than a `write_rows` or `undo_rows` write that is `blocked` `key_spent`, `conflict_unresolved` or `ancestor_unavailable`, a device MUST give it a fresh idempotency key.
 
-**Reason:** sent again under the spent key, the write would be answered from the server's record, which is the answer that stopped it. A row write keeps its batch's key (`queue-and-verdicts/rows-release-key`) and an undo its own (`queue-and-verdicts/undo-release-key`), unless the server holds another request under the key.
+**Reason:** the server holds under the key an answer that applied none of the write, and sent again under it the write would be answered from that record, which is the answer that stopped it.
 
-**Tests:** `device/classification.test.ts › sends a released write again under a fresh key`.
+**Tests:** `device/classification.test.ts › sends a released write again under a fresh key`, `device/release-key-live.test.ts › sends a write blocked conflict_unresolved again under a fresh key once a caller releases it, so the server judges it again`.
+
+### `queue-and-verdicts/release-keeps-key`
+
+When a caller releases a write other than a `write_rows` or `undo_rows` write that is `dead`, or `blocked` for a reason other than `key_spent`, `conflict_unresolved` or `ancestor_unavailable`, a device MUST keep the idempotency key it went under.
+
+**Reason:** the device never read an answer that says whether the write took effect, so the server may hold it applied under that key. Under a fresh key the server would apply it a second time, and a metadata, extension or tag write, which checks no version, would undo a change made since. A row write keeps its batch's key (`queue-and-verdicts/rows-release-key`) and an undo its own (`queue-and-verdicts/undo-release-key`) for every reason but `key_spent`.
+
+**Tests:** `device/release-key-live.test.ts › sends a set-aside write again under its key once a caller releases it, so the server answers it from its record and keeps the change made since`, `› sends a dead write again under its key once a caller releases it`, `device/classification.test.ts › releases by reason the writes blocked for it, and never a dead one`, `device/stuck-write.test.ts › sets aside a create the server answers with a 500 it names its contract for`, `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`.
 
 ### `queue-and-verdicts/release-resets-count`
 
