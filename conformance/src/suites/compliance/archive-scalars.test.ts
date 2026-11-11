@@ -166,7 +166,11 @@ describe("archived item and edge scalars", () => {
   });
 
   it.each([
-    { name: "omitted scalars", version: undefined, tier: undefined },
+    {
+      name: "an omitted tier and edge version",
+      version: undefined,
+      tier: undefined,
+    },
     { name: "initial versions", version: 1, tier: "library" },
     { name: "nondefault scalars", version: 7, tier: "feed" },
     {
@@ -179,7 +183,7 @@ describe("archived item and edge scalars", () => {
     async ({ version, tier }) => {
       const f = fixture();
       for (const row of f.rows) {
-        row.version = version;
+        row.version = version ?? 1;
         row.tier = tier;
       }
       f.edge.version = version;

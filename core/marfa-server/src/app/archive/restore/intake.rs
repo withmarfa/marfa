@@ -10,7 +10,7 @@ use marfa_rules::schema::{Obj, icon_issue};
 use serde_json::{Map, Value, json};
 
 use super::untar::{NotTar, Part, Reader};
-use crate::app::archive::{FORMAT, VERSION, checks};
+use crate::app::archive::{VERSION, checks};
 use crate::app::blobs::Hash;
 use crate::app::blobs::restore::{Arriving, Named, Sealed, Spool};
 use crate::app::catalog::Catalog;
@@ -76,6 +76,10 @@ pub struct Manifest {
     pub missing: BTreeMap<String, (Option<String>, Option<u64>)>,
     /// The lines it counts in `items.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`.
     pub counts: [u64; 3],
+    /// The lines it counts of each kind in `instance.ndjson.gz`, in the order of `KINDS`.
+    pub instance_counts: [u64; KINDS.len()],
+    /// The `blobs/` entries it says the archive carries.
+    pub blob_count: u64,
 }
 
 /// What `instance.ndjson.gz` registers and sets; the agreements stay in the spool.
@@ -172,23 +176,27 @@ struct Rows {
     edges: usize,
     rows: usize,
     instance: usize,
+    kinds: [u64; KINDS.len()],
     /// The place of the last row line read, which the next must come after.
     last_row: Option<checks::RowKey>,
 }
 
-fn kind_of(line: &Value) -> Option<&'static str> {
+/// Each kind of `instance.ndjson.gz` line, with the manifest field that counts it.
+const KINDS: [(&str, &str); 7] = [
+    ("type", "type_count"),
+    ("edge_type", "edge_type_count"),
+    ("type_icon", "type_icon_count"),
+    ("source", "source_count"),
+    ("setting", "setting_count"),
+    ("connector_state", "connector_state_count"),
+    ("connector_agreement", "connector_agreement_count"),
+];
+
+fn kind_of(line: &Value) -> Option<usize> {
     let object = line.as_object()?;
-    [
-        "type",
-        "edge_type",
-        "type_icon",
-        "source",
-        "setting",
-        "connector_state",
-        "connector_agreement",
-    ]
-    .into_iter()
-    .find(|kind| object.contains_key(*kind))
+    KINDS
+        .iter()
+        .position(|(kind, _)| object.contains_key(*kind))
 }
 
 impl Rows {
@@ -269,11 +277,13 @@ impl Rows {
     }
 
     fn instance_line(&mut self, line: &Value, row: usize) -> Result<()> {
-        let kind = kind_of(line).ok_or_else(|| {
+        let at = kind_of(line).ok_or_else(|| {
             invalid(format!(
                 "Line {row} of {INSTANCE} names none of type, edge_type, type_icon, source, setting, connector_state or connector_agreement."
             ))
         })?;
+        self.kinds[at] += 1;
+        let kind = KINDS[at].0;
         let body = &line[kind];
         let registrations = &mut self.registrations;
         match kind {
@@ -626,6 +636,7 @@ pub struct Intake {
     rows: Option<Rows>,
     spools: [Option<crate::app::blobs::Scratch>; 4],
     carried: Vec<(Sealed, String)>,
+    blob_entries: u64,
 }
 
 fn not_tar(_: NotTar) -> Refusal {
@@ -674,10 +685,12 @@ impl Intake {
                 edges: 0,
                 rows: 0,
                 instance: 0,
+                kinds: [0; KINDS.len()],
                 last_row: None,
             }),
             spools,
             carried: Vec::new(),
+            blob_entries: 0,
         })
     }
 
@@ -753,6 +766,7 @@ impl Intake {
             return Ok(());
         }
         if let Some(rest) = name.strip_prefix(BLOBS) {
+            self.blob_entries += 1;
             let listed = self
                 .manifest
                 .as_ref()
@@ -898,6 +912,23 @@ impl Intake {
                 .with_detail("field", count));
             }
         }
+        for (((_, count), lines), counted) in
+            KINDS.iter().zip(rows.kinds).zip(manifest.instance_counts)
+        {
+            if lines != counted {
+                return Err(invalid(format!(
+                    "{MANIFEST} counts {counted} in {count}, and {INSTANCE} holds {lines} of them."
+                ))
+                .with_detail("field", *count));
+            }
+        }
+        if self.blob_entries != manifest.blob_count {
+            return Err(invalid(format!(
+                "{MANIFEST} counts {} in blob_count, and the archive carries {} blobs/ entries.",
+                manifest.blob_count, self.blob_entries
+            ))
+            .with_detail("field", "blob_count"));
+        }
         let [Some(instance), Some(items), Some(edges), Some(row_lines)] =
             std::mem::take(&mut self.spools)
         else {
@@ -944,9 +975,14 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
         .get("version")
         .filter(|version| version.is_number() && version.as_u64() != Some(VERSION))
     {
+        let writer = held
+            .get("written_by")
+            .and_then(Value::as_str)
+            .map_or_else(|| "a build that does not say".to_string(), str::to_string);
         return Err(invalid(format!(
-            "The archive is at version {version}; an archive at a version other than {VERSION} is read only by the build that wrote it."
-        )));
+            "The archive is at version {version}, written by {writer}; this build restores only version {VERSION}, so restore it with the build that wrote it."
+        ))
+        .with_detail("version", version.clone()));
     }
     let mut errors = Vec::new();
     let mut wrong =
@@ -954,8 +990,8 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
     if held.get("version").and_then(Value::as_u64) != Some(VERSION) {
         wrong("version".into(), "Must be a number.");
     }
-    if held.get("format").and_then(Value::as_str) != Some(FORMAT) {
-        wrong("format".into(), "Must be marfa-archive-v0.");
+    if !held.get("written_by").is_some_and(Value::is_string) {
+        wrong("written_by".into(), "Must be a string.");
     }
     let mut manifest = Manifest::default();
     for (at, count) in ["item_count", "edge_count", "row_count"]
@@ -966,6 +1002,16 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
             Some(counted) => manifest.counts[at] = counted,
             None => wrong(count.into(), "Must be a non-negative integer."),
         }
+    }
+    for (at, (_, count)) in KINDS.iter().enumerate() {
+        match held.get(*count).and_then(Value::as_u64) {
+            Some(counted) => manifest.instance_counts[at] = counted,
+            None => wrong((*count).into(), "Must be a non-negative integer."),
+        }
+    }
+    match held.get("blob_count").and_then(Value::as_u64) {
+        Some(counted) => manifest.blob_count = counted,
+        None => wrong("blob_count".into(), "Must be a non-negative integer."),
     }
     match held.get("blobs") {
         Some(Value::Object(blobs)) => {
@@ -1055,15 +1101,28 @@ mod tests {
         );
     }
 
+    const COUNTS: &str = r#""item_count":0,"edge_count":0,"row_count":0,"blob_count":0,"type_count":0,"edge_type_count":0,"type_icon_count":0,"source_count":0,"setting_count":0,"connector_state_count":0,"connector_agreement_count":0"#;
+
     #[test]
-    fn a_manifest_at_another_version_is_refused_for_its_version_alone() {
-        let refused = manifest(br#"{"version":1,"blobs":[]}"#).unwrap_err();
-        assert!(
-            refused
-                .message
-                .contains("read only by the build that wrote it")
+    fn a_manifest_at_another_version_is_refused_naming_the_build_that_wrote_it() {
+        for version in [0, 2] {
+            let text =
+                format!(r#"{{"version":{version},"written_by":"marfa-server 0.0.1","blobs":[]}}"#);
+            let refused = manifest(text.as_bytes()).unwrap_err();
+            let message = refused.message.to_string();
+            assert!(message.contains("marfa-server 0.0.1"), "{message}");
+            assert!(message.contains("restores only version 1"), "{message}");
+        }
+        let refused = manifest(br#"{"version":0}"#).unwrap_err();
+        assert!(refused.message.contains("a build that does not say"));
+    }
+
+    #[test]
+    fn a_manifest_lacking_a_field_it_relies_on_is_refused_naming_each() {
+        let text = format!(
+            r#"{{"version":1,"written_by":"x",{COUNTS},"blobs":{{"h":{{"mime_type":null,"size_bytes":-1}}}}}}"#
         );
-        let refused = manifest(br#"{"version":0,"format":"marfa-archive-v0","item_count":0,"edge_count":0,"row_count":0,"blobs":{"h":{"mime_type":null,"size_bytes":-1}}}"#).unwrap_err();
+        let refused = manifest(text.as_bytes()).unwrap_err();
         let paths: Vec<String> = refused.details.unwrap()["errors"]
             .as_array()
             .unwrap()
@@ -1071,6 +1130,13 @@ mod tests {
             .map(|error| error["path"].as_str().unwrap().to_string())
             .collect();
         assert_eq!(paths, ["blobs.h.mime_type", "blobs.h.size_bytes"]);
+        let bare = manifest(br#"{"version":1,"blobs":{}}"#).unwrap_err();
+        let message = bare.message.to_string();
+        for field in ["written_by", "item_count", "setting_count", "blob_count"] {
+            assert!(message.contains(field), "{message}");
+        }
+        let whole = format!(r#"{{"version":1,"written_by":"x",{COUNTS},"blobs":{{}}}}"#);
+        assert!(manifest(whole.as_bytes()).is_ok());
     }
 
     #[test]

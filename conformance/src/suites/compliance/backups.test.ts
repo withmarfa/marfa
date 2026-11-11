@@ -170,7 +170,6 @@ describe("a backup in the object store", () => {
       created_at: string;
       blobs: Record<string, unknown>;
       missing_blobs: Record<string, unknown>;
-      bucket_blobs: string[];
       item_count: number;
     }>(backup);
     expect(manifest.created_at).toBe(created_at);
@@ -183,10 +182,6 @@ describe("a backup in the object store", () => {
     ]);
     expect(manifest.blobs).toEqual({});
     expect(Object.keys(manifest.missing_blobs)).toContain(made.hash);
-    expect(manifest.bucket_blobs).toContain(made.hash);
-    for (const hash of manifest.bucket_blobs) {
-      expect(Object.keys(manifest.missing_blobs)).toContain(hash);
-    }
 
     const exported = await (
       await everythingClient(origin)

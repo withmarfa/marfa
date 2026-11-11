@@ -12,7 +12,10 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { gunzipSync } from "node:zlib";
 import { afterAll, describe, expect, it } from "vitest";
+import { MarfaClient } from "../../client/api.js";
+import { listEntries, readEntry } from "../../utils/archive.js";
 import { controlRequest } from "../../utils/control-request.js";
 import {
   bootFreshServer,
@@ -292,5 +295,98 @@ describe("the secrets of a server that was not configured by hand", () => {
     const restored = start(data, { MARFA_KEY_SALT: salt });
     await listening(restored);
     await stop(restored);
+  });
+
+  /** The names of an archive's entries and all its text, line files unzipped. */
+  function readable(archive: Uint8Array): { names: string[]; text: string } {
+    const entries = listEntries(archive);
+    return {
+      names: entries.map((entry) => entry.name),
+      text: entries
+        .map((entry) =>
+          entry.name.endsWith(".gz")
+            ? gunzipSync(entry.body).toString("utf8")
+            : entry.body.toString("latin1"),
+        )
+        .join("\n"),
+    };
+  }
+
+  /** An export of a running server, taken with a key the private socket mints. */
+  async function exportsOf(run: Run): Promise<{
+    archive: Uint8Array;
+    lines: string;
+    instanceId: string;
+  }> {
+    const port = /listening on port (\d+)/.exec(run.output())?.[1];
+    expect(port, run.output()).toBeDefined();
+    const baseUrl = `http://127.0.0.1:${port}`;
+    const local = new MarfaClient({ baseUrl, controlSocket: run.socket });
+    const minted = await local.createKey({
+      label: "reaches everything",
+      source: "secrets-export",
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    const client = new MarfaClient({ baseUrl, apiKey: minted.data.key });
+    const note = await client.createItem({
+      type: "core.note",
+      properties: { body: "an item for the export to carry" },
+    });
+    expect(note.ok, JSON.stringify(note.error)).toBe(true);
+    const archive = await client.exportArchive({});
+    expect(archive.status).toBe(200);
+    const lines = await client.exportItems({});
+    expect(lines.status).toBe(200);
+    const manifest = JSON.parse(
+      readEntry(archive.data, "manifest.json") ?? "{}",
+    ) as { instance_id: string };
+    return {
+      archive: archive.data,
+      lines: lines.data,
+      instanceId: manifest.instance_id,
+    };
+  }
+
+  it("leaves marfa.secrets out of an export, whether the file was generated or the secrets came from the environment", async () => {
+    const generated = folder("marfa-hf-data-");
+    const first = start(generated);
+    await listening(first);
+    const fromFile = lines(generated);
+    const fromFileExport = await exportsOf(first);
+    await stop(first);
+
+    const given = {
+      MARFA_KEY_SALT: randomBytes(32).toString("hex"),
+      MARFA_AUTH_SECRET: randomBytes(32).toString("hex"),
+    };
+    const environment = folder("marfa-hf-data-");
+    const second = start(environment, given);
+    await listening(second);
+    const fromEnvironmentExport = await exportsOf(second);
+    await stop(second);
+    expect(existsSync(secretsOf(environment))).toBe(false);
+
+    const cases = [
+      { exported: fromFileExport, secrets: Object.values(fromFile) },
+      { exported: fromEnvironmentExport, secrets: Object.values(given) },
+    ];
+    for (const { exported, secrets } of cases) {
+      const { names, text } = readable(exported.archive);
+      // The witnesses: the export carries the item and the instance's name,
+      // so a search of its text could have found a secret.
+      expect(text).toContain("an item for the export to carry");
+      expect(text).toContain(exported.instanceId);
+      expect(exported.lines).toContain("an item for the export to carry");
+      expect(secrets).toHaveLength(2);
+      expect(names).not.toContain("marfa.secrets");
+      for (const secret of secrets) {
+        expect(secret).toMatch(PLAIN_SECRET);
+        expect(text).not.toContain(secret);
+        expect(exported.lines).not.toContain(secret);
+        expect(
+          Buffer.from(exported.archive).includes(Buffer.from(secret)),
+        ).toBe(false);
+      }
+    }
   });
 });

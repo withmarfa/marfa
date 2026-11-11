@@ -11,7 +11,12 @@ import {
   trackKey,
   trackType,
 } from "../../utils/setup.js";
-import { tar, lineFile } from "../../utils/archive.js";
+import {
+  tar,
+  lineFile,
+  emptyManifest,
+  itemFields,
+} from "../../utils/archive.js";
 import { v7 as uuidv7 } from "uuid";
 
 /**
@@ -210,6 +215,7 @@ describe("a file item carries the size of the bytes it names", () => {
     const line = (id: string, bytes: Uint8Array, lends: boolean) =>
       JSON.stringify({
         item: {
+          ...itemFields(),
           id,
           type: "core.file",
           source: ctx.source,
@@ -226,8 +232,7 @@ describe("a file item carries the size of the bytes it names", () => {
       {
         name: "manifest.json",
         body: JSON.stringify({
-          version: 0,
-          format: "marfa-archive-v0",
+          ...emptyManifest(),
           created_at: new Date().toISOString(),
           item_count: 2,
           edge_count: 0,

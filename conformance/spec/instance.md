@@ -280,9 +280,17 @@ When `GET /openapi.json` is answered, the server MUST answer `info.version` as t
 
 ### `instance/archive-version`
 
-When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 0.
+When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 1.
 
-**Reason:** an archive is read only by the build that wrote it, and the format stays at version 0 until the first public release (`search-and-filters/restore-version`).
+**Reason:** the version is the one marker of the archive's layout, and a restore reads only the version its own build writes (`search-and-filters/restore-version`).
+
+**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
+
+### `instance/archive-written-by`
+
+When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `written_by` of `marfa-server` and the version of the build, separated by a space.
+
+**Reason:** a restore that refuses an archive of another version names the build that can read it, and only the manifest says which build wrote it.
 
 **Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
 
@@ -479,14 +487,6 @@ When the server takes a backup, the server MUST put in it the items, edges, rows
 When the server takes a backup, the server MUST name every file its items name under the manifest's `missing_blobs`, and carry no file's bytes.
 
 **Reason:** the object store already holds a copy of each file the instance has replicated, so a backup that carried them would put every file in the bucket again each time.
-
-**Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything`.
-
-### `instance/backup-bucket-blobs`
-
-When the server takes a backup, the server MUST list under the manifest's `bucket_blobs` the hash of each file the backup names that the object store held a recorded copy of in the snapshot the backup was read from.
-
-**Reason:** a restore on the same bucket takes those files from the store, and a file outside the list may still be only on the instance's disk.
 
 **Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything`.
 
@@ -2071,7 +2071,7 @@ When the server writes an archive export, the server MUST NOT include `marfa.sec
 
 **Reason:** an export is meant to be shared and restored elsewhere, and the secrets belong to the instance that made them.
 
-**Tests:** waiting on #2771.
+**Tests:** `compliance/hook-free-server.test.ts › leaves marfa.secrets out of an export, whether the file was generated or the secrets came from the environment`.
 
 ### `instance/proxy-header-trusted-peer`
 

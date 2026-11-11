@@ -16,8 +16,14 @@ use crate::app::query::{self, Ask};
 use crate::app::refusal::Result;
 use crate::db::io_refusal;
 
-/// Items per credential check; checked pages can remain queued for the socket.
+/// The most items one credential check selects.
 const PAGE: i64 = 100;
+
+/// A page stops taking items once its text reaches this; one item can pass it.
+const PAGE_BYTES: usize = 256 * 1024;
+
+/// The most items read at once, so a run of large items cannot all be held together.
+const READ_AT_ONCE: usize = 16;
 
 /// One page: its lines, where the next begins, and whether the credential now reads all of it.
 struct Page {
@@ -44,23 +50,39 @@ async fn item_page(
         let admitted = admitted.unwrap_or_else(|| read.caller.clone());
         let selecting = read.as_caller(admitted.clone());
         let seqs = query::selected(&selecting, &ask, after, PAGE)?;
-        let rows = items::archived(
-            read.tx,
-            &admitted,
-            &read.catalog,
-            &read.read_only,
-            &seqs,
-            false,
-        )?;
         let mut whole = true;
-        for row in &rows {
-            whole &= reads_row(read, row)?;
-        }
         let mut text = String::new();
-        for row in &rows {
-            text.push_str(&row.line);
-            text.push('\n');
+        let (mut taken, mut longest) = (0, 1);
+        while taken < seqs.len() && text.len() < PAGE_BYTES {
+            let fit = (PAGE_BYTES - text.len()) / longest;
+            let count = if taken == 0 {
+                1
+            } else {
+                fit.clamp(1, READ_AT_ONCE)
+            };
+            let end = (taken + count).min(seqs.len());
+            let rows = items::archived(
+                read.tx,
+                &admitted,
+                &read.catalog,
+                &read.read_only,
+                &seqs[taken..end],
+                false,
+            )?;
+            for row in rows {
+                whole &= reads_row(read, &row)?;
+                longest = longest.max(row.line.len() + 1);
+                if text.is_empty() {
+                    text = row.line;
+                    text.reserve(PAGE_BYTES.saturating_sub(text.len()).max(1));
+                } else {
+                    text.push_str(&row.line);
+                }
+                text.push('\n');
+            }
+            taken = end;
         }
+        let seqs = seqs[..taken].to_vec();
         Ok((
             read.caller.clone(),
             Page {

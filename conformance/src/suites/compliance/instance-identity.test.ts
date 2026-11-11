@@ -56,12 +56,14 @@ describe("the instance's identity", () => {
     expect(raw).not.toBeNull();
     const manifest = JSON.parse(raw as string) as {
       version: number;
+      written_by: string;
       instance_id: string;
     };
     // The witness. Without it a reader that silently returned the wrong
     // member, or an empty one, would satisfy the identity assertion below
     // for the wrong reason.
-    expect(manifest.version).toBe(0);
+    expect(manifest.version).toBe(1);
+    expect(manifest.written_by).toMatch(/^marfa-server \S+$/);
     expect(manifest.instance_id).toBe(root.instance_id);
     expect(manifest.instance_id).toMatch(UUID_V7);
   });
