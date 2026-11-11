@@ -56,10 +56,13 @@ pub(crate) fn boundary(consent: &Consent, inactivity_days: u64) -> Result<Option
 
 pub(crate) fn sign_in_name(tx: &Connection, consent: &Consent) -> Result<String> {
     let client = store::client(tx, &consent.client_id)?;
+    named(tx, consent, client.as_ref())
+}
+
+/// For a caller that read the grant's client already.
+pub(crate) fn named(tx: &Connection, consent: &Consent, client: Option<&Client>) -> Result<String> {
     let own = grant::own_name(tx, &consent.grant_id)?;
-    let registered = client
-        .as_ref()
-        .and_then(|client| client.registration.client_name.as_deref());
+    let registered = client.and_then(|client| client.registration.client_name.as_deref());
     Ok(names::usable(own.as_deref())
         .or_else(|| names::usable(registered))
         .unwrap_or(&consent.client_id)

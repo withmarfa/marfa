@@ -45,6 +45,11 @@ pub struct Key {
 }
 
 impl Key {
+    /// The label where it can be shown, otherwise the ID.
+    pub fn shown_name(&self) -> &str {
+        super::auth::names::usable(Some(&self.label)).unwrap_or(&self.id)
+    }
+
     /// A stored expiry was read with the row, so its text compares as its instant.
     fn lives_at(&self, at: &str) -> bool {
         self.expires_at.as_deref().is_none_or(|end| end > at)
