@@ -497,9 +497,7 @@ describe("a completed claim after credential rows disappear", () => {
           db.exec("PRAGMA foreign_keys = OFF");
           if (missing !== "owner") db.exec("DELETE FROM api_keys");
           if (missing !== "keys")
-            db.exec(
-              "DELETE FROM auth_session; DELETE FROM auth_account; DELETE FROM auth_user",
-            );
+            db.exec("DELETE FROM sign_ins; DELETE FROM owner");
         });
         const restarted = await bootUnclaimedServer({ state: server.stateDir });
         const status = await controlRequest(
@@ -706,7 +704,9 @@ describe("starting on a database this build did not write", () => {
           );
           expect(text, cause).toMatch(/start (this build )?on a fresh file/i);
           expect(text, cause).toContain("restore the archive there");
-          expect(text, cause).toMatch(/restore\b.*\bcan refuse/i);
+          expect(text, cause).toMatch(
+            /restore reads only the archive version its own build writes, and refuses another/i,
+          );
         });
       }
     },
