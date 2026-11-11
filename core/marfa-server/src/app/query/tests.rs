@@ -128,7 +128,7 @@ fn every_compiled_read_carries_the_callers_reach() {
                 &ask,
                 &catalog,
                 "word",
-                &Ranking::Whole,
+                &Ranking([None, None]),
                 &order,
                 (21, 0),
             )

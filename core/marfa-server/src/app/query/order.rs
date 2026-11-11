@@ -10,6 +10,8 @@ pub struct Key {
     pub expression: Sql,
     pub descending: bool,
     pub nullable: bool,
+    /// The search's own rank, which its select list names `rank` and orders by without computing it twice.
+    pub relevance: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -33,9 +35,6 @@ pub fn property_key(name: &str) -> Sql {
     sql
 }
 
-/// The relevance key of a search, which [`Order::ranked_by`] replaces with each index's rank.
-const RELEVANCE: &str = "bm25(items_fts)";
-
 fn column(name: &str) -> Sql {
     Sql::new(&format!("i.{name}"))
 }
@@ -55,6 +54,7 @@ impl Order {
                 expression,
                 descending,
                 nullable: false,
+                relevance: false,
             }],
             id_descending: descending,
             spelled: format!("{spelled} {}", word(descending)),
@@ -67,6 +67,7 @@ impl Order {
                 expression: property_key(name),
                 descending,
                 nullable: true,
+                relevance: false,
             }],
             id_descending: false,
             spelled: format!("properties.{name} {}", word(descending)),
@@ -113,9 +114,10 @@ impl Order {
         let Some(field) = &sort.field else {
             return Order {
                 keys: vec![Key {
-                    expression: Sql::new(RELEVANCE),
+                    expression: Sql::default(),
                     descending: ascending,
                     nullable: false,
+                    relevance: true,
                 }],
                 id_descending: false,
                 spelled: format!("relevance {}", word(!ascending)),
@@ -160,26 +162,26 @@ impl Order {
         }
     }
 
+    /// Whether the search's rank is the only key, so that no column of the item is read to order.
+    pub fn ranks_alone(&self) -> bool {
+        self.keys.iter().all(|key| key.relevance)
+    }
+
     pub fn width(&self) -> usize {
         self.keys.len()
     }
 
     pub fn columns(&self, sql: &mut Sql) {
-        for (at, key) in self.keys.iter().enumerate() {
+        for (at, key) in self
+            .keys
+            .iter()
+            .enumerate()
+            .filter(|(_, key)| !key.relevance)
+        {
             sql.append(&key.expression);
             sql.push(&format!(" AS {}, ", alias(at)));
         }
         sql.push("i.id");
-    }
-
-    pub fn ranked_by(&self, rank: &Sql) -> Order {
-        let mut order = self.clone();
-        for key in &mut order.keys {
-            if key.expression.text == RELEVANCE {
-                key.expression = rank.clone();
-            }
-        }
-        order
     }
 
     pub fn order_by(&self, sql: &mut Sql) {
@@ -190,7 +192,11 @@ impl Order {
     pub fn order_by_named(&self, sql: &mut Sql, id: &str) {
         sql.push(" ORDER BY ");
         for (at, key) in self.keys.iter().enumerate() {
-            let name = alias(at);
+            let name = if key.relevance {
+                "rank".to_string()
+            } else {
+                alias(at)
+            };
             if key.nullable {
                 sql.push(&format!("{name} IS NULL, "));
             }

@@ -41,8 +41,8 @@ fn sized(tx: &Transaction<'_>, seq: i64) -> Result<()> {
         .prepare_cached("SELECT sz FROM items_fts_docsize WHERE id = ?1")?
         .query_row([seq], |row| row.get(0))?;
     tx.prepare_cached(
-        "INSERT INTO items_fts_sizes (seq, type, source, tokens) \
-         SELECT seq, type, source, ?2 FROM items WHERE seq = ?1",
+        "INSERT INTO items_fts_sizes (seq, id, type, state, source, tokens) \
+         SELECT seq, id, type, state, source, ?2 FROM items WHERE seq = ?1",
     )?
     .execute(params![seq, rank::tokens_of(&sizes)?])?;
     Ok(())

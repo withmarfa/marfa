@@ -415,10 +415,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
     tokenize = 'porter unicode61'
 );
 
--- Each `items_fts` entry's length in tokens, summed by type and source in `items_fts_totals`.
+-- Each `items_fts` entry's item and length in tokens, summed by type and source in `items_fts_totals`.
+-- A search filters its hits on these columns, which a page of the table holds for many more items than
+-- the wide rows of `items` do.
 CREATE TABLE IF NOT EXISTS items_fts_sizes (
     seq INTEGER PRIMARY KEY,
+    id TEXT NOT NULL,
     type TEXT NOT NULL,
+    state TEXT NOT NULL,
     source TEXT NOT NULL,
     tokens INTEGER NOT NULL CHECK (tokens >= 0)
 ) STRICT;
@@ -441,7 +445,7 @@ CREATE TRIGGER IF NOT EXISTS items_fts_unsized AFTER DELETE ON items_fts_sizes B
     UPDATE items_fts_totals SET entries = entries - 1, tokens = tokens - OLD.tokens
     WHERE type = OLD.type AND source = OLD.source;
 END;
-CREATE TRIGGER IF NOT EXISTS items_fts_resized AFTER UPDATE ON items_fts_sizes BEGIN
+CREATE TRIGGER IF NOT EXISTS items_fts_resized AFTER UPDATE OF type, source, tokens ON items_fts_sizes BEGIN
     UPDATE items_fts_totals SET entries = entries - 1, tokens = tokens - OLD.tokens
     WHERE type = OLD.type AND source = OLD.source;
     INSERT INTO items_fts_totals (type, source, entries, tokens)
@@ -449,10 +453,11 @@ CREATE TRIGGER IF NOT EXISTS items_fts_resized AFTER UPDATE ON items_fts_sizes B
     ON CONFLICT (type, source) DO UPDATE
     SET entries = entries + 1, tokens = tokens + excluded.tokens;
 END;
-CREATE TRIGGER IF NOT EXISTS items_fts_moved AFTER UPDATE OF type, source ON items
-WHEN NEW.type IS NOT OLD.type OR NEW.source IS NOT OLD.source
+CREATE TRIGGER IF NOT EXISTS items_fts_moved AFTER UPDATE OF type, source, state ON items
+WHEN NEW.type IS NOT OLD.type OR NEW.source IS NOT OLD.source OR NEW.state IS NOT OLD.state
 BEGIN
-    UPDATE items_fts_sizes SET type = NEW.type, source = NEW.source WHERE seq = NEW.seq;
+    UPDATE items_fts_sizes SET type = NEW.type, source = NEW.source, state = NEW.state
+    WHERE seq = NEW.seq;
 END;
 
 -- The rows whose indexed text a write may have changed. The item write function
@@ -495,6 +500,64 @@ CREATE TABLE IF NOT EXISTS items_fts_stale (
     after_seq INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (type, state)
 ) STRICT, WITHOUT ROWID;
+
+-- The (type, property) pairs a sorted listing reads from `item_sort_keys`. The triggers below keep a
+-- pair's keys true from its first row; `filled_through` and `ready` track the walk that keys the items
+-- already there.
+CREATE TABLE IF NOT EXISTS sort_indexes (
+    type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    filled_through INTEGER NOT NULL DEFAULT 0,
+    ready INTEGER NOT NULL DEFAULT 0 CHECK (ready IN (0, 1)),
+    PRIMARY KEY (type, name)
+) STRICT, WITHOUT ROWID;
+
+-- Pairs no longer kept, whose keys are removed a page at a time.
+CREATE TABLE IF NOT EXISTS sort_indexes_dropping (
+    type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    PRIMARY KEY (type, name)
+) STRICT, WITHOUT ROWID;
+
+-- A property's sort value: a number or boolean as a REAL, text as itself, else the empty blob, which
+-- sorts last. The descending index keeps ids ascending, as a listing sorted down does.
+CREATE TABLE IF NOT EXISTS item_sort_keys (
+    type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    value ANY NOT NULL,
+    id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    PRIMARY KEY (type, name, value, id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS item_sort_keys_descending
+    ON item_sort_keys (type, name, value DESC, id, seq);
+
+CREATE TRIGGER IF NOT EXISTS item_sort_keys_inserted AFTER INSERT ON items
+WHEN EXISTS (SELECT 1 FROM sort_indexes WHERE type = NEW.type)
+BEGIN
+    INSERT OR IGNORE INTO item_sort_keys (type, name, value, id, seq)
+    SELECT NEW.type, s.name, COALESCE(CASE json_type(NEW.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(NEW.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), NEW.id, NEW.seq
+    FROM sort_indexes s WHERE s.type = NEW.type;
+END;
+CREATE TRIGGER IF NOT EXISTS item_sort_keys_changed AFTER UPDATE OF type, properties ON items
+WHEN (NEW.type IS NOT OLD.type OR NEW.properties IS NOT OLD.properties)
+    AND (EXISTS (SELECT 1 FROM sort_indexes WHERE type = OLD.type)
+        OR EXISTS (SELECT 1 FROM sort_indexes WHERE type = NEW.type))
+BEGIN
+    DELETE FROM item_sort_keys WHERE (type, name, value, id) IN (
+        SELECT OLD.type, s.name, COALESCE(CASE json_type(OLD.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(OLD.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), OLD.id
+        FROM sort_indexes s WHERE s.type = OLD.type);
+    INSERT OR IGNORE INTO item_sort_keys (type, name, value, id, seq)
+    SELECT NEW.type, s.name, COALESCE(CASE json_type(NEW.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(NEW.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), NEW.id, NEW.seq
+    FROM sort_indexes s WHERE s.type = NEW.type;
+END;
+CREATE TRIGGER IF NOT EXISTS item_sort_keys_deleted AFTER DELETE ON items
+WHEN EXISTS (SELECT 1 FROM sort_indexes WHERE type = OLD.type)
+BEGIN
+    DELETE FROM item_sort_keys WHERE (type, name, value, id) IN (
+        SELECT OLD.type, s.name, COALESCE(CASE json_type(OLD.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(OLD.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), OLD.id
+        FROM sort_indexes s WHERE s.type = OLD.type);
+END;
 
 -- The one owner. `password` holds the hash, never the password.
 CREATE TABLE IF NOT EXISTS owner (

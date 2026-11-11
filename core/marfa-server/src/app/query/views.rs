@@ -106,6 +106,7 @@ fn key_of(by: &str, descending: bool, catalog: &Catalog) -> Option<Key> {
         expression,
         descending,
         nullable,
+        relevance: false,
     })
 }
 
@@ -181,7 +182,7 @@ fn page(read: &Reader<'_, '_>, secret: &super::Secret, view: &ViewPage) -> Resul
         .transpose()?;
     let selected = selection(&reach, &ask, &read.catalog, order.walked())?;
     let sql = page_sql(&selected, &ask, &order, position.as_ref(), view.limit);
-    let rows = found(read, &sql, order.width())?;
+    let rows = found(read.tx, &sql, order.width())?;
     answered(
         read,
         rows,
