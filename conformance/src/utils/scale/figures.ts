@@ -172,6 +172,21 @@ export const CEILINGS: Record<string, CeilingEntry> = {
   tables_rss_after_write: recorded,
   tables_db_size: recorded,
 
+  // One long conversation, and conversations listed by their latest message.
+  conversation_messages_written: recorded,
+  conversation_fill_rate: recorded,
+  conversation_append: { ceiling: 10, issue: 2838 },
+  conversation_latest_50: { ceiling: 10, issue: 2838 },
+  conversation_page_by_sent_at: recorded,
+  conversations_list_by_activity: { ceiling: 50, issue: 2838 },
+  conversation_export: recorded,
+  conversation_export_size: recorded,
+  conversation_restore: recorded,
+  conversation_messages_restored: recorded,
+  conversation_latest_50_after_restore: { ceiling: 10, issue: 2838 },
+  conversation_rss: recorded,
+  conversation_db_size: recorded,
+
   // What the instance weighs, recorded so a drift shows.
   db_size: recorded,
   wal_size: recorded,

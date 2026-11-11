@@ -1,5 +1,6 @@
 // Missed ceilings are recorded here; the judge step decides the nightly result.
 import { bulk } from "./bulk.js";
+import { conversations } from "./conversations.js";
 import { device } from "./device.js";
 import { edges } from "./edges.js";
 import { exportArchive } from "./export.js";
@@ -21,6 +22,7 @@ const STEPS: Record<string, () => Promise<void> | void> = {
   export: exportArchive,
   storage,
   tables,
+  conversations,
   device,
   folder,
   watch,
