@@ -173,9 +173,11 @@ fn lead_with_joined(mut told: Vec<(Settled, crate::drain::DrainVerdict)>) -> Res
     Ok(lead)
 }
 
-/// `resent` where the batch went out before this request: its key's record
-/// would have answered it, so a refusal of one operation comes only once that
-/// record is gone, and says nothing of what an earlier attempt wrote.
+/// `resent` where the batch went out before this request. A refusal the server
+/// answers from its key's record is the refusal of an attempt that wrote none
+/// of the batch, since a success completes the record in its own transaction.
+/// Any other refusal of a batch resent comes once that record is gone, and says
+/// nothing of what an earlier attempt wrote.
 pub(super) fn settle(
     core: &Core,
     row: &QueuedWrite,
@@ -201,7 +203,7 @@ pub(super) fn settle(
         }
         (WriteKind::WriteRows, Classified::Delivered, Ok(_)) => taken(core, &writes, None),
         (WriteKind::WriteRows, Classified::Contract, Ok(refused)) => {
-            match operation_of(refused, &writes).filter(|_| !resent) {
+            match operation_of(refused, &writes).filter(|_| !resent || refused.replayed) {
                 Some(at) => split(core, &writes, refused, at),
                 None => whole(core, &writes, answer, class),
             }
