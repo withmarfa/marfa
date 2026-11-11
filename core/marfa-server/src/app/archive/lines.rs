@@ -16,7 +16,7 @@ use crate::app::query::{self, Ask};
 use crate::app::refusal::Result;
 use crate::db::io_refusal;
 
-/// Items in one page, so a credential that ends or narrows stops the export within a page.
+/// Items per credential check; checked pages can remain queued for the socket.
 const PAGE: i64 = 100;
 
 /// One page: its lines, where the next begins, and whether the credential now reads all of it.

@@ -10,28 +10,14 @@ import {
 } from "../../utils/fresh-server.js";
 import { clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
 
-/**
- * What an export does when the credential it was admitted on ends or narrows
- * while the response is open, on a server of the fixture's own.
- *
- * Every case holds the export at `hold:export-check`, before a check of its
- * credential partway through the response, so the response is still open
- * when the credential changes, however much the sockets between the server
- * and the client can hold. The client takes a first part, the credential
- * changes, the hold is cleared, and the client reads on. Each case that cuts
- * the response has a witness, the same export held the same way with the
- * credential left alone, which arrives whole.
- */
+// Socket buffers can absorb the whole export before revocation, so hold it at a check.
 const NOTES = 800;
 /** Random bytes in each note, which come to about 40 KB as base64. */
 const NOTE_BYTES = 30 * 1024;
 const BLOB_BYTES = 24 * 1024 * 1024;
 /** How much the client takes before the credential changes. */
 const FIRST_PART = 256 * 1024;
-/**
- * Which check each export is held before: far enough in that the first part
- * has been sent, and far enough from the end that most of the data has not.
- */
+// Leave a readable prefix and unsent data on either side of the hold.
 const HELD_AT = { ndjson: 1, archive: 8, blob: 10 } as const;
 /** How long the first part may take to arrive once the export is held. */
 const FIRST_PART_MS = 10_000;
@@ -136,7 +122,6 @@ interface Taken {
   failed: boolean;
 }
 
-/** Reads a body to its end, and says whether it ended with an error. */
 async function readToEnd(
   reader: ReadableStreamDefaultReader<Uint8Array>,
   chunks: Buffer[],
@@ -162,12 +147,6 @@ async function firstPartTaken(chunks: Buffer[]): Promise<void> {
   }
 }
 
-/**
- * Reads an export that is held before its `heldAt`th credential check, runs
- * `change` once the hold is reached and the first part has arrived, clears
- * the hold, and reads to the end. Nothing past the hold can be sent before
- * the change, however much the sockets hold.
- */
 async function takeAcross(
   opened: () => Promise<Response>,
   heldAt: number,
