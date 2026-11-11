@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
@@ -6,16 +12,19 @@ import {
   collectionNotes,
   contractFiles,
   countCollected,
+  excuse,
   filesNamedIn,
   fixturePath,
   renderScore,
   scoreRun,
+  type ReportedTest,
   type VitestReport,
 } from "./rust-score.js";
 
 const A = "src/suites/compliance/a.test.ts";
 const B = "src/suites/compliance/b.test.ts";
 const C = "src/suites/sync/c.test.ts";
+const LINUX = { platform: "linux" };
 
 const result = (
   file: string,
@@ -41,6 +50,7 @@ describe("the score of a run", () => {
       ],
       [A, B, C],
       [],
+      LINUX,
     );
     expect([score.passed, score.total, score.filesPassing]).toEqual([5, 6, 2]);
     expect(
@@ -63,13 +73,14 @@ describe("the score of a run", () => {
       ],
       [A],
       [],
+      LINUX,
     );
     expect([score.passed, score.total, score.filesPassing]).toEqual([1, 3, 0]);
   });
 
   describe("for a file the Rust server judges", () => {
     const failures = (testResults: VitestReport["testResults"], judged = [A]) =>
-      scoreRun([{ testResults }], [A, B], judged).failures;
+      scoreRun([{ testResults }], [A, B], judged, LINUX).failures;
 
     it("passes when every test in it passed", () => {
       expect(
@@ -98,7 +109,7 @@ describe("the score of a run", () => {
   });
 
   it("counts a file no report names as not passing, and leaves a file the Rust server does not judge unable to fail the run", () => {
-    const score = scoreRun([{ testResults: [] }], [A, B], []);
+    const score = scoreRun([{ testResults: [] }], [A, B], [], LINUX);
     expect([score.passed, score.filesPassing, score.failures]).toEqual([
       0,
       0,
@@ -125,7 +136,7 @@ describe("the score of a run", () => {
       ],
       [A, B, C],
       [A, B, C],
-      new Map([...collected, [C, 3]]),
+      { collected: new Map([...collected, [C, 3]]), platform: "linux" },
     );
     expect(score.passed).toBe(2);
     expect(score.total).toBe(10);
@@ -146,17 +157,20 @@ describe("the score of a run", () => {
       [{ testResults: [result(A, "passed", ["passed", "passed", "skipped"])] }],
       [A, B],
       [],
-      new Map([
-        [A, 2],
-        [B, 0],
-      ]),
+      {
+        collected: new Map([
+          [A, 2],
+          [B, 0],
+        ]),
+        platform: "linux",
+      },
     );
     expect(score.files.map((f) => f.total)).toEqual([3, 0]);
     const fewer = scoreRun(
       [{ testResults: [result(A, "passed", ["passed"])] }],
       [A],
       [A],
-      new Map([[A, 4]]),
+      { collected: new Map([[A, 4]]), platform: "linux" },
     );
     expect(fewer.failures).toEqual([`${A}: 1 of 4 tests passed`]);
   });
@@ -174,6 +188,7 @@ describe("the score of a run", () => {
       ],
       [A],
       [],
+      LINUX,
     );
     expect([score.passed, score.total, score.files.length]).toEqual([1, 1, 1]);
   });
@@ -187,6 +202,7 @@ describe("the score of a run", () => {
         ],
         [A],
         [],
+        LINUX,
       ),
     ).toThrow(`two reports name ${A}`);
   });
@@ -195,6 +211,123 @@ describe("the score of a run", () => {
     expect(fixturePath(`/home/runner/work/marfa/marfa/conformance/${A}`)).toBe(
       A,
     );
+  });
+});
+
+describe("a test skipped for the machine alone", () => {
+  const macOnly: ReportedTest = {
+    status: "skipped",
+    fullName: "a chapter a Mac test",
+    meta: { onlyOn: "darwin" },
+  };
+  const clamped: ReportedTest = {
+    status: "skipped",
+    fullName: "a clamped test",
+    meta: { unobservable: "this machine clamps every process" },
+  };
+  const file = (...tests: ReportedTest[]) => ({
+    name: `/checkout/conformance/${A}`,
+    status: "passed",
+    assertionResults: [{ status: "passed" }, ...tests],
+  });
+  const score = (platform: string, ...tests: ReportedTest[]) =>
+    scoreRun([{ testResults: [file(...tests)] }], [A], [A], {
+      collected: new Map([[A, 1 + tests.length]]),
+      platform,
+    });
+
+  it("is left out of the count on another platform and listed, so its file passes whole", () => {
+    const linux = score("linux", macOnly);
+    expect(linux.failures).toEqual([]);
+    expect(linux.files[0]).toMatchObject({ passed: 1, total: 1 });
+    expect(renderScore(linux)).toContain(
+      `${A} › a chapter a Mac test: runs only on darwin`,
+    );
+  });
+
+  it("does not pass on the platform it runs on", () => {
+    expect(score("darwin", macOnly).failures).toEqual([
+      `${A}: 1 of 2 tests passed`,
+    ]);
+  });
+
+  it("is left out of the count when it says this machine cannot show what it asserts", () => {
+    const mac = score("darwin", clamped);
+    expect(mac.failures).toEqual([]);
+    expect(renderScore(mac)).toContain(
+      "a clamped test: this machine clamps every process",
+    );
+  });
+
+  it.each([
+    ["a skip with no reason", { status: "skipped" }],
+    ["a skip with empty metadata", { status: "skipped", meta: {} }],
+    [
+      "a skip naming no machine",
+      { status: "skipped", meta: { unobservable: "" } },
+    ],
+    [
+      "a todo on another platform",
+      { status: "todo", meta: { onlyOn: "darwin" } },
+    ],
+    [
+      "a failure on another platform",
+      { status: "failed", meta: { onlyOn: "darwin" } },
+    ],
+  ] as [string, ReportedTest][])("still fails the file for %s", (_, test) => {
+    expect(score("linux", test).failures).toEqual([
+      `${A}: 1 of 2 tests passed`,
+    ]);
+  });
+
+  it("passes a file every test of which runs only on another platform", () => {
+    const only = scoreRun(
+      [
+        {
+          testResults: [
+            {
+              name: `/checkout/conformance/${A}`,
+              status: "passed",
+              assertionResults: [macOnly],
+            },
+          ],
+        },
+      ],
+      [A],
+      [A],
+      { collected: new Map([[A, 1]]), platform: "linux" },
+    );
+    expect(only.failures).toEqual([]);
+    expect(only.filesPassing).toBe(1);
+  });
+
+  it("names the excuse a test reports, and none for a test that ran", () => {
+    expect(excuse(macOnly, "linux")).toBe("runs only on darwin");
+    expect(excuse(macOnly, "darwin")).toBeUndefined();
+    expect(excuse({ ...macOnly, status: "passed" }, "linux")).toBeUndefined();
+  });
+});
+
+describe("the excuses the contract makes", () => {
+  const ROOT = join(import.meta.dirname, "..", "..");
+  const text = (file: string) => readFileSync(join(ROOT, file), "utf8");
+
+  it("says a machine cannot show a test in one fixture alone, the clamped priority", () => {
+    const naming = contractFiles(ROOT).filter((file) =>
+      text(file).includes(".meta.unobservable"),
+    );
+    expect(naming).toEqual(["src/suites/device/folders-autostart.test.ts"]);
+    expect(text(naming[0] ?? "").split(".meta.unobservable").length - 1).toBe(
+      1,
+    );
+  });
+
+  it("skips a test for the platform only through ON_MACOS", () => {
+    const raw = /runIf\(process\.platform|skip:\s*process\.platform/;
+    const files = contractFiles(ROOT);
+    // The witness: the files read are the fixtures, and one uses ON_MACOS.
+    expect(files.some((file) => text(file).includes("ON_MACOS"))).toBe(true);
+    expect(files.filter((file) => raw.test(text(file)))).toEqual([]);
   });
 });
 

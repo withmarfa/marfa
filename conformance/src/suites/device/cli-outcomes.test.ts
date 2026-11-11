@@ -30,6 +30,7 @@ import {
   startHarness,
   type Harness,
 } from "./harness.js";
+import { ON_MACOS } from "../../utils/platform.js";
 
 let harness: Harness | undefined;
 afterEach(async () => {
@@ -350,7 +351,7 @@ describe("CLI outcomes preserve the result", () => {
  * The token is kept in the run's own keychain file, which exists only where
  * there are keychain files.
  */
-describe.runIf(process.platform === "darwin")("a renewal a drain meets", () => {
+describe("a renewal a drain meets", ON_MACOS, () => {
   async function renewing(tokenAnswer: ReturnType<typeof refusal>) {
     const h = await prepared();
     const later = await h.device.create({

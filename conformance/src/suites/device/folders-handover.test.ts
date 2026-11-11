@@ -28,6 +28,7 @@ import {
   sentTitles,
   withFault,
 } from "./folders.shared.js";
+import { ON_MACOS } from "../../utils/platform.js";
 
 /**
  * A command that works a folder asks a running `folders watch` for it, and
@@ -893,7 +894,7 @@ describe("a folder whose lock file cannot be written", () => {
 });
 
 /** Where there are keychain files to give the binary a credential of its own. */
-describe.runIf(process.platform === "darwin")("a watch's credential", () => {
+describe("a watch's credential", ON_MACOS, () => {
   it("takes a folder back with the credential it began with, though the keychain cannot be read meanwhile", async () => {
     const harness = await oneFolder("handover-keychain");
     const keychain = ownKeychain();

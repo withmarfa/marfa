@@ -30,6 +30,7 @@ import {
   SCRIPTED_INSTANCE,
   SCRIPTED_TYPES,
 } from "../../device/marfa-answers.js";
+import { ON_MACOS } from "../../utils/platform.js";
 
 const run = promisify(execFile);
 
@@ -400,7 +401,7 @@ const ROOT: Answer = {
   },
 };
 
-describe.runIf(process.platform === "darwin")("a kept credential", () => {
+describe("a kept credential", ON_MACOS, () => {
   let keychain: { path: string; remove: () => void };
   let server: ScriptedServer;
   beforeEach(async () => {

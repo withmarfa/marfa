@@ -25,6 +25,7 @@ import { folderHarness, requireBinary } from "./harness.js";
 import type { FolderHarness } from "./harness.js";
 import type { HeldCommand } from "../../device/cli-adapter.js";
 import { put, scriptFolderWrites, sentTitles } from "./folders.shared.js";
+import { ON_MACOS } from "../../utils/platform.js";
 
 /**
  * Folder syncing from login. No fixture installs a real login agent or
@@ -622,8 +623,9 @@ describe("folder syncing from login", () => {
     expect(report.running).toBe(true);
   });
 
-  it.runIf(process.platform === "darwin")(
+  it(
     "keeps an error the watch makes before it opens its log in the file launchd was given beside the log",
+    ON_MACOS,
     async () => {
       const root = standIn("launchd-output");
       const registry = registryOf(root);
@@ -1347,101 +1349,96 @@ describe("folder syncing from login", () => {
     expect(sent).not.toContain(`Bearer ${kept}`);
   });
 
-  describe.runIf(process.platform === "darwin")(
-    "a credential the keychain keeps",
-    () => {
-      it("reads the keychain for no folder with a key file, though it keeps a credential for the folder's server", async () => {
-        const harness = await folderHarness("autostart-keyfile-keychain");
-        made.push(harness);
-        scriptFolderWrites(harness);
-        const keychain = ownKeychain();
-        cleanups.push(keychain.remove);
-        const inKeychain = "device-fixture-key-in-the-keychain";
-        keepKey(keychain.path, harness.server.url, inKeychain);
-        const root = standIn("keyfile-keychain");
-        // The key file names another server, so the folder's own server is
-        // found only in the keychain, which the watch must not read.
-        const path = keyFile(root, "http://127.0.0.1:9", "unused-key");
-        const from = harness.server.requests.length;
-        parsed<Switched>(
-          autostart(root, "on", {
-            registry: harness.registry,
-            env: { MARFA_KEYCHAIN: keychain.path },
-            args: ["--key-file", path],
-          }),
-        );
-        await vi.waitFor(() => {
-          const status = parsed<Status>(
-            autostart(root, "status", {
-              registry: harness.registry,
-              env: { MARFA_KEYCHAIN: keychain.path },
-            }),
-          );
-          expect(status.record?.current).toBe(true);
-          expect(["no_credential", "no_keychain"]).toContain(
-            status.record?.folders.find((folder) => folder.dir === harness.dir)
-              ?.reason,
-          );
-        }, WAIT);
-        const sent = harness.server.requests
-          .slice(from)
-          .map((request) => request.headers.authorization)
-          .filter((header) => header !== undefined);
-        expect(sent).not.toContain(`Bearer ${inKeychain}`);
-        // The witness: without the key file, the same keychain is read.
-        parsed<Switched>(
-          autostart(root, "on", {
+  describe("a credential the keychain keeps", ON_MACOS, () => {
+    it("reads the keychain for no folder with a key file, though it keeps a credential for the folder's server", async () => {
+      const harness = await folderHarness("autostart-keyfile-keychain");
+      made.push(harness);
+      scriptFolderWrites(harness);
+      const keychain = ownKeychain();
+      cleanups.push(keychain.remove);
+      const inKeychain = "device-fixture-key-in-the-keychain";
+      keepKey(keychain.path, harness.server.url, inKeychain);
+      const root = standIn("keyfile-keychain");
+      // The key file names another server, so the folder's own server is
+      // found only in the keychain, which the watch must not read.
+      const path = keyFile(root, "http://127.0.0.1:9", "unused-key");
+      const from = harness.server.requests.length;
+      parsed<Switched>(
+        autostart(root, "on", {
+          registry: harness.registry,
+          env: { MARFA_KEYCHAIN: keychain.path },
+          args: ["--key-file", path],
+        }),
+      );
+      await vi.waitFor(() => {
+        const status = parsed<Status>(
+          autostart(root, "status", {
             registry: harness.registry,
             env: { MARFA_KEYCHAIN: keychain.path },
           }),
         );
-        put(
-          harness,
-          "Keychain.md",
-          "---\ntitle: Keychain\n---\nthe keychain is read\n",
+        expect(status.record?.current).toBe(true);
+        expect(["no_credential", "no_keychain"]).toContain(
+          status.record?.folders.find((folder) => folder.dir === harness.dir)
+            ?.reason,
         );
-        await vi.waitFor(
-          () => expect(sentTitles(harness)).toEqual(["Keychain"]),
-          WAIT,
-        );
-      });
+      }, WAIT);
+      const sent = harness.server.requests
+        .slice(from)
+        .map((request) => request.headers.authorization)
+        .filter((header) => header !== undefined);
+      expect(sent).not.toContain(`Bearer ${inKeychain}`);
+      // The witness: without the key file, the same keychain is read.
+      parsed<Switched>(
+        autostart(root, "on", {
+          registry: harness.registry,
+          env: { MARFA_KEYCHAIN: keychain.path },
+        }),
+      );
+      put(
+        harness,
+        "Keychain.md",
+        "---\ntitle: Keychain\n---\nthe keychain is read\n",
+      );
+      await vi.waitFor(
+        () => expect(sentTitles(harness)).toEqual(["Keychain"]),
+        WAIT,
+      );
+    });
 
-      it("keeps a folder in step from the agent, with the credential the keychain keeps for the folder's server", async () => {
-        const harness = await folderHarness("autostart-keychain");
-        made.push(harness);
-        scriptFolderWrites(harness);
-        const keychain = ownKeychain();
-        cleanups.push(keychain.remove);
-        const kept = "device-fixture-key-kept-for-login";
-        keepKey(keychain.path, harness.server.url, kept);
-        const root = standIn("keychain");
-        const from = harness.server.requests.length;
-        parsed<Switched>(
-          autostart(root, "on", {
-            registry: harness.registry,
-            env: { MARFA_KEYCHAIN: keychain.path },
-          }),
-        );
-        put(
-          harness,
-          "At login.md",
-          "---\ntitle: At login\n---\nno terminal open\n",
-        );
-        await vi.waitFor(
-          () => expect(sentTitles(harness)).toEqual(["At login"]),
-          WAIT,
-        );
-        const sent = harness.server.requests
-          .slice(from)
-          .map((request) => request.headers.authorization)
-          .filter((header) => header !== undefined);
-        expect(sent).toContain(`Bearer ${kept}`);
-        expect(sent.filter((header) => header !== `Bearer ${kept}`)).toEqual(
-          [],
-        );
-      });
-    },
-  );
+    it("keeps a folder in step from the agent, with the credential the keychain keeps for the folder's server", async () => {
+      const harness = await folderHarness("autostart-keychain");
+      made.push(harness);
+      scriptFolderWrites(harness);
+      const keychain = ownKeychain();
+      cleanups.push(keychain.remove);
+      const kept = "device-fixture-key-kept-for-login";
+      keepKey(keychain.path, harness.server.url, kept);
+      const root = standIn("keychain");
+      const from = harness.server.requests.length;
+      parsed<Switched>(
+        autostart(root, "on", {
+          registry: harness.registry,
+          env: { MARFA_KEYCHAIN: keychain.path },
+        }),
+      );
+      put(
+        harness,
+        "At login.md",
+        "---\ntitle: At login\n---\nno terminal open\n",
+      );
+      await vi.waitFor(
+        () => expect(sentTitles(harness)).toEqual(["At login"]),
+        WAIT,
+      );
+      const sent = harness.server.requests
+        .slice(from)
+        .map((request) => request.headers.authorization)
+        .filter((header) => header !== undefined);
+      expect(sent).toContain(`Bearer ${kept}`);
+      expect(sent.filter((header) => header !== `Bearer ${kept}`)).toEqual([]);
+    });
+  });
 });
 
 describe("the watch run by a service manager", () => {
@@ -1488,8 +1485,9 @@ describe("the watch run by a service manager", () => {
   // A sibling started the way the harness starts the watch shows whether this
   // machine can, and the core's own tests, which read each thread's class
   // from inside, hold the rule where it cannot.
-  it.runIf(process.platform === "darwin")(
+  it(
     "runs the threads of a folder watch, and the threads they start, at utility quality of service",
+    ON_MACOS,
     async (context) => {
       const sibling = spawn("sleep", ["30"], { stdio: "ignore" });
       let siblingFound: string[];
@@ -1505,6 +1503,7 @@ describe("the watch run by a service manager", () => {
         sibling.kill("SIGTERM");
       }
       if (siblingFound.some((priority) => priority !== "31")) {
+        context.task.meta.unobservable = CLAMPED;
         context.skip(CLAMPED);
       }
       const harness = await folderHarness("autostart-utility");

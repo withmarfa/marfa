@@ -22,6 +22,7 @@ import {
   startHarness,
   type Harness,
 } from "./harness.js";
+import { ON_MACOS } from "../../utils/platform.js";
 
 let harness: Harness | undefined;
 const scratch: string[] = [];
@@ -387,138 +388,130 @@ describe("a trim to the file budget", () => {
   });
 });
 
-describe.runIf(process.platform === "darwin")(
-  "backups of the file cache on a Mac",
-  () => {
-    const excluded = (path: string): boolean => {
-      const said = execFileSync("tmutil", ["isexcluded", path], {
-        encoding: "utf8",
-      });
-      expect(said).toMatch(/\[(In|Ex)cluded\]/);
-      return said.includes("[Excluded]");
-    };
-
-    it("keeps the bytes it fetched out of backups, and the bytes of an upload in them", async () => {
-      // The system excludes its own temporary folders, so the store has to sit
-      // under the home folder for the verdict to be the device's.
-      const area = mkdtempSync(join(homedir(), ".marfa-conformance-backup-"));
-      scratch.push(area);
-      harness = await started("backup");
-      const device = new CliDevice({
-        binary: requireBinary(),
-        store: join(area, "core.sqlite"),
-        url: harness.server.url,
-        key: KEY,
-      });
-      expect((await device.status()).ok).toBe(true);
-
-      const upload = ten("upload");
-      const queued = await device.putBlob(fileOf("note.txt", upload));
-      expect(queued.ok, JSON.stringify(queued)).toBe(true);
-      const hash = scriptBlob(harness.server, ten("fetched"));
-      expect((await device.blob(hash)).ok).toBe(true);
-
-      // The mark is on each fetched file, which tmutil reports.
-      expect(
-        excluded(heldAt(device, hash)),
-        "tmutil does not exclude the fetched file",
-      ).toBe(true);
-      expect(
-        excluded(heldAt(device, hashOf(upload))),
-        "the only copy of an upload is kept out of backups",
-      ).toBe(false);
-      expect(
-        excluded(`${device.store}.blobs`),
-        "the folder that holds uploads is kept out of backups",
-      ).toBe(false);
-      expect((await cacheOf(device)).backup_mark_failure).toBeNull();
+describe("backups of the file cache on a Mac", ON_MACOS, () => {
+  const excluded = (path: string): boolean => {
+    const said = execFileSync("tmutil", ["isexcluded", path], {
+      encoding: "utf8",
     });
+    expect(said).toMatch(/\[(In|Ex)cluded\]/);
+    return said.includes("[Excluded]");
+  };
 
-    /** Serves the first `cut` bytes of `bytes` of a link that then stops, and answers the blob's hash. */
-    function scriptStoppedBlob(
-      { server }: Harness,
-      bytes: Buffer,
-      cut: number,
-    ): string {
-      const hash = hashOf(bytes);
-      const hex = hash.slice("sha256:".length);
-      server.copyAnswer(
-        "GET",
-        `/blobs/${hash}/url`,
-        writeAnswers.link(`${server.url}/links/${hex}`),
-      );
-      server.copyAnswer("GET", `/links/${hex}`, {
-        kind: "bytes",
-        status: 200,
-        body: bytes,
-        cut,
-      } as Answer);
-      return hash;
-    }
-
-    it("keeps the partial file of a fetch that stopped out of backups", async () => {
-      const area = mkdtempSync(join(homedir(), ".marfa-conformance-backup-"));
-      scratch.push(area);
-      harness = await started("backup-partial");
-      const device = new CliDevice({
-        binary: requireBinary(),
-        store: join(area, "core.sqlite"),
-        url: harness.server.url,
-        key: KEY,
-      });
-      expect((await device.status()).ok).toBe(true);
-      const bytes = Buffer.from("a file that arrives in two parts".repeat(4));
-      const hash = scriptStoppedBlob(harness, bytes, 40);
-      expect((await device.blob(hash)).ok).toBe(false);
-
-      const partial = `${device.store}.blobs/.partial-${hash.slice("sha256:".length)}`;
-      expect(existsSync(partial), "no partial file was left to check").toBe(
-        true,
-      );
-      expect(
-        excluded(partial),
-        "tmutil does not exclude the partial file",
-      ).toBe(true);
-      expect((await cacheOf(device)).backup_mark_failure).toBeNull();
+  it("keeps the bytes it fetched out of backups, and the bytes of an upload in them", async () => {
+    // The system excludes its own temporary folders, so the store has to sit
+    // under the home folder for the verdict to be the device's.
+    const area = mkdtempSync(join(homedir(), ".marfa-conformance-backup-"));
+    scratch.push(area);
+    harness = await started("backup");
+    const device = new CliDevice({
+      binary: requireBinary(),
+      store: join(area, "core.sqlite"),
+      url: harness.server.url,
+      key: KEY,
     });
+    expect((await device.status()).ok).toBe(true);
 
-    it("says in its state report when the partial file of a fetch cannot be kept out of backups", async () => {
-      harness = await started("backup-partial-refused");
-      const { device } = harness;
-      const bytes = Buffer.from("a file that arrives in two parts".repeat(4));
-      const hash = scriptStoppedBlob(harness, bytes, 40);
-      const got = await withFault("backup-mark-refused", () =>
-        device.blob(hash),
-      );
-      expect(got.ok).toBe(false);
-      const said = (await cacheOf(device)).backup_mark_failure;
-      expect(said).toEqual(expect.any(String));
-      expect(said).not.toBe("");
+    const upload = ten("upload");
+    const queued = await device.putBlob(fileOf("note.txt", upload));
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    const hash = scriptBlob(harness.server, ten("fetched"));
+    expect((await device.blob(hash)).ok).toBe(true);
 
-      // Until a file of fetched bytes is marked again.
-      await fetched(harness, ten("again"));
-      expect((await cacheOf(device)).backup_mark_failure).toBeNull();
+    // The mark is on each fetched file, which tmutil reports.
+    expect(
+      excluded(heldAt(device, hash)),
+      "tmutil does not exclude the fetched file",
+    ).toBe(true);
+    expect(
+      excluded(heldAt(device, hashOf(upload))),
+      "the only copy of an upload is kept out of backups",
+    ).toBe(false);
+    expect(
+      excluded(`${device.store}.blobs`),
+      "the folder that holds uploads is kept out of backups",
+    ).toBe(false);
+    expect((await cacheOf(device)).backup_mark_failure).toBeNull();
+  });
+
+  /** Serves the first `cut` bytes of `bytes` of a link that then stops, and answers the blob's hash. */
+  function scriptStoppedBlob(
+    { server }: Harness,
+    bytes: Buffer,
+    cut: number,
+  ): string {
+    const hash = hashOf(bytes);
+    const hex = hash.slice("sha256:".length);
+    server.copyAnswer(
+      "GET",
+      `/blobs/${hash}/url`,
+      writeAnswers.link(`${server.url}/links/${hex}`),
+    );
+    server.copyAnswer("GET", `/links/${hex}`, {
+      kind: "bytes",
+      status: 200,
+      body: bytes,
+      cut,
+    } as Answer);
+    return hash;
+  }
+
+  it("keeps the partial file of a fetch that stopped out of backups", async () => {
+    const area = mkdtempSync(join(homedir(), ".marfa-conformance-backup-"));
+    scratch.push(area);
+    harness = await started("backup-partial");
+    const device = new CliDevice({
+      binary: requireBinary(),
+      store: join(area, "core.sqlite"),
+      url: harness.server.url,
+      key: KEY,
     });
+    expect((await device.status()).ok).toBe(true);
+    const bytes = Buffer.from("a file that arrives in two parts".repeat(4));
+    const hash = scriptStoppedBlob(harness, bytes, 40);
+    expect((await device.blob(hash)).ok).toBe(false);
 
-    it("says in its state report when fetched bytes cannot be kept out of backups", async () => {
-      harness = await started("backup-refused");
-      const { device } = harness;
-      // The witness: a fetch that marks its file reports nothing.
-      await fetched(harness, ten("marked"));
-      expect((await cacheOf(device)).backup_mark_failure).toBeNull();
+    const partial = `${device.store}.blobs/.partial-${hash.slice("sha256:".length)}`;
+    expect(existsSync(partial), "no partial file was left to check").toBe(true);
+    expect(excluded(partial), "tmutil does not exclude the partial file").toBe(
+      true,
+    );
+    expect((await cacheOf(device)).backup_mark_failure).toBeNull();
+  });
 
-      const refused = scriptBlob(harness.server, ten("refused"));
-      const got = await withFault("backup-mark-refused", () =>
-        device.blob(refused),
-      );
-      expect(got.ok, "the bytes were refused with the mark").toBe(true);
-      const said = (await cacheOf(device)).backup_mark_failure;
-      expect(said).toEqual(expect.any(String));
-      expect(said).not.toBe("");
+  it("says in its state report when the partial file of a fetch cannot be kept out of backups", async () => {
+    harness = await started("backup-partial-refused");
+    const { device } = harness;
+    const bytes = Buffer.from("a file that arrives in two parts".repeat(4));
+    const hash = scriptStoppedBlob(harness, bytes, 40);
+    const got = await withFault("backup-mark-refused", () => device.blob(hash));
+    expect(got.ok).toBe(false);
+    const said = (await cacheOf(device)).backup_mark_failure;
+    expect(said).toEqual(expect.any(String));
+    expect(said).not.toBe("");
 
-      // Until a fetch marks its file again.
-      await fetched(harness, ten("again"));
-      expect((await cacheOf(device)).backup_mark_failure).toBeNull();
-    });
-  },
-);
+    // Until a file of fetched bytes is marked again.
+    await fetched(harness, ten("again"));
+    expect((await cacheOf(device)).backup_mark_failure).toBeNull();
+  });
+
+  it("says in its state report when fetched bytes cannot be kept out of backups", async () => {
+    harness = await started("backup-refused");
+    const { device } = harness;
+    // The witness: a fetch that marks its file reports nothing.
+    await fetched(harness, ten("marked"));
+    expect((await cacheOf(device)).backup_mark_failure).toBeNull();
+
+    const refused = scriptBlob(harness.server, ten("refused"));
+    const got = await withFault("backup-mark-refused", () =>
+      device.blob(refused),
+    );
+    expect(got.ok, "the bytes were refused with the mark").toBe(true);
+    const said = (await cacheOf(device)).backup_mark_failure;
+    expect(said).toEqual(expect.any(String));
+    expect(said).not.toBe("");
+
+    // Until a fetch marks its file again.
+    await fetched(harness, ten("again"));
+    expect((await cacheOf(device)).backup_mark_failure).toBeNull();
+  });
+});

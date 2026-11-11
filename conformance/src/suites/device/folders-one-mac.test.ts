@@ -57,6 +57,7 @@ import {
   sentUpdates,
   withFault,
 } from "./folders.shared.js";
+import { ON_MACOS } from "../../utils/platform.js";
 
 let harness: FolderHarness | undefined;
 let second: FolderHarness | undefined;
@@ -69,8 +70,9 @@ afterEach(async () => {
 });
 
 describe("folders on one Mac", () => {
-  describe.runIf(process.platform === "darwin")(
+  describe(
     "unidentified cross-directory moves and older deletions",
+    ON_MACOS,
     () => {
       it.each(["directory", "file", "unreadable file"])(
         "holds cross-directory moves and older deletions behind an unidentified %s",

@@ -183,7 +183,7 @@ describe("every device statement is asserted by something", () => {
     // asserted while nothing runs it. One marked to fail is the same: it
     // passes when what it asserts is false.
     const SKIPS =
-      /\b(?:skip|skipIf|runIf|todo|fails)\s*\(|\b(?:skip|todo|fails)\s*:\s*true\b/;
+      /\b(?:skip|skipIf|runIf|todo|fails)\s*\(|\b(?:todo|fails)\s*:\s*true\b|[{,]\s*skip\s*:/;
     // The witness: the check sees each way a fixture is skipped.
     for (const written of [
       "context.skip();",
@@ -194,6 +194,7 @@ describe("every device statement is asserted by something", () => {
       'it.todo("a fixture");',
       'it.fails("a fixture", () => {});',
       'it("a fixture", { skip: true }, () => {});',
+      'it("a fixture", { skip: process.platform !== "darwin" }, () => {});',
       'it("a fixture", { todo: true }, () => {});',
       'it("a fixture", { fails: true }, () => {});',
       'describe.skip("a chapter", () => {});',
@@ -201,16 +202,18 @@ describe("every device statement is asserted by something", () => {
       expect(SKIPS.test(written), written).toBe(true);
     }
     // A fixture that runs only on macOS, such as one of the keychain, which
-    // no other platform has, asserts its statement where the device suite
-    // runs on macOS: nightly and on request (`ci.yml`), never on a pull
-    // request.
-    const ON_MACOS = /\.runIf\(process\.platform === "darwin"\)/g;
-    const skips = (text: string) => SKIPS.test(text.replace(ON_MACOS, ""));
+    // no other platform has, says so with `ON_MACOS` (`utils/platform.ts`),
+    // which the Rust score tells apart from any other skip, and asserts its
+    // statement where the device suite runs on macOS: nightly and on request
+    // (`ci.yml`), never on a pull request.
+    const skips = (text: string) => SKIPS.test(text);
     // GitHub's hosted Macs clamp every process at utility, so no run there
     // can show a thread lowered to it: the priority fixture skips where its
     // sibling reads the clamp, and asserts `folders/watch-utility-priority`
     // on a Mac that does not clamp. The core's own tests read each thread's
-    // class from inside the process, which a clamp does not hide.
+    // class from inside the process, which a clamp does not hide. It names
+    // the clamp as `unobservable` first, which the Rust score lists and
+    // leaves out of the count.
     const CLAMPED = {
       file: "folders-autostart.test.ts",
       written: "context.skip(CLAMPED);",
@@ -225,10 +228,11 @@ describe("every device statement is asserted by something", () => {
       readFileSync(resolve(here, CLAMPED.file), "utf8").split(CLAMPED.written)
         .length - 1,
     ).toBe(1);
+    expect(skips('describe("a", ON_MACOS, () => {})')).toBe(false);
     expect(skips('describe.runIf(process.platform === "darwin")("a")')).toBe(
-      false,
+      true,
     );
-    expect(skips('describe.runIf(process.platform === "linux")("a")')).toBe(
+    expect(skips('it("a", { skip: process.platform !== "darwin" })')).toBe(
       true,
     );
     const skipping = fixtureFiles.filter((file) => skips(read(file)));

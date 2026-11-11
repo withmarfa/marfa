@@ -40,6 +40,7 @@ import {
   sentTitles,
   sentUpdates,
 } from "./folders.shared.js";
+import { ON_MACOS } from "../../utils/platform.js";
 
 /**
  * `folders watch` with no directory: one process keeping every folder the
@@ -653,74 +654,71 @@ describe("a watch of every folder", () => {
     ).not.toBe("waiting");
   });
 
-  describe.runIf(process.platform === "darwin")(
-    "folders on two servers",
-    () => {
-      it("keeps each folder with its own server and credential, and one server down stops only its folder", async () => {
-        const a = await folderHarness("every-servers-a", {
-          settings: tagged("a"),
-        });
-        made.push(a);
-        scriptFolderWrites(a);
-        const b = await folderHarness("every-servers-b", {
-          settings: tagged("b"),
-          registry: a.registry,
-        });
-        made.push(b);
-        scriptFolderWrites(b);
-        expect(b.server.url).not.toBe(a.server.url);
-        const keychain = ownKeychain();
-        cleanups.push(keychain.remove);
-        const kept = "device-fixture-key-kept-for-b";
-        keepKey(keychain.path, b.server.url, kept);
-        const from = b.server.requests.length;
-        const watch = hold(
-          a.folder.watchEvery({ MARFA_KEYCHAIN: keychain.path }),
-        );
-        put(a, "On A.md", "---\ntitle: On A\n---\nfor the named server\n");
-        put(b, "On B.md", "---\ntitle: On B\n---\nfor its own server\n");
-        await vi.waitFor(() => {
-          expect(sentTitles(a), watch.stdout).toEqual(["On A"]);
-          expect(sentTitles(b), watch.stdout).toEqual(["On B"]);
-        }, WAIT);
-        // A server's root is read with no credential at all.
-        const sentToB = b.server.requests
-          .slice(from)
-          .map((request) => request.headers.authorization)
-          .filter((sent) => sent !== undefined);
-        expect(sentToB).toContain(`Bearer ${kept}`);
-        expect(
-          sentToB.filter((sent) => sent !== `Bearer ${kept}`),
-          "a folder's server was sent another credential than the one kept for it",
-        ).toEqual([]);
-
-        await b.server.offline();
-        await vi.waitFor(() => {
-          expect(
-            linesFor(watch, b.dir).filter((line) => line.reachable === false),
-            watch.stdout,
-          ).toHaveLength(1);
-        }, WAIT);
-        put(
-          a,
-          "While B is down.md",
-          "---\ntitle: While B is down\n---\na goes on\n",
-        );
-        put(b, "Waits.md", "---\ntitle: Waits\n---\nfor its server\n");
-        await vi.waitFor(
-          () => expect(sentTitles(a)).toContain("While B is down"),
-          WAIT,
-        );
-        expect(
-          linesFor(watch, a.dir).filter((line) => line.reachable === false),
-          "a folder on a server that answers was said to be cut off",
-        ).toEqual([]);
-        await b.server.online();
-        await vi.waitFor(() => expect(sentTitles(b)).toContain("Waits"), WAIT);
-        expect(watch.running(), watch.stderr).toBe(true);
+  describe("folders on two servers", ON_MACOS, () => {
+    it("keeps each folder with its own server and credential, and one server down stops only its folder", async () => {
+      const a = await folderHarness("every-servers-a", {
+        settings: tagged("a"),
       });
-    },
-  );
+      made.push(a);
+      scriptFolderWrites(a);
+      const b = await folderHarness("every-servers-b", {
+        settings: tagged("b"),
+        registry: a.registry,
+      });
+      made.push(b);
+      scriptFolderWrites(b);
+      expect(b.server.url).not.toBe(a.server.url);
+      const keychain = ownKeychain();
+      cleanups.push(keychain.remove);
+      const kept = "device-fixture-key-kept-for-b";
+      keepKey(keychain.path, b.server.url, kept);
+      const from = b.server.requests.length;
+      const watch = hold(
+        a.folder.watchEvery({ MARFA_KEYCHAIN: keychain.path }),
+      );
+      put(a, "On A.md", "---\ntitle: On A\n---\nfor the named server\n");
+      put(b, "On B.md", "---\ntitle: On B\n---\nfor its own server\n");
+      await vi.waitFor(() => {
+        expect(sentTitles(a), watch.stdout).toEqual(["On A"]);
+        expect(sentTitles(b), watch.stdout).toEqual(["On B"]);
+      }, WAIT);
+      // A server's root is read with no credential at all.
+      const sentToB = b.server.requests
+        .slice(from)
+        .map((request) => request.headers.authorization)
+        .filter((sent) => sent !== undefined);
+      expect(sentToB).toContain(`Bearer ${kept}`);
+      expect(
+        sentToB.filter((sent) => sent !== `Bearer ${kept}`),
+        "a folder's server was sent another credential than the one kept for it",
+      ).toEqual([]);
+
+      await b.server.offline();
+      await vi.waitFor(() => {
+        expect(
+          linesFor(watch, b.dir).filter((line) => line.reachable === false),
+          watch.stdout,
+        ).toHaveLength(1);
+      }, WAIT);
+      put(
+        a,
+        "While B is down.md",
+        "---\ntitle: While B is down\n---\na goes on\n",
+      );
+      put(b, "Waits.md", "---\ntitle: Waits\n---\nfor its server\n");
+      await vi.waitFor(
+        () => expect(sentTitles(a)).toContain("While B is down"),
+        WAIT,
+      );
+      expect(
+        linesFor(watch, a.dir).filter((line) => line.reachable === false),
+        "a folder on a server that answers was said to be cut off",
+      ).toEqual([]);
+      await b.server.online();
+      await vi.waitFor(() => expect(sentTitles(b)).toContain("Waits"), WAIT);
+      expect(watch.running(), watch.stderr).toBe(true);
+    });
+  });
 });
 
 /**

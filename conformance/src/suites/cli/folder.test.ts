@@ -16,6 +16,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { cleanup, trackFolder, trackItem } from "../../utils/setup.js";
 import { cliContext, unique } from "./harness.js";
 import type { CliContext, ItemEnvelope } from "./harness.js";
+import { ON_MACOS } from "../../utils/platform.js";
 
 /**
  * The folder round trip, from the terminal: a note dropped in a folder
@@ -806,103 +807,100 @@ describe("a folder round trip", () => {
   });
 
   // The default macOS volume folds letter case; Linux volumes do not.
-  describe.runIf(process.platform === "darwin")(
-    "on a volume that folds letter case",
-    () => {
-      it("refuses a folder that holds a listed folder, or lies inside one, when its path is spelled in another case", async () => {
-        mkdirSync(join(dir, "a", "notes", "inner"), { recursive: true });
-        // The witness that the volume folds letter case, as the default macOS
-        // one does.
-        expect(existsSync(join(dir, "A", "NOTES", "INNER"))).toBe(true);
-        const folder = async (title: string) => {
-          const settings = await c.cli.json<ItemEnvelope>([
-            "folders",
-            "create",
-            "--title",
-            unique(title),
-            "--query",
-            JSON.stringify({ types: ["core.note"] }),
-          ]);
-          trackFolder(c.ctx, settings.item.id);
-          return settings.item.id;
-        };
-        const add = (spelling: string, id: string) => [
-          "folders",
-          "add",
-          spelling,
-          "--folder",
-          id,
-          "--yes",
-        ];
-        // Listed as typed, in another case than the directory on disk.
-        const first = (
-          await c.cli.json<{ dir: string }>(
-            add(join(dir, "a", "NOTES"), await folder("listed-folded")),
-          )
-        ).dir;
-        expect(first).toBe(join(realpathSync(dir), "a", "NOTES"));
-        const other = await folder("folded");
-        for (const spelling of [
-          join(dir, "A"),
-          join(dir, "a", "notes", "inner"),
-        ]) {
-          const refused = await c.cli.refused(add(spelling, other));
-          expect(refused.code, spelling).toBe(1);
-          expect(refused.envelope.error.code, spelling).toBe("invalid");
-          expect(refused.envelope.error.message, spelling).toContain(
-            "would hold one another's files",
-          );
-        }
-        expect(existsSync(join(dir, "a", ".marfa", "core.sqlite"))).toBe(false);
-        expect(
-          existsSync(join(dir, "a", "notes", "inner", ".marfa", "core.sqlite")),
-        ).toBe(false);
-        expect(existsSync(join(first, ".marfa", "core.sqlite"))).toBe(true);
-        // The witness: once the listed folder is removed, both spellings are
-        // added.
-        await c.cli.json(["folders", "remove", first]);
-        const inner = await c.cli.json<{ dir: string }>(
-          add(join(dir, "a", "notes", "inner"), other),
-        );
-        expect(await listed()).toContain(inner.dir);
-        await c.cli.json(["folders", "remove", inner.dir]);
-        const holding = await c.cli.json<{ dir: string }>(
-          add(join(dir, "A"), other),
-        );
-        expect(await listed()).toContain(holding.dir);
-      });
-
-      it("lists a folder added again under another letter case once, in place of its old entry", async () => {
-        const first = await addNotes("a");
-        // The witness that the volume folds letter case, and that the first
-        // spelling is listed.
-        expect(existsSync(join(dir, "A", "NOTES"))).toBe(true);
-        expect(await listed()).toContain(first);
-        rmSync(join(first, ".marfa"), { recursive: true });
+  describe("on a volume that folds letter case", ON_MACOS, () => {
+    it("refuses a folder that holds a listed folder, or lies inside one, when its path is spelled in another case", async () => {
+      mkdirSync(join(dir, "a", "notes", "inner"), { recursive: true });
+      // The witness that the volume folds letter case, as the default macOS
+      // one does.
+      expect(existsSync(join(dir, "A", "NOTES", "INNER"))).toBe(true);
+      const folder = async (title: string) => {
         const settings = await c.cli.json<ItemEnvelope>([
           "folders",
           "create",
           "--title",
-          unique("refolded"),
+          unique(title),
           "--query",
           JSON.stringify({ types: ["core.note"] }),
         ]);
         trackFolder(c.ctx, settings.item.id);
-        const added = await c.cli.json<{ dir: string }>([
-          "folders",
-          "add",
-          join(dir, "a", "NOTES"),
-          "--folder",
-          settings.item.id,
-          "--yes",
-        ]);
-        expect(added.dir).not.toBe(first);
-        const after = await listed();
-        expect(after).toContain(added.dir);
-        expect(after, "the old spelling stayed listed").not.toContain(first);
-      });
-    },
-  );
+        return settings.item.id;
+      };
+      const add = (spelling: string, id: string) => [
+        "folders",
+        "add",
+        spelling,
+        "--folder",
+        id,
+        "--yes",
+      ];
+      // Listed as typed, in another case than the directory on disk.
+      const first = (
+        await c.cli.json<{ dir: string }>(
+          add(join(dir, "a", "NOTES"), await folder("listed-folded")),
+        )
+      ).dir;
+      expect(first).toBe(join(realpathSync(dir), "a", "NOTES"));
+      const other = await folder("folded");
+      for (const spelling of [
+        join(dir, "A"),
+        join(dir, "a", "notes", "inner"),
+      ]) {
+        const refused = await c.cli.refused(add(spelling, other));
+        expect(refused.code, spelling).toBe(1);
+        expect(refused.envelope.error.code, spelling).toBe("invalid");
+        expect(refused.envelope.error.message, spelling).toContain(
+          "would hold one another's files",
+        );
+      }
+      expect(existsSync(join(dir, "a", ".marfa", "core.sqlite"))).toBe(false);
+      expect(
+        existsSync(join(dir, "a", "notes", "inner", ".marfa", "core.sqlite")),
+      ).toBe(false);
+      expect(existsSync(join(first, ".marfa", "core.sqlite"))).toBe(true);
+      // The witness: once the listed folder is removed, both spellings are
+      // added.
+      await c.cli.json(["folders", "remove", first]);
+      const inner = await c.cli.json<{ dir: string }>(
+        add(join(dir, "a", "notes", "inner"), other),
+      );
+      expect(await listed()).toContain(inner.dir);
+      await c.cli.json(["folders", "remove", inner.dir]);
+      const holding = await c.cli.json<{ dir: string }>(
+        add(join(dir, "A"), other),
+      );
+      expect(await listed()).toContain(holding.dir);
+    });
+
+    it("lists a folder added again under another letter case once, in place of its old entry", async () => {
+      const first = await addNotes("a");
+      // The witness that the volume folds letter case, and that the first
+      // spelling is listed.
+      expect(existsSync(join(dir, "A", "NOTES"))).toBe(true);
+      expect(await listed()).toContain(first);
+      rmSync(join(first, ".marfa"), { recursive: true });
+      const settings = await c.cli.json<ItemEnvelope>([
+        "folders",
+        "create",
+        "--title",
+        unique("refolded"),
+        "--query",
+        JSON.stringify({ types: ["core.note"] }),
+      ]);
+      trackFolder(c.ctx, settings.item.id);
+      const added = await c.cli.json<{ dir: string }>([
+        "folders",
+        "add",
+        join(dir, "a", "NOTES"),
+        "--folder",
+        settings.item.id,
+        "--yes",
+      ]);
+      expect(added.dir).not.toBe(first);
+      const after = await listed();
+      expect(after).toContain(added.dir);
+      expect(after, "the old spelling stayed listed").not.toContain(first);
+    });
+  });
 
   it("takes a listed folder off the list without removing a folder moved into its place", async () => {
     const first = await addNotes("a");

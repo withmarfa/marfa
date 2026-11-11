@@ -18,6 +18,7 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { CliFolder } from "../../device/cli-adapter.js";
 import { keychainEnv } from "../../utils/keychain.js";
+import { ON_MACOS } from "../../utils/platform.js";
 const execute = promisify(execFile);
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -829,7 +830,7 @@ async function fault<T>(name: string, action: () => Promise<T>): Promise<T> {
   }
 }
 
-describe.runIf(process.platform === "darwin")("quarantine failures", () => {
+describe("quarantine failures", ON_MACOS, () => {
   it("refuses a new downloaded file when quarantine marking fails and retries it", async () => {
     harness = await fileHarness("contract-b-quarantine-fails");
     const failed = await fault("quarantine-fails", () =>
@@ -1175,7 +1176,7 @@ it.each(["ignore", "dot directory"])(
   },
 );
 
-describe.runIf(process.platform === "darwin")("exFAT permissions", () => {
+describe("exFAT permissions", ON_MACOS, () => {
   it("leaves file and item executable values alone on an exFAT volume", async () => {
     harness = await fileHarness("contract-b-exfat");
     expect((await harness.folder.pull()).ok).toBe(true);

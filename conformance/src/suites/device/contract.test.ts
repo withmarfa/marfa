@@ -49,6 +49,7 @@ import {
   type Harness,
   type FolderHarness,
 } from "./harness.js";
+import { ON_MACOS } from "../../utils/platform.js";
 
 /**
  * The binary holds a server to the contract it was built for.
@@ -697,8 +698,9 @@ describe("the contract the binary was built for", () => {
 
   // Only macOS has a keychain file that can fail to open; elsewhere one
   // named reads as holding nothing.
-  it.runIf(process.platform === "darwin")(
+  it(
     "reports a keychain that cannot be read as itself, not as no server named",
+    ON_MACOS,
     async () => {
       const unreadable = await marfa(["--json", "whoami"], undefined, {
         MARFA_KEYCHAIN: "/marfa-test-no-keychain",
@@ -719,8 +721,9 @@ describe("the contract the binary was built for", () => {
 
   // Only macOS has a keychain file that can fail to open; elsewhere one
   // named reads as holding nothing.
-  it.runIf(process.platform === "darwin")(
+  it(
     "runs a command on held bytes alone when the keychain cannot be read",
+    ON_MACOS,
     async () => {
       boundFolder = await folderHarness("contract-unreadable-keychain");
       // As over SSH on a Mac: no server is named and the keychain cannot be

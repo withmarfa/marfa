@@ -9,6 +9,7 @@ import type { CliContext } from "./harness.js";
 import { keychainEnv } from "../../utils/keychain.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import { answers } from "../../device/marfa-answers.js";
+import { ON_MACOS } from "../../utils/platform.js";
 
 /**
  * The exit codes `marfa --help` documents but Ctrl-C's 130, which
@@ -80,8 +81,9 @@ describe("the exit codes", () => {
     expect(queue.some((write) => write.id === pending.id)).toBe(true);
   });
 
-  it.runIf(process.platform === "darwin")(
+  it(
     "keeps an ended folder renewal local while reaching a real server",
+    ON_MACOS,
     async () => {
       const folder = await c.cli.json<{ item: { id: string } }>(
         ["folders", "create", "--file", "-", "--title", "renewal fixture"],

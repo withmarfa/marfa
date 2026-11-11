@@ -7,6 +7,7 @@ import {
   RUST_JUDGED,
   withoutRustJudged,
 } from "./rust-judged.js";
+import { contractFiles } from "./rust-score.js";
 
 const ROOT = resolve(import.meta.dirname, "..", "..");
 const SERVER_PROJECTS = ["correctness", "compliance", "sync", "device", "cli"];
@@ -21,6 +22,18 @@ describe("the files the Rust server judges", () => {
       expect(path, path).not.toMatch(/\.decision\.test\.ts$/);
       expect(SERVER_PROJECTS, path).toContain(project);
     }
+  });
+
+  it("are every contract file of the five server projects, so a new file cannot go unjudged", () => {
+    const files = contractFiles(ROOT);
+    // The witness: the walk reaches every project's fixtures.
+    for (const project of SERVER_PROJECTS) {
+      expect(
+        files.some((file) => file.startsWith(`src/suites/${project}/`)),
+        project,
+      ).toBe(true);
+    }
+    expect(files.filter((file) => !RUST_JUDGED.includes(file))).toEqual([]);
   });
 
   describe("as a listed path is read", () => {
