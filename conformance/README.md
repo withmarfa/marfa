@@ -263,9 +263,10 @@ and a value passed for one replaces its own:
 
 - The port, the paths of the database, the disk store and the private socket
   (`MARFA_CONTROL_SOCKET` names its path, and then its folder is the caller's),
-  `MARFA_LISTEN_HOST` and `MARFA_AUTH_SECRET`. By default `MARFA_SIGN_IN_ADDRESS`
-  is unset, so the sign-in address is the server's own on its assigned loopback
-  port.
+  `MARFA_LISTEN_HOST` and `MARFA_AUTH_SECRET`. On a port the adapter picks,
+  `MARFA_SIGN_IN_ADDRESS` is `http://localhost:<port>`. On a port the caller
+  names, it is unset unless the last boot of the same state had it there.
+  `MARFA_SIGN_IN_ADDRESS=` boots with none.
 - Enrichment, OCR and the request limiter off, a blob cleanup grace of 0, and
   webhook delivery to private addresses allowed, so the fixtures can use a
   receiver on the loopback address.

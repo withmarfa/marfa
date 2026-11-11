@@ -7,7 +7,7 @@ import {
 import { issuerOrigin } from "../../utils/signed-in.js";
 import { testAuthenticator } from "../../utils/passkey-authenticator.js";
 import { TEST_OWNER } from "../../utils/target.js";
-import { sessionCookieOf } from "../../client/owner-session.js";
+import { sessionCookieOf as sessionCookie } from "../../client/owner-session.js";
 
 /**
  * Confirming a stale sign-in in place: `POST /auth/confirm` replaces the
@@ -39,8 +39,6 @@ function nextAddress(): string {
   addresses += 1;
   return `198.51.100.${String(addresses)}`;
 }
-
-const sessionCookie = sessionCookieOf;
 
 /** Signs in with the owner's password from `address`. */
 async function signIn(address = nextAddress()): Promise<string> {

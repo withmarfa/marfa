@@ -3,12 +3,11 @@ import { resolve } from "node:path";
 
 /**
  * The contract test files the Rust server judges, by path from `conformance/`.
- * Every file not listed here is judged by the TypeScript server, as before.
  *
  * A listed file runs in the Rust contract jobs, where one test that does not
- * pass fails the run, and in no TypeScript shard: a run without
- * `MARFA_SERVER_BIN` leaves it out (`withoutRustJudged`). A file is listed
- * once it passes whole on the Rust server, and stays passing.
+ * pass fails the run; a run without `MARFA_SERVER_BIN` leaves it out
+ * (`withoutRustJudged`). A file is listed once it passes whole on the Rust
+ * server, and stays passing.
  *
  * The performance, load and hydration projects are not listed: no job but the
  * nightly benchmarks runs them, and it boots the Rust server, whose exit
