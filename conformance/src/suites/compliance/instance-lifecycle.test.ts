@@ -16,8 +16,10 @@ import {
 } from "../../utils/fresh-server.js";
 import { listened, settingLines } from "../../utils/refused-boot.js";
 import { TEST_OWNER } from "../../utils/target.js";
+import { authenticateOwner } from "../../client/owner-session.js";
 import {
   bootControlServer,
+  bootUnclaimedServer,
   stopServer,
 } from "../../../scripts/marfa-server.js";
 
@@ -363,21 +365,27 @@ it(
       expect(
         (await controlRequest(local.controlSocket, "/owner")).body,
       ).toEqual(owner.body);
-      const signIn = (password: string) =>
-        controlRequest(local.controlSocket, "/auth/sign-in/email", {
-          method: "POST",
-          body: { email: TEST_OWNER.email, password },
-        });
-      expect((await signIn(TEST_OWNER.password)).status).toBe(401);
-      expect((await signIn("new control-only recovery password")).status).toBe(
-        200,
-      );
       const audits = await controlRequest(
         local.controlSocket,
         "/audit?action=owner.password.recovered",
       );
       expect(audits.status).toBe(200);
       expect(audits.body.data).toHaveLength(1);
+
+      // Only the public listener signs in, so the new password is tried
+      // once the public port is free and the instance starts in full.
+      await stopServer({ state: server.stateDir });
+      held.server.close();
+      const open = await bootUnclaimedServer({ state: server.stateDir });
+      await expect(
+        authenticateOwner(open.url, undefined, TEST_OWNER),
+      ).rejects.toThrow("401");
+      expect(
+        await authenticateOwner(open.url, undefined, {
+          email: TEST_OWNER.email,
+          password: "new control-only recovery password",
+        }),
+      ).toContain("=");
     } finally {
       held.server.close();
       await server.stop();

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 
@@ -14,6 +14,7 @@ use crate::app::oauth::{register as registration, revoke as revocation, token};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::body::JsonBody;
 use crate::http::caller::bears_token;
+use crate::http::query;
 
 async fn form_of(
     headers: &HeaderMap,
@@ -55,8 +56,10 @@ pub async fn register(
     State(app): State<Arc<App>>,
     visit: Visit,
     headers: HeaderMap,
+    uri: Uri,
     body: JsonBody,
 ) -> Answer {
+    query::only(&uri, &[])?;
     if !body.declares_plain_json() {
         let refused = json!({
             "message": "Send the registration as application/json.",

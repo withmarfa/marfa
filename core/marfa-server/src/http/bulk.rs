@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{StatusCode, Uri};
 use marfa_rules::validation;
 use serde_json::{Map, Value};
 
@@ -12,6 +12,7 @@ use super::body::{Bag, JsonBody, ReadBody, only_declared};
 use super::items::{
     declared_type, edges_of, invalid_field, properties_of, tags_of, text_of, time_of, version_of,
 };
+use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::items::bulk::{self, Asked, Entry, rollback};
@@ -164,8 +165,14 @@ pub(super) fn asked_from(
     })
 }
 
-pub async fn write(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
+pub async fn write(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
     caller.require_reach()?;
+    query::only(&uri, &[])?;
     let sent = body.read().await?;
     let asked = asked_of(&sent)?;
     let answer = bulk::write(&app, &caller, asked).await?;

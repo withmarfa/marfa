@@ -147,7 +147,10 @@ impl Filter {
                         .ok()
                         .filter(|limit| (1..=MAX_LIMIT).contains(limit))
                         .ok_or_else(|| {
-                            Refusal::validation("limit must be a whole number from 1 to 200.")
+                            Refusal::invalid_at(
+                                "limit",
+                                "limit must be a whole number from 1 to 200.",
+                            )
                         })?;
                 }
                 "cursor" => filter.cursor = Some(value.clone()),

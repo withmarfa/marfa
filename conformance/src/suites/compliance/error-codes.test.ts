@@ -252,6 +252,9 @@ function tableCodes(): Set<string> {
   );
 }
 
+/** POST operations that answer a question and write nothing. */
+const CHECKS_WITHOUT_WRITING = new Set(["POST /config/address-check"]);
+
 describe("every refusal's code", () => {
   it("answers every refusal across the published operations with a code from the table", async () => {
     const table = tableCodes();
@@ -268,7 +271,12 @@ describe("every refusal's code", () => {
     trackKey(ctx, narrowed.data.id);
 
     const document = await servedDocument();
-    const doors: { method: string; template: string; reads: boolean }[] = [];
+    const doors: {
+      method: string;
+      template: string;
+      reads: boolean;
+      label: string;
+    }[] = [];
     for (const [template, item] of Object.entries(document.paths)) {
       // The sign-in library answers these in its own shapes.
       if (template.startsWith("/auth/")) continue;
@@ -281,6 +289,7 @@ describe("every refusal's code", () => {
           method: method.toUpperCase(),
           template,
           reads: method === "get",
+          label: `${method.toUpperCase()} ${template}`,
         });
       }
     }
@@ -388,7 +397,7 @@ describe("every refusal's code", () => {
                 );
                 const text = await res.text();
                 if (res.status < 400) {
-                  if (!door.reads)
+                  if (!door.reads && !CHECKS_WITHOUT_WRITING.has(door.label))
                     wrote.push(`${label} answered ${String(res.status)}`);
                   continue;
                 }

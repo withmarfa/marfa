@@ -779,6 +779,8 @@ describe("a query key no door declares", () => {
       template === "/owner" ||
       template.startsWith("/owner/") ||
       template === "/restore" ||
+      template === "/backups" ||
+      template.startsWith("/backups/") ||
       template === "/trash" ||
       template === "/trash/empty" ||
       (template.startsWith("/types/") && template.endsWith("/icon")) ||

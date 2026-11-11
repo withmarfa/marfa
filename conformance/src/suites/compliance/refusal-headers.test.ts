@@ -454,7 +454,7 @@ describe("X-Request-ID", () => {
   });
 });
 
-describe("the registration the sign-in library answers", () => {
+describe("the client registration door", () => {
   it("answers a body that is not JSON with a 415 that carries X-Request-ID and no X-Error-Code, where Marfa's own doors carry both", async () => {
     // The witness: a refusal of Marfa's own carries both.
     const own = await fetch(`${apiUrl}/items`, {

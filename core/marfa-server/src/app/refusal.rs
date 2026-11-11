@@ -166,6 +166,14 @@ impl Refusal {
         Refusal::new(Code::ValidationError, message)
     }
 
+    /// A validation refusal that names the request field it is about.
+    pub fn invalid_at(path: &str, message: &str) -> Refusal {
+        Refusal::validation(message.to_string()).with_detail(
+            "errors",
+            serde_json::json!([{ "path": path, "message": message }]),
+        )
+    }
+
     /// A fault nothing foresaw. `context` goes to the log and nowhere else.
     pub fn internal(context: &str) -> Refusal {
         tracing::error!(context, "Internal error");

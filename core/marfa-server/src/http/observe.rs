@@ -150,10 +150,7 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         "x-marfa-contract",
         HeaderValue::from(observed.app.contract()),
     );
-    if !path.starts_with("/auth/")
-        && !path.starts_with("/.well-known/")
-        && let Ok(value) = HeaderValue::from_str(&request_id)
-    {
+    if let Ok(value) = HeaderValue::from_str(&request_id) {
         headers.insert("x-request-id", value);
     }
     let error_code = response

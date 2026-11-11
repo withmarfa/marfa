@@ -20,6 +20,7 @@ import {
   trackView,
   trackItem,
   trackKey,
+  trackType,
 } from "../../utils/setup.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
@@ -187,6 +188,31 @@ async function note(
     ...extra,
   });
   expect(made.status).toBe(201);
+  trackItem(ctx, made.data.item.id);
+  return made.data.item;
+}
+
+let tableType: string | undefined;
+
+/** An item whose type declares a `spend` table. */
+async function tableHolder(): Promise<MarfaItem> {
+  if (tableType === undefined) {
+    const type = `user.replay_rows_${ctx.runId.replaceAll("-", "_")}`;
+    const registered = await client.registerType({
+      id: type,
+      fields: {},
+      tables: { spend: { columns: { amount: { type: "number" } } } },
+    } as never);
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    trackType(ctx, type, client);
+    tableType = type;
+  }
+  const made = await client.createItem({
+    type: tableType,
+    source: ctx.source,
+    properties: {},
+  } as never);
+  expect(made.status, JSON.stringify(made.error)).toBe(201);
   trackItem(ctx, made.data.item.id);
   return made.data.item;
 }
@@ -906,6 +932,8 @@ const DOORS = [
   "PUT /items/{id}/metadata",
   "PUT /items/{id}/extensions/{namespace}",
   "DELETE /items/{id}/extensions/{namespace}",
+  "POST /items/{id}/tables/{table}/rows",
+  "POST /items/{id}/tables/{table}/batches/{batch}/undo",
 ];
 
 interface Prepared {
@@ -1063,6 +1091,23 @@ async function prepare(door: string): Promise<Prepared> {
           .ok,
       ).toBe(true);
       return { method, path: `/items/${item.id}/extensions/replay-door` };
+    }
+    case "POST /items/{id}/tables/{table}/rows":
+      return {
+        method,
+        path: `/items/${(await tableHolder()).id}/tables/spend/rows`,
+        body: { operations: [{ op: "put", values: { amount: 1 } }] },
+      };
+    case "POST /items/{id}/tables/{table}/batches/{batch}/undo": {
+      const holder = await tableHolder();
+      const written = await client.writeRows(holder.id, "spend", {
+        operations: [{ op: "put", values: { amount: 1 } }],
+      });
+      expect(written.status, JSON.stringify(written.error)).toBe(200);
+      return {
+        method,
+        path: `/items/${holder.id}/tables/spend/batches/${written.data.batch}/undo`,
+      };
     }
     default:
       throw new Error(`no request is written for ${door}`);

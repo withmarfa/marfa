@@ -135,7 +135,13 @@ fn trash_ids(sent: &Map<String, Value>) -> Result<Vec<String>> {
     Ok(ids)
 }
 
-pub async fn preview(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
+pub async fn preview(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    uri: Uri,
+    body: JsonBody,
+) -> Answer {
+    query::only(&uri, &[])?;
     let sent = body.object(&PREVIEW_FIELDS).await?;
     let ids = trash_ids(&sent)?;
     let answer = items::trash_preview(&app, &caller, ids).await?;

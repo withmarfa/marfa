@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 
@@ -21,6 +21,7 @@ use crate::http::body::JsonBody;
 use crate::http::caller::OnPage;
 use crate::http::named_instance;
 use crate::http::pages::{self, OwnerPasskey, OwnerPasskeys};
+use crate::http::query;
 
 const REGISTRATION_FIELDS: [&str; 2] = ["name", "response"];
 const AUTHENTICATION_FIELDS: [&str; 1] = ["response"];
@@ -111,8 +112,9 @@ pub async fn verify_authentication(
     ))
 }
 
-pub async fn list(State(app): State<Arc<App>>, OnPage(caller): OnPage) -> Answer {
+pub async fn list(State(app): State<Arc<App>>, OnPage(caller): OnPage, uri: Uri) -> Answer {
     let caller = caller.ok_or_else(unauthorized)?;
+    query::only(&uri, &[])?;
     let data: Vec<Value> = passkeys::list(&app, &caller)
         .await?
         .iter()
@@ -130,10 +132,12 @@ pub async fn rename(
     Path(id): Path<String>,
     headers: HeaderMap,
     OnPage(caller): OnPage,
+    uri: Uri,
     body: JsonBody,
 ) -> Answer {
     let caller = caller.ok_or_else(unauthorized)?;
     named_instance::judge(&app, &headers)?;
+    query::only(&uri, &[])?;
     let body = body.object(&RENAME_FIELDS).await?;
     let name = text_field(&body, "name")?;
     let renamed = passkeys::rename(&app, &caller, id, name).await?;
@@ -145,9 +149,11 @@ pub async fn remove(
     Path(id): Path<String>,
     headers: HeaderMap,
     OnPage(caller): OnPage,
+    uri: Uri,
 ) -> Answer {
     let caller = caller.ok_or_else(unauthorized)?;
     named_instance::judge(&app, &headers)?;
+    query::only(&uri, &[])?;
     passkeys::remove(&app, &caller, id).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }
