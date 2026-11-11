@@ -5340,7 +5340,7 @@ If the server refuses to replace a declared type, then a device MUST leave the t
 
 **Reason:** a key that may register a type may still not change its fields, and the rest of the slice does not depend on it.
 
-**Tests:** `device/declare-replaces.test.ts › keeps the server's definition of a type it refuses to replace, says why, and finishes the hydration`, `device/declare-replaces-live.test.ts › keeps what the server holds of a type it will not replace, says why, and finishes the hydration`.
+**Tests:** `device/declare-replaces.test.ts › keeps the server's definition of a type it refuses to replace, says why, and finishes the hydration`, `device/declare-replaces-live.test.ts › keeps what the server holds of a type it will not replace, says why, and finishes the hydration`, `› asks the server to replace each held type whose declared parents loop, and finishes the hydration`.
 
 ### `device/hydrate-replaced-said`
 

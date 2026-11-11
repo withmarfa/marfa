@@ -1188,36 +1188,48 @@ fn registration_needs(id: &str, json: &str) -> Vec<String> {
     needs
 }
 
-fn parent_need(_: &str, json: &str) -> Vec<String> {
+fn parent_need(id: &str, json: &str) -> Vec<String> {
     serde_json::from_str::<serde_json::Value>(json)
         .ok()
         .and_then(|row| row.get("parent")?.as_str().map(str::to_string))
+        .filter(|parent| parent != id)
         .into_iter()
         .collect()
 }
 
-/// Stable: rows keep their order except where one needs another.
+/// A declared type's id and definition.
+type Row = (String, String);
+
+/// Stable: rows keep their order except where one needs another. Answers the
+/// rows in order, then those left waiting on each other, in the order they came.
 fn in_order_of_need(
-    mut rows: Vec<(String, String)>,
+    mut rows: Vec<Row>,
     needs: fn(&str, &str) -> Vec<String>,
-) -> Result<Vec<(String, String)>> {
+) -> (Vec<Row>, Vec<Row>) {
     let mut waits: Vec<Vec<String>> = rows.iter().map(|(id, json)| needs(id, json)).collect();
     let mut ordered = Vec::with_capacity(rows.len());
-    while !rows.is_empty() {
-        let ready = |at: usize| {
-            !waits[at]
-                .iter()
-                .any(|need| rows.iter().any(|(id, _)| id == need))
-        };
-        match (0..rows.len()).find(|&at| ready(at)) {
-            Some(at) => {
-                waits.remove(at);
-                ordered.push(rows.remove(at));
-            }
-            None => return Err(waiting_on_each_other(&rows, &waits)),
-        }
+    while let Some(at) = (0..rows.len()).find(|&at| {
+        !waits[at]
+            .iter()
+            .any(|need| rows.iter().any(|(id, _)| id == need))
+    }) {
+        waits.remove(at);
+        ordered.push(rows.remove(at));
     }
-    Ok(ordered)
+    (ordered, rows)
+}
+
+/// Types left waiting on each other can never be registered, whatever the order.
+fn in_order_of_registration(rows: Vec<(String, String)>) -> Result<Vec<(String, String)>> {
+    let (ordered, left) = in_order_of_need(rows, registration_needs);
+    if left.is_empty() {
+        return Ok(ordered);
+    }
+    let waits: Vec<Vec<String>> = left
+        .iter()
+        .map(|(id, json)| registration_needs(id, json))
+        .collect();
+    Err(waiting_on_each_other(&left, &waits))
 }
 
 /// Names the rows on the loop that following each row's first need reaches.
@@ -1272,9 +1284,11 @@ fn declare_on_instance(
     };
     let held = |id: &str| catalog.types.iter().any(|held| held.id == id);
     let (present, missing): (Vec<_>, Vec<_>) = declared.into_iter().partition(|(id, _)| held(id));
-    let missing = in_order_of_need(missing, registration_needs)?;
+    let missing = in_order_of_registration(missing)?;
+    // The server judges each replacement, a parent loop included.
     let own = present.into_iter().filter(|(id, _)| id.starts_with("app."));
-    let own = in_order_of_need(own.collect(), parent_need)?;
+    let (mut own, looped) = in_order_of_need(own.collect(), parent_need);
+    own.extend(looped);
     let mut done = Declared::default();
     for (id, json) in missing {
         crate::catch_up::refuse_if_stopped(stop)?;
@@ -1817,7 +1831,7 @@ mod tests {
     }
 
     fn order(rows: Vec<(String, String)>) -> crate::Result<Vec<String>> {
-        Ok(super::in_order_of_need(rows, super::registration_needs)?
+        Ok(super::in_order_of_registration(rows)?
             .into_iter()
             .map(|(id, _)| id)
             .collect())
@@ -1860,6 +1874,24 @@ mod tests {
             .unwrap(),
             ["app.r.leaf", "app.r.tree"]
         );
+    }
+
+    #[test]
+    fn held_types_go_after_their_parents_and_a_parent_loop_goes_last_in_declared_order() {
+        let (ordered, looped) = super::in_order_of_need(
+            vec![
+                declared("app.r.child", json!({"parent": "app.r.parent"})),
+                declared("app.r.a", json!({"parent": "app.r.b"})),
+                declared("app.r.own", json!({"parent": "app.r.own"})),
+                declared("app.r.b", json!({"parent": "app.r.a"})),
+                declared("app.r.parent", json!({})),
+            ],
+            super::parent_need,
+        );
+        let ids =
+            |rows: Vec<(String, String)>| rows.into_iter().map(|(id, _)| id).collect::<Vec<_>>();
+        assert_eq!(ids(ordered), ["app.r.own", "app.r.parent", "app.r.child"]);
+        assert_eq!(ids(looped), ["app.r.a", "app.r.b"]);
     }
 
     #[test]
