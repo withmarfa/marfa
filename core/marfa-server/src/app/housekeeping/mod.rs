@@ -25,7 +25,6 @@ use crate::settings::registry::Setting;
 pub use cleanups::{drain, report_kept};
 use jobs::JOBS;
 
-/// The names of the jobs the server runs.
 pub fn job_names() -> Vec<&'static str> {
     JOBS.iter().map(|job| job.name).collect()
 }

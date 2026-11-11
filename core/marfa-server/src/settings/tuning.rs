@@ -1,5 +1,4 @@
-//! Timings and batch sizes the server fixes in code. Only a server built with test hooks reads
-//! `MARFA_TEST_TUNING`, so a fixture can shorten one without an owner ever having the setting.
+//! Timings and batch sizes the server fixes, which a test-hooks server may shorten.
 
 use std::time::Duration;
 

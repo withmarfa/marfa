@@ -187,7 +187,7 @@ pub async fn change(app: &Arc<App>, write: Write, changes: Vec<Change>) -> Resul
 /// Rows of the `settings` table that are no setting: the server's own notes.
 const NOTES: [&str; 2] = [super::config::ENFORCEMENT_ROW, super::health::PROBE_KEY];
 
-/// Says plainly that a stored setting this server does not have is left alone, never read.
+/// Logs the stored settings this server does not have; their rows are left alone.
 pub fn report_unknown(rows: &[(String, String)]) {
     let unknown: Vec<&str> = rows
         .iter()
@@ -202,8 +202,7 @@ pub fn report_unknown(rows: &[(String, String)]) {
     }
 }
 
-/// A line naming either address is a damaged archive, since a move changes them. A line naming
-/// a setting this instance does not have gives no text: the restore leaves it out and says so.
+/// A line naming either address is a damaged archive; one naming an unknown setting gives no text.
 pub fn archived(line: &serde_json::Value) -> Result<(String, Option<String>)> {
     let key = line
         .get("key")
