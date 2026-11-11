@@ -203,7 +203,7 @@ const coreTable: TypeSchema = {
   fields: {
     title: { type: "string", description: "The name of the table.", required: true },
     description: { type: "string", description: "What the table is for." },
-    columns: { type: "object", description: "The table's columns, by name. A column has a `type` and may have a `label`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum`, `maximum`, `type_constraints`, `adds_up` and `searchable`, as a column a type declares does.", required: true },
+    columns: { type: "object", description: "The table's columns, by name. A column has a `type` and may have a `label`, `description`, `required`, `enum_values`, `format`, `max_length`, `minimum`, `maximum`, `type_constraints`, `adds_up` and `searchable`, as a column a type declares does.", required: true },
   },
   display_hints: { title_field: "title", body_field: "description", icon: "lucide:table" },
   merge_policy: { default: "last_writer_wins" },

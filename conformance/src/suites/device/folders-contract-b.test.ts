@@ -674,7 +674,7 @@ it("warns at the exact JSON-encoded size boundary including escaped text", async
         bodyField: "body",
         fields: {
           title: { type: "string" },
-          body: { type: "string", maxLength: 1_000_000 },
+          body: { type: "string", max_length: 1_000_000 },
         },
       }),
     ]),

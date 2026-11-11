@@ -22,11 +22,11 @@ let store: string;
 let apiUrl: string;
 let apiKey: string;
 const fields: Record<string, FieldDefinition> = {
-  title: { type: "string", required: true, maxLength: 5 },
+  title: { type: "string", required: true, max_length: 5 },
   read: { type: "boolean" },
   count: { type: "integer" },
   choice: { type: "enum", enum_values: ["yes", "no"] },
-  list: { type: "array", maxItems: 2, items_type: "string" },
+  list: { type: "array", max_items: 2, items_type: "string" },
   sites: { type: "array", items_type: "url" },
   things: { type: "array", items_type: "object" },
   date: { type: "date" },
@@ -48,7 +48,7 @@ beforeAll(async () => {
       await client.registerType({
         id: valuesType,
         fields: {
-          title: { type: "string", required: true, maxLength: 5 },
+          title: { type: "string", required: true, max_length: 5 },
           weight: { type: "number" },
           url: { type: "url" },
           sites: { type: "array", items_type: "url" },
@@ -76,7 +76,7 @@ beforeAll(async () => {
             items_type: "object",
             items_fields: {
               value: { type: "email", required: true },
-              label: { type: "string", maxLength: 10 },
+              label: { type: "string", max_length: 10 },
               rank: { type: "integer", minimum: 1, maximum: 5 },
             },
           },

@@ -5200,7 +5200,7 @@ If an app declares a type whose identifier breaks the type grammar or uses a res
 
 ### `device/declaration-field-refused`
 
-If an app declares a field, or a member of a list's entries (`items_fields`), that has a `type` other than a field type (for a member, other than `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date` or `datetime`); that has `items_type` `status`; that has `status_values` where its `type` is not `status`; whose `type` is `status` with `enum_values`, or with `status_values` that is not a non-empty list of words, each exactly a `value` and a `group`, the `value` a lowercase letter then up to 63 lowercase letters, digits and underscores and named once, the `group` one of `not_started`, `in_progress`, `completed` and `canceled`; that is a `string` whose `format` is `currency` with a `maxLength`; or that has `items_fields` where it is not an `array` whose `items_type` is `object`, or that names no member, or a member that is not an object naming its `type`, then a device MUST refuse the declaration `invalid`, naming the field.
+If an app declares a field, or a member of a list's entries (`items_fields`), that has a `type` other than a field type (for a member, other than `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date` or `datetime`); that has `items_type` `status`; that has `status_values` where its `type` is not `status`; whose `type` is `status` with `enum_values`, or with `status_values` that is not a non-empty list of words, each exactly a `value` and a `group`, the `value` a lowercase letter then up to 63 lowercase letters, digits and underscores and named once, the `group` one of `not_started`, `in_progress`, `completed` and `canceled`; that is a `string` whose `format` is `currency` with a `max_length`; or that has `items_fields` where it is not an `array` whose `items_type` is `object`, or that names no member, or a member that is not an object naming its `type`, then a device MUST refuse the declaration `invalid`, naming the field.
 
 **Reason:** the server refuses these when the type is registered (`types/field-grammar`, `types/status-refused`, `types/items-fields-refused`). A list whose entry declaration a device took, with a member of no type or of a kind an entry does not have, would fail every later write of that list with a decoding error instead of a refusal. A device checks only these, the tables a type declares (`device/declaration-tables-refused`), the shape of an inherited field (`device/declaration-field-shape-refused`), and the status words and thumbnails a chain holds (`device/declaration-words-thumbnails-refused`). It leaves the rest of the field grammar to the server, which refuses it when a hydration registers the declaration (`device/hydrate-unregistered-said`): for example, in a field or in a member, an `enum` without `enum_values`, a `minimum` above its `maximum` or on a field that is not a number, a `format` it does not know or on a kind the format does not fit, and an `array` without `items_type`.
 
@@ -5216,7 +5216,7 @@ Where an app declares a `string` field, or a member of a list's entries, whose `
 
 ### `device/declaration-field-shape-refused`
 
-If an app declares a type that gives a field another `type`, `format`, `items_type`, `items_fields`, `searchable`, `maxLength`, `maxItems` or `enum_values` than a type above it gives it, whether that type is in the declaration or one Marfa ships, or a `minimum` or `maximum` looser than that type's, or makes an inherited required field optional, then a device MUST refuse the declaration `invalid`, naming the type and the field (`types/child-shape`, `types/child-range-refused`).
+If an app declares a type that gives a field another `type`, `format`, `items_type`, `items_fields`, `searchable`, `max_length`, `max_items` or `enum_values` than a type above it gives it, whether that type is in the declaration or one Marfa ships, or a `minimum` or `maximum` looser than that type's, or makes an inherited required field optional, then a device MUST refuse the declaration `invalid`, naming the type and the field (`types/child-shape`, `types/child-range-refused`).
 
 **Reason:** the server refuses these when the type is registered, and a type a device took would fail there instead of at the app's own declaration.
 
@@ -7528,7 +7528,7 @@ If the `--parent` of `marfa types scaffold` breaks the type grammar or names the
 
 ### `device/types-scaffold-parent-shape-refused`
 
-If a `--field` of `marfa types scaffold` redeclares a field of a parent Marfa ships with another `type`, `format`, `items_type`, `searchable`, `maxLength`, `maxItems` or `enum_values`, or makes a field the parent requires optional (`types/child-shape`), then the CLI MUST exit 1 with `invalid`, naming the reason.
+If a `--field` of `marfa types scaffold` redeclares a field of a parent Marfa ships with another `type`, `format`, `items_type`, `searchable`, `max_length`, `max_items` or `enum_values`, or makes a field the parent requires optional (`types/child-shape`), then the CLI MUST exit 1 with `invalid`, naming the reason.
 
 **Reason:** the server refuses such a subtype with `inheritance_violation`, so the definition would not register.
 

@@ -5605,7 +5605,7 @@ describe("large removals, status and size", () => {
           bodyField: "body",
           fields: {
             title: { type: "string" },
-            body: { type: "string", required: true, maxLength: 1_000_000 },
+            body: { type: "string", required: true, max_length: 1_000_000 },
           },
         }),
       ]),

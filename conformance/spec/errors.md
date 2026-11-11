@@ -20,17 +20,11 @@ When the server carries `details` in the `error` object of a refusal, the server
 
 ### `errors/status-absent`
 
-The server MUST NOT carry a `status` member in the `error` object of a refusal other than `409 version_conflict` and `409 ancestor_unavailable`.
+The server MUST NOT carry a `status` member in the `error` object of a refusal.
 
-**Tests:** `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`, `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`.
+**Reason:** the HTTP status is the answer's own, so the `error` object has the same members at every door: `code`, `message` and, where there is one, `details`.
 
-### `errors/status-version-envelope`
-
-When the server answers `409 version_conflict` or `409 ancestor_unavailable`, the server MUST carry `409` as `error.status`.
-
-**Reason:** `versions.md` states the rest of each envelope. The member is the one thing that sets these two answers apart from every other refusal.
-
-**Tests:** `correctness/item-versioning.test.ts › a stale write answers version_conflict with a three-way envelope`, `› a version no client ever read answers ancestor_unavailable`, `› answers an edges-only stale write with the envelope minus its merge half`, `› answers an update that carries only edges or names the item's own type version_conflict with no ancestor, whichever version it names`, `compliance/error-codes.test.ts › rejects a stale write whose base version is retained`, `› rejects an update naming a version that never existed`, `correctness/edges/edges-crud.test.ts › refuses a stale edge update, under current and not under edge`, `compliance/edge-refusals.test.ts › answers a stale edge update with the edge as it stands and none of ancestor, conflicting_fields or merge_policy`, `compliance/purge-preconditions.test.ts › refuses a stale version with version_conflict, and the item survives`.
+**Tests:** `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`, `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`, `correctness/item-versioning.test.ts › a stale write answers version_conflict with a three-way envelope`, `› a version no client ever read answers ancestor_unavailable`, `compliance/error-codes.test.ts › rejects a stale write whose base version is retained`.
 
 ### `errors/code-closed`
 

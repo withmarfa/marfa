@@ -625,13 +625,6 @@
             ],
             "description": "A machine-readable code for the error. Use it in your logic."
           },
-          "status": {
-            "type": "number",
-            "enum": [
-              409
-            ],
-            "description": "The HTTP status, always `409`."
-          },
           "message": {
             "type": "string",
             "description": "A description of the error for a person to read. It can change, so don't match on it."
@@ -639,7 +632,6 @@
         },
         "required": [
           "code",
-          "status",
           "message"
         ],
         "description": "The error block of the `version_conflict` refusal."
@@ -654,13 +646,6 @@
             ],
             "description": "A machine-readable code for the error. Use it in your logic."
           },
-          "status": {
-            "type": "number",
-            "enum": [
-              409
-            ],
-            "description": "The HTTP status, always `409`."
-          },
           "message": {
             "type": "string",
             "description": "A description of the error for a person to read. It can change, so don't match on it."
@@ -668,7 +653,6 @@
         },
         "required": [
           "code",
-          "status",
           "message"
         ],
         "description": "The error block of the `ancestor_unavailable` refusal."
@@ -920,7 +904,7 @@
           },
           "body_field": {
             "type": "string",
-            "description": "The field that holds an item's body for display. The field holds Markdown, and a `string` field named here holds up to 1,000,000 UTF-16 code units unless its `maxLength` says otherwise."
+            "description": "The field that holds an item's body for display. The field holds Markdown, and a `string` field named here holds up to 1,000,000 UTF-16 code units unless its `max_length` says otherwise."
           },
           "name_from_body": {
             "type": "boolean",
@@ -4571,11 +4555,11 @@
             "type": "boolean",
             "description": "`false` if full-text search should skip the field. Items still return it."
           },
-          "maxLength": {
+          "max_length": {
             "type": "integer",
             "description": "The longest value a `string` or `enum` field allows, in UTF-16 code units. Defaults to 1,000,000 on the `string` field `display_hints.body_field` names, and to 100,000 on any other."
           },
-          "maxItems": {
+          "max_items": {
             "type": "integer",
             "description": "The most elements an `array` field allows."
           },
@@ -4674,7 +4658,7 @@
             ],
             "description": "A refinement of a `string` member, as a field's `format`."
           },
-          "maxLength": {
+          "max_length": {
             "type": "integer",
             "description": "The longest value a `string` or `enum` member allows."
           },
@@ -11139,7 +11123,7 @@
             ],
             "description": "A refinement of a `string` column, as a field's `format`. Not for an `item` column."
           },
-          "maxLength": {
+          "max_length": {
             "type": "integer",
             "description": "The longest value a `string` or `enum` column allows. Not for an `item` column."
           },

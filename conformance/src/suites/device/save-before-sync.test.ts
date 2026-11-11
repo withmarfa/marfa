@@ -535,12 +535,12 @@ describe("a copy no server has been named for", () => {
         { type: "string", items_fields: { m: { type: "string" } } },
       ],
       [
-        "a maxLength on a currency",
-        { type: "string", format: "currency", maxLength: 2 },
+        "a max_length on a currency",
+        { type: "string", format: "currency", max_length: 2 },
       ],
       [
-        "a maxLength on a currency member",
-        entries({ m: { type: "string", format: "currency", maxLength: 2 } }),
+        "a max_length on a currency member",
+        entries({ m: { type: "string", format: "currency", max_length: 2 } }),
       ],
       [
         "a member that is a thumbnail by its format",
@@ -602,8 +602,8 @@ describe("a copy no server has been named for", () => {
         { type: "status", status_values: [{ ...word, group: "later" }] },
       ],
       [
-        "a maxLength on a currency",
-        { type: "string", format: "currency", maxLength: 3 },
+        "a max_length on a currency",
+        { type: "string", format: "currency", max_length: 3 },
       ],
       [
         "items_fields on a string",

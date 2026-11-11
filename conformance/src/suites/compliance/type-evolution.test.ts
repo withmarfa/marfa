@@ -248,9 +248,9 @@ describe("a key whose type map reaches a type evolves it", () => {
         body: { type: "string", required: true },
         flag: { type: "string", required: true },
         title: { type: "string" },
-        notes: { type: "string", maxLength: 100 },
+        notes: { type: "string", max_length: 100 },
         status: { type: "enum", enum_values: ["open", "closed"] },
-        tags: { type: "array", items_type: "string", maxItems: 5 },
+        tags: { type: "array", items_type: "string", max_items: 5 },
         locale: { type: "string" },
         hidden: { type: "string", searchable: false },
         visible: { type: "string" },
@@ -281,8 +281,8 @@ describe("a key whose type map reaches a type evolves it", () => {
       named: "compatible_with",
     },
     {
-      what: "a maxLength",
-      change: { field: ["notes", { type: "string", maxLength: 50 }] },
+      what: "a max_length",
+      change: { field: ["notes", { type: "string", max_length: 50 }] },
       named: "fields.notes",
     },
     {
@@ -293,16 +293,16 @@ describe("a key whose type map reaches a type evolves it", () => {
       named: "fields.status",
     },
     {
-      what: "a maxItems",
+      what: "a max_items",
       change: {
-        field: ["tags", { type: "array", items_type: "string", maxItems: 6 }],
+        field: ["tags", { type: "array", items_type: "string", max_items: 6 }],
       },
       named: "fields.tags",
     },
     {
       what: "the items_type",
       change: {
-        field: ["tags", { type: "array", items_type: "number", maxItems: 5 }],
+        field: ["tags", { type: "array", items_type: "number", max_items: 5 }],
       },
       named: "fields.tags",
     },

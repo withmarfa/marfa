@@ -135,8 +135,8 @@ export interface FieldDefinition {
   status_values?: { value: string; group: StatusGroup }[];
   /** Required on an `array` field: names the element type. */
   items_type?: FieldType;
-  maxLength?: number;
-  maxItems?: number;
+  max_length?: number;
+  max_items?: number;
   /** On a `number` or `integer` field: the lowest value it takes. */
   minimum?: number;
   /** On a `number` or `integer` field: the highest value it takes. */
@@ -174,7 +174,7 @@ export interface ColumnDefinition {
   searchable?: boolean;
   enum_values?: string[];
   format?: string;
-  maxLength?: number;
+  max_length?: number;
   minimum?: number;
   maximum?: number;
   /** On an `item` column: the types it accepts. */

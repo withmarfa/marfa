@@ -62,7 +62,7 @@ function errorFields(res: ApiResponse<unknown>): string[] {
 }
 
 const EVERY_KIND: Columns = {
-  name: { type: "string", required: true, maxLength: 80, searchable: true },
+  name: { type: "string", required: true, max_length: 80, searchable: true },
   mail: { type: "email", searchable: true },
   site: { type: "url" },
   state: { type: "enum", enum_values: ["open", "done"] },
@@ -202,8 +202,8 @@ describe("a table a person keeps", () => {
     ],
     [
       "a value rule on an item column",
-      { a: { type: "item", maxLength: 5 } },
-      ["columns.a.maxLength"],
+      { a: { type: "item", max_length: 5 } },
+      ["columns.a.max_length"],
     ],
     [
       "two faults in two columns",

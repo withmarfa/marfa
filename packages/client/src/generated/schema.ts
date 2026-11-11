@@ -2683,11 +2683,6 @@ export interface components {
              * @enum {string}
              */
             code: "version_conflict";
-            /**
-             * @description The HTTP status, always `409`.
-             * @enum {number}
-             */
-            status: 409;
             /** @description A description of the error for a person to read. It can change, so don't match on it. */
             message: string;
         };
@@ -2698,11 +2693,6 @@ export interface components {
              * @enum {string}
              */
             code: "ancestor_unavailable";
-            /**
-             * @description The HTTP status, always `409`.
-             * @enum {number}
-             */
-            status: 409;
             /** @description A description of the error for a person to read. It can change, so don't match on it. */
             message: string;
         };
@@ -2802,7 +2792,7 @@ export interface components {
         DisplayHints: {
             /** @description The field that holds an item's title for display. */
             title_field?: string;
-            /** @description The field that holds an item's body for display. The field holds Markdown, and a `string` field named here holds up to 1,000,000 UTF-16 code units unless its `maxLength` says otherwise. */
+            /** @description The field that holds an item's body for display. The field holds Markdown, and a `string` field named here holds up to 1,000,000 UTF-16 code units unless its `max_length` says otherwise. */
             body_field?: string;
             /** @description Whether an item with no title is named by the first line of its body. `false` where the body is not a name, such as a highlight's passage: such an item is named after what it comes from, or `Untitled`. Defaults to `true`. */
             name_from_body?: boolean;
@@ -4311,9 +4301,9 @@ export interface components {
             /** @description `false` if full-text search should skip the field. Items still return it. */
             searchable?: boolean;
             /** @description The longest value a `string` or `enum` field allows, in UTF-16 code units. Defaults to 1,000,000 on the `string` field `display_hints.body_field` names, and to 100,000 on any other. */
-            maxLength?: number;
+            max_length?: number;
             /** @description The most elements an `array` field allows. */
-            maxItems?: number;
+            max_items?: number;
             /** @description The lowest value the field allows, itself included. Only a `number` or `integer` field takes it. A subtype may raise it, never lower or drop it. */
             minimum?: number;
             /** @description The highest value the field allows, itself included. Only a `number` or `integer` field takes it. A subtype may lower it, never raise or drop it. */
@@ -4352,7 +4342,7 @@ export interface components {
              */
             format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency" | "phone";
             /** @description The longest value a `string` or `enum` member allows. */
-            maxLength?: number;
+            max_length?: number;
             /** @description The lowest value the member allows, itself included. Only a `number` or `integer` member takes it. */
             minimum?: number;
             /** @description The highest value the member allows, itself included. Only a `number` or `integer` member takes it. */
@@ -6921,7 +6911,7 @@ export interface components {
              */
             format?: "url" | "email" | "datetime" | "date" | "bcp47" | "iso3166" | "currency" | "phone";
             /** @description The longest value a `string` or `enum` column allows. Not for an `item` column. */
-            maxLength?: number;
+            max_length?: number;
             /** @description The lowest value the column allows, itself included. Only a `number` or `integer` column takes it. */
             minimum?: number;
             /** @description The highest value the column allows, itself included. Only a `number` or `integer` column takes it. */

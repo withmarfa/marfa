@@ -166,8 +166,8 @@ const SHAPE: [&str; 7] = [
     "format",
     "items_type",
     "searchable",
-    "maxLength",
-    "maxItems",
+    "max_length",
+    "max_items",
     "enum_values",
 ];
 

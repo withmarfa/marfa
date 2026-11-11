@@ -93,7 +93,7 @@ pub fn normalize_field(raw: &Obj, required: Option<bool>) -> Obj {
     if raw.get("searchable") == Some(&Value::Bool(false)) {
         out.insert("searchable".into(), json!(false));
     }
-    for key in ["maxLength", "maxItems", "minimum", "maximum"] {
+    for key in ["max_length", "max_items", "minimum", "maximum"] {
         if let Some(value @ Value::Number(_)) = raw.get(key) {
             out.insert(key.into(), value.clone());
         }
@@ -294,7 +294,7 @@ pub(super) fn validate_field_shape(
             "Set searchable: false to keep the field out of full-text search; omit it to index the field.".into(),
         ));
     }
-    for cap in ["maxLength", "maxItems"] {
+    for cap in ["max_length", "max_items"] {
         if fd.contains_key(cap) && !positive_integer(fd.get(cap)) {
             errors.push(issue(
                 cap,
@@ -306,27 +306,27 @@ pub(super) fn validate_field_shape(
             ));
         }
     }
-    if fd.contains_key("maxLength") && type_word != "string" && type_word != "enum" {
+    if fd.contains_key("max_length") && type_word != "string" && type_word != "enum" {
         errors.push(issue(
-            "maxLength",
-            "maxLength on a string or enum field".into(),
-            format!("maxLength on a {} field", describe(held_kind)),
-            "maxLength bounds string length. Use maxItems for arrays; drop it elsewhere.".into(),
+            "max_length",
+            "max_length on a string or enum field".into(),
+            format!("max_length on a {} field", describe(held_kind)),
+            "max_length bounds string length. Use max_items for arrays; drop it elsewhere.".into(),
         ));
-    } else if fd.contains_key("maxLength") && text(fd, "format") == Some("currency") {
+    } else if fd.contains_key("max_length") && text(fd, "format") == Some("currency") {
         errors.push(issue(
-            "maxLength",
-            "no maxLength on a currency field".into(),
-            describe(fd.get("maxLength")),
-            "A currency code is always three capital letters, so a length bound would be ignored. Drop maxLength.".into(),
+            "max_length",
+            "no max_length on a currency field".into(),
+            describe(fd.get("max_length")),
+            "A currency code is always three capital letters, so a length bound would be ignored. Drop max_length.".into(),
         ));
     }
-    if fd.contains_key("maxItems") && type_word != "array" {
+    if fd.contains_key("max_items") && type_word != "array" {
         errors.push(issue(
-            "maxItems",
-            "maxItems on an array field".into(),
-            format!("maxItems on a {} field", describe(held_kind)),
-            "maxItems bounds element count. Use maxLength for strings; drop it elsewhere.".into(),
+            "max_items",
+            "max_items on an array field".into(),
+            format!("max_items on a {} field", describe(held_kind)),
+            "max_items bounds element count. Use max_length for strings; drop it elsewhere.".into(),
         ));
     }
     validate_range(&path, fd, errors);
@@ -344,7 +344,7 @@ fn validate_range(path: &str, fd: &Obj, errors: &mut Vec<Issue>) {
                 at,
                 format!("{bound} on a number or integer field"),
                 format!("{bound} on a {} field", describe(fd.get("type"))),
-                format!("{bound} bounds a number. Use maxLength for the length of a string and maxItems for the count of a list; drop it elsewhere."),
+                format!("{bound} bounds a number. Use max_length for the length of a string and max_items for the count of a list; drop it elsewhere."),
             ));
         } else if !number(Some(value)).is_some_and(f64::is_finite) {
             errors.push(Issue::new(

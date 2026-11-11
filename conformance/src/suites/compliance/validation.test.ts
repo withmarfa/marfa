@@ -120,7 +120,7 @@ describe("validation edge cases", () => {
   });
 
   it("stores a body at the field's length cap intact", async () => {
-    // `core.note` names `body` as its body and declares no `maxLength`.
+    // `core.note` names `body` as its body and declares no `max_length`.
     const note = createNote({
       source: ctx.source,
       properties: {
