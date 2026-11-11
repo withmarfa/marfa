@@ -109,7 +109,7 @@ impl Decided {
     }
 }
 
-/// An open job's patch keeps every digest it names, as a reference that lends no read does.
+/// An open job's patch keeps every blob it names, and lends no read.
 pub fn hold_for_job(tx: &Transaction<'_>, job_id: &str, patch: &Map<String, Value>) -> Result<()> {
     for digest in digests(patch) {
         rows::hold_for_job(tx, job_id, &digest)?;
