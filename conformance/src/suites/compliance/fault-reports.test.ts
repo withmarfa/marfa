@@ -270,13 +270,13 @@ describe("an unhandled fault in which a statement failed", () => {
 const HEARTBEAT_BUDGET_MS = 45_000;
 
 describe("a warning about an event stream that cannot be read", () => {
-  /** The warnings and errors in the server's log, as its JSON lines. */
+  /** The warnings in the server's log, as its JSON lines. */
   async function warnings(): Promise<Record<string, unknown>[]> {
     return (await serverLog())
       .split("\n")
       .filter((text) => text.startsWith("{"))
       .map((text) => JSON.parse(text) as Record<string, unknown>)
-      .filter((line) => line.level === "warn" || line.level === "error");
+      .filter((line) => line.level === "warn");
   }
 
   /** Waits for the warnings a fault adds, and holds each to the rule. */

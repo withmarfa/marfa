@@ -494,8 +494,7 @@ impl Run {
     /// Reads the credential again while a page is handed over.
     async fn recheck(&mut self) -> std::result::Result<(), Ending> {
         if self.app.faults.fail(FAIL_STREAM_CREDENTIAL, None) {
-            let failed = self.failure(&io_refusal());
-            return Err(if self.torn { self.give_up() } else { failed });
+            return Err(self.read_refused(&io_refusal()));
         }
         self.reread().await
     }
@@ -518,12 +517,16 @@ impl Run {
                 self.credential_read(expires_at.as_deref());
                 Ok(())
             }
-            Err(refusal) if self.torn => {
-                tracing::debug!(error = %refusal, "A stream ended inside a frame");
-                Err(self.give_up())
-            }
-            Err(refusal) => Err(self.failure(&refusal)),
+            Err(refusal) => Err(self.read_refused(&refusal)),
         }
+    }
+
+    fn read_refused(&self, refusal: &Refusal) -> Ending {
+        if self.torn {
+            tracing::debug!(error = %refusal, "A stream ended inside a frame");
+            return self.give_up();
+        }
+        self.failure(refusal)
     }
 
     /// A closing frame cannot follow part of a frame, so a torn stream is closed without one.
@@ -614,7 +617,7 @@ impl Run {
         if refusal.code == Code::Unauthorized {
             return self.incomplete("credential_ended");
         }
-        tracing::error!(error = %refusal, "A stream could not read the log");
+        tracing::warn!(error = %refusal.cause(), "A stream could not read the log");
         self.incomplete("read_failed")
     }
 
