@@ -201,6 +201,11 @@ impl Destination {
         &self.0
     }
 
+    /// The loopback or a private-use scheme: a program on the person's device, never a site.
+    pub fn reaches_no_website(&self) -> bool {
+        only_native_receives(&self.0)
+    }
+
     /// Adds `pairs` and the `issuer` (RFC 9207). A query on the registered URI stays.
     pub fn with(&self, pairs: &[(&str, &str)], issuer: &str) -> String {
         let mut query = form_urlencoded::Serializer::new(String::new());

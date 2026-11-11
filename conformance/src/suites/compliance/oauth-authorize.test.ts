@@ -161,6 +161,93 @@ describe("authorization with consent", () => {
     expect(exchanged.body.scope).toBe(NOTES);
   });
 
+  /** Each response the server sends to a redirect URI: the code, then each error. */
+  async function responses(): Promise<
+    { name: string; sent: URL | undefined }[]
+  > {
+    const app = await registerApp(server, NOTES);
+    const consent = await consentScreen(
+      authorizeQuery(app.clientId, NOTES, pkce()),
+    );
+    const declined = await consentScreen(
+      authorizeQuery(app.clientId, NOTES, pkce()),
+    );
+    return [
+      {
+        name: "code",
+        sent: await decide(server, origin, cookie, consent, true, [NOTES]),
+      },
+      {
+        name: "access_denied",
+        sent: await decide(server, origin, cookie, declined, false, [NOTES]),
+      },
+      {
+        name: "invalid_request",
+        sent: await landing(authorizeQuery(app.clientId, NOTES, undefined)),
+      },
+      {
+        name: "invalid_scope",
+        sent: await landing(
+          authorizeQuery(
+            app.clientId,
+            "user.nothing_registered_here:read",
+            pkce(),
+          ),
+        ),
+      },
+      {
+        name: "login_required",
+        sent: await landing(
+          authorizeQuery(app.clientId, NOTES, pkce(), { prompt: "none" }),
+          null,
+        ),
+      },
+      {
+        name: "consent_required",
+        sent: await landing(
+          authorizeQuery(app.clientId, `${NOTES} ${BOOKMARKS}`, pkce(), {
+            prompt: "none",
+          }),
+        ),
+      },
+    ];
+  }
+
+  it("sends its issuer with the code and with each error it sends to a redirect URI", async () => {
+    const issuer = (
+      (await (
+        await fetch(
+          `${server.apiUrl}/.well-known/oauth-authorization-server/auth`,
+        )
+      ).json()) as { issuer: string }
+    ).issuer;
+    for (const { name, sent } of await responses()) {
+      expect(sent?.href.startsWith(CALLBACK), `${name}: ${String(sent)}`).toBe(
+        true,
+      );
+      expect(sent?.searchParams.get("iss"), name).toBe(issuer);
+      if (name === "code") {
+        expect(sent?.searchParams.get("code")).toBeTruthy();
+      } else {
+        expect(sent?.searchParams.get("error"), String(sent)).toBe(name);
+      }
+    }
+  });
+
+  it("says why in an error_description with each error it sends to a redirect URI", async () => {
+    for (const { name, sent } of await responses()) {
+      if (name === "code") {
+        // The witness: a code is no error, and carries no description.
+        expect(sent?.searchParams.get("code")).toBeTruthy();
+        expect(sent?.searchParams.get("error_description")).toBeNull();
+        continue;
+      }
+      expect(sent?.searchParams.get("error"), String(sent)).toBe(name);
+      const why = sent?.searchParams.get("error_description") ?? "";
+      expect(why.trim().length, `${name}: ${String(sent)}`).toBeGreaterThan(0);
+    }
+  });
+
   it("sends a request in which no scope can be granted to the redirect URI as invalid_scope", async () => {
     const app = await registerApp(server, NOTES);
     const sent = await landing(
@@ -210,6 +297,47 @@ describe("the request an app sends", () => {
     const sent = await landing(authorizeQuery(app.clientId, NOTES, undefined));
     expect(sent?.href.startsWith(CALLBACK), String(sent)).toBe(true);
     expect(sent?.searchParams.get("error")).toBe("invalid_request");
+  });
+
+  it("sends a refusal for a web app nobody approved to the error page, and to its redirect URI once the person approves it", async () => {
+    const web = "https://app.example/callback";
+    const app = await registerApp(server, NOTES, {
+      application_type: "web",
+      redirect_uris: [web],
+    });
+    const asked = (proof: ReturnType<typeof pkce> | undefined) => {
+      const query = authorizeQuery(app.clientId, NOTES, proof);
+      query.set("redirect_uri", web);
+      return query;
+    };
+    const ownPage = new URL(server.apiUrl).origin;
+    for (const [query, as, error] of [
+      [asked(undefined), cookie, "invalid_request"],
+      [
+        (() => {
+          const silent = asked(pkce());
+          silent.set("prompt", "none");
+          return silent;
+        })(),
+        null,
+        "login_required",
+      ],
+    ] as const) {
+      const sent = await landing(query, as);
+      expect(sent?.origin, String(sent)).toBe(ownPage);
+      expect(sent?.pathname).toBe("/auth/error");
+      expect(sent?.searchParams.get("error")).toBe(error);
+    }
+    // The witness: once the person approves the app there, the same refusal goes to it.
+    const consent = await consentScreen(asked(pkce()));
+    const approved = await decide(server, origin, cookie, consent, true, [
+      NOTES,
+    ]);
+    expect(approved?.href.startsWith(web), String(approved)).toBe(true);
+    const sent = await landing(asked(undefined));
+    expect(sent?.href.startsWith(web), String(sent)).toBe(true);
+    expect(sent?.searchParams.get("error")).toBe("invalid_request");
+    expect(sent?.searchParams.get("state")).toBe("signed-in-fixture");
   });
 
   it("is sent to the error page, never to a redirect URI the app did not register", async () => {

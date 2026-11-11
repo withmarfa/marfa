@@ -6,6 +6,7 @@ import {
   trackItem,
   trackEdge,
   trackEdgeType,
+  trackType,
   trackKey,
   trackFolder,
   cleanup,
@@ -424,6 +425,33 @@ describe("custom edge-type registration", () => {
       edge_type: id,
       required_scope: "edge.user.*:write",
     });
+
+    // A root a registered type sits under is one an app can be granted whole.
+    const root = `held${ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase()}`;
+    const held = await client.registerType({
+      id: `${root}.thing`,
+      fields: { name: { type: "string" as const } },
+    });
+    expect(held.status).toBe(201);
+    trackType(ctx, `${root}.thing`, client);
+    const underHeld = await scoped.registerEdgeType({
+      label: "Test edge type",
+      id: `${root}.relates`,
+      cardinality: "many-to-many",
+    });
+    expect(underHeld.status).toBe(403);
+    expect(underHeld.error?.error.details).toMatchObject({
+      required_scope: `edge.${root}.*:write`,
+    });
+
+    // A root nothing is registered under has none, so the refusal names none.
+    const unheard = await scoped.registerEdgeType({
+      label: "Test edge type",
+      id: `unheard${root}.relates`,
+      cardinality: "many-to-many",
+    });
+    expect(unheard.status).toBe(403);
+    expect(unheard.error?.error.details?.required_scope).toBeUndefined();
   });
 
   it("rejects a custom type whose id collides with a core edge type", async () => {
