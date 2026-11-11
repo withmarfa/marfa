@@ -1974,7 +1974,6 @@ When the private local process sends `confirm_sign_in_address_change` set to `tr
 
 **Tests:** `compliance/instance-addresses.test.ts › is not moved, and the answer names the consequences, until a write confirms it`.
 
-
 ### `instance/sign-in-needs-address`
 
 While no sign-in address is set, if a caller whose address is not on the loopback sends `POST /auth/sign-in`, then the server MUST answer `403 forbidden` with a message that says how to set the sign-in address.

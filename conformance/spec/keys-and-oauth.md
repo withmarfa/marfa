@@ -1295,7 +1295,6 @@ When a native client's registration names an `http` redirect URI on the loopback
 
 **Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `compliance/oauth-registration-schema.test.ts › describes the public metadata registration accepts and echoes`.
 
-
 ### `keys-and-oauth/redirect-loopback-any-port`
 
 When an authorization request names an `http` redirect URI on the loopback that differs from one the client registered on the loopback only in its port, the server MUST take it as the registered redirect URI.
@@ -1998,7 +1997,6 @@ When the server issues an access token, the server MUST accept that token at its
 
 **Tests:** `compliance/oauth-tokens.test.ts › accepts a token at the API and at /mcp, whichever of the server's resources it was issued for`.
 
-
 ### `keys-and-oauth/access-token-lifetime`
 
 When the server issues an access token, the server MUST answer `expires_in` of 3600.
@@ -2527,7 +2525,6 @@ The server MUST count an IPv6 address by its /64 for the password sign-in limits
 
 **Tests:** `compliance/sign-in-limits.test.ts › counts an IPv6 address as its /64`.
 
-
 ### `keys-and-oauth/sign-in-other-emails-limit`
 
 If one address has made ten password sign-in attempts in fifteen minutes at emails that are not the owner's, then the server MUST answer its next attempt at an email that is not the owner's `429` with `Retry-After`, before it judges the password.
@@ -2535,7 +2532,6 @@ If one address has made ten password sign-in attempts in fifteen minutes at emai
 **Reason:** Every email but the owner's has no account to guess, so all of them share one count, and an address cannot spread its attempts over made-up emails.
 
 **Tests:** `compliance/sign-in-door-limits.test.ts › counts password sign-ins at every email but the owner's together, and still judges the owner's password`.
-
 
 ### `keys-and-oauth/sign-in-decoy-queue`
 
@@ -2560,7 +2556,6 @@ Where `rate_limit_enabled` is `true`, if one address has sent thirty `POST /auth
 **Reason:** A device code request needs no credential, and each one stores a code a person may be asked to type.
 
 **Tests:** `compliance/sign-in-door-limits.test.ts › answers the thirty-first device code from one address in a minute 429`.
-
 
 ### `keys-and-oauth/client-document-limits`
 
@@ -2617,7 +2612,6 @@ When `GET /auth/device` carries `error=expired_code`, the server MUST answer a p
 The server MUST say, on the page where a device code is typed, that codes end after 10 minutes, the `expires_in` of 600 it issues them with.
 
 **Tests:** `compliance/sign-in-surface.test.ts › says how long codes last`.
-
 
 ### `keys-and-oauth/device-page-code`
 
@@ -2708,7 +2702,6 @@ Where the sign-in address is HTTPS, the server MUST set the owner's session cook
 **Reason:** The prefix binds the cookie to the instance's host, so no other host under the same domain can set or read it.
 
 **Tests:** `compliance/session-cookie-https.test.ts › is __Host-marfa_session, Secure, on path / and with no Domain`.
-
 
 ### `keys-and-oauth/session-renewal-not-on-error`
 
