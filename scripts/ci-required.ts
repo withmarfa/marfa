@@ -68,8 +68,9 @@ export const JOBS = [
   // meter, and never the TypeScript server's code in `packages/`.
   "rust-contract",
   // The device and CLI fixtures against the Rust server on macOS, for file
-  // watching, name case, Finder packages and a real keychain. Only the
-  // nightly and a dispatch with `macos` run it.
+  // watching, name case, Finder packages and a real keychain: one build, the
+  // shards after it and their score. Only the nightly and a dispatch with
+  // `macos` run it.
   "rust-contract-macos",
   // The MCP project's conformance tool, against `/mcp` on the Rust server's
   // release build, and the restore drill, which throws a Rust server away

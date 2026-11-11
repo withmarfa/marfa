@@ -791,19 +791,29 @@ JSON report, so run with `--reporter=json --outputFile=<vitest.json>`.
 
 `RUST_JUDGED` in `src/utils/rust-judged.ts` lists, by path from `conformance/`,
 the contract test files that the Rust server must pass whole: every file of
-the five server projects. A new file joins it once the Rust server passes it
-whole. A run with `MARFA_SERVER_BIN` unset, against the TypeScript server,
-leaves the listed files out (`vitest.config.ts`); no CI job runs one. A test
-checks that every listed path exists.
+the five server projects. A run with `MARFA_SERVER_BIN` unset, against the
+TypeScript server, leaves the listed files out (`vitest.config.ts`); no CI job
+runs one. A test checks that every listed path exists and that every contract
+file of the five projects is listed, so a new file is judged from the start.
 
 ### How the score is counted
 
-`pnpm rust:score --reports <dir> [--markdown <file>]` reads every `vitest.json`
-under `<dir>`, one per shard, and prints the score. CI writes it to the job
-summary of `Rust contract score`.
+`pnpm rust:score --reports <dir> [--platform <name>] [--projects <a,b>] [--markdown <file>]`
+reads every `vitest.json` under `<dir>`, one per shard, and prints the score.
+`--platform` names the machine the reports came from, `process.platform` by
+default, and `--projects` limits the score to some of the five projects. CI
+writes it to the job summary of `Rust contract score` and of
+`Rust contract score on macOS`.
 
 - A test passes when Vitest reports it `passed`. A skipped or todo test is not
-  passing, and still counts in the total.
+  passing, and still counts in the total, with two exceptions, which the
+  summary lists and leaves out of the count:
+  - A test that runs on one platform alone, which takes `ON_MACOS` from
+    `src/utils/platform.ts` and so carries `meta.onlyOn`, when it is skipped
+    on another platform. On its own platform its skip is not passing.
+  - A test that sets `meta.unobservable` to the reason just before it skips,
+    because the machine cannot show what it asserts. A test pins the one test
+    that does.
 - A file passes whole when a report names it, it lists at least one test, every
   test passed, and the file did not fail around its tests, as when an
   `afterAll` hook throws after every test passed.
@@ -952,10 +962,17 @@ a dispatch with `macos` runs them there too.
   test failed. `Rust contract score` counts the reports as described
   above and fails when a file in `RUST_JUDGED` did not pass whole. `Full CI`
   waits for it.
-- **On macOS.** `Rust contract on macOS` builds the server natively with its
-  test hooks, and runs the CLI fixtures and the device fixtures over three
-  shards against it, for file watching, name case, Finder packages and the
-  login keychain. A failed test fails the shard.
+- **Statuses.** The correctness, sync and CLI shards also run
+  `pnpm check:statuses` on their server's log, which fails on a status the
+  published document does not declare.
+- **On macOS.** `Rust server on macOS (build)` builds the server with its test
+  hooks, the command line and the Node module once, and uploads them. Four
+  `Rust contract on macOS` runners download them and run the CLI fixtures and
+  the device fixtures over three shards, for file watching, name case, Finder
+  packages and the login keychain, and each writes Vitest's JSON report.
+  `Rust contract score on macOS` scores the CLI and device projects with
+  `--platform darwin`, so every test that runs only on macOS is judged there,
+  and fails when one of their files in `RUST_JUDGED` did not pass whole.
 - **MCP conformance and the restore drill** boot the release build. The drill
   is `pnpm drill:restore`, described above.
 - **Offline lane.** `pnpm test:generators` runs as a job of its own, with no
