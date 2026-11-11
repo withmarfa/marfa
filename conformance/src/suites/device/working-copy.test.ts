@@ -1787,12 +1787,11 @@ describe("the working copy belongs to one server", () => {
     // reader reads, under a version number that is not its own.
     const store = new DatabaseSync(harness.device.store);
     try {
-      const { value } = store
-        .prepare("SELECT value FROM meta WHERE key = 'schema_version'")
-        .get() as { value: string };
-      store
-        .prepare("UPDATE meta SET value = ? WHERE key = 'schema_version'")
-        .run(String(Number(value) + 1));
+      const { user_version } = store.prepare("PRAGMA user_version").get() as {
+        user_version: number;
+      };
+      expect(user_version, "the store records no version").toBeGreaterThan(0);
+      store.exec(`PRAGMA user_version = ${user_version + 1}`);
     } finally {
       store.close();
     }
@@ -1816,8 +1815,8 @@ describe("the working copy belongs to one server", () => {
     }
   });
 
-  it("refuses a store another build shaped, by name, with the writes it holds unsent", async () => {
-    harness = await hydratedHarness("store-shape", {
+  it("refuses a store an earlier build made, by name, with the writes it holds unsent", async () => {
+    harness = await hydratedHarness("store-version", {
       items: { "core.note": [{ item: { id: "n1" } }] },
     });
     const queued = await harness.device.create({
@@ -1825,18 +1824,28 @@ describe("the working copy belongs to one server", () => {
       properties: { title: "unsent", body: "unsent" },
     });
     expect(queued.ok, JSON.stringify(queued)).toBe(true);
-    // The witness: the same store, in this build's shape, reads its queue.
+    // The witness: the same store, at this build's version, reads its queue.
     const held = await harness.device.queue();
     expect(held.ok ? held.value.length : held).toBe(1);
 
-    // What a build with another queue would have left: the same version,
-    // one column of the queue under another name.
+    // What an earlier build left: the same tables, with no version set.
+    const queuedRows = () => {
+      const reading = new DatabaseSync(harness!.device.store);
+      try {
+        return reading
+          .prepare("SELECT id, idempotency_key, payload FROM queue ORDER BY id")
+          .all();
+      } finally {
+        reading.close();
+      }
+    };
     const store = new DatabaseSync(harness.device.store);
     try {
-      store.exec("ALTER TABLE queue RENAME COLUMN follows TO after_write");
+      store.exec("PRAGMA user_version = 0");
     } finally {
       store.close();
     }
+    const before = queuedRows();
     for (const [opened, device] of [
       ["writer", harness.device],
       ["reader", harness.device.reopen({ reader: true })],
@@ -1844,7 +1853,7 @@ describe("the working copy belongs to one server", () => {
       const refused = await device.queue();
       expect(
         refused.ok,
-        `a ${opened} opened a store of another shape as though this build had made it`,
+        `a ${opened} opened a store an earlier build made as though this build had made it`,
       ).toBe(false);
       if (refused.ok) continue;
       expect(
@@ -1860,12 +1869,19 @@ describe("the working copy belongs to one server", () => {
         refused.refusal.raw,
         "the refusal advises deleting a store that holds a write nothing else can send",
       ).not.toMatch(/delete/i);
+      expect(
+        refused.refusal.raw,
+        "the refusal does not send the person to the build that made the store",
+      ).toContain("only the build that made it can send or show");
     }
+    expect(queuedRows(), "refusing the store changed its queue").toEqual(
+      before,
+    );
   });
 
-  it("names a blocked write among the writes a store of another shape holds unsent", async () => {
+  it("names a blocked write among the writes a store of another version holds unsent", async () => {
     const id = "01a00000-0000-7000-8000-00000000000a";
-    harness = await hydratedHarness("store-shape-held", {
+    harness = await hydratedHarness("store-version-held", {
       items: { "core.note": [{ item: { id, version: 3 } }] },
     });
     const edit = await harness.device.update(id, {
@@ -1884,7 +1900,7 @@ describe("the working copy belongs to one server", () => {
 
     const store = new DatabaseSync(harness.device.store);
     try {
-      store.exec("ALTER TABLE queue RENAME COLUMN follows TO after_write");
+      store.exec("PRAGMA user_version = 0");
     } finally {
       store.close();
     }
@@ -1902,8 +1918,8 @@ describe("the working copy belongs to one server", () => {
     ).toContain("blocked");
   });
 
-  it("names a write of a kind this build does not send, among the writes a store of another shape holds", async () => {
-    harness = await hydratedHarness("store-shape-kind", {
+  it("names a write of a kind this build does not send, among the writes a store of another version holds", async () => {
+    harness = await hydratedHarness("store-version-kind", {
       items: { "core.note": [{ item: { id: "n1" } }] },
     });
     const { device } = harness;
@@ -1934,13 +1950,14 @@ describe("the working copy belongs to one server", () => {
           "INSERT INTO queue_admitting SELECT * FROM queue; DROP TABLE queue; ALTER TABLE queue_admitting RENAME TO queue;",
         );
         store.prepare("UPDATE queue SET kind = ?").run(kind);
+        store.exec("PRAGMA user_version = 0");
       } finally {
         store.close();
       }
     };
     const said = async () => {
       const refused = await device.queue();
-      expect(refused.ok, "a store of another shape was opened").toBe(false);
+      expect(refused.ok, "a store of another version was opened").toBe(false);
       if (refused.ok) return "";
       expect(refused.refusal.code).toBe("wrong_schema");
       return (
@@ -1974,114 +1991,6 @@ describe("the working copy belongs to one server", () => {
       ).toEqual(["merge_metadata"]);
     } finally {
       store.close();
-    }
-  });
-
-  it("opens a store made before a table this build adds, and adds it", async () => {
-    harness = await hydratedHarness("store-older", {
-      items: { "core.note": [{ item: { id: "n1" } }] },
-    });
-    const store = new DatabaseSync(harness.device.store);
-    try {
-      store.exec("DROP TABLE beneath; DROP TABLE read_backs;");
-    } finally {
-      store.close();
-    }
-    // A reader cannot add a table, and says the store wants this build's
-    // writer once rather than that another build made it.
-    const reader = harness.device.reopen({ reader: true });
-    const early = await reader.get("n1");
-    expect(early.ok, "a reader read a store that lacks a table it reads").toBe(
-      false,
-    );
-    if (!early.ok) {
-      expect(early.refusal.code).toBe("invalid");
-      expect(early.refusal.raw).toContain("writer");
-    }
-    const read = await harness.device.get("n1");
-    expect(read.ok, JSON.stringify(read)).toBe(true);
-    expect((await reader.get("n1")).ok).toBe(true);
-    const reopened = new DatabaseSync(harness.device.store);
-    try {
-      const tables = reopened
-        .prepare(
-          "SELECT name FROM sqlite_master WHERE name IN ('beneath', 'read_backs') ORDER BY name",
-        )
-        .all() as Array<{ name: string }>;
-      expect(tables.map((row) => row.name)).toEqual(["beneath", "read_backs"]);
-    } finally {
-      reopened.close();
-    }
-  });
-
-  it("opens a store made before a column this build adds, adds it, and sends the write it holds", async () => {
-    harness = await hydratedHarness("store-older-column", {
-      items: { "core.note": [{ item: { id: "n1" } }] },
-    });
-    const edit = await harness.device.update("n1", {
-      properties: { title: "unsent", body: "unsent" },
-      version: 1,
-    });
-    expect(edit.ok, JSON.stringify(edit)).toBe(true);
-    // What a build from before the columns left: the item table without the
-    // columns added at its end since.
-    const store = new DatabaseSync(harness.device.store);
-    try {
-      store.exec(
-        "DROP INDEX items_read_only; ALTER TABLE items DROP COLUMN read_only; ALTER TABLE items DROP COLUMN trashed_at; ALTER TABLE items DROP COLUMN capture_longitude; ALTER TABLE items DROP COLUMN capture_latitude;",
-      );
-    } finally {
-      store.close();
-    }
-    // A reader cannot add a column, and says the store wants this build's
-    // writer once rather than that another build made it.
-    const reader = harness.device.reopen({ reader: true });
-    const early = await reader.get("n1");
-    expect(early.ok, "a reader read a store that lacks a column it reads").toBe(
-      false,
-    );
-    if (!early.ok) {
-      expect(early.refusal.code).toBe("invalid");
-      expect(early.refusal.raw).toContain("writer");
-    }
-    const answered = wireItem({
-      id: "n1",
-      type: "core.note",
-      version: 2,
-      properties: { title: "unsent", body: "unsent" },
-    });
-    scriptWrites(harness.server, {
-      update: [answers.updated(answered)],
-      read: [answers.updated(answered)],
-    });
-    const drained = await harness.device.drain();
-    expect(drained.ok, JSON.stringify(drained)).toBe(true);
-    expect(drained.ok && drained.value.verdicts.map((v) => v.verdict)).toEqual([
-      "accepted",
-    ]);
-    expect(
-      harness.server.requests.some(
-        (request) =>
-          request.method === "PATCH" && request.pathname.includes("n1"),
-      ),
-      "the write the store held never reached the server",
-    ).toBe(true);
-    expect((await reader.get("n1")).ok).toBe(true);
-    const reopened = new DatabaseSync(harness.device.store);
-    try {
-      const columns = reopened
-        .prepare(
-          "SELECT name FROM pragma_table_info('items') WHERE name IN ('capture_latitude', 'capture_longitude', 'trashed_at', 'read_only') ORDER BY cid",
-        )
-        .all() as Array<{ name: string }>;
-      expect(columns.map((row) => row.name)).toEqual([
-        "capture_latitude",
-        "capture_longitude",
-        "trashed_at",
-        "read_only",
-      ]);
-    } finally {
-      reopened.close();
     }
   });
 

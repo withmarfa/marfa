@@ -9,8 +9,8 @@ use serde_json::{Map, Value, json};
 
 use crate::reach::Context;
 use crate::scripted::{self, Answer, Scripted, Then, certified};
-use crate::stop_tests::{copy, copy_in_keyed};
-use crate::{Core, CoreError, Draft, Edit, Item, Server, read_only, store};
+use crate::stop_tests::copy;
+use crate::{Core, CoreError, Draft, Edit, Item, read_only, store};
 use marfa_rules::wire::WireCatalog;
 
 const NOTE: &str = "core.note";
@@ -928,103 +928,6 @@ fn a_delete_and_a_create_are_not_stopped_by_the_flag() {
     .unwrap();
 
     assert_eq!(core.queue().unwrap().len(), 2);
-}
-
-/// Takes the store back to how a build before `read_only` left it.
-fn from_before_the_field(path: &std::path::Path) {
-    let conn = rusqlite::Connection::open(path).unwrap();
-    conn.execute_batch(
-        "UPDATE beneath SET row = json_remove(row, '$.read_only');
-         DELETE FROM meta WHERE key = 'read_only_read_at';
-         DROP INDEX items_read_only;
-         ALTER TABLE items DROP COLUMN read_only;",
-    )
-    .unwrap();
-}
-
-#[test]
-fn a_copy_from_before_the_field_opens_with_its_work_and_learns_the_flags_at_its_next_sync() {
-    let server = Scripted::start();
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("core.sqlite");
-    let core = copy_in_keyed(&server, dir.path(), "k");
-    holding_the_servers_catalog(&server, &core);
-    for id in ["edited", "blocked", "plain"] {
-        put(&core, id, "connector", false);
-    }
-    put(&core, "other", "other", false);
-    core.update_item("blocked", &titled("blocked here"))
-        .unwrap();
-    server.on(
-        "/items/blocked",
-        vec![scripted::refusal(409, "version_conflict")],
-    );
-    core.drain().unwrap();
-    core.update_item("edited", &titled("edited here")).unwrap();
-    core.create_item(&Draft {
-        r#type: NOTE.into(),
-        id: Some(MADE_HERE.into()),
-        properties: titled("made here").properties,
-        source: Some("connector".into()),
-        ..Draft::default()
-    })
-    .unwrap();
-    let queue = core.queue().unwrap();
-    assert_eq!(queue.len(), 3, "{queue:?}");
-    assert!(
-        queue
-            .iter()
-            .any(|write| write.verdict == Some(crate::model::Verdict::Blocked)),
-        "no write was left blocked: {queue:?}"
-    );
-    drop(core);
-    from_before_the_field(&path);
-
-    let server_at = Server {
-        url: server.url(),
-        key: "k".into(),
-    };
-    let core = Core::open(&path, Some(server_at.clone())).unwrap();
-    assert_eq!(core.queue().unwrap(), queue, "opening moved the queue");
-    assert_eq!(title(&held(&core, "edited")), "edited here");
-    assert_eq!(title(&held(&core, "blocked")), "blocked here");
-    assert_eq!(title(&held(&core, MADE_HERE)), "made here");
-    assert!(!flag(&core, "edited"), "an old row read other than false");
-    assert_eq!(beneath(&core, "edited").get("read_only"), None);
-    assert!(core.pending_landings().is_ok());
-    server.on(
-        "/items/bulk-get",
-        vec![asked(&[
-            ("plain", "connector", Some(true)),
-            ("other", "other", Some(false)),
-        ])],
-    );
-
-    core.catch_up().unwrap();
-
-    assert_eq!(
-        asks(&server),
-        1,
-        "a copy with no look on record did not ask"
-    );
-    for id in ["plain", "edited", "blocked"] {
-        assert!(flag(&core, id), "{id} did not learn its flag");
-    }
-    assert!(!flag(&core, "other"));
-    assert!(!flag(&core, MADE_HERE));
-    assert_eq!(core.queue().unwrap(), queue, "the sync moved the queue");
-    assert_eq!(title(&held(&core, "edited")), "edited here");
-    assert_eq!(title(&held(&core, "blocked")), "blocked here");
-    assert_eq!(beneath(&core, "edited")["read_only"], json!(true));
-    assert_eq!(
-        beneath(&core, "edited")["properties"]["title"],
-        json!("edited")
-    );
-
-    drop(core);
-    let core = Core::open(&path, Some(server_at)).unwrap();
-    assert!(flag(&core, "plain"), "a reopen lost the flag");
-    assert_eq!(core.queue().unwrap(), queue);
 }
 
 #[test]

@@ -1,6 +1,7 @@
--- `meta` is not declared here: `store::prepare` creates it before this file
--- runs, because it reads the schema version from it to decide whether to run
--- this file at all. A declaration here would never execute.
+-- Runs once, in the transaction that makes an empty store; a store at
+-- another `user_version` is refused (`store::SCHEMA_VERSION`).
+
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 
 CREATE TABLE IF NOT EXISTS types (
   id TEXT PRIMARY KEY,
@@ -46,7 +47,6 @@ CREATE INDEX IF NOT EXISTS items_type_occurred_at ON items (type, occurred_at);
 -- every list does unless it asks for all states.
 CREATE INDEX IF NOT EXISTS items_created ON items (created_at, id);
 CREATE INDEX IF NOT EXISTS items_state_created ON items (state, created_at, id);
-DROP INDEX IF EXISTS items_state;
 CREATE INDEX IF NOT EXISTS items_tier ON items (tier);
 -- What `read_only::refresh` asks of the whole copy: which sources and types it
 -- holds, and whether any row of one differs from the server's, answered from

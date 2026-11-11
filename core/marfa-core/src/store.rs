@@ -18,15 +18,12 @@ use marfa_rules::wire::{WireCatalog, WireType};
 
 pub const SCHEMA: &str = include_str!("schema.sql");
 
-pub const META_SCHEMA_VERSION: &str = "schema_version";
 pub const META_SERVER_ORIGIN: &str = "server_origin";
 pub const META_SLICE_TYPES: &str = "slice_types";
 pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_SLICE_EDGE_TYPES: &str = "slice_edge_types";
 /// The slice's query past its types and tier, as JSON, and absent where the
-/// slice holds every row of its types and tier. A store written before the
-/// key existed reads as holding no query, so a folder asking for one sees
-/// its slice moved and hydrates again.
+/// slice holds every row of its types and tier.
 pub const META_SLICE_QUERY: &str = "slice_query";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 /// The instance the copy was hydrated from, as the server's root names it.
@@ -93,10 +90,9 @@ pub const META_READ_ONLY_READ: &str = "read_only_read_at";
 /// copy no longer holds once there are more than twice this many.
 pub const EDGE_CHANGES_KEPT: usize = 10_000;
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "0";
-
-const META_TABLE: &str =
-    "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
+/// The version of the shape `schema.sql` makes, held in SQLite's
+/// `user_version`. A change to that shape raises it.
+pub const SCHEMA_VERSION: i64 = 1;
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at, read_only";
 const EDGE_COLUMNS: &str =
@@ -221,10 +217,10 @@ pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
 /// `None` where a writer would open it.
 pub(crate) fn refusal(path: &Path) -> Result<Option<CoreError>, CoreError> {
     let conn = open_refused(path)?;
-    match refuse_misshapen(&conn, &held_shape(&conn)?, false) {
-        Ok(_) => Ok(None),
-        Err(error @ CoreError::WrongSchema { .. }) => Ok(Some(at_path(error, path))),
-        Err(other) => Err(other),
+    match version(&conn)? {
+        SCHEMA_VERSION => Ok(None),
+        0 if !holds_tables(&conn)? => Ok(None),
+        found => Ok(Some(at_path(refused(&conn, found), path))),
     }
 }
 
@@ -462,25 +458,6 @@ pub(crate) fn refused_folder_meta(
     )?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     meta_of(&conn, keys)
-}
-
-/// Whether the folder store holds this build's `meta` but lacks a table or a
-/// column this build makes, which its writer adds on open
-/// (`device/added-table`, `device/added-column`).
-#[cfg(unix)]
-pub(crate) fn folder_store_behind(
-    vfs: &crate::directory_vfs::DirectoryVfs,
-) -> Result<bool, CoreError> {
-    let conn = vfs.open(
-        FOLDER_STORE,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    let held = held_shape(&conn)?;
-    let built = built_shape()?;
-    Ok(held.contains_key("meta")
-        && (built.keys().any(|name| !held.contains_key(name))
-            || !columns_behind(&held, built).is_empty()))
 }
 
 #[cfg(unix)]
@@ -723,7 +700,7 @@ fn read_checked(conn: &Connection, path: &Path) -> Result<(), CoreError> {
             path.display()
         ))
     };
-    let held = held_shape(conn).map_err(|error| match &error {
+    let found = version(conn).map_err(|error| match &error {
         rusqlite::Error::SqliteFailure(_, Some(message))
             if message.contains("file is not a database") =>
         {
@@ -731,10 +708,17 @@ fn read_checked(conn: &Connection, path: &Path) -> Result<(), CoreError> {
         }
         _ => CoreError::from(error),
     })?;
-    if !held.contains_key("meta") {
-        return Err(no_schema());
+    if found != SCHEMA_VERSION {
+        let has_meta: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_meta {
+            return Err(no_schema());
+        }
+        return Err(at_path(refused(conn, found), path));
     }
-    refuse_misshapen(conn, &held, true).map_err(|error| at_path(error, path))?;
     tune(conn)
 }
 
@@ -758,18 +742,12 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
     )?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     tune(conn)?;
-    conn.execute_batch(META_TABLE)?;
-    // Before the schema is applied: `CREATE TABLE IF NOT EXISTS` is silent
-    // about a table that exists with other columns. A store of another shape
-    // is refused, never discarded, because it may hold writes the server has
-    // never seen.
-    let behind = refuse_misshapen(conn, &held_shape(conn)?, false)?;
-    add_columns(conn, &behind)?;
-    conn.execute_batch(SCHEMA)?;
-    // Only when absent: writing it on every open would make a reading command
-    // take a write lock.
-    if meta_get(conn, META_SCHEMA_VERSION)?.is_none() {
-        meta_set(conn, META_SCHEMA_VERSION, SCHEMA_VERSION)?;
+    // A store at another version is refused, never discarded, because it may
+    // hold writes the server has never seen.
+    match version(conn)? {
+        SCHEMA_VERSION => {}
+        0 if !holds_tables(conn)? => make(conn)?,
+        found => return Err(refused(conn, found)),
     }
     if meta_get(conn, META_STORE_ID)?.is_none() {
         meta_set(
@@ -779,6 +757,47 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
         )?;
     }
     Ok(())
+}
+
+/// Makes this build's schema in an empty store, in one transaction, so a
+/// crash leaves the store empty or whole.
+fn make(conn: &Connection) -> Result<(), CoreError> {
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    // Another program may have made it between the read and the lock.
+    match version(&tx)? {
+        SCHEMA_VERSION => return Ok(()),
+        0 if !holds_tables(&tx)? => {}
+        found => return Err(refused(&tx, found)),
+    }
+    tx.execute_batch(SCHEMA)?;
+    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn version(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+}
+
+fn holds_tables(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table')",
+        [],
+        |row| row.get(0),
+    )
+}
+
+/// The refusal of a store at version `found`, with what it holds.
+fn refused(conn: &Connection, found: i64) -> CoreError {
+    CoreError::WrongSchema {
+        path: String::new(),
+        reason: format!(
+            "it is at schema version {found}, and this build reads schema version {SCHEMA_VERSION}{}",
+            unsendable(conn)
+        ),
+        unsent: untaken_count(conn),
+        folder: None,
+    }
 }
 
 pub(crate) fn store_id(conn: &Connection) -> Result<String, CoreError> {
@@ -844,206 +863,18 @@ fn held_statements(conn: &Connection, kind: &str) -> rusqlite::Result<Shape> {
     rows.collect()
 }
 
-/// The tables and the triggers this build makes, read from SQLite rather
-/// than from the file so they are compared as SQLite records them.
-struct Built {
-    tables: Shape,
-    triggers: Shape,
-}
-
-fn built() -> Result<&'static Built, CoreError> {
-    static BUILT: std::sync::OnceLock<Built> = std::sync::OnceLock::new();
+/// The tables this build makes, read from SQLite rather than from the file
+/// so they are compared as SQLite records them.
+#[cfg(unix)]
+fn built_shape() -> Result<&'static Shape, CoreError> {
+    static BUILT: std::sync::OnceLock<Shape> = std::sync::OnceLock::new();
     if let Some(built) = BUILT.get() {
         return Ok(built);
     }
     let conn = Connection::open_in_memory()?;
-    conn.execute_batch(META_TABLE)?;
     conn.execute_batch(SCHEMA)?;
-    let built = Built {
-        tables: held_shape(&conn)?,
-        triggers: held_statements(&conn, "trigger")?,
-    };
+    let built = held_shape(&conn)?;
     Ok(BUILT.get_or_init(|| built))
-}
-
-fn built_shape() -> Result<&'static Shape, CoreError> {
-    Ok(&built()?.tables)
-}
-
-/// The triggers the store holds that are not this build's, by name: each
-/// this build makes in another form, and each it does not make. Every
-/// trigger in a store is one `schema.sql` made, of this build or another.
-fn triggers_behind(conn: &Connection) -> Result<Vec<String>, CoreError> {
-    let made = &built()?.triggers;
-    let mut behind: Vec<String> = held_statements(conn, "trigger")?
-        .into_iter()
-        .filter(|(name, held)| made.get(name) != Some(held))
-        .map(|(name, _)| name)
-        .collect();
-    behind.sort();
-    Ok(behind)
-}
-
-/// Gives the store this build's triggers, in one transaction: each it holds
-/// in another form is made again, which `CREATE TRIGGER IF NOT EXISTS`
-/// leaves as it is, and each this build does not make is dropped. Only the
-/// writer may call it. A store already holding this build's triggers is not
-/// written to.
-pub(crate) fn hold_triggers(conn: &Connection) -> Result<(), CoreError> {
-    if triggers_behind(conn)?.is_empty() {
-        return Ok(());
-    }
-    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
-    // Another program may have made them again between the read and the lock.
-    for name in triggers_behind(&tx)? {
-        tx.execute_batch(&format!("DROP TRIGGER \"{}\";", name.replace('"', "\"\"")))?;
-    }
-    tx.execute_batch(SCHEMA)?;
-    if let Some(name) = triggers_behind(&tx)?.first() {
-        return Err(CoreError::Store(format!(
-            "making the trigger {name} again did not give the statement this build makes"
-        )));
-    }
-    tx.commit()?;
-    Ok(())
-}
-
-/// Each column added to the end of a table since a table last changed in a
-/// way no column added to its end can follow (`blob`, in the middle of
-/// `folder_files`), in the order added, as `schema.sql` defines it. A writer
-/// adds those a store lacks (`device/added-column`); a column added to a
-/// table's end goes here, or every store made before it is refused.
-const ADDED_COLUMNS: &[(&str, &str)] = &[
-    ("items", "capture_latitude REAL"),
-    ("items", "capture_longitude REAL"),
-    ("items", "trashed_at TEXT"),
-    ("items", "read_only INTEGER NOT NULL DEFAULT 0"),
-    ("folder_files", "embeds TEXT"),
-];
-
-/// The columns, from `ADDED_COLUMNS`, that the store's `table` lacks, where
-/// its statement `held` is this build's `built` less some of those at the
-/// end of its column list, before any table options such as `WITHOUT ROWID`.
-/// `None` for any other statement.
-fn columns_to_add(table: &str, held: &str, built: &str) -> Option<Vec<&'static str>> {
-    let added: Vec<&'static str> = ADDED_COLUMNS
-        .iter()
-        .filter(|(name, _)| *name == table)
-        .map(|(_, column)| *column)
-        .collect();
-    let (mut shorter, options) = built.split_at(built.rfind(')')?);
-    for at in (0..added.len()).rev() {
-        shorter = shorter.strip_suffix(&format!(",{}", statement(added[at])))?;
-        if format!("{shorter}{options}") == held {
-            return Some(added[at..].to_vec());
-        }
-    }
-    None
-}
-
-/// Each table of `held` that lacks columns a writer adds, with those columns.
-fn columns_behind(held: &Shape, built: &Shape) -> Vec<(String, Vec<&'static str>)> {
-    let mut behind: Vec<_> = held
-        .iter()
-        .filter_map(|(name, statement)| {
-            let made = built.get(name).filter(|made| *made != statement)?;
-            Some((name.clone(), columns_to_add(name, statement, made)?))
-        })
-        .collect();
-    behind.sort();
-    behind
-}
-
-/// Adds the columns `behind` names, in one transaction, and holds each table
-/// it changes to the statement this build makes it with.
-fn add_columns(conn: &Connection, behind: &[(String, Vec<&'static str>)]) -> Result<(), CoreError> {
-    if behind.is_empty() {
-        return Ok(());
-    }
-    let built = built_shape()?;
-    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
-    // Another program may have added them between the read and the lock.
-    let behind = columns_behind(&held_shape(&tx)?, built);
-    if behind.is_empty() {
-        return Ok(());
-    }
-    for (table, columns) in &behind {
-        for column in columns {
-            tx.execute_batch(&format!("ALTER TABLE \"{table}\" ADD COLUMN {column}"))?;
-        }
-    }
-    let held = held_shape(&tx)?;
-    if let Some((table, _)) = behind
-        .iter()
-        .find(|(table, _)| held.get(table) != built.get(table))
-    {
-        return Err(CoreError::Store(format!(
-            "adding this build's columns to its table {table} did not give the shape this build reads"
-        )));
-    }
-    tx.commit()?;
-    Ok(())
-}
-
-/// The version stays put until the first public release, so it alone cannot
-/// tell two builds' stores apart: every table the store holds is held to the
-/// statement this build makes it with. A table it lacks, or a column of
-/// `ADDED_COLUMNS` at a table's end, is one a writer adds on open, which a
-/// reader cannot; the columns a writer adds are returned.
-fn refuse_misshapen(
-    conn: &Connection,
-    held: &Shape,
-    reading: bool,
-) -> Result<Vec<(String, Vec<&'static str>)>, CoreError> {
-    let built = built_shape()?;
-    let behind = columns_behind(held, built);
-    let differs = |name: &str| {
-        held.get(name)
-            .is_some_and(|statement| built.get(name) != Some(statement))
-            && !behind.iter().any(|(table, _)| table == name)
-    };
-    let refuse = |reason: String| {
-        Err(CoreError::WrongSchema {
-            path: String::new(),
-            reason: format!("{reason}{}", unsendable(conn)),
-            unsent: untaken_count(conn),
-            folder: None,
-        })
-    };
-    if differs("meta") {
-        return refuse("its table meta is not the shape this build reads".into());
-    }
-    if held.contains_key("meta") {
-        match meta_get(conn, META_SCHEMA_VERSION)? {
-            Some(found) if found != SCHEMA_VERSION => {
-                return refuse(format!(
-                    "it was written by schema {found}, and this build reads schema {SCHEMA_VERSION}"
-                ));
-            }
-            None if reading => return refuse("it names no schema version".into()),
-            _ => {}
-        }
-    }
-    let mut names: Vec<&String> = built.keys().collect();
-    names.sort();
-    if let Some(name) = names.iter().find(|name| differs(name)) {
-        return refuse(format!(
-            "its table {name} is not the shape this build reads"
-        ));
-    }
-    // Not another build's store: one this build's writer completes on open.
-    if reading && let Some(name) = names.iter().find(|name| !held.contains_key(name.as_str())) {
-        return Err(CoreError::Invalid(format!(
-            "this store has no table {name} yet, which this build's writer adds when it opens the store: open it once with this build's writer, then read it"
-        )));
-    }
-    if reading && let Some((table, columns)) = behind.first() {
-        return Err(CoreError::Invalid(format!(
-            "this store's table {table} has no column {} yet, which this build's writer adds when it opens the store: open it once with this build's writer, then read it",
-            columns.join(", ")
-        )));
-    }
-    Ok(behind)
 }
 
 /// The writes the server has not taken whose kind this build does not send,
@@ -8287,10 +8118,7 @@ mod tests {
     #[test]
     fn meta_and_the_hydration_guard() {
         let conn = conn();
-        assert_eq!(
-            meta_get(&conn, META_SCHEMA_VERSION).unwrap().as_deref(),
-            Some(SCHEMA_VERSION)
-        );
+        assert_eq!(version(&conn).unwrap(), SCHEMA_VERSION);
         assert_eq!(
             refuse_unless_hydrated(&conn),
             Err(CoreError::HydrationIncomplete)
@@ -9531,79 +9359,6 @@ mod tests {
     }
 
     #[test]
-    fn a_store_made_before_the_copy_revision_gains_its_triggers_when_opened_to_write() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("older.sqlite");
-        let triggers = |conn: &Connection| -> Vec<String> {
-            let mut statement = conn
-                .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%\\_revise\\_%' ESCAPE '\\' ORDER BY name")
-                .unwrap();
-            statement
-                .query_map([], |row| row.get(0))
-                .unwrap()
-                .collect::<rusqlite::Result<_>>()
-                .unwrap()
-        };
-        {
-            let conn = open(&path).unwrap();
-            let made = triggers(&conn);
-            assert_eq!(made.len(), REVISED.len() * 3, "{made:?}");
-            for name in &made {
-                conn.execute_batch(&format!("DROP TRIGGER {name};"))
-                    .unwrap();
-            }
-            upsert_item(
-                &conn,
-                &note("row", "t", "b", "2026-01-01T00:00:00Z"),
-                None,
-                &Indexing::default(),
-            )
-            .unwrap();
-            assert_eq!(copy_revision(&conn).unwrap(), 0);
-        }
-        let reading = read_connection(
-            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap(),
-            &path,
-        )
-        .unwrap();
-        assert!(item_held(&reading, "row").unwrap());
-        assert!(triggers(&reading).is_empty(), "a reader wrote the schema");
-        drop(reading);
-
-        let conn = open(&path).unwrap();
-        assert_eq!(triggers(&conn).len(), REVISED.len() * 3);
-        assert!(item_held(&conn, "row").unwrap());
-        conn.execute("UPDATE items SET version = 2 WHERE id = 'row'", [])
-            .unwrap();
-        assert_eq!(copy_revision(&conn).unwrap(), 1);
-    }
-
-    #[test]
-    fn a_store_made_before_the_send_index_gets_it_when_its_writer_opens_it() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("core.sqlite");
-        let held = |conn: &Connection| -> bool {
-            conn.query_row(
-                "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'queue_sent_seq'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap()
-                == 1
-        };
-        {
-            let conn = open(&path).unwrap();
-            assert!(held(&conn), "a new store lacks the index");
-            conn.execute_batch("DROP INDEX queue_sent_seq;").unwrap();
-        }
-        let reading = open_to_read(&path).unwrap();
-        assert!(!held(&reading), "a reader made the index");
-        drop(reading);
-        let conn = open(&path).unwrap();
-        assert!(held(&conn), "the writer did not make the index");
-    }
-
-    #[test]
     fn only_a_write_laid_over_the_copy_changes_it_as_it_leaves_the_queue() {
         let conn = conn();
         let marks = |conn: &Connection| {
@@ -9644,129 +9399,6 @@ mod tests {
                 assert_eq!(marks(&conn), (revision, change), "{verdict:?}");
             }
         }
-    }
-
-    /// Each trigger the store holds, by name as SQLite records it, with its
-    /// statement exactly as recorded.
-    fn held_triggers(conn: &Connection) -> Vec<(String, String)> {
-        conn.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name")
-            .unwrap()
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
-            .unwrap()
-    }
-
-    #[test]
-    fn a_store_holding_an_earlier_builds_trigger_is_given_this_builds_only_by_its_writer() {
-        let answered_leaves = |conn: &Connection| {
-            conn.execute(
-                "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, queued_at, verdict)
-                 VALUES ('w', 'update_item', 'a', 'k', '{}', '2026-01-01T00:00:00Z', 'accepted')",
-                [],
-            )
-            .unwrap();
-            let before = last_change(conn, Changes::Items).unwrap();
-            conn.execute("DELETE FROM queue WHERE id = 'w'", [])
-                .unwrap();
-            last_change(conn, Changes::Items).unwrap() != before
-        };
-        let earlier_change_delete = |name: &str| {
-            format!(
-                "DROP TRIGGER queue_change_delete;
-                 CREATE TRIGGER {name} AFTER DELETE ON queue BEGIN
-                   INSERT INTO copy_changes (item_id, seq)
-                     SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
-                     FROM (SELECT OLD.item_id AS id UNION SELECT OLD.target_id) WHERE id IS NOT NULL
-                     ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
-                 END;"
-            )
-        };
-        let earlier: [(&str, String, &[&str]); 4] = [
-            (
-                "a statement",
-                earlier_change_delete("queue_change_delete"),
-                &["queue_change_delete"],
-            ),
-            (
-                "a name in other case",
-                earlier_change_delete("Queue_Change_Delete"),
-                &["queue_change_delete"],
-            ),
-            (
-                "whitespace inside a string",
-                "DROP TRIGGER queue_revise_delete;
-                 CREATE TRIGGER queue_revise_delete AFTER DELETE ON queue
-                   WHEN OLD.verdict IS NULL OR OLD.verdict IN ('blocked ', 'dead') BEGIN
-                   INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
-                     ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
-                 END;"
-                    .into(),
-                &["queue_revise_delete"],
-            ),
-            (
-                "a trigger this build does not make",
-                "CREATE TRIGGER left_by_another_build AFTER DELETE ON queue BEGIN
-                   INSERT INTO meta (key, value) VALUES ('left', '1');
-                 END;"
-                    .into(),
-                &["left_by_another_build"],
-            ),
-        ];
-        for (what, sql, behind) in earlier {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("older.sqlite");
-            let writer = crate::Core::open(&path, None).unwrap();
-            let made = held_triggers(&writer.conn().unwrap());
-            {
-                let conn = writer.conn().unwrap();
-                assert_eq!(triggers_behind(&conn).unwrap(), Vec::<String>::new());
-                conn.execute_batch(&sql).unwrap();
-                assert_eq!(triggers_behind(&conn).unwrap(), behind, "{what}");
-                if behind == ["queue_change_delete"] {
-                    assert!(answered_leaves(&conn), "the witness: the earlier trigger");
-                }
-            }
-            let earlier = held_triggers(&writer.conn().unwrap());
-
-            // The ordinary second opener, and a reader by its own door.
-            let second = crate::Core::open(&path, None).unwrap();
-            assert_eq!(second.handle(), crate::Handle::Reader, "{what}");
-            let reader = crate::Core::open_reader(&path).unwrap();
-            assert_eq!(
-                held_triggers(&writer.conn().unwrap()),
-                earlier,
-                "a reading handle wrote the schema: {what}"
-            );
-            drop((second, reader, writer));
-
-            let writer = crate::Core::open(&path, None).unwrap();
-            let conn = writer.conn().unwrap();
-            assert_eq!(held_triggers(&conn), made, "{what}");
-            assert!(!answered_leaves(&conn), "{what}");
-        }
-    }
-
-    #[test]
-    fn a_store_made_before_the_tables_beneath_and_read_backs_opens_and_gains_them() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("older.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            upsert_item(
-                &conn,
-                &note("row", "t", "b", "2026-01-01T00:00:00Z"),
-                None,
-                &Indexing::default(),
-            )
-            .unwrap();
-            conn.execute_batch("DROP TABLE beneath; DROP TABLE read_backs;")
-                .unwrap();
-        }
-        let conn = open(&path).unwrap();
-        assert!(item_held(&conn, "row").unwrap());
-        assert_eq!(beneath_item(&conn, "row").unwrap(), None);
-        assert!(owed_read_backs(&conn).unwrap().is_empty());
     }
 
     #[test]
@@ -10186,6 +9818,27 @@ mod tests {
         .unwrap();
     }
 
+    /// Sets the version SQLite records for the store at `path`, as another
+    /// build of the core would have left it.
+    fn at_version(path: &Path, version: i64) {
+        Connection::open(path)
+            .unwrap()
+            .pragma_update(None, "user_version", version)
+            .unwrap();
+    }
+
+    fn queued(path: &Path) -> Vec<(String, String)> {
+        let conn = Connection::open(path).unwrap();
+        let mut statement = conn
+            .prepare("SELECT id, idempotency_key FROM queue ORDER BY id")
+            .unwrap();
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
     #[test]
     fn a_store_counts_every_write_the_server_has_not_taken() {
         let dir = tempfile::tempdir().unwrap();
@@ -10197,17 +9850,10 @@ mod tests {
                 queue_one(&conn);
                 conn.execute("UPDATE queue SET verdict = ?1, sent = 1", [verdict])
                     .unwrap();
-                meta_set(&conn, META_SCHEMA_VERSION, SCHEMA_VERSION).unwrap();
-                conn.execute_batch("DROP TABLE pins; CREATE TABLE pins (other TEXT);")
-                    .unwrap();
             }
+            at_version(&path, SCHEMA_VERSION + 1);
             let refused = refusal_of(&path);
-            Connection::open(&path)
-                .unwrap()
-                .execute_batch(
-                    "DROP TABLE pins; CREATE TABLE pins (item_id TEXT PRIMARY KEY) WITHOUT ROWID;",
-                )
-                .unwrap();
+            at_version(&path, SCHEMA_VERSION);
             refused
         };
         for verdict in [None, Some("blocked"), Some("refused"), Some("dead")] {
@@ -10225,9 +9871,8 @@ mod tests {
                 [],
             )
             .unwrap();
-            conn.execute_batch("DROP TABLE pins; CREATE TABLE pins (other TEXT);")
-                .unwrap();
         }
+        at_version(&path, SCHEMA_VERSION + 1);
         let (_, unsent, said) = refusal_of(&path);
         assert_eq!(
             unsent,
@@ -10235,12 +9880,7 @@ mod tests {
             "a refused delete that clearing drops was counted"
         );
         assert!(said.contains("loses nothing"), "{said}");
-        Connection::open(&path)
-            .unwrap()
-            .execute_batch(
-                "DROP TABLE pins; CREATE TABLE pins (item_id TEXT PRIMARY KEY) WITHOUT ROWID;",
-            )
-            .unwrap();
+        at_version(&path, SCHEMA_VERSION);
         assert!(
             open_to_read(&path).is_ok(),
             "counting left the reader's temporary queue in place"
@@ -10253,57 +9893,126 @@ mod tests {
     }
 
     #[test]
-    fn a_store_written_by_another_schema_is_refused_with_what_it_holds() {
+    fn an_empty_file_is_made_a_store_at_this_version() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            queue_one(&conn);
-            meta_set(&conn, META_SCHEMA_VERSION, "something-else").unwrap();
-        }
-        let (reason, unsent, said) = refusal_of(&path);
-        assert!(reason.contains("something-else"), "{reason}");
-        assert_eq!(unsent, Some(1));
-        assert!(
-            said.contains(&path.display().to_string()),
-            "the refusal does not say which file, which a person may know only by the variable that named it: {said}"
-        );
-        assert!(said.contains("1 write the server has not taken"), "{said}");
-        assert!(!said.to_lowercase().contains("delete"), "{said}");
+        // As a make that never committed leaves it.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("PRAGMA journal_mode = WAL;")
+            .unwrap();
+        let conn = open(&path).unwrap();
+        assert_eq!(version(&conn).unwrap(), SCHEMA_VERSION);
+        assert!(held_shape(&conn).unwrap().contains_key("queue"));
     }
 
     #[test]
-    fn a_store_of_another_shape_at_this_version_is_refused_by_name() {
+    fn two_programs_making_one_store_at_once_both_open_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let late = Connection::open(&path).unwrap();
+        // It read the file empty before the other made the store.
+        assert_eq!(version(&late).unwrap(), 0);
+        assert!(!holds_tables(&late).unwrap());
+        drop(open(&path).unwrap());
+        make(&late).unwrap();
+        assert_eq!(version(&late).unwrap(), SCHEMA_VERSION);
+        assert!(open(&path).is_ok());
+    }
+
+    /// The meta an earlier build of the core wrote, beside a version it
+    /// never set.
+    fn as_an_earlier_build_left_it(path: &Path) {
+        Connection::open(path)
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO meta (key, value) VALUES ('schema_version', '0');
+                 PRAGMA user_version = 0;",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn a_store_at_another_version_is_refused_with_its_writes_kept() {
+        for (found, older) in [(0, true), (0, false), (SCHEMA_VERSION + 1, false)] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("core.sqlite");
+            {
+                let conn = open(&path).unwrap();
+                queue_one(&conn);
+                meta_set(&conn, "kept", "as it was").unwrap();
+            }
+            if older {
+                as_an_earlier_build_left_it(&path);
+            } else {
+                at_version(&path, found);
+            }
+            let before = queued(&path);
+            let (reason, unsent, said) = refusal_of(&path);
+            assert!(
+                reason.contains(&format!(
+                    "schema version {found}, and this build reads schema version {SCHEMA_VERSION}"
+                )),
+                "{reason}"
+            );
+            assert_eq!(unsent, Some(1));
+            assert!(
+                said.contains(&path.display().to_string()),
+                "the refusal does not say which file, which a person may know only by the variable that named it: {said}"
+            );
+            assert!(
+                said.contains(
+                    "1 write the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send or show: open it with that build and drain or discard them before hydrating a new store"
+                ),
+                "{said}"
+            );
+            assert!(!said.to_lowercase().contains("delete"), "{said}");
+            assert!(matches!(
+                open_to_read(&path),
+                Err(CoreError::WrongSchema {
+                    unsent: Some(1),
+                    ..
+                })
+            ));
+            // A replacement would lose the write, so it is refused too.
+            assert!(matches!(
+                refusal(&path).unwrap(),
+                Some(CoreError::WrongSchema {
+                    unsent: Some(1),
+                    ..
+                })
+            ));
+            assert_eq!(
+                queued(&path),
+                before,
+                "refusing the store changed its queue"
+            );
+            let conn = Connection::open(&path).unwrap();
+            assert_eq!(version(&conn).unwrap(), found);
+            assert_eq!(
+                meta_get(&conn, "kept").unwrap().as_deref(),
+                Some("as it was")
+            );
+
+            // The witness: the same store at this version opens, write and all.
+            drop(conn);
+            at_version(&path, SCHEMA_VERSION);
+            let conn = open(&path).unwrap();
+            assert_eq!(untaken_count(&conn), Some(1));
+        }
+    }
+
+    #[test]
+    fn a_store_at_another_version_whose_queue_cannot_be_read_says_so() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite");
         {
             let conn = open(&path).unwrap();
             queue_one(&conn);
-            conn.execute_batch("ALTER TABLE queue RENAME COLUMN follows TO after_write")
-                .unwrap();
-            assert_eq!(
-                meta_get(&conn, META_SCHEMA_VERSION).unwrap().as_deref(),
-                Some(SCHEMA_VERSION)
-            );
-        }
-        let (reason, unsent, _) = refusal_of(&path);
-        assert!(reason.contains("queue"), "{reason}");
-        assert_eq!(unsent, Some(1));
-        assert!(matches!(
-            open_to_read(&path),
-            Err(CoreError::WrongSchema {
-                unsent: Some(1),
-                ..
-            })
-        ));
-
-        // A queue whose shape hides its count is refused all the same, and
-        // says it cannot tell.
-        {
-            let conn = Connection::open(&path).unwrap();
             conn.execute_batch("ALTER TABLE queue RENAME COLUMN verdict TO answer_kind")
                 .unwrap();
         }
+        at_version(&path, 0);
         let (_, unsent, said) = refusal_of(&path);
         assert_eq!(unsent, None);
         assert!(said.contains("cannot be read"), "{said}");
@@ -10347,6 +10056,7 @@ mod tests {
             let conn = open(&path).unwrap();
             queue_admitting(&conn, "merge_metadata");
         }
+        at_version(&path, 0);
         // A refused write that carried content stays until discarded, so it
         // is counted with the waiting one.
         for verdict in [None, Some("refused"), Some("dead")] {
@@ -10372,288 +10082,45 @@ mod tests {
             );
         }
         // The witness: the same earlier queue with the write answered names
-        // no kind, and is refused only for its shape.
+        // no kind, and is refused only for its version.
         hold(Some("accepted"));
         let (reason, unsent, _) = refusal_of(&path);
         assert!(!reason.contains("merge_metadata"), "{reason}");
-        assert!(reason.contains("its table queue"), "{reason}");
+        assert!(reason.contains("schema version 0"), "{reason}");
         assert_eq!(unsent, Some(0));
     }
 
+    /// Any change to what `schema.sql` makes, tables, indexes and triggers
+    /// alike, changes this hash: raise `SCHEMA_VERSION` with it, so a store
+    /// of the earlier shape is refused rather than misread.
     #[test]
-    fn a_store_with_the_older_index_is_refused_with_its_queue_kept() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            queue_one(&conn);
-            conn.execute_batch(
-                "DROP TABLE items_fts;
-                 CREATE VIRTUAL TABLE items_fts USING fts5 (
-                   title, body, tags, tokenize = 'unicode61 remove_diacritics 2'
-                 );",
+    fn the_shape_this_build_makes_is_the_one_its_version_names() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        let mut query = conn
+            .prepare(
+                "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name",
             )
             .unwrap();
-        }
-        let (reason, unsent, _) = refusal_of(&path);
-        assert!(reason.contains("items_fts"), "{reason}");
-        assert_eq!(unsent, Some(1));
-        let conn = Connection::open(&path).unwrap();
+        let named: String = query
+            .query_map([], |row| {
+                Ok(format!(
+                    "{}:{}:{}\n",
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    statement(&row.get::<_, String>(2)?)
+                ))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
         assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM queue", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            1,
-            "refusing the old index took the write beside it"
-        );
-    }
-
-    #[test]
-    fn a_store_without_folder_presentation_is_refused_without_losing_its_queue() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            queue_one(&conn);
-            conn.execute_batch("ALTER TABLE folder_files DROP COLUMN presentation")
-                .unwrap();
-        }
-        let (reason, unsent, _) = refusal_of(&path);
-        assert!(reason.contains("folder_files"), "{reason}");
-        assert_eq!(unsent, Some(1));
-        let conn = Connection::open(&path).unwrap();
-        assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM queue", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            1
-        );
-        assert!(!held_shape(&conn).unwrap()["folder_files"].contains("presentation"));
-    }
-
-    #[test]
-    fn a_store_made_before_a_table_this_build_adds_opens_and_gains_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            conn.execute_batch("DROP TABLE beneath; DROP TABLE read_backs;")
-                .unwrap();
-        }
-        // A reader cannot make the tables, so it waits on this build's
-        // writer, and says so rather than sending the person to another build.
-        assert!(matches!(
-            open_to_read(&path),
-            Err(CoreError::Invalid(said)) if said.contains("this build's writer")
-        ));
-        let conn = open(&path).unwrap();
-        let tables: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('beneath', 'read_backs')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(tables, 2);
-        assert!(open_to_read(&path).is_ok());
-    }
-
-    fn items_shape(conn: &Connection) -> String {
-        held_shape(conn).unwrap()["items"].clone()
-    }
-
-    #[test]
-    fn a_store_made_before_a_column_this_build_adds_opens_and_gains_it() {
-        for dropped in [
-            "read_only",
-            "read_only, trashed_at",
-            "read_only, trashed_at, capture_longitude",
-            "read_only, trashed_at, capture_longitude, capture_latitude",
-        ] {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("core.sqlite");
-            {
-                let conn = open(&path).unwrap();
-                queue_one(&conn);
-                upsert_item(
-                    &conn,
-                    &note("n1", "a", "b", "2026-01-01T00:00:00Z"),
-                    None,
-                    &Indexing::default(),
-                )
-                .unwrap();
-                conn.execute_batch("DROP INDEX items_read_only").unwrap();
-                for column in dropped.split(", ") {
-                    conn.execute_batch(&format!("ALTER TABLE items DROP COLUMN {column}"))
-                        .unwrap();
-                }
-                assert_ne!(items_shape(&conn), built_shape().unwrap()["items"]);
-            }
-            assert!(
-                matches!(
-                    open_to_read(&path),
-                    Err(CoreError::Invalid(said)) if said.contains("this build's writer") && said.contains("read_only")
-                ),
-                "a reader of a store without {dropped} did not send it to this build's writer"
-            );
-            let conn = open(&path).unwrap();
-            assert_eq!(items_shape(&conn), built_shape().unwrap()["items"]);
-            assert_eq!(
-                conn.query_row("SELECT COUNT(*) FROM queue", [], |row| row.get::<_, i64>(0))
-                    .unwrap(),
-                1
-            );
-            assert!(item_held(&conn, "n1").unwrap());
-            let trashed: Option<String> = conn
-                .query_row("SELECT trashed_at FROM items WHERE id = 'n1'", [], |row| {
-                    row.get(0)
-                })
-                .unwrap();
-            assert_eq!(trashed, None);
-            let read_only: bool = conn
-                .query_row("SELECT read_only FROM items WHERE id = 'n1'", [], |row| {
-                    row.get(0)
-                })
-                .unwrap();
-            assert!(!read_only);
-            drop(conn);
-            assert!(open_to_read(&path).is_ok());
-        }
-    }
-
-    /// A table made `WITHOUT ROWID` gains a column at its end as one made
-    /// without that does.
-    #[test]
-    fn a_folder_record_made_before_its_embeds_opens_and_gains_them() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            conn.execute_batch(
-                "INSERT INTO folder_files (path, item_id, content_hash, links, edge_lines, seen_at)
-                 VALUES ('a.md', 'n1', 'h', '[]', '[]', '2026-01-01T00:00:00Z');
-                 ALTER TABLE folder_files DROP COLUMN embeds",
-            )
-            .unwrap();
-        }
-        let conn = open(&path).unwrap();
-        let held = held_shape(&conn).unwrap();
-        assert_eq!(held["folder_files"], built_shape().unwrap()["folder_files"]);
-        let embeds: Option<String> = conn
-            .query_row(
-                "SELECT embeds FROM folder_files WHERE path = 'a.md'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(embeds, None);
-    }
-
-    #[test]
-    fn two_programs_opening_one_old_store_at_once_both_succeed() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            conn.execute_batch(
-                "DROP INDEX items_read_only; ALTER TABLE items DROP COLUMN read_only",
-            )
-            .unwrap();
-        }
-        let first = Connection::open(&path).unwrap();
-        let second = Connection::open(&path).unwrap();
-        let seen_first = refuse_misshapen(&first, &held_shape(&first).unwrap(), false).unwrap();
-        let seen_second = refuse_misshapen(&second, &held_shape(&second).unwrap(), false).unwrap();
-        assert!(!seen_first.is_empty() && !seen_second.is_empty());
-        add_columns(&first, &seen_first).unwrap();
-        // It read the old shape before the first added the column.
-        add_columns(&second, &seen_second).unwrap();
-        assert_eq!(items_shape(&second), built_shape().unwrap()["items"]);
-    }
-
-    #[test]
-    fn a_store_made_with_the_columns_written_otherwise_gains_them() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            let made: String = conn
-                .query_row(
-                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'items'",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            let earlier = made
-                .replace(
-                    ",\n  capture_latitude REAL,\n  capture_longitude REAL,\n  trashed_at TEXT,\n  read_only INTEGER NOT NULL DEFAULT 0\n",
-                    "\n  -- as an earlier build wrote it\n",
-                )
-                .replace("(\n", "(");
-            assert!(!earlier.contains("capture_latitude"), "{earlier}");
-            conn.execute_batch(&format!("DROP TABLE items; {earlier};"))
-                .unwrap();
-        }
-        let conn = open(&path).unwrap();
-        assert_eq!(items_shape(&conn), built_shape().unwrap()["items"]);
-    }
-
-    #[test]
-    fn a_store_missing_a_column_short_of_the_end_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            queue_one(&conn);
-            conn.execute_batch("ALTER TABLE items DROP COLUMN capture_latitude")
-                .unwrap();
-        }
-        let (reason, unsent, _) = refusal_of(&path);
-        assert!(reason.contains("items"), "{reason}");
-        assert_eq!(unsent, Some(1));
-        let conn = Connection::open(&path).unwrap();
-        assert!(!items_shape(&conn).contains("capture_latitude"));
-    }
-
-    /// Each column `ADDED_COLUMNS` lists is at its table's end, in order, so
-    /// a store made before all of them gains them.
-    #[test]
-    fn the_columns_a_writer_adds_end_their_tables() {
-        let built = built_shape().unwrap();
-        let mut tables: Vec<&str> = ADDED_COLUMNS.iter().map(|(table, _)| *table).collect();
-        tables.dedup();
-        for table in tables {
-            let added: Vec<&str> = ADDED_COLUMNS
-                .iter()
-                .filter(|(name, _)| *name == table)
-                .map(|(_, column)| *column)
-                .collect();
-            let made = &built[table];
-            let (mut earliest, options) = made.split_at(made.rfind(')').unwrap());
-            for column in added.iter().rev() {
-                earliest = earliest
-                    .strip_suffix(&format!(",{}", statement(column)))
-                    .unwrap_or_else(|| panic!("{column} does not end {table}"));
-            }
-            let earliest = format!("{earliest}{options}");
-            assert_eq!(columns_to_add(table, &earliest, made), Some(added));
-        }
-    }
-
-    /// A change to a table's shape refuses every store made before it, but
-    /// for a column added to a table's end that `ADDED_COLUMNS` lists, so it
-    /// is made on purpose: write the new hash here when it is.
-    #[test]
-    fn the_shape_this_build_makes_is_the_one_meant() {
-        let built = built_shape().unwrap();
-        let mut tables: Vec<_> = built.iter().collect();
-        tables.sort();
-        let named: String = tables
-            .iter()
-            .map(|(name, statement)| format!("{name}:{statement}\n"))
-            .collect();
-        assert_eq!(
-            crate::folder::state::hash(named.as_bytes()),
-            "d8292a811b74a68a",
-            "the shape of a table changed, which refuses every store made before it"
+            (
+                SCHEMA_VERSION,
+                crate::folder::state::hash(named.as_bytes()).as_str()
+            ),
+            (1, "9a505dc1b14cecc6"),
+            "the shape schema.sql makes changed: raise SCHEMA_VERSION and write the new hash here"
         );
     }
 
@@ -11329,7 +10796,7 @@ mod tests {
         )
         .unwrap();
         malformed
-            .execute_batch("ALTER TABLE queue RENAME COLUMN follows TO after_write")
+            .pragma_update(None, "user_version", SCHEMA_VERSION + 1)
             .unwrap();
         assert!(matches!(open(&path), Err(CoreError::WrongSchema { .. })));
         assert!(matches!(
