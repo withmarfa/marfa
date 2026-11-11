@@ -304,7 +304,7 @@ describe("two servers on one prefix", () => {
     const stores = (await operator.listBlobStores()).data.data;
     const disk = stores.find((found) => found.kind === "disk")!;
     const s3 = stores.find((found) => found.kind === "s3")!;
-    // The restore wakes replication, which waits here until the drop is refused.
+    // The restore and the upload wake replication, which waits here until the drop is refused.
     await second.setFault("hold:housekeeping:blob-replicate");
     const restored = await ownerOf(second).restoreBackup(
       firstId,
@@ -313,6 +313,15 @@ describe("two servers on one prefix", () => {
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     expect(restored.data.blobs_missing).toEqual([]);
     await second.waitForHold("hold:housekeeping:blob-replicate");
+    const uploaded = await clientsFor(second).working.uploadBlob(
+      kept.bytes,
+      "text/plain",
+    );
+    expect(uploaded.status, JSON.stringify(uploaded.error)).toBeLessThan(300);
+    const copies = (await operator.listBlobCopies(kept.hash)).data.data;
+    expect(copies.map((copy) => copy.store_id).sort()).toEqual(
+      [disk.id, s3.id].sort(),
+    );
     const early = await operator.deleteBlobCopy(kept.hash, disk.id);
     expect(early.status).toBe(409);
     expect(early.error?.error.code).toBe("copies_below_minimum");
