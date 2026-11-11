@@ -171,8 +171,7 @@ impl Sender {
             // The pass sees every commit counted so far, and its own commit wakes nothing.
             let before = *self.commits.borrow_and_update();
             let app = self.app.clone();
-            // A pass that only moves the place is made again if a power cut loses it; one that
-            // queues a delivery is synced, since a delivery keeps its ids once sent.
+            // Only a pass that may queue a delivery is synced: a sent delivery keeps its ids.
             let write = if synced {
                 Write::own()
             } else {

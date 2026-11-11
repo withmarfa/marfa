@@ -67,8 +67,7 @@ impl Write {
         }
     }
 
-    /// For a commit that confirms nothing, and that a power cut can lose only with every synced
-    /// commit after it, since a sync covers every earlier frame of the log.
+    /// Only for a commit that confirms nothing: the next synced commit syncs it too.
     pub const fn unsynced(self) -> Write {
         Write {
             sync: false,

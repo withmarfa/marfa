@@ -232,8 +232,7 @@ pub async fn write(app: &App, caller: &Caller, asked: Asked) -> Result<String> {
     .await
 }
 
-/// A best-effort page's answer, kept outside its transaction so that a failed commit can still
-/// answer for each entry.
+/// Kept outside the transaction, so a failed commit can still answer for each entry.
 #[derive(Default)]
 pub(crate) struct Answer {
     counts: Counts,
