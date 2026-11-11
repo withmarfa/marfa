@@ -6,7 +6,7 @@ use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 
 use super::origin;
-use super::sign_in::{done, refuse_elsewhere};
+use super::sign_in::{done, refuse_elsewhere, require_own_page};
 use super::{
     cookies, redirect, require_safe_caller, require_safe_transport, text_field, with_cookie,
 };
@@ -92,7 +92,7 @@ pub async fn sign_in(
     body: JsonBody,
 ) -> Answer {
     require_safe_caller(&app, &visit)?;
-    refuse_elsewhere(origin::said(&headers, &form_origins(&app)))?;
+    require_own_page(&app, &headers)?;
     let mut body = body.object(&AUTHENTICATION_FIELDS).await?;
     let assertion = Assertion {
         token: challenge_token(&app, &headers),

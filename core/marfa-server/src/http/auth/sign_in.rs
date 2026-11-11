@@ -21,14 +21,26 @@ const PASSWORD_FIELDS: [&str; 2] = ["email", "password"];
 const CONFIRM_FIELDS: [&str; 2] = ["password", "passkey"];
 const CONFIRM_PASSWORD_CHARS: usize = 1024;
 
+fn not_from_here() -> Refusal {
+    Refusal::new(
+        Code::Forbidden,
+        "This sign-in did not come from a page of this instance.",
+    )
+}
+
 pub(super) fn refuse_elsewhere(source: Source) -> Result<(), Refusal> {
-    if source == Source::Elsewhere {
-        return Err(Refusal::new(
-            Code::Forbidden,
-            "This sign-in did not come from a page of this instance.",
-        ));
+    match source {
+        Source::Elsewhere => Err(not_from_here()),
+        Source::Own | Source::Unsaid => Ok(()),
     }
-    Ok(())
+}
+
+/// A door that opens a browser session needs `Origin` or `Referer` to name this instance.
+pub(super) fn require_own_page(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
+    match origin::said_by_form(headers, &form_origins(app)) {
+        Source::Own => Ok(()),
+        Source::Elsewhere | Source::Unsaid => Err(not_from_here()),
+    }
 }
 
 pub(super) fn done(cookie: HeaderValue) -> Answer {
@@ -49,7 +61,7 @@ pub async fn sign_in(
     if body.declares_form() {
         return form(&app, &headers, visit, body).await;
     }
-    refuse_elsewhere(origin::said(&headers, &form_origins(&app)))?;
+    require_own_page(&app, &headers)?;
     let body = body.object(&PASSWORD_FIELDS).await?;
     let email = text_field(&body, "email")?.to_string();
     let password = text_field(&body, "password")?.to_string();
@@ -71,7 +83,7 @@ fn back_to_sign_in(pairs: &[(&str, &str)]) -> String {
 }
 
 async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody) -> Answer {
-    refuse_elsewhere(origin::said_by_form(headers, &form_origins(app)))?;
+    require_own_page(app, headers)?;
     let fields = body.form().await?;
     let field = |name: &str| fields.get(name).and_then(Value::as_str).unwrap_or("");
     let address = app.addresses().sign_in();

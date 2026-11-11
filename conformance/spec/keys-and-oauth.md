@@ -2413,7 +2413,7 @@ If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/consent` or `PO
 
 ### `keys-and-oauth/browser-no-origin`
 
-When a browser form post carries neither `Origin` nor `Referer`, the server MUST answer it as that operation answers a form rather than refuse it for its origin.
+When a form post to `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/authorize/decision` carries neither `Origin` nor `Referer`, the server MUST answer it as that operation answers a form rather than refuse it for its origin.
 
 **Tests:** `compliance/sign-in-surface.test.ts › refuses a form post from an origin it does not trust, on every browser door`.
 
@@ -2597,9 +2597,37 @@ If `POST /auth/sign-in` sends, as JSON, a key other than `email` and `password`,
 
 Where the sign-in address is plain HTTP on this machine, the server MUST name the owner's session cookie `marfa_session`.
 
-**Reason:** A browser takes a `__Host-` cookie only over HTTPS. Over HTTPS the cookie is `__Host-marfa_session`, which binds it to the instance's host and path `/`.
+**Reason:** A browser takes a `__Host-` cookie only over HTTPS.
 
 **Tests:** `compliance/sign-in-surface.test.ts › answers a password sign-in sent as JSON with only ok, and its session cookie`.
+
+### `keys-and-oauth/session-cookie-https`
+
+Where the sign-in address is HTTPS, the server MUST set the owner's session cookie as `__Host-marfa_session`, with `Secure`, `Path=/` and no `Domain`.
+
+**Reason:** The prefix binds the cookie to the instance's host, so no other host under the same domain can set or read it.
+
+**Tests:** `compliance/session-cookie-https.test.ts › is __Host-marfa_session, Secure, on path / and with no Domain`.
+
+### `keys-and-oauth/session-cookie-other-name`
+
+If a request carries a live browser session's token under a cookie name other than the one the sign-in address calls for, then the server MUST answer the request as one that carries no session.
+
+**Tests:** `compliance/session-cookie-https.test.ts › signs no one in when its token comes under the name a plain HTTP address uses`.
+
+### `keys-and-oauth/sign-in-unsaid-origin`
+
+If `POST /auth/sign-in` or `POST /auth/passkeys/sign-in` carries neither `Origin` nor `Referer`, then the server MUST answer `403 forbidden`.
+
+**Reason:** Sign-in form posts must say where they came from, because a door that opens a browser session takes a post only from a page of this instance.
+
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a sign-in that says neither Origin nor Referer, as a form or as JSON, and sets no cookie`, `compliance/passkeys.test.ts › refuses a passkey sign-in that says neither Origin nor Referer, and opens no session`.
+
+### `keys-and-oauth/sign-out-answer`
+
+When `POST /auth/sign-out` ends the browser session, the server MUST answer `200` with only `{"ok": true}`.
+
+**Tests:** `compliance/sign-in-surface.test.ts › answers a sign-out with only ok, and ends the session cookie`.
 
 ### `keys-and-oauth/library-origin`
 
