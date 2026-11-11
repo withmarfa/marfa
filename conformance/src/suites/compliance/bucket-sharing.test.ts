@@ -19,7 +19,8 @@ import {
  * Two servers on one prefix of one bucket, as when a server replaces another
  * that may still run, and a server started again on an image of its data
  * directory: each deletes only the objects it wrote (`stores/delete-only-written`
- * and `instance/backup-thinning-only-backups`), and keeps the files a backup
+ * and `instance/backup-thinning-only-backups`), writes its own copy of a file a
+ * restore found (`stores/replicate-own-copy`), and keeps the files a backup
  * in its folder names though its database never recorded that backup
  * (`instance/backup-found-keeps-files`).
  */
@@ -276,6 +277,50 @@ describe("two servers on one prefix", () => {
         bytes: kept.bytes,
       });
     }
+  });
+
+  it("writes a copy of its own of each file a restore found in the bucket, and then drops the disk copy", async () => {
+    const store = ownObjectStore();
+    const bucket = bucketAt(store.S3_PREFIX);
+    const first = await boot("bucket-own-first", store);
+    const firstId = await instanceIdOf(first);
+    const kept = await file(first, "a file the second server copies for itself");
+    const backup = await ownerOf(first).runBackup();
+    expect(backup.status, JSON.stringify(backup.error)).toBe(200);
+    const hex = kept.hash.replace(/^sha256:/, "");
+    const objects = async () =>
+      (await bucket.keys()).filter((key) =>
+        key.startsWith(`${store.S3_PREFIX}/blobs/${hex}/`),
+      );
+    const firsts = await objects();
+    expect(firsts.length).toBe(1);
+
+    const second = await boot("bucket-own-second", store);
+    const restored = await ownerOf(second).restoreBackup(
+      firstId,
+      backup.data.backup.name,
+    );
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data.blobs_missing).toEqual([]);
+    const { operator } = clientsFor(second);
+    await replicated(operator);
+    const both = await objects();
+    expect(both.length).toBe(2);
+    expect(both).toEqual(expect.arrayContaining(firsts));
+
+    const stores = (await operator.listBlobStores()).data.data;
+    const disk = stores.find((found) => found.kind === "disk")!;
+    const s3 = stores.find((found) => found.kind === "s3")!;
+    const drop = await operator.deleteBlobCopy(kept.hash, disk.id);
+    expect(drop.status, JSON.stringify(drop.error)).toBe(200);
+    expect(await download(second, kept.hash)).toEqual({
+      status: 200,
+      bytes: kept.bytes,
+    });
+    const last = await operator.deleteBlobCopy(kept.hash, s3.id);
+    expect(last.status).toBe(409);
+    expect(last.error?.error.code).toBe("copies_below_minimum");
+    expect(await objects()).toEqual(expect.arrayContaining(both));
   });
 
   it("keeps the files a backup in its folder names when its database never recorded that backup, and deletes only the backups it recorded", async () => {
