@@ -11,6 +11,7 @@ pub mod volume;
 mod writer;
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use rusqlite::Transaction;
@@ -80,6 +81,8 @@ pub struct Db {
     writer: writer::Writer,
     faults: Arc<Faults>,
     budget: Duration,
+    /// A statement has met pages SQLite cannot read; nothing clears it but a restart.
+    damaged: AtomicBool,
 }
 
 impl Db {
@@ -93,10 +96,22 @@ impl Db {
             writer,
             faults,
             budget: options.write_wait,
+            damaged: AtomicBool::new(false),
         })
     }
 
-    fn with_budget(&self, refusal: Refusal) -> Refusal {
+    /// Whether the file has answered a statement with damage since the server started.
+    pub fn damaged(&self) -> bool {
+        self.damaged.load(Ordering::Relaxed)
+    }
+
+    fn answered(&self, refusal: Refusal) -> Refusal {
+        if matches!(
+            refusal.database_code(),
+            Some("SQLITE_CORRUPT" | "SQLITE_NOTADB")
+        ) {
+            self.damaged.store(true, Ordering::Relaxed);
+        }
         if refusal.code == Code::WriteContention {
             refusal.with_detail("budget_ms", self.budget.as_millis() as u64)
         } else {
@@ -115,7 +130,7 @@ impl Db {
         self.readers
             .read(job)
             .await
-            .map_err(|refusal| self.with_budget(refusal))
+            .map_err(|refusal| self.answered(refusal))
     }
 
     /// As `read`, behind other work: for a long read that no request waits on.
@@ -130,7 +145,7 @@ impl Db {
         self.readers
             .read_background(job)
             .await
-            .map_err(|refusal| self.with_budget(refusal))
+            .map_err(|refusal| self.answered(refusal))
     }
 
     /// Empties the log a large write grew, so it does not stay the size of that write.
@@ -151,13 +166,13 @@ impl Db {
             return Err(io_refusal());
         }
         if !self.wait_out_lock().await {
-            return Err(self.with_budget(Refusal::new(
+            return Err(self.answered(Refusal::new(
                 Code::WriteContention,
                 "The database is busy; try again.",
             )));
         }
         if write.for_caller && self.faults.fail(FAIL_LOCK, None) {
-            return Err(self.with_budget(Refusal::new(
+            return Err(self.answered(Refusal::new(
                 Code::WriteContention,
                 "The database is busy; try again.",
             )));
@@ -165,7 +180,7 @@ impl Db {
         self.writer
             .submit(write, self.budget, job)
             .await
-            .map_err(|refusal| self.with_budget(refusal))
+            .map_err(|refusal| self.answered(refusal))
     }
 
     /// Waits as for a lock another connection holds, until it is let go or the write wait is spent.
@@ -225,7 +240,7 @@ impl Db {
         self.writer
             .flush()
             .await
-            .map_err(|refusal| self.with_budget(refusal))
+            .map_err(|refusal| self.answered(refusal))
     }
 
     pub fn commits(&self) -> watch::Receiver<u64> {

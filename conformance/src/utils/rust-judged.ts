@@ -107,6 +107,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/disk-reserve-health.test.ts",
   "src/suites/compliance/disk-reserve.test.ts",
   "src/suites/compliance/disk-space-faults.test.ts",
+  "src/suites/compliance/durability.test.ts",
   "src/suites/compliance/edge-check-order.test.ts",
   "src/suites/compliance/edge-events.test.ts",
   "src/suites/compliance/edge-gaps.test.ts",

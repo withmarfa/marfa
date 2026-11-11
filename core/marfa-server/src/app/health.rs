@@ -176,6 +176,9 @@ impl Health {
 }
 
 async fn database(app: &App) -> Component {
+    if app.db.damaged() {
+        return Component::not_ok(Status::Down, "the database file is damaged");
+    }
     let started = Instant::now();
     let read = app.db.read(|tx| {
         tx.query_row(

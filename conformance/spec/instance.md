@@ -1256,6 +1256,26 @@ When the server completes an unfinished database, the server MUST leave it holdi
 
 **Tests:** `compliance/database-file.test.ts › creates the tables it lacks and remains unclaimed until a real claim`.
 
+## Durability
+
+A write the server confirms is one a client may rely on. The database file is the only place the server keeps it.
+
+### `instance/confirmed-write-durable`
+
+When the server answers a write with a success status, the server MUST have synced that write to stable storage, so that it is present after the machine loses power or the server's process is killed.
+
+**Reason:** a commit that waits for its data to reach the drive, not the operating system's cache, is the only one a power cut or a kernel panic cannot take back. On macOS a plain `fsync` leaves the data in the drive's cache, so the server asks for a full flush there. A best-effort page of `POST /items/bulk` or `POST /edges/bulk` answers only once every entry it kept is synced.
+
+**Tests:** `compliance/durability.test.ts › syncs each commit in full on every connection`, `› keeps every write it confirmed through kills at random points, and leaves a file that checks out`.
+
+### `instance/damaged-file-reported`
+
+If a read or a write meets pages of the database file that SQLite cannot read, then the server MUST answer that request `500 internal_error`, report the database `down` in `GET /health` and keep serving.
+
+**Reason:** SQLite keeps no checksum of a page's content, so a changed byte inside a stored value cannot be told from the value. A start does not check the whole file, since `PRAGMA quick_check` reads every page and takes seconds on an instance of 250,000 items; damage to the structure is reported when a request meets it.
+
+**Tests:** `compliance/durability.test.ts › answers 500 for what reads them, reports the database down, and keeps serving`.
+
 ## The configuration operations
 
 `GET /config`, `PUT /config` and `PATCH /config` hold the instance's display name, levers and live settings. What a lever does is `types/strict-mode`, `types/source-allowlist` and `types/source-filter`, and the bounds of a retention are `housekeeping/retention-days-range` and `housekeeping/retention-hours-range`. That `PUT /config` replaces the configuration whole is `types/config`, and the code a lever missing a member gets is `types/config-lever-missing-field`.
