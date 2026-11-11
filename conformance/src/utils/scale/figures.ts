@@ -174,6 +174,7 @@ export const CEILINGS: Record<string, CeilingEntry> = {
 
   // One long conversation, and conversations listed by their latest message.
   conversation_messages_written: recorded,
+  conversation_activity_advances: recorded,
   conversation_fill_rate: recorded,
   conversation_append: { ceiling: 10, issue: 2838 },
   conversation_latest_50: { ceiling: 10, issue: 2838 },

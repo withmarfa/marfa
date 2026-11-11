@@ -3,6 +3,7 @@ import { loadavg, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { setTimeout as sleep } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { bootServer, stopServer } from "../marfa-server.js";
 import { controlRequest } from "../../src/utils/control-request.js";
@@ -14,7 +15,10 @@ import {
 } from "../../src/utils/scale/figures.js";
 import { timedAnswer } from "../../src/utils/scale/answer.js";
 import {
+  ActivityLog,
+  judgeBlob,
   judgeListing,
+  ListingWalk,
   messageOf,
   MessageWalk,
   scrambled,
@@ -46,6 +50,13 @@ const LIST_RUNS = 30;
 const WALK_LIMIT = 1000;
 const LISTING_LIMIT = 500;
 const DEEP_PAGES = 3;
+/** Each other conversation holds message 0 then message 1, which share a `sent_at`. */
+const SMALL_PLAN = {
+  first: 0,
+  direction: "asc",
+  total: 2,
+  held: 2,
+} as const;
 const fileText = (n: number) => `Minutes of meeting ${n}`;
 
 interface Options {
@@ -149,10 +160,28 @@ export async function conversations(): Promise<void> {
         files,
         first: inOrder - 1,
         direction: "desc",
-        total: LATEST,
+        total: 2 * LATEST,
+        held: opts.messages,
         limit: LATEST,
       });
-      checker.page(answer.json(), null);
+      const body = answer.json() as { next_cursor?: unknown };
+      checker.page(body, null);
+      if (typeof body.next_cursor === "string") {
+        const more = await send(
+          "GET",
+          `${latestPath(id, LATEST)}&cursor=${encodeURIComponent(body.next_cursor)}`,
+          undefined,
+          connection,
+        );
+        if (!ok(more)) {
+          result.errors++;
+          log(
+            `latest ${LATEST}, next: ${more.status} ${more.text.slice(0, 160)}`,
+          );
+          continue;
+        }
+        checker.page(more.json(), body.next_cursor);
+      }
       checker.finish();
       if (checker.problemCount > 0) {
         if (result.errors === 0) {
@@ -170,7 +199,7 @@ export async function conversations(): Promise<void> {
   const walkMessages = async (
     connection: Connection,
     id: string,
-    plan: Pick<MessagePlan, "first" | "direction" | "total">,
+    plan: Pick<MessagePlan, "first" | "direction" | "total" | "held">,
     pages: number,
   ): Promise<Walked> => {
     const checker = new MessageWalk({
@@ -197,7 +226,7 @@ export async function conversations(): Promise<void> {
       const body = answer.json() as { next_cursor?: string | null };
       checker.page(body, cursor);
       cursor = body.next_cursor ?? null;
-      if (cursor === null) break;
+      if (cursor === null || checker.cursorStuck) break;
     }
     checker.finish();
     result.errors += checker.problemCount;
@@ -207,7 +236,7 @@ export async function conversations(): Promise<void> {
   };
 
   const listConversations = async (connection: Connection) => {
-    const items: { id: string; last_activity_at: string }[] = [];
+    const walk = new ListingWalk(opts.conversations, LISTING_LIMIT);
     let ms = 0;
     let cursor: string | null = null;
     do {
@@ -220,19 +249,18 @@ export async function conversations(): Promise<void> {
       if (!ok(answer)) {
         return {
           ms,
-          items,
+          items: walk.items,
           failed: `${answer.status} ${answer.text.slice(0, 160)}`,
         };
       }
       ms += answer.ms;
-      const body = answer.json() as {
-        data: { id: string; last_activity_at: string }[];
-        next_cursor?: string | null;
-      };
-      items.push(...body.data);
-      cursor = body.next_cursor ?? null;
+      const step = walk.page(answer.json(), cursor);
+      if (step.problem !== null) {
+        return { ms, items: walk.items, failed: step.problem };
+      }
+      cursor = step.next;
     } while (cursor !== null);
-    return { ms, items, failed: null as string | null };
+    return { ms, items: walk.items, failed: null as string | null };
   };
 
   const rowCount = async (connection: Connection, id: string) => {
@@ -242,7 +270,7 @@ export async function conversations(): Promise<void> {
       undefined,
       connection,
     );
-    mustOk("listing the tables", listed);
+    if (!ok(listed)) return undefined;
     return (
       listed.json() as { data: { name: string; row_count: number }[] }
     ).data.find((t) => t.name === TABLE)?.row_count;
@@ -306,7 +334,8 @@ export async function conversations(): Promise<void> {
       mustOk("creating a conversation", made, 201);
       return (made.json() as { item: { id: string } }).item.id;
     };
-    const long = await makeConversation("The long conversation");
+    const longTitle = "The long conversation";
+    const long = await makeConversation(longTitle);
     // Reversed bulk pages expose reads that use id order instead of sent_at.
     const putBody = (numbers: number[]) =>
       JSON.stringify({
@@ -315,7 +344,7 @@ export async function conversations(): Promise<void> {
           values: messageOf(n, files),
         })),
       });
-    const activity = new Map<string, string>();
+    const activity = new ActivityLog();
     let written = 0;
     let writeErrors = 0;
     let failedPages = 0;
@@ -324,12 +353,14 @@ export async function conversations(): Promise<void> {
       numbers: number[],
       label: string,
     ): Promise<number | null> => {
+      const sentAt = Date.now();
       const answer = await send(
         "POST",
         `/items/${id}/tables/${TABLE}/rows`,
         putBody(numbers),
         connection,
       );
+      const receivedAt = Date.now();
       const judged = judgeWrite(answer, numbers.length);
       written += judged.written.length;
       writeErrors += judged.errors;
@@ -346,14 +377,16 @@ export async function conversations(): Promise<void> {
         log(`${label}: the answer names no last_activity_at`);
         return null;
       }
-      const before = activity.get(id);
-      if (before !== undefined && judged.lastActivity < before) {
+      const problem = activity.record(
+        id,
+        sentAt,
+        receivedAt,
+        judged.lastActivity,
+      );
+      if (problem !== null) {
         writeErrors++;
-        log(
-          `${label}: last_activity_at went back from ${before} to ${judged.lastActivity}`,
-        );
+        log(`${label}: ${problem}`);
       }
-      activity.set(id, judged.lastActivity);
       return answer.ms;
     };
 
@@ -381,11 +414,16 @@ export async function conversations(): Promise<void> {
 
     // Interleaving appends exposes a listing that special-cases the long conversation.
     const small: string[] = [];
+    const titles = new Map([[long, longTitle]]);
     for (let i = 0; i < opts.conversations - 1; i++) {
-      small.push(await makeConversation(`Conversation ${i}`));
+      const title = `Conversation ${i}`;
+      const id = await makeConversation(title);
+      titles.set(id, title);
+      small.push(id);
     }
     const appendTimes: number[] = [];
     for (const id of small) await write(id, [0], "a first message");
+    await sleep(5);
     const turn = scrambled(small.length);
     const middle = Math.floor(small.length / 2);
     // The last appends are the late messages, so the newest ids are the earliest sent.
@@ -428,11 +466,21 @@ export async function conversations(): Promise<void> {
     const itemActivity = (
       longItem.json() as { item: { last_activity_at: string } }
     ).item.last_activity_at;
-    if (itemActivity !== activity.get(long)) {
+    if (itemActivity !== activity.latest.get(long)) {
       throw new Error(
-        `the conversation reads last_activity_at ${itemActivity}, its last append was answered ${activity.get(long)}`,
+        `the conversation reads last_activity_at ${itemActivity}, its last append was answered ${activity.latest.get(long)}`,
       );
     }
+    add(
+      scalar("conversation_activity_advances", "count", activity.advances, {
+        errors: activity.advances === 0 ? 1 : 0,
+        note:
+          activity.advances === 0
+            ? "no write came far enough after the one before it to show last_activity_at moving on"
+            : "writes to one conversation, 2 ms or more apart, that each moved last_activity_at on",
+      }),
+      recordedOnly("every such write moves it on"),
+    );
     const memory = readServerMemory(supervisor(stateA));
     add(
       scalar("conversation_rss", "MB", memory.rssMb),
@@ -459,6 +507,7 @@ export async function conversations(): Promise<void> {
         first: inOrder - 1,
         direction: "desc",
         total: Math.min(DEEP_PAGES * WALK_LIMIT, opts.messages),
+        held: opts.messages,
       },
       DEEP_PAGES,
     );
@@ -478,10 +527,18 @@ export async function conversations(): Promise<void> {
       Math.ceil(opts.messages / WALK_LIMIT) + 1,
     );
     for (const problem of source.problems) log(`source walk: ${problem}`);
+    const digests = new Map([[long, source.digest]]);
+    let smallErrors = 0;
+    for (const id of small) {
+      const walked = await walkMessages(connection, id, SMALL_PLAN, 2);
+      for (const problem of walked.problems) log(`${id}: ${problem}`);
+      smallErrors += walked.errors;
+      digests.set(id, walked.digest);
+    }
     add(
       distribution("conversation_page_by_sent_at", "ms", source.times, {
-        errors: source.errors,
-        note: `${source.times.length} pages of ${WALK_LIMIT}: every message once, in order, with the values and files written`,
+        errors: source.errors + smallErrors,
+        note: `${source.times.length} pages of ${WALK_LIMIT}: every message once, in order, with the values and files written; the ${small.length} other conversations read the same way`,
       }),
       recordedOnly("recorded"),
     );
@@ -490,7 +547,8 @@ export async function conversations(): Promise<void> {
     let listErrors = 0;
     for (let run = -3; run < LIST_RUNS; run++) {
       const answer = await listConversations(connection);
-      const wrong = answer.failed ?? judgeListing(answer.items, activity);
+      const wrong =
+        answer.failed ?? judgeListing(answer.items, activity.latest);
       if (wrong !== null) {
         if (listErrors++ === 0) log(`listing: ${wrong}`);
         continue;
@@ -500,7 +558,7 @@ export async function conversations(): Promise<void> {
     add(
       distribution("conversations_list_by_activity", "ms", listed, {
         errors: listErrors,
-        note: `all ${opts.conversations} conversations in pages of ${LISTING_LIMIT}, latest message first; ${new Set(activity.values()).size} distinct times`,
+        note: `all ${opts.conversations} conversations in pages of ${LISTING_LIMIT}, latest message first; ${new Set(activity.latest.values()).size} distinct times`,
       }),
       upTo("p95 50 ms"),
     );
@@ -577,25 +635,45 @@ export async function conversations(): Promise<void> {
       upTo("p95 10 ms"),
     );
     const problems: string[] = [];
-    const restoredCount = await rowCount(restoreInto, long);
-    if (restoredCount !== opts.messages) {
-      problems.push(
-        `the conversation holds ${String(restoredCount)} messages, not ${opts.messages}`,
+    let restoredCount = 0;
+    let expectedCount = 0;
+    for (const [id, title] of titles) {
+      const plan = id === long ? undefined : SMALL_PLAN;
+      const total = plan?.total ?? opts.messages;
+      expectedCount += total;
+      const label = id === long ? "the long conversation" : title;
+      const item = await send("GET", `/items/${id}`, undefined, restoreInto);
+      const heldTitle = ok(item)
+        ? (item.json() as { item: { properties: { title?: string } } }).item
+            .properties.title
+        : undefined;
+      if (heldTitle !== title) {
+        problems.push(`${label} reads the title ${String(heldTitle)}`);
+      }
+      const count = await rowCount(restoreInto, id);
+      if (count !== total) {
+        problems.push(`${label} holds ${String(count)} messages, not ${total}`);
+      }
+      restoredCount += count ?? 0;
+      const walked = await walkMessages(
+        restoreInto,
+        id,
+        plan ?? { first: -LATE, direction: "asc", total, held: total },
+        Math.ceil(total / WALK_LIMIT) + 1,
       );
+      if (walked.errors > 0) {
+        problems.push(
+          `${label}: ${walked.errors} faults reading the messages back: ${walked.problems.join("; ")}`,
+        );
+      }
+      if (walked.digest !== digests.get(id)) {
+        problems.push(
+          `${label}: the restored message ids differ from the source's`,
+        );
+      }
     }
-    const restoredWalk = await walkMessages(
-      restoreInto,
-      long,
-      { first: -LATE, direction: "asc", total: opts.messages },
-      Math.ceil(opts.messages / WALK_LIMIT) + 1,
-    );
-    if (restoredWalk.errors > 0) {
-      problems.push(
-        `${restoredWalk.errors} faults reading the restored messages back: ${restoredWalk.problems.join("; ")}`,
-      );
-    }
-    if (restoredWalk.digest !== source.digest) {
-      problems.push("the restored message ids differ from the source's");
+    if (restoredCount !== expectedCount) {
+      problems.push(`${restoredCount} messages came back of ${expectedCount}`);
     }
     for (const [n, id] of files.entries()) {
       const file = await send("GET", `/items/${id}`, undefined, restoreInto);
@@ -615,19 +693,16 @@ export async function conversations(): Promise<void> {
           headers: { Authorization: `Bearer ${restoreInto.key}` },
         }),
       );
-      if (bytes.text !== content.text) {
-        problems.push(
-          `file ${id} holds "${bytes.text.slice(0, 40)}", not "${content.text}"`,
-        );
-      }
+      const wrong = judgeBlob(bytes, content.text);
+      if (wrong !== null) problems.push(`file ${id} ${wrong}`);
     }
-    for (const problem of problems) log(`restore: ${problem}`);
+    for (const problem of problems.slice(0, 20)) log(`restore: ${problem}`);
     add(
-      scalar("conversation_messages_restored", "count", restoredCount ?? 0, {
+      scalar("conversation_messages_restored", "count", restoredCount, {
         errors: problems.length,
         note:
           problems.length === 0
-            ? `every message read back with the values written, in order, and the ${files.length} files they name with their bytes`
+            ? `every message of all ${titles.size} conversations read back with the values written, in order, and the ${files.length} files they name with their bytes`
             : problems.join("; ").slice(0, 400),
       }),
       recordedOnly("every message, in order, and its files"),

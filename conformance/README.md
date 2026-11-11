@@ -861,16 +861,21 @@ messages, a tenth of them naming one of `--files` files, in pages of `--page`
 that list their messages latest first, so ids rise against the time sent. It then
 appends the rest one at a time and times each. The last 50 of those were sent
 before all the others, as an offline device's are, so the latest 50 by `sent_at`
-are not the 50 newest ids. It times a read of the latest 50 and checks the next
-pages by cursor, and lists `--conversations` conversations by latest activity,
-each of which last had a message at a time its append was answered. It exports
-the conversations and their files, restores them into the second server, reads
-the latest 50 first, and then reads every message back. It checks what came
+are not the 50 newest ids. Messages come in groups of four that share a
+`sent_at`, so a read must break each tie by id ascending. It times a read of the
+latest 50 and follows that answer's own cursor to the next 50, and lists
+`--conversations` conversations by latest activity, each of which last had a
+message at a time its append was answered. It exports the conversations and
+their files, restores them into the second server, reads the latest 50 first,
+and then reads every message of every conversation back. It checks what came
 back, so a figure cannot pass on a wrong answer: every read must give each
-message once, in the order of `sent_at`, with the values and file written; the
-listing must give every conversation with the time its last append was answered,
-latest first; the restore must keep every message, every file and each file's
-bytes. It prints each figure against its goal and writes
+message once, in the order of `sent_at`, with the values and file written, and
+a cursor wherever more messages exist; a cursor that comes again ends a walk;
+`last_activity_at` must move on across writes made at least 2 ms apart, so a
+frozen activity fails; the listing must give every conversation with the time
+its last append was answered, latest first; the restore must keep every
+conversation's title and messages, every file, and each file's bytes, read
+under a successful status. It prints each figure against its goal and writes
 `reports/scale/conversations.json`. It is a measurement on request, not a
 nightly step, and it stops the servers it started by their process IDs.
 

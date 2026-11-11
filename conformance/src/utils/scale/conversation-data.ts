@@ -6,6 +6,11 @@ const ATTACH_EVERY = 10;
 
 const mod = (n: number, size: number) => ((n % size) + size) % size;
 
+const TIE_SIZE = 4;
+
+/** Messages of one group share a `sent_at`, so a read must break the tie by id. */
+export const tieGroup = (n: number) => Math.floor(n / TIE_SIZE);
+
 // Negative numbers model late arrivals that belong before the messages already held.
 export function messageOf(
   n: number,
@@ -15,7 +20,7 @@ export function messageOf(
   return {
     author: AUTHORS[mod(n, AUTHORS.length)],
     text: `Message ${n} of the long conversation, sent on time`,
-    sent_at: new Date(FIRST_SENT_MS + n * 1000).toISOString(),
+    sent_at: new Date(FIRST_SENT_MS + tieGroup(n) * 1000).toISOString(),
     ...(attached
       ? { attachment: files[mod(Math.floor(n / ATTACH_EVERY), files.length)] }
       : {}),
@@ -52,7 +57,10 @@ export interface MessagePlan {
   files: readonly string[];
   first: number;
   direction: Direction;
+  /** Messages this walk reads. */
   total: number;
+  /** Messages the conversation holds, when the walk reads only the first of them. */
+  held?: number;
   limit: number;
 }
 
@@ -60,10 +68,14 @@ export class MessageWalk {
   readonly problems: string[] = [];
   problemCount = 0;
   private readonly ids = new Set<string>();
+  private readonly numbers = new Set<number>();
   private readonly cursors = new Set<string>();
+  private previous: { id: string; n: number } | null = null;
   private readonly hash = createHash("sha256");
   private count = 0;
   private pages = 0;
+  /** Set once a cursor came back that an earlier page already answered. */
+  cursorStuck = false;
 
   constructor(private readonly plan: MessagePlan) {}
 
@@ -104,6 +116,7 @@ export class MessageWalk {
       }
       if (next === cursor || this.cursors.has(next)) {
         this.fail("the cursor did not move on");
+        this.cursorStuck = true;
       }
       this.cursors.add(next);
     }
@@ -117,13 +130,36 @@ export class MessageWalk {
       const n = messageNumber(row.values, files);
       if (n === null) {
         this.fail(`row ${id} holds values that were never written`);
-      } else if (n !== wanted) {
-        this.fail(`row ${id} is message ${n}, not message ${wanted}`);
+        this.previous = null;
+      } else {
+        if (tieGroup(n) !== tieGroup(wanted)) {
+          this.fail(
+            `row ${id} is message ${n}, not one sent with message ${wanted}`,
+          );
+        }
+        if (this.numbers.has(n)) this.fail(`message ${n} came twice`);
+        this.numbers.add(n);
+        const before = this.previous;
+        if (
+          before !== null &&
+          tieGroup(before.n) === tieGroup(n) &&
+          !(before.id < id)
+        ) {
+          this.fail(
+            `row ${id} follows row ${before.id}, sent at the same time: a tie goes by id ascending`,
+          );
+        }
+        this.previous = { id, n };
       }
       if (this.ids.has(id)) this.fail(`row ${id} came twice`);
       this.ids.add(id);
       this.hash.update(id);
       this.count++;
+    }
+    if (next === null && this.count < (this.plan.held ?? this.plan.total)) {
+      this.fail(
+        `no next_cursor after ${this.count} messages of ${this.plan.held ?? this.plan.total}`,
+      );
     }
     this.pages++;
   }
@@ -141,6 +177,106 @@ export function scrambled(count: number): number[] {
   const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
   const stride = [7919, 7907, 7901].find((s) => gcd(s, count) === 1) ?? 1;
   return Array.from({ length: count }, (_, i) => (i * stride) % count);
+}
+
+const MIN_GAP_MS = 2;
+
+/**
+ * Keeps the `last_activity_at` each write answered. A write begun at least
+ * `MIN_GAP_MS` after the previous answer to the same conversation arrived must
+ * read later, so an activity that never moves cannot pass as a listing order.
+ */
+export class ActivityLog {
+  readonly latest = new Map<string, string>();
+  /** Writes proved to have moved the activity on. */
+  advances = 0;
+  private readonly received = new Map<string, number>();
+
+  record(
+    id: string,
+    sentAt: number,
+    receivedAt: number,
+    activity: string,
+  ): string | null {
+    const at = Date.parse(activity);
+    const before = this.latest.get(id);
+    const answeredAt = this.received.get(id);
+    let problem: string | null = null;
+    if (Number.isNaN(at)) {
+      problem = `last_activity_at ${activity} is not a time`;
+    } else if (before !== undefined && answeredAt !== undefined) {
+      const earlier = Date.parse(before);
+      if (at < earlier) {
+        problem = `last_activity_at went back from ${before} to ${activity}`;
+      } else if (sentAt - answeredAt >= MIN_GAP_MS) {
+        if (at === earlier) {
+          problem = `last_activity_at stayed ${activity} across writes ${sentAt - answeredAt} ms apart`;
+        } else {
+          this.advances++;
+        }
+      }
+    }
+    this.latest.set(id, activity);
+    this.received.set(id, receivedAt);
+    return problem;
+  }
+}
+
+/** Judges each page of a listing, and stops a walk that repeats a cursor or runs past the known count. */
+export class ListingWalk {
+  readonly items: { id: string; last_activity_at: string }[] = [];
+  private readonly cursors = new Set<string>();
+  private pages = 0;
+
+  constructor(
+    private readonly known: number,
+    private readonly limit: number,
+  ) {}
+
+  /** The next cursor, or null at the end; a problem ends the walk. */
+  page(
+    body: unknown,
+    cursor: string | null,
+  ): { next: string | null; problem: string | null } {
+    const answer = body as { data?: unknown; next_cursor?: unknown } | null;
+    const stop = (problem: string) => ({ next: null, problem });
+    if (!Array.isArray(answer?.data))
+      return stop("the answer holds no data array");
+    this.items.push(
+      ...(answer.data as { id: string; last_activity_at: string }[]),
+    );
+    if (this.items.length > this.known) {
+      return stop(`more than the ${this.known} conversations made were listed`);
+    }
+    const next = answer.next_cursor ?? null;
+    if (next !== null && typeof next !== "string") {
+      return stop(`next_cursor is ${JSON.stringify(next)}`);
+    }
+    if (next !== null) {
+      if (next === cursor || this.cursors.has(next)) {
+        return stop("the cursor did not move on");
+      }
+      this.cursors.add(next);
+      if (++this.pages > Math.ceil(this.known / this.limit) + 1) {
+        return stop(`still paging after ${this.pages} pages of ${this.limit}`);
+      }
+    }
+    return { next, problem: null };
+  }
+}
+
+/** A download counts only with a successful status and the bytes uploaded. */
+export function judgeBlob(
+  answer: { status: number; text: string },
+  expected: string,
+): string | null {
+  if (answer.status < 200 || answer.status >= 300) {
+    return `answered ${answer.status}`;
+  }
+  if (answer.text !== expected) {
+    return `holds "${answer.text.slice(0, 40)}", not "${expected}"`;
+  }
+  return null;
 }
 
 // Appends can share a millisecond, so their receipt order does not determine the listing.
