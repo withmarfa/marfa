@@ -18,6 +18,7 @@ const WORKFLOWS = resolve(
 const MAC_JOBS = new Set([
   "ci.yml:core-checks",
   "ci.yml:rust-contract-macos",
+  "ci.yml:rust-contract-macos-shards",
   "core-live.yml:live",
   "release.yml:programs-macos",
   "release.yml:sign",

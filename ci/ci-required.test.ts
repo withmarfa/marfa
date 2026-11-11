@@ -1135,10 +1135,12 @@ const NOT_CLASSIFIED = [
   "ci-sqlite-tests",
   "gate",
   "report-failure",
-  // The two jobs after the Rust server's build wait for it, and
+  // The jobs after each Rust server build wait for it, and
   // `ci/rust-contract.test.ts` pins them.
   "rust-contract-shards",
   "rust-contract-score",
+  "rust-contract-macos-shards",
+  "rust-contract-macos-score",
   ...QUICK_JOBS,
   ...STOP_JOBS,
 ];

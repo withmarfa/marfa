@@ -4,7 +4,7 @@
  * when a file the Rust server judges did not pass or a shard wrote no report.
  * `Full CI` waits for the score. MCP conformance and the restore drill boot
  * the same build, and the nightly runs the device and CLI fixtures against a
- * build of its own on macOS.
+ * build of its own on macOS, scored the same way.
  */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -25,6 +25,7 @@ interface Entry {
   args: string;
   binary: boolean;
   module: boolean;
+  statuses: boolean;
 }
 interface Job {
   name?: string;
@@ -183,6 +184,19 @@ describe("the Rust contract shards", () => {
     expect(step(shards, "Stop the server").if).toBe("always()");
   });
 
+  it("hold every status the server answered to its declaration, before the stop clears the log, on the shards whose server draws none undeclared", () => {
+    const names = shards?.steps.map((s) => s.name) ?? [];
+    const held = names.indexOf("Hold every status observed to its declaration");
+    expect(held).toBeGreaterThan(names.indexOf("Run the shard"));
+    expect(held).toBeLessThan(names.indexOf("Stop the server"));
+    const check = step(shards, "Hold every status observed to its declaration");
+    expect(check.run).toBe('pnpm check:statuses --state "$RUNNER_TEMP/marfa"');
+    expect(check.if).toBe("${{ !cancelled() && matrix.statuses }}");
+    expect(
+      matrix.filter((entry) => entry.statuses).map((entry) => entry.slug),
+    ).toEqual(["correctness-sync", "cli"]);
+  });
+
   it("start nothing that is for the TypeScript server", () => {
     const text = JSON.stringify(shards?.steps);
     expect(text).not.toContain("@withmarfa/server...");
@@ -274,15 +288,24 @@ describe("MCP conformance and the restore drill", () => {
 
 describe("the Rust contract on macOS", () => {
   const mac = jobs["rust-contract-macos"];
-  const entries = (mac?.strategy?.matrix?.include ?? []) as unknown as {
+  const macShards = jobs["rust-contract-macos-shards"];
+  const macScore = jobs["rust-contract-macos-score"];
+  const entries = (macShards?.strategy?.matrix?.include ?? []) as unknown as {
     args: string;
+    slug: string;
   }[];
+  const gate =
+    "(github.event_name == 'schedule' || inputs.macos) && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-macos != 'false')";
 
   it("runs only on the nightly and a dispatch that asks for macOS", () => {
     expect(mac?.["runs-on"]).toBe("macos-26");
-    expect(mac?.if).toContain(
-      "(github.event_name == 'schedule' || inputs.macos)",
+    expect(macShards?.["runs-on"]).toBe("macos-26");
+    expect(mac?.if).toBe(`\${{ !cancelled() && ${gate} }}`);
+    expect(needsOf(macShards)).toEqual(["changes", "rust-contract-macos"]);
+    expect(macShards?.if).toBe(
+      "${{ !cancelled() && needs.rust-contract-macos.result == 'success' }}",
     );
+    expect(macScore?.if).toBe(`\${{ !cancelled() && ${gate} }}`);
   });
 
   it("runs the CLI fixtures whole and every shard of the device fixtures once", () => {
@@ -302,9 +325,12 @@ describe("the Rust contract on macOS", () => {
         (_, i) => `${String(i + 1)}/${String(count)}`,
       ),
     );
+    expect(new Set(entries.map((entry) => entry.slug)).size).toBe(
+      entries.length,
+    );
   });
 
-  it("builds the server with its test hooks, leaves the login keychain as it was, and fails on a failed test", () => {
+  it("builds the server with its test hooks, the device and the Node module once, and every shard downloads them", () => {
     const built = step(
       mac,
       "Build the server, the device and the Node module under test",
@@ -312,17 +338,71 @@ describe("the Rust contract on macOS", () => {
     expect(built).toContain(
       "cargo build --locked --release -p marfa-server --features test-hooks",
     );
-    const run = step(mac, "Run the shard").run ?? "";
+    expect(built).toContain("cargo build --locked -p marfa-cli");
+    expect(built).toContain("run build:debug");
+    const kept = step(mac, "Keep what is under test");
+    expect(kept.with?.name).toBe("rust-contract-macos-build");
+    expect(kept.with?.["if-no-files-found"]).toBe("error");
+    for (const path of [
+      "core/target/release/marfa-server",
+      "core/target/debug/marfa",
+      "core/bindings/node/*.node",
+    ]) {
+      expect(kept.with?.path).toContain(path);
+    }
+    const download = macShards?.steps.find(
+      (s) =>
+        s.uses?.startsWith("actions/download-artifact") &&
+        s.with?.name === "rust-contract-macos-build",
+    );
+    expect(download?.with?.path).toBe("core");
+    expect(JSON.stringify(macShards?.steps)).not.toContain("cargo build");
+  });
+
+  it("leaves the login keychain as it was, fails on a failed test and keeps the report whatever the verdict", () => {
+    const run = step(macShards, "Run the shard").run ?? "";
     expect(run).toContain("../core/scripts/login-keychain-unchanged.sh");
     expect(run).toContain("--retry=0");
+    expect(run).toContain("--reporter=json");
     expect(run).not.toContain("|| status");
-    expect(step(mac, "Stop the server").if).toBe("always()");
-    expect(step(mac, "Stop the object store").if).toBe("always()");
+    const keep = step(macShards, "Keep the report");
+    expect(keep.if).toBe("always()");
+    expect(keep.with?.name).toBe(
+      "rust-contract-macos-report-${{ matrix.slug }}",
+    );
+    expect(step(macShards, "Stop the server").if).toBe("always()");
+    expect(step(macShards, "Stop the object store").if).toBe("always()");
+  });
+
+  it("scores the CLI and device projects as macOS, so a skip there fails unless the machine cannot show the test", () => {
+    expect(needsOf(macScore)).toEqual([
+      "changes",
+      "rust-contract-macos",
+      "rust-contract-macos-shards",
+    ]);
+    expect(macScore?.["runs-on"]).toBe("ubuntu-latest");
+    const download = macScore?.steps.find((s) =>
+      s.uses?.startsWith("actions/download-artifact"),
+    );
+    expect(download?.with?.pattern).toBe("rust-contract-macos-report-*");
+    const run = step(macScore, "Score the run").run ?? "";
+    expect(run).toContain("pnpm rust:score");
+    expect(run).toContain("--platform darwin");
+    expect(run).toContain("--projects cli,device");
+    expect(macScore?.steps[0]?.run).toContain('[ "$BUILD" != success ]');
   });
 
   it("is waited for by Full CI and by the report of a failed night", () => {
     for (const waiter of ["gate", "report-failure"]) {
-      expect(needsOf(jobs[waiter])).toContain("rust-contract-macos");
+      for (const name of [
+        "rust-contract-macos",
+        "rust-contract-macos-shards",
+        "rust-contract-macos-score",
+      ]) {
+        expect(needsOf(jobs[waiter]), `${waiter} waits for ${name}`).toContain(
+          name,
+        );
+      }
     }
   });
 });
