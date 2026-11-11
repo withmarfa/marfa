@@ -832,14 +832,7 @@ describe("the receiving door on an instance that names its limits", () => {
     // The server is booted with an idle limit of one second.
     const owner = await freshConnector("steady");
     const made = await endpoint(owner);
-    const parts = [
-      "a body ",
-      "that ",
-      "keeps ",
-      "arriving ",
-      "a part ",
-      "at a time",
-    ];
+    const parts = ["a", "b", "c", "d", "e", "f"];
     const steady = slowPost({ apiUrl: server!.apiUrl }, made.path, {});
     const started = Date.now();
     for (const part of parts) {
