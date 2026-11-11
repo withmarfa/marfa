@@ -2124,7 +2124,7 @@ When the server writes an archive export, the server MUST NOT include `marfa.sec
 
 ### `instance/unknown-setting-warned`
 
-When the server starts and the environment holds a variable whose name begins with `MARFA_` or `S3_` and names no setting of the server and none that the `marfa` command reads from a shell, the server MUST log one warning that names the variable, and the closest setting when one is near, and holds none of its value.
+When the server starts and the environment holds a variable whose name begins with `MARFA_` or `S3_` and names no setting of the server and none that the `marfa` command reads from a shell, the server MUST log one warning for each such variable, naming the variable and the closest setting when one is near, and containing no part of the variable's value.
 
 **Reason:** a setting that was renamed or removed, or one spelled wrongly, would otherwise leave the owner on the default with no word of it. The server still starts, because the same variable can be a leftover that does no harm, and the warning is where the owner looks for it. A value is never logged, since a misnamed variable can hold a secret.
 
