@@ -67,7 +67,12 @@ impl Tuning {
                 .split_once('=')
                 .ok_or_else(|| format!("must be name=value pairs, and {pair} is not one"))?;
             let least = u64::from(name != "write_wait_ms");
-            let number = super::rule::whole_number(value, least, super::rule::YEAR_SECONDS * 1_000)
+            let most = if name.starts_with(INTERVAL) {
+                crate::app::clock::MAX_OFFSET_MS
+            } else {
+                super::rule::YEAR_SECONDS * 1_000
+            };
+            let number = super::rule::whole_number(value, least, most)
                 .map_err(|rule| format!("{name} {rule}"))?;
             let millis = Duration::from_millis(number);
             match name {
@@ -125,6 +130,16 @@ mod tests {
         // The wildcard is accepted and leaves a stored interval alone.
         let wild = Tuning::read("interval.*=1000", &jobs).unwrap();
         assert_eq!(wild.interval_ms("feed-expiry", 3_600_000), 1_000);
+    }
+
+    #[test]
+    fn an_interval_may_outlast_any_clock_a_test_moves_and_a_timing_may_not() {
+        let jobs = crate::app::housekeeping::job_names();
+        let far = crate::app::clock::MAX_OFFSET_MS;
+        let tuning = Tuning::read(&format!("interval.feed-expiry={far}"), &jobs).unwrap();
+        assert_eq!(tuning.interval_ms("feed-expiry", 1), far);
+        assert!(Tuning::read(&format!("interval.feed-expiry={}", far + 1), &jobs).is_err());
+        assert!(Tuning::read("upload_idle_ms=31536000001", &jobs).is_err());
     }
 
     #[test]
