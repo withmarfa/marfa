@@ -1,4 +1,5 @@
-//! `bm25_within(fts, entries, tokens, hits per phrase...)`: FTS5's `bm25` over a given corpus.
+//! `bm25_within(fts, entries, tokens, length, hits per phrase...)`: FTS5's `bm25` over a given corpus, with the
+//! entry's length in tokens where the caller already holds it, and NULL where FTS5 should read it.
 
 use std::ffi::c_int;
 use std::ptr;
@@ -60,7 +61,7 @@ unsafe fn score(
     // SAFETY: `fts` is the context of the current call, as for every call below.
     let phrases = usize::try_from(unsafe { phrases(fts) }).map_err(|_| ffi::SQLITE_ERROR)?;
     let count = usize::try_from(count).map_err(|_| ffi::SQLITE_MISUSE)?;
-    if count != phrases + 2 || values.is_null() {
+    if count != phrases + 3 || values.is_null() {
         return Err(ffi::SQLITE_MISUSE);
     }
     // SAFETY: SQLite passes `count` values, valid for the call.
@@ -97,17 +98,23 @@ unsafe fn score(
             *held += 1.0;
         }
     }
-    let mut length: c_int = 0;
-    // SAFETY: as above.
-    let rc = unsafe { size(fts, -1, &mut length) };
-    if rc != ffi::SQLITE_OK {
-        return Err(rc);
-    }
-    let length = f64::from(length);
+    // SAFETY: each value is a live argument of the call.
+    let given = unsafe { ffi::sqlite3_value_type(*values.get(2).ok_or(ffi::SQLITE_MISUSE)?) };
+    let length = if given == ffi::SQLITE_NULL {
+        let mut length: c_int = 0;
+        // SAFETY: as above.
+        let rc = unsafe { size(fts, -1, &mut length) };
+        if rc != ffi::SQLITE_OK {
+            return Err(rc);
+        }
+        f64::from(length)
+    } else {
+        number(2)?
+    };
 
     let mut score = 0.0;
     for (at, frequency) in frequency.iter().enumerate() {
-        let hits = number(at + 2)?;
+        let hits = number(at + 3)?;
         let idf = ((entries - hits + 0.5) / (hits + 0.5)).ln();
         let idf = if idf <= 0.0 { LEAST_IDF } else { idf };
         score +=
@@ -237,7 +244,7 @@ mod tests {
             .fold((0, 0), |(entries, tokens), size| {
                 (entries + 1, tokens + size.unwrap())
             });
-        let mut arguments = vec![entries.to_string(), tokens.to_string()];
+        let mut arguments = vec![entries.to_string(), tokens.to_string(), "NULL".to_string()];
         for phrase in phrases {
             let hits: i64 = conn
                 .query_row(
@@ -302,10 +309,48 @@ mod tests {
     }
 
     #[test]
+    fn a_length_the_caller_holds_ranks_as_the_one_fts5_reads() {
+        let conn = indexed(|_| true);
+        conn.execute_batch("CREATE TEMP TABLE held (seq INTEGER PRIMARY KEY, tokens INTEGER)")
+            .unwrap();
+        let sizes: Vec<(i64, Vec<u8>)> = conn
+            .prepare("SELECT id, sz FROM t_docsize")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        for (seq, sz) in sizes {
+            conn.execute(
+                "INSERT INTO held VALUES (?1, ?2)",
+                rusqlite::params![seq, tokens_of(&sz).unwrap()],
+            )
+            .unwrap();
+        }
+        let every: Vec<i64> = (0..TEXTS.len()).map(rowid).collect();
+        for phrases in QUERIES {
+            let query = phrases.join(" ");
+            let read = within(&conn, phrases, &every);
+            let held = read.replacen("NULL", "h.tokens", 1);
+            let given = conn
+                .prepare(&format!(
+                    "SELECT t.rowid, {held} FROM t JOIN held h ON h.seq = t.rowid \
+                     WHERE t MATCH ?1 ORDER BY t.rowid"
+                ))
+                .unwrap()
+                .query_map([&query], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<(i64, f64)>>>()
+                .unwrap();
+            close(&ranked(&conn, &query, &read), &given);
+        }
+    }
+
+    #[test]
     fn a_count_for_each_phrase_is_required() {
         let conn = indexed(|_| true);
         let refused = conn.query_row(
-            "SELECT bm25_within(t, 6, 40) FROM t WHERE t MATCH '\"quick\"'",
+            "SELECT bm25_within(t, 6, 40, NULL) FROM t WHERE t MATCH '\"quick\"'",
             [],
             |row| row.get::<_, f64>(0),
         );

@@ -162,18 +162,27 @@ impl Order {
         }
     }
 
+    /// Whether the search's rank is the only key, so that no column of the item is read to order.
+    pub fn ranks_alone(&self) -> bool {
+        self.keys.iter().all(|key| key.relevance)
+    }
+
     pub fn width(&self) -> usize {
         self.keys.len()
     }
 
     pub fn columns(&self, sql: &mut Sql) {
-        for (at, key) in self.keys.iter().enumerate().filter(|(_, key)| !key.relevance) {
+        for (at, key) in self
+            .keys
+            .iter()
+            .enumerate()
+            .filter(|(_, key)| !key.relevance)
+        {
             sql.append(&key.expression);
             sql.push(&format!(" AS {}, ", alias(at)));
         }
         sql.push("i.id");
     }
-
 
     pub fn order_by(&self, sql: &mut Sql) {
         self.order_by_named(sql, "i.id");
