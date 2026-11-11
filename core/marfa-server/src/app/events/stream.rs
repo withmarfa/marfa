@@ -22,6 +22,7 @@ use crate::app::faults::{
 };
 use crate::app::items::{Reader, reading_under};
 use crate::app::refusal::{Code, Refusal, Result};
+use crate::db::io_refusal;
 
 /// A quiet stream is pinged this often, and a reader that takes nothing for this long is closed.
 pub const PING: Duration = Duration::from_secs(30);
@@ -312,7 +313,7 @@ impl Run {
             self.check_stop()?;
             let faults = self.app.faults.clone();
             if faults.fail(FAIL_STREAM_REPLAY, None) {
-                return Err(self.incomplete("read_failed"));
+                return Err(self.failure(&io_refusal()));
             }
             self.page(Some(faults)).await?;
         }
@@ -403,7 +404,7 @@ impl Run {
             .faults
             .fail(crate::app::faults::FAIL_STREAM_HEAD, None)
         {
-            return Err(self.incomplete("read_failed"));
+            return Err(self.failure(&io_refusal()));
         }
         let bounds = self.head().await?;
         self.app.faults.hold(HOLD_STREAM_HEAD, None).await;
@@ -449,7 +450,7 @@ impl Run {
     /// One page: the credential is read again in the same snapshot as the log, and what the page holds is sent.
     async fn page(&mut self, replay: Option<Arc<Faults>>) -> std::result::Result<Page, Ending> {
         if self.app.faults.fail(FAIL_STREAM_CREDENTIAL, None) {
-            return Err(self.incomplete("read_failed"));
+            return Err(self.failure(&io_refusal()));
         }
         let (filter, after) = (self.filter.clone(), self.position);
         let demand = self.copy.as_ref().and_then(Copying::demand);
@@ -493,7 +494,8 @@ impl Run {
     /// Reads the credential again while a page is handed over.
     async fn recheck(&mut self) -> std::result::Result<(), Ending> {
         if self.app.faults.fail(FAIL_STREAM_CREDENTIAL, None) {
-            return Err(self.cut_short("read_failed"));
+            let failed = self.failure(&io_refusal());
+            return Err(if self.torn { self.give_up() } else { failed });
         }
         self.reread().await
     }

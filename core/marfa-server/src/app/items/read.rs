@@ -317,6 +317,7 @@ pub async fn history(
 ) -> Result<String> {
     reading(app, caller, move |read| {
         let row = read.row(&id)?;
+        read.hydrating();
         let after = match cursor.as_deref() {
             Some(cursor) => version_at(&read.cursors, cursor)?,
             None => 0,

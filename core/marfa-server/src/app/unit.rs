@@ -11,10 +11,13 @@ use super::catalog::Snapshot;
 use super::clock::Stamp;
 use super::connectors::{ReadOnly, Registry, read_only};
 use super::events::{self, Event};
+use super::faults::{FAIL_EVENT_STAMP, Faults};
 use super::provenance::{self, Origin};
 use super::query::Secret;
 use super::refusal::Result;
 use crate::db::Write;
+
+const A_YEAR_MS: i64 = 365 * 24 * 60 * 60 * 1000;
 
 /// What a write records goes in here, so it commits or rolls back with the write.
 pub struct Unit<'t, 'c> {
@@ -31,6 +34,7 @@ pub struct Unit<'t, 'c> {
     pub cursors: Secret,
     /// A job's chunk records one entry for its rows, as an atomic page does.
     summarised: bool,
+    faults: Arc<Faults>,
 }
 
 impl<'c> Unit<'_, 'c> {
@@ -55,6 +59,7 @@ impl<'c> Unit<'_, 'c> {
             read_only: self.read_only.clone(),
             cursors: self.cursors.clone(),
             summarised: self.summarised,
+            faults: self.faults.clone(),
         }
     }
 
@@ -79,6 +84,10 @@ impl<'c> Unit<'_, 'c> {
     }
 
     pub fn announce(&self, event: &Event<'_>) -> Result<()> {
+        if self.faults.fail(FAIL_EVENT_STAMP, None) {
+            let ahead = self.instant.plus_ms(A_YEAR_MS)?.text();
+            return events::append(self.tx, &ahead, self.fanout, event);
+        }
         events::append(self.tx, &self.at, self.fanout, event)
     }
 
@@ -157,6 +166,7 @@ impl App {
         let origin = provenance::current();
         let read_only = self.read_only_handle();
         let cursors = self.cursor_secret.clone();
+        let faults = self.faults.clone();
         let write = if matches!(caller, Caller::Server) {
             Write::server(action)
         } else {
@@ -178,6 +188,7 @@ impl App {
                     read_only,
                     cursors,
                     summarised: false,
+                    faults,
                 })
             })
             .await

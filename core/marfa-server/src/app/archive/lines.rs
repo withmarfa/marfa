@@ -44,6 +44,7 @@ async fn item_page(
         let admitted = admitted.unwrap_or_else(|| read.caller.clone());
         let selecting = read.as_caller(admitted.clone());
         let seqs = query::selected(&selecting, &ask, after, PAGE)?;
+        read.hydrating();
         let rows = items::archived(
             read.tx,
             &admitted,
