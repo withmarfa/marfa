@@ -455,6 +455,10 @@ jobs:
             ${{ runner.temp }}/marfa-native/downloads
             ${{ runner.temp }}/marfa-native/archives
           key: ${{ steps.key.outputs.key }}
+      # The image is restored from the cache, never built from the package
+      # archive when the cache holds it; `main` saves it.
+      - name: Make the build image
+        uses: ./.github/actions/native-build-image
       - name: Build and check the programs
         run: core/marfa-enrichment/native/release.sh "$TARGET" --full
       # A run whose cases did not run would pass `verify.sh` with nothing to fail;
@@ -1069,6 +1073,10 @@ jobs:
             ${{ runner.temp }}/marfa-native/downloads
             ${{ runner.temp }}/marfa-native/archives
           key: ${{ steps.key.outputs.key }}
+      # The image is restored from the cache, never built from the package
+      # archive when the cache holds it; `main` saves it.
+      - name: Make the build image
+        uses: ./.github/actions/native-build-image
       - name: Build the Rust server
         env:
           MARFA_SERVER_FEATURES: test-hooks
@@ -1545,6 +1553,10 @@ jobs:
             ${{ runner.temp }}/marfa-native/downloads
             ${{ runner.temp }}/marfa-native/archives
           key: ${{ steps.key.outputs.key }}
+      # The image is restored from the cache, never built from the package
+      # archive when the cache holds it; `main` saves it.
+      - name: Make the build image
+        uses: ./.github/actions/native-build-image
       - name: Build and check the programs
         run: scripts/release/build-programs.sh "$TARGET"
       - name: Build the image

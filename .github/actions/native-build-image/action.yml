@@ -1,0 +1,45 @@
+name: Native build image
+description: >-
+  Makes the image the native readers are built in, from the cache when one holds
+  it. The image installs packages from a snapshot of the Ubuntu archive, and
+  that archive is out of reach at times, so a run that finds the image in the
+  cache never contacts it. A push to main saves the image; every other run
+  only restores it.
+
+runs:
+  using: composite
+  steps:
+    - name: Key the cache on what decides the image
+      id: key
+      shell: bash
+      run: |
+        echo "key=marfa-native-image-$RUNNER_OS-$("$GITHUB_WORKSPACE/core/marfa-enrichment/native/image.sh" key)" >> "$GITHUB_OUTPUT"
+    - name: Restore the build image
+      id: cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ runner.temp }}/marfa-native-image/image.tar.zst
+        key: ${{ steps.key.outputs.key }}
+    - name: Load the build image
+      if: ${{ steps.cache.outputs.cache-hit == 'true' }}
+      shell: bash
+      run: |
+        "$GITHUB_WORKSPACE/core/marfa-enrichment/native/image.sh" load "$RUNNER_TEMP/marfa-native-image/image.tar.zst"
+    # Builds only when the cache held nothing, since an image loaded with the
+    # recipe's hash is used as it is.
+    - name: Make the build image
+      shell: bash
+      run: |
+        "$GITHUB_WORKSPACE/core/marfa-enrichment/native/image.sh" build
+    - name: Write the build image for the cache
+      if: ${{ github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true' }}
+      shell: bash
+      run: |
+        "$GITHUB_WORKSPACE/core/marfa-enrichment/native/image.sh" save "$RUNNER_TEMP/marfa-native-image/image.tar.zst"
+        ls -l "$RUNNER_TEMP/marfa-native-image/image.tar.zst"
+    - name: Save the build image
+      if: ${{ github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true' }}
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ runner.temp }}/marfa-native-image/image.tar.zst
+        key: ${{ steps.key.outputs.key }}

@@ -245,6 +245,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // `ci/` tests read every workflow. `core.yml` only calls the one above,
   // for a push to `main`, and no pull request runs it.
   [/^\.github\/workflows\//, ["workspace"]],
+  // The action the three Linux build jobs use to get the native build image
+  // (`release.yml` uses it too, and no pull request runs that).
+  [
+    /^\.github\/actions\/native-build-image\//,
+    ["core-native", "image", "rust-contract"],
+  ],
   // Read by GitHub alone. Anything else under `.github/`, such as an action
   // a workflow uses, runs everything until a rule names it.
   [/^\.github\/(ISSUE_TEMPLATE\/|dependabot\.yml$)/, []],

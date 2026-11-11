@@ -145,6 +145,11 @@ describe("what a change runs", () => {
       ["ci-sqlite"],
     ],
     [
+      "the action that makes the native build image",
+      [".github/actions/native-build-image/action.yml"],
+      ["ci-sqlite", "core-native", "image", "rust-contract"],
+    ],
+    [
       "an action a workflow could use",
       [".github/actions/setup/action.yml"],
       [...JOBS],
