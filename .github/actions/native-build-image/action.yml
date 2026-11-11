@@ -24,7 +24,8 @@ runs:
       if: ${{ steps.cache.outputs.cache-hit == 'true' }}
       shell: bash
       run: |
-        "$GITHUB_WORKSPACE/core/marfa-enrichment/native/image.sh" load "$RUNNER_TEMP/marfa-native-image/image.tar.zst"
+        "$GITHUB_WORKSPACE/core/marfa-enrichment/native/image.sh" load "$RUNNER_TEMP/marfa-native-image/image.tar.zst" \
+          || echo "::warning::The cached build image did not load, so it is built instead."
     # Builds only when the cache held nothing, since an image loaded with the
     # recipe's hash is used as it is.
     - name: Make the build image
