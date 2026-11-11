@@ -1122,26 +1122,24 @@ const statusesGate =
   "${{ !cancelled() && needs.conformance-shards.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.conformance-statuses != 'false') }}";
 
 describe("the conformance shards", () => {
-  it("lay out one runner for correctness and sync, eight for compliance and six for the device", () => {
+  it("lay out one runner for correctness and sync, eight for compliance and one for the device", () => {
     const all = conformanceShards(classify([]));
     expect(all.map((shard) => shard.name)).toEqual([
       "correctness and sync",
       ...[1, 2, 3, 4, 5, 6, 7, 8].map((i) => `compliance ${String(i)}/8`),
-      ...[1, 2, 3, 4, 5, 6].map((i) => `device ${String(i)}/6`),
+      "device",
     ]);
     expect(all.map((shard) => shard.args)).toEqual([
       "--project correctness --project sync",
       ...[1, 2, 3, 4, 5, 6, 7, 8].map(
         (i) => `--project compliance --shard=${String(i)}/8`,
       ),
-      ...[1, 2, 3, 4, 5, 6].map(
-        (i) => `--project device --shard=${String(i)}/6`,
-      ),
+      "--project device",
     ]);
     // Only the device fixtures need the binary built from the core.
     expect(
       all.filter((shard) => shard.device).map((shard) => shard.name),
-    ).toEqual([1, 2, 3, 4, 5, 6].map((i) => `device ${String(i)}/6`));
+    ).toEqual(["device"]);
   });
 
   it("name each artifact and job apart, in characters an artifact name may hold", () => {
@@ -1157,9 +1155,9 @@ describe("the conformance shards", () => {
     expect(names(["conformance/src/suites/sync/streams.test.ts"])).toEqual([
       "correctness and sync",
     ]);
-    expect(names(["conformance/src/suites/device/folders.test.ts"])).toEqual(
-      [1, 2, 3, 4, 5, 6].map((i) => `device ${String(i)}/6`),
-    );
+    expect(names(["conformance/src/suites/device/folders.test.ts"])).toEqual([
+      "device",
+    ]);
     expect(names(["conformance/spec/items.md"])).toEqual([]);
     expect(names(["README.md"])).toEqual([]);
     expect(conformanceShards(forDraft(classify([])))).toEqual([]);
@@ -2114,7 +2112,7 @@ describe("the classifier as CI runs it", () => {
       (
         JSON.parse(night["conformance-shards"] ?? "[]") as { name: string }[]
       ).map((shard) => shard.name),
-    ).toEqual([1, 2, 3, 4, 5, 6].map((i) => `device ${String(i)}/6`));
+    ).toEqual(["device"]);
     // The pull request's lanes are untouched by the nightly's answer.
     expect(forNightly()).toEqual(
       Object.fromEntries(JOBS.map((job) => [job, NIGHTLY_JOBS.includes(job)])),
