@@ -1,4 +1,4 @@
-//! Which property sorts are read from `item_sort_keys`, and the walk that gives existing items their keys.
+//! Which property sorts are read from `item_sort_keys`, the walk that gives existing items their keys, and the removal of a dropped pair's keys.
 
 use marfa_rules::catalog::Catalog as Rules;
 use marfa_rules::query::property_sort_expression;
