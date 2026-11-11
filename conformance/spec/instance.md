@@ -2130,13 +2130,29 @@ When the server starts and the environment holds a variable whose name begins wi
 
 **Tests:** `compliance/hook-free-server.test.ts › warns once of each MARFA_ or S3_ variable it does not read, names the setting it is near, and starts`.
 
+### `instance/unknown-setting-no-ignored-name`
+
+When the setting closest to an unknown variable is one that the server ignores because its test hooks are off, the server MUST NOT offer the name it ignores as the correction.
+
+**Reason:** a variable that seeds a stored setting, or that runs a test hook, does nothing on a server without hooks, so the correction would lead the owner to another variable the server ignores. The warning names the stored setting instead, and the way to set it.
+
+**Tests:** `compliance/hook-free-server.test.ts › warns once of each MARFA_ or S3_ variable it does not read, names the setting it is near, and starts`.
+
 ### `instance/unknown-secret-name-refused`
 
-If the environment holds a variable that names no setting of the server and is within two edits of `MARFA_KEY_SALT` or `MARFA_AUTH_SECRET`, ignoring case, then the server MUST refuse to start and name the variable and the secret.
+If the environment holds a variable that names no setting of the server and is within two edits of the name of a secret, `MARFA_KEY_SALT` or `MARFA_AUTH_SECRET`, ignoring case and whatever the variable's prefix, and holds no variable named for that secret, then the server MUST refuse to start and name the variable and the secret.
 
-**Reason:** a misspelled secret would not stop the server, which makes a secret of its own where the environment gives none: a new salt ends every key, and a new authentication secret ends every sign-in. This is the one misspelling that costs more than the start it stops.
+**Reason:** a misspelled secret would not stop the server, which makes a secret of its own where the environment gives none: a new salt ends every key, and a new authentication secret ends every sign-in. This is the one misspelling that costs more than the start it stops. A wrong prefix, such as `MARF_AUTH_SECRET`, is as likely a slip as a wrong letter, so the name is judged whatever it begins with. When the secret itself is set, nothing is replaced, so the start goes on and the near name draws the ordinary warning.
 
-**Tests:** `compliance/hook-free-server.test.ts › refuses a variable a letter from the name of a secret, which the server would replace, and starts without it`.
+**Tests:** `compliance/hook-free-server.test.ts › refuses a variable a letter from the name of a secret, which the server would replace, and starts without it`, `compliance/hook-free-server.test.ts › starts, and warns of the near name, when the secret itself is set`.
+
+### `instance/unknown-setting-warned-after-refusal`
+
+If another setting refuses the start, then the server MUST NOT log the warning for an unknown variable.
+
+**Reason:** a refused start shows what to fix and no more, so a leftover variable's warning does not bury the refusal.
+
+**Tests:** `compliance/hook-free-server.test.ts › logs no warning when another setting refuses the start`.
 
 ### `instance/proxy-header-trusted-peer`
 

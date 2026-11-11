@@ -45,11 +45,17 @@ pub struct Accepted {
     given: Given,
     seeds: Seeds,
     start_only: Vec<start_only::Listed>,
+    unknown: Vec<unknown::Unknown>,
 }
 
 impl Accepted {
     pub fn fixed(&self) -> &Fixed {
         &self.fixed
+    }
+
+    /// Logged once nothing else refuses the start, so a refused start shows its refusal alone.
+    pub fn warn_of_unknown(&self) {
+        unknown::warn(&self.unknown);
     }
 
     /// Makes the secrets file on a first start; the server holds the control socket's claim before this.
@@ -139,13 +145,13 @@ impl Settings {
         if !fixed.test_hooks {
             warn_of_ignored(&environment);
         }
-        unknown::warn(&unknown);
         let start_only = start_only::listed(&environment, fixed.test_hooks);
         Ok(Accepted {
             fixed,
             given,
             seeds,
             start_only,
+            unknown,
         })
     }
 

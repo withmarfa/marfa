@@ -21,6 +21,7 @@ fn read_settings() -> Result<(marfa_server::settings::Accepted, Config), Failure
         Ok(accepted) if own.is_empty() => {
             let together = config::disagreements(&environment);
             if together.is_empty() {
+                accepted.warn_of_unknown();
                 Ok((accepted, telemetry))
             } else {
                 Err(refuse(together))
