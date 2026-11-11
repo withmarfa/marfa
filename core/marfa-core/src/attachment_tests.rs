@@ -379,6 +379,13 @@ fn left_in_cache(dir: &Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
     path
 }
 
+/// Whether `path` can be locked as a fetch locks it, letting go at once.
+#[cfg(unix)]
+fn lockable(path: &Path) -> bool {
+    let file = std::fs::File::open(path).unwrap();
+    rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive).is_ok()
+}
+
 #[cfg(unix)]
 #[test]
 fn removing_fetched_files_keeps_what_the_device_needs_and_leaves_the_budget() {
@@ -439,6 +446,16 @@ fn removing_fetched_files_keeps_what_the_device_needs_and_leaves_the_budget() {
     // their bytes, and still not those of the attachment or the upload.
     drop(reading);
     drop(fetching);
+    // A child process spawned by a test running in parallel holds a copy of
+    // the lock until it execs.
+    let free = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while !lockable(&held_partial) {
+        assert!(
+            std::time::Instant::now() < free,
+            "the partial file stayed locked"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
     assert_eq!(core.remove_fetched_files().unwrap(), 29 + 11);
     assert!(!core.blob_held(&read).unwrap());
     assert!(!held_partial.exists());
