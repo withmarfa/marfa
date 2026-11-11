@@ -74,8 +74,8 @@ function options(): Options {
   const page = whole("page", values.page, 1);
   if (page > 1000)
     throw new Error("--page is at most 1000, the most rows a batch holds");
-  const appends = whole("appends", values.appends, 1);
-  const messages = whole("messages", values.messages, appends + LATE + LATEST);
+  const appends = whole("appends", values.appends, LATE + 1);
+  const messages = whole("messages", values.messages, appends + LATEST);
   if (values.server === "") {
     throw new Error(
       "--server names the marfa-server program to measure (or set MARFA_SERVER_BIN)",
@@ -267,7 +267,7 @@ export async function conversations(): Promise<void> {
       ),
     );
     log(
-      `${opts.messages} messages in one conversation (${LATE} sent before the rest, ${opts.appends} appended one at a time), ${opts.conversations} conversations, ${opts.files} files, pages of ${opts.page}`,
+      `${opts.messages} messages in one conversation (${opts.appends} appended one at a time, the last ${LATE} of them sent before all the others), ${opts.conversations} conversations, ${opts.files} files, pages of ${opts.page}`,
     );
 
     const contents: { hash: string; text: string }[] = [];
@@ -364,7 +364,7 @@ export async function conversations(): Promise<void> {
       return answer.ms;
     };
 
-    const bulk = inOrder - opts.appends;
+    const bulk = opts.messages - opts.appends;
     const startedWriting = performance.now();
     for (let first = 0; first < bulk; first += opts.page) {
       const last = Math.min(first + opts.page, bulk) - 1;
@@ -396,17 +396,14 @@ export async function conversations(): Promise<void> {
     for (const id of small) await write(id, [0], "a first message");
     const turn = scrambled(small.length);
     const middle = Math.floor(small.length / 2);
-    // The late messages are written last, so the newest ids are the earliest sent.
+    // The last appends are the late messages, so the newest ids are the earliest sent.
     const appendLong = async () => {
-      for (let n = inOrder - opts.appends; n < inOrder; n++) {
+      const sentInOrder = opts.appends - LATE;
+      for (let i = 0; i < opts.appends; i++) {
+        const n = i < sentInOrder ? bulk + i : sentInOrder - 1 - i;
         const ms = await write(long, [n], `append ${n}`);
         if (ms !== null) appendTimes.push(ms);
       }
-      await write(
-        long,
-        Array.from({ length: LATE }, (_, i) => -1 - i),
-        "the late messages",
-      );
     };
     for (const [position, which] of turn.entries()) {
       if (position === middle) await appendLong();
@@ -416,7 +413,7 @@ export async function conversations(): Promise<void> {
     add(
       distribution("conversation_append", "ms", appendTimes, {
         errors: writeErrors,
-        note: `${appendTimes.length} single messages, from message ${opts.messages - opts.appends} to ${opts.messages}`,
+        note: `${appendTimes.length} single messages, the conversation growing from ${bulk} to ${opts.messages}; the last ${LATE} were sent before all the others`,
       }),
       upTo("p95 10 ms"),
     );
