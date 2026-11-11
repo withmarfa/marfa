@@ -128,7 +128,7 @@ When a caller queues a write, a device MUST give it an idempotency key at once a
 
 When a drain sends a write again that it sent before, a device MUST send it under the idempotency key it carried, unless a caller released it in between.
 
-**Reason:** an attempt whose answer the device never read may have taken effect, and only the same key lets the server answer the next attempt from its record. A release mints a fresh key (`queue-and-verdicts/release-fresh-key`).
+**Reason:** an attempt whose answer the device never read may have taken effect, and only the same key lets the server answer the next attempt from its record. A release mints a fresh key for a write other than a row write (`queue-and-verdicts/release-fresh-key`), and for a row write only where the server holds another request under the key (`queue-and-verdicts/rows-release-key-spent`).
 
 **Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`, `device/grant-recovery.test.ts › keeps an edit blocked for $kind $level until its grant returns`, `device/versioned-deletes-live.test.ts › replays a lost delete answer without deleting a restored newer item`, `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
@@ -252,11 +252,11 @@ When a drain sends a `write_rows` write it has not sent before, a device MUST se
 
 ### `queue-and-verdicts/rows-joined-again`
 
-When a drain sends again a batch it sent before, a device MUST send the same writes in it, in the same order, under the same key.
+When a drain sends again a batch it sent before, a device MUST send the same writes in it, in the same order, under the same key, unless a caller released the batch from `key_spent` (`queue-and-verdicts/rows-release-key-spent`).
 
 **Reason:** the server may have taken the batch, and only its record under the key answers the batch sent again; a `patch` applied twice would overwrite a change made between the two sends.
 
-**Tests:** `device/store-busy-live.test.ts › ends the drain store_busy when another program writes to the store at every attempt to record a batch's answer, and the next drain sends the same batch under its key, keeping a change made between`.
+**Tests:** `device/store-busy-live.test.ts › ends the drain store_busy when another program writes to the store at every attempt to record a batch's answer, and the next drain sends the same batch under its key, keeping a change made between`, `device/table-writes-live.test.ts › sets a batch whose answer was lost aside whole under its key, telling each write once, and sends it again as it went once a caller releases one of its writes`, `› releases every write of a dead batch when a caller releases one, and sends the batch again as it went under its key`.
 
 ### `queue-and-verdicts/rows-results`
 
@@ -288,23 +288,31 @@ When a device gives a `write_rows` write the verdict `conflicted`, a device MUST
 
 ### `queue-and-verdicts/rows-refused-operation`
 
-If the server refuses a batch naming in `details.operation` an operation of one of its writes, then a device MUST refuse that write with the server's code, naming in its refusal's `details.operation` the operation's place in that write.
+If the server refuses a batch the device had not sent before naming in `details.operation` an operation of one of its writes, then a device MUST refuse that write with the server's code, naming in its refusal's `details.operation` the operation's place in that write.
 
 **Tests:** `device/table-writes-live.test.ts › refuses only the write whose operation the server refuses, and sends the batch's other writes again in the same drain`.
 
 ### `queue-and-verdicts/rows-refused-others`
 
-When the server refuses a batch naming an operation of one of its writes, a device MUST send the batch's other writes again in the same drain, in a batch of their own under a fresh key.
+When the server refuses a batch the device had not sent before naming an operation of one of its writes, a device MUST send the batch's other writes again in the same drain, in a batch of their own under a fresh key.
 
-**Reason:** the server wrote none of the batch, so one write's refusal says nothing of the others, and an edit refused only for sharing a batch would be lost.
+**Reason:** the server wrote none of the batch in the request it refused (`tables/rows-all-or-none`), and no earlier request carried the batch, so one write's refusal says nothing of the others, and an edit refused only for sharing a batch would be lost.
 
 **Tests:** `device/table-writes-live.test.ts › refuses only the write whose operation the server refuses, and sends the batch's other writes again in the same drain`.
+
+### `queue-and-verdicts/rows-refused-resent`
+
+If the server refuses a batch the device sent before naming an operation of it, then a device MUST settle each write of the batch as that answer settles a write sent on its own.
+
+**Reason:** the server answers a batch sent again under its key from its record, so such a refusal comes only once that record is gone, and says nothing of what an earlier attempt wrote. A write sent again apart, under a new key, could be written twice over a change made since.
+
+**Tests:** `device/table-writes-live.test.ts › refuses every write of a batch it sent before that the server refuses naming an operation, sending none of it again`.
 
 ### `queue-and-verdicts/rows-refused-whole`
 
 If the server refuses a batch naming no operation of it, then a device MUST settle each write of the batch as that answer settles a write sent on its own.
 
-**Tests:** `device/table-writes-live.test.ts › refuses every write of a batch the server refuses naming no operation`.
+**Tests:** `device/table-writes-live.test.ts › refuses every write of a batch the server refuses naming no operation, and discards them all when a caller discards one`.
 
 ### `queue-and-verdicts/rows-settled-together`
 
@@ -332,31 +340,63 @@ If the server answers an undo `2xx` with a body whose `results` do not each name
 
 When a drain answers the writes of a batch, a device MUST name each write once in the drain's `verdicts`, with the last verdict the drain gave it.
 
-**Tests:** `device/table-writes-live.test.ts › lets the other writes of a batch go on their own once its first write is set aside or withdrawn, telling each write once`.
+**Tests:** `device/table-writes-live.test.ts › sets a batch whose answer was lost aside whole under its key, telling each write once, and sends it again as it went once a caller releases one of its writes`.
 
-### `queue-and-verdicts/rows-set-aside-apart`
+### `queue-and-verdicts/rows-set-aside-whole`
 
-When a drain sets aside the first write of a sent batch under `queue-and-verdicts/stuck-write-set-aside`, a device MUST send each other write of the batch that is waiting in no batch with the first.
+When a drain sets aside the first write of a batch under `queue-and-verdicts/stuck-write-set-aside`, a device MUST set aside every other write of the batch as `failing_alone` with it, keeping each in the batch.
 
-**Reason:** the first write fails alone, and the others would otherwise wait on a write no drain sends until a person looks at it.
+**Reason:** the batch may have reached the server under its key, as after an answer lost on its way back, and only that key lets the server answer it from its record rather than write it again over a change made since.
 
-**Tests:** `device/table-writes-live.test.ts › lets the other writes of a batch go on their own once its first write is set aside or withdrawn, telling each write once`.
+**Tests:** `device/table-writes-live.test.ts › sets a batch whose answer was lost aside whole under its key, telling each write once, and sends it again as it went once a caller releases one of its writes`.
 
-### `queue-and-verdicts/rows-taken-out-apart`
+### `queue-and-verdicts/rows-released-whole`
 
-When a caller withdraws, discards or releases a write of a sent batch, a device MUST send each other write of the batch that is waiting in no batch with that write.
+When a caller releases a write of a batch, a device MUST release every write of the batch, keeping each in the batch.
 
-**Reason:** the batch can no longer be sent again as it went, so each write still waiting goes on its own rather than wait on a write that left it.
+**Reason:** the server may hold the batch under its key, so the batch goes again only as it went (`queue-and-verdicts/rows-joined-again`).
 
-**Tests:** `device/table-writes-live.test.ts › sends a write of a batch blocked whole on its own once a caller releases it, and the first write under a fresh key`.
+**Tests:** `device/table-writes-live.test.ts › sets a batch whose answer was lost aside whole under its key, telling each write once, and sends it again as it went once a caller releases one of its writes`, `› releases every write of a dead batch when a caller releases one, and sends the batch again as it went under its key`, `› releases every write of a batch blocked key_spent when a caller releases one, and sends the batch as it went under a fresh key`.
 
-### `queue-and-verdicts/rows-apart-key`
+### `queue-and-verdicts/rows-release-key`
 
-When the other writes of a batch go apart from its first write under `queue-and-verdicts/rows-set-aside-apart` or `queue-and-verdicts/rows-taken-out-apart`, a device MUST send the first write again, if it goes again, under a key no request has carried.
+When a caller releases a `write_rows` write that is not `blocked` `key_spent`, a device MUST keep the key its batch went under.
 
-**Reason:** the key the batch went under names the whole batch at the server, which would answer the first write alone with the batch's answer or refuse it as a key reused.
+**Reason:** whatever stopped the batch, the server may hold it under that key, and a fresh key would let the server write it twice.
 
-**Tests:** `device/table-writes-live.test.ts › lets the other writes of a batch go on their own once its first write is set aside or withdrawn, telling each write once`, `› sends a write of a batch blocked whole on its own once a caller releases it, and the first write under a fresh key`.
+**Tests:** `device/table-writes-live.test.ts › sets a batch whose answer was lost aside whole under its key, telling each write once, and sends it again as it went once a caller releases one of its writes`, `› releases every write of a dead batch when a caller releases one, and sends the batch again as it went under its key`.
+
+### `queue-and-verdicts/rows-release-key-spent`
+
+When a caller releases a `write_rows` write `blocked` `key_spent`, a device MUST send its batch again under a key no request has carried.
+
+**Reason:** the server holds another request under the key, so it holds nothing of this batch under it, and it would refuse the key again.
+
+**Tests:** `device/table-writes-live.test.ts › releases every write of a batch blocked key_spent when a caller releases one, and sends the batch as it went under a fresh key`.
+
+### `queue-and-verdicts/rows-withdrawn-whole`
+
+When a caller withdraws a write of a batch, a device MUST withdraw every write of the batch.
+
+**Reason:** the server may hold the batch under its key, and a write left behind could go again only in another request, which the server would write a second time.
+
+**Tests:** `device/table-writes-live.test.ts › withdraws every write of a batch set aside whole when a caller withdraws one of them`.
+
+### `queue-and-verdicts/rows-discarded-whole`
+
+When a caller discards a write of a batch, a device MUST discard every write of the batch.
+
+**Reason:** the server refused the batch whole, so no write of it goes again, and a write left behind would point at a batch the queue no longer holds.
+
+**Tests:** `device/table-writes-live.test.ts › refuses every write of a batch the server refuses naming no operation, and discards them all when a caller discards one`.
+
+### `queue-and-verdicts/rows-instance-changed-apart`
+
+When the server answers a batch `409 instance_changed`, a device MUST take every write of the batch out of it, so that a drain sends each as a write it has not sent before.
+
+**Reason:** the instance that refused the batch took none of it, and the instance now at the address has seen no attempt of it (`queue-and-verdicts/instance-changed-afresh`).
+
+**Tests:** `device/table-writes-live.test.ts › marks every write of a batch another instance answers unsent and out of the batch, and sends them together again`.
 
 ### `queue-and-verdicts/undo-door`
 
@@ -1566,9 +1606,9 @@ When a caller releases a write that is `dead`, or `blocked` for a reason other t
 
 ### `queue-and-verdicts/release-fresh-key`
 
-When a caller releases a write, a device MUST give it a fresh idempotency key.
+When a caller releases a write other than a `write_rows` write, a device MUST give it a fresh idempotency key.
 
-**Reason:** sent again under the spent key, the write would be answered from the server's record, which is the answer that stopped it.
+**Reason:** sent again under the spent key, the write would be answered from the server's record, which is the answer that stopped it. A row write keeps its batch's key (`queue-and-verdicts/rows-release-key`).
 
 **Tests:** `device/classification.test.ts › sends a released write again under a fresh key`.
 
