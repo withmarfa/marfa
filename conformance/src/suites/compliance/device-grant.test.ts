@@ -160,7 +160,7 @@ describe("a device code", () => {
       // The witness: the code's item is there, found by its client.
       const rows = db
         .prepare(
-          "SELECT device_code FROM auth_oauth_device_code WHERE client_id = ?",
+          "SELECT device_code FROM oauth_device_codes WHERE client_id = ?",
         )
         .all(flow.clientId) as { device_code: string }[];
       expect(rows).toHaveLength(1);

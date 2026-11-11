@@ -50,7 +50,7 @@ pub fn read(tx: &Transaction<'_>) -> Result<Option<Owner>> {
     };
     let owner = tx
         .query_row(
-            "SELECT id, email, name, created_at FROM auth_user WHERE id = ?1",
+            "SELECT id, email, name, created_at FROM owner WHERE id = ?1",
             [id],
             from_row,
         )
@@ -72,7 +72,7 @@ pub fn not_found() -> Refusal {
 pub(super) fn stored_password(tx: &Transaction<'_>, owner_id: &str) -> Result<Option<String>> {
     Ok(tx
         .query_row(
-            "SELECT password FROM auth_account WHERE user_id = ?1",
+            "SELECT password FROM owner WHERE id = ?1",
             [owner_id],
             |row| row.get(0),
         )
@@ -86,7 +86,7 @@ pub(super) fn set_password(
     now: Stamp,
 ) -> Result<()> {
     tx.execute(
-        "UPDATE auth_account SET password = ?2, updated_at = ?3 WHERE user_id = ?1",
+        "UPDATE owner SET password = ?2, updated_at = ?3 WHERE id = ?1",
         params![owner_id, hash, now],
     )?;
     Ok(())
@@ -161,14 +161,9 @@ pub(super) fn create(
 ) -> Result<Owner> {
     let id = uuid::Uuid::now_v7().to_string();
     tx.execute(
-        "INSERT INTO auth_user (id, name, email, email_verified, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, 1, ?4, ?4)",
-        params![id, details.name, details.email, now],
-    )?;
-    tx.execute(
-        "INSERT INTO auth_account (id, user_id, password, created_at, updated_at) \
-         VALUES (?1, ?2, ?3, ?4, ?4)",
-        params![uuid::Uuid::now_v7().to_string(), id, hash, now],
+        "INSERT INTO owner (id, name, email, password, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?5)",
+        params![id, details.name, details.email, hash, now],
     )?;
     Ok(Owner {
         id,
@@ -231,9 +226,7 @@ pub async fn update(app: &App, caller: &Caller, update: Update, visit: Visit) ->
             owner.avatar = false;
         }
         unit.tx().execute(
-            "UPDATE auth_user SET email = ?2, name = ?3, updated_at = ?4, \
-             email_verified = CASE WHEN email = ?2 THEN email_verified ELSE 0 END \
-             WHERE id = ?1",
+            "UPDATE owner SET email = ?2, name = ?3, updated_at = ?4 WHERE id = ?1",
             params![owner.id, owner.email, owner.name, unit.instant],
         )?;
         note(
@@ -243,7 +236,7 @@ pub async fn update(app: &App, caller: &Caller, update: Update, visit: Visit) ->
             &visit,
             Note {
                 action: "owner.update",
-                resource_type: "auth_user",
+                resource_type: "owner",
                 resource_id: &owner.id,
                 details: Some(json!({ "fields": update.fields })),
             },
@@ -319,7 +312,7 @@ pub async fn update_profile(
         let owner = read(unit.tx())?.ok_or_else(not_found)?;
         if let Some(name) = &update.name {
             unit.tx().execute(
-                "UPDATE auth_user SET name = ?2, updated_at = ?3 WHERE id = ?1",
+                "UPDATE owner SET name = ?2, updated_at = ?3 WHERE id = ?1",
                 params![owner.id, name, unit.instant],
             )?;
         }
@@ -333,7 +326,7 @@ pub async fn update_profile(
             &visit,
             Note {
                 action: "profile.update",
-                resource_type: "auth_user",
+                resource_type: "owner",
                 resource_id: &owner.id,
                 details: Some(json!({ "fields": fields })),
             },

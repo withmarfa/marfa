@@ -1,3 +1,4 @@
+import { signInOwnerWithPassword } from "../../client/owner-session.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { createHash, randomBytes } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
@@ -34,17 +35,7 @@ beforeAll(async () => {
   );
   const { issuer } = (await discovery.json()) as { issuer: string };
   origin = new URL(issuer).origin;
-  const signedIn = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
-    method: "POST",
-    headers: { "content-type": "application/json", origin },
-    body: JSON.stringify(OWNER),
-  });
-  expect(signedIn.status).toBe(200);
-  const session = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-    signedIn.headers.get("set-cookie") ?? "",
-  )?.[1];
-  expect(session, "sign-in set no session cookie").toBeTruthy();
-  cookie = session!;
+  cookie = await signInOwnerWithPassword(server.apiUrl, origin, OWNER);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {

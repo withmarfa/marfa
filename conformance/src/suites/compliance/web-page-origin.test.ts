@@ -472,7 +472,7 @@ describe("an approved page's address and the sign-in surface", () => {
     );
 
     const passwordSignIn = (from: string) =>
-      fetch(`${server.apiUrl}/auth/sign-in/email`, {
+      fetch(`${server.apiUrl}/auth/sign-in`, {
         method: "POST",
         headers: { origin: from, "content-type": "application/json" },
         body: JSON.stringify(TEST_OWNER),

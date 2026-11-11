@@ -1848,6 +1848,18 @@ If the server cannot record an export's `export.run` entry because the write loc
 
 **Tests:** `compliance/write-contention.test.ts › refuses an export with 503 before its stream starts, and records nothing of it`.
 
+### `events/audit-sign-in-owner`
+
+When the server records a password sign-in or the refusal of one, the server MUST name `resource_type` `owner`.
+
+**Tests:** `compliance/credential-audit.test.ts › names the owner as the resource of a sign-in and its refusal, and the sign-in as the resource of its end`.
+
+### `events/audit-sign-in-ended`
+
+When the server records the end of a browser session, the server MUST name `resource_type` `sign_in`.
+
+**Tests:** `compliance/credential-audit.test.ts › names the owner as the resource of a sign-in and its refusal, and the sign-in as the resource of its end`.
+
 ### `events/audit-filter`
 
 The server MUST filter `GET /audit` by `action`, `resource_type` and `resource_id`.

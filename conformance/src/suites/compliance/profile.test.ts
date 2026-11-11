@@ -73,7 +73,7 @@ describe("owner and delegated profile changes", () => {
     await expectMatchesSchema("GET", "/profile", 200, read);
 
     const signin = (email: string) =>
-      fetch(server.apiUrl + "/auth/sign-in/email", {
+      fetch(server.apiUrl + "/auth/sign-in", {
         method: "POST",
         headers: { "content-type": "application/json", origin: server.apiUrl },
         body: JSON.stringify({ email, password: TEST_OWNER.password }),

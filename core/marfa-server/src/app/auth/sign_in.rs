@@ -96,7 +96,7 @@ async fn refused_sign_in(app: &App, email: &str, reason: &str, visit: &Visit) ->
                 &visit,
                 Note {
                     action: SIGN_IN_FAILED,
-                    resource_type: "auth_user",
+                    resource_type: "owner",
                     resource_id: &email,
                     details: Some(json!({
                         "email": email,
@@ -113,7 +113,6 @@ pub async fn with_password(
     app: &App,
     email: String,
     password: String,
-    remembered: bool,
     visit: Visit,
 ) -> Result<Opened> {
     let email = limits::account_key(&email);
@@ -150,8 +149,7 @@ pub async fn with_password(
                 Stamp::read(&at)?,
                 New {
                     salt: &salt,
-                    user_id: &proven.owner.id,
-                    remembered,
+                    owner_id: &proven.owner.id,
                     visit: &audited,
                 },
             )?;
@@ -162,7 +160,7 @@ pub async fn with_password(
                 &audited,
                 Note {
                     action: SIGNED_IN,
-                    resource_type: "auth_user",
+                    resource_type: "owner",
                     resource_id: &named,
                     details: Some(json!({ "email": named, "method": "password" })),
                 },
@@ -202,8 +200,7 @@ pub async fn confirm(app: &App, caller: &Caller, password: String, visit: Visit)
             unit.instant,
             New {
                 salt: &salt,
-                user_id: &session.user_id,
-                remembered: session.remembered,
+                owner_id: &session.owner_id,
                 visit: &visit,
             },
         )?;
@@ -215,7 +212,7 @@ pub async fn confirm(app: &App, caller: &Caller, password: String, visit: Visit)
             &visit,
             Note {
                 action: SIGNED_IN,
-                resource_type: "auth_user",
+                resource_type: "owner",
                 resource_id: &proven.owner.email,
                 details: Some(json!({
                     "email": proven.owner.email,

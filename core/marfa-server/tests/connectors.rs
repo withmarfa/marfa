@@ -442,7 +442,7 @@ async fn an_owner_session_cookie_reaches_no_connector_door_and_the_private_socke
         .local(Method::POST, "/_control/setup/claim", Some(claim.clone()))
         .await;
     assert_eq!(claimed.status, StatusCode::CREATED);
-    let mut signing_in = request(Method::POST, "/auth/sign-in/email", None, Some(&claim));
+    let mut signing_in = request(Method::POST, "/auth/sign-in", None, Some(&claim));
     signing_in
         .headers_mut()
         .insert(header::ORIGIN, ORIGIN.parse().unwrap());

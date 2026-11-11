@@ -43,7 +43,7 @@ async function signIn(
   password: string,
   address: string,
 ): Promise<Response> {
-  const response = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
+  const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
     method: "POST",
     headers: {
       "content-type": "application/json",

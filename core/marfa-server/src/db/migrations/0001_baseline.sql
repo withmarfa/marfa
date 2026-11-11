@@ -495,18 +495,11 @@ CREATE TABLE IF NOT EXISTS items_fts_stale (
     PRIMARY KEY (type, state)
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE IF NOT EXISTS auth_user (
+-- The one owner. `password` holds the hash, never the password.
+CREATE TABLE IF NOT EXISTS owner (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
-    email_verified INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS auth_account (
-    id TEXT PRIMARY KEY NOT NULL,
-    user_id TEXT NOT NULL UNIQUE REFERENCES auth_user (id) ON DELETE CASCADE,
     password TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
@@ -514,19 +507,18 @@ CREATE TABLE IF NOT EXISTS auth_account (
 
 -- `token` holds a digest, never the cookie's value. `updated_at` is the last
 -- recorded use.
-CREATE TABLE IF NOT EXISTS auth_session (
+CREATE TABLE IF NOT EXISTS sign_ins (
     id TEXT PRIMARY KEY NOT NULL,
     token TEXT NOT NULL UNIQUE,
-    user_id TEXT NOT NULL REFERENCES auth_user (id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
-    remembered INTEGER NOT NULL DEFAULT 1,
     user_agent TEXT,
     ip_address TEXT
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS auth_session_user ON auth_session (user_id);
+CREATE INDEX IF NOT EXISTS sign_ins_owner ON sign_ins (owner_id);
 
 -- What leads to a claim. Every row holds a digest, and goes with the claim.
 -- A setup code has no `expires_at`.
@@ -551,7 +543,7 @@ CREATE INDEX IF NOT EXISTS mcp_spent_confirmations_expiry
 
 -- What the OAuth server keeps. A secret is held only as a digest.
 
-CREATE TABLE IF NOT EXISTS auth_oauth_client (
+CREATE TABLE IF NOT EXISTS oauth_clients (
     client_id TEXT PRIMARY KEY NOT NULL,
     auth_method TEXT NOT NULL,
     secret_digest TEXT,
@@ -573,10 +565,10 @@ CREATE TABLE IF NOT EXISTS auth_oauth_client (
 ) STRICT;
 
 -- The clients that name themselves by a metadata document, and how long the
--- copy in `auth_oauth_client` may answer without a fetch.
-CREATE TABLE IF NOT EXISTS auth_oauth_client_document (
+-- copy in `oauth_clients` may answer without a fetch.
+CREATE TABLE IF NOT EXISTS oauth_client_documents (
     client_id TEXT PRIMARY KEY NOT NULL
-        REFERENCES auth_oauth_client (client_id) ON DELETE CASCADE,
+        REFERENCES oauth_clients (client_id) ON DELETE CASCADE,
     fetched_at TEXT NOT NULL,
     fresh_until TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
@@ -584,16 +576,16 @@ CREATE TABLE IF NOT EXISTS auth_oauth_client_document (
 -- One row per app and person, for as long as the client is kept. A withdrawn
 -- consent keeps its row, so the same grant item comes back if the person
 -- approves again.
-CREATE TABLE IF NOT EXISTS auth_oauth_consent (
-    client_id TEXT NOT NULL REFERENCES auth_oauth_client (client_id),
-    user_id TEXT NOT NULL REFERENCES auth_user (id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS oauth_consents (
+    client_id TEXT NOT NULL REFERENCES oauth_clients (client_id),
+    owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     grant_id TEXT NOT NULL UNIQUE,
     scopes TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_used_at TEXT,
     withdrawn_at TEXT,
-    PRIMARY KEY (client_id, user_id)
+    PRIMARY KEY (client_id, owner_id)
 ) STRICT, WITHOUT ROWID;
 
 -- starts_after excludes events committed before registration.
@@ -605,7 +597,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
     secret TEXT NOT NULL,
     active INTEGER NOT NULL CHECK (active IN (0, 1)),
     key_id TEXT REFERENCES api_keys (id) ON DELETE CASCADE,
-    grant_id TEXT REFERENCES auth_oauth_consent (grant_id) ON DELETE CASCADE,
+    grant_id TEXT REFERENCES oauth_consents (grant_id) ON DELETE CASCADE,
     starts_after INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -619,7 +611,7 @@ CREATE INDEX IF NOT EXISTS webhooks_grant ON webhooks (grant_id) WHERE grant_id 
 -- tell the maker's webhooks changed and no one else's can move it.
 CREATE TABLE IF NOT EXISTS webhook_turns (
     key_id TEXT REFERENCES api_keys (id) ON DELETE CASCADE,
-    grant_id TEXT REFERENCES auth_oauth_consent (grant_id) ON DELETE CASCADE,
+    grant_id TEXT REFERENCES oauth_consents (grant_id) ON DELETE CASCADE,
     turns INTEGER NOT NULL,
     CHECK ((key_id IS NULL) <> (grant_id IS NULL))
 ) STRICT;
@@ -665,22 +657,22 @@ INSERT OR IGNORE INTO webhook_position (id, event_id) VALUES (1, 0);
 -- The redirect URIs a person approved. Only an approval adds a row, so a later
 -- change to the client's own list reaches nothing here. `page_origin` is what
 -- the URI allowed as a web page's origin when it was approved.
-CREATE TABLE IF NOT EXISTS auth_oauth_consent_destination (
+CREATE TABLE IF NOT EXISTS oauth_consent_destinations (
     client_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
     redirect_uri TEXT NOT NULL,
     page_origin TEXT,
-    PRIMARY KEY (client_id, user_id, redirect_uri),
-    FOREIGN KEY (client_id, user_id)
-        REFERENCES auth_oauth_consent (client_id, user_id) ON DELETE CASCADE
+    PRIMARY KEY (client_id, owner_id, redirect_uri),
+    FOREIGN KEY (client_id, owner_id)
+        REFERENCES oauth_consents (client_id, owner_id) ON DELETE CASCADE
 ) STRICT, WITHOUT ROWID;
 
 -- `session_id` names no table: the row outlives the session it asks about. A
 -- spent row stays until `expires_at`, so a replay can end its `chain_id`.
-CREATE TABLE IF NOT EXISTS auth_oauth_code (
+CREATE TABLE IF NOT EXISTS oauth_codes (
     digest TEXT PRIMARY KEY NOT NULL,
-    client_id TEXT NOT NULL REFERENCES auth_oauth_client (client_id) ON DELETE CASCADE,
-    user_id TEXT NOT NULL REFERENCES auth_user (id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL REFERENCES oauth_clients (client_id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     session_id TEXT NOT NULL,
     grant_id TEXT NOT NULL,
     redirect_uri TEXT NOT NULL,
@@ -692,31 +684,31 @@ CREATE TABLE IF NOT EXISTS auth_oauth_code (
     chain_id TEXT
 ) STRICT, WITHOUT ROWID;
 
-CREATE INDEX IF NOT EXISTS auth_oauth_code_grant ON auth_oauth_code (client_id, user_id);
+CREATE INDEX IF NOT EXISTS oauth_codes_grant ON oauth_codes (client_id, owner_id);
 
 -- `client_id` holds no reference: a code outlives its client, so that the
 -- approval page can say the client is gone.
-CREATE TABLE IF NOT EXISTS auth_oauth_device_code (
+CREATE TABLE IF NOT EXISTS oauth_device_codes (
     device_code TEXT PRIMARY KEY NOT NULL,
     user_code TEXT NOT NULL UNIQUE,
     client_id TEXT NOT NULL,
     scopes TEXT NOT NULL,
     destinations TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied', 'spent')),
-    user_id TEXT REFERENCES auth_user (id) ON DELETE CASCADE,
+    owner_id TEXT REFERENCES owner (id) ON DELETE CASCADE,
     interval_seconds INTEGER NOT NULL,
     last_polled_at TEXT,
     expires_at TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
-CREATE INDEX IF NOT EXISTS auth_oauth_device_code_client ON auth_oauth_device_code (client_id);
+CREATE INDEX IF NOT EXISTS oauth_device_codes_client ON oauth_device_codes (client_id);
 
 -- `chain_id` is what one authorization led to, through every rotation.
-CREATE TABLE IF NOT EXISTS auth_oauth_access_token (
+CREATE TABLE IF NOT EXISTS oauth_access_tokens (
     id TEXT PRIMARY KEY NOT NULL,
     digest TEXT NOT NULL UNIQUE,
-    client_id TEXT NOT NULL REFERENCES auth_oauth_client (client_id),
-    user_id TEXT NOT NULL REFERENCES auth_user (id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL REFERENCES oauth_clients (client_id),
+    owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     chain_id TEXT NOT NULL,
     scopes TEXT NOT NULL,
     audience TEXT,
@@ -724,16 +716,16 @@ CREATE TABLE IF NOT EXISTS auth_oauth_access_token (
     expires_at TEXT NOT NULL
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS auth_oauth_access_token_chain ON auth_oauth_access_token (chain_id);
-CREATE INDEX IF NOT EXISTS auth_oauth_access_token_grant ON auth_oauth_access_token (client_id, user_id);
+CREATE INDEX IF NOT EXISTS oauth_access_tokens_chain ON oauth_access_tokens (chain_id);
+CREATE INDEX IF NOT EXISTS oauth_access_tokens_grant ON oauth_access_tokens (client_id, owner_id);
 
 -- A rotated token stays until it would have expired, so that its replay is
 -- told from a token nobody issued.
-CREATE TABLE IF NOT EXISTS auth_oauth_refresh_token (
+CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
     id TEXT PRIMARY KEY NOT NULL,
     digest TEXT NOT NULL UNIQUE,
-    client_id TEXT NOT NULL REFERENCES auth_oauth_client (client_id),
-    user_id TEXT NOT NULL REFERENCES auth_user (id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL REFERENCES oauth_clients (client_id),
+    owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     chain_id TEXT NOT NULL,
     scopes TEXT NOT NULL,
     audience TEXT,
@@ -743,15 +735,15 @@ CREATE TABLE IF NOT EXISTS auth_oauth_refresh_token (
     ended_at TEXT
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS auth_oauth_refresh_token_chain ON auth_oauth_refresh_token (chain_id);
-CREATE INDEX IF NOT EXISTS auth_oauth_refresh_token_grant ON auth_oauth_refresh_token (client_id, user_id);
+CREATE INDEX IF NOT EXISTS oauth_refresh_tokens_chain ON oauth_refresh_tokens (chain_id);
+CREATE INDEX IF NOT EXISTS oauth_refresh_tokens_grant ON oauth_refresh_tokens (client_id, owner_id);
 
 -- The owner's passkeys. `credential` is the verifier's record of one, as JSON,
 -- and `host` the relying party it was made for, which is the only one it can
 -- answer.
-CREATE TABLE IF NOT EXISTS auth_passkey (
+CREATE TABLE IF NOT EXISTS passkeys (
     id TEXT PRIMARY KEY NOT NULL,
-    user_id TEXT NOT NULL REFERENCES auth_user (id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     credential_id TEXT NOT NULL UNIQUE,
     host TEXT NOT NULL,
     name TEXT,
@@ -760,11 +752,11 @@ CREATE TABLE IF NOT EXISTS auth_passkey (
     last_used_at TEXT
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS auth_passkey_user ON auth_passkey (user_id);
+CREATE INDEX IF NOT EXISTS passkeys_owner ON passkeys (owner_id);
 
 -- A ceremony under way. The browser holds a token and this table its digest,
 -- so a copy of the database starts nothing. A row goes at its first use.
-CREATE TABLE IF NOT EXISTS auth_passkey_challenge (
+CREATE TABLE IF NOT EXISTS passkey_challenges (
     digest TEXT PRIMARY KEY NOT NULL,
     purpose TEXT NOT NULL CHECK (purpose IN ('add', 'prove')),
     origin TEXT NOT NULL,
@@ -773,7 +765,7 @@ CREATE TABLE IF NOT EXISTS auth_passkey_challenge (
     expires_at TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
-CREATE INDEX IF NOT EXISTS auth_passkey_challenge_expiry ON auth_passkey_challenge (expires_at);
+CREATE INDEX IF NOT EXISTS passkey_challenges_expiry ON passkey_challenges (expires_at);
 
 -- A blob is bytes under the digest of their content. `hash` is `sha256:` and
 -- 64 lowercase hex characters; `mime_type` is the first type recorded.
@@ -888,7 +880,7 @@ CREATE TABLE IF NOT EXISTS owner_picture (
 CREATE TABLE IF NOT EXISTS folder_status (
     folder_id TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
     key_id TEXT REFERENCES api_keys (id) ON DELETE CASCADE,
-    grant_id TEXT REFERENCES auth_oauth_consent (grant_id) ON DELETE CASCADE,
+    grant_id TEXT REFERENCES oauth_consents (grant_id) ON DELETE CASCADE,
     sign_in_kind TEXT GENERATED ALWAYS AS (CASE WHEN key_id IS NULL THEN 'app' ELSE 'key' END) VIRTUAL,
     sign_in_id TEXT GENERATED ALWAYS AS (coalesce(key_id, grant_id)) VIRTUAL,
     sign_in_name TEXT NOT NULL,

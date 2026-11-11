@@ -167,7 +167,7 @@ pub async fn exchange(
 
 struct Issue<'i> {
     client: &'i Client,
-    user_id: &'i str,
+    owner_id: &'i str,
     chain_id: &'i str,
     scopes: &'i ScopeSet,
     /// A narrower access token leaves it whole.
@@ -188,7 +188,7 @@ fn issue(app: &App, unit: &Unit<'_, '_>, issue: Issue<'_>) -> Result<Map<String,
             id: Uuid::now_v7().to_string(),
             digest: digest_of(salt, &access)?,
             client_id: issue.client.id.clone(),
-            user_id: issue.user_id.to_string(),
+            owner_id: issue.owner_id.to_string(),
             chain_id: issue.chain_id.to_string(),
             scopes: issue.scopes.clone(),
             audience: issue.audience.map(str::to_string),
@@ -209,7 +209,7 @@ fn issue(app: &App, unit: &Unit<'_, '_>, issue: Issue<'_>) -> Result<Map<String,
                 id: Uuid::now_v7().to_string(),
                 digest: digest_of(salt, &refresh)?,
                 client_id: issue.client.id.clone(),
-                user_id: issue.user_id.to_string(),
+                owner_id: issue.owner_id.to_string(),
                 chain_id: issue.chain_id.to_string(),
                 scopes: issue.keeps.clone(),
                 audience: issue.audience.map(str::to_string),
@@ -221,7 +221,7 @@ fn issue(app: &App, unit: &Unit<'_, '_>, issue: Issue<'_>) -> Result<Map<String,
         )?;
         answer.insert("refresh_token".to_string(), json!(refresh));
     }
-    store::note_consent_used(tx, &issue.client.id, issue.user_id, now)?;
+    store::note_consent_used(tx, &issue.client.id, issue.owner_id, now)?;
     audit::record_from(
         tx,
         &unit.at,
@@ -233,7 +233,7 @@ fn issue(app: &App, unit: &Unit<'_, '_>, issue: Issue<'_>) -> Result<Map<String,
             resource_id: Some(&issue.client.id),
             details: Some(json!({
                 "client_id": issue.client.id,
-                "user_id": issue.user_id,
+                "owner_id": issue.owner_id,
                 "scopes": issue.scopes.literals(),
             })),
         },
@@ -279,7 +279,7 @@ async fn by_code(
                         resource_id: Some(&code.client_id),
                         details: Some(json!({
                             "client_id": code.client_id,
-                            "user_id": code.user_id,
+                            "owner_id": code.owner_id,
                         })),
                     },
                 )?;
@@ -308,7 +308,7 @@ async fn by_code(
                 "The browser session that approved this code has ended.",
             )));
         }
-        let stands = store::consent(tx, &client.id, &code.user_id)?
+        let stands = store::consent(tx, &client.id, &code.owner_id)?
             .is_some_and(|consent| consent.stands() && consent.grant_id == code.grant_id);
         if !stands {
             return Ok(Err(spent()));
@@ -321,7 +321,7 @@ async fn by_code(
             unit,
             Issue {
                 client: &client,
-                user_id: &code.user_id,
+                owner_id: &code.owner_id,
                 chain_id: &chain_id,
                 scopes: &code.scopes,
                 keeps: &code.scopes,
@@ -366,12 +366,12 @@ async fn by_refresh(
                     action: "auth.refresh.replayed",
                     resource_type: "oauth_grant",
                     resource_id: Some(&client.id),
-                    details: Some(json!({ "client_id": client.id, "user_id": old.user_id })),
+                    details: Some(json!({ "client_id": client.id, "owner_id": old.owner_id })),
                 },
             )?;
             return Ok(Err(dead()));
         }
-        let consent = store::consent(tx, &client.id, &old.user_id)?;
+        let consent = store::consent(tx, &client.id, &old.owner_id)?;
         let Some(consent) = consent.filter(|consent| consent.stands() && old.expires_at > now)
         else {
             return Ok(Err(dead()));
@@ -395,7 +395,7 @@ async fn by_refresh(
             unit,
             Issue {
                 client: &client,
-                user_id: &old.user_id,
+                owner_id: &old.owner_id,
                 chain_id: &old.chain_id,
                 scopes: asked.as_ref().unwrap_or(&old.scopes),
                 keeps: &old.scopes,
@@ -459,10 +459,10 @@ async fn by_device_code(
             ))),
             DeviceStatus::Spent => Ok(Err(spent())),
             DeviceStatus::Approved => {
-                let Some(user_id) = code.user_id.clone() else {
+                let Some(owner_id) = code.owner_id.clone() else {
                     return Ok(Err(spent()));
                 };
-                match store::consent(tx, &client.id, &user_id)? {
+                match store::consent(tx, &client.id, &owner_id)? {
                     Some(consent) if consent.stands() => {}
                     _ => return Ok(Err(spent())),
                 }
@@ -472,7 +472,7 @@ async fn by_device_code(
                     unit,
                     Issue {
                         client: &client,
-                        user_id: &user_id,
+                        owner_id: &owner_id,
                         chain_id: &Uuid::now_v7().to_string(),
                         scopes: &code.scopes,
                         keeps: &code.scopes,

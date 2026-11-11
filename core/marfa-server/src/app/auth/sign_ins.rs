@@ -191,7 +191,7 @@ pub async fn end(
                 &unit.caller,
                 &visit,
                 &session.id,
-                &session.user_id,
+                &session.owner_id,
                 false,
             ),
             Named::App(consent) => grants::withdraw(unit, &cache, &consent, with_keys),

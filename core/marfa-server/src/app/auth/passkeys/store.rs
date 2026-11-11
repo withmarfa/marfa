@@ -26,14 +26,14 @@ impl Listed {
 
 pub struct Held {
     pub id: String,
-    pub user_id: String,
+    pub owner_id: String,
     pub host: String,
     pub passkey: Passkey,
 }
 
 pub struct New<'a> {
     pub id: &'a str,
-    pub user_id: &'a str,
+    pub owner_id: &'a str,
     pub credential_id: &'a str,
     pub host: &'a str,
     pub name: Option<&'a str>,
@@ -59,14 +59,14 @@ fn written(passkey: &Passkey) -> Result<String> {
 
 pub fn all(tx: &Transaction<'_>) -> Result<Vec<Listed>> {
     let mut statement = tx.prepare(&format!(
-        "SELECT {LISTED} FROM auth_passkey ORDER BY created_at, id"
+        "SELECT {LISTED} FROM passkeys ORDER BY created_at, id"
     ))?;
     let rows = statement.query_map([], listed)?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
 pub fn credentials_of(tx: &Transaction<'_>, host: &str) -> Result<Vec<String>> {
-    let mut statement = tx.prepare("SELECT credential_id FROM auth_passkey WHERE host = ?1")?;
+    let mut statement = tx.prepare("SELECT credential_id FROM passkeys WHERE host = ?1")?;
     let rows = statement.query_map(params![host], |row| row.get(0))?;
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
@@ -74,18 +74,18 @@ pub fn credentials_of(tx: &Transaction<'_>, host: &str) -> Result<Vec<String>> {
 pub fn by_credential(tx: &Transaction<'_>, credential_id: &str) -> Result<Option<Held>> {
     let found: Option<(String, String, String, String)> = tx
         .query_row(
-            "SELECT id, user_id, host, credential FROM auth_passkey WHERE credential_id = ?1",
+            "SELECT id, owner_id, host, credential FROM passkeys WHERE credential_id = ?1",
             params![credential_id],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
         )
         .optional()?;
     found
-        .map(|(id, user_id, host, credential)| {
+        .map(|(id, owner_id, host, credential)| {
             let passkey = serde_json::from_str(&credential)
                 .map_err(|_| Refusal::internal("a stored passkey did not read"))?;
             Ok(Held {
                 id,
-                user_id,
+                owner_id,
                 host,
                 passkey,
             })
@@ -96,11 +96,11 @@ pub fn by_credential(tx: &Transaction<'_>, credential_id: &str) -> Result<Option
 /// `None` if the credential is already registered; the unique column decides.
 pub fn insert(tx: &Transaction<'_>, new: &New<'_>) -> Result<Option<Listed>> {
     let inserted = tx.execute(
-        "INSERT INTO auth_passkey (id, user_id, credential_id, host, name, credential, \
+        "INSERT INTO passkeys (id, owner_id, credential_id, host, name, credential, \
          created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) ON CONFLICT (credential_id) DO NOTHING",
         params![
             new.id,
-            new.user_id,
+            new.owner_id,
             new.credential_id,
             new.host,
             new.name,
@@ -119,7 +119,7 @@ pub fn insert(tx: &Transaction<'_>, new: &New<'_>) -> Result<Option<Listed>> {
 
 pub fn record_use(tx: &Transaction<'_>, id: &str, passkey: &Passkey, at: &str) -> Result<()> {
     tx.execute(
-        "UPDATE auth_passkey SET credential = ?2, last_used_at = ?3 WHERE id = ?1",
+        "UPDATE passkeys SET credential = ?2, last_used_at = ?3 WHERE id = ?1",
         params![id, written(passkey)?, at],
     )?;
     Ok(())
@@ -128,7 +128,7 @@ pub fn record_use(tx: &Transaction<'_>, id: &str, passkey: &Passkey, at: &str) -
 pub fn rename(tx: &Transaction<'_>, id: &str, name: &str) -> Result<Option<Listed>> {
     Ok(tx
         .query_row(
-            &format!("UPDATE auth_passkey SET name = ?2 WHERE id = ?1 RETURNING {LISTED}"),
+            &format!("UPDATE passkeys SET name = ?2 WHERE id = ?1 RETURNING {LISTED}"),
             params![id, name],
             listed,
         )
@@ -136,12 +136,12 @@ pub fn rename(tx: &Transaction<'_>, id: &str, name: &str) -> Result<Option<Liste
 }
 
 pub fn remove(tx: &Transaction<'_>, id: &str) -> Result<bool> {
-    Ok(tx.execute("DELETE FROM auth_passkey WHERE id = ?1", params![id])? == 1)
+    Ok(tx.execute("DELETE FROM passkeys WHERE id = ?1", params![id])? == 1)
 }
 
 pub fn count_beyond(tx: &Transaction<'_>, host: &str) -> Result<i64> {
     Ok(tx.query_row(
-        "SELECT count(*) FROM auth_passkey WHERE host <> ?1",
+        "SELECT count(*) FROM passkeys WHERE host <> ?1",
         params![host],
         |row| row.get(0),
     )?)

@@ -21,7 +21,7 @@ use crate::app::{App, instance, keys};
 const COMMAND_LINE_SOFTWARE_ID: &str = "so.marfa.cli";
 const APP_SOURCE_PREFIX: &str = "oauth:";
 const NARROWED: &str = "auth.grant.narrowed";
-pub(crate) const RENAMED: &str = "auth.grant.rename";
+pub(crate) const RENAMED: &str = "auth.grant.renamed";
 pub(crate) const REVOKED: &str = GRANT_REVOKED;
 
 fn no_such_grant() -> Refusal {
@@ -66,19 +66,19 @@ pub(crate) fn sign_in_name(tx: &Connection, consent: &Consent) -> Result<String>
         .to_string())
 }
 
-pub(crate) fn source_of(client_id: &str, user_id: &str) -> String {
-    format!("{APP_SOURCE_PREFIX}{client_id}:{user_id}")
+pub(crate) fn source_of(client_id: &str, owner_id: &str) -> String {
+    format!("{APP_SOURCE_PREFIX}{client_id}:{owner_id}")
 }
 
 /// A client's ID can hold a colon; a person's cannot.
 pub(crate) fn name_of_source(tx: &Connection, source: &str) -> Result<Option<String>> {
-    let Some((client_id, user_id)) = source
+    let Some((client_id, owner_id)) = source
         .strip_prefix(APP_SOURCE_PREFIX)
         .and_then(|named| named.rsplit_once(':'))
     else {
         return Ok(None);
     };
-    match store::consent(tx, client_id, user_id)?.filter(Consent::stands) {
+    match store::consent(tx, client_id, owner_id)?.filter(Consent::stands) {
         Some(consent) => sign_in_name(tx, &consent).map(Some),
         None => Ok(None),
     }
@@ -159,7 +159,7 @@ fn end_chains_beyond(
     scopes: &ScopeSet,
     now: Stamp,
 ) -> Result<()> {
-    let tokens = store::usable_tokens(tx, &consent.client_id, &consent.user_id)?;
+    let tokens = store::usable_tokens(tx, &consent.client_id, &consent.owner_id)?;
     for (chain, held) in &tokens {
         if first_uncovered(scopes, held).is_some() {
             store::end_chain(tx, chain, now)?;
@@ -196,7 +196,7 @@ pub async fn narrow(
             return Ok(consent.scopes);
         }
         end_chains_beyond(tx, &consent, &asked.scopes, unit.instant)?;
-        store::end_outstanding_codes(tx, &consent.client_id, &consent.user_id)?;
+        store::end_outstanding_codes(tx, &consent.client_id, &consent.owner_id)?;
         grant::narrow(unit, &cache, &consent, &asked.scopes)?;
         unit.audit(
             "oauth_grant",
@@ -217,14 +217,14 @@ pub(crate) fn withdraw(
     consent: &Consent,
     with_keys: bool,
 ) -> Result<()> {
-    grant::end(unit, cache, &consent.client_id, &consent.user_id)?;
+    grant::end(unit, cache, &consent.client_id, &consent.owner_id)?;
     unit.audit_also(
         REVOKED,
         "oauth_grant",
         &consent.client_id,
         Some(json!({
             "client_id": consent.client_id,
-            "user_id": consent.user_id,
+            "owner_id": consent.owner_id,
             "grant_item_id": consent.grant_id,
             "revoke_keys": with_keys,
         })),

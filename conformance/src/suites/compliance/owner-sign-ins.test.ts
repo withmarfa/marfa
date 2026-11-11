@@ -78,7 +78,7 @@ async function signIn(
 ): Promise<Browser> {
   addresses += 1;
   const address = `198.51.100.${String(addresses)}`;
-  const response = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
+  const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -89,7 +89,7 @@ async function signIn(
     body: JSON.stringify({ email: OWNER.email, password: OWNER.password }),
   });
   expect(response.status).toBe(200);
-  const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+  const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
     response.headers.get("set-cookie") ?? "",
   )?.[1];
   expect(cookie, "sign-in set no session cookie").toBeTruthy();
@@ -741,7 +741,7 @@ describe("ending a sign-in", () => {
     const page = await new MarfaClient({
       baseUrl: server.apiUrl,
       apiKey: server.managementKey,
-    }).listAudit({ action: "auth.session.delete", limit: 200 });
+    }).listAudit({ action: "auth.sign_in.ended", limit: 200 });
     expect(page.status, JSON.stringify(page.error)).toBe(200);
     expect(page.data.data.map((row) => row.resource_id)).toContain(id);
   });
@@ -1026,55 +1026,6 @@ describe("a browser session's idle week", () => {
     expect(cookieMaxAge(next, browser.cookie)).toBe(COOKIE_SECONDS);
     expect((await stored(id)).updated_at).toBeGreaterThan(recorded);
   }, 30_000);
-
-  it("keeps a sign-in not to be remembered on a cookie with no Max-Age, and its idle week on the server", async () => {
-    const earlier = new Set((await signIns()).map((row) => row.id));
-    addresses += 1;
-    const response = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        origin,
-        [CLIENT_HEADER]: `198.51.100.${String(addresses)}`,
-      },
-      body: JSON.stringify({ ...OWNER, rememberMe: false }),
-    });
-    expect(response.status).toBe(200);
-    const line = response.headers
-      .getSetCookie()
-      .find((value) => /session_token=/.test(value));
-    expect(line, "sign-in set no session cookie").toBeDefined();
-    expect(line).not.toMatch(/max-age/i);
-    const browser: Browser = {
-      cookie: response.headers
-        .getSetCookie()
-        .map((value) => value.split(";")[0])
-        .join("; "),
-      address: "",
-      userAgent: "",
-      maxAge: Number.NaN,
-    };
-    const session = line!.split(";")[0]!;
-    const id = (await signIns()).find(
-      (row) => row.kind === "browser" && !earlier.has(row.id),
-    )!.id;
-    const created = (await signIns()).find((row) => row.id === id)!;
-    expect(
-      (Date.parse(created.expires_at) - Date.parse(created.created_at)) / 1000,
-    ).toBe(7 * 24 * 3600 + 60);
-
-    await pass(2 * MINUTE);
-    const before = Math.floor(serverNow());
-    const used = await use(browser);
-    expect(used.status).toBe(200);
-    expect(cookieMaxAge(used, session)).toBeUndefined();
-    expect(
-      used.headers.getSetCookie().some((value) => /session_token=/.test(value)),
-    ).toBe(false);
-    const row = await stored(id);
-    expect(row.updated_at).toBeGreaterThanOrEqual(before);
-    expect(row.expires_at - row.updated_at).toBe(IDLE_WEEK_MS);
-  });
 
   it("does not record a use within a minute of the last one", async () => {
     const browser = await signIn();

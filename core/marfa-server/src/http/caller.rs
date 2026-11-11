@@ -99,11 +99,11 @@ async fn owner_by_cookie(
             .notes
             .key_id
             .set(format!("owner:{}", seen.session.id));
-        if seen.recorded && seen.session.remembered {
+        if seen.recorded {
             let _ = context
                 .notes
                 .renewal
-                .set(cookies::session(&address, token, true)?);
+                .set(cookies::session(&address, token)?);
         }
     }
     Ok(Some(Caller::Owner(Box::new(seen.session))))

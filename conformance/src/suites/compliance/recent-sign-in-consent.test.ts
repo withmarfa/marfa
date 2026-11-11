@@ -52,7 +52,7 @@ function nextAddress(): string {
 }
 
 async function signIn(): Promise<string> {
-  const response = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
+  const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -62,7 +62,7 @@ async function signIn(): Promise<string> {
     body: JSON.stringify(TEST_OWNER),
   });
   expect(response.status).toBe(200);
-  const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+  const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
     response.headers.get("set-cookie") ?? "",
   )?.[1];
   expect(cookie, "sign-in set no session cookie").toBeTruthy();

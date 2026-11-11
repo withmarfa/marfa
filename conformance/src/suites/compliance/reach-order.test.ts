@@ -735,13 +735,13 @@ describe("the reach of an approved app", () => {
     );
     origin = new URL(((await discovery.json()) as { issuer: string }).issuer)
       .origin;
-    const response = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
+    const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
       method: "POST",
       headers: { "content-type": "application/json", origin },
       body: JSON.stringify(OWNER),
     });
     expect(response.status).toBe(200);
-    const session = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+    const session = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
       response.headers.get("set-cookie") ?? "",
     )?.[1];
     expect(session, "sign-in set no session cookie").toBeTruthy();

@@ -64,6 +64,12 @@ If `POST /setup/exchange` or `POST /setup/claim`, with a JSON body or a form, ca
 
 **Tests:** `compliance/owner.test.ts › refuses a key the setup doors do not declare, in a JSON or a form body, without consuming valid setup proof`.
 
+### `instance-claim/exchange-answer`
+
+When `POST /setup/exchange`, sent as JSON, exchanges valid setup proof, the server MUST answer `200` with only `{"ok": true}`.
+
+**Tests:** `compliance/owner.test.ts › answers an exchange sent as JSON with only ok, and the setup cookie`.
+
 ### `instance-claim/owner-created`
 
 When valid setup proof claims an unclaimed instance with valid owner details, the server MUST answer `201` with the owner's `id`, lowercased `email`, `name`, and `created_at`.

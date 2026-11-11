@@ -1,3 +1,4 @@
+import { signInOwnerWithPassword } from "../../client/owner-session.js";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -729,15 +730,7 @@ describe("the instance from the terminal", () => {
       verification_uri_complete: string;
     };
     const origin = new URL(code.verification_uri_complete).origin;
-    const signIn = await fetch(`${origin}/auth/sign-in/email`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin },
-      body: JSON.stringify(TEST_OWNER),
-    });
-    const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-      signIn.headers.get("set-cookie") ?? "",
-    )?.[1];
-    expect(cookie, "sign-in set no session cookie").toBeTruthy();
+    const cookie = await signInOwnerWithPassword(origin, origin, TEST_OWNER);
     const form = new URLSearchParams({
       user_code: code.user_code,
       decision: "approve",
@@ -746,7 +739,7 @@ describe("the instance from the terminal", () => {
     const approved = await fetch(`${origin}/auth/device/consent`, {
       method: "POST",
       headers: {
-        cookie: cookie!,
+        cookie,
         origin,
         "content-type": "application/x-www-form-urlencoded",
       },

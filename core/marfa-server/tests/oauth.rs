@@ -172,7 +172,7 @@ impl Instance {
         .await;
         assert_eq!(claimed.status, StatusCode::CREATED);
         let public = public(app.clone());
-        let signed_in = send(public.clone(), post_json("/auth/sign-in/email", &claim)).await;
+        let signed_in = send(public.clone(), post_json("/auth/sign-in", &claim)).await;
         assert_eq!(signed_in.status, StatusCode::OK);
         Instance {
             cookie: signed_in.cookie().unwrap(),
@@ -468,7 +468,7 @@ async fn two_exchanges_of_one_code_at_once_leave_no_tokens_standing() {
         first
     };
     refused_as(&loser, "invalid_grant");
-    let tokens = "SELECT count(*) FROM auth_oauth_access_token";
+    let tokens = "SELECT count(*) FROM oauth_access_tokens";
     assert_eq!(instance.count(tokens).await, 0);
 }
 
@@ -512,14 +512,14 @@ async fn a_spent_code_stays_until_its_expiry_and_ends_nothing_after() {
     let code = instance.code(&client, NOTES).await;
     let issued = instance.exchange(&client, &code).await;
     assert_eq!(issued.status, StatusCode::OK, "{}", issued.text);
-    let rows = "SELECT count(*) FROM auth_oauth_code";
+    let rows = "SELECT count(*) FROM oauth_codes";
     assert_eq!(instance.count(rows).await, 1);
 
     instance.app.clock.advance(601_000).unwrap();
     refused_as(&instance.exchange(&client, &code).await, "invalid_grant");
     let replays = "SELECT count(*) FROM audit_log WHERE action = 'auth.code.replayed'";
     assert_eq!(instance.count(replays).await, 0);
-    let tokens = "SELECT count(*) FROM auth_oauth_access_token";
+    let tokens = "SELECT count(*) FROM oauth_access_tokens";
     assert_eq!(instance.count(tokens).await, 1);
 
     cleaned(&instance.app).await;
@@ -549,7 +549,7 @@ async fn an_exchange_that_failed_burns_the_code_and_names_no_replay() {
     refused_as(&instance.exchange(&client, &code).await, "invalid_grant");
     let replays = "SELECT count(*) FROM audit_log WHERE action = 'auth.code.replayed'";
     assert_eq!(instance.count(replays).await, 0);
-    let tokens = "SELECT count(*) FROM auth_oauth_access_token";
+    let tokens = "SELECT count(*) FROM oauth_access_tokens";
     assert_eq!(instance.count(tokens).await, 0);
 }
 
@@ -592,7 +592,7 @@ async fn two_refreshes_at_once_cannot_both_leave_a_live_token() {
     let mut statuses = [first.status, second.status];
     statuses.sort();
     assert_eq!(statuses, [StatusCode::OK, StatusCode::BAD_REQUEST]);
-    let live = "SELECT count(*) FROM auth_oauth_refresh_token \
+    let live = "SELECT count(*) FROM oauth_refresh_tokens \
                 WHERE ended_at IS NULL AND rotated_at IS NULL";
     assert_eq!(instance.count(live).await, 0);
     instance
@@ -647,9 +647,9 @@ async fn a_failed_audit_undoes_the_whole_approval() {
     let client = instance.register(NOTES).await;
     let link = instance.consent_link(&client, NOTES).await;
     let grants = "SELECT count(*) FROM items WHERE type = 'system.connection'";
-    let consents = "SELECT count(*) FROM auth_oauth_consent";
+    let consents = "SELECT count(*) FROM oauth_consents";
     let events = "SELECT count(*) FROM event_log";
-    let codes = "SELECT count(*) FROM auth_oauth_code";
+    let codes = "SELECT count(*) FROM oauth_codes";
     let events_before = instance.count(events).await;
 
     let aim = Some("item.create");
@@ -688,7 +688,7 @@ async fn a_failed_audit_leaves_a_withdrawal_undone() {
     assert!(reply.status.is_server_error(), "{}", reply.text);
     let written = instance.write_note(text_at(&issued, "access_token")).await;
     assert_eq!(written.status, StatusCode::CREATED, "{}", written.text);
-    let withdrawn = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NOT NULL";
+    let withdrawn = "SELECT count(*) FROM oauth_consents WHERE withdrawn_at IS NOT NULL";
     assert_eq!(instance.count(withdrawn).await, 0);
 }
 
@@ -707,7 +707,7 @@ async fn a_code_dies_with_the_browser_session_that_approved_it() {
     assert!(left.status.is_success(), "{}", left.text);
     let reply = instance.exchange(&client, &code).await;
     refused_as(&reply, "invalid_request");
-    let tokens = "SELECT count(*) FROM auth_oauth_access_token";
+    let tokens = "SELECT count(*) FROM oauth_access_tokens";
     assert_eq!(instance.count(tokens).await, 1);
 }
 
@@ -725,7 +725,7 @@ async fn a_grant_revoked_between_approval_and_poll_issues_nothing() {
         .revoke(&client, text_at(&issued.json(), "refresh_token"))
         .await;
     refused_as(&instance.poll(&client, &late).await, "invalid_grant");
-    let tokens = "SELECT count(*) FROM auth_oauth_access_token";
+    let tokens = "SELECT count(*) FROM oauth_access_tokens";
     assert_eq!(instance.count(tokens).await, 0);
 }
 
@@ -736,7 +736,7 @@ async fn a_poll_that_cannot_read_the_consent_fails_as_the_server() {
     let client = instance.register_device(scope).await;
     let device_code = instance.device_approved(&client, scope).await;
     instance
-        .stage("UPDATE auth_oauth_consent SET scopes = 'not a list'")
+        .stage("UPDATE oauth_consents SET scopes = 'not a list'")
         .await;
 
     let reply = instance.poll(&client, &device_code).await;
@@ -746,7 +746,7 @@ async fn a_poll_that_cannot_read_the_consent_fails_as_the_server() {
         "{}",
         reply.text
     );
-    let spent = "SELECT count(*) FROM auth_oauth_device_code WHERE status = 'spent'";
+    let spent = "SELECT count(*) FROM oauth_device_codes WHERE status = 'spent'";
     assert_eq!(instance.count(spent).await, 0);
 }
 
@@ -797,7 +797,7 @@ async fn a_post_naming_a_scope_the_request_narrowed_away_grants_nothing() {
     let exp = instance.app.clock.now_ms() / 1_000 + 600;
     let secret = &instance.app.settings.start.auth_secret;
     let link = signed_link::sign(&params, exp, secret).unwrap();
-    let consents = "SELECT count(*) FROM auth_oauth_consent";
+    let consents = "SELECT count(*) FROM oauth_consents";
 
     let reply = instance.decide(&link, &["system.*:read"]).await;
     assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.text);
@@ -821,9 +821,7 @@ async fn approving_with_nothing_chosen_denies() {
             .any(|(n, v)| n == "error" && v == "access_denied")
     );
     assert_eq!(
-        instance
-            .count("SELECT count(*) FROM auth_oauth_consent")
-            .await,
+        instance.count("SELECT count(*) FROM oauth_consents").await,
         0
     );
 }
@@ -1184,7 +1182,7 @@ async fn cleanup_takes_only_the_clients_nothing_holds() {
         .revoke(&revoked, text_at(&issued, "refresh_token"))
         .await;
     let offered = instance.register(NOTES).await;
-    let clients = "SELECT count(*) FROM auth_oauth_client";
+    let clients = "SELECT count(*) FROM oauth_clients";
     assert_eq!(instance.count(clients).await, 4);
     cleaned(&instance.app).await;
     assert_eq!(instance.count(clients).await, 4);
@@ -1228,7 +1226,7 @@ async fn a_failing_stage_leaves_the_later_stages_to_run_and_fails_the_run() {
     instance.register(NOTES).await;
     let app = &instance.app;
     app.clock.advance(366 * DAY_MS).unwrap();
-    let clients = "SELECT count(*) FROM auth_oauth_client";
+    let clients = "SELECT count(*) FROM oauth_clients";
     assert_eq!(instance.count(clients).await, 2);
 
     app.faults
@@ -1272,8 +1270,8 @@ async fn an_idle_grant_retires_then_goes_and_its_client_can_follow() {
     let grants = "SELECT count(*) FROM items WHERE type = 'system.connection'";
     assert_eq!(instance.count(grants).await, 1);
 
-    let consents = "SELECT count(*) FROM auth_oauth_consent";
-    let clients = "SELECT count(*) FROM auth_oauth_client";
+    let consents = "SELECT count(*) FROM oauth_consents";
+    let clients = "SELECT count(*) FROM oauth_clients";
     app.clock.advance(89 * DAY_MS).unwrap();
     cleaned(app).await;
     assert_eq!(instance.count(consents).await, 1);
@@ -1408,9 +1406,9 @@ async fn idle_revoked_and_unused() -> Instance {
     instance
 }
 
-const STANDING: &str = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NULL";
-const WITHDRAWN: &str = "SELECT count(*) FROM auth_oauth_consent WHERE withdrawn_at IS NOT NULL";
-const CLIENTS: &str = "SELECT count(*) FROM auth_oauth_client";
+const STANDING: &str = "SELECT count(*) FROM oauth_consents WHERE withdrawn_at IS NULL";
+const WITHDRAWN: &str = "SELECT count(*) FROM oauth_consents WHERE withdrawn_at IS NOT NULL";
+const CLIENTS: &str = "SELECT count(*) FROM oauth_clients";
 
 #[tokio::test]
 async fn the_cleanup_keeps_what_a_retention_committed_before_it_is_live_keeps() {
@@ -1504,7 +1502,7 @@ async fn the_expired_go_and_a_rotated_token_waits_for_its_own_end() {
         cleaned(app).await.deleted,
         both_codes_and_both_access_tokens
     );
-    let rotated = "SELECT count(*) FROM auth_oauth_refresh_token WHERE rotated_at IS NOT NULL";
+    let rotated = "SELECT count(*) FROM oauth_refresh_tokens WHERE rotated_at IS NOT NULL";
     assert_eq!(instance.count(rotated).await, 1);
     app.clock.advance(31 * DAY_MS).unwrap();
     let both_tokens_and_the_browser_session = 3;
@@ -1519,16 +1517,16 @@ async fn the_expired_go_and_a_rotated_token_waits_for_its_own_end() {
 async fn an_expired_browser_session_goes_and_a_live_one_stays() {
     let instance = Instance::signed_in().await;
     let claim = json!({ "email": EMAIL, "password": PASSWORD });
-    let again = post_json("/auth/sign-in/email", &claim);
+    let again = post_json("/auth/sign-in", &claim);
     assert_eq!(instance.send(again).await.status, StatusCode::OK);
-    let sessions = "SELECT count(*) FROM auth_session";
+    let sessions = "SELECT count(*) FROM sign_ins";
     assert_eq!(instance.count(sessions).await, 2);
     let app = &instance.app;
     app.db
         .write(Write::own(), |tx| {
             tx.execute(
-                "UPDATE auth_session SET expires_at = '2000-01-01T00:00:00.000Z' \
-                 WHERE id = (SELECT id FROM auth_session LIMIT 1)",
+                "UPDATE sign_ins SET expires_at = '2000-01-01T00:00:00.000Z' \
+                 WHERE id = (SELECT id FROM sign_ins LIMIT 1)",
                 [],
             )?;
             Ok(())
@@ -1548,21 +1546,21 @@ async fn a_pass_works_through_more_than_one_batch() {
     for _ in 0..MORE_THAN_A_BATCH {
         instance.register(NOTES).await;
     }
-    let user = instance.text_of("SELECT id FROM auth_user").await;
+    let user = instance.text_of("SELECT id FROM owner").await;
     let app = &instance.app;
     app.db
         .write(Write::own(), move |tx| {
             tx.execute(
-                "INSERT INTO auth_oauth_consent \
-                 (client_id, user_id, grant_id, scopes, created_at, updated_at) \
-                 SELECT client_id, ?1, client_id, '[]', ?2, ?2 FROM auth_oauth_client",
+                "INSERT INTO oauth_consents \
+                 (client_id, owner_id, grant_id, scopes, created_at, updated_at) \
+                 SELECT client_id, ?1, client_id, '[]', ?2, ?2 FROM oauth_clients",
                 [user.as_str(), "2000-01-01T00:00:00.000Z"],
             )?;
             tx.execute(
-                "INSERT INTO auth_oauth_code (digest, client_id, user_id, session_id, grant_id, \
+                "INSERT INTO oauth_codes (digest, client_id, owner_id, session_id, grant_id, \
                  redirect_uri, scopes, challenge, resources, expires_at) \
                  SELECT client_id, client_id, ?1, 's', client_id, 'r', '[]', 'c', '[]', ?2 \
-                 FROM auth_oauth_client",
+                 FROM oauth_clients",
                 [user.as_str(), "2000-01-01T00:00:00.000Z"],
             )?;
             Ok(())
@@ -1788,7 +1786,7 @@ impl Instance {
     }
 
     async fn last_use(&self) -> String {
-        let query = "SELECT coalesce(max(last_used_at), '') FROM auth_oauth_consent";
+        let query = "SELECT coalesce(max(last_used_at), '') FROM oauth_consents";
         self.text_of(query).await
     }
 
@@ -1806,7 +1804,7 @@ impl Instance {
     /// Whoever holds the instance's own cookie stays signed in.
     async fn sign_in_again(&self) -> String {
         let claim = json!({ "email": EMAIL, "password": PASSWORD });
-        let signed_in = self.send(post_json("/auth/sign-in/email", &claim)).await;
+        let signed_in = self.send(post_json("/auth/sign-in", &claim)).await;
         assert_eq!(signed_in.status, StatusCode::OK, "{}", signed_in.text);
         signed_in.cookie().unwrap()
     }
@@ -1845,7 +1843,7 @@ fn way_back(reply: &Reply) -> String {
 async fn an_ended_grant_keeps_no_destination_and_a_narrowed_one_keeps_them() {
     let instance = Instance::signed_in().await;
     let app = &instance.app;
-    let destinations = "SELECT count(*) FROM auth_oauth_consent_destination";
+    let destinations = "SELECT count(*) FROM oauth_consent_destinations";
     let both = "core.note:read core.task:read";
     let client = instance.register(both).await;
     instance.tokens(&client, both).await;
@@ -2175,7 +2173,7 @@ async fn a_chain_reaching_past_its_grant_refreshes_to_nothing() {
         .db
         .write(Write::own(), |tx| {
             tx.execute(
-                "UPDATE auth_oauth_consent SET scopes = '[\"core.note:read\",\"offline_access\"]'",
+                "UPDATE oauth_consents SET scopes = '[\"core.note:read\",\"offline_access\"]'",
                 [],
             )?;
             Ok(())
@@ -2251,7 +2249,7 @@ async fn a_refresh_is_judged_by_what_the_grant_reaches_not_how_it_is_spelled() {
         .db
         .write(Write::own(), |tx| {
             tx.execute(
-                "UPDATE auth_oauth_consent \
+                "UPDATE oauth_consents \
                  SET scopes = '[\"*:write\",\"core.*:read\",\"offline_access\"]'",
                 [],
             )?;
@@ -2423,7 +2421,7 @@ async fn a_failed_audit_keeps_a_browser_session_and_a_retry_ends_it() {
     let own = rows.iter().find(|row| row["kind"] == "browser").unwrap();
     let id = text_at(own, "id");
 
-    let aim = Some("auth.session.delete");
+    let aim = Some("auth.sign_in.ended");
     instance.app.faults.set("fail:audit", aim).unwrap();
     let failed = instance.end_sign_in(id).await;
     instance.app.faults.clear(None);
@@ -2561,19 +2559,19 @@ async fn a_silent_code_reads_its_destination_inside_the_write() {
     let instance = Instance::signed_in().await;
     let client = instance.register(NOTES).await;
     instance.code(&client, NOTES).await;
-    let codes = "SELECT count(*) FROM auth_oauth_code";
+    let codes = "SELECT count(*) FROM oauth_codes";
     assert_eq!(instance.count(codes).await, 1);
 
     instance
         .app
         .faults
-        .set("hold:write", Some("auth.verification.create"))
+        .set("hold:write", Some("auth.code.issued"))
         .unwrap();
     let asked = instance.authorize(&client, NOTES, CALLBACK);
     let moved = async {
         instance.when_held().await;
         instance
-            .stage("UPDATE auth_oauth_client SET redirect_uris = '[\"http://127.0.0.1:9/moved\"]'")
+            .stage("UPDATE oauth_clients SET redirect_uris = '[\"http://127.0.0.1:9/moved\"]'")
             .await;
         instance.app.faults.clear(None);
     };
@@ -2589,7 +2587,7 @@ async fn a_silent_code_reads_its_destination_inside_the_write() {
 async fn a_foreign_form_neither_uses_nor_renews_a_session() {
     let instance = Instance::signed_in().await;
     instance.app.clock.advance(120_000).unwrap();
-    let last_use = "SELECT updated_at FROM auth_session";
+    let last_use = "SELECT updated_at FROM sign_ins";
     let before = instance.text_of(last_use).await;
 
     for door in [
@@ -2653,7 +2651,7 @@ async fn the_doors_of_a_sign_in_hold_a_session_to_a_safe_address() {
         .unwrap();
     let decided = instance.send(form).await;
     assert_eq!(decided.status, StatusCode::FORBIDDEN, "{}", decided.text);
-    let consents = "SELECT count(*) FROM auth_oauth_consent";
+    let consents = "SELECT count(*) FROM oauth_consents";
     assert_eq!(instance.count(consents).await, 0);
 }
 
@@ -2709,7 +2707,7 @@ async fn registrations_from_one_address_stop_at_their_limit() {
         .await;
     assert_eq!(held.status, StatusCode::TOO_MANY_REQUESTS, "{}", held.text);
     assert!(held.headers.contains_key(header::RETRY_AFTER));
-    let clients = "SELECT count(*) FROM auth_oauth_client";
+    let clients = "SELECT count(*) FROM oauth_clients";
     assert_eq!(instance.count(clients).await, 9);
 
     instance.app.clock.advance(60_000).unwrap();
@@ -2724,7 +2722,7 @@ async fn an_expired_device_code_answers_its_poll_then_goes() {
     let client = instance.register_device(NOTES).await;
     let device_code = instance.device_requested(&client, NOTES).await;
     let left_alone = instance.device_requested(&client, NOTES).await;
-    let codes = "SELECT count(*) FROM auth_oauth_device_code";
+    let codes = "SELECT count(*) FROM oauth_device_codes";
 
     app.clock.advance(11 * 60_000).unwrap();
     cleaned(app).await;
@@ -2776,7 +2774,7 @@ async fn ending_a_grant_ends_the_device_code_left_on_a_screen() {
     assert_eq!(refused.status, StatusCode::NOT_FOUND, "{}", refused.text);
     let device_code = text_at(&on_screen, "device_code");
     refused_as(&instance.poll(&client, device_code).await, "invalid_grant");
-    let tokens = "SELECT count(*) FROM auth_oauth_access_token";
+    let tokens = "SELECT count(*) FROM oauth_access_tokens";
     assert_eq!(instance.count(tokens).await, 0);
 
     let kept = approve(&unrelated).await;
@@ -2816,7 +2814,7 @@ async fn a_device_code_outlives_its_client_and_its_page_says_so() {
     app.clock.advance(DAY_MS - 5 * 60_000).unwrap();
     let asked = instance.device_asked(&client, NOTES).await;
     app.clock.advance(6 * 60_000).unwrap();
-    let clients = "SELECT count(*) FROM auth_oauth_client";
+    let clients = "SELECT count(*) FROM oauth_clients";
     assert_eq!(instance.count(clients).await, 1);
     cleaned(app).await;
     assert_eq!(instance.count(clients).await, 0);
@@ -2839,7 +2837,7 @@ async fn a_device_code_outlives_its_client_and_its_page_says_so() {
     let polled = instance.poll(&client, text_at(&asked, "device_code")).await;
     assert_eq!(polled.json()["error"], "invalid_client", "{}", polled.text);
 
-    let codes = "SELECT count(*) FROM auth_oauth_device_code";
+    let codes = "SELECT count(*) FROM oauth_device_codes";
     assert_eq!(instance.count(codes).await, 2);
     app.clock.advance(DAY_MS + 15 * 60_000).unwrap();
     cleaned(app).await;
@@ -2889,7 +2887,7 @@ async fn no_door_takes_the_scope_that_writes_the_sign_in_address() {
     let link = instance.consent_link(&client, NOTES).await;
     let refused = instance.decide(&link, &["profile.email:write"]).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
-    let consents = "SELECT count(*) FROM auth_oauth_consent";
+    let consents = "SELECT count(*) FROM oauth_consents";
     assert_eq!(instance.count(consents).await, 0);
 
     let code = instance.code(&client, OFFLINE_NOTES).await;
@@ -2979,7 +2977,7 @@ async fn a_registration_not_sent_as_json_gets_the_answer_of_its_own_shape() {
         assert!(answer.get("error").is_none());
         assert!(!reply.headers.contains_key("x-error-code"));
     }
-    let clients = "SELECT count(*) FROM auth_oauth_client";
+    let clients = "SELECT count(*) FROM oauth_clients";
     assert_eq!(instance.count(clients).await, 0);
     for content_type in ["application/json", "APPLICATION/JSON; charset=utf-8"] {
         let reply = instance
@@ -3001,7 +2999,7 @@ async fn a_registration_carrying_a_bearer_is_refused_as_an_unaccepted_token() {
         assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{}", reply.text);
         assert_eq!(reply.json()["error"], "invalid_token");
     }
-    let clients = "SELECT count(*) FROM auth_oauth_client";
+    let clients = "SELECT count(*) FROM oauth_clients";
     assert_eq!(instance.count(clients).await, 0);
 
     let refused = instance
@@ -3110,7 +3108,7 @@ async fn device_codes_for_one_address_stop_at_their_limit() {
         .await;
     assert_eq!(held.status, StatusCode::TOO_MANY_REQUESTS, "{}", held.text);
     assert!(held.headers.contains_key(header::RETRY_AFTER));
-    let codes = "SELECT count(*) FROM auth_oauth_device_code";
+    let codes = "SELECT count(*) FROM oauth_device_codes";
     assert_eq!(instance.count(codes).await, 30);
 }
 
@@ -3137,7 +3135,7 @@ async fn an_approved_client_naming_another_page(instance: &Instance) -> (String,
     let approved = an_approved_page(instance).await;
     instance
         .stage(
-            "UPDATE auth_oauth_client SET redirect_uris = \
+            "UPDATE oauth_clients SET redirect_uris = \
              '[\"https://approved.example/callback\",\"https://added.example/callback\"]'",
         )
         .await;
@@ -3211,14 +3209,14 @@ async fn an_approval_stands_only_for_the_destinations_its_screen_showed() {
     let link = instance.consent_link(&client, NOTES).await;
     instance
         .stage(
-            "UPDATE auth_oauth_client SET redirect_uris = \
+            "UPDATE oauth_clients SET redirect_uris = \
              '[\"http://127.0.0.1:9/callback\",\"https://added.example/callback\"]'",
         )
         .await;
 
     let approved = instance.decide(&link, &[NOTES]).await;
     assert!(code_in(&approved).is_none(), "{:?}", approved.location());
-    let consents = "SELECT count(*) FROM auth_oauth_consent";
+    let consents = "SELECT count(*) FROM oauth_consents";
     assert_eq!(instance.count(consents).await, 0);
 
     let declined = instance
@@ -3358,7 +3356,7 @@ async fn a_device_approval_stands_only_for_the_destinations_asked_about() {
         .json();
     instance
         .stage(
-            "UPDATE auth_oauth_client SET redirect_uris = \
+            "UPDATE oauth_clients SET redirect_uris = \
              '[\"http://127.0.0.1:9/callback\",\"https://added.example/callback\"]'",
         )
         .await;
@@ -3375,7 +3373,7 @@ async fn a_device_approval_stands_only_for_the_destinations_asked_about() {
             &fields,
         ))
         .await;
-    let consents = "SELECT count(*) FROM auth_oauth_consent";
+    let consents = "SELECT count(*) FROM oauth_consents";
     assert_eq!(instance.count(consents).await, 0);
 }
 
@@ -3546,7 +3544,7 @@ async fn end_tokens_at(app: &Arc<App>, expires_at: String) {
     app.db
         .write(Write::own(), move |tx| {
             tx.execute(
-                "UPDATE auth_oauth_access_token SET expires_at = ?1",
+                "UPDATE oauth_access_tokens SET expires_at = ?1",
                 [&expires_at],
             )?;
             Ok(())
@@ -3569,7 +3567,7 @@ async fn an_access_token_opens_until_the_millisecond_it_ends_and_the_sweep_takes
     end_tokens_at(app, now.text()).await;
     assert_eq!(instance.reads(&token).await, StatusCode::UNAUTHORIZED);
 
-    let tokens = "SELECT count(*) FROM auth_oauth_access_token";
+    let tokens = "SELECT count(*) FROM oauth_access_tokens";
     end_tokens_at(app, now.plus_ms(1).unwrap().text()).await;
     cleaned(app).await;
     assert_eq!(instance.count(tokens).await, 1);

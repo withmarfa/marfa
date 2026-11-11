@@ -63,29 +63,29 @@ impl Instance {
             .db
             .write(Write::own(), move |tx| {
                 tx.execute(
-                    "INSERT INTO auth_user (id, name, email, created_at, updated_at) \
-                     VALUES ('owner', 'Owner', 'owner@example.com', ?1, ?1)",
+                    "INSERT INTO owner (id, name, email, password, created_at, updated_at) \
+                     VALUES ('owner', 'Owner', 'owner@example.com', 'x', ?1, ?1)",
                     [old],
                 )?;
                 instance::mark_claimed(tx, "2026-01-01T00:00:00.000Z", "owner")?;
                 let session = |id: String, expires_at: Stamp| {
                     tx.execute(
-                        "INSERT INTO auth_session \
-                         (id, token, user_id, created_at, updated_at, expires_at) \
+                        "INSERT INTO sign_ins \
+                         (id, token, owner_id, created_at, updated_at, expires_at) \
                          VALUES (?1, ?1, 'owner', ?3, ?3, ?2)",
                         rusqlite::params![id, expires_at, old],
                     )
                 };
                 let consent = |id: String, withdrawn_at: Option<&str>| {
                     tx.execute(
-                        "INSERT INTO auth_oauth_client (client_id, auth_method, \
+                        "INSERT INTO oauth_clients (client_id, auth_method, \
                          application_type, redirect_uris, grant_types, response_types, scopes, \
                          contacts, created_at) \
                          VALUES (?1, 'none', 'native', '[]', '[]', '[]', '[]', '[]', ?2)",
                         [id.as_str(), old],
                     )?;
                     tx.execute(
-                        "INSERT INTO auth_oauth_consent (client_id, user_id, grant_id, scopes, \
+                        "INSERT INTO oauth_consents (client_id, owner_id, grant_id, scopes, \
                          created_at, updated_at, withdrawn_at) \
                          VALUES (?1, 'owner', ?1, '[]', ?3, ?3, ?2)",
                         rusqlite::params![id, withdrawn_at, old],

@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
+import { withInstanceDatabase } from "../../utils/instance-database.js";
 import {
   archiveLines,
   archiveManifest,
@@ -238,6 +239,12 @@ describe("a backup in the object store", () => {
       process.env.S3_ACCESS_KEY_ID!,
       process.env.S3_SECRET_ACCESS_KEY!,
     ];
+    // What a sign-in is found by: the digest the instance keeps of its token.
+    const signIns = withInstanceDatabase(origin.sqlitePath, (db) =>
+      db.prepare("SELECT token FROM sign_ins").all(),
+    ).map((row) => String(row.token));
+    expect(signIns.length, "the owner's sign-in is stored").toBeGreaterThan(0);
+    secrets.push(...signIns);
     // What `marfa.secrets` holds, where the environment did not give it.
     const secretsFile = join(dirname(origin.sqlitePath), "marfa.secrets");
     if (existsSync(secretsFile)) {

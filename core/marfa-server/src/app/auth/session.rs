@@ -2,7 +2,7 @@
 //! their digest, so a copy of the database signs no one in.
 
 use rusqlite::{OptionalExtension, Row, Transaction, params};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::{Note, Visit, names, note};
 use crate::app::access::{Caller, Standing, unauthorized};
@@ -18,21 +18,20 @@ const TOKEN_BYTES: usize = 32;
 const IDLE_MS: i64 = (7 * 24 * 3600 + 60) * 1000;
 const USE_EVERY_MS: i64 = 60 * 1000;
 const RECENT_MS: i64 = 5 * 60 * 1000;
-pub(super) const ENDED: &str = "auth.session.delete";
+pub(super) const ENDED: &str = "auth.sign_in.ended";
 /// Bookkeeping, named so a fault can reach it. It leaves no audit entry.
 const USE: Write = Write {
-    action: Some("auth.session.use"),
+    action: Some("auth.sign_in.used"),
     for_caller: false,
 };
 
 #[derive(Clone, Debug)]
 pub struct Session {
     pub id: String,
-    pub user_id: String,
+    pub owner_id: String,
     pub created_at: Stamp,
     pub updated_at: Stamp,
     pub expires_at: Stamp,
-    pub remembered: bool,
     pub user_agent: Option<String>,
     /// What the instance's levers hold it to, once a transaction has read them.
     pub standing: Standing,
@@ -47,16 +46,6 @@ impl Session {
     pub fn name(&self) -> String {
         names::browser_name(self.user_agent.as_deref())
     }
-
-    pub fn to_json(&self) -> Value {
-        json!({
-            "id": self.id,
-            "userId": self.user_id,
-            "createdAt": self.created_at,
-            "updatedAt": self.updated_at,
-            "expiresAt": self.expires_at,
-        })
-    }
 }
 
 /// A session just made, with the one copy of its token.
@@ -69,30 +58,29 @@ pub struct Opened {
 fn from_row(row: &Row<'_>) -> rusqlite::Result<Session> {
     Ok(Session {
         id: row.get("id")?,
-        user_id: row.get("user_id")?,
+        owner_id: row.get("owner_id")?,
         created_at: row.get("created_at")?,
         updated_at: row.get("updated_at")?,
         expires_at: row.get("expires_at")?,
-        remembered: row.get("remembered")?,
         user_agent: row.get("user_agent")?,
         standing: Standing::default(),
     })
 }
 
-const COLUMNS: &str = "id, user_id, created_at, updated_at, expires_at, remembered, user_agent";
+const COLUMNS: &str = "id, owner_id, created_at, updated_at, expires_at, user_agent";
 
 /// Only the owner's session counts, and only while it lasts.
 fn live(tx: &Transaction<'_>, found: Option<Session>, now: Stamp) -> Result<Option<Session>> {
     let owner = instance::owner_id(tx)?;
     Ok(found.filter(|session| {
-        session.expires_at > now && owner.as_deref() == Some(session.user_id.as_str())
+        session.expires_at > now && owner.as_deref() == Some(session.owner_id.as_str())
     }))
 }
 
 pub fn live_by_id(tx: &Transaction<'_>, id: &str, now: Stamp) -> Result<Option<Session>> {
     let found = tx
         .query_row(
-            &format!("SELECT {COLUMNS} FROM auth_session WHERE id = ?1"),
+            &format!("SELECT {COLUMNS} FROM sign_ins WHERE id = ?1"),
             [id],
             from_row,
         )
@@ -107,7 +95,7 @@ pub(super) fn all_live(tx: &Transaction<'_>, now: Stamp) -> Result<Vec<(Session,
     };
     Ok(tx
         .prepare(&format!(
-            "SELECT {COLUMNS}, ip_address FROM auth_session WHERE user_id = ?1"
+            "SELECT {COLUMNS}, ip_address FROM sign_ins WHERE owner_id = ?1"
         ))?
         .query_map([owner], |row| Ok((from_row(row)?, row.get("ip_address")?)))?
         .collect::<rusqlite::Result<Vec<_>>>()?
@@ -119,7 +107,7 @@ pub(super) fn all_live(tx: &Transaction<'_>, now: Stamp) -> Result<Vec<(Session,
 fn live_by_digest(tx: &Transaction<'_>, digest: &str, now: Stamp) -> Result<Option<Session>> {
     let found = tx
         .query_row(
-            &format!("SELECT {COLUMNS} FROM auth_session WHERE token = ?1"),
+            &format!("SELECT {COLUMNS} FROM sign_ins WHERE token = ?1"),
             [digest],
             from_row,
         )
@@ -133,7 +121,7 @@ pub fn live_count(tx: &Transaction<'_>, now: Stamp) -> Result<i64> {
         return Ok(0);
     };
     let ends = tx
-        .prepare("SELECT expires_at FROM auth_session WHERE user_id = ?1")?
+        .prepare("SELECT expires_at FROM sign_ins WHERE owner_id = ?1")?
         .query_map([owner], |row| row.get::<_, Stamp>(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     Ok(ends.iter().filter(|ends| **ends > now).count() as i64)
@@ -151,8 +139,7 @@ fn looks_like_a_token(text: &str) -> bool {
 
 pub(super) struct New<'a> {
     pub salt: &'a str,
-    pub user_id: &'a str,
-    pub remembered: bool,
+    pub owner_id: &'a str,
     pub visit: &'a Visit,
 }
 
@@ -160,24 +147,22 @@ pub(super) fn open(tx: &Transaction<'_>, now: Stamp, new: New<'_>) -> Result<Ope
     let token = new_token()?;
     let session = Session {
         id: uuid::Uuid::now_v7().to_string(),
-        user_id: new.user_id.to_string(),
+        owner_id: new.owner_id.to_string(),
         created_at: now,
         updated_at: now,
         expires_at: now.plus_ms(IDLE_MS)?,
-        remembered: new.remembered,
         user_agent: new.visit.user_agent.clone(),
         standing: Standing::default(),
     };
     tx.execute(
-        "INSERT INTO auth_session (id, token, user_id, created_at, updated_at, expires_at, \
-         remembered, user_agent, ip_address) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8)",
+        "INSERT INTO sign_ins (id, token, owner_id, created_at, updated_at, expires_at, \
+         user_agent, ip_address) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7)",
         params![
             session.id,
             digest_of(new.salt, &token)?,
-            session.user_id,
+            session.owner_id,
             now,
             session.expires_at,
-            session.remembered,
             session.user_agent,
             new.visit.client_ip(),
         ],
@@ -207,7 +192,7 @@ fn record_use(tx: &Transaction<'_>, id: &str, now: Stamp) -> Result<Option<Seen>
     session.updated_at = now;
     session.expires_at = now.plus_ms(IDLE_MS)?;
     tx.execute(
-        "UPDATE auth_session SET updated_at = ?2, expires_at = ?3 WHERE id = ?1",
+        "UPDATE sign_ins SET updated_at = ?2, expires_at = ?3 WHERE id = ?1",
         params![id, session.updated_at, session.expires_at],
     )?;
     Ok(Some(Seen {
@@ -280,11 +265,11 @@ pub(super) fn ended(
     actor: &Caller,
     visit: &Visit,
     session_id: &str,
-    user_id: &str,
+    owner_id: &str,
     replaced: bool,
 ) -> Result<()> {
-    tx.execute("DELETE FROM auth_session WHERE id = ?1", [session_id])?;
-    let mut details = json!({ "operation": "delete", "user_id": user_id });
+    tx.execute("DELETE FROM sign_ins WHERE id = ?1", [session_id])?;
+    let mut details = json!({ "operation": "delete", "owner_id": owner_id });
     if replaced {
         details["replaced_by_confirmation"] = true.into();
     }
@@ -295,7 +280,7 @@ pub(super) fn ended(
         visit,
         Note {
             action: ENDED,
-            resource_type: "auth_session",
+            resource_type: "sign_in",
             resource_id: session_id,
             details: Some(details),
         },
@@ -310,39 +295,39 @@ pub(super) fn end_replaced(
     visit: &Visit,
     session: &Session,
 ) -> Result<()> {
-    ended(tx, at, actor, visit, &session.id, &session.user_id, true)
+    ended(tx, at, actor, visit, &session.id, &session.owner_id, true)
 }
 
-/// Ends every session of `user_id` but `keeping`. One already past its end was
+/// Ends every session of `owner_id` but `keeping`. One already past its end was
 /// over before this, so it goes unrecorded.
 pub(super) fn end_all(
     tx: &Transaction<'_>,
     at: &str,
     actor: &Caller,
     visit: &Visit,
-    user_id: &str,
+    owner_id: &str,
     keeping: Option<&str>,
 ) -> Result<()> {
     let now = Stamp::read(at)?;
     tx.execute(
         &format!(
-            "DELETE FROM auth_session WHERE user_id = ?1 AND {} AND expires_at <= ?2",
+            "DELETE FROM sign_ins WHERE owner_id = ?1 AND {} AND expires_at <= ?2",
             readable("expires_at")
         ),
-        params![user_id, now],
+        params![owner_id, now],
     )?;
-    let mut statement = tx.prepare("SELECT id FROM auth_session WHERE user_id = ?1")?;
+    let mut statement = tx.prepare("SELECT id FROM sign_ins WHERE owner_id = ?1")?;
     let ids = statement
-        .query_map([user_id], |row| row.get::<_, String>(0))?
+        .query_map([owner_id], |row| row.get::<_, String>(0))?
         .collect::<rusqlite::Result<Vec<String>>>()?;
     for id in ids.iter().filter(|id| Some(id.as_str()) != keeping) {
-        ended(tx, at, actor, visit, id, user_id, false)?;
+        ended(tx, at, actor, visit, id, owner_id, false)?;
     }
     Ok(())
 }
 
 pub const UNREAD: Unread<'static> = Unread {
-    table: "auth_session",
+    table: "sign_ins",
     time: "expires_at",
     scope: "1",
 };
@@ -351,8 +336,8 @@ pub const UNREAD: Unread<'static> = Unread {
 pub fn remove_expired(tx: &Transaction<'_>, now: Stamp, batch: i64) -> Result<i64> {
     let count = tx.execute(
         &format!(
-            "DELETE FROM auth_session WHERE id IN ( \
-             SELECT id FROM auth_session WHERE {} AND expires_at <= ?1 LIMIT ?2)",
+            "DELETE FROM sign_ins WHERE id IN ( \
+             SELECT id FROM sign_ins WHERE {} AND expires_at <= ?1 LIMIT ?2)",
             readable("expires_at")
         ),
         params![now, batch],
@@ -386,7 +371,7 @@ pub async fn sign_out(app: &App, caller: &Caller, visit: Visit) -> Result<()> {
                 &unit.caller,
                 &visit,
                 &session.id,
-                &session.user_id,
+                &session.owner_id,
                 false,
             )
         })
@@ -415,8 +400,8 @@ mod tests {
             .unwrap();
         let then = at(NOW - 60_000);
         db.execute(
-            "INSERT INTO auth_user (id, name, email, created_at, updated_at) \
-             VALUES ('owner', 'Owner', 'owner@example.test', ?1, ?1)",
+            "INSERT INTO owner (id, name, email, password, created_at, updated_at) \
+             VALUES ('owner', 'Owner', 'owner@example.test', 'x', ?1, ?1)",
             [then],
         )
         .unwrap();
@@ -430,7 +415,7 @@ mod tests {
 
     fn ending(tx: &Transaction<'_>, id: &str, expires_at: &str) {
         tx.execute(
-            "INSERT INTO auth_session (id, token, user_id, created_at, updated_at, expires_at) \
+            "INSERT INTO sign_ins (id, token, owner_id, created_at, updated_at, expires_at) \
              VALUES (?1, ?1, 'owner', ?2, ?2, ?3)",
             params![id, at(NOW - 60_000), expires_at],
         )
@@ -457,7 +442,7 @@ mod tests {
         assert_eq!(live_count(&tx, now).unwrap(), 1);
         assert_eq!(remove_expired(&tx, now, 10).unwrap(), 2);
         let left: Vec<String> = tx
-            .prepare("SELECT id FROM auth_session")
+            .prepare("SELECT id FROM sign_ins")
             .unwrap()
             .query_map([], |row| row.get(0))
             .unwrap()

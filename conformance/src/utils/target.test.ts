@@ -10,7 +10,7 @@ const credentials = {
   apiKey: "marfa_k1_working",
   managementKey: "marfa_k1_management",
   controlSocket: "/tmp/marfa-control-fixture/control.sock",
-  ownerCookie: "marfa.auth.session_token=fixture",
+  ownerCookie: "marfa_session=fixture",
 };
 
 describe("redactSetupProof", () => {
@@ -55,7 +55,7 @@ describe("env file", () => {
   it("round-trips through the shell-sourceable format", () => {
     const text = renderEnvFile("http://127.0.0.1:8600", credentials);
     expect(text).toBe(
-      "MARFA_API_URL=http://127.0.0.1:8600\nMARFA_API_KEY=marfa_k1_working\nMARFA_MANAGEMENT_KEY=marfa_k1_management\nMARFA_CONTROL_SOCKET=/tmp/marfa-control-fixture/control.sock\nMARFA_OWNER_COOKIE=marfa.auth.session_token=fixture\n",
+      "MARFA_API_URL=http://127.0.0.1:8600\nMARFA_API_KEY=marfa_k1_working\nMARFA_MANAGEMENT_KEY=marfa_k1_management\nMARFA_CONTROL_SOCKET=/tmp/marfa-control-fixture/control.sock\nMARFA_OWNER_COOKIE=marfa_session=fixture\n",
     );
     expect(parseEnvFile(text)).toEqual({
       MARFA_API_URL: "http://127.0.0.1:8600",

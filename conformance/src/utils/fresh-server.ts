@@ -11,6 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { signInOwnerWithPassword } from "../client/owner-session.js";
 import { offeredValues } from "./approval-form.js";
 import { parseEnvFile, redactSetupProof, TEST_OWNER } from "./target.js";
 import {
@@ -794,25 +795,8 @@ export async function startDeviceFlow(
   };
   const origin = new URL(code.verification_uri_complete).origin;
 
-  const ownerSession = async (): Promise<string> => {
-    const signIn = await fetch(`${origin}/auth/sign-in/email`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin },
-      body: JSON.stringify(owner),
-    });
-    if (signIn.status !== 200) {
-      throw new Error(
-        `the owner could not sign in, so nothing can be decided: ${String(signIn.status)}`,
-      );
-    }
-    const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-      signIn.headers.get("set-cookie") ?? "",
-    )?.[1];
-    if (cookie === undefined) {
-      throw new Error("the owner's sign-in set no session cookie");
-    }
-    return cookie;
-  };
+  const ownerSession = (): Promise<string> =>
+    signInOwnerWithPassword(origin, origin, owner);
 
   return {
     clientId: registered.client_id,

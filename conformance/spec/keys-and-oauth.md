@@ -2413,7 +2413,7 @@ If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/consent` or `PO
 
 ### `keys-and-oauth/browser-no-origin`
 
-When a browser form post carries neither `Origin` nor `Referer`, the server MUST answer it as that operation answers a form rather than refuse it for its origin.
+When a form post to `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/authorize/decision` carries neither `Origin` nor `Referer`, the server MUST answer it as that operation answers a form rather than refuse it for its origin.
 
 **Tests:** `compliance/sign-in-surface.test.ts › refuses a form post from an origin it does not trust, on every browser door`.
 
@@ -2575,21 +2575,63 @@ When an owner's device code lookup window or the owner lane's collective window 
 
 **Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes`, `› holds the owner lane aggregate to its limit and resets its fifteen-minute window`.
 
-## The sign-in library's routes
+## Password sign-in
 
-The sign-in surface is served through a library that offers more routes than Marfa uses.
+`POST /auth/sign-in` takes the sign-in page's form, which it answers with a redirect, or a JSON body.
 
-### `keys-and-oauth/auth-other-paths`
+### `keys-and-oauth/password-sign-in-answer`
 
-If a request names a path under `/auth/` that the sign-in surface does not serve, with or without a trailing slash, then the server MUST answer `404 not_found`.
+When `POST /auth/sign-in` sends, as JSON, the owner's `email` and `password` and signs the owner in, the server MUST answer `200` with only `{"ok": true}` and set the owner's session cookie, `HttpOnly` and `SameSite=Lax`.
 
-**Reason:** Of the library's routes, the surface serves password sign-in and sign-out, the confirmation of a recent sign-in, passkey sign-in and registration, the OAuth protocol routes, the device code request, and the discovery and error documents. Every other one, such as profile and account editing, social and email flows, the browser session's own reads and revocations, a password change, session and account listings, a password check and a signed session token, answers as a path nothing serves.
+**Reason:** A script that signs in needs the cookie and nothing else, and the session it opens is listed at `GET /owner/sign-ins`.
 
-**Tests:** `compliance/sign-in-library-routes.test.ts › answer 404 not_found on every path no Marfa client uses, either spelling, to a signed-in owner`.
+**Tests:** `compliance/sign-in-surface.test.ts › answers a password sign-in sent as JSON with only ok, and its session cookie`.
+
+### `keys-and-oauth/password-sign-in-fields`
+
+If `POST /auth/sign-in` sends, as JSON, a key other than `email` and `password`, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`, and set no cookie.
+
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a password sign-in sent as JSON with a field it does not take, and sets no cookie`.
+
+### `keys-and-oauth/session-cookie-name`
+
+Where the sign-in address is plain HTTP on this machine, the server MUST name the owner's session cookie `marfa_session`.
+
+**Reason:** A browser takes a `__Host-` cookie only over HTTPS.
+
+**Tests:** `compliance/sign-in-surface.test.ts › answers a password sign-in sent as JSON with only ok, and its session cookie`.
+
+### `keys-and-oauth/session-cookie-https`
+
+Where the sign-in address is HTTPS, the server MUST set the owner's session cookie as `__Host-marfa_session`, with `Secure`, `Path=/` and no `Domain`.
+
+**Reason:** The prefix binds the cookie to the instance's host, so no other host under the same domain can set or read it.
+
+**Tests:** `compliance/session-cookie-https.test.ts › is __Host-marfa_session, Secure, on path / and with no Domain`.
+
+### `keys-and-oauth/session-cookie-other-name`
+
+If a request carries a live browser session's token under a cookie name other than the one the sign-in address calls for, then the server MUST answer the request as one that carries no session.
+
+**Tests:** `compliance/session-cookie-https.test.ts › signs no one in when its token comes under the name a plain HTTP address uses`.
+
+### `keys-and-oauth/sign-in-unsaid-origin`
+
+If `POST /auth/sign-in` or `POST /auth/passkeys/sign-in` carries neither `Origin` nor `Referer`, then the server MUST answer `403 forbidden`.
+
+**Reason:** A door that opens a browser session takes a post, as a form or as JSON, only from a page it trusts, so a post that does not say where it came from is refused.
+
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a sign-in that says neither Origin nor Referer, as a form or as JSON, and sets no cookie`, `compliance/passkeys.test.ts › refuses a passkey sign-in that says neither Origin nor Referer, and opens no session`.
+
+### `keys-and-oauth/sign-out-answer`
+
+When `POST /auth/sign-out` ends the browser session, the server MUST answer `200` with only `{"ok": true}`.
+
+**Tests:** `compliance/sign-in-surface.test.ts › answers a sign-out with only ok, and ends the session cookie`.
 
 ### `keys-and-oauth/library-origin`
 
-If `POST /auth/sign-in/email` carries an `Origin` that is neither the issuer's origin nor one `cors_origins` names, an approved web page's origin included, then the server MUST answer `403`.
+If `POST /auth/sign-in` carries an `Origin` that is neither the issuer's origin nor one `cors_origins` names, an approved web page's origin included, then the server MUST answer `403`.
 
 **Reason:** A password sign-in sets the owner's session cookie, so the origins it trusts are the operator's and never widen with an approval.
 
@@ -2957,7 +2999,7 @@ If `PATCH /owner/sign-ins/{id}` names no live sign-in of the owner, then the ser
 
 ## A browser session's idle week
 
-A browser session expires seven days and one minute after its last recorded use. A use is recorded at most once a minute; a use that storage refuses does not renew the expiry. A session signed in to be remembered keeps a cookie that lasts longer, and one signed in not to be remembered keeps a cookie that ends with the browser. The stored session is what ends either.
+A browser session expires seven days and one minute after its last recorded use. A use is recorded at most once a minute; a use that storage refuses does not renew the expiry. The session's cookie lasts longer, so the stored session is what ends it.
 
 ### `keys-and-oauth/session-use-recorded`
 
@@ -2971,7 +3013,7 @@ When the server admits a request on a browser session whose last recorded use is
 
 When the server records a use of a browser session, the server MUST set the session's `expires_at` to seven days and one minute after that use.
 
-**Reason:** The sign-in library renews a session only once its last renewal is a day old, so a session used within that day would end a week after the older renewal rather than a week after its last use.
+**Reason:** A session renewed only once its last renewal is a day old would end a week after that renewal rather than a week after its last use.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › records a request as the last use and moves the expiry to a week and a minute after it, where a renewal a day old would not`.
 
@@ -2979,31 +3021,23 @@ When the server records a use of a browser session, the server MUST set the sess
 
 When a password sign-in creates a browser session, the server MUST set the session's `expires_at` to seven days and one minute after the sign-in.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › gives a new session a week and a minute, and its cookie 400 days`, `› keeps a sign-in not to be remembered on a cookie with no Max-Age, and its idle week on the server`.
+**Tests:** `compliance/owner-sign-ins.test.ts › gives a new session a week and a minute, and its cookie 400 days`.
 
 ### `keys-and-oauth/session-cookie-lifetime`
 
-When a password sign-in that asks to be remembered sets a browser session's cookie, the server MUST give the cookie a `Max-Age` of 400 days.
+When a password sign-in sets a browser session's cookie, the server MUST give the cookie a `Max-Age` of 400 days.
 
 **Reason:** The stored session is the only clock, so the cookie only has to outlive it. A cookie that tracked the session's expiry would be dropped while the session lived whenever the answer that renewed it did not reach the browser.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › gives a new session a week and a minute, and its cookie 400 days`.
 
-### `keys-and-oauth/session-cookie-forgotten`
-
-When a password sign-in asks not to be remembered, the server MUST set the session's cookie without a `Max-Age`.
-
-**Reason:** The browser drops such a cookie when it closes, as the person asked.
-
-**Tests:** `compliance/owner-sign-ins.test.ts › keeps a sign-in not to be remembered on a cookie with no Max-Age, and its idle week on the server`.
-
 ### `keys-and-oauth/session-use-cookie`
 
-When the server records a use of a browser session signed in to be remembered, the server MUST send the browser's session cookie again with a `Max-Age` of 400 days, in any answer other than `401` or one that ends that session.
+When the server records a use of a browser session, the server MUST send the browser's session cookie again with a `Max-Age` of 400 days, in any answer other than `401` or one that ends that session.
 
 **Reason:** A session in use for longer than 400 days keeps its cookie. An answer that refuses the request still records the use, a `401` means the session ended while the request was in flight, and an answer that ends the session clears its cookie instead.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › sends the cookie again for 400 days when it records a use, in a refusal too`, `› keeps a sign-in not to be remembered on a cookie with no Max-Age, and its idle week on the server`.
+**Tests:** `compliance/owner-sign-ins.test.ts › sends the cookie again for 400 days when it records a use, in a refusal too`.
 
 ### `keys-and-oauth/session-use-unwritten`
 

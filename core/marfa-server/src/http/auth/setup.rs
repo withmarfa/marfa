@@ -56,7 +56,7 @@ pub async fn exchange(
     let answer = if form {
         redirect(StatusCode::SEE_OTHER, "/setup")?
     } else {
-        json_answer(StatusCode::OK, &json!({ "ready": true }))
+        json_answer(StatusCode::OK, &json!({ "ok": true }))
     };
     Ok(with_cookie(answer, cookie))
 }
@@ -88,13 +88,9 @@ pub(super) async fn make_claim(
     if origin::said(headers, &own_origins(app)) != Source::Own {
         return Ok((owner, None));
     }
-    let opening = sign_in::with_password(app, owner.email.clone(), password, true, visit).await;
+    let opening = sign_in::with_password(app, owner.email.clone(), password, visit).await;
     let cookie = match opening {
-        Ok(opened) => Some(cookies::session(
-            &app.addresses().sign_in(),
-            &opened.token,
-            opened.session.remembered,
-        )?),
+        Ok(opened) => Some(cookies::session(&app.addresses().sign_in(), &opened.token)?),
         Err(refusal) => {
             tracing::warn!(code = refusal.code.wire(), "a claim left no session open");
             None

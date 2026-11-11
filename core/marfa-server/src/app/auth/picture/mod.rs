@@ -150,7 +150,7 @@ impl App {
                 &visit,
                 Note {
                     action: door.action(),
-                    resource_type: "auth_user",
+                    resource_type: "owner",
                     resource_id: &found.id,
                     details: Some(json!({ "fields": ["avatar"] })),
                 },

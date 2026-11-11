@@ -1,3 +1,4 @@
+import { signInOwnerWithPassword } from "../../client/owner-session.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
@@ -62,26 +63,20 @@ interface Browser {
 async function signIn(userAgent = SAFARI): Promise<Browser> {
   const before = new Set((await signIns()).map((row) => row.id));
   addresses += 1;
-  const response = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin,
+  const cookie = await signInOwnerWithPassword(
+    server.apiUrl,
+    origin,
+    { email: OWNER.email, password: OWNER.password },
+    {
       "user-agent": userAgent,
       [CLIENT_HEADER]: `198.51.100.${String(addresses)}`,
     },
-    body: JSON.stringify({ email: OWNER.email, password: OWNER.password }),
-  });
-  expect(response.status).toBe(200);
-  const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-    response.headers.get("set-cookie") ?? "",
-  )?.[1];
-  expect(cookie, "sign-in set no session cookie").toBeTruthy();
+  );
   const own = (await signIns()).find(
     (row) => row.kind === "browser" && !before.has(row.id),
   );
   expect(own, "the listing holds no new browser session").toBeDefined();
-  return { cookie: cookie!, id: own!.id };
+  return { cookie, id: own!.id };
 }
 
 interface ListedSignIn {

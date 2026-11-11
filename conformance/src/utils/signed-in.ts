@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { signInOwnerWithPassword } from "../client/owner-session.js";
 import type { FreshServer } from "./fresh-server.js";
 import { TEST_OWNER } from "./target.js";
 
@@ -26,19 +27,7 @@ export async function signIn(
   server: FreshServer,
   origin: string,
 ): Promise<string> {
-  const response = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
-    method: "POST",
-    headers: { "content-type": "application/json", origin },
-    body: JSON.stringify(TEST_OWNER),
-  });
-  if (response.status !== 200) {
-    throw new Error(`the owner could not sign in: ${String(response.status)}`);
-  }
-  const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-    response.headers.get("set-cookie") ?? "",
-  )?.[1];
-  if (cookie === undefined) throw new Error("sign-in set no session cookie");
-  return cookie;
+  return signInOwnerWithPassword(server.apiUrl, origin, TEST_OWNER);
 }
 
 export interface App {

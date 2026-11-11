@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
+import { authenticateOwner } from "../../client/owner-session.js";
 import { cleanup, createTestContext, trackItem } from "../../utils/setup.js";
+import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * What a request no door serves is answered: a path nobody serves, or a
@@ -55,6 +57,19 @@ async function ask(
 
 const asKey = () => ({ Authorization: `Bearer ${apiKey}` });
 
+/** Like {@link ask}, for a path whose answer may not be JSON when it fails. */
+async function askAny(
+  method: string,
+  path: string,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; code: string | undefined }> {
+  const res = await fetch(`${apiUrl}${path}`, { method, headers });
+  const body = (await res.json().catch(() => ({}))) as {
+    error?: { code?: string };
+  };
+  return { status: res.status, code: body.error?.code };
+}
+
 describe("a request no door serves", () => {
   it("answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without", async () => {
     // The witness: a door that is served answers the same caller.
@@ -84,6 +99,78 @@ describe("a request no door serves", () => {
       const answer = await ask(method, path, headers);
       expect(answer.status, `${method} ${path}`).toBe(404);
       expect(answer.code, `${method} ${path}`).toBe("not_found");
+    }
+  });
+
+  it("answers a GET or POST under /auth/ that no door serves 404 not_found, and a method no door serves there", async () => {
+    // The witness: a door under /auth/ that is served answers.
+    expect((await askAny("GET", "/auth/sign-in")).status).toBe(200);
+
+    for (const [method, path] of [
+      ["GET", "/auth/no-such-door"],
+      ["POST", "/auth/no-such-door"],
+      ["GET", "/auth/get-session"],
+      ["POST", "/auth/sign-in/email"],
+      ["GET", "/auth/passkey/generate-authenticate-options"],
+      ["GET", "/auth/sign-out"],
+      ["GET", "/auth/passkeys/sign-in/options"],
+    ] as const) {
+      for (const headers of [{}, asKey()]) {
+        const answer = await askAny(method, path, headers);
+        expect(answer.status, `${method} ${path}`).toBe(404);
+        expect(answer.code, `${method} ${path}`).toBe("not_found");
+      }
+    }
+  });
+
+  it("answers a path under /auth/ no door serves 404 not_found to the owner's session, with a trailing slash too, and a served door spelled with a percent-escape", async () => {
+    const origin = new URL(apiUrl).origin;
+    const cookie = await authenticateOwner(
+      apiUrl,
+      process.env.MARFA_OWNER_COOKIE,
+      TEST_OWNER,
+    );
+    // The witness: the same session is answered where a door serves it.
+    const session = await fetch(`${apiUrl}/owner/passkeys`, {
+      headers: { cookie },
+    });
+    expect(session.status).toBe(200);
+    await session.body?.cancel();
+
+    for (const path of [
+      "/auth/get-session",
+      "/auth/list-sessions",
+      "/auth/revoke-sessions",
+      "/auth/update-user",
+      "/auth/change-password",
+      "/auth/sign-in/email",
+      "/auth/sign-up/email",
+      "/auth/passkey/verify-authentication",
+      "/auth/not-a-door",
+      "/auth/sign%2Dout",
+      "/auth/sign%2Din",
+      "/auth/oauth2/%74oken",
+      "/auth/passkeys/sign%2Din",
+    ]) {
+      for (const spelling of [path, `${path}/`]) {
+        for (const method of ["GET", "POST"]) {
+          const label = `${method} ${spelling}`;
+          const response = await fetch(`${apiUrl}${spelling}`, {
+            method,
+            headers: {
+              cookie,
+              origin,
+              "content-type": "application/json",
+            },
+            ...(method === "POST"
+              ? { body: JSON.stringify({ password: TEST_OWNER.password }) }
+              : {}),
+          });
+          expect(response.status, label).toBe(404);
+          expect(response.headers.get("x-error-code"), label).toBe("not_found");
+          await response.body?.cancel();
+        }
+      }
     }
   });
 

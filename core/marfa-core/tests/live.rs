@@ -262,7 +262,7 @@ fn app_token(url: &str) -> String {
     .unwrap();
     let email = std::env::var("MARFA_TEST_OWNER_EMAIL").expect("the boot names its owner");
     let password = std::env::var("MARFA_TEST_OWNER_PASSWORD").expect("the boot names its owner");
-    let sign_in = ureq::post(format!("{url}/auth/sign-in/email"))
+    let sign_in = ureq::post(format!("{url}/auth/sign-in"))
         .header("Content-Type", "application/json")
         .header("Origin", url)
         .send(serde_json::json!({"email": email, "password": password}).to_string())
@@ -272,7 +272,7 @@ fn app_token(url: &str) -> String {
         .get_all("set-cookie")
         .iter()
         .filter_map(|value| value.to_str().ok())
-        .find(|value| value.contains("session_token="))
+        .find(|value| value.contains("marfa_session="))
         .and_then(|value| value.split(';').next())
         .expect("the owner's sign-in sets a session cookie")
         .to_string();

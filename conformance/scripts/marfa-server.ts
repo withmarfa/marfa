@@ -712,7 +712,7 @@ export async function bootControlServer(
   );
 }
 
-const SIGN_IN_DOOR = "/auth/sign-in/email";
+const SIGN_IN_DOOR = "/auth/sign-in";
 
 /**
  * The owner's session cookie, or undefined for a target with no owner

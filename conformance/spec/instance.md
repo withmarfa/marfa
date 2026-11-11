@@ -1528,9 +1528,9 @@ Where `MARFA_TEST_CLOCK_OFFSET_MS` is set, the server MUST read the time as that
 
 ### `instance/test-clock-sign-in`
 
-While `MARFA_TEST_HOOKS` is true, the server MUST stamp the sign-in library's persisted session and credential times with the time the server reads.
+While `MARFA_TEST_HOOKS` is true, the server MUST stamp the stored sign-in and credential times with the time the server reads.
 
-**Reason:** A session, a sign-in token and an authorization link carry a time the server later compares with its clock. If the library kept the system's, moving the clock would put the two out of step.
+**Reason:** A session, a sign-in token and an authorization link carry a time the server later compares with its clock. If one kept the system's time, moving the clock would put the two out of step.
 
 **Tests:** `compliance/test-hooks.test.ts › stamps a sign-in with the time the server reads`.
 
