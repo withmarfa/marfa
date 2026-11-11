@@ -373,36 +373,56 @@ fn set_aside(
     else {
         return Ok(());
     };
+    // The server may hold the batch under its key, so its writes stay together.
+    let members = if row.kind == WriteKind::WriteRows {
+        rows::joined(&tx, &row.id)?
+    } else {
+        Vec::new()
+    };
     store::note_last_failure(&tx, &row.id, failure)?;
-    store::record_verdict(
-        &tx,
-        &row.id,
-        &store::Answered {
-            verdict: Verdict::Blocked,
-            reason: Some(BlockedReason::FailingAlone.as_str()),
-            answer: None,
-            conflicted_copy_id: None,
-        },
-    )?;
+    for write in std::iter::once(&row).chain(&members) {
+        store::record_verdict(
+            &tx,
+            &write.id,
+            &store::Answered {
+                verdict: Verdict::Blocked,
+                reason: Some(BlockedReason::FailingAlone.as_str()),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )?;
+    }
     // The later edit read this edit's optimistic fields, which will not reach
     // the server until a person releases it.
     move_edits_back(&tx, &row)?;
-    crate::row_writes::break_batch(&tx, &row.id)?;
     crate::row_writes::flush(&tx)?;
-    let set_aside = store::queued_write(&tx, &row.id)?.unwrap_or(row);
+    let mut set_aside = Vec::with_capacity(members.len() + 1);
+    for write in std::iter::once(&row).chain(&members) {
+        set_aside.push(store::queued_write(&tx, &write.id)?.unwrap_or_else(|| write.clone()));
+    }
     tx.commit()?;
-    answers.insert(set_aside.id.clone(), Some(Verdict::Blocked));
-    report.answered += 1;
-    if let Some(entry) = report.verdicts.get_mut(stuck.verdict_at) {
-        *entry = verdict_of(
-            &set_aside,
+    let told = |write: &QueuedWrite| {
+        verdict_of(
+            write,
             &Settled::plain(
                 Some(Verdict::Blocked),
                 Some(BlockedReason::FailingAlone.as_str().into()),
-                set_aside.refusals,
+                write.refusals,
             ),
             None,
-        );
+        )
+    };
+    for (at, write) in set_aside.iter().enumerate() {
+        answers.insert(write.id.clone(), Some(Verdict::Blocked));
+        report.answered += 1;
+        if at == 0 {
+            if let Some(entry) = report.verdicts.get_mut(stuck.verdict_at) {
+                *entry = told(write);
+            }
+        } else if !tell(report, told(write)) {
+            // Told undelivered when the batch first met the failure this pass.
+            report.undelivered = report.undelivered.saturating_sub(1);
+        }
     }
     Ok(())
 }
@@ -1542,11 +1562,12 @@ fn send_queue(
         // The connection is not held across the send, or `queue`, read while
         // a drain runs, would wait on the network.
         crate::catch_up::refuse_if_stopped(stop)?;
-        {
+        let resent = {
             // Before the send: one whose answer never arrives has still
             // reached the server, and treating it as unsent would write twice.
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
+            let resent = !store::unsent(&tx, &row.id)?;
             store::mark_sent(&tx, &row.id)?;
             rows::mark_joined(&tx, row, &batched)?;
             tx.commit()?;
@@ -1557,7 +1578,8 @@ fn send_queue(
                     &store::credential_digest(&http.authorization()),
                 )?;
             }
-        }
+            resent
+        };
         let (answer, shape) = {
             let write = telemetry::operation!("write", kind, status);
             telemetry::record!(write, kind = row.kind.as_str());
@@ -1608,7 +1630,7 @@ fn send_queue(
             Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;
-                store::mark_unsent(&tx, &row.id)?;
+                crate::row_writes::leave_unsent(&tx, &row.id)?;
                 let error = crate::catch_up::expire_for_another_instance(&tx, generation)?;
                 tx.commit()?;
                 return Err(error);
@@ -1626,7 +1648,7 @@ fn send_queue(
         let landed = matches!(class, Classified::Landed { .. } | Classified::Delivered);
         let taken = match store_fault(row) {
             Some(error) => Err(error),
-            None if row.kind.rows() => rows::settle(core, row, &answer, class),
+            None if row.kind.rows() => rows::settle(core, row, &answer, class, resent),
             None => settle(core, row, &answer, class, shape, pass),
         };
         let mut settled = match taken {

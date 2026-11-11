@@ -735,9 +735,9 @@ pub(crate) fn spend_key(conn: &Connection, id: &str) -> Result<()> {
     Ok(())
 }
 
-/// For a write of a sent batch about to go apart from it: every waiting write
-/// of the batch goes on its own, and the first under a key of its own.
-pub(crate) fn break_batch(conn: &Connection, id: &str) -> Result<()> {
+/// The ids of the writes sent in one request with `id`, the first first, or
+/// `id` alone where it went in no batch with another.
+pub(crate) fn batch_of(conn: &Connection, id: &str) -> Result<Vec<String>> {
     let Some(lead) = conn
         .query_row(
             "SELECT COALESCE(batched_with, id) FROM queue WHERE id = ?1 AND kind = ?2",
@@ -746,23 +746,25 @@ pub(crate) fn break_batch(conn: &Connection, id: &str) -> Result<()> {
         )
         .optional()?
     else {
-        return Ok(());
+        return Ok(vec![id.to_string()]);
     };
-    let waiting = "(verdict IS NULL OR verdict = 'blocked')";
-    let released = conn.execute(
-        &format!("UPDATE queue SET batched_with = NULL WHERE batched_with = ?1 AND {waiting}"),
-        [&lead],
-    )?;
-    let open = conn
-        .query_row(
-            &format!("SELECT 1 FROM queue WHERE id = ?1 AND {waiting}"),
-            [&lead],
-            |_| Ok(()),
-        )
-        .optional()?
-        .is_some();
-    if released > 0 && open {
-        spend_key(conn, &lead)?;
+    let mut query =
+        conn.prepare_cached("SELECT id FROM queue WHERE batched_with = ?1 ORDER BY seq ASC")?;
+    let members = query
+        .query_map([&lead], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(std::iter::once(lead).chain(members).collect())
+}
+
+/// Every write sent in the request with `id` leaves its batch, unsent: only
+/// for an answer that proves the server holding the copy's items took none of it.
+pub(crate) fn leave_unsent(conn: &Connection, id: &str) -> Result<()> {
+    for write in batch_of(conn, id)? {
+        conn.execute(
+            "UPDATE queue SET batched_with = NULL WHERE id = ?1",
+            [&write],
+        )?;
+        store::mark_unsent(conn, &write)?;
     }
     Ok(())
 }

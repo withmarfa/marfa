@@ -282,6 +282,7 @@ pub enum DeviceCommand {
     /// a create refused onto an item its natural key names that no read has
     /// found: discarded, that create takes its item out of the copy, and the
     /// writes waiting on it are refused unsent, each kept with its content.
+    /// A row write goes with every write sent in its batch.
     Discard {
         /// The refused write to discard.
         #[arg(value_name = "ID")]
@@ -290,7 +291,9 @@ pub enum DeviceCommand {
     /// Send a blocked, dead or unsent refused write again, under a fresh key.
     ///
     /// A write blocked `awaiting_dependency` is released only by the answer
-    /// to the write it waits behind, never by this command.
+    /// to the write it waits behind, never by this command. A row write goes
+    /// again with every write sent in its batch, as they went, under the
+    /// batch's key unless it was blocked `key_spent`.
     Release {
         /// The queued write to release.
         #[arg(
@@ -312,7 +315,7 @@ pub enum DeviceCommand {
     /// refused the same way each time, and one blocked `ancestor_unavailable`
     /// too, unless the credential it is sent with has come to read the
     /// snapshot it names. The writes held for the withdrawn write are refused
-    /// unsent.
+    /// unsent. A row write goes with every write sent in its batch.
     Withdraw {
         /// The queued write to withdraw.
         #[arg(value_name = "ID")]

@@ -1853,7 +1853,9 @@ impl Core {
         drain::drain_keeping(self, &NEVER_STOPPED)
     }
 
-    /// Under a fresh idempotency key. Answers `false` for a row that is not
+    /// Under a fresh idempotency key, but a row write, released with every
+    /// write of its batch under the batch's key unless it was blocked
+    /// `key_spent`. Answers `false` for a row that is not
     /// blocked, dead or refused without being sent, for one held behind
     /// another write, and for one refused because what it waited for was
     /// withdrawn.
@@ -1886,9 +1888,14 @@ impl Core {
         drop(conn);
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
+        // A write released with its batch is released all the same.
+        for id in &ids {
+            store::release(&tx, id)?;
+        }
         let mut released = 0;
-        for id in ids {
-            if store::release(&tx, &id)? {
+        for id in &ids {
+            if store::queued_write(&tx, id)?.is_some_and(|row| row.blocked_reason() != Some(reason))
+            {
                 released += 1;
             }
         }
@@ -1910,32 +1917,49 @@ impl Core {
     /// Answers `false` for any row not blocked `ancestor_unavailable`,
     /// `conflict_unresolved`, `failing_alone` or `instance_changed`. Everything it puts back is read from the server
     /// before anything changes, so a withdraw that cannot read leaves the
-    /// queue and the copy as they were.
+    /// queue and the copy as they were. A row write goes with every write of
+    /// its batch, or none does.
     pub fn withdraw(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
-        let Some(row) = store::queued_write(&*self.conn()?, id)? else {
+        if store::queued_write(&*self.conn()?, id)?.is_none() {
             return Err(CoreError::NotFound {
                 code: "queued_write_not_found".into(),
                 message: format!("{id} is not a write this queue holds"),
             });
-        };
-        if !row.withdrawable() {
-            return Ok(false);
         }
-        let held = store::held_for(&*self.conn()?, id)?;
-        let mut reads = vec![drain::read_back(self, &row)?];
-        for dependant in &held {
-            reads.push(drain::read_back(self, dependant)?);
+        let batch = row_writes::batch_of(&*self.conn()?, id)?;
+        let mut taken = Vec::with_capacity(batch.len());
+        for write in &batch {
+            let Some(row) = store::queued_write(&*self.conn()?, write)? else {
+                return Ok(false);
+            };
+            if !row.withdrawable() {
+                return Ok(false);
+            }
+            let held = store::held_for(&*self.conn()?, write)?;
+            let mut reads = vec![drain::read_back(self, &row)?];
+            for dependant in &held {
+                reads.push(drain::read_back(self, dependant)?);
+            }
+            taken.push((row, held, reads));
         }
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
         // Another thread may have released or answered a row while the
         // reads were out.
-        if store::queued_write(&tx, id)?.as_ref() != Some(&row) || store::held_for(&tx, id)? != held
-        {
+        if row_writes::batch_of(&tx, id)? != batch {
             return Ok(false);
         }
-        drain::withdraw_read_backs(&tx, &row, &held, &reads)?;
+        for (row, held, _) in &taken {
+            if store::queued_write(&tx, &row.id)?.as_ref() != Some(row)
+                || store::held_for(&tx, &row.id)? != *held
+            {
+                return Ok(false);
+            }
+        }
+        for (row, held, reads) in taken.iter().rev() {
+            drain::withdraw_read_backs(&tx, row, held, reads)?;
+        }
         row_writes::flush(&tx)?;
         tx.commit()?;
         Ok(true)

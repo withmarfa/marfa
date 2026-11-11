@@ -271,7 +271,7 @@ CREATE TABLE IF NOT EXISTS queue (
   -- The table a row write or an undo names.
   row_table TEXT,
   -- The write whose batch this one went in, while the queue holds that write;
-  -- cleared where the batch's writes go on their own.
+  -- cleared only where the server is known to have taken none of the batch.
   batched_with TEXT,
   base_version INTEGER,
   -- `UNIQUE` because the server answers a reused key from the first write's
