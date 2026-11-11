@@ -119,6 +119,39 @@ export interface CatchUpReport {
   /** Whether the catch-up changed the catalog the copy holds
    *  (`device/catch-up-catalog-told`). */
   catalog_changed: boolean;
+  /** The fill of the tables not yet whole (`device/table-fill-when`). */
+  tables: TableFill;
+}
+
+/** One pass over the tables a copy holds that are not whole. */
+export interface TableFill {
+  whole: number;
+  online: number;
+  unfilled: number;
+  pages: number;
+  rows: number;
+  /** Tables whose read failed, each left to the next pass. */
+  failed: number;
+  failure: string | null;
+}
+
+/** `marfa device tables hold`: the choice, and the fill it ran, if any. */
+export interface TableHold {
+  type: string;
+  table: string;
+  was_held: boolean;
+  fill: TableFill | null;
+}
+
+/** `marfa device tables held`. */
+export interface HeldTables {
+  choices: { type: string; table: string }[];
+  tables: {
+    item: string;
+    table: string;
+    state: "owed" | "filling" | "whole" | "online";
+    rows: number;
+  }[];
 }
 
 /** One event a held stream applied (`device/follow-applies`). */

@@ -11,6 +11,7 @@ mod undo;
 
 use std::collections::{HashMap, HashSet};
 
+use marfa_rules::schema::Registry;
 use marfa_rules::validation;
 use rusqlite::Transaction;
 use serde_json::{Map, Value, json};
@@ -28,8 +29,8 @@ use store::Held;
 
 pub use events::{ROWS_CHANGED, judged as judged_event};
 pub use lifecycle::{
-    cleanup, constraining_columns, doom, held_in_use, refuse_moving_type, refuse_undeclared,
-    rekey_item, rekey_types,
+    Shape, cleanup, constraining_columns, doom, held_in_use, judge_item_change, refuse_moving_type,
+    rekey_item, rekey_types, unkept_columns,
 };
 pub use read::{Page, batches, get, list, page, totals};
 pub use undo::undo;
@@ -103,7 +104,6 @@ fn values_of(index: usize, value: Option<&Value>) -> Result<Map<String, Value>> 
     Ok(values.clone())
 }
 
-/// The row an operation leaves, as JSON, is at most [`MAX_ROW_BYTES`].
 fn refuse_wide(index: usize, values: &Map<String, Value>) -> Result<()> {
     let bytes = store::printed_len(values);
     if bytes > MAX_ROW_BYTES as i64 {
@@ -179,7 +179,6 @@ pub(crate) fn not_found_row() -> Refusal {
     Refusal::new(Code::RowNotFound, "The table holds no row with this id.")
 }
 
-/// A table as the item's type declares it, inherited or its own, with its label and defaults.
 pub(crate) struct Table {
     pub name: String,
     pub label: String,
@@ -200,33 +199,59 @@ impl Table {
     }
 }
 
-pub(crate) fn tables_of(catalog: &Catalog, type_id: &str) -> Vec<Table> {
-    let Ok(Some(resolved)) = marfa_rules::schema::resolve(&catalog.types, type_id, false) else {
-        return Vec::new();
-    };
-    let Some(Value::Object(tables)) = resolved.get("tables") else {
-        return Vec::new();
-    };
-    let mut found: Vec<Table> = tables
-        .iter()
-        .filter_map(|(name, table)| {
-            let table = table.as_object()?;
-            let columns = table.get("columns")?.as_object()?;
-            Some(Table {
-                name: name.clone(),
-                label: table.get("label")?.as_str()?.to_string(),
-                columns: columns.clone(),
-                order: Order::of(table),
-                searched: Searched::of(columns),
-            })
-        })
-        .collect();
-    found.sort_by(|a, b| a.name.cmp(&b.name));
-    found
+fn unread_tables() -> Refusal {
+    Refusal::internal("a stored item's tables do not read")
 }
 
-pub(crate) fn table_of(catalog: &Catalog, type_id: &str, name: &str) -> Result<Table> {
-    tables_of(catalog, type_id)
+pub(crate) fn tables_by_name(
+    types: &Registry,
+    type_id: &str,
+    properties: &Map<String, Value>,
+) -> Result<Map<String, Value>> {
+    marfa_rules::schema::item_tables(types, type_id, properties).map_err(|_| unread_tables())
+}
+
+pub(crate) fn item_tables(
+    types: &Registry,
+    type_id: &str,
+    properties: &Map<String, Value>,
+) -> Result<Vec<Table>> {
+    let mut found = tables_by_name(types, type_id, properties)?
+        .into_iter()
+        .map(|(name, table)| {
+            let table = table.as_object().ok_or_else(unread_tables)?;
+            let columns = table
+                .get("columns")
+                .and_then(Value::as_object)
+                .ok_or_else(unread_tables)?
+                .clone();
+            Ok(Table {
+                label: table
+                    .get("label")
+                    .and_then(Value::as_str)
+                    .ok_or_else(unread_tables)?
+                    .to_string(),
+                searched: Searched::of(&columns),
+                columns,
+                order: Order::of(table),
+                name,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    found.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(found)
+}
+
+pub(crate) fn tables_of_host(catalog: &Catalog, host: &Host) -> Result<Vec<Table>> {
+    let properties = match serde_json::from_str(&host.properties) {
+        Ok(Value::Object(properties)) => properties,
+        _ => return Err(unread_tables()),
+    };
+    item_tables(&catalog.types, &host.type_id, &properties)
+}
+
+pub(crate) fn table_of(catalog: &Catalog, host: &Host, name: &str) -> Result<Table> {
+    tables_of_host(catalog, host)?
         .into_iter()
         .find(|table| table.name == name)
         .ok_or_else(|| not_found_table(name))
@@ -255,7 +280,6 @@ impl Outcome {
     }
 }
 
-/// A row as a batch left it, for its event.
 pub(crate) enum Changed {
     Held {
         values: Map<String, Value>,
@@ -291,7 +315,6 @@ impl Sight {
         Ok(sees)
     }
 
-    /// The columns of `refs` whose value the caller may not see.
     pub(crate) fn withheld(
         &mut self,
         tx: &Transaction<'_>,
@@ -337,8 +360,6 @@ struct Batch<'a, 'c> {
 }
 
 impl Batch<'_, '_> {
-    /// Refuses a put or patch naming a column whose value the writing key may not see, and
-    /// answers those columns.
     fn refuse_withheld(
         &mut self,
         index: usize,
@@ -439,7 +460,6 @@ impl Batch<'_, '_> {
         Ok(())
     }
 
-    /// Sets in `refs` each value `values` writes to an item column, and clears the rest it names.
     fn mark_refs(&self, refs: &mut Map<String, Value>, values: &Map<String, Value>) {
         for (column, value) in values {
             refs.remove(column);
@@ -720,7 +740,6 @@ impl<'a, 'c> Batch<'a, 'c> {
     }
 }
 
-/// Access and changes share the batch's transaction.
 pub async fn write(
     app: &App,
     caller: &Caller,
@@ -732,7 +751,7 @@ pub async fn write(
     app.write(caller, "rows.write", move |unit| {
         let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
         let host = items::writable_host(unit, &catalog, &item_id)?;
-        let table = table_of(&catalog, &host.type_id, &table)?;
+        let table = table_of(&catalog, &host, &table)?;
         let mut batch = Batch::new(unit, &catalog, &host, &table, None)?;
         let mut results = Vec::with_capacity(ops.len());
         for (index, op) in ops.into_iter().enumerate() {

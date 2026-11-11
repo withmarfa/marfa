@@ -180,6 +180,17 @@ pub enum DeviceCommand {
         #[command(subcommand)]
         command: DeviceViewsCommand,
     },
+    /// The tables the copy holds: which an app holds, and how each fills.
+    Tables {
+        #[command(subcommand)]
+        command: DeviceTablesCommand,
+    },
+    /// A table's rows, read from the copy where it holds the table whole and
+    /// from the server otherwise; `held` says which.
+    Rows {
+        #[command(subcommand)]
+        command: DeviceRowsCommand,
+    },
     /// Full-text search over the local copy, best match first.
     ///
     /// Without `--view`, while a hydration fills the copy or after one was
@@ -1009,6 +1020,60 @@ const VIEW_SCOPED: [&str; 14] = [
 ];
 
 #[derive(Debug, Subcommand)]
+pub enum DeviceTablesCommand {
+    /// Hold a table of each item the copy holds whose type TYPE names, as a
+    /// slice names a type, and fill it now: whole up to 100,000 rows and
+    /// 64 MiB, and read from the server past that.
+    Hold {
+        /// The type, as a slice names one: an id, `<root>.*`, or `*`.
+        #[arg(value_name = "TYPE")]
+        type_id: String,
+        /// The table's name.
+        table: String,
+    },
+    /// Stop holding a table, removing the rows the copy holds of it.
+    #[command(name = "let-go")]
+    LetGo {
+        /// The type, as it was held.
+        #[arg(value_name = "TYPE")]
+        type_id: String,
+        /// The table's name.
+        table: String,
+    },
+    /// The tables held, and how far each item's table has filled.
+    Held,
+    /// Fill each table held that is not whole.
+    Fill,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DeviceRowsCommand {
+    /// One page of a table's rows, as `marfa rows list` answers it.
+    List(crate::commands::rows::ListArgs),
+    /// One row of a table.
+    Get {
+        /// The item id.
+        item: String,
+        /// The table name.
+        table: String,
+        /// The row id.
+        row: String,
+    },
+    /// How many rows a filter selects, and the total of each column that
+    /// names `adds_up`.
+    Totals {
+        /// The item id.
+        item: String,
+        /// The table name.
+        table: String,
+        /// Only the rows this expression matches, in the server's filter
+        /// grammar, where `values.<column>` names a column.
+        #[arg(long)]
+        filter: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub enum DeviceViewsCommand {
     /// List the views held in the copy.
     List,
@@ -1194,9 +1259,10 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             }
             output::line_of(&report, json, || {
                 let failed = match (&report.last_failure, report.failed_opens) {
-                    (Some(reason), count) => {
-                        format!("; {count} stream(s) could not be opened, last: {reason}")
-                    }
+                    (Some(reason), count) => format!(
+                        "; {count} stream(s) could not be opened and {} table read(s) failed, last: {reason}",
+                        report.tables_failed
+                    ),
                     (None, _) => String::new(),
                 };
                 let cursor = if report.cursor.is_empty() {
@@ -1617,6 +1683,74 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             };
             let core = store.open(None)?;
             output::found(core.search_shown(&query, &filters, limit)?, json)
+        }
+        DeviceCommand::Tables { command } => match command {
+            DeviceTablesCommand::Hold { type_id, table } => {
+                let core = store.open_with_server(named)?;
+                let stop = crate::interrupt::stop();
+                let held = core.hold_table_until(&type_id, &table, stop)?;
+                output::report(&held, json, || {
+                    let what = format!("{type_id} {table}");
+                    match &held.fill {
+                        Some(fill) => format!("holding {what}; {}", fill_line(fill)),
+                        None => format!("holding {what}; it fills with the stream"),
+                    }
+                })
+            }
+            DeviceTablesCommand::LetGo { type_id, table } => {
+                let was_held = store.open(None)?.let_go_table(&type_id, &table)?;
+                output::report(
+                    &serde_json::json!({ "type": type_id, "table": table, "was_held": was_held }),
+                    json,
+                    || match was_held {
+                        true => format!("let go of {type_id} {table}"),
+                        false => format!("{type_id} {table} was not held"),
+                    },
+                )
+            }
+            DeviceTablesCommand::Held => {
+                let held = store.open(None)?.held_tables()?;
+                output::report(&held, json, || {
+                    held.tables
+                        .iter()
+                        .map(|table| {
+                            format!("{} {}: {}, {} row(s)", table.item, table.table, table.state, table.rows)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+            }
+            DeviceTablesCommand::Fill => {
+                let core = store.open_with_server(named)?;
+                let stop = crate::interrupt::stop();
+                let fill = core.fill_tables(stop)?;
+                output::report(&fill, json, || fill_line(&fill))
+            }
+        },
+        DeviceCommand::Rows { command } => {
+            let core = store.open_with_server(named)?;
+            let answer = match command {
+                DeviceRowsCommand::List(args) => core.table_rows(
+                    &args.item,
+                    &args.table,
+                    &marfa_core::RowsAsked {
+                        limit: args.page.limit.map(i64::from),
+                        cursor: args.page.cursor.clone(),
+                        filter: args.filter.clone(),
+                        sort: args.sort.clone(),
+                        direction: args.direction.map(|direction| direction.as_str().to_string()),
+                    },
+                )?,
+                DeviceRowsCommand::Get { item, table, row } => core.table_row(&item, &table, &row)?,
+                DeviceRowsCommand::Totals {
+                    item,
+                    table,
+                    filter,
+                } => core.table_totals(&item, &table, filter.as_deref())?,
+            };
+            output::report(&answer, json, || {
+                serde_json::to_string_pretty(&answer).unwrap_or_default()
+            })
         }
         DeviceCommand::Views { command } => {
             let core = store.open(None)?;
@@ -2438,4 +2572,15 @@ impl Store {
         }
         self.open(Some(named.session()?))
     }
+}
+
+fn fill_line(fill: &marfa_core::FillReport) -> String {
+    let failed = match &fill.failure {
+        Some(reason) => format!("; {} table read(s) failed, last: {reason}", fill.failed),
+        None => String::new(),
+    };
+    format!(
+        "{} table(s) whole, {} read from the server, {} still to fill; {} page(s), {} row(s){failed}",
+        fill.whole, fill.online, fill.unfilled, fill.pages, fill.rows
+    )
 }

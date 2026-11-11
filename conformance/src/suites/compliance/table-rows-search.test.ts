@@ -297,13 +297,17 @@ describe("searching rows", () => {
     const narrow = new MarfaClient({ baseUrl: apiUrl, apiKey: made.data.key });
     const scored = async (on: MarfaClient) => {
       const hits = (await search(`${v} ${w}`, {}, on)).data;
-      return keys(hits).map((key, at) => `${key} ${String(hits[at]!.relevance_score)}`);
+      return keys(hits).map(
+        (key, at) => `${key} ${String(hits[at]!.relevance_score)}`,
+      );
     };
     const before = await scored(narrow);
     expect(before).toHaveLength(5);
     const visible = (lines: string[]) =>
       lines.filter((line) =>
-        before.some((seen) => line.startsWith(seen.slice(0, seen.lastIndexOf(" ")))),
+        before.some((seen) =>
+          line.startsWith(seen.slice(0, seen.lastIndexOf(" "))),
+        ),
       );
     const ownerBefore = visible(await scored(client));
 
@@ -561,6 +565,49 @@ describe("searching rows", () => {
     expect(await found()).toEqual(hits);
     await change({ messages: chatTables().messages });
     expect(await found()).toEqual([hits[0]]);
+  });
+
+  it("follows a change to the columns an item of core.table keeps", async () => {
+    const w = word();
+    const memo = `memo${w}`;
+    const made = await client.createItem({
+      type: "core.table",
+      source: ctx.source,
+      properties: {
+        title: "Sheet",
+        columns: {
+          name: { type: "string", searchable: true },
+          memo: { type: "string" },
+        },
+      },
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const item = made.data.item.id;
+    trackItem(ctx, item);
+    const [row] = await put(item, "table", [{ name: w, memo }]);
+    const hit = `${item} table ${row}`;
+    const keep = async (columns: Record<string, unknown>) => {
+      const held = await client.getItem(item);
+      const res = await client.updateItem(item, {
+        properties: { columns },
+        version: held.data.item.version,
+      } as never);
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+    };
+    expect(await rowKeys(w)).toEqual([hit]);
+    expect(await rowKeys(memo)).toEqual([]);
+
+    await keep({
+      name: { type: "string" },
+      memo: { type: "string", searchable: true },
+    });
+    expect(await rowKeys(w)).toEqual([]);
+    expect(await rowKeys(memo)).toEqual([hit]);
+    await keep({
+      name: { type: "string" },
+      memo: { type: "email", searchable: true },
+    });
+    expect(await rowKeys(memo)).toEqual([hit]);
   });
 
   it(

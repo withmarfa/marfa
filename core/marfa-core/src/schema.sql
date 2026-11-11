@@ -110,6 +110,62 @@ CREATE TABLE IF NOT EXISTS pins (
   item_id TEXT PRIMARY KEY
 ) WITHOUT ROWID;
 
+-- The tables an app holds, by a type as a slice names one and the table's name.
+CREATE TABLE IF NOT EXISTS table_choices (
+  type TEXT NOT NULL,
+  name TEXT NOT NULL,
+  PRIMARY KEY (type, name)
+) WITHOUT ROWID;
+
+-- Only `filling` and `whole` tables hold rows.
+CREATE TABLE IF NOT EXISTS item_tables (
+  item_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  state TEXT NOT NULL CHECK (state IN ('owed', 'filling', 'whole', 'online')),
+  cursor TEXT,
+  -- What `table_rows` holds of it, so the cap is judged without a scan.
+  rows INTEGER NOT NULL DEFAULT 0,
+  bytes INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (item_id, name)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS item_tables_state ON item_tables (state);
+
+-- `withheld` names columns the server omitted for this key.
+CREATE TABLE IF NOT EXISTS table_rows (
+  item_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  id TEXT NOT NULL,
+  body TEXT NOT NULL,
+  withheld TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (item_id, name, id)
+) WITHOUT ROWID;
+
+-- Each item id a held row's values name, so a purge of that item finds the
+-- rows whose withholding it changes. Any value of an item id's form counts.
+CREATE TABLE IF NOT EXISTS row_refs (
+  item_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  row_id TEXT NOT NULL,
+  target TEXT NOT NULL,
+  PRIMARY KEY (item_id, name, row_id, target)
+) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS row_refs_target ON row_refs (target);
+CREATE TRIGGER IF NOT EXISTS table_rows_refs_gone AFTER DELETE ON table_rows BEGIN
+  DELETE FROM row_refs
+   WHERE item_id = OLD.item_id AND name = OLD.name AND row_id = OLD.id;
+END;
+
+-- The rows a purge reads again, kept on disk until the purge event applies
+-- them. `answer` is NULL where the server no longer holds the row.
+CREATE TABLE IF NOT EXISTS rows_reread (
+  item_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  id TEXT NOT NULL,
+  answer TEXT,
+  PRIMARY KEY (item_id, name, id)
+) WITHOUT ROWID;
+
 -- Keyed by rowid = items.seq: an FTS5 column cannot be indexed for a lookup,
 -- so deleting by an item_id column would scan the whole index per write.
 -- The columns and the tokenizer are the server's, so a query matches the same

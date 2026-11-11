@@ -546,6 +546,8 @@ pub struct CatchUpReport {
     /// The catch-up replaced the catalog the copy holds with one that
     /// differs from it.
     pub catalog_changed: bool,
+    /// The fill of the tables the copy holds that were not whole.
+    pub tables: crate::tables::FillReport,
 }
 
 /// A catch-up that failed. A catch-up commits the catalog it reads before it

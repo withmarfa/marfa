@@ -98,6 +98,7 @@ describe("type registration and listing", () => {
       "core.media.song",
       "core.message",
       "core.note",
+      "core.table",
       "core.task",
     ];
     const r = await client.listTypes();

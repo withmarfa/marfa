@@ -774,6 +774,39 @@ impl Http {
         ))
     }
 
+    /// `GET /items/{id}/tables`, as the server answers it.
+    pub(crate) fn item_tables(&self, id: &str) -> Result<serde_json::Value, CoreError> {
+        self.get_json(&["items", id, "tables"], &[])
+    }
+
+    /// `GET /items/{id}/tables/{table}/rows`, as the server answers it.
+    pub(crate) fn table_rows(
+        &self,
+        id: &str,
+        table: &str,
+        params: &[(&str, &str)],
+    ) -> Result<serde_json::Value, CoreError> {
+        self.get_json(&["items", id, "tables", table, "rows"], params)
+    }
+
+    pub(crate) fn table_row(
+        &self,
+        id: &str,
+        table: &str,
+        row: &str,
+    ) -> Result<serde_json::Value, CoreError> {
+        self.get_json(&["items", id, "tables", table, "rows", row], &[])
+    }
+
+    pub(crate) fn table_totals(
+        &self,
+        id: &str,
+        table: &str,
+        params: &[(&str, &str)],
+    ) -> Result<serde_json::Value, CoreError> {
+        self.get_json(&["items", id, "tables", table, "totals"], params)
+    }
+
     pub fn types(&self) -> Result<Vec<WireType>, CoreError> {
         let page: WirePage<WireType> = self.get_json(&["types"], &[])?;
         self.whole_catalog(page.next_cursor, "type")?;

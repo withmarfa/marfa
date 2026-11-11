@@ -147,7 +147,8 @@ fn unexplained(
 /// What a held stream changed in the copy: an event it applied, with the
 /// item or edge it was about, or a catalog that differs from the one held,
 /// naming neither. Or what became of the server: unreachable, with why, once
-/// when a stream cannot be had, and reachable once when one is had again.
+/// when a stream cannot be had or an event it sends cannot be taken, and
+/// reachable once when one is had, or the event taken, again.
 /// Or what became of the queue it drained then. `cursor` is the cursor held
 /// after it.
 #[derive(Debug, Clone, PartialEq)]
@@ -207,8 +208,9 @@ pub enum ChangeEvent {
     Applied(String),
     /// A stream it opened read a catalog that differs from the one held.
     CatalogChanged,
-    /// No stream can be had, for this failure: the network failing, a rate
-    /// limit, a failing server or a refusal naming no contract.
+    /// No stream can be had, or an event it sends cannot be taken, for this
+    /// failure: the network failing, a rate limit, a failing server or a
+    /// refusal naming no contract.
     ServerUnreachable(CoreError),
     ServerReachable,
     /// The queue was drained once a stream was had again, and what that
@@ -259,9 +261,11 @@ pub struct FollowReport {
     pub cursor: String,
     /// Streams asked for after the first, for any reason.
     pub reconnects: u64,
-    /// Counts failed reads of a row entering the slice as well as failed asks
-    /// for a stream.
+    /// Counts failed reads an event needed (a row entering the slice, a
+    /// table's rows) as well as failed asks for a stream.
     pub failed_opens: u64,
+    /// Tables whose read failed, each left to the next stream.
+    pub tables_failed: u64,
     pub last_failure: Option<String>,
 }
 
@@ -399,9 +403,17 @@ fn open(http: &Http, cursor: &str, bound: Duration) -> Result<Receiver<io::Resul
     Ok(frames)
 }
 
+/// What one event changed: its own change, and the tables a purge's re-read
+/// changed.
+struct Taken {
+    change: Option<Change>,
+    rows: Vec<Change>,
+}
+
 /// The connection is released before this returns, so a caller told of the
 /// change can read the row it names. A transaction another program's commit
-/// refuses is made again from its first read, without reading the row again.
+/// refuses is made again from its first read, without reading from the server
+/// again.
 #[allow(clippy::too_many_arguments)]
 fn take(
     core: &Core,
@@ -412,7 +424,7 @@ fn take(
     kind: &str,
     payload: &EventPayload,
     stop: &AtomicBool,
-) -> Result<Option<Change>> {
+) -> Result<Taken> {
     // A held stream spans ordinary pin changes. Snapshot pins for this event's
     // awaited reads, while retaining the stream's copy and authority guard.
     let operation = {
@@ -421,11 +433,36 @@ fn take(
         Context::capture_build(&conn)?
     };
     let entering = entering_row(core, &operation, catalog, slice, kind, payload)?;
-    let applied = crate::busy::retrying(&core.conn, stop, || {
+    let read_rows = match &payload.rows {
+        Some(rows) => crate::tables::rows_to_read(core, &operation, rows)?,
+        None => None,
+    };
+    let reread = match &payload.item {
+        Some(item) if kind == "item.purged" => Some(crate::tables::reread_naming(
+            core, &operation, &item.id, stop,
+        )?),
+        _ => None,
+    };
+    let rows_changed = |item: String| Change {
+        event: ChangeEvent::Applied(crate::tables::ROWS_CHANGED.into()),
+        item_id: Some(item),
+        edge_id: None,
+        cursor: id.to_string(),
+    };
+    crate::busy::retrying(&core.conn, stop, || {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
         operation.check(&tx)?;
         reach::cursor(id).ok_or_else(reach::invalid)?;
+        if let Some(rows) = &payload.rows {
+            let applied = crate::tables::apply(&tx, rows, read_rows.as_ref())?;
+            store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
+            tx.commit()?;
+            return Ok(Taken {
+                change: applied.then(|| rows_changed(rows.item.id.clone())),
+                rows: Vec::new(),
+            });
+        }
         // Judged outside the transaction: a row held or pinned since is taken
         // as any held row is, and judged again once taken.
         let outside = entering.outside
@@ -451,18 +488,30 @@ fn take(
                 store::take_server_edge(&tx, edge)?;
             }
         }
+        if let Some(item) = &payload.item {
+            crate::tables::reconcile_item(&tx, &item.id)?;
+        }
+        let reread = match &reread {
+            Some(reread) => crate::tables::take_reread(&tx, reread)?,
+            None => Vec::new(),
+        };
         // The last id applied, never the highest seen: where an event is not
         // applied, a high-water mark would step over it forever.
         store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
         tx.commit()?;
-        Ok(applied)
-    })?;
-    Ok(applied.then(|| Change {
-        event: ChangeEvent::Applied(kind.to_string()),
-        item_id: payload.item.as_ref().map(|item| item.id.clone()),
-        edge_id: payload.edge.as_ref().map(|edge| edge.id.clone()),
-        cursor: id.to_string(),
-    }))
+        Ok(Taken {
+            change: applied.then(|| Change {
+                event: ChangeEvent::Applied(kind.to_string()),
+                item_id: payload.item.as_ref().map(|item| item.id.clone()),
+                edge_id: payload.edge.as_ref().map(|edge| edge.id.clone()),
+                cursor: id.to_string(),
+            }),
+            rows: reread
+                .into_iter()
+                .map(|(item, _)| rows_changed(item))
+                .collect(),
+        })
+    })
 }
 
 /// Frames the filter or the credential withheld are never sent, so the
@@ -547,6 +596,7 @@ pub(crate) fn catch_up(
     )
     .or_else(read_only::contained)
     .map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?;
+    report.tables = crate::tables::fill(core, &context, stop)?;
     Ok(report)
 }
 
@@ -570,6 +620,7 @@ pub(crate) fn replay_build(
     stop: &AtomicBool,
     catalog_changed: &mut bool,
 ) -> Result<CatchUpReport> {
+    crate::busy::transaction(core, context, stop, crate::tables::forget_reread)?;
     let (slice, cursor) = start_build(&*core.conn()?)?;
     let catalog = ask_unless_stopped(stop, http, Http::catalog)?;
     refuse_if_stopped(stop)?;
@@ -586,6 +637,7 @@ pub(crate) fn replay_build(
         read_only_held: 0,
         cursor: cursor.clone(),
         catalog_changed: false,
+        tables: crate::tables::FillReport::default(),
     };
     let mut reached_head = false;
     let mut head: Option<u64> = None;
@@ -688,6 +740,7 @@ pub(crate) fn replay_build(
                             catalog = adopt(core, context, &refreshed_catalog, catalog_changed)?;
                         }
                         if take(core, context, &catalog, &slice, &id, kind, &payload, stop)?
+                            .change
                             .is_some()
                         {
                             report.applied += 1;
@@ -947,8 +1000,8 @@ fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
 /// How a follow starts, beyond the stop that ends it.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct FollowAs {
-    /// The caller was last told `server.unreachable`, so the first stream is
-    /// told `server.reachable`.
+    /// The caller was last told `server.unreachable`, so the first stream to
+    /// take an event or go live is told `server.reachable`.
     pub(crate) told_unreachable: bool,
     /// The first stream is drained to, though no one was told the server was
     /// lost.
@@ -962,8 +1015,9 @@ pub(crate) struct FollowAs {
 /// stream is being asked for: that request runs on a thread holding only the
 /// transport, so it cannot keep the store once this has returned. The thread
 /// reading the last stream may hold its connection a while longer (`open`).
-/// `on_contact` is called each time a request reaches the server, whatever the
-/// server answers.
+/// `on_contact` is called each time a stream is had, or a refusal answers one,
+/// except while an event cannot be taken: then when a stream takes an event or
+/// goes live.
 pub(crate) fn follow(
     core: &Core,
     http: Arc<Http>,
@@ -1048,10 +1102,11 @@ fn follow_paced(
         // other end, so the next stream reads again for a property its type has
         // since made its thumbnail.
         let mut refreshed = HashSet::new();
-        // Unknown until the first stream is asked for, so a follow that never
-        // reaches the server says so, and one that does says nothing, unless
-        // its caller was last told the server could not be reached.
-        let mut reachable: Option<bool> = told_unreachable.then_some(false);
+        let mut told = Told {
+            reachable: told_unreachable.then_some(false),
+            stalled: told_unreachable,
+            contact: on_contact,
+        };
         let mut owes_drain = owes_drain;
         let mut synced = None;
         while !stop.load(Ordering::Relaxed) {
@@ -1067,9 +1122,6 @@ fn follow_paced(
             let Some(reached) = reach(&http, &cursor, stop, pace.stop_poll) else {
                 break;
             };
-            if !matches!(&reached, Err(error) if error.is_environmental()) {
-                on_contact();
-            }
             let (instance, fetched, frames) = match reached {
                 Ok(reached) => reached,
                 Err(error) if error.is_environmental() => {
@@ -1078,37 +1130,30 @@ fn follow_paced(
                         .retry_after()
                         .map_or(backoff, |named| backoff.max(named));
                     report.last_failure = Some(error.to_string());
-                    if reachable != Some(false) {
-                        reachable = Some(false);
-                        on_change(&Change {
-                            event: ChangeEvent::ServerUnreachable(error.clone()),
-                            item_id: None,
-                            edge_id: None,
-                            cursor: report.cursor.clone(),
-                        });
-                    }
+                    told.lost(&error, &report.cursor, on_change);
                     pause(wait);
                     backoff = (backoff * 2).min(pace.reconnect_most);
                     continue;
                 }
-                Err(error) => return Err(error),
+                Err(error) => {
+                    if !told.stalled {
+                        (told.contact)();
+                    }
+                    return Err(error);
+                }
             };
             crate::busy::retrying(&core.conn, stop, || {
                 same_instance(core, &instance, context.generation)
             })?;
-            if reachable == Some(false) {
-                on_change(&Change {
-                    event: ChangeEvent::ServerReachable,
-                    item_id: None,
-                    edge_id: None,
-                    cursor: report.cursor.clone(),
-                });
-                recovery.reachable();
-            } else if owes_drain {
-                recovery.reachable();
+            #[cfg(debug_assertions)]
+            crate::fault::hold(|| "follow-stream-had");
+            if !told.stalled {
+                if owes_drain && told.reachable != Some(false) {
+                    recovery.reachable();
+                }
+                told.back(&report.cursor, &recovery, on_change);
             }
             owes_drain = false;
-            reachable = Some(true);
             let mut moved = false;
             let catalog = crate::busy::retrying(&core.conn, stop, || {
                 adopt(core, &context, &fetched, &mut moved)
@@ -1137,6 +1182,7 @@ fn follow_paced(
                 &mut synced,
                 &mut look,
                 &recovery,
+                &mut told,
                 on_change,
                 on_live,
             )?;
@@ -1144,6 +1190,15 @@ fn follow_paced(
             match ended {
                 Ended::Stopped => return Ok(report),
                 Ended::Behind => continue,
+                Ended::Stalled(error) => {
+                    refreshed.clear();
+                    told.lost(&error, &report.cursor, on_change);
+                    told.stalled = true;
+                    recovery.tell(&report.cursor, on_change);
+                    pause(backoff);
+                    backoff = (backoff * 2).min(pace.reconnect_most);
+                    continue;
+                }
                 Ended::Over => {}
             }
             refreshed.clear();
@@ -1185,6 +1240,54 @@ fn follow_paced(
         }
     }
     result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
+}
+
+/// What a follow last told its caller of the server: `reachable` is `None`
+/// until the first stream is asked for, so a follow that never reaches the
+/// server says so, and one that does says nothing, unless its caller was last
+/// told the server could not be reached.
+struct Told<'a> {
+    reachable: Option<bool>,
+    /// A stream had is no sign the outage the caller was told has ended,
+    /// such as an event a stream could not take, so `server.reachable` waits
+    /// until a stream takes an event or goes live.
+    stalled: bool,
+    contact: &'a mut dyn FnMut(),
+}
+
+impl Told<'_> {
+    fn lost(&mut self, error: &CoreError, cursor: &str, on_change: &mut dyn FnMut(&Change)) {
+        if self.reachable != Some(false) {
+            self.reachable = Some(false);
+            on_change(&Change {
+                event: ChangeEvent::ServerUnreachable(error.clone()),
+                item_id: None,
+                edge_id: None,
+                cursor: cursor.to_string(),
+            });
+        }
+    }
+
+    fn back(&mut self, cursor: &str, recovery: &Recovery, on_change: &mut dyn FnMut(&Change)) {
+        self.stalled = false;
+        (self.contact)();
+        if self.reachable == Some(false) {
+            on_change(&Change {
+                event: ChangeEvent::ServerReachable,
+                item_id: None,
+                edge_id: None,
+                cursor: cursor.to_string(),
+            });
+            recovery.reachable();
+        }
+        self.reachable = Some(true);
+    }
+
+    fn unstalled(&mut self, cursor: &str, recovery: &Recovery, on_change: &mut dyn FnMut(&Change)) {
+        if self.stalled {
+            self.back(cursor, recovery, on_change);
+        }
+    }
 }
 
 /// Raises its flag when dropped, unwinding included.
@@ -1388,6 +1491,8 @@ enum Ended {
     Stopped,
     /// The catalog could not explain an event; reopen at once.
     Behind,
+    /// An event could not be taken for a reason that clears on its own.
+    Stalled(CoreError),
     Over,
 }
 
@@ -1407,6 +1512,7 @@ fn read_stream(
     synced: &mut Option<Instant>,
     look: &mut Look,
     recovery: &Recovery,
+    told: &mut Told<'_>,
     on_change: &mut dyn FnMut(&Change),
     on_live: &mut dyn FnMut(bool),
 ) -> Result<Ended> {
@@ -1416,13 +1522,27 @@ fn read_stream(
     let mut greatest = reach::cursor(&report.cursor).unwrap_or(0);
     // A settle a stop or a failure cut short is owed from before this stream.
     let mut unsettled = 1;
+    crate::busy::transaction(core, context, stop, |tx| {
+        crate::tables::forget_reread(tx)?;
+        crate::tables::reconcile_all(tx)
+    })?;
+    let mut pass = crate::tables::Pass::default();
+    let mut filling = pass.owes(&*core.conn()?, now())?;
     loop {
         if stop.load(Ordering::Relaxed) {
             return Ok(Ended::Stopped);
         }
+        if core.tables_owed.swap(false, Ordering::SeqCst) || (!filling && pass.retry_due(now())) {
+            filling = pass.owes(&*core.conn()?, now())?;
+        }
         recovery.tell(&report.cursor, on_change);
         look.tell(report, on_change)?;
-        let frame = match frames.recv_timeout(pace.stop_poll) {
+        let wait = if filling {
+            Duration::ZERO
+        } else {
+            pace.stop_poll
+        };
+        let frame = match frames.recv_timeout(wait) {
             Ok(Ok(frame)) => frame,
             Ok(Err(error)) if error.kind() == io::ErrorKind::InvalidData => {
                 return Err(CoreError::Decoding(error.to_string()));
@@ -1432,6 +1552,23 @@ fn read_stream(
                 if now().saturating_duration_since(heard) > pace.silence =>
             {
                 return Ok(Ended::Over);
+            }
+            Err(RecvTimeoutError::Timeout) if filling => {
+                match pass.step(core, context, now(), stop) {
+                    Ok(crate::tables::Step::Done) => filling = false,
+                    Ok(crate::tables::Step::Moved) => {}
+                    Ok(crate::tables::Step::Failed(failure)) => {
+                        report.tables_failed += 1;
+                        report.last_failure = Some(failure);
+                    }
+                    Err(error) if error.is_environmental() => {
+                        report.failed_opens += 1;
+                        report.last_failure = Some(error.to_string());
+                        return Ok(Ended::Over);
+                    }
+                    Err(error) => return Err(error),
+                }
+                continue;
             }
             Err(RecvTimeoutError::Timeout) if unsettled > 0 => {
                 unsettled = 0;
@@ -1494,6 +1631,7 @@ fn read_stream(
                     return Ok(ended);
                 }
                 live_confirmed = reach::cursor(&report.cursor).is_some_and(|cursor| cursor >= live);
+                told.unstalled(&report.cursor, recovery, on_change);
                 on_live(live_confirmed);
                 if live_confirmed {
                     mark_synced_while_live(core, context, pace, now, synced, stop)?;
@@ -1518,7 +1656,7 @@ fn read_stream(
                     refreshed.insert(named);
                     return Ok(Ended::Behind);
                 }
-                // A failed read of a row entering the slice reopens the
+                // A read that fails for a reason that clears reopens the
                 // stream from before this event rather than ending.
                 let taken = match take(core, context, catalog, slice, &id, kind, &payload, stop) {
                     Err(ref error) if crate::folder::copy_changed(error) => {
@@ -1530,18 +1668,23 @@ fn read_stream(
                     Err(error) if error.is_environmental() => {
                         report.failed_opens += 1;
                         report.last_failure = Some(error.to_string());
-                        return Ok(Ended::Over);
+                        return Ok(Ended::Stalled(error));
                     }
                     other => other?,
                 };
-                match taken {
+                told.unstalled(&report.cursor, recovery, on_change);
+                match &taken.change {
                     Some(change) => {
                         report.applied += 1;
-                        on_change(&change);
+                        on_change(change);
                     }
                     None => report.skipped += 1,
                 }
+                for change in &taken.rows {
+                    on_change(change);
+                }
                 report.cursor = id;
+                filling = pass.owes(&*core.conn()?, now())?;
                 unsettled += usize::from(may_owe(kind));
                 if unsettled >= SETTLE_EVERY {
                     unsettled = 0;
@@ -1562,8 +1705,8 @@ fn read_stream(
 
 /// Settles the slice's `beneath` for a follow, telling a settle that changed
 /// the rows held as an edge change, a settle that failed after a page
-/// committed included. A failure ends the stream as a failed take does; the
-/// settle stays owed, so the next stream makes it.
+/// committed included. A failure ends the stream; the settle stays owed, so
+/// the next stream makes it.
 fn settle_following(
     core: &Core,
     context: &Context,
@@ -2482,11 +2625,17 @@ mod tests {
     }
 
     #[test]
-    fn a_follow_told_the_server_was_unreachable_says_once_it_is_reached() {
+    fn a_follow_told_the_server_was_unreachable_says_once_a_stream_goes_live() {
         let events = |told| {
             let server = Scripted::start();
             server.on("/types", vec![types(&[(NOTE, None)])]);
-            server.on("/events", vec![stream(vec![connected()], Then::End)]);
+            server.on(
+                "/events",
+                vec![stream(
+                    vec![connected(), stream_cursor("10"), stream_live(Some("10"))],
+                    Then::End,
+                )],
+            );
             let (_dir, core) = hydrated(&server);
             let (sent, heard) = mpsc::channel();
             let run = follow_told(&core, QUICK, Some(2), told, move |change| {
@@ -2503,6 +2652,116 @@ mod tests {
             [ChangeEvent::ServerReachable],
             "a follow started after the server was told unreachable did not say it came back, once"
         );
+    }
+
+    #[test]
+    fn an_event_it_cannot_take_for_now_tells_the_server_lost_once_and_back_once() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let payload = item_payload("item.updated", "n1", NOTE, 2);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected(), event("11", "item.updated", &payload)],
+                held(),
+            )],
+        );
+        let read: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        let read = serde_json::json!({
+            "item": read["item"], "metadata": read["metadata"], "listed": true
+        });
+        let busy = || crate::scripted::certified(refusal(503, "unavailable"));
+        server.on(
+            "/items/n1",
+            vec![
+                busy(),
+                busy(),
+                busy(),
+                crate::scripted::certified(crate::scripted::json(200, &read.to_string())),
+            ],
+        );
+        let (_dir, core) = hydrated(&server);
+        let run = follow_on(&core, STILL, None);
+        let told: Vec<ChangeEvent> = (0..3)
+            .map(|_| match run.changes.recv_timeout(Duration::from_secs(5)) {
+                Ok(change) => change.event,
+                Err(_) => panic!("no change was told: {:?}", run.ended()),
+            })
+            .collect();
+        run.stop();
+        let report = run.ended().unwrap();
+        assert_eq!(
+            server.seen("/items/n1").len(),
+            4,
+            "the entering row was not read until its read was answered"
+        );
+        assert!(
+            matches!(&told[0], ChangeEvent::ServerUnreachable(error) if error.to_string().contains("503")),
+            "an event a failing server kept from being taken was told as nothing: {told:?}"
+        );
+        assert_eq!(
+            told[1..],
+            [
+                ChangeEvent::ServerReachable,
+                ChangeEvent::Applied("item.updated".into())
+            ],
+            "the server was told back before the event was taken, or lost more than once"
+        );
+        assert!(run.changes.try_iter().next().is_none());
+        assert_eq!(report.cursor, "11");
+    }
+
+    #[test]
+    fn a_follow_restarted_while_an_event_cannot_be_taken_tells_nothing_until_it_is_taken() {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        let payload = item_payload("item.updated", "n1", NOTE, 2);
+        server.on(
+            "/events",
+            vec![stream(
+                vec![connected(), event("11", "item.updated", &payload)],
+                held(),
+            )],
+        );
+        let read: serde_json::Value = serde_json::from_str(&payload).unwrap();
+        let read = serde_json::json!({
+            "item": read["item"], "metadata": read["metadata"], "listed": true
+        });
+        let busy = || crate::scripted::certified(refusal(503, "unavailable"));
+        server.on(
+            "/items/n1",
+            vec![
+                busy(),
+                busy(),
+                busy(),
+                crate::scripted::certified(crate::scripted::json(200, &read.to_string())),
+            ],
+        );
+        let (_dir, core) = hydrated(&server);
+        let (sent, heard) = mpsc::channel();
+        let run = follow_told(&core, STILL, None, true, move |change| {
+            let _ = sent.send(change.clone());
+        });
+        let first = heard
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap_or_else(|_| panic!("no change was told: {:?}", run.ended()));
+        let second = heard.recv_timeout(Duration::from_secs(5)).unwrap();
+        run.stop();
+        run.ended().unwrap();
+        assert_eq!(
+            [first.event, second.event],
+            [
+                ChangeEvent::ServerReachable,
+                ChangeEvent::Applied("item.updated".into())
+            ],
+            "a caller last told the server was lost was told so again, or told it was back before the event was taken"
+        );
+        assert_eq!(
+            server.seen("/items/n1").len(),
+            4,
+            "the entering row was not refused three times before it was read"
+        );
+        assert!(heard.try_iter().next().is_none());
     }
 
     /// A copy of one row at the head of a held stream, its last look at
@@ -3780,6 +4039,11 @@ mod tests {
                     &mut None,
                     &mut look,
                     &recovery,
+                    &mut Told {
+                        reachable: Some(true),
+                        stalled: false,
+                        contact: &mut || {},
+                    },
                     &mut |_| {},
                     &mut |_| {},
                 )
@@ -4902,6 +5166,50 @@ mod tests {
             Err(CoreError::StreamIncomplete { .. })
         ));
         assert_eq!(stored_cursor(&core).as_deref(), Some("11"));
+    }
+
+    #[test]
+    fn a_catch_up_and_a_follow_each_let_go_of_a_reread_left_behind() {
+        let staged = |core: &Core| {
+            let conn = core.conn().unwrap();
+            conn.execute(
+                "INSERT INTO rows_reread (item_id, name, id, answer) VALUES ('i', 't', 'r', NULL)",
+                [],
+            )
+            .unwrap();
+        };
+        let left = |core: &Core| -> i64 {
+            core.conn()
+                .unwrap()
+                .query_row("SELECT COUNT(*) FROM rows_reread", [], |row| row.get(0))
+                .unwrap()
+        };
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None)])]);
+        server.on("/events", vec![withheld_head(None)]);
+        let (_dir, core) = hydrated(&server);
+        staged(&core);
+        assert_eq!(left(&core), 1);
+        let http = core.http.clone().unwrap();
+        let _ = catch_up(&core, &http, MS(200), &AtomicBool::new(false), &mut false);
+        assert_eq!(
+            left(&core),
+            0,
+            "a catch-up kept a re-read no purge it takes made"
+        );
+
+        server.on("/events", vec![held_open()]);
+        staged(&core);
+        let seen = server.seen("/events").len();
+        let run = follow_on(&core, STILL, None);
+        wait_until("the follow never held a stream", || {
+            server.seen("/events").len() > seen
+        });
+        wait_until("a follow kept a re-read no purge it takes made", || {
+            left(&core) == 0
+        });
+        run.stop();
+        run.ended().unwrap();
     }
 
     #[test]

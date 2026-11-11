@@ -510,6 +510,61 @@ fn a_follow_that_ends_on_the_servers_own_answer_ends_the_outage_too() {
 }
 
 #[test]
+fn a_held_stream_whose_event_cannot_be_taken_for_now_tells_only_that_the_server_is_unreachable() {
+    let server = Scripted::start();
+    let core = copy(&server);
+    let entering = payload("item.updated", "n1");
+    server.on(
+        "/events",
+        vec![scripted::stream(
+            vec![
+                scripted::connected(),
+                scripted::copy_marker("stream_cursor", "10"),
+                scripted::event("11", "item.updated", &entering),
+            ],
+            held(),
+        )],
+    );
+    let read: serde_json::Value = serde_json::from_str(&entering).unwrap();
+    let read = serde_json::json!({
+        "item": read["item"], "metadata": read["metadata"], "listed": true
+    });
+    let busy = || scripted::certified(scripted::refusal(503, "unavailable"));
+    let ready = Arc::new(AtomicBool::new(false));
+    server.on(
+        "/items/n1",
+        vec![
+            busy(),
+            busy(),
+            busy(),
+            until(
+                &ready,
+                scripted::certified(scripted::json(200, &read.to_string())),
+            ),
+        ],
+    );
+    let heard = listener();
+    let _listening = watch(&core, &heard);
+    // Three streams were had and their event refused; the fourth read waits.
+    server.wait_for("/items/n1", 4, Duration::from_secs(5));
+    assert!(server.seen("/events").len() >= 4);
+    thread::sleep(MS(100));
+    assert_eq!(
+        heard.kinds(),
+        ["server.unreachable"],
+        "a listener was told the server was back while the event still could not be taken"
+    );
+    ready.store(true, Ordering::Relaxed);
+    heard.wait_for_kind("item.updated", 1);
+    thread::sleep(MS(50));
+    assert_eq!(
+        heard.kinds(),
+        ["server.unreachable", "server.reachable", "item.updated"],
+        "the event was taken without telling the server back, once, before it"
+    );
+}
+
+#[test]
 fn a_failed_follow_starts_again_after_the_next_catch_up_and_a_listener_that_joined_meanwhile_was_told()
  {
     let server = Scripted::start();

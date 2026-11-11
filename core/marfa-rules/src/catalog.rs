@@ -7,9 +7,11 @@ use serde_json::{Map, Value, json};
 
 use crate::display::ItemDisplay;
 use crate::error::{Code, FieldError, RuleError, field_code};
+use crate::schema::{OWN_COLUMNS, OWN_TABLE_TYPE, judge_item_columns};
 use crate::wire::{WireEdgeType, WireType, label_from_id, label_from_name, plural_from_label};
 
 const TITLE_PROPERTY: &str = "title";
+const OWN_ORDER: &str = "order";
 
 /// Optional fields every type takes, though no read of a type lists them, with each element's type.
 const EVERY_TYPE_TAKES: [(&str, &str); 2] = [("attachments", "object"), ("links", "string")];
@@ -834,6 +836,13 @@ pub struct Catalog {
 
 const MAX_PARENT_WALK: usize = 64;
 
+/// A write names registered types; an item or type held, or restored, keeps any a forced delete left.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Naming {
+    Registered,
+    Any,
+}
+
 impl Catalog {
     /// A catalog that declares no type: every type reads its title and body from the default properties.
     pub fn empty() -> Catalog {
@@ -911,6 +920,7 @@ impl Catalog {
             fields.insert(name.as_str(), definition);
         }
         crate::validation::properties(&fields, properties, complete)?;
+        self.judge_kept_columns(type_id, written, Naming::Registered)?;
         if complete {
             self.judge_schedule(type_id, properties)?;
         }
@@ -935,6 +945,64 @@ impl Catalog {
             )]));
         }
         Ok(())
+    }
+
+    pub fn keeps_own_table(&self, type_id: &str) -> bool {
+        type_id == OWN_TABLE_TYPE || self.descends_from(type_id, OWN_TABLE_TYPE)
+    }
+
+    pub fn judge_kept_columns(
+        &self,
+        type_id: &str,
+        properties: &Map<String, Value>,
+        naming: Naming,
+    ) -> Result<(), RuleError> {
+        if !self.keeps_own_table(type_id) {
+            return Ok(());
+        }
+        if properties.contains_key(OWN_ORDER)
+            && self
+                .resolved(type_id)
+                .is_ok_and(|declared| !declared.contains_key(OWN_ORDER))
+        {
+            let message =
+                "An item's own columns have no order: only a table a type declares names one.";
+            return Err(
+                RuleError::new(Code::InvalidProperties, format!("{OWN_ORDER}: {message}"))
+                    .with_fields(vec![FieldError::new(
+                        OWN_ORDER,
+                        field_code::INVALID_VALUE,
+                        message,
+                    )]),
+            );
+        }
+        let Some(columns) = properties.get(OWN_COLUMNS) else {
+            return Ok(());
+        };
+        let known = |id: &str| match naming {
+            Naming::Registered => self.known(id),
+            Naming::Any => true,
+        };
+        judge_item_columns(Some(columns), &known)
+            .map(drop)
+            .map_err(|issues| {
+                let message = issues
+                    .iter()
+                    .map(|issue| format!("{}: {}", issue.field, issue.message()))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                let fields = issues
+                    .iter()
+                    .map(|issue| {
+                        FieldError::new(
+                            issue.field.clone(),
+                            field_code::INVALID_VALUE,
+                            issue.message(),
+                        )
+                    })
+                    .collect();
+                RuleError::new(Code::InvalidProperties, message).with_fields(fields)
+            })
     }
 
     /// An event's schedule and a task's `recurrence` are judged on the item a write leaves.
@@ -1810,5 +1878,84 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(base.tables.len(), 1);
+    }
+    #[test]
+    fn an_item_of_core_table_or_below_is_judged_by_the_validator_a_declared_table_passes() {
+        let catalog = Catalog::from_wire(
+            &held(json!([
+                {"id": "core.table", "fields": {"columns": {"type": "object"}}},
+                {"id": "app.acme.ledger", "parent": "core.table", "fields": {}},
+                {"id": "core.note", "fields": {}}
+            ])),
+            None,
+        );
+        let good = json!({"columns": {"a": {"type": "item", "type_constraints": ["core.table"]}}});
+        let bad = json!({"columns": {"a": {"type": "money"}, "B": {"type": "string"}}});
+        let judge = |type_id: &str, properties: &Value| {
+            catalog.validate_properties(type_id, properties.as_object().unwrap(), true)
+        };
+        assert!(judge("core.table", &good).is_ok());
+        assert!(judge("app.acme.ledger", &good).is_ok());
+        let refused = judge("app.acme.ledger", &bad).unwrap_err();
+        let paths: Vec<&str> = refused.fields.iter().map(|f| f.path.as_str()).collect();
+        assert_eq!(paths, ["columns.a.type", "columns.B"]);
+        assert!(
+            judge("core.note", &bad).is_ok(),
+            "a note's columns are a property like any other"
+        );
+        assert!(judge("core.table", &json!({"columns": {}})).is_err());
+    }
+
+    #[test]
+    fn an_order_beside_an_item_s_own_columns_is_refused_unless_the_type_declares_the_field() {
+        let catalog = Catalog::from_wire(
+            &held(json!([
+                {"id": "core.table", "fields": {"columns": {"type": "object"}}},
+                {"id": "app.acme.ledger", "parent": "core.table", "fields": {}},
+                {"id": "app.acme.sorted", "parent": "core.table",
+                 "fields": {"order": {"type": "string"}}},
+                {"id": "core.note", "fields": {}}
+            ])),
+            None,
+        );
+        let columns = json!({"a": {"type": "datetime"}});
+        let judge = |type_id: &str, order: Option<&str>| {
+            let mut properties = json!({"title": "T", "columns": columns});
+            if let Some(order) = order {
+                properties["order"] = json!(order);
+            }
+            catalog.validate_properties(type_id, properties.as_object().unwrap(), true)
+        };
+        assert!(judge("core.table", None).is_ok());
+        assert!(judge("core.note", Some("a")).is_ok(), "the witness");
+        assert!(judge("app.acme.sorted", Some("a")).is_ok());
+        for type_id in ["core.table", "app.acme.ledger"] {
+            let refused = judge(type_id, Some("a")).unwrap_err();
+            let paths: Vec<&str> = refused.fields.iter().map(|f| f.path.as_str()).collect();
+            assert_eq!(paths, ["order"], "{type_id}");
+        }
+    }
+
+    #[test]
+    fn a_partial_write_is_judged_by_the_columns_it_leaves() {
+        let catalog = Catalog::from_wire(
+            &held(json!([
+                {"id": "core.table", "fields": {"columns": {"type": "object"}}},
+                {"id": "app.acme.ledger", "parent": "core.table", "fields": {}}
+            ])),
+            None,
+        );
+        let partial = Map::new();
+        let left = |columns: Value| json!({"title": "T", "columns": columns});
+        let judged = |written: &Value| {
+            catalog.validate_merged(
+                "app.acme.ledger",
+                &partial,
+                false,
+                written.as_object().unwrap(),
+            )
+        };
+        assert!(judged(&left(json!({"a": {"type": "string"}}))).is_ok());
+        assert!(judged(&left(json!({"a": {"type": "money"}}))).is_err());
     }
 }

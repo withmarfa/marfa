@@ -175,6 +175,8 @@ describe("the document declares the headers the server sets", () => {
       "GET /items",
       "GET /items/{id}",
       "GET /items/{id}/edges",
+      "GET /items/{id}/tables",
+      "GET /items/{id}/tables/{table}/rows",
       "GET /edges",
       "GET /edges/{id}",
       "GET /types",

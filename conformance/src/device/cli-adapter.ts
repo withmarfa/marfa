@@ -19,6 +19,7 @@ import {
   type FolderItem,
   type FollowReport,
   type Found,
+  type HeldTables,
   type HydrateReport,
   type Item,
   type ItemType,
@@ -33,6 +34,8 @@ import {
   type SearchFilters,
   type SearchHit,
   type SliceTier,
+  type TableFill,
+  type TableHold,
   type FileCache,
   type KeptFetch,
   type Status,
@@ -250,6 +253,40 @@ export class CliDevice implements DeviceUnderTest {
 
   async unpin(id: string): Promise<Outcome<PinReport>> {
     return this.json<PinReport>(["unpin", id]);
+  }
+
+  async holdTable(type: string, table: string): Promise<Outcome<TableHold>> {
+    return this.json<TableHold>([
+      "tables",
+      "hold",
+      type,
+      table,
+      ...this.server(),
+    ]);
+  }
+
+  async letGoTable(
+    type: string,
+    table: string,
+  ): Promise<Outcome<{ was_held: boolean }>> {
+    return this.json<{ was_held: boolean }>(["tables", "let-go", type, table]);
+  }
+
+  async heldTables(): Promise<Outcome<HeldTables>> {
+    return this.json<HeldTables>(["tables", "held"]);
+  }
+
+  async fillTables(): Promise<Outcome<TableFill>> {
+    return this.json<TableFill>(["tables", "fill", ...this.server()]);
+  }
+
+  /** `marfa device rows <command>`, as the copy or the server answers it, with `held`. */
+  async tableRead<T>(args: string[]): Promise<Outcome<T & { held: boolean }>> {
+    return this.json<T & { held: boolean }>([
+      "rows",
+      ...args,
+      ...this.server(),
+    ]);
   }
 
   async catchUp(): Promise<Outcome<CatchUpReport>> {

@@ -23726,6 +23726,18 @@
             "description": "The order of the sort: `asc` or `desc`.",
             "name": "direction",
             "in": "query"
+          },
+          {
+            "name": "X-Marfa-Reach",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "description": "The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read."
           }
         ],
         "responses": {
@@ -23757,6 +23769,9 @@
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Marfa-Reach": {
+                "$ref": "#/components/headers/X-Marfa-Reach"
               }
             }
           },
@@ -23799,6 +23814,9 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "X-Marfa-Reach": {
+                "$ref": "#/components/headers/X-Marfa-Reach"
               }
             }
           },
@@ -23808,6 +23826,30 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ItemNotFoundOrTableNotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "X-Marfa-Reach": {
+                "$ref": "#/components/headers/X-Marfa-Reach"
+              }
+            }
+          },
+          "409": {
+            "description": "`reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReachChangedRefusal"
                 }
               }
             },
@@ -24161,6 +24203,18 @@
             "description": "The ID of the item.",
             "name": "id",
             "in": "path"
+          },
+          {
+            "name": "X-Marfa-Reach",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$",
+              "minLength": 64,
+              "maxLength": 64
+            },
+            "description": "The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read."
           }
         ],
         "responses": {
@@ -24192,6 +24246,9 @@
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Marfa-Reach": {
+                "$ref": "#/components/headers/X-Marfa-Reach"
               }
             }
           },
@@ -24234,6 +24291,9 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "X-Marfa-Reach": {
+                "$ref": "#/components/headers/X-Marfa-Reach"
               }
             }
           },
@@ -24243,6 +24303,30 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ItemNotFoundRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "X-Marfa-Reach": {
+                "$ref": "#/components/headers/X-Marfa-Reach"
+              }
+            }
+          },
+          "409": {
+            "description": "`reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReachChangedRefusal"
                 }
               }
             },
