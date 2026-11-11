@@ -1,8 +1,4 @@
-//! `bm25_within(fts, entries, tokens, hits...)`: FTS5's `bm25` with the corpus statistics
-//! given, so a ranking says nothing of the entries outside that corpus.
-//!
-//! `entries` and `tokens` count the corpus and its length in tokens; each `hits` counts the
-//! corpus entries matching one phrase of the query, in the query's order.
+//! `bm25_within(fts, entries, tokens, hits per phrase...)`: FTS5's `bm25` over a given corpus.
 
 use std::ffi::c_int;
 use std::ptr;

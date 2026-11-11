@@ -414,8 +414,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
     tokenize = 'porter unicode61'
 );
 
--- Each `items_fts` entry's length in tokens, kept with its item's type and source so that
--- `items_fts_totals` can give BM25 the statistics of what a key may read.
+-- Each `items_fts` entry's length in tokens, summed by type and source in `items_fts_totals`.
 CREATE TABLE IF NOT EXISTS items_fts_sizes (
     seq INTEGER PRIMARY KEY,
     type TEXT NOT NULL,

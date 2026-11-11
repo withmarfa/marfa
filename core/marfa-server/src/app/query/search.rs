@@ -117,8 +117,7 @@ impl Ranking {
             arguments.extend(counts(read, &totals_sql(source, reach), 2)?);
             for phrase in phrases {
                 let hits = counts(read, &hits_sql(source, reach, phrase), 1)?;
-                // FTS5 drops a phrase that holds no word, and one that matches nothing within
-                // reach leaves no hit to rank, so the counts kept are FTS5's phrases in order.
+                // FTS5 drops a wordless phrase; one with no hit in reach leaves no row to rank.
                 arguments.extend(hits.into_iter().filter(|hits| *hits > 0));
             }
         }
