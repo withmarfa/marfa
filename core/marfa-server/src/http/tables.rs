@@ -6,8 +6,7 @@ use axum::extract::State;
 use axum::http::{StatusCode, Uri};
 
 use super::answer::{Answer, text_answer};
-use super::body::JsonBody;
-use super::items::{Named, check_item_id, invalid_field};
+use super::items::{Named, Sent, check_item_id, invalid_field, keyed};
 use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
@@ -36,16 +35,18 @@ pub async fn write(
     State(app): State<Arc<App>>,
     caller: Caller,
     Named((id, table)): Named<(String, String)>,
-    uri: Uri,
-    body: JsonBody,
+    sent: Sent,
 ) -> Answer {
     caller.require_reach()?;
-    query::only(&uri, &[])?;
-    check_item_id(&id)?;
-    let sent = body.object(&BATCH_FIELDS).await?;
-    let ops = tables::operations(sent.get("operations"), tables::MAX_OPERATIONS)?;
-    let answer = tables::write(&app, &caller, id, table, ops).await?;
-    Ok(text_answer(StatusCode::OK, answer))
+    let (door, who) = (app.clone(), caller.clone());
+    keyed(&app, &caller, sent, |claim, uri, body| async move {
+        query::only(&uri, &[])?;
+        check_item_id(&id)?;
+        let sent = body.declared_object(&BATCH_FIELDS)?;
+        let ops = tables::operations(sent.get("operations"), tables::MAX_OPERATIONS)?;
+        tables::write(&door, &who, claim, id, table, ops).await
+    })
+    .await
 }
 
 fn one(uri: &Uri, name: &str) -> Result<Option<String>> {
@@ -141,11 +142,14 @@ pub async fn undo(
     State(app): State<Arc<App>>,
     caller: Caller,
     Named((id, table, batch)): Named<(String, String, String)>,
-    uri: Uri,
+    sent: Sent,
 ) -> Answer {
     caller.require_reach()?;
-    query::only(&uri, &[])?;
-    check_item_id(&id)?;
-    let answer = tables::undo(&app, &caller, id, table, batch).await?;
-    Ok(text_answer(StatusCode::OK, answer))
+    let (door, who) = (app.clone(), caller.clone());
+    keyed(&app, &caller, sent, |claim, uri, _| async move {
+        query::only(&uri, &[])?;
+        check_item_id(&id)?;
+        tables::undo(&door, &who, claim, id, table, batch).await
+    })
+    .await
 }

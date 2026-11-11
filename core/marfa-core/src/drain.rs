@@ -10,7 +10,9 @@ use serde::Serialize;
 
 use crate::error::CoreError;
 use crate::http::{Answer, Call, CallBody, Http, INSTANCE_CHANGED, Method, Outgoing};
-use crate::model::{BlockedReason, LastFailure, QueuedWrite, Refusal, Subject, Verdict, WriteKind};
+use crate::model::{
+    BlockedReason, LastFailure, QueuedWrite, Refusal, RowConflict, Subject, Verdict, WriteKind,
+};
 use crate::telemetry;
 use crate::wire::{WireEdge, WireEdgeAnswer, WireErrorEnvelope, WireItem, WireWriteAnswer};
 use crate::{Core, Result};
@@ -18,6 +20,7 @@ use crate::{reach, store};
 
 mod create_edges;
 mod pages;
+mod rows;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct DrainReport {
@@ -122,7 +125,7 @@ impl From<CoreError> for Cut {
 pub struct DrainVerdict {
     pub id: String,
     pub kind: WriteKind,
-    /// An edge write's source; otherwise the row written to.
+    /// An edge write's source; otherwise the item written to.
     pub item_id: Option<String>,
     pub edge_id: Option<String>,
     /// `None` where the write was sent and not answered.
@@ -136,6 +139,8 @@ pub struct DrainVerdict {
     /// `acknowledged`.
     pub replayed: bool,
     pub merged_fields: Vec<String>,
+    /// What a `conflicted` row write replaced unseen.
+    pub conflicts: Vec<RowConflict>,
 }
 
 impl DrainVerdict {
@@ -291,6 +296,21 @@ fn leave_waiting(stuck: &Suspect, report: &mut DrainReport) {
     }
 }
 
+/// Puts the write's entry in place of the one it has, or last, answering
+/// whether it had none.
+fn tell(report: &mut DrainReport, entry: DrainVerdict) -> bool {
+    match report.verdicts.iter_mut().find(|told| told.id == entry.id) {
+        Some(told) => {
+            *told = entry;
+            false
+        }
+        None => {
+            report.verdicts.push(entry);
+            true
+        }
+    }
+}
+
 /// Puts the write's entry in the report: in place of the one it already has,
 /// where it has one, and last otherwise.
 fn put_verdict(report: &mut DrainReport, replacing: Option<usize>, entry: DrainVerdict) {
@@ -353,34 +373,56 @@ fn set_aside(
     else {
         return Ok(());
     };
+    // The server may hold the batch under its key, so its writes stay together.
+    let members = if row.kind == WriteKind::WriteRows {
+        rows::joined(&tx, &row.id)?
+    } else {
+        Vec::new()
+    };
     store::note_last_failure(&tx, &row.id, failure)?;
-    store::record_verdict(
-        &tx,
-        &row.id,
-        &store::Answered {
-            verdict: Verdict::Blocked,
-            reason: Some(BlockedReason::FailingAlone.as_str()),
-            answer: None,
-            conflicted_copy_id: None,
-        },
-    )?;
+    for write in std::iter::once(&row).chain(&members) {
+        store::record_verdict(
+            &tx,
+            &write.id,
+            &store::Answered {
+                verdict: Verdict::Blocked,
+                reason: Some(BlockedReason::FailingAlone.as_str()),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )?;
+    }
     // The later edit read this edit's optimistic fields, which will not reach
     // the server until a person releases it.
     move_edits_back(&tx, &row)?;
-    let set_aside = store::queued_write(&tx, &row.id)?.unwrap_or(row);
+    crate::row_writes::flush(&tx)?;
+    let mut set_aside = Vec::with_capacity(members.len() + 1);
+    for write in std::iter::once(&row).chain(&members) {
+        set_aside.push(store::queued_write(&tx, &write.id)?.unwrap_or_else(|| write.clone()));
+    }
     tx.commit()?;
-    answers.insert(set_aside.id.clone(), Some(Verdict::Blocked));
-    report.answered += 1;
-    if let Some(entry) = report.verdicts.get_mut(stuck.verdict_at) {
-        *entry = verdict_of(
-            &set_aside,
+    let told = |write: &QueuedWrite| {
+        verdict_of(
+            write,
             &Settled::plain(
                 Some(Verdict::Blocked),
                 Some(BlockedReason::FailingAlone.as_str().into()),
-                set_aside.refusals,
+                write.refusals,
             ),
             None,
-        );
+        )
+    };
+    for (at, write) in set_aside.iter().enumerate() {
+        answers.insert(write.id.clone(), Some(Verdict::Blocked));
+        report.answered += 1;
+        if at == 0 {
+            if let Some(entry) = report.verdicts.get_mut(stuck.verdict_at) {
+                *entry = told(write);
+            }
+        } else if !tell(report, told(write)) {
+            // Told undelivered when the batch first met the failure this pass.
+            report.undelivered = report.undelivered.saturating_sub(1);
+        }
     }
     Ok(())
 }
@@ -524,13 +566,14 @@ fn first_succeeded(answer: &Answer) -> bool {
 
 /// Only some doors answer with an item: tags, metadata and extensions answer
 /// the sidecar they changed, a delete answers `{"ok": true}`, an edge the
-/// edge, and an upload the hash.
+/// edge, an upload the hash, and a row write each operation's outcome.
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Shape {
     Item,
     Edge,
     Plain,
     Blob,
+    Rows,
 }
 
 enum Door<'a> {
@@ -655,6 +698,14 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
             ))
         })
     };
+    let table = || -> Result<&str> {
+        row.table.as_deref().ok_or_else(|| {
+            CoreError::Store(format!(
+                "the queued {} names no table, so there is nowhere to send it",
+                row.kind
+            ))
+        })
+    };
     let tag = || -> Result<&str> {
         row.tag.as_deref().ok_or_else(|| {
             CoreError::Store(format!(
@@ -767,6 +818,44 @@ fn address<'a>(row: &'a QueuedWrite, payload: &'a str) -> Result<Door<'a>> {
             ],
             Shape::Plain,
         ),
+        WriteKind::WriteRows => to(
+            Method::Post,
+            vec![
+                "items".into(),
+                item_id()?.into(),
+                "tables".into(),
+                table()?.into(),
+                "rows".into(),
+            ],
+            Shape::Rows,
+        ),
+        WriteKind::UndoRows => {
+            let batch = row
+                .body
+                .get("batch")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| {
+                    CoreError::Store(format!("the queued undo {} names no batch", row.id))
+                })?;
+            Ok(Door::Json(
+                Outgoing {
+                    method: Method::Post,
+                    segments: vec![
+                        "items".into(),
+                        item_id()?.into(),
+                        "tables".into(),
+                        table()?.into(),
+                        "batches".into(),
+                        batch.into(),
+                        "undo".into(),
+                    ],
+                    params: Vec::new(),
+                    body: "{}",
+                    idempotency_key: &row.idempotency_key,
+                },
+                Shape::Rows,
+            ))
+        }
         WriteKind::UploadBlob => {
             let hash = row.blob.as_deref().ok_or_else(|| {
                 CoreError::Store(format!(
@@ -1255,6 +1344,10 @@ fn send_queue(
             store::queued_write(&conn, &row.id)?
         };
         let row = current.as_ref().unwrap_or(row);
+        // Sent in another write's batch, which that write answers for.
+        if row.batched_with.is_some() {
+            continue;
+        }
         // Answered since the pass read the queue, as a settled create refuses
         // the writes to an edge it did not make.
         if let Some(answered) = current.as_ref().and_then(|now| now.verdict) {
@@ -1354,7 +1447,23 @@ fn send_queue(
             Readiness::Ready => {}
         }
 
+        let after = all
+            .iter()
+            .position(|queued| queued.id == row.id)
+            .map_or(&all[..0], |at| &all[at + 1..]);
+        let batched = rows::gather(
+            core,
+            row,
+            after,
+            &rows::Standing {
+                rows: &rows,
+                answers: &answers,
+                waiting: &waiting,
+                landing: &landing,
+            },
+        )?;
         let payload = match payload_to_send(core, http, row, &all, &mut lookups)? {
+            Ok(_) if row.kind == WriteKind::WriteRows => rows::body(row, &batched),
             Ok(payload) => payload,
             Err(CoreError::Unauthorized { .. }) => {
                 park_for_credential(core, report)?;
@@ -1453,11 +1562,15 @@ fn send_queue(
         // The connection is not held across the send, or `queue`, read while
         // a drain runs, would wait on the network.
         crate::catch_up::refuse_if_stopped(stop)?;
-        {
+        let resent = {
             // Before the send: one whose answer never arrives has still
             // reached the server, and treating it as unsent would write twice.
-            let conn = core.conn()?;
-            store::mark_sent(&conn, &row.id)?;
+            let mut conn = core.conn()?;
+            let tx = conn.transaction()?;
+            let resent = !store::unsent(&tx, &row.id)?;
+            store::mark_sent(&tx, &row.id)?;
+            rows::mark_joined(&tx, row, &batched)?;
+            tx.commit()?;
             if row.kind == WriteKind::UploadBlob {
                 store::record_upload_sent_as(
                     &conn,
@@ -1465,7 +1578,8 @@ fn send_queue(
                     &store::credential_digest(&http.authorization()),
                 )?;
             }
-        }
+            resent
+        };
         let (answer, shape) = {
             let write = telemetry::operation!("write", kind, status);
             telemetry::record!(write, kind = row.kind.as_str());
@@ -1516,7 +1630,7 @@ fn send_queue(
             Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;
-                store::mark_unsent(&tx, &row.id)?;
+                crate::row_writes::leave_unsent(&tx, &row.id)?;
                 let error = crate::catch_up::expire_for_another_instance(&tx, generation)?;
                 tx.commit()?;
                 return Err(error);
@@ -1534,9 +1648,10 @@ fn send_queue(
         let landed = matches!(class, Classified::Landed { .. } | Classified::Delivered);
         let taken = match store_fault(row) {
             Some(error) => Err(error),
+            None if row.kind.rows() => rows::settle(core, row, &answer, class, resent),
             None => settle(core, row, &answer, class, shape, pass),
         };
-        let settled = match taken {
+        let mut settled = match taken {
             Ok(settled) => settled,
             Err(error) => {
                 // A verdict is committed before the read it owes, and that
@@ -1560,6 +1675,15 @@ fn send_queue(
                             current.answer.as_deref(),
                         ),
                     );
+                    if row.kind.rows() {
+                        for member in rows::joined(&*core.conn()?, &row.id)? {
+                            let settled = committed(&member, None, shape, false);
+                            tell(
+                                report,
+                                verdict_of(&member, &settled, member.answer.as_deref()),
+                            );
+                        }
+                    }
                     return Err(error);
                 }
                 if matches!(
@@ -1578,20 +1702,35 @@ fn send_queue(
                 }
                 // The server answered and the copy could not take the answer:
                 // a further attempt may clear it, nothing clears it on its own.
-                let refusals = store::count_refusal(&*core.conn()?, &row.id)?;
-                let mut settled = finish_counted(
-                    core,
-                    row,
-                    refusals,
-                    answer.as_ref().ok().map(|answer| answer.body.clone()),
-                )?;
-                // A dead write carries no reason, in the queue or here.
-                if settled.verdict.is_none() {
-                    settled.reason = Some(format!("the copy could not take the answer: {error}"));
+                let reason = format!("the copy could not take the answer: {error}");
+                let envelope = answer.as_ref().ok().map(|answer| answer.body.clone());
+                if row.kind.rows() {
+                    let members = rows::joined(&*core.conn()?, &row.id)?;
+                    let writes: Vec<&QueuedWrite> = std::iter::once(row).chain(&members).collect();
+                    rows::counted(core, &writes, envelope.as_deref(), Some(reason))?
+                } else {
+                    let refusals = store::count_refusal(&*core.conn()?, &row.id)?;
+                    let mut settled = finish_counted(core, row, refusals, envelope)?;
+                    // A dead write carries no reason, in the queue or here.
+                    if settled.verdict.is_none() {
+                        settled.reason = Some(reason);
+                    }
+                    settled
                 }
-                settled
             }
         };
+        if settled.again {
+            for entry in std::mem::take(&mut settled.joined) {
+                answers.insert(entry.id.clone(), entry.verdict);
+                if tell(report, entry) {
+                    report.answered += 1;
+                }
+            }
+            if role == Role::Walk {
+                cursor -= 1;
+            }
+            continue;
+        }
         // What the write met is kept for every answer it had from the server,
         // a rate limit included. A failure that came before the write was
         // answered says nothing of it.
@@ -1666,6 +1805,23 @@ fn send_queue(
             replacing,
             verdict_of(answered, &settled, answered.answer.as_deref()),
         );
+        for entry in std::mem::take(&mut settled.joined) {
+            answers.insert(entry.id.clone(), entry.verdict);
+            let verdict = entry.verdict;
+            if verdict.is_none() {
+                waiting.insert(entry.id.clone());
+            }
+            if !tell(report, entry) {
+                continue;
+            }
+            if verdict.is_some() || settled.unavailable.is_none() && answer.is_ok() {
+                report.answered += 1;
+            } else if settled.unavailable.is_some() {
+                report.undelivered += 1;
+            } else {
+                report.unmade += 1;
+            }
+        }
         // The write has met the failure in three drains in a row, the first
         // five minutes ago: it waits for a write to test it.
         let mut carry_on = counted;
@@ -1675,7 +1831,11 @@ fn send_queue(
                 key: row.idempotency_key.clone(),
                 at: cursor - 1,
                 unavailable: settled.unavailable.clone().unwrap_or_default(),
-                verdict_at: report.verdicts.len() - 1,
+                verdict_at: report
+                    .verdicts
+                    .iter()
+                    .position(|told| told.id == row.id)
+                    .unwrap_or(report.verdicts.len() - 1),
                 phase: Phase::Testing,
             });
         }
@@ -2416,6 +2576,7 @@ fn verdict_of(row: &QueuedWrite, settled: &Settled, answer: Option<&str>) -> Dra
         refusals: settled.refusals,
         replayed: settled.replayed,
         merged_fields: settled.merged_fields.clone(),
+        conflicts: settled.conflicts.clone(),
     }
 }
 
@@ -2464,6 +2625,11 @@ struct Settled {
     /// Set where this write, or a read it needed, could not get through: the
     /// pass ends here.
     unavailable: Option<String>,
+    conflicts: Vec<RowConflict>,
+    /// The other writes of this one's batch.
+    joined: Vec<DrainVerdict>,
+    /// Refused for another write's operation, so this one goes again at once.
+    again: bool,
 }
 
 impl Settled {
@@ -2480,6 +2646,9 @@ impl Settled {
             unclaimed: None,
             retry_after_seconds: None,
             unavailable: None,
+            conflicts: Vec::new(),
+            joined: Vec::new(),
+            again: false,
         }
     }
 }
@@ -3015,7 +3184,7 @@ fn settle_delivered(
     let subject = match shape {
         Shape::Item => row.item_id.as_deref().map(|id| ("items", id)),
         Shape::Edge => row.edge_id.as_deref().map(|id| ("edges", id)),
-        Shape::Plain | Shape::Blob => None,
+        Shape::Plain | Shape::Blob | Shape::Rows => None,
     };
     let read = match subject {
         None => None,

@@ -282,15 +282,19 @@ pub enum DeviceCommand {
     /// a create refused onto an item its natural key names that no read has
     /// found: discarded, that create takes its item out of the copy, and the
     /// writes waiting on it are refused unsent, each kept with its content.
+    /// A row write goes with every write sent in its batch.
     Discard {
         /// The refused write to discard.
         #[arg(value_name = "ID")]
         id: String,
     },
-    /// Send a blocked, dead or unsent refused write again, under a fresh key.
+    /// Send a blocked, dead or unsent refused write again.
     ///
     /// A write blocked `awaiting_dependency` is released only by the answer
-    /// to the write it waits behind, never by this command.
+    /// to the write it waits behind, never by this command. A released write
+    /// goes under a fresh idempotency key. A row write instead goes again with
+    /// every write sent in its batch, as they went, under the batch's key, and
+    /// an undo under its own key, unless either was blocked `key_spent`.
     Release {
         /// The queued write to release.
         #[arg(
@@ -307,12 +311,11 @@ pub enum DeviceCommand {
     /// `failing_alone` or `instance_changed` out of the queue, and put the
     /// copy back to what the server holds.
     ///
-    /// A release sends a write again under a fresh idempotency key but on the
-    /// version it already names. A write blocked `conflict_unresolved` is
-    /// refused the same way each time, and one blocked `ancestor_unavailable`
-    /// too, unless the credential it is sent with has come to read the
-    /// snapshot it names. The writes held for the withdrawn write are refused
-    /// unsent.
+    /// A release sends a write again on the version it already names. A write
+    /// blocked `conflict_unresolved` is refused the same way each time, and
+    /// one blocked `ancestor_unavailable` too, unless the credential it is
+    /// sent with has come to read the snapshot it names. The writes held for the withdrawn write are refused
+    /// unsent. A row write goes with every write sent in its batch.
     Withdraw {
         /// The queued write to withdraw.
         #[arg(value_name = "ID")]
@@ -1050,6 +1053,27 @@ pub enum DeviceTablesCommand {
 pub enum DeviceRowsCommand {
     /// One page of a table's rows, as `marfa rows list` answers it.
     List(crate::commands::rows::ListArgs),
+    /// Queue a batch of `put`, `patch` and `delete` operations for a table,
+    /// all of them or none, as `marfa rows write` takes it. Where the copy
+    /// holds the table whole, its rows show the batch at once.
+    Write {
+        /// The item id.
+        item: String,
+        /// The table name.
+        table: String,
+        #[command(flatten)]
+        body: crate::commands::BodySource,
+    },
+    /// Queue an undo of a batch, as `marfa rows undo` sends it. The rows it
+    /// puts back reach the copy with its `rows.changed`.
+    Undo {
+        /// The item id.
+        item: String,
+        /// The table name.
+        table: String,
+        /// The batch id, as a write's answer names it.
+        batch: String,
+    },
     /// One row of a table.
     Get {
         /// The item id.
@@ -1727,6 +1751,29 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 output::report(&fill, json, || fill_line(&fill))
             }
         },
+        DeviceCommand::Rows {
+            command: DeviceRowsCommand::Write { item, table, body },
+        } => {
+            let core = store.open(None)?;
+            let batch = body.read()?;
+            let operations = batch
+                .get("operations")
+                .and_then(serde_json::Value::as_array)
+                .filter(|_| batch.is_object())
+                .ok_or_else(|| {
+                    CliError::Invalid(
+                        "a batch is a JSON object holding `operations`, a list of put, patch and delete operations"
+                            .into(),
+                    )
+                })?;
+            output::queued_one(&core.write_rows(&item, &table, operations)?, json)
+        }
+        DeviceCommand::Rows {
+            command: DeviceRowsCommand::Undo { item, table, batch },
+        } => {
+            let core = store.open(None)?;
+            output::queued_one(&core.undo_rows(&item, &table, &batch)?, json)
+        }
         DeviceCommand::Rows { command } => {
             let core = store.open_with_server(named)?;
             let answer = match command {
@@ -1747,6 +1794,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     table,
                     filter,
                 } => core.table_totals(&item, &table, filter.as_deref())?,
+                DeviceRowsCommand::Write { .. } | DeviceRowsCommand::Undo { .. } => {
+                    return Err(CliError::Invalid("a row write is not a read".into()));
+                }
             };
             output::report(&answer, json, || {
                 serde_json::to_string_pretty(&answer).unwrap_or_default()
@@ -1965,8 +2015,10 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 if released == 0 {
                     "nothing to release: a write is released only where it is blocked, dead or refused unsent, and never while it waits behind another write"
                         .into()
+                } else if let Some(id) = &id {
+                    format!("released {id}")
                 } else {
-                    format!("released {released} write(s), each under a fresh key")
+                    format!("released {released} write(s)")
                 }
             })
         }

@@ -896,10 +896,12 @@ pub enum WriteKind {
     WriteExtension,
     DeleteExtension,
     UploadBlob,
+    WriteRows,
+    UndoRows,
 }
 
 impl WriteKind {
-    pub const ALL: [WriteKind; 14] = [
+    pub const ALL: [WriteKind; 16] = [
         WriteKind::CreateItem,
         WriteKind::UpdateItem,
         WriteKind::DeleteItem,
@@ -914,6 +916,8 @@ impl WriteKind {
         WriteKind::WriteExtension,
         WriteKind::DeleteExtension,
         WriteKind::UploadBlob,
+        WriteKind::WriteRows,
+        WriteKind::UndoRows,
     ];
 
     /// Creates and updates can advance the version a later edit names.
@@ -936,7 +940,12 @@ impl WriteKind {
                 | WriteKind::WriteExtension
                 | WriteKind::CreateEdge
                 | WriteKind::UpdateEdge
+                | WriteKind::WriteRows
         )
+    }
+
+    pub fn rows(self) -> bool {
+        matches!(self, WriteKind::WriteRows | WriteKind::UndoRows)
     }
 
     /// An edge write names its endpoints in `item_id` and `target_id` too,
@@ -956,7 +965,7 @@ impl WriteKind {
             WriteKind::CreateEdge | WriteKind::UpdateEdge | WriteKind::DeleteEdge => {
                 Some(Subject::Edge)
             }
-            WriteKind::UploadBlob => None,
+            WriteKind::UploadBlob | WriteKind::WriteRows | WriteKind::UndoRows => None,
         }
     }
 
@@ -976,6 +985,8 @@ impl WriteKind {
             WriteKind::WriteExtension => "write_extension",
             WriteKind::DeleteExtension => "delete_extension",
             WriteKind::UploadBlob => "upload_blob",
+            WriteKind::WriteRows => "write_rows",
+            WriteKind::UndoRows => "undo_rows",
         }
     }
 }
@@ -1428,8 +1439,21 @@ pub struct QueuedWrite {
     pub body: Value,
     pub conflicted_copy_id: Option<String>,
     pub refusals: i64,
+    /// The table a row write or an undo names.
+    pub table: Option<String>,
+    /// The row write whose batch this one was sent in, where it was not the first.
+    pub batched_with: Option<String>,
+    /// What a `conflicted` row write replaced unseen.
+    pub conflicts: Vec<RowConflict>,
     pub queued_at: String,
     pub answered_at: Option<String>,
+}
+
+/// A column of a row whose value a row write replaced without the copy having shown it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RowConflict {
+    pub row: String,
+    pub column: String,
 }
 
 impl QueuedWrite {
@@ -1751,6 +1775,9 @@ mod tests {
             body: Value::Null,
             conflicted_copy_id: Some("sibling".into()),
             refusals: 0,
+            table: None,
+            batched_with: None,
+            conflicts: Vec::new(),
             environmental_streak: 0,
             last_failure: None,
             queued_at: "2026-01-01T00:00:00Z".into(),

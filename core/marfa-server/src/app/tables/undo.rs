@@ -5,11 +5,13 @@ use std::collections::BTreeSet;
 use serde_json::json;
 
 use super::store::{self, Before, Change, Held};
-use super::{Batch, table_of};
+use super::{Batch, completed, table_of};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::catalog::{self, Snapshot};
+use crate::app::idempotency::Claim;
 use crate::app::items;
+use crate::app::items::write::Done;
 use crate::app::refusal::{Code, Refusal, Result};
 
 pub(crate) fn not_found_batch() -> Refusal {
@@ -104,14 +106,15 @@ impl Batch<'_, '_> {
 pub async fn undo(
     app: &App,
     caller: &Caller,
+    claim: Option<Claim>,
     item_id: String,
     table: String,
     batch: String,
-) -> Result<String> {
+) -> Result<Done> {
     let cache = app.catalog_handle();
     app.write(caller, "rows.undo", move |unit| {
         let catalog = catalog::current(&cache, unit.tx(), Snapshot::Pending)?;
-        let host = items::writable_host(unit, &catalog, &item_id)?;
+        let host = items::writable_host(unit, &catalog, claim.as_ref(), &item_id)?;
         let table = table_of(&catalog, &host, &table)?;
         let mut undoing = Batch::new(unit, &catalog, &host, &table, Some(batch.clone()))?;
         let seq = undoing.table_seq.ok_or_else(not_found_batch)?;
@@ -184,7 +187,7 @@ pub async fn undo(
                 "results": results,
             }),
         };
-        Ok(answer.to_string())
+        completed(unit, claim.as_ref(), answer.to_string())
     })
     .await
 }

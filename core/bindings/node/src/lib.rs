@@ -599,6 +599,8 @@ pub enum WriteKind {
     WriteExtension,
     DeleteExtension,
     UploadBlob,
+    WriteRows,
+    UndoRows,
 }
 
 /// Why a `blocked` write has stopped.
@@ -817,8 +819,30 @@ pub struct QueuedWrite {
     pub environmental_streak: i64,
     /// What the write last met when the failure was environmental.
     pub last_failure: Option<LastFailure>,
+    /// The table a row write or an undo names.
+    pub table: Option<String>,
+    /// The row write whose batch this one was sent in.
+    pub batched_with: Option<String>,
+    /// What a `conflicted` row write replaced unseen.
+    pub conflicts: Vec<RowConflict>,
     pub queued_at: String,
     pub answered_at: Option<String>,
+}
+
+#[napi(object)]
+pub struct RowConflict {
+    pub row: String,
+    pub column: String,
+}
+
+fn row_conflicts(conflicts: Vec<marfa_core::RowConflict>) -> Vec<RowConflict> {
+    conflicts
+        .into_iter()
+        .map(|conflict| RowConflict {
+            row: conflict.row,
+            column: conflict.column,
+        })
+        .collect()
 }
 
 /// What a write met that was no answer to it: the HTTP status, absent where
@@ -858,7 +882,7 @@ pub struct Attached {
 pub struct DrainVerdict {
     pub id: String,
     pub kind: WriteKind,
-    /// An edge write's source; otherwise the row written to.
+    /// An edge write's source; otherwise the item written to.
     pub item_id: Option<String>,
     pub edge_id: Option<String>,
     pub verdict: Option<Verdict>,
@@ -866,6 +890,8 @@ pub struct DrainVerdict {
     /// The server answered from its record of this idempotency key rather
     /// than writing again.
     pub replayed: bool,
+    /// What a `conflicted` row write replaced unseen.
+    pub conflicts: Vec<RowConflict>,
 }
 
 /// What a drain did.
@@ -1093,6 +1119,8 @@ impl From<marfa_core::WriteKind> for WriteKind {
             K::WriteExtension => WriteKind::WriteExtension,
             K::DeleteExtension => WriteKind::DeleteExtension,
             K::UploadBlob => WriteKind::UploadBlob,
+            K::WriteRows => WriteKind::WriteRows,
+            K::UndoRows => WriteKind::UndoRows,
         }
     }
 }
@@ -1195,7 +1223,7 @@ fn crossed(outcome: Option<marfa_core::Outcome>) -> (Option<Verdict>, bool) {
     (Some(verdict), false)
 }
 
-fn queued(env: Env, write: marfa_core::QueuedWrite) -> Result<QueuedWrite> {
+pub(crate) fn queued(env: Env, write: marfa_core::QueuedWrite) -> Result<QueuedWrite> {
     let (verdict, waiting) = crossed(write.outcome().map_err(|error| failure(env, error))?);
     Ok(QueuedWrite {
         verdict,
@@ -1220,6 +1248,9 @@ fn queued(env: Env, write: marfa_core::QueuedWrite) -> Result<QueuedWrite> {
             status: failure.status.map(u32::from),
             text: failure.text,
         }),
+        table: write.table,
+        batched_with: write.batched_with,
+        conflicts: row_conflicts(write.conflicts),
         queued_at: write.queued_at,
         answered_at: write.answered_at,
     })
@@ -1242,6 +1273,7 @@ fn report_of(
             edge_id: entry.edge_id,
             refusals: entry.refusals,
             replayed: entry.replayed,
+            conflicts: row_conflicts(entry.conflicts),
         });
     }
     Ok(DrainReport {
@@ -3236,8 +3268,9 @@ impl MarfaCore {
             }))
     }
 
-    /// Sends a blocked or dead write again, under a fresh idempotency key.
-    /// Answers whether the row was one a release applies to.
+    /// Sends a blocked or dead write again, under a fresh idempotency key but
+    /// for a row write or an undo, which keeps its key unless blocked
+    /// `key_spent`. Answers whether the row was one a release applies to.
     #[napi]
     pub fn release(&self, env: Env, id: String) -> Result<bool> {
         self.inner.release(&id).map_err(|error| failure(env, error))

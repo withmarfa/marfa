@@ -100,6 +100,19 @@ pub fn item_type(conn: &Connection, id: &str) -> Result<ItemType, CoreError> {
     store::catalog_scope(conn, |conn| resolved(id, &held_types(conn)?, &load(conn)?))
 }
 
+/// An item's tables: its type chain's and, from `core.table` down, its own.
+pub(crate) fn item_tables(
+    conn: &Connection,
+    type_id: &str,
+    properties: &Map<String, Value>,
+) -> Result<Map<String, Value>, CoreError> {
+    store::catalog_scope(conn, |conn| {
+        let registry = marfa_rules::schema::Registry::new(held_types(conn)?.into_values());
+        marfa_rules::schema::item_tables(&registry, type_id, properties)
+            .map_err(|_| type_not_found(type_id))
+    })
+}
+
 fn edge_type_of(id: &str, json: &str) -> Result<EdgeType, CoreError> {
     let wire: WireEdgeType = serde_json::from_str(json)
         .map_err(|error| CoreError::Store(format!("the held edge type {id}: {error}")))?;

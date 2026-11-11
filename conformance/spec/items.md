@@ -1038,11 +1038,11 @@ When the revocation of a key commits after an earlier entry of a `POST /items/bu
 
 ### `items/idempotency-operations`
 
-The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/trash`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/metadata`, `PUT /items/{id}/extensions/{namespace}`, `DELETE /items/{id}/extensions/{namespace}`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke`, `POST /views`, `PATCH /views/{id}`, `DELETE /views/{id}` and `POST /items/bulk-actions`, and on no other operation.
+The server MUST honor an `Idempotency-Key` on `POST /items`, `PATCH /items/{id}`, `DELETE /items/{id}`, `POST /items/trash`, `POST /items/{id}/purge`, `POST /items/{id}/transition`, `POST /items/{id}/restore`, `POST /items/{id}/tags`, `DELETE /items/{id}/tags/{tag}`, `PUT /items/{id}/metadata`, `PUT /items/{id}/extensions/{namespace}`, `DELETE /items/{id}/extensions/{namespace}`, `POST /edges`, `PATCH /edges/{id}`, `DELETE /edges/{id}`, `POST /folders`, `PATCH /folders/{id}`, `POST /folders/{id}/revoke`, `POST /views`, `PATCH /views/{id}`, `DELETE /views/{id}`, `POST /items/bulk-actions` and the two doors `tables/rows-keyed` names, and on no other operation.
 
 **Reason:** a client resends a write whose answer it lost. A metadata or extension write checks no version, and a tag write checks one only when it names one, so one applied a second time would undo a change made between the two sends.
 
-**Tests:** `sync/idempotency-replay.test.ts › guards the replay on every idempotent write operation`, `› takes no Idempotency-Key on the operations that do not list it, and runs each repeat`, `› a metadata or extension write sent again under its key`, `compliance/edge-move.test.ts › answers a move repeated under one Idempotency-Key from its record`, `compliance/views.test.ts › answers a view create repeated under one Idempotency-Key once`.
+**Tests:** `sync/idempotency-replay.test.ts › guards the replay on every idempotent write operation`, `› takes no Idempotency-Key on the operations that do not list it, and runs each repeat`, `› a metadata or extension write sent again under its key`, `compliance/edge-move.test.ts › answers a move repeated under one Idempotency-Key from its record`, `compliance/views.test.ts › answers a view create repeated under one Idempotency-Key once`, `compliance/table-rows-keyed.test.ts › answers a batch sent again under its key from the record, keeping a change made between the two`.
 
 ### `items/idempotency-replay`
 

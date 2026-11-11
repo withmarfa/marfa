@@ -33,7 +33,7 @@ const REREAD_PAGE: i64 = 1000;
 
 const OWED: &str = "owed";
 const FILLING: &str = "filling";
-const WHOLE: &str = "whole";
+pub(crate) const WHOLE: &str = "whole";
 const ONLINE: &str = "online";
 
 /// What one pass over the tables not yet whole did.
@@ -109,12 +109,33 @@ fn names(pattern: &str, type_id: &str, catalog: &Catalog) -> bool {
     }
 }
 
-fn declared(conn: &Connection, type_id: &str) -> Result<Map<String, Value>> {
-    match crate::catalog::item_type(conn, type_id) {
-        Ok(resolved) => Ok(resolved.tables),
-        Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => Ok(Map::new()),
-        Err(error) => Err(error),
+/// The tables every item of the type has: those it declares and, from
+/// `core.table` down, the one each item keeps.
+fn type_tables(conn: &Connection, catalog: &Catalog, type_id: &str) -> Result<Vec<String>> {
+    let mut names: Vec<String> = match crate::catalog::item_type(conn, type_id) {
+        Ok(resolved) => resolved.tables.into_iter().map(|(name, _)| name).collect(),
+        Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => Vec::new(),
+        Err(error) => return Err(error),
+    };
+    if catalog.keeps_own_table(type_id) {
+        names.push(marfa_rules::schema::OWN_TABLE.to_string());
     }
+    Ok(names)
+}
+
+/// An item's tables, with their columns: its type's and, from `core.table`
+/// down, its own from its `columns`.
+pub(crate) fn of_item(conn: &Connection, item: &str) -> Result<Map<String, Value>> {
+    let (type_id, properties): (String, String) = conn.query_row(
+        "SELECT type, properties FROM items WHERE id = ?1",
+        [item],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let properties = match serde_json::from_str(&properties)? {
+        Value::Object(properties) => properties,
+        _ => Map::new(),
+    };
+    crate::catalog::item_tables(conn, &type_id, &properties)
 }
 
 fn wanted(
@@ -131,10 +152,10 @@ fn wanted(
     if named.is_empty() {
         return Ok(Vec::new());
     }
-    let declared = declared(conn, type_id)?;
+    let declared = type_tables(conn, catalog, type_id)?;
     let mut tables: Vec<String> = named
         .into_iter()
-        .filter(|table| declared.contains_key(table.as_str()))
+        .filter(|table| declared.contains(table))
         .cloned()
         .collect();
     tables.sort();
@@ -143,6 +164,7 @@ fn wanted(
 }
 
 fn drop_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
+    crate::row_writes::forget_table(conn, item, table)?;
     for sql in [
         "DELETE FROM table_rows WHERE item_id = ?1 AND name = ?2",
         "DELETE FROM rows_reread WHERE item_id = ?1 AND name = ?2",
@@ -159,6 +181,7 @@ fn owe_table(conn: &Connection, item: &str, table: &str) -> Result<()> {
 }
 
 fn empty_rows(conn: &Connection, item: &str, table: &str) -> Result<()> {
+    crate::row_writes::forget_table(conn, item, table)?;
     conn.execute(
         "DELETE FROM table_rows WHERE item_id = ?1 AND name = ?2",
         params![item, table],
@@ -170,7 +193,7 @@ fn empty_rows(conn: &Connection, item: &str, table: &str) -> Result<()> {
     Ok(())
 }
 
-fn delete_row(conn: &Connection, item: &str, table: &str, id: &str) -> Result<bool> {
+pub(crate) fn delete_row(conn: &Connection, item: &str, table: &str, id: &str) -> Result<bool> {
     let held: Option<i64> = conn
         .query_row(
             "DELETE FROM table_rows WHERE item_id = ?1 AND name = ?2 AND id = ?3
@@ -203,6 +226,7 @@ fn set_state(
 }
 
 pub(crate) fn drop_item(conn: &Connection, item: &str) -> Result<()> {
+    crate::row_writes::forget_item(conn, item)?;
     for sql in [
         "DELETE FROM table_rows WHERE item_id = ?1",
         "DELETE FROM rows_reread WHERE item_id = ?1",
@@ -215,6 +239,7 @@ pub(crate) fn drop_item(conn: &Connection, item: &str) -> Result<()> {
 
 /// Owes every table again, for a copy that missed events.
 pub(crate) fn owe_again(conn: &Connection) -> Result<()> {
+    crate::row_writes::forget_all(conn)?;
     conn.execute_batch(
         "DELETE FROM table_rows;
          DELETE FROM rows_reread;
@@ -276,6 +301,7 @@ pub(crate) fn reconcile_all(conn: &Connection) -> Result<()> {
             .optional()?
             .is_some();
         if holds {
+            crate::row_writes::forget_all(conn)?;
             conn.execute_batch(
                 "DELETE FROM table_rows; DELETE FROM rows_reread; DELETE FROM item_tables;",
             )?;
@@ -324,6 +350,12 @@ pub(crate) fn reconcile_all(conn: &Connection) -> Result<()> {
         [],
     )?;
     conn.execute(
+        "DELETE FROM rows_beneath WHERE NOT EXISTS (
+           SELECT 1 FROM item_tables t
+            WHERE t.item_id = rows_beneath.item_id AND t.name = rows_beneath.name)",
+        [],
+    )?;
+    conn.execute(
         &format!(
             "INSERT INTO item_tables (item_id, name, state)
              SELECT i.id, w.name, 'owed' FROM items i JOIN ({wanted_sql}) w ON w.type = i.type
@@ -340,10 +372,10 @@ pub(crate) fn choose(conn: &mut Connection, type_id: &str, table: &str) -> Resul
     let declares = held
         .iter()
         .filter(|(id, _)| names(type_id, id, &catalog))
-        .map(|(id, _)| declared(conn, id))
+        .map(|(id, _)| type_tables(conn, &catalog, id))
         .collect::<Result<Vec<_>>>()?
         .iter()
-        .any(|tables| tables.contains_key(table));
+        .any(|tables| tables.iter().any(|name| name == table));
     if !declares {
         return Err(CoreError::Invalid(format!(
             "no type the copy holds under {type_id} declares a table {table}"
@@ -390,6 +422,10 @@ pub(crate) fn held(conn: &Connection) -> Result<HeldTables> {
     Ok(HeldTables { choices, tables })
 }
 
+pub(crate) fn state(conn: &Connection, item: &str, table: &str) -> Result<Option<String>> {
+    Ok(state_of(conn, item, table)?.map(|(state, _)| state))
+}
+
 fn state_of(
     conn: &Connection,
     item: &str,
@@ -415,7 +451,7 @@ fn invalid() -> CoreError {
     crate::reach::invalid()
 }
 
-fn hold_row(
+pub(crate) fn hold_row(
     conn: &Connection,
     item: &str,
     table: &str,
@@ -495,7 +531,14 @@ fn hold_answered(conn: &Connection, item: &str, table: &str, row: &Value) -> Res
         .and_then(Value::as_str)
         .ok_or_else(invalid)?;
     let withheld = withheld_of(row)?;
-    hold_row(conn, item, table, id, values, &withheld, updated_at)
+    crate::row_writes::unjudge(conn, item, table, Some(id))?;
+    crate::row_writes::take_server_row(conn, item, table, id, Some((values, &withheld, updated_at)))
+}
+
+/// A row a read found gone.
+fn read_gone(conn: &Connection, item: &str, table: &str, id: &str) -> Result<bool> {
+    crate::row_writes::unjudge(conn, item, table, Some(id))?;
+    crate::row_writes::take_server_row(conn, item, table, id, None)
 }
 
 fn withheld_of(row: &Value) -> Result<Vec<String>> {
@@ -509,7 +552,7 @@ fn withheld_of(row: &Value) -> Result<Vec<String>> {
     }
 }
 
-fn past_cap(conn: &Connection, item: &str, table: &str) -> Result<bool> {
+pub(crate) fn past_cap(conn: &Connection, item: &str, table: &str) -> Result<bool> {
     let (rows, bytes): (i64, i64) = conn.query_row(
         "SELECT rows, bytes FROM item_tables WHERE item_id = ?1 AND name = ?2",
         params![item, table],
@@ -521,6 +564,15 @@ fn past_cap(conn: &Connection, item: &str, table: &str) -> Result<bool> {
         return Ok(true);
     }
     Ok(false)
+}
+
+/// A table the copy holds whole, with the row writes still laid over it.
+fn become_whole(conn: &Connection, item: &str, table: &str) -> Result<()> {
+    set_state(conn, item, table, WHOLE, None)?;
+    crate::row_writes::unjudge(conn, item, table, None)?;
+    crate::row_writes::lay_table(conn, item, table)?;
+    past_cap(conn, item, table)?;
+    Ok(())
 }
 
 fn is_refused_cursor(error: &CoreError) -> bool {
@@ -692,6 +744,20 @@ fn advance(
         })
     };
     let gone = || write(&|tx| drop_table(tx, item, table));
+    if state == OWED && !crate::store::untaken_creates_for_item(&*core.conn()?, item)?.is_empty() {
+        let moved = crate::busy::transaction(core, context, stop, |tx| {
+            if !still(tx)? {
+                return Ok(false);
+            }
+            empty_rows(tx, item, table)?;
+            become_whole(tx, item, table)?;
+            Ok(true)
+        })?;
+        if moved {
+            report.whole += 1;
+        }
+        return Ok(());
+    }
     if state == OWED {
         let listed = match http.item_tables(item) {
             Err(error) if is_gone(&error) => return gone(),
@@ -726,7 +792,10 @@ fn advance(
                 return Ok(false);
             }
             empty_rows(tx, item, table)?;
-            set_state(tx, item, table, next, None)?;
+            match next {
+                WHOLE => become_whole(tx, item, table)?,
+                _ => set_state(tx, item, table, next, None)?,
+            }
             Ok(true)
         })?;
         if moved {
@@ -773,7 +842,7 @@ fn advance(
             set_state(tx, item, table, FILLING, Some(next))?;
             FILLING
         } else {
-            set_state(tx, item, table, WHOLE, None)?;
+            become_whole(tx, item, table)?;
             WHOLE
         }))
     })?;
@@ -1091,7 +1160,7 @@ pub(crate) fn take_reread(conn: &Connection, reread: &Reread) -> Result<Vec<(Str
                 Some(answer) => {
                     hold_answered(conn, &item, &table, &serde_json::from_str(&answer)?)?
                 }
-                None => delete_row(conn, &item, &table, &id)?,
+                None => read_gone(conn, &item, &table, &id)?,
             };
         }
         if past_cap(conn, &item, &table)? || moved {
@@ -1134,19 +1203,17 @@ pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) 
     };
     for row in &event.rows {
         if row.deleted {
-            delete_row(conn, item, table, &row.id)?;
+            crate::row_writes::take_server_row(conn, item, table, &row.id, None)?;
             continue;
         }
         if event.values_included {
             let values = row.values.as_ref().ok_or_else(invalid)?;
-            hold_row(
+            crate::row_writes::take_server_row(
                 conn,
                 item,
                 table,
                 &row.id,
-                values,
-                &row.withheld,
-                &event.last_activity_at,
+                Some((values, &row.withheld, &event.last_activity_at)),
             )?;
             continue;
         }
@@ -1157,32 +1224,32 @@ pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) 
         };
         match read.get(&row.id) {
             Some(answered) => hold_answered(conn, item, table, answered)?,
-            None => delete_row(conn, item, table, &row.id)?,
+            None => read_gone(conn, item, table, &row.id)?,
         };
     }
+    crate::row_writes::applied_batch(conn, item, table, &event.batch)?;
     past_cap(conn, item, table)?;
     Ok(true)
 }
 
 fn local_table(conn: &Connection, item: &str, table: &str) -> Result<Option<Map<String, Value>>> {
-    let held: Option<(String, String)> = conn
+    let state: Option<String> = conn
         .query_row(
-            "SELECT t.state, i.type FROM item_tables t JOIN items i ON i.id = t.item_id
+            "SELECT t.state FROM item_tables t JOIN items i ON i.id = t.item_id
               WHERE t.item_id = ?1 AND t.name = ?2 AND i.state <> 'trashed'",
             params![item, table],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| row.get(0),
         )
         .optional()?;
-    let Some((state, type_id)) = held else {
-        return Ok(None);
-    };
-    if state != WHOLE {
+    if state.as_deref() != Some(WHOLE) {
         return Ok(None);
     }
-    Ok(declared(conn, &type_id)?
-        .get(table)
-        .and_then(Value::as_object)
-        .cloned())
+    let tables = match of_item(conn, item) {
+        Ok(tables) => tables,
+        Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(tables.get(table).and_then(Value::as_object).cloned())
 }
 
 fn marked(mut answer: Value, held: bool) -> Value {
@@ -1528,6 +1595,7 @@ fn totals_from_copy(
 }
 
 pub(crate) fn rows(core: &Core, item: &str, table: &str, asked: &RowsAsked) -> Result<Value> {
+    core.lay_rows()?;
     {
         let conn = core.conn()?;
         if let Some(definition) = local_table(&conn, item, table)? {
@@ -1557,6 +1625,7 @@ pub(crate) fn rows(core: &Core, item: &str, table: &str, asked: &RowsAsked) -> R
 }
 
 pub(crate) fn row(core: &Core, item: &str, table: &str, row: &str) -> Result<Value> {
+    core.lay_rows()?;
     {
         let conn = core.conn()?;
         if local_table(&conn, item, table)?.is_some() {
@@ -1584,6 +1653,7 @@ pub(crate) fn row(core: &Core, item: &str, table: &str, row: &str) -> Result<Val
 }
 
 pub(crate) fn totals(core: &Core, item: &str, table: &str, filter: Option<&str>) -> Result<Value> {
+    core.lay_rows()?;
     {
         let conn = core.conn()?;
         if let Some(definition) = local_table(&conn, item, table)? {

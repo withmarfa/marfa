@@ -280,6 +280,31 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<TableFill>(["tables", "fill", ...this.server()]);
   }
 
+  /** `marfa device rows write`: one batch, laid over the copy and queued. */
+  async writeRows(
+    item: string,
+    table: string,
+    operations: Record<string, unknown>[],
+  ): Promise<Outcome<QueuedWrite>> {
+    return this.json<QueuedWrite>([
+      "rows",
+      "write",
+      item,
+      table,
+      "--body",
+      JSON.stringify({ operations }),
+    ]);
+  }
+
+  /** `marfa device rows undo`: queued, and never laid over the copy. */
+  async undoRows(
+    item: string,
+    table: string,
+    batch: string,
+  ): Promise<Outcome<QueuedWrite>> {
+    return this.json<QueuedWrite>(["rows", "undo", item, table, batch]);
+  }
+
   /** `marfa device rows <command>`, as the copy or the server answers it, with `held`. */
   async tableRead<T>(args: string[]): Promise<Outcome<T & { held: boolean }>> {
     return this.json<T & { held: boolean }>([

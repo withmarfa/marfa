@@ -3621,6 +3621,42 @@ marfa device rows list [OPTIONS] <ITEM> <TABLE>
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
+### marfa device rows write
+
+Queue a batch of `put`, `patch` and `delete` operations for a table, all of them or none, as `marfa rows write` takes it. Where the copy holds the table whole, its rows show the batch at once.
+
+```text
+marfa device rows write [OPTIONS] <ITEM> <TABLE>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+
+| Option | Description |
+| --- | --- |
+| `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
+| `--body <JSON>` | The JSON body inline. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
+### marfa device rows undo
+
+Queue an undo of a batch, as `marfa rows undo` sends it. The rows it puts back reach the copy with its `rows.changed`.
+
+```text
+marfa device rows undo [OPTIONS] <ITEM> <TABLE> <BATCH>
+```
+
+| Argument | Description |
+| --- | --- |
+| `<ITEM>` | The item id. |
+| `<TABLE>` | The table name. |
+| `<BATCH>` | The batch id, as a write's answer names it. |
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
 ### marfa device rows get
 
 One row of a table.
@@ -3730,7 +3766,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Take a refused write out of the queue, with the content it carried.
 
-The one way a refused create, edit, metadata, extension or edge write leaves the queue. A write still waiting on it keeps it, but for a create refused onto an item its natural key names that no read has found: discarded, that create takes its item out of the copy, and the writes waiting on it are refused unsent, each kept with its content.
+The one way a refused create, edit, metadata, extension or edge write leaves the queue. A write still waiting on it keeps it, but for a create refused onto an item its natural key names that no read has found: discarded, that create takes its item out of the copy, and the writes waiting on it are refused unsent, each kept with its content. A row write goes with every write sent in its batch.
 
 ```text
 marfa device discard [OPTIONS] <ID>
@@ -3744,9 +3780,9 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device release
 
-Send a blocked, dead or unsent refused write again, under a fresh key.
+Send a blocked, dead or unsent refused write again.
 
-A write blocked `awaiting_dependency` is released only by the answer to the write it waits behind, never by this command.
+A write blocked `awaiting_dependency` is released only by the answer to the write it waits behind, never by this command. A released write goes under a fresh idempotency key. A row write instead goes again with every write sent in its batch, as they went, under the batch's key, and an undo under its own key, unless either was blocked `key_spent`.
 
 ```text
 marfa device release [OPTIONS] [ID]
@@ -3766,7 +3802,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Take a write blocked `ancestor_unavailable`, `conflict_unresolved`, `failing_alone` or `instance_changed` out of the queue, and put the copy back to what the server holds.
 
-A release sends a write again under a fresh idempotency key but on the version it already names. A write blocked `conflict_unresolved` is refused the same way each time, and one blocked `ancestor_unavailable` too, unless the credential it is sent with has come to read the snapshot it names. The writes held for the withdrawn write are refused unsent.
+A release sends a write again on the version it already names. A write blocked `conflict_unresolved` is refused the same way each time, and one blocked `ancestor_unavailable` too, unless the credential it is sent with has come to read the snapshot it names. The writes held for the withdrawn write are refused unsent. A row write goes with every write sent in its batch.
 
 ```text
 marfa device withdraw [OPTIONS] <ID>

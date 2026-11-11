@@ -587,6 +587,7 @@ impl Folder {
                 "metadata"
             }
             WriteKind::UploadBlob => "upload",
+            WriteKind::WriteRows | WriteKind::UndoRows => "rows",
         }
     }
 }

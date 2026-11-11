@@ -2160,7 +2160,7 @@ pub fn held_version(conn: &Connection, id: &str) -> Result<Option<i64>, CoreErro
 const QUEUE_COLUMNS: &str = "id, kind, item_id, target_id, edge_id, namespace, tag, \
      base_version, idempotency_key, depends_on, verdict, reason, answer, \
      conflicted_copy_id, refusals, queued_at, answered_at, blob, follows, payload, \
-     environmental_streak, last_failure";
+     environmental_streak, last_failure, row_table, batched_with, conflicts";
 
 pub struct NewWrite<'a> {
     pub kind: WriteKind,
@@ -3578,6 +3578,9 @@ pub(crate) fn read_writes(
             payload: row.get(19)?,
             environmental_streak: row.get(20)?,
             last_failure: row.get(21)?,
+            row_table: row.get(22)?,
+            batched_with: row.get(23)?,
+            conflicts: row.get(24)?,
         })
     })?;
 
@@ -3635,6 +3638,15 @@ pub(crate) fn read_writes(
                 })
             })
             .transpose()?;
+        let conflicts = match raw.conflicts.as_deref() {
+            Some(json) => serde_json::from_str(json).map_err(|error| {
+                CoreError::Store(format!(
+                    "queued write {} holds conflicts this build cannot read ({error})",
+                    raw.id
+                ))
+            })?,
+            None => Vec::new(),
+        };
         writes.push(QueuedWrite {
             kind: raw.kind.parse()?,
             id: raw.id,
@@ -3657,6 +3669,9 @@ pub(crate) fn read_writes(
             body,
             conflicted_copy_id: raw.conflicted_copy_id,
             refusals: raw.refusals,
+            table: raw.row_table,
+            batched_with: raw.batched_with,
+            conflicts,
             queued_at: raw.queued_at,
             answered_at: raw.answered_at,
         });
@@ -3687,6 +3702,9 @@ struct RawWrite {
     payload: String,
     environmental_streak: i64,
     last_failure: Option<String>,
+    row_table: Option<String>,
+    batched_with: Option<String>,
+    conflicts: Option<String>,
 }
 
 type TypeRow = (
@@ -4510,9 +4528,11 @@ pub fn adopt_answered_id(conn: &Connection, local: &str, answered: &str) -> Resu
         "UPDATE body_names SET other_id = ?2 WHERE other_id = ?1",
         "UPDATE folder_files SET item_id = ?2 WHERE item_id = ?1",
         "UPDATE folder_journal SET item_id = ?2 WHERE item_id = ?1",
+        "UPDATE rows_laid SET item_id = ?2 WHERE item_id = ?1",
     ] {
         conn.execute(statement, params![local, answered])?;
     }
+    crate::tables::drop_item(conn, local)?;
     // The names the create's body carries are the row's now; the landing
     // drops any its answered body does not carry.
     if conn.query_row(
@@ -4678,7 +4698,8 @@ pub fn land_on_held_row(
             WriteKind::AddTag
             | WriteKind::CreateEdge
             | WriteKind::UpdateEdge
-            | WriteKind::CreateItem => false,
+            | WriteKind::CreateItem
+            | WriteKind::WriteRows => false,
             WriteKind::UpdateItem
             | WriteKind::DeleteItem
             | WriteKind::RestoreItem
@@ -4689,7 +4710,7 @@ pub fn land_on_held_row(
             | WriteKind::DeleteExtension => true,
             // Not written against an item's create, so never one of its
             // dependants; refused all the same should one ever be.
-            WriteKind::DeleteEdge | WriteKind::UploadBlob => true,
+            WriteKind::DeleteEdge | WriteKind::UploadBlob | WriteKind::UndoRows => true,
         };
         if replaces {
             let reason = format!(
@@ -5777,19 +5798,20 @@ const SELF_CLEARING: [&str; 2] = [
 ];
 
 /// The released row goes out under a fresh key; the spent one is kept so a
-/// late answer under it is not taken for an answer to the new attempt.
+/// late answer under it is not taken for an answer to the new attempt. A row
+/// write or an undo keeps its key unless blocked `key_spent`, and a row write
+/// releases every write of its batch, to go again as it went.
 pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
-    let Some((verdict, reason, key, spent, sent)) = conn
+    let Some((verdict, reason, kind, sent)) = conn
         .query_row(
-            "SELECT verdict, reason, idempotency_key, spent_keys, sent FROM queue WHERE id = ?1",
+            "SELECT verdict, reason, kind, sent FROM queue WHERE id = ?1",
             [id],
             |row| {
                 Ok((
                     row.get::<_, Option<String>>(0)?,
                     row.get::<_, Option<String>>(1)?,
                     row.get::<_, String>(2)?,
-                    row.get::<_, Option<String>>(3)?,
-                    row.get::<_, i64>(4)? != 0,
+                    row.get::<_, i64>(3)? != 0,
                 ))
             },
         )
@@ -5821,25 +5843,33 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     if refused_by_dependency && waits_for_withdrawn(conn, id)? {
         return Ok(false);
     }
-    let mut keys: Vec<String> = match spent {
-        Some(json) => serde_json::from_str(&json)?,
-        None => Vec::new(),
-    };
-    keys.push(key);
-    conn.execute(
-        "UPDATE queue
-            SET verdict = NULL, reason = NULL, answer = NULL,
-                conflicted_copy_id = NULL, answered_at = NULL,
-                refusals = 0, environmental_streak = 0, environmental_since = NULL,
-                environmental_last = NULL, last_failure = NULL,
-                spent_keys = ?2, idempotency_key = ?3
-          WHERE id = ?1",
-        params![
-            id,
-            serde_json::to_string(&keys)?,
-            Uuid::now_v7().to_string()
-        ],
-    )?;
+    let batch = crate::row_writes::batch_of(conn, id)?;
+    for write in &batch {
+        conn.execute(
+            "UPDATE queue
+                SET verdict = NULL, reason = NULL, answer = NULL,
+                    conflicted_copy_id = NULL, answered_at = NULL,
+                    refusals = 0, environmental_streak = 0, environmental_since = NULL,
+                    environmental_last = NULL, last_failure = NULL
+              WHERE id = ?1",
+            [write],
+        )?;
+    }
+    // A row batch or an undo whose answer is unknown may be held under its key,
+    // and only that key keeps the server from applying it twice. `key_spent`
+    // says the server holds another request under it, so none of this one.
+    let rows = kind.parse::<WriteKind>()?.rows();
+    if !rows || reason.as_deref() == Some(BlockedReason::KeySpent.as_str()) {
+        crate::row_writes::spend_key(conn, &batch[0])?;
+    }
+    if rows {
+        for write in &batch {
+            for dependant in dependants_refused_with(conn, write)? {
+                release(conn, &dependant)?;
+            }
+        }
+        return Ok(true);
+    }
     let released = queued_write(conn, id)?.expect("released row exists");
     let original_fields = edit_fields(conn, &released)?;
     let mut excluded_attempts = HashSet::new();
@@ -6292,8 +6322,8 @@ fn content_free_kinds() -> String {
 /// carried content leaves it. Answers `false` for a row not refused, or one a
 /// write still waits on, which would then wait on nothing. A create refused
 /// onto a row no read has found goes all the same, and the writes waiting on
-/// it are refused unsent: each names a row the server never held. Call in a
-/// transaction.
+/// it are refused unsent: each names a row the server never held. A row write
+/// goes with every write of its batch, or none does. Call in a transaction.
 pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let Some(row) = queued_write(conn, id)? else {
         return Err(CoreError::NotFound {
@@ -6303,6 +6333,23 @@ pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     };
     if row.verdict != Some(Verdict::Refused) {
         return Ok(false);
+    }
+    let batch = crate::row_writes::batch_of(conn, id)?;
+    if batch.len() > 1 {
+        for write in &batch {
+            let refused = queued_write(conn, write)?
+                .is_some_and(|write| write.verdict == Some(Verdict::Refused));
+            if !refused || !held_for(conn, write)?.is_empty() {
+                return Ok(false);
+            }
+        }
+        for write in batch.iter().rev() {
+            conn.execute("DELETE FROM queue WHERE id = ?1", [write])?;
+            meta_delete(conn, &effect_key(write))?;
+            meta_delete(conn, &chosen_tier_key(write))?;
+            meta_delete(conn, &cleared_time_key(write))?;
+        }
+        return Ok(true);
     }
     let receipt = format!("receipt_pending/{id}");
     let landing = match meta_get(conn, &receipt)? {
@@ -6716,7 +6763,9 @@ fn lay_write(
         | WriteKind::DeleteEdge
         | WriteKind::WriteExtension
         | WriteKind::DeleteExtension
-        | WriteKind::UploadBlob => {}
+        | WriteKind::UploadBlob
+        | WriteKind::WriteRows
+        | WriteKind::UndoRows => {}
     }
     Ok(())
 }
@@ -10603,7 +10652,7 @@ mod tests {
             .collect();
         assert_eq!(
             crate::folder::state::hash(named.as_bytes()),
-            "5699a275608a979c",
+            "d8292a811b74a68a",
             "the shape of a table changed, which refuses every store made before it"
         );
     }

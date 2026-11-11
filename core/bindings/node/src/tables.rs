@@ -170,6 +170,40 @@ impl MarfaCore {
         self.table_call(Box::new(move |core| core.table_rows(&item, &table, &asked)))
     }
 
+    /// Queues one batch of row operations, laid over the copy where it holds the table whole.
+    #[napi]
+    pub fn write_rows(
+        &self,
+        env: Env,
+        item: String,
+        table: String,
+        operations: Vec<serde_json::Value>,
+    ) -> Result<crate::QueuedWrite> {
+        crate::queued(
+            env,
+            self.inner
+                .write_rows(&item, &table, &operations)
+                .map_err(|error| failure(env, error))?,
+        )
+    }
+
+    /// Queues an undo of a batch.
+    #[napi]
+    pub fn undo_rows(
+        &self,
+        env: Env,
+        item: String,
+        table: String,
+        batch: String,
+    ) -> Result<crate::QueuedWrite> {
+        crate::queued(
+            env,
+            self.inner
+                .undo_rows(&item, &table, &batch)
+                .map_err(|error| failure(env, error))?,
+        )
+    }
+
     #[napi(ts_return_type = "Promise<Record<string, unknown>>")]
     pub fn table_row(&self, item: String, table: String, row: String) -> AsyncTask<TableCall> {
         self.table_call(Box::new(move |core| core.table_row(&item, &table, &row)))

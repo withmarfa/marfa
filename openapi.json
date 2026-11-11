@@ -23354,6 +23354,16 @@
             "description": "The name of the table.",
             "name": "table",
             "in": "path"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it."
           }
         ],
         "requestBody": {
@@ -23438,6 +23448,9 @@
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -23447,6 +23460,30 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
                 }
               }
             },
@@ -23501,15 +23538,18 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
-          "401": {
-            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+          "409": {
+            "description": "`idempotency_key_in_flight`: a request carrying the same `Idempotency-Key` is still being processed. Retry.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                  "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
                 }
               }
             },
@@ -23522,6 +23562,9 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -23546,6 +23589,30 @@
               }
             }
           },
+          "422": {
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
+              }
+            }
+          },
           "429": {
             "description": "`rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again.",
             "content": {
@@ -23567,6 +23634,9 @@
               },
               "Retry-After": {
                 "$ref": "#/components/headers/Retry-After"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -23588,6 +23658,9 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -23609,6 +23682,9 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -23630,6 +23706,9 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           }
@@ -24950,6 +25029,16 @@
             "description": "The ID of the batch.",
             "name": "batch",
             "in": "path"
+          },
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "maxLength": 255
+            },
+            "description": "A unique key that makes the request safe to retry. If you send the same request with the same key again, Marfa returns the first response and doesn't write again. A key belongs to the credential that sends it."
           }
         ],
         "responses": {
@@ -24983,6 +25072,9 @@
               },
               "X-Request-ID": {
                 "$ref": "#/components/headers/X-Request-ID"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -24992,6 +25084,30 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/InvalidIdOrValidationErrorRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
+              }
+            }
+          },
+          "401": {
+            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UnauthorizedRefusal"
                 }
               }
             },
@@ -25046,15 +25162,25 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
           "409": {
-            "description": "`undo_conflict`: a later batch changed rows the undo would put back. `details.rows` names them. Undo the later batches first, newest first.",
+            "description": "- `undo_conflict`: a later batch changed rows the undo would put back. `details.rows` names them. Undo the later batches first, newest first.\n- `idempotency_key_in_flight`: a request carrying the same `Idempotency-Key` is still being processed. Retry.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UndoConflictRefusal"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/UndoConflictRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                    }
+                  ]
                 }
               }
             },
@@ -25067,15 +25193,18 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
-          "401": {
-            "description": "`unauthorized`: the request has no credential, or its credential is not valid.",
+          "422": {
+            "description": "- `idempotency_key_reused`: the key was first used for a different request. Nothing is written.\n- `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/UnauthorizedRefusal"
+                  "$ref": "#/components/schemas/IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"
                 }
               }
             },
@@ -25088,6 +25217,9 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -25112,6 +25244,9 @@
               },
               "Retry-After": {
                 "$ref": "#/components/headers/Retry-After"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -25133,6 +25268,9 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -25154,6 +25292,9 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           },
@@ -25175,6 +25316,9 @@
               },
               "X-Error-Code": {
                 "$ref": "#/components/headers/X-Error-Code"
+              },
+              "Idempotency-Replayed": {
+                "$ref": "#/components/headers/Idempotency-Replayed"
               }
             }
           }

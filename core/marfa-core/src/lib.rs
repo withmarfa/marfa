@@ -63,6 +63,7 @@ mod remove_tests;
 mod replace_tests;
 #[cfg(test)]
 mod request_limit_tests;
+mod row_writes;
 mod scaffold;
 #[cfg(test)]
 mod scripted;
@@ -144,9 +145,9 @@ pub use model::{
     Added, Attached, Attachment, BinPage, BlockedReason, CatchUpFailed, CatchUpReport,
     Completeness, Draft, Edge, EdgeDraft, EdgeEdit, EdgeOp, Edit, FieldRefusal, GrantKind,
     GrantLevel, HydrateReport, HydrateRestart, Hydration, Item, ItemState, LastFailure,
-    ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, Rows, SearchFilters,
-    SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Tier, UnregisteredType,
-    Verdict, WriteKind,
+    ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, RowConflict, Rows,
+    SearchFilters, SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Tier,
+    UnregisteredType, Verdict, WriteKind,
 };
 pub use reads::CopyChanges;
 pub use scaffold::{ScaffoldField, scaffold_type};
@@ -1178,6 +1179,29 @@ impl Core {
         tables::totals(self, item, table, filter)
     }
 
+    /// Laid over the table where the copy holds it whole.
+    pub fn write_rows(&self, item: &str, table: &str, operations: &[Value]) -> Result<QueuedWrite> {
+        self.lock.refuse_unless_writer()?;
+        row_writes::write(&mut *self.conn()?, item, table, operations)
+    }
+
+    /// Changes no held row until its `rows.changed` arrives.
+    pub fn undo_rows(&self, item: &str, table: &str, batch: &str) -> Result<QueuedWrite> {
+        self.lock.refuse_unless_writer()?;
+        row_writes::undo(&mut *self.conn()?, item, table, batch)
+    }
+
+    pub(crate) fn lay_rows(&self) -> Result<()> {
+        if self.lock.handle() == Handle::Reader {
+            return Ok(());
+        }
+        let mut conn = self.conn()?;
+        let tx = conn.transaction()?;
+        row_writes::flush(&tx)?;
+        tx.commit()?;
+        Ok(())
+    }
+
     /// A failure does not say whether the catalog changed before it;
     /// `catch_up_until` does.
     pub fn catch_up(&self) -> Result<CatchUpReport> {
@@ -1829,7 +1853,9 @@ impl Core {
         drain::drain_keeping(self, &NEVER_STOPPED)
     }
 
-    /// Under a fresh idempotency key. Answers `false` for a row that is not
+    /// Under a fresh idempotency key, but a row write, released with every
+    /// write of its batch under the batch's key, and an undo, under its own,
+    /// unless blocked `key_spent`. Answers `false` for a row that is not
     /// blocked, dead or refused without being sent, for one held behind
     /// another write, and for one refused because what it waited for was
     /// withdrawn.
@@ -1846,6 +1872,7 @@ impl Core {
                 self.credential().as_deref(),
             )?;
         }
+        row_writes::flush(&tx)?;
         tx.commit()?;
         Ok(released)
     }
@@ -1861,9 +1888,14 @@ impl Core {
         drop(conn);
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
+        // A write released with its batch is released all the same.
+        for id in &ids {
+            store::release(&tx, id)?;
+        }
         let mut released = 0;
-        for id in ids {
-            if store::release(&tx, &id)? {
+        for id in &ids {
+            if store::queued_write(&tx, id)?.is_some_and(|row| row.blocked_reason() != Some(reason))
+            {
                 released += 1;
             }
         }
@@ -1875,6 +1907,7 @@ impl Core {
                 self.credential().as_deref(),
             )?;
         }
+        row_writes::flush(&tx)?;
         // One transaction: a release part-way through would leave some rows
         // on a fresh key and some on a spent one.
         tx.commit()?;
@@ -1884,32 +1917,50 @@ impl Core {
     /// Answers `false` for any row not blocked `ancestor_unavailable`,
     /// `conflict_unresolved`, `failing_alone` or `instance_changed`. Everything it puts back is read from the server
     /// before anything changes, so a withdraw that cannot read leaves the
-    /// queue and the copy as they were.
+    /// queue and the copy as they were. A row write goes with every write of
+    /// its batch, or none does.
     pub fn withdraw(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
-        let Some(row) = store::queued_write(&*self.conn()?, id)? else {
+        if store::queued_write(&*self.conn()?, id)?.is_none() {
             return Err(CoreError::NotFound {
                 code: "queued_write_not_found".into(),
                 message: format!("{id} is not a write this queue holds"),
             });
-        };
-        if !row.withdrawable() {
-            return Ok(false);
         }
-        let held = store::held_for(&*self.conn()?, id)?;
-        let mut reads = vec![drain::read_back(self, &row)?];
-        for dependant in &held {
-            reads.push(drain::read_back(self, dependant)?);
+        let batch = row_writes::batch_of(&*self.conn()?, id)?;
+        let mut taken = Vec::with_capacity(batch.len());
+        for write in &batch {
+            let Some(row) = store::queued_write(&*self.conn()?, write)? else {
+                return Ok(false);
+            };
+            if !row.withdrawable() {
+                return Ok(false);
+            }
+            let held = store::held_for(&*self.conn()?, write)?;
+            let mut reads = vec![drain::read_back(self, &row)?];
+            for dependant in &held {
+                reads.push(drain::read_back(self, dependant)?);
+            }
+            taken.push((row, held, reads));
         }
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
         // Another thread may have released or answered a row while the
         // reads were out.
-        if store::queued_write(&tx, id)?.as_ref() != Some(&row) || store::held_for(&tx, id)? != held
-        {
+        if row_writes::batch_of(&tx, id)? != batch {
             return Ok(false);
         }
-        drain::withdraw_read_backs(&tx, &row, &held, &reads)?;
+        for (row, held, _) in &taken {
+            if store::queued_write(&tx, &row.id)?.as_ref() != Some(row)
+                || store::held_for(&tx, &row.id)? != *held
+            {
+                return Ok(false);
+            }
+        }
+        for (row, held, reads) in taken.iter().rev() {
+            drain::withdraw_read_backs(&tx, row, held, reads)?;
+        }
+        row_writes::flush(&tx)?;
         tx.commit()?;
         Ok(true)
     }
@@ -1938,6 +1989,7 @@ impl Core {
         if let Some(item) = row.item_id.as_deref() {
             store::refollow(&tx, item, id)?;
         }
+        row_writes::flush(&tx)?;
         tx.commit()?;
         Ok(true)
     }
@@ -3249,6 +3301,7 @@ impl Core {
         body::rule::after_answers_in(&tx, None)?;
         store::forget_answered(&tx)?;
         let left = store::queued_ids(&tx)?;
+        row_writes::flush(&tx)?;
         tx.commit()?;
         Ok(before
             .into_iter()
@@ -3282,6 +3335,7 @@ impl Core {
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
         let discarded = store::discard(&tx, id)?;
+        row_writes::flush(&tx)?;
         tx.commit()?;
         Ok(discarded)
     }
@@ -8517,6 +8571,17 @@ mod tests {
                 reader.fill_tables(&NEVER_STOPPED).unwrap_err(),
             ),
             (
+                "write_rows",
+                reader
+                    .write_rows(
+                        "x",
+                        "x",
+                        &[serde_json::json!({ "op": "delete", "id": "x" })],
+                    )
+                    .unwrap_err(),
+            ),
+            ("undo_rows", reader.undo_rows("x", "x", "x").unwrap_err()),
+            (
                 "follow",
                 reader
                     .follow(&std::sync::atomic::AtomicBool::new(true), false, |_| {})
@@ -8538,7 +8603,7 @@ mod tests {
         );
         assert_eq!(
             refusals.len(),
-            58,
+            60,
             "an entry has gone from the list above, and a door dropped from \
              it is a door nothing here covers"
         );

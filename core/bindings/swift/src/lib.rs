@@ -826,6 +826,8 @@ pub enum WriteKind {
     WriteExtension,
     DeleteExtension,
     UploadBlob,
+    WriteRows,
+    UndoRows,
 }
 
 /// Why a `blocked` write has stopped.
@@ -1305,7 +1307,7 @@ impl From<marfa_core::LinkCandidates> for LinkCandidates {
 pub struct DrainVerdict {
     pub id: String,
     pub kind: WriteKind,
-    /// An edge write's source; otherwise the row written to.
+    /// An edge write's source; otherwise the item written to.
     pub item_id: Option<String>,
     pub edge_id: Option<String>,
     pub verdict: Option<Verdict>,
@@ -1947,6 +1949,8 @@ impl From<marfa_core::WriteKind> for WriteKind {
             K::WriteExtension => WriteKind::WriteExtension,
             K::DeleteExtension => WriteKind::DeleteExtension,
             K::UploadBlob => WriteKind::UploadBlob,
+            K::WriteRows => WriteKind::WriteRows,
+            K::UndoRows => WriteKind::UndoRows,
         }
     }
 }
@@ -3080,8 +3084,9 @@ impl Core {
         drained(self.inner.drain_until(&flag_of(stop))?)
     }
 
-    /// Sends a blocked or dead write again, under a fresh idempotency key.
-    /// Answers whether the row was one a release applies to.
+    /// Sends a blocked or dead write again, under a fresh idempotency key but
+    /// for a row write or an undo, which keeps its key unless blocked
+    /// `key_spent`. Answers whether the row was one a release applies to.
     pub fn release(&self, id: String) -> Result<bool, MarfaError> {
         Ok(self.inner.release(&id)?)
     }
@@ -5599,6 +5604,9 @@ mod tests {
                 body: serde_json::json!({ "properties": { "title": "t" } }),
                 conflicted_copy_id: None,
                 refusals: 0,
+                table: None,
+                batched_with: None,
+                conflicts: Vec::new(),
                 environmental_streak: 0,
                 last_failure: None,
                 queued_at: String::new(),
