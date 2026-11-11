@@ -747,8 +747,6 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
     match version(conn)? {
         SCHEMA_VERSION => {}
         0 if !holds_tables(conn)? => make(conn)?,
-        // A migration from an earlier version goes here, as an arm that
-        // brings the store to `SCHEMA_VERSION` in one transaction.
         found => return Err(refused(conn, found)),
     }
     if meta_get(conn, META_STORE_ID)?.is_none() {

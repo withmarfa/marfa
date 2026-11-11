@@ -299,9 +299,10 @@ fn a_store_that_cannot_be_made_leaves_the_refused_one_where_it_was() {
     let (_dir, path) = refused_store(false);
     in_log(
         &path,
-        "UPDATE meta SET value = value WHERE key = 'schema_version'",
+        "INSERT INTO meta (key, value) VALUES ('in_log', '1')",
     );
     let before = files(&path);
+    assert!(before[1].1.is_some_and(|(length, _)| length > 0));
     let names = listing(&path);
     // The fault fires once the new store's file has been made, so what the
     // call removes is a real partial store.
