@@ -14,13 +14,13 @@ import { clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
  * What an export does when the credential it was admitted on ends or narrows
  * while the response is open, on a server of the fixture's own.
  *
- * Every case reads the response slowly: it takes a first part, waits for the
- * server to fill the buffers between it and the client, changes the
- * credential, and reads on. The data is larger than those buffers, so a
- * response that kept sending after the change would still be sending when
- * the client reads on. Each case that cuts the response has a witness, the
- * same export read the same way with the credential left alone, which
- * arrives whole.
+ * Every case holds the export at `hold:export-check`, before a check of its
+ * credential partway through the response, so the response is still open
+ * when the credential changes, however much the sockets between the server
+ * and the client can hold. The client takes a first part, the credential
+ * changes, the hold is cleared, and the client reads on. Each case that cuts
+ * the response has a witness, the same export held the same way with the
+ * credential left alone, which arrives whole.
  */
 const NOTES = 800;
 /** Random bytes in each note, which come to about 40 KB as base64. */
@@ -28,8 +28,13 @@ const NOTE_BYTES = 30 * 1024;
 const BLOB_BYTES = 24 * 1024 * 1024;
 /** How much the client takes before the credential changes. */
 const FIRST_PART = 256 * 1024;
-/** Time for the server to fill what sits between it and the client. */
-const BUFFERS_FILL_MS = 1000;
+/**
+ * Which check each export is held before: far enough in that the first part
+ * has been sent, and far enough from the end that most of the data has not.
+ */
+const HELD_AT = { ndjson: 1, archive: 8, blob: 10 } as const;
+/** How long the first part may take to arrive once the export is held. */
+const FIRST_PART_MS = 10_000;
 const TEST_MS = 180_000;
 
 let server: FreshServer;
@@ -131,34 +136,61 @@ interface Taken {
   failed: boolean;
 }
 
-/** Takes the first part, waits, runs `change`, and reads to the end. */
-async function takeAcross(
-  response: Response,
-  change?: () => Promise<unknown>,
-): Promise<Taken> {
-  expect(response.status).toBe(200);
-  const reader = response.body!.getReader();
-  const chunks: Buffer[] = [];
-  let received = 0;
-  let changed = change === undefined;
+/** Reads a body to its end, and says whether it ended with an error. */
+async function readToEnd(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  chunks: Buffer[],
+): Promise<boolean> {
   try {
     for (;;) {
       const { done, value } = await reader.read();
-      if (done) break;
+      if (done) return false;
       chunks.push(Buffer.from(value));
-      received += value.length;
-      if (!changed && received >= FIRST_PART) {
-        changed = true;
-        await new Promise((resolve) => setTimeout(resolve, BUFFERS_FILL_MS));
-        await change!();
-      }
     }
   } catch {
-    return { bytes: Buffer.concat(chunks), failed: true };
+    return true;
   }
-  expect(changed).toBe(true);
-  return { bytes: Buffer.concat(chunks), failed: false };
 }
+
+async function firstPartTaken(chunks: Buffer[]): Promise<void> {
+  const deadline = Date.now() + FIRST_PART_MS;
+  while (chunks.reduce((sum, chunk) => sum + chunk.length, 0) < FIRST_PART) {
+    if (Date.now() > deadline) {
+      throw new Error("the export was held before its first part arrived");
+    }
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
+
+/**
+ * Reads an export that is held before its `heldAt`th credential check, runs
+ * `change` once the hold is reached and the first part has arrived, clears
+ * the hold, and reads to the end. Nothing past the hold can be sent before
+ * the change, however much the sockets hold.
+ */
+async function takeAcross(
+  opened: () => Promise<Response>,
+  heldAt: number,
+  change: () => Promise<unknown>,
+): Promise<Taken> {
+  const chunks: Buffer[] = [];
+  await server.setFault(`hold:export-check=${String(heldAt)}`);
+  let reading: Promise<boolean> | undefined;
+  try {
+    const response = await opened();
+    expect(response.status).toBe(200);
+    reading = readToEnd(response.body!.getReader(), chunks);
+    await server.waitForHold("hold:export-check");
+    await firstPartTaken(chunks);
+    await change();
+  } finally {
+    await server.clearFault("hold:export-check");
+  }
+  const failed = await reading;
+  return { bytes: Buffer.concat(chunks), failed };
+}
+
+const standing = () => Promise.resolve();
 
 const noteLines = (bytes: Buffer) =>
   bytes
@@ -171,11 +203,13 @@ function archivedNotes(bytes: Buffer): number {
   return (items ?? "").trim().split("\n").length;
 }
 
-describe("an ndjson export read slowly", () => {
+describe("an ndjson export held partway", () => {
   it("arrives whole when its credential stands, which is the witness for the cases below", async () => {
     const { key } = await readsNotes();
-    const taken = await takeAcross(await open("ndjson", "core.note", key), () =>
-      Promise.resolve(),
+    const taken = await takeAcross(
+      () => open("ndjson", "core.note", key),
+      HELD_AT.ndjson,
+      standing,
     );
     expect(taken.failed).toBe(false);
     expect(noteLines(taken.bytes)).toBe(NOTES);
@@ -186,7 +220,8 @@ describe("an ndjson export read slowly", () => {
     async () => {
       const { id, key } = await readsNotes();
       const taken = await takeAcross(
-        await open("ndjson", "core.note", key),
+        () => open("ndjson", "core.note", key),
+        HELD_AT.ndjson,
         async () => {
           expect((await working.revokeKey(id)).status).toBe(200);
         },
@@ -202,7 +237,8 @@ describe("an ndjson export read slowly", () => {
     async () => {
       const app = await connectedApp();
       const taken = await takeAcross(
-        await open("ndjson", "core.note", app.token),
+        () => open("ndjson", "core.note", app.token),
+        HELD_AT.ndjson,
         app.disconnect,
       );
       expect(taken.failed).toBe(true);
@@ -220,7 +256,8 @@ describe("an ndjson export read slowly", () => {
         new Date(Date.now() + server.clockOffsetMs + hour).toISOString(),
       );
       const taken = await takeAcross(
-        await open("ndjson", "core.note", key),
+        () => open("ndjson", "core.note", key),
+        HELD_AT.ndjson,
         async () => {
           await server.advanceClock(2 * hour);
         },
@@ -236,7 +273,8 @@ describe("an ndjson export read slowly", () => {
     async () => {
       const { id, key } = await readsNotes();
       const taken = await takeAcross(
-        await open("ndjson", "core.note", key),
+        () => open("ndjson", "core.note", key),
+        HELD_AT.ndjson,
         async () => {
           const narrowed = await working.updateKey(id, {
             type_permissions: { "core.task": "read" },
@@ -255,7 +293,8 @@ describe("an ndjson export read slowly", () => {
     async () => {
       const { id, key } = await readsNotes();
       const taken = await takeAcross(
-        await open("ndjson", "core.note", key),
+        () => open("ndjson", "core.note", key),
+        HELD_AT.ndjson,
         async () => {
           const narrowed = await working.updateKey(id, {
             type_permissions: { "core.note": "read" },
@@ -270,14 +309,15 @@ describe("an ndjson export read slowly", () => {
   );
 });
 
-describe("an archive export read slowly", () => {
+describe("an archive export held partway", () => {
   it(
     "arrives whole when its credential stands, which is the witness for the cases below",
     async () => {
       const { key } = await readsNotes();
       const taken = await takeAcross(
-        await open("archive", "core.note", key),
-        () => Promise.resolve(),
+        () => open("archive", "core.note", key),
+        HELD_AT.archive,
+        standing,
       );
       expect(taken.failed).toBe(false);
       expect(archivedNotes(taken.bytes)).toBe(NOTES);
@@ -290,7 +330,8 @@ describe("an archive export read slowly", () => {
     async () => {
       const { id, key } = await readsNotes();
       const taken = await takeAcross(
-        await open("archive", "core.note", key),
+        () => open("archive", "core.note", key),
+        HELD_AT.archive,
         async () => {
           expect((await working.revokeKey(id)).status).toBe(200);
         },
@@ -306,7 +347,8 @@ describe("an archive export read slowly", () => {
     async () => {
       const app = await connectedApp();
       const taken = await takeAcross(
-        await open("archive", "core.note", app.token),
+        () => open("archive", "core.note", app.token),
+        HELD_AT.archive,
         app.disconnect,
       );
       expect(taken.failed).toBe(true);
@@ -324,7 +366,8 @@ describe("an archive export read slowly", () => {
         new Date(Date.now() + server.clockOffsetMs + hour).toISOString(),
       );
       const taken = await takeAcross(
-        await open("archive", "core.note", key),
+        () => open("archive", "core.note", key),
+        HELD_AT.archive,
         async () => {
           await server.advanceClock(2 * hour);
         },
@@ -340,7 +383,8 @@ describe("an archive export read slowly", () => {
     async () => {
       const { id, key } = await readsNotes();
       const taken = await takeAcross(
-        await open("archive", "core.note", key),
+        () => open("archive", "core.note", key),
+        HELD_AT.archive,
         async () => {
           const narrowed = await working.updateKey(id, {
             type_permissions: { "core.task": "read" },
@@ -359,7 +403,8 @@ describe("an archive export read slowly", () => {
     async () => {
       const { id, key } = await readsNotes();
       const taken = await takeAcross(
-        await open("archive", "core.note", key),
+        () => open("archive", "core.note", key),
+        HELD_AT.archive,
         async () => {
           const narrowed = await working.updateKey(id, {
             type_permissions: { "core.note": "read" },
@@ -378,14 +423,16 @@ describe("an archive export read slowly", () => {
     async () => {
       const { id, key } = await mint({ "core.file": "read" });
       const witness = await takeAcross(
-        await open("archive", "core.file", key),
-        () => Promise.resolve(),
+        () => open("archive", "core.file", key),
+        HELD_AT.blob,
+        standing,
       );
       expect(witness.failed).toBe(false);
       expect(witness.bytes.length).toBeGreaterThan(BLOB_BYTES);
 
       const taken = await takeAcross(
-        await open("archive", "core.file", key),
+        () => open("archive", "core.file", key),
+        HELD_AT.blob,
         async () => {
           expect((await working.revokeKey(id)).status).toBe(200);
         },
