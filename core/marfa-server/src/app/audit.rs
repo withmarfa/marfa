@@ -80,7 +80,7 @@ pub fn record_from(
         params![
             uuid::Uuid::now_v7().to_string(),
             at,
-            caller.map(Caller::audit_id),
+            caller.and_then(Caller::audit_id),
             caller.map(|caller| caller.actor().to_string()),
             entry.action,
             kind_of(entry.action),

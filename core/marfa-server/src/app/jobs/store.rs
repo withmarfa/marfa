@@ -3,8 +3,9 @@
 use rusqlite::{OptionalExtension, Row, Transaction, params};
 use serde_json::Value;
 
-use super::Queued;
+use super::{Action, Queued};
 use crate::app::access::Maker;
+use crate::app::blobs::references;
 use crate::app::clock::{Unread, readable};
 use crate::app::items::Selected;
 use crate::app::refusal::{Refusal, Result};
@@ -129,6 +130,9 @@ pub fn insert(
             at
         ],
     )?;
+    if let Action::UpdateProperties { patch } = &queued.action {
+        references::hold_for_job(tx, id, patch)?;
+    }
     let mut statement = tx.prepare_cached(
         "INSERT INTO bulk_job_items (job_id, position, item_id, version, state) \
          VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -255,7 +259,7 @@ pub fn end(
     )?;
     tx.execute("DELETE FROM bulk_job_items WHERE job_id = ?1", [id])?;
     tx.execute("DELETE FROM bulk_job_notes WHERE job_id = ?1", [id])?;
-    Ok(())
+    references::release_job(tx, id)
 }
 
 pub const UNREAD_ENDED: Unread<'static> = Unread {
