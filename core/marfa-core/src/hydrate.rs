@@ -487,6 +487,7 @@ fn attempt(
             store::refilling(&conn)?,
         )
     };
+    let kept_interval = store::lengthen_log_interval(&*core.conn()?)?;
     let result = (|| {
         let catalog = {
             let conn = core.conn()?;
@@ -537,7 +538,7 @@ fn attempt(
                 |(page, overflow)| {
                     *pages += 1;
                     pages_total += 1;
-                    store::with_journals_in_memory(&mut *core.conn()?, |tx| {
+                    store::with_page_write(&mut *core.conn()?, |tx| {
                         context.check(tx)?;
                         // The expected count is of the slice's listings, so pinned
                         // rows and queued creates, which `items` also counts, stay
@@ -617,7 +618,7 @@ fn attempt(
                 |page| {
                     *pages += 1;
                     pages_total += 1;
-                    store::with_journals_in_memory(&mut *core.conn()?, |tx| {
+                    store::with_page_write(&mut *core.conn()?, |tx| {
                         context.check(tx)?;
                         for edge in &page.data {
                             store::put_server_edge(tx, edge)?;
@@ -673,7 +674,7 @@ fn attempt(
                         )?);
                     }
                 }
-                store::with_journals_in_memory(&mut *core.conn()?, |tx| {
+                store::with_page_write(&mut *core.conn()?, |tx| {
                     context.check(tx)?;
                     for row in &rows {
                         crate::reach::set_listed(
@@ -765,7 +766,13 @@ fn attempt(
             unreplaced_types: declared.unreplaced.clone(),
         })))
     })();
-    result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))
+    let settled = core
+        .conn()
+        .and_then(|conn| store::restore_log_interval(&conn, kept_interval));
+    let attempt =
+        result.map_err(|error| context.failed(core, error).unwrap_or_else(|error| error))?;
+    settled?;
+    Ok(attempt)
 }
 
 /// What a hydration reads the copy against: the server's head and the slice

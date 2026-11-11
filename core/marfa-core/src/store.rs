@@ -663,6 +663,38 @@ fn tune(conn: &Connection) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// The pages the log may hold during a hydration. At the default, each
+/// checkpoint writes the same pages again.
+const HYDRATION_LOG_PAGES: i64 = 32_768;
+
+/// Raises the checkpoint interval to `HYDRATION_LOG_PAGES` and answers the
+/// one it replaces, for `restore_log_interval`.
+pub(crate) fn lengthen_log_interval(conn: &Connection) -> Result<i64, CoreError> {
+    let kept: i64 = conn.query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))?;
+    conn.execute_batch(&format!(
+        "PRAGMA wal_autocheckpoint = {HYDRATION_LOG_PAGES}"
+    ))?;
+    Ok(kept)
+}
+
+/// Gives back the interval `kept` and empties the log into the store without
+/// waiting on a reader that holds it. Emptying the log only saves its size, so
+/// a failure there is a warning and never the caller's.
+pub(crate) fn restore_log_interval(conn: &Connection, kept: i64) -> Result<(), CoreError> {
+    conn.execute_batch(&format!("PRAGMA wal_autocheckpoint = {kept}"))?;
+    let emptied = (|| {
+        #[cfg(debug_assertions)]
+        if crate::fault::fails(|| "hydration-checkpoint") {
+            return Err(CoreError::Store("hydration-checkpoint".into()));
+        }
+        crate::reclaim::without_waiting(conn, || crate::reclaim::checkpointed(conn))
+    })();
+    if let Err(error) = &emptied {
+        crate::telemetry::unemptied!(error);
+    }
+    Ok(())
+}
+
 /// `write` in a transaction whose statement journals are held in memory.
 ///
 /// Every write to an indexed table inside a transaction keeps a statement
@@ -2981,6 +3013,17 @@ fn attachments_touching(conn: &Connection, ids: &[&str]) -> Result<Vec<Attachmen
         return Ok(Vec::new());
     }
     let marks = vec!["?"; ids.len()].join(", ");
+    // No `attached-to` edge at `ids` means no attachment, which the edge
+    // indexes answer without reading a row.
+    let attached: bool = conn
+        .prepare_cached(&format!(
+            "SELECT EXISTS (SELECT 1 FROM edges WHERE edge_type = '{ATTACHED_TO}' AND source_id IN ({marks}))
+                 OR EXISTS (SELECT 1 FROM edges WHERE edge_type = '{ATTACHED_TO}' AND target_id IN ({marks}))"
+        ))?
+        .query_row(params_from_iter([ids, ids].concat()), |row| row.get(0))?;
+    if !attached {
+        return Ok(Vec::new());
+    }
     attachments_where(
         conn,
         &format!(
@@ -4024,11 +4067,20 @@ fn index_row(
     properties: &Map<String, Value>,
     indexing: &Indexing,
 ) -> Result<(), CoreError> {
-    let tags = tags_for_one(conn, id)?;
-    let text = fts_text(properties, indexing);
+    let text = (ItemState::from_str_checked(state)? != ItemState::Trashed)
+        .then(|| fts_text(properties, indexing));
+    if let Some(text) = hold_index(seq, text) {
+        write_index(conn, seq, id, text)?;
+    }
+    Ok(())
+}
+
+/// Replaces the index entry of the row at `seq`.
+fn write_index(conn: &Connection, seq: i64, id: &str, text: IndexEntry) -> Result<(), CoreError> {
     conn.prepare_cached("DELETE FROM items_fts WHERE rowid = ?1")?
         .execute([seq])?;
-    if ItemState::from_str_checked(state)? != ItemState::Trashed {
+    if let Some(text) = text {
+        let tags = tags_for_one(conn, id)?;
         conn.prepare_cached(
             "INSERT INTO items_fts (rowid, title, body, description, name, extra, tags)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -4044,6 +4096,80 @@ fn index_row(
         ])?;
     }
     Ok(())
+}
+
+/// What a row is indexed by, or `None` for a row left out of the index.
+type IndexEntry = Option<marfa_rules::search::FtsText>;
+
+thread_local! {
+    /// The entries a page write holds back, by the row's `seq`.
+    static HELD_INDEX: std::cell::RefCell<Option<std::collections::BTreeMap<i64, IndexEntry>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Holds the entry back while a page write is open on this thread, answering
+/// `None`; hands it back to be written at once otherwise.
+fn hold_index(seq: i64, text: IndexEntry) -> Option<IndexEntry> {
+    HELD_INDEX.with(|held| match held.borrow_mut().as_mut() {
+        Some(held) => {
+            held.insert(seq, text);
+            None
+        }
+        None => Some(text),
+    })
+}
+
+/// Ends the hold at the end of the page write, whether it succeeded or not.
+struct IndexHold;
+
+impl IndexHold {
+    fn begin() -> Self {
+        HELD_INDEX.with(|held| *held.borrow_mut() = Some(std::collections::BTreeMap::new()));
+        IndexHold
+    }
+
+    /// Writes the held entries together, for the rows the copy still holds. The
+    /// index flushes its pending rows as a segment at each statement that can
+    /// fail partway, so one entry per row would make a segment per row.
+    fn write(&self, conn: &Connection) -> Result<(), CoreError> {
+        let held = HELD_INDEX
+            .with(|held| held.borrow_mut().as_mut().map(std::mem::take))
+            .unwrap_or_default();
+        let mut id = conn.prepare_cached("SELECT id FROM items WHERE seq = ?1")?;
+        for (seq, text) in held {
+            match id
+                .query_row([seq], |row| row.get::<_, String>(0))
+                .optional()?
+            {
+                Some(id) => write_index(conn, seq, &id, text)?,
+                None => {
+                    conn.prepare_cached("DELETE FROM items_fts WHERE rowid = ?1")?
+                        .execute([seq])?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for IndexHold {
+    fn drop(&mut self) {
+        HELD_INDEX.with(|held| *held.borrow_mut() = None);
+    }
+}
+
+/// `with_journals_in_memory` for a page of a server's rows, which indexes the
+/// rows once the page is written.
+pub(crate) fn with_page_write<T>(
+    conn: &mut Connection,
+    write: impl FnOnce(&rusqlite::Transaction) -> Result<T, CoreError>,
+) -> Result<T, CoreError> {
+    with_journals_in_memory(conn, |tx| {
+        let hold = IndexHold::begin();
+        let written = write(tx)?;
+        hold.write(tx)?;
+        Ok(written)
+    })
 }
 
 pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
@@ -7191,6 +7317,103 @@ mod tests {
             default,
             "a failed write left journals in memory"
         );
+    }
+
+    fn indexed(conn: &rusqlite::Connection, word: &str) -> Vec<String> {
+        conn.prepare(
+            "SELECT items.id FROM items_fts JOIN items ON items.seq = items_fts.rowid
+             WHERE items_fts MATCH ?1 ORDER BY items.id",
+        )
+        .unwrap()
+        .query_map([word], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+    }
+
+    #[test]
+    fn a_page_write_indexes_the_rows_it_wrote_once_it_has_written_all_of_them() {
+        let mut conn = conn();
+        let note = |id: &str, state: &str, title: &str| {
+            wire_item(
+                id,
+                "core.note",
+                state,
+                "2026-01-01T00:00:00Z",
+                json!({ "title": title }),
+            )
+        };
+        let indexing = Indexing::default();
+        upsert_item(&conn, &note("a", "active", "alpha"), None, &indexing).unwrap();
+        assert_eq!(indexed(&conn, "alpha"), ["a"], "a write outside a page");
+        super::with_page_write(&mut conn, |tx| {
+            upsert_item(tx, &note("a", "active", "gamma"), None, &indexing)?;
+            upsert_item(tx, &note("b", "active", "gamma"), None, &indexing)?;
+            upsert_item(tx, &note("c", "trashed", "gamma"), None, &indexing)?;
+            upsert_item(tx, &note("d", "active", "gamma"), None, &indexing)?;
+            forget_item(tx, "d")?;
+            assert_eq!(
+                indexed(tx, "alpha"),
+                ["a"],
+                "held until the page is written"
+            );
+            assert!(indexed(tx, "gamma").is_empty());
+            Ok(())
+        })
+        .unwrap();
+        assert!(indexed(&conn, "alpha").is_empty());
+        assert_eq!(indexed(&conn, "gamma"), ["a", "b"]);
+        upsert_item(&conn, &note("e", "active", "delta"), None, &indexing).unwrap();
+        assert_eq!(indexed(&conn, "delta"), ["e"], "a write after the page");
+    }
+
+    #[test]
+    fn a_page_write_that_fails_leaves_nothing_held_for_the_next_write() {
+        let mut conn = conn();
+        let note = wire_item(
+            "a",
+            "core.note",
+            "active",
+            "2026-01-01T00:00:00Z",
+            json!({ "title": "alpha" }),
+        );
+        let failed = super::with_page_write(&mut conn, |tx| {
+            upsert_item(tx, &note, None, &Indexing::default())?;
+            Err::<(), _>(super::CoreError::Canceled)
+        });
+        assert!(matches!(failed, Err(super::CoreError::Canceled)));
+        assert!(indexed(&conn, "alpha").is_empty());
+        upsert_item(&conn, &note, None, &Indexing::default()).unwrap();
+        assert_eq!(indexed(&conn, "alpha"), ["a"]);
+    }
+
+    #[test]
+    fn the_log_may_grow_through_a_hydration_and_is_emptied_after_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("core.sqlite");
+        let conn = super::open(&path).unwrap();
+        let interval = |conn: &rusqlite::Connection| -> i64 {
+            conn.query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))
+                .unwrap()
+        };
+        let kept = interval(&conn);
+        assert_eq!(super::lengthen_log_interval(&conn).unwrap(), kept);
+        assert!(interval(&conn) > kept);
+        for n in 0..3000 {
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)",
+                params![format!("filler/{n}"), "x".repeat(2000)],
+            )
+            .unwrap();
+        }
+        let log = temp.path().join("core.sqlite-wal");
+        assert!(
+            std::fs::metadata(&log).unwrap().len() > 4_000_000,
+            "the log held what was written"
+        );
+        super::restore_log_interval(&conn, kept).unwrap();
+        assert_eq!(interval(&conn), kept);
+        assert_eq!(std::fs::metadata(&log).unwrap().len(), 0);
     }
 
     #[test]
