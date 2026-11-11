@@ -672,7 +672,7 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
     if !forced && held.failures == 0 && current {
         return Ok(Outcome::Unchanged);
     }
-    wake_replication(app).await;
+    bring_replication_forward(app).await;
     match put(app, &bucket).await {
         Ok((taken, name, size, changes)) => {
             let (store, recorded) = (bucket.id().to_string(), name.clone());
@@ -706,17 +706,16 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
 }
 
 /// Brings replication forward, so the copies a backup leaves to the store are made soon.
-async fn wake_replication(app: &Arc<App>) {
+async fn bring_replication_forward(app: &Arc<App>) {
     let at = app.clock.stamp();
-    let woken = app
+    let brought = app
         .db
         .write(Write::own(), move |tx| {
             housekeeping::bring_forward(tx, REPLICATION, &at)
         })
         .await;
-    match woken {
-        Ok(()) => housekeeping::wake(app),
-        Err(error) => tracing::warn!(%error, "A backup did not wake replication"),
+    if let Err(error) = brought {
+        tracing::warn!(%error, "A backup did not bring replication forward");
     }
 }
 

@@ -44,8 +44,12 @@ impl Unsynced {
     }
 }
 
+/// Runs on the writer's thread after each job, with the connection between jobs.
+pub type Watcher = Box<dyn FnMut(&Connection) + Send>;
+
 enum Message {
     Run(Job),
+    Watch(Watcher),
     Stop(oneshot::Sender<()>),
 }
 
@@ -177,11 +181,19 @@ fn checkpoint_and_close(conn: Connection) {
 }
 
 fn run_thread(mut conn: Connection, mut queue: mpsc::Receiver<Message>) {
+    let mut watcher: Option<Watcher> = None;
     while let Some(message) = queue.blocking_recv() {
         match message {
             Message::Run(job) => {
                 job(&mut conn);
                 ensure_closed(&conn);
+                if let Some(watch) = watcher.as_mut() {
+                    watch(&conn);
+                }
+            }
+            Message::Watch(mut watch) => {
+                watch(&conn);
+                watcher = Some(watch);
             }
             Message::Stop(done) => {
                 checkpoint_and_close(conn);
@@ -216,6 +228,13 @@ impl Writer {
 
     pub fn pulse(&self) -> Pulse {
         self.pulse.clone()
+    }
+
+    /// Replaces the watcher, which then runs once at once and after every job.
+    pub async fn watch(&self, watcher: Watcher) {
+        if self.queue.send(Message::Watch(watcher)).await.is_err() {
+            tracing::error!("The writer has stopped");
+        }
     }
 
     /// A job withdrawn after `budget` never ran; a started job always finishes. With a `cap`,

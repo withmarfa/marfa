@@ -4,8 +4,9 @@ use std::pin::pin;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::task::Poll;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
+use futures_util::FutureExt;
 use tokio::sync::watch;
 
 use super::super::App;
@@ -17,7 +18,8 @@ use crate::db::Write;
 use crate::settings::registry::ERROR_REPORTING_ENABLED;
 use crate::telemetry::{Fault, Finished};
 
-const SLICE: Duration = Duration::from_secs(1);
+/// How long after a pass that failed the next one waits.
+const RETRY: Duration = Duration::from_secs(1);
 const RECORD_RETRY_FIRST: Duration = Duration::from_millis(100);
 const RECORD_RETRY_MOST: Duration = Duration::from_secs(5);
 
@@ -32,11 +34,20 @@ pub fn wanted(app: &App) -> Vec<Wanted> {
         .collect()
 }
 
-async fn pass(app: &Arc<App>) -> Result<()> {
+/// The wait until the next look, or `None` when this pass changed the table and the next look
+/// should come at once.
+async fn pass(app: &Arc<App>) -> Result<Option<Duration>> {
     let rows = app.db.read(schedule::rows).await?;
-    let steps = schedule::plan(&rows, &wanted(app), app.clock.now_ms());
+    let wanted = wanted(app);
+    let now = app.clock.now_ms();
+    let steps = schedule::plan(&rows, &wanted, now);
     if steps.is_empty() {
-        return Ok(());
+        let longest = app.settings.start.tuning.housekeeping_poll;
+        return Ok(Some(
+            schedule::next_due(&rows, &wanted, now).map_or(longest, |ms| {
+                Duration::from_millis(u64::try_from(ms).unwrap_or(0)).min(longest)
+            }),
+        ));
     }
     let clock = app.clock.clone();
     let (claimed, started) = app
@@ -52,41 +63,74 @@ async fn pass(app: &Arc<App>) -> Result<()> {
             tokio::spawn(supervise(app.clone(), job, started.clone(), active));
         }
     }
-    Ok(())
+    Ok(None)
 }
 
-async fn rest(app: &App, stopping: &mut watch::Receiver<bool>) {
-    let began = Instant::now();
-    let poll = app.settings.start.tuning.housekeeping_poll;
-    loop {
-        let left = poll.saturating_sub(began.elapsed());
-        if left.is_zero() {
-            return;
-        }
-        tokio::select! {
-            () = tokio::time::sleep(left.min(SLICE)) => {}
-            () = app.housekeeping.wake.notified() => return,
-            _ = stopping.wait_for(|stopping| *stopping) => return,
-        }
+/// Sleeps until `left` has passed or something that can change when a job is due has happened:
+/// a commit that moved a schedule, a changed setting, a moved clock, or a stop.
+async fn rest(
+    app: &App,
+    stopping: &mut watch::Receiver<bool>,
+    moves: &mut watch::Receiver<u64>,
+    left: Duration,
+) {
+    tokio::select! {
+        () = tokio::time::sleep(left) => {}
+        () = app.housekeeping.wake.notified() => {}
+        _ = moves.changed() => {}
+        _ = stopping.wait_for(|stopping| *stopping) => {}
     }
 }
 
-/// Starts the polling task. It counts as work in progress, so a stop waits for
-/// a pass that is under way, and a claim is never left with nothing to run it.
+/// Wakes the scheduler after a write that changed when a job is due or which jobs run.
+async fn watch_schedule(app: &App) {
+    let wake = app.housekeeping.wake.clone();
+    let mut before: Option<String> = None;
+    app.db
+        .watch_writes(Box::new(move |conn| match schedule::signature(conn) {
+            Ok(now) => {
+                if before.as_ref().is_some_and(|before| *before != now) {
+                    wake.notify_one();
+                }
+                before = Some(now);
+            }
+            Err(error) => {
+                tracing::warn!(%error, "The housekeeping schedule could not be checked after a write");
+                wake.notify_one();
+            }
+        }))
+        .await;
+}
+
+/// Starts the scheduler. It counts as work in progress, so a stop waits for a pass that is
+/// under way, and a claim is never left with nothing to run it. It reads the table when it
+/// starts and again only when a job is due, the table or a setting it reads has changed, the
+/// clock has moved, or the longest wait, `housekeeping_poll`, has passed.
 pub fn start(app: Arc<App>) {
     let active = app.housekeeping.active();
     tokio::spawn(async move {
         let _active = active;
         let mut stopping = app.housekeeping.stopping.subscribe();
+        let mut moves = app.clock.moves();
+        watch_schedule(&app).await;
+        let longest = app.settings.start.tuning.housekeeping_poll;
         while !*stopping.borrow() {
-            match caught(pass(&app)).await {
-                Ok(Ok(())) => {}
+            // A wake that is already here is answered by the read this pass makes.
+            let _ = app.housekeeping.wake.notified().now_or_never();
+            moves.borrow_and_update();
+            let left = match caught(pass(&app)).await {
+                Ok(Ok(Some(left))) => left,
+                Ok(Ok(None)) => continue,
                 Ok(Err(refused)) => {
                     tracing::warn!(error = %refused, "A housekeeping pass did not finish");
+                    RETRY.min(longest)
                 }
-                Err(fault) => report(&app, "scheduler", &fault),
-            }
-            rest(&app, &mut stopping).await;
+                Err(fault) => {
+                    report(&app, "scheduler", &fault);
+                    RETRY.min(longest)
+                }
+            };
+            rest(&app, &mut stopping, &mut moves, left).await;
         }
     });
 }

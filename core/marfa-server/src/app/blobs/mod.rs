@@ -692,10 +692,10 @@ impl Room {
     }
 }
 
-/// Bytes on the disk that no record names yet, locked against deletion until `release_upload`.
+/// Bytes on the disk that no record names yet, locked against deletion until it is dropped, once the record's write has ended.
 struct Placed {
     recording: Recording,
-    held: store::Held,
+    _held: store::Held,
 }
 
 #[derive(Clone)]
@@ -876,17 +876,8 @@ impl App {
                 store_id: self.blobs.disk.id().to_string(),
                 replicates: self.blobs.s3.is_some(),
             },
-            held,
+            _held: held,
         })
-    }
-
-    /// Call only once the record's write has ended.
-    fn release_upload(&self, placed: Placed, committed: bool) {
-        let Placed { recording, held } = placed;
-        drop(held);
-        if committed && recording.replicates {
-            housekeeping::wake(self);
-        }
     }
 
     /// Holds the blob lock through the record's commit, even if the caller disconnects.
@@ -908,7 +899,7 @@ impl App {
             let written = app
                 .write(&caller, action, move |unit| job(unit, &recording))
                 .await;
-            app.release_upload(placed, written.is_ok());
+            drop(placed);
             written
         })
         .await

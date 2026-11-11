@@ -97,7 +97,7 @@ pub struct Placed {
     pub imported: usize,
     pub missing: Vec<String>,
     pub replicates: bool,
-    held: Vec<Held>,
+    _held: Vec<Held>,
 }
 
 /// Records each copy, and each blob the instance did not hold. A found object is this server's
@@ -271,7 +271,7 @@ impl App {
             copies,
             imported,
             missing,
-            held,
+            _held: held,
             replicates: self.blobs.s3.is_some(),
         })
     }
@@ -425,16 +425,6 @@ impl App {
             object,
             replaces,
         }))
-    }
-}
-
-impl Placed {
-    /// Starts copying to other stores if the write committed.
-    pub fn release(self, app: &App, committed: bool) {
-        drop(self.held);
-        if committed && self.replicates && !self.copies.is_empty() {
-            super::housekeeping::wake(app);
-        }
     }
 }
 
