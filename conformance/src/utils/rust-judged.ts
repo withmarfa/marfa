@@ -81,6 +81,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/blob-stores.test.ts",
   "src/suites/compliance/body-field-length.test.ts",
   "src/suites/compliance/browser-sessions.test.ts",
+  "src/suites/compliance/bucket-sharing.test.ts",
   "src/suites/compliance/bulk-get.test.ts",
   "src/suites/compliance/bulk-job-holds.test.ts",
   "src/suites/compliance/bulk-job-long.test.ts",

@@ -585,6 +585,14 @@ fn keep_held(tx: &rusqlite::Transaction<'_>, hash: &Hash, store_id: &str) -> Res
     }
 }
 
+/// The copies but the one in `store_id` that count toward the minimum: those this server wrote.
+fn own_others(holders: &[rows::Held], store_id: &str) -> usize {
+    holders
+        .iter()
+        .filter(|held| held.store_id != store_id && held.written)
+        .count()
+}
+
 fn below(live: usize, min_copies: u64) -> Refusal {
     Refusal::new(
         Code::CopiesBelowMinimum,
@@ -1225,6 +1233,9 @@ impl App {
             .store(store_id)
             .filter(|_| holders.iter().any(|held| held.store_id == store_id))
             .ok_or_else(copy_not_found)?;
+        if matches!(store, Store::S3(_)) {
+            crate::app::backups::survey_folder(self).await?;
+        }
         let (blob, kept_in) = (hash.clone(), store_id.to_string());
         self.db
             .read(move |tx| keep_held(tx, &blob, &kept_in))
@@ -1234,8 +1245,9 @@ impl App {
             .db
             .read(move |tx| stored::deciding(tx, &seeds, BLOB_MIN_COPIES))
             .await?;
-        if ((holders.len() - 1) as u64) < min_copies {
-            return Err(below(holders.len(), min_copies));
+        let kept = own_others(&holders, store_id);
+        if (kept as u64) < min_copies {
+            return Err(below(kept + 1, min_copies));
         }
         let _held = self.blobs.gate.lock(hash).await;
         if self.blobs.gate.unfinished(hash) {
@@ -1248,7 +1260,7 @@ impl App {
         }
         let others: Vec<(Store, &str)> = holders
             .iter()
-            .filter(|held| held.store_id != store_id)
+            .filter(|held| held.store_id != store_id && held.written)
             .filter_map(|held| Some((self.blobs.store(&held.store_id)?, held.object.as_str())))
             .collect();
         let answers = join_all(
@@ -1278,8 +1290,9 @@ impl App {
             }
             keep_held(unit.tx(), &blob, &dropped)?;
             let min_copies = stored::deciding(unit.tx(), &seeds, BLOB_MIN_COPIES)?;
-            if ((holders.len() - 1) as u64) < min_copies {
-                return Err(below(holders.len(), min_copies));
+            let kept = own_others(&holders, &dropped);
+            if (kept as u64) < min_copies {
+                return Err(below(kept + 1, min_copies));
             }
             if (confirmed as u64) < min_copies {
                 return Err(below(confirmed + 1, min_copies));

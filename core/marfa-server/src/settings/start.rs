@@ -222,7 +222,7 @@ impl Reader<'_> {
             path_style,
             prefix: self
                 .take("S3_PREFIX", prefix)
-                .unwrap_or_else(|| "blobs".to_string()),
+                .unwrap_or_else(|| "marfa".to_string()),
         })
     }
 

@@ -1,5 +1,6 @@
-//! The object store: one object per write of a blob, under `<prefix>/<hex>/<write>`, and a
-//! marker object that holds the store's id.
+//! The object store: one object per write of a blob, under `<prefix>/blobs/<hex>/<write>`, a
+//! marker object at `<prefix>/blobs/.marfa-store` that holds the store's id, and whole objects
+//! such as backups elsewhere under `<prefix>`.
 
 use std::future::Future;
 use std::io;
@@ -29,6 +30,8 @@ const PART: usize = 8 * 1024 * 1024;
 const PARTS_IN_FLIGHT: usize = 2;
 const ABORT_DEADLINE: Duration = Duration::from_secs(15);
 const MARKER: &str = ".marfa-store";
+/// The folder under the prefix that holds the blobs' objects and the marker.
+const BLOBS: &str = "blobs";
 /// The object metadata that names the store which wrote an object.
 const WRITER: &str = "marfa-store";
 
@@ -221,7 +224,7 @@ impl S3 {
     }
 
     fn marker_path(&self) -> Path {
-        Path::from(format!("{}/{MARKER}", self.prefix))
+        self.blob_path(MARKER)
     }
 
     /// The store id the marker object holds.
@@ -273,31 +276,37 @@ impl S3 {
         &self.locator
     }
 
+    /// A blob's object, named as the copy record names it.
+    fn blob_path(&self, object: &str) -> Path {
+        Path::from(format!("{}/{BLOBS}/{object}", self.prefix))
+    }
+
+    /// A whole object, named by its key under the prefix.
     fn path_of(&self, key: &str) -> Path {
         Path::from(format!("{}/{key}", self.prefix))
     }
 
-    /// The name, under the prefix, of a new object for the blob's bytes. No two writes share one,
+    /// The name, under the blobs' folder, of a new object for the blob's bytes. No two writes share one,
     /// so a request that lands late can only touch the object it names.
     pub fn new_key(hash: &Hash) -> String {
         format!("{}/{}", hash.hex(), Uuid::now_v7().simple())
     }
 
-    pub async fn size_of(&self, key: &str) -> io::Result<Option<u64>> {
-        match self.client.head(&self.path_of(key)).await {
+    pub async fn size_of(&self, object: &str) -> io::Result<Option<u64>> {
+        match self.client.head(&self.blob_path(object)).await {
             Ok(meta) => Ok(Some(meta.size)),
             Err(error) if is_missing(&error) => Ok(None),
             Err(error) => Err(failed(error)),
         }
     }
 
-    /// What the store answers for the object at `key`, and whether the object names this store.
-    pub async fn answer_for(&self, key: &str) -> io::Result<Answer> {
+    /// What the store answers for a blob's object, and whether the object names this store.
+    pub async fn answer_for(&self, object: &str) -> io::Result<Answer> {
         let options = GetOptions {
             head: true,
             ..GetOptions::default()
         };
-        match self.client.get_opts(&self.path_of(key), options).await {
+        match self.client.get_opts(&self.blob_path(object), options).await {
             Ok(found) => {
                 let writer = found.attributes.get(&Attribute::Metadata(WRITER.into()));
                 if writer.is_some_and(|writer| writer.as_ref() == self.id) {
@@ -311,10 +320,10 @@ impl S3 {
         }
     }
 
-    /// Every object the store holds for the blob, by name under the prefix, with its size.
+    /// Every object the store holds for the blob, by name under the blobs' folder, with its size.
     pub async fn objects_of(&self, hash: &Hash) -> io::Result<Vec<(String, u64)>> {
-        let root = Path::from(self.prefix.as_str());
-        let under = Path::from(format!("{}/{}", self.prefix, hash.hex()));
+        let root = Path::from(format!("{}/{BLOBS}", self.prefix));
+        let under = self.blob_path(hash.hex());
         self.client
             .list(Some(&under))
             .map_ok(move |meta| {
@@ -333,7 +342,7 @@ impl S3 {
 
     pub async fn read(
         &self,
-        key: &str,
+        object: &str,
         first: u64,
         length: u64,
     ) -> io::Result<BoxStream<'static, io::Result<Bytes>>> {
@@ -343,7 +352,7 @@ impl S3 {
         };
         let found = self
             .client
-            .get_opts(&self.path_of(key), options)
+            .get_opts(&self.blob_path(object), options)
             .await
             .map_err(failed)?;
         Ok(found.into_stream().map_err(failed).boxed())
@@ -353,7 +362,7 @@ impl S3 {
     /// whole, so nothing is placed before it is checked. Fails once it outlasts `limit`.
     pub async fn write(
         &self,
-        key: &str,
+        object: &str,
         hash: &Hash,
         mime_type: &str,
         size: u64,
@@ -364,7 +373,7 @@ impl S3 {
         let mut hasher = super::store::Hasher::default();
         let attributes = attributes(mime_type, hash, &self.id);
         let checked = Some((&mut hasher, hash, size));
-        self.place(key, attributes, bytes, deadline, checked)
+        self.place(self.blob_path(object), attributes, bytes, deadline, checked)
             .await
             .map(|_| ())
     }
@@ -381,19 +390,19 @@ impl S3 {
         let mut attributes = Attributes::new();
         attributes.insert(Attribute::ContentType, content_type.to_string().into());
         attributes.insert(Attribute::Metadata(WRITER.into()), self.id.clone().into());
-        self.place(key, attributes, bytes, deadline, None).await
+        self.place(self.path_of(key), attributes, bytes, deadline, None)
+            .await
     }
 
     /// A body above one part goes multipart, aborted on failure or at `deadline`.
     async fn place(
         &self,
-        key: &str,
+        location: Path,
         attributes: Attributes,
         mut bytes: BoxStream<'static, io::Result<Bytes>>,
         deadline: Instant,
         mut checked: Checked<'_>,
     ) -> io::Result<u64> {
-        let location = self.path_of(key);
         let mut first: Vec<Bytes> = Vec::new();
         let mut held = 0u64;
         let mut ended = false;
@@ -511,8 +520,18 @@ impl S3 {
         }
     }
 
-    pub async fn delete(&self, key: &str) -> io::Result<()> {
-        match self.client.delete(&self.path_of(key)).await {
+    /// Deletes a blob's object.
+    pub async fn delete(&self, object: &str) -> io::Result<()> {
+        self.remove(&self.blob_path(object)).await
+    }
+
+    /// Deletes the whole object at `key`.
+    pub async fn delete_whole(&self, key: &str) -> io::Result<()> {
+        self.remove(&self.path_of(key)).await
+    }
+
+    async fn remove(&self, location: &Path) -> io::Result<()> {
+        match self.client.delete(location).await {
             Ok(()) => Ok(()),
             Err(error) if is_missing(&error) => Ok(()),
             Err(error) => Err(failed(error)),
@@ -521,8 +540,8 @@ impl S3 {
 
     /// A link the store serves itself, signed with the store's own clock, made within `limit`
     /// with the wait for credentials included.
-    pub async fn link(&self, key: &str, ttl: Duration, limit: Duration) -> io::Result<String> {
-        let path = self.path_of(key);
+    pub async fn link(&self, object: &str, ttl: Duration, limit: Duration) -> io::Result<String> {
+        let path = self.blob_path(object);
         let signed = self.client.signed_url(axum::http::Method::GET, &path, ttl);
         match tokio::time::timeout(limit, signed).await {
             Ok(signed) => signed.map(|url| url.to_string()).map_err(failed),
@@ -574,8 +593,8 @@ mod tests {
             .unwrap();
         let s3 = S3 {
             id: Uuid::now_v7().to_string(),
-            locator: "s3://marfa/blobs".to_string(),
-            prefix: "blobs".to_string(),
+            locator: "s3://marfa/marfa".to_string(),
+            prefix: "marfa".to_string(),
             client,
         };
         let limit = Duration::from_millis(50);

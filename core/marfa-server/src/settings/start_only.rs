@@ -85,7 +85,7 @@ pub const DECLARED: &[Declared] = &[
     ),
     plain(
         "S3_PREFIX",
-        "The folder in the bucket the server keeps files under.",
+        "The folder in the bucket the server keeps files and backups under.",
     ),
     plain(
         "MARFA_CONTROL_SOCKET",

@@ -719,7 +719,7 @@ const BUCKET: &str = "marfa";
 /// Where the keys of a blob's objects in the fake store, in `prefix`, start.
 fn objects_of(prefix: &str, hash: &str) -> String {
     format!(
-        "/{BUCKET}/{prefix}/{}",
+        "/{BUCKET}/{prefix}/blobs/{}",
         hash.strip_prefix("sha256:").unwrap()
     )
 }
@@ -732,7 +732,7 @@ fn object_key(s3: &FakeS3, prefix: &str, hash: &str) -> String {
 }
 
 fn marker_key(prefix: &str) -> String {
-    format!("/{BUCKET}/{prefix}/.marfa-store")
+    format!("/{BUCKET}/{prefix}/blobs/.marfa-store")
 }
 
 impl Instance {
@@ -1658,4 +1658,50 @@ async fn a_copy_that_runs_out_of_time_aborts_its_multipart_upload() {
         s3.objects_under(&format!("/{BUCKET}/blobs/stalled"))
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn a_file_whose_grace_ends_while_a_sweep_waits_to_choose_keeps_its_object_store_copy() {
+    let s3 = FakeS3::start().await;
+    let mut env = s3.settings(BUCKET, "blobs");
+    env.push(("MARFA_BLOB_CLEANUP_GRACE_MS".into(), "1000".into()));
+    let instance = Instance::start(&pairs(&env)).await;
+    let hash = instance
+        .replicated(&s3, b"its grace ends while the sweep waits")
+        .await;
+    instance.run("blob-orphans").await;
+    instance.app.clock.advance(999).unwrap();
+
+    // The writer's queue becomes: a hold, the sweep's claim, a second hold, then its choice.
+    let (first, first_began) = occupy_writer(&instance.app);
+    first_began.await.unwrap();
+    let control = instance.control.clone();
+    let sweep = tokio::spawn(async move {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/housekeeping/blob-orphans/run")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        send(&control, request).await
+    });
+    settle().await;
+    let (second, second_began) = occupy_writer(&instance.app);
+    settle().await;
+    first.send(()).unwrap();
+    second_began.await.unwrap();
+    settle().await;
+    instance.app.clock.advance(2).unwrap();
+    second.send(()).unwrap();
+    let run = sweep.await.unwrap();
+    assert_eq!(run.body["outcome"], "ok", "{}", run.body);
+    assert_eq!(run.body["result"]["purged"], 0, "{}", run.body);
+    assert_eq!(instance.fetch(&hash).await.status, StatusCode::OK);
+    object_key(&s3, "blobs", &hash);
+
+    // The witness: the next sweep surveys the backups and purges the file.
+    let next = instance.run("blob-orphans").await;
+    assert_eq!(next["purged"], 1, "{next}");
+    assert_eq!(instance.fetch(&hash).await.status, StatusCode::NOT_FOUND);
+    assert!(s3.objects_under(&objects_of("blobs", &hash)).is_empty());
 }

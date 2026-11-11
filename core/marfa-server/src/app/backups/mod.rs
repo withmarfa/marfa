@@ -1,5 +1,6 @@
 //! Backups: an archive without files, put as one object under `<prefix>/backups/<instance id>/`.
 
+mod found;
 mod names;
 
 use std::collections::HashSet;
@@ -25,6 +26,7 @@ use super::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 use crate::settings::registry::BACKUP_INTERVAL_SECONDS;
 
+pub use found::survey_folder;
 pub use names::{doomed, instance_of, missing_past_retention, name_of, parse};
 
 /// The folder under the object store's prefix that holds a folder of backups per instance.
@@ -126,7 +128,7 @@ fn begin(tx: &Transaction<'_>, store: &str, name: &str) -> Result<i64> {
     let taken = tx
         .prepare_cached("SELECT 1 FROM backups WHERE store_id = ?1 AND name = ?2")?
         .exists(params![store, name])?;
-    if taken {
+    if taken || found::recorded(tx, store, name)? {
         return Err(Refusal::new(
             Code::Conflict,
             format!(
@@ -368,7 +370,7 @@ async fn settle_attempts(app: &Arc<App>, bucket: &Arc<S3>) -> Result<()> {
         .await
 }
 
-/// Of `hashes`, those a backup of `store` that this instance keeps may name.
+/// Of `hashes`, those a backup of `store` that this instance keeps or found may name.
 pub fn held(tx: &Transaction<'_>, store: &str, hashes: &[Hash]) -> Result<HashSet<Hash>> {
     let mut statement = tx.prepare_cached(
         "SELECT 1 FROM backup_files f JOIN backups b ON b.store_id = f.store_id \
@@ -377,7 +379,9 @@ pub fn held(tx: &Transaction<'_>, store: &str, hashes: &[Hash]) -> Result<HashSe
     )?;
     let mut held = HashSet::new();
     for hash in hashes {
-        if statement.exists(params![store, hash.as_str()])? {
+        if statement.exists(params![store, hash.as_str()])?
+            || found::names(tx, store, hash.as_str())?
+        {
             held.insert(hash.clone());
         }
     }
@@ -746,7 +750,8 @@ async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(Stamp, String, u64, i6
     Ok((taken, name, size, changes))
 }
 
-/// Only names it listed in its own folder and could read as a backup are deleted.
+/// Only names it listed in its own folder, could read as a backup and recorded putting are
+/// deleted.
 async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp) -> (usize, usize) {
     let own = format!("{FOLDER}/{}", app.instance_id);
     let listed = match super::blobs::store::within(LIST_DEADLINE, bucket.list_in(&own)).await {
@@ -757,11 +762,34 @@ async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp) -> (usize, usize) 
         }
     };
     let names: Vec<String> = listed.into_iter().map(|(name, _)| name).collect();
+    if let Err(error) = found::survey(app, bucket, &names).await {
+        tracing::warn!(%error, "The backups this instance did not record were not read");
+    }
+    let looked = bucket.id().to_string();
+    let put: HashSet<String> = match app
+        .db
+        .read(move |tx| {
+            Ok(tx
+                .prepare_cached("SELECT name FROM backups WHERE store_id = ?1")?
+                .query_map([&looked], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?)
+        })
+        .await
+    {
+        Ok(put) => put,
+        Err(error) => {
+            tracing::warn!(%error, "The recorded backups were not read for thinning");
+            return (0, 0);
+        }
+    };
     let mut deleted = HashSet::new();
     let (mut removed, mut unremoved) = (0, 0);
-    for name in doomed(&names, taken) {
+    for name in doomed(&names, taken)
+        .into_iter()
+        .filter(|name| put.contains(name))
+    {
         let key = key_of(&app.instance_id, &name);
-        match super::blobs::store::within(LIST_DEADLINE, bucket.delete(&key)).await {
+        match super::blobs::store::within(LIST_DEADLINE, bucket.delete_whole(&key)).await {
             Ok(()) => {
                 deleted.insert(name);
                 removed += 1;
@@ -839,8 +867,8 @@ mod tests {
             )
             .unwrap();
             tx.execute(
-                "INSERT INTO blob_copies (hash, store_id, object, recorded_at) \
-                 VALUES (?1, ?2, ?1, '2026-11-01T00:00:00.000Z')",
+                "INSERT INTO blob_copies (hash, store_id, object, written, recorded_at) \
+                 VALUES (?1, ?2, ?1, 1, '2026-11-01T00:00:00.000Z')",
                 params![hash.as_str(), BUCKET],
             )
             .unwrap();
@@ -1220,6 +1248,37 @@ mod tests {
         reconcile(&tx, "bucket A", &names(&[&a1, &a2]), &names(&[]), at(2)).unwrap();
 
         assert_eq!(held_in(&tx, "bucket A", &[&x]), ['a']);
+    }
+
+    #[test]
+    fn a_found_backup_holds_its_files_and_its_name_until_listings_long_omit_it() {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        let (a, b) = (hash('a'), hash('b'));
+        registered(&tx, &[&a, &b]);
+        let found = named(5);
+        tx.execute(
+            "INSERT INTO found_backups (store_id, name, files_read) VALUES (?1, ?2, 1)",
+            params![BUCKET, found],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO found_backup_files (seq, hash) SELECT seq, ?1 FROM found_backups",
+            [a.as_str()],
+        )
+        .unwrap();
+        assert_eq!(held_of(&tx, &[&a, &b]), ['a']);
+        assert_eq!(begin(&tx, BUCKET, &found).unwrap_err().code, Code::Conflict);
+
+        let since = at(6);
+        let retained = since.plus_ms(31 * DAY_MS).unwrap();
+        for now in [since, retained, retained] {
+            found::settle(&tx, BUCKET, &names(&[]), now).unwrap();
+        }
+        assert_eq!(held_of(&tx, &[&a, &b]), ['a']);
+        found::settle(&tx, BUCKET, &names(&[]), retained.plus_ms(1).unwrap()).unwrap();
+        assert!(held_of(&tx, &[&a, &b]).is_empty());
+        assert_eq!(count(&tx, "SELECT COUNT(*) FROM found_backup_files"), 0);
     }
 
     #[test]

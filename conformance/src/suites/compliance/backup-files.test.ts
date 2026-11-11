@@ -64,11 +64,12 @@ async function unname(server: FreshServer, id: string) {
 async function objectsOf(hash: string): Promise<string[]> {
   const hex = hash.replace(/^sha256:/, "");
   return (await bucket.keys()).filter((key) =>
-    key.startsWith(`${store.S3_PREFIX}/${hex}/`),
+    key.startsWith(`${store.S3_PREFIX}/blobs/${hex}/`),
   );
 }
 
 let kept: Awaited<ReturnType<typeof namedFile>>;
+let keptObjects: string[];
 let backupName: string;
 
 describe("the files a backup names", () => {
@@ -94,7 +95,8 @@ describe("the files a backup names", () => {
     expect((await operator.downloadBlob(witness.hash)).status).toBe(404);
     expect(await objectsOf(witness.hash)).toEqual([]);
     expect((await operator.downloadBlob(kept.hash)).status).toBe(200);
-    expect((await objectsOf(kept.hash)).length).toBeGreaterThan(0);
+    keptObjects = await objectsOf(kept.hash);
+    expect(keptObjects.length).toBeGreaterThan(0);
 
     fresh = await bootFreshServer("backup-files-fresh", {
       ...store,
@@ -174,7 +176,8 @@ describe("the files a backup names", () => {
 
       await runJob(operator, "blob-orphans");
       expect((await operator.downloadBlob(kept.hash)).status).toBe(404);
-      expect(await objectsOf(kept.hash)).toEqual([]);
+      const left = await objectsOf(kept.hash);
+      for (const key of keptObjects) expect(left).not.toContain(key);
     } finally {
       await origin.pauseClock(false);
     }

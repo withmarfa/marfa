@@ -1,6 +1,7 @@
 //! `POST /restore`: reads and checks the body as it arrives, then one write records everything or nothing.
 
 pub mod intake;
+pub mod named;
 mod untar;
 
 use std::collections::{BTreeMap, HashSet};

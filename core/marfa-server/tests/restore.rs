@@ -320,3 +320,91 @@ async fn a_restore_keeps_an_ordered_table_in_its_order_from_its_answer_on() {
         .unwrap();
     assert_eq!(marks, [0]);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_copy_a_restore_found_in_the_bucket_counts_toward_the_minimum_once_this_server_writes_its_own()
+ {
+    let s3 = FakeS3::start().await;
+    let origin = Instance::start(&s3_settings(&s3)).await;
+    let bytes = b"a file both servers keep".to_vec();
+    let stored = origin
+        .send(
+            Method::POST,
+            "/blobs",
+            Body::from(bytes.clone()),
+            "text/plain",
+        )
+        .await;
+    assert_eq!(stored.status, StatusCode::CREATED, "{}", stored.body);
+    let hash = hash_of(&bytes);
+    let item = json!({ "type": "core.file", "properties": { "blob_ref": hash, "mime_type": "text/plain" } });
+    let made = origin.write("/items", item).await;
+    assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    let run = origin
+        .json(Method::POST, "/housekeeping/blob-replicate/run", json!({}))
+        .await;
+    assert_eq!(run.body["result"]["copied"], 1, "{}", run.body);
+    let archive = origin.archive("&files=false").await;
+
+    let fresh = Instance::start(&s3_settings(&s3)).await;
+    let restored = fresh.restore(archive).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+    assert_eq!(restored.body["blobs_missing"], json!([]));
+    let uploaded = fresh
+        .send(
+            Method::POST,
+            "/blobs",
+            Body::from(bytes.clone()),
+            "text/plain",
+        )
+        .await;
+    assert!(uploaded.status.is_success(), "{}", uploaded.body);
+    let stores = fresh
+        .send(
+            Method::GET,
+            "/blobs/stores",
+            Body::empty(),
+            "application/json",
+        )
+        .await;
+    let disk = stores.body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|store| store["kind"] == "disk")
+        .and_then(|store| store["id"].as_str())
+        .unwrap()
+        .to_string();
+    let door = format!("/blobs/{hash}/copies/{disk}");
+    let objects = format!(
+        "/{BUCKET}/blobs/blobs/{}",
+        hash.strip_prefix("sha256:").unwrap()
+    );
+    assert_eq!(s3.objects_under(&objects).len(), 1);
+
+    let refused = fresh
+        .send(Method::DELETE, &door, Body::empty(), "application/json")
+        .await;
+    assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+    assert_eq!(refused.body["error"]["code"], "copies_below_minimum");
+
+    let run = fresh
+        .json(Method::POST, "/housekeeping/blob-replicate/run", json!({}))
+        .await;
+    assert_eq!(run.body["result"]["copied"], 1, "{}", run.body);
+    assert_eq!(s3.objects_under(&objects).len(), 2);
+    let dropped = fresh
+        .send(Method::DELETE, &door, Body::empty(), "application/json")
+        .await;
+    assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
+    let read = fresh
+        .send(
+            Method::GET,
+            &format!("/blobs/{hash}"),
+            Body::empty(),
+            "application/json",
+        )
+        .await;
+    assert_eq!(read.status, StatusCode::OK);
+    assert!(read.bytes == bytes);
+}

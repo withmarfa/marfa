@@ -112,6 +112,12 @@ While a copy sits in a store the configuration no longer names, the server MUST 
 
 **Tests:** `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
+### `stores/held-not-live`
+
+While a copy's object is one the server did not write, the server MUST NOT count it among the live copies a drop keeps at `min_copies`.
+
+**Tests:** `compliance/bucket-sharing.test.ts › refuses to drop the disk copy of each file a restore found in the bucket until it writes a copy of its own, and then drops it`.
+
 ### `stores/min-copies-reported`
 
 When a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer `min_copies` as the instance's `blob_min_copies`, which is 1 unless set.
@@ -222,6 +228,30 @@ While an attached object store does not answer with the `.marfa-store` marker of
 
 **Tests:** `compliance/blob-store-bounds.test.ts › changes no copy on the answers of an object store that holds another store's marker`.
 
+### `stores/object-layout`
+
+Where an object store is attached, the server MUST keep each copy's object and the store's `.marfa-store` marker under `<S3_PREFIX>/blobs/`.
+
+**Reason:** a prefix holds one instance: its files under `blobs/` and its backups under `backups/` (`instance/backup-object`), so each can take a lifecycle rule of its own.
+
+**Tests:** `compliance/bucket-sharing.test.ts › keeps the files and the store's marker under the prefix's blobs folder and the backups under its backups folder`.
+
+### `stores/object-layout-root-ignored`
+
+When the server starts on a prefix that holds a `.marfa-store` marker or copies directly under `<S3_PREFIX>/`, the server MUST NOT read them as the store's.
+
+**Reason:** an earlier build kept them there, and nothing is carried from earlier builds.
+
+**Tests:** `compliance/bucket-sharing.test.ts › starts beside objects an older layout left at the prefix's root, and never reads or deletes them`.
+
+### `stores/delete-only-written`
+
+The server MUST NOT delete an object in an object store that it did not write.
+
+**Reason:** another server can work on the same prefix, as one that replaces an instance does, and a restore records an object it finds there as a copy (`instance/backup-restore`). When the server drops, strikes or purges such a copy, it takes the copy out of the copy record and leaves the object. An object it found that it had written and not yet deleted counts as its own.
+
+**Tests:** `compliance/bucket-sharing.test.ts › deletes none of the first server's objects from a server restored from its backup, through every clean-up, so the first server's backup still restores`, `compliance/bucket-sharing.test.ts › starts beside objects an older layout left at the prefix's root, and never reads or deletes them`.
+
 ## Links
 
 A link to a blob's bytes names the instance or the object store as its host, and the lifetime and the signature are `blobs.md`'s.
@@ -255,6 +285,14 @@ When `blob-replicate` has run to `remaining: 0`, the server MUST list a copy in 
 When a run of `blob-replicate` finds a blob that an attached store lacks and another attached store holds, the server MUST copy it from the store that holds it, whichever of the disk and the object store that is.
 
 **Tests:** `compliance/blob-rules.test.ts › replicates every blob to the object store and records the copies, and the link becomes the store's own`, `› stamps a good copy and strikes a corrupt one, which replication then restores`, `› removes a dropped copy's bytes from its store`.
+
+### `stores/replicate-own-copy`
+
+When a run of `blob-replicate` finds an attached object store whose copy of a blob is an object the server did not write, the server MUST write its own copy of the blob to that store.
+
+**Reason:** a copy whose object the server did not write does not count toward `min_copies` (`stores/held-not-live`).
+
+**Tests:** `compliance/bucket-sharing.test.ts › refuses to drop the disk copy of each file a restore found in the bucket until it writes a copy of its own, and then drops it`.
 
 ### `stores/replicate-verifies`
 
@@ -348,7 +386,7 @@ While a write or a deletion of a blob's bytes that the server stopped waiting fo
 
 ### `stores/drop-allowed`
 
-When a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs/{hash}/copies/{store}` for a copy that an attached store holds, and at least `min_copies` live copies would remain, the server MUST answer `200`.
+When a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs/{hash}/copies/{store}` for a copy that an attached store holds, and at least `min_copies` live copies, counted under `stores/detached-not-live` and `stores/held-not-live`, would remain, the server MUST answer `200`.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `› answers the drop door's refusals in their order`.
 
@@ -360,9 +398,11 @@ When the server answers a drop with `200`, the server MUST remove the copy's row
 
 ### `stores/drop-removes-bytes`
 
-When the server answers a drop with `200`, the server MUST remove the copy's bytes from its store.
+When the server answers a drop with `200` for a copy whose object it wrote, the server MUST remove the copy's bytes from its store.
 
-**Tests:** `compliance/blob-rules.test.ts › removes a dropped copy's bytes from its store`.
+**Reason:** a copy whose object the server did not write leaves the copy record and keeps its object (`stores/delete-only-written`).
+
+**Tests:** `compliance/blob-rules.test.ts › removes a dropped copy's bytes from its store`, `compliance/bucket-sharing.test.ts › deletes none of the first server's objects from a server restored from its backup, through every clean-up, so the first server's backup still restores`.
 
 ### `stores/drop-below-minimum`
 
@@ -386,7 +426,7 @@ When the server answers a drop with `409 copies_below_minimum`, the server MUST 
 
 If a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs/{hash}/copies/{store}`, and fewer than `min_copies` of the other live copies are confirmed by their stores, each asked within 15 seconds, then the server MUST answer `409 copies_below_minimum`.
 
-**Reason:** the copy record can name a copy its store no longer holds, such as one removed from the store by hand or lost with a disk. A drop that trusted the copy record could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing, and neither does an object store that answers with another store's marker (`stores/object-store-itself`) or for an object that does not name it (`stores/object-answer-names-store`).
+**Reason:** the copy record can name a copy its store no longer holds, such as one removed from the store by hand or lost with a disk. A drop that trusted the copy record could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing, and neither does an object store that answers with another store's marker (`stores/object-store-itself`) or for an object that does not name it (`stores/object-answer-names-store`). A copy whose object the server did not write confirms nothing either (`stores/held-not-live`).
 
 **Tests:** `compliance/blob-rules.test.ts › refuses a drop the copy record allows when the other copy is gone from its store, and keeps the copy`.
 
@@ -692,9 +732,9 @@ When a run of `blob-orphans` purges a blob, the server MUST take it off the repo
 
 ### `stores/orphan-purge-bytes`
 
-When a run of `blob-orphans` purges a blob, the server MUST remove its bytes from every attached store.
+When a run of `blob-orphans` purges a blob, the server MUST remove its bytes from every attached store but an object it did not write.
 
-**Tests:** `compliance/blob-rules.test.ts › removes a purged blob's bytes from every store`.
+**Tests:** `compliance/blob-rules.test.ts › removes a purged blob's bytes from every store`, `compliance/bucket-sharing.test.ts › deletes none of the first server's objects from a server restored from its backup, through every clean-up, so the first server's backup still restores`.
 
 ### `stores/orphan-switched-off-unlisted`
 

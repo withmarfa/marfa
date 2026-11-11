@@ -431,6 +431,8 @@ mod tests {
     #[test]
     fn an_object_store_is_attached_by_its_bucket_and_read_with_its_defaults() {
         assert!(read(&[]).ok().unwrap().fixed().object_store.is_none());
+        let unprefixed = read(&[("S3_BUCKET", "marfa")]).ok().unwrap();
+        assert_eq!(unprefixed.fixed.object_store.unwrap().prefix, "marfa");
         let read_back = read(&[("S3_BUCKET", "marfa"), ("S3_PREFIX", "/one/two/")]);
         let store = read_back.ok().unwrap().fixed.object_store.unwrap();
         assert_eq!(

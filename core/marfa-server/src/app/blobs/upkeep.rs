@@ -89,8 +89,8 @@ enum Copy {
     TargetSilent,
 }
 
-/// Places one blob in `target`, read from the first other store that holds it and answers. An
-/// object store's copy goes to a new object, queued for deletion until its copy is recorded.
+/// Places one blob in `target` from the first holder that answers, `target`'s held copy included.
+/// An object store's copy goes to a new object, queued for deletion until it is recorded.
 async fn copy_to(
     app: &App,
     target: &Store,
@@ -101,7 +101,7 @@ async fn copy_to(
     let blobs = &app.blobs;
     for source in blobs.attached() {
         let id = source.id().to_string();
-        if id == target.id() || unreachable.contains(&id) {
+        if unreachable.contains(&id) {
             continue;
         }
         let Some(held) = holders.iter().find(|held| held.store_id == id) else {
@@ -230,7 +230,10 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         }
         let blob = hash.clone();
         let holders = app.db.read(move |tx| rows::holders(tx, &blob)).await?;
-        if holders.iter().any(|held| held.store_id == pair.store_id) {
+        if holders
+            .iter()
+            .any(|held| held.store_id == pair.store_id && held.written)
+        {
             continue;
         }
         let cleared = match app.finish_deletion(&target, &hash).await {
@@ -270,7 +273,8 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         let (blob, to) = (hash.clone(), pair.store_id.clone());
         let recorded = app
             .write(&Caller::Server, "blob.copy_replicated", move |unit| {
-                if rows::record_copy(unit.tx(), &blob, &to, &object, &unit.at)? {
+                let recorded = rows::record_copy(unit.tx(), &blob, &to, &object, true, &unit.at)?;
+                if recorded == rows::Recorded::Copy {
                     unit.audit(
                         "blob",
                         blob.as_str(),
@@ -284,7 +288,7 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
             .await?;
         if !recorded {
             if let Err(failure) = app.finish_deletion(&target, &hash).await {
-                tracing::warn!(?failure, "The copy of a purged blob waits for a later run");
+                tracing::warn!(?failure, "A copy not recorded waits for a later run");
             }
             continue;
         }
@@ -487,14 +491,25 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
     })))
 }
 
-/// Read from `tx`, since the live settings lag a committed change.
-fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
+/// Read from `tx`, since the live settings lag a committed change. Unless `surveyed`, a file
+/// with an object store copy stays.
+fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App, surveyed: bool) -> Result<Vec<Hash>> {
     let mut found = past_grace(tx, app)?;
     if let Some(bucket) = app.blobs.s3()
         && !found.is_empty()
     {
         let held = crate::app::backups::held(tx, bucket.id(), &found)?;
         found.retain(|hash| !held.contains(hash));
+        if !surveyed {
+            let stored: HashSet<String> = rows::held_in(
+                tx,
+                bucket.id(),
+                found.iter().map(|hash| hash.as_str().to_string()),
+            )?
+            .into_iter()
+            .collect();
+            found.retain(|hash| !stored.contains(hash.as_str()));
+        }
     }
     Ok(found)
 }
@@ -524,12 +539,28 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
     let mut unreachable = BTreeSet::new();
     app.retry_deletions(&run, LEFTOVERS, true, &mut unreachable)
         .await?;
+    let looked = app.clone();
+    let due = app
+        .db
+        .read(move |tx| Ok(!past_grace(tx, &looked)?.is_empty()))
+        .await?;
+    let surveyed = if due {
+        match crate::app::backups::survey_folder(&app).await {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(%error, "Files the object store holds wait for a survey of the backups");
+                false
+            }
+        }
+    } else {
+        false
+    };
     let (live, at, job) = (app.clone(), app.clock.stamp(), run.job);
     let (candidates, kept) = app
         .db
         .write(Write::own(), move |tx| {
             // Chosen before this run reports, so only an earlier run's report is purged.
-            let candidates = purgeable(tx, &live)?;
+            let candidates = purgeable(tx, &live, surveyed)?;
             let kept = match grace_cutoff(tx, &live)? {
                 Some(_) => rows::UNREAD_ORPHANS.report(tx, job, [])?,
                 None => 0,
@@ -552,7 +583,7 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
         let gone = app
             .write(&Caller::Server, "blob.purge", move |unit| {
                 let tx = unit.tx();
-                let still: HashSet<Hash> = purgeable(tx, &live)?.into_iter().collect();
+                let still: HashSet<Hash> = purgeable(tx, &live, surveyed)?.into_iter().collect();
                 let chosen: Vec<Hash> = candidates
                     .into_iter()
                     .filter(|hash| still.contains(hash))
