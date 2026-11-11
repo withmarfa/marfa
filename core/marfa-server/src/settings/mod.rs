@@ -8,6 +8,7 @@ pub mod start;
 pub mod start_only;
 pub mod together;
 pub mod tuning;
+mod unknown;
 
 use std::fmt;
 use std::sync::Arc;
@@ -112,7 +113,9 @@ impl Settings {
     /// only in place of its default.
     pub fn read(environment: Environment) -> Result<Accepted, Refused> {
         let mut problems = Vec::new();
+        let unknown = unknown::find(&environment);
         let read = Fixed::read(&environment, &mut problems);
+        problems.extend(unknown::refusals(&unknown));
         #[cfg(feature = "test-hooks")]
         let seeds = if Fixed::hooks_on(&environment) {
             registry::seeds(&environment, &mut problems)
@@ -136,6 +139,7 @@ impl Settings {
         if !fixed.test_hooks {
             warn_of_ignored(&environment);
         }
+        unknown::warn(&unknown);
         let start_only = start_only::listed(&environment, fixed.test_hooks);
         Ok(Accepted {
             fixed,

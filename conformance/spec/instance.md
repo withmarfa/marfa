@@ -2122,6 +2122,22 @@ When the server writes an archive export, the server MUST NOT include `marfa.sec
 
 **Tests:** `compliance/hook-free-server.test.ts › leaves marfa.secrets out of an export, whether the file was generated or the secrets came from the environment`.
 
+### `instance/unknown-setting-warned`
+
+When the server starts and the environment holds a variable whose name begins with `MARFA_` or `S3_` and names no setting of the server and none that the `marfa` command reads from a shell, the server MUST log one warning that names the variable, and the closest setting when one is near, and holds none of its value.
+
+**Reason:** a setting that was renamed or removed, or one spelled wrongly, would otherwise leave the owner on the default with no word of it. The server still starts, because the same variable can be a leftover that does no harm, and the warning is where the owner looks for it. A value is never logged, since a misnamed variable can hold a secret.
+
+**Tests:** `compliance/hook-free-server.test.ts › warns once of each MARFA_ or S3_ variable it does not read, names the setting it is near, and starts`.
+
+### `instance/unknown-secret-name-refused`
+
+If the environment holds a variable that names no setting of the server and is within two edits of `MARFA_KEY_SALT` or `MARFA_AUTH_SECRET`, ignoring case, then the server MUST refuse to start and name the variable and the secret.
+
+**Reason:** a misspelled secret would not stop the server, which makes a secret of its own where the environment gives none: a new salt ends every key, and a new authentication secret ends every sign-in. This is the one misspelling that costs more than the start it stops.
+
+**Tests:** `compliance/hook-free-server.test.ts › refuses a variable a letter from the name of a secret, which the server would replace, and starts without it`.
+
 ### `instance/proxy-header-trusted-peer`
 
 While both `MARFA_TRUSTED_PROXY_HEADER` and `MARFA_TRUSTED_PROXY_CIDRS` are set, the server MUST read a caller's address from the header only when the request's peer is inside the ranges, and the peer's address stands for any other request.
