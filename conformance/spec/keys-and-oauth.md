@@ -2536,6 +2536,15 @@ If one address has made ten password sign-in attempts in fifteen minutes at emai
 
 **Tests:** `compliance/sign-in-door-limits.test.ts › counts password sign-ins at every email but the owner's together, and still judges the owner's password`.
 
+
+### `keys-and-oauth/sign-in-decoy-queue`
+
+If eight password sign-ins at emails that are not the owner's are already waiting for their password check, then the server MUST answer the next such sign-in `429` with `Retry-After`.
+
+**Reason:** A sign-in at an email with no account still does the work of a password check, so it cannot be told from a wrong password by its time; those checks wait in a queue of their own, so they can never hold up the owner's.
+
+**Tests:** waiting on #2892.
+
 ### `keys-and-oauth/register-address-limit`
 
 Where `rate_limit_enabled` is `true`, if one address has sent ten `POST /auth/oauth2/register` requests in a minute, then the server MUST answer its next one `429` with `Retry-After`.
@@ -2551,6 +2560,21 @@ Where `rate_limit_enabled` is `true`, if one address has sent thirty `POST /auth
 **Reason:** A device code request needs no credential, and each one stores a code a person may be asked to type.
 
 **Tests:** `compliance/sign-in-door-limits.test.ts › answers the thirty-first device code from one address in a minute 429`.
+
+
+### `keys-and-oauth/client-document-limits`
+
+If one address has made ten requests in a minute that fetch a client ID metadata document, or every address together thirty, then the server MUST NOT fetch the document for the next such request.
+
+**Reason:** Each request makes the server fetch from an address the caller names, so the count holds what one caller can make the server send.
+
+**Tests:** waiting on #2892.
+
+### `keys-and-oauth/client-document-limit-answer`
+
+If a client document limit keeps the server from fetching a client's metadata document, then the server MUST answer the request as it would with the copy it keeps of that client, or, with none kept, refuse it with `temporarily_unavailable`.
+
+**Tests:** waiting on #2892.
 
 ### `keys-and-oauth/device-lookup-address-limit`
 
@@ -2684,6 +2708,15 @@ Where the sign-in address is HTTPS, the server MUST set the owner's session cook
 **Reason:** The prefix binds the cookie to the instance's host, so no other host under the same domain can set or read it.
 
 **Tests:** `compliance/session-cookie-https.test.ts › is __Host-marfa_session, Secure, on path / and with no Domain`.
+
+
+### `keys-and-oauth/session-renewal-not-on-error`
+
+If the server answers a request that would renew a browser session with a `5xx` status, then the server MUST NOT send the renewal cookie.
+
+**Reason:** The request may not have done what it set out to do, and a renewal on it would keep a session alive on the strength of a failure.
+
+**Tests:** waiting on #2892.
 
 ### `keys-and-oauth/session-cookie-other-name`
 
