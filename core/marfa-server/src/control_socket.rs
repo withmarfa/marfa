@@ -362,7 +362,7 @@ fn refuse_acl(path: &Path, what: &str) -> Result<(), Failure> {
 mod tests {
     use std::os::unix::fs::symlink;
 
-    use marfa_acl::testing::{Grant, let_another_account};
+    use marfa_acl::testing::Grant;
     use tempfile::TempDir;
 
     use super::*;
@@ -374,6 +374,19 @@ mod tests {
         let dir = TempDir::new_in(root).unwrap();
         let path = dir.path().to_path_buf();
         (dir, path)
+    }
+
+    /// A child process holds every socket its parent has open until it has
+    /// executed, so a listener dropped while another test spawns still answers.
+    static SPAWNING: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn spawning<T>(run: impl FnOnce() -> T) -> T {
+        let _held = SPAWNING.lock().unwrap_or_else(|error| error.into_inner());
+        run()
+    }
+
+    fn let_another_account(folder: &Path, grant: Grant) -> bool {
+        spawning(|| marfa_acl::testing::let_another_account(folder, grant))
     }
 
     fn refusal(path: &Path) -> String {
@@ -550,7 +563,7 @@ mod tests {
         let (_dir, root) = private_root();
         set_mode(&root, 0o700);
         let path = root.join("marfa.sock");
-        drop(UnixListener::bind(&path).unwrap());
+        spawning(|| drop(UnixListener::bind(&path).unwrap()));
         let mut claim = Claim::take(&path).unwrap();
         let _listener = claim.bind().unwrap();
         UnixStream::connect(&path).unwrap();
@@ -694,18 +707,22 @@ mod tests {
         let folder = root.join("control");
         std::fs::create_dir(&folder).unwrap();
         set_mode(&folder, 0o700);
-        let deny = std::process::Command::new("/bin/chmod")
-            .args(["+a", "everyone deny delete"])
-            .arg(&folder)
-            .status()
-            .unwrap();
+        let deny = spawning(|| {
+            std::process::Command::new("/bin/chmod")
+                .args(["+a", "everyone deny delete"])
+                .arg(&folder)
+                .status()
+                .unwrap()
+        });
         assert!(deny.success());
         Claim::take(&folder.join("marfa.sock")).unwrap();
-        let allow = std::process::Command::new("/bin/chmod")
-            .args(["+a", "everyone allow list,search"])
-            .arg(&folder)
-            .status()
-            .unwrap();
+        let allow = spawning(|| {
+            std::process::Command::new("/bin/chmod")
+                .args(["+a", "everyone allow list,search"])
+                .arg(&folder)
+                .status()
+                .unwrap()
+        });
         assert!(allow.success());
         let said = refusal(&folder.join("marfa.sock"));
         assert!(said.contains("access control list"), "{said}");
