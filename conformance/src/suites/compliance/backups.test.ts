@@ -27,6 +27,7 @@ import {
   ownObjectStore,
   runJob,
 } from "../../utils/own-blob-server.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { waitFor } from "../../utils/wait.js";
 
@@ -153,6 +154,7 @@ describe("a backup in the object store", () => {
     const owner = ownerOf(origin);
     const run = await owner.runBackup();
     expect(run.status, JSON.stringify(run.error)).toBe(200);
+    await expectMatchesSchema("POST", "/backups", 200, run.data);
     expect(run.data.outcome).toBe("put");
     const { name, instance_id, created_at, size_bytes } = run.data.backup;
     expect(name).toBe(`${created_at}.tar`);
@@ -257,6 +259,7 @@ describe("a backup in the object store", () => {
     expect(second.status, JSON.stringify(second.error)).toBe(200);
     const listed = await owner.listBackups();
     expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+    await expectMatchesSchema("GET", "/backups", 200, listed.data);
     expect(listed.data.next_cursor).toBeNull();
     expect(listed.data.data.map((backup) => backup.name)).toEqual([
       second.data.backup.name,
@@ -291,6 +294,12 @@ describe("a backup in the object store", () => {
     );
     const restored = await ownerOf(fresh).restoreBackup(originId, firstName);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    await expectMatchesSchema(
+      "POST",
+      "/backups/{instance_id}/{name}/restore",
+      200,
+      restored.data,
+    );
     expect(restored.data.backup).toEqual({
       name: firstName,
       instance_id: originId,
