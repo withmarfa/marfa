@@ -475,9 +475,9 @@ records an audit entry names it by the entry's `action`
 ([The audit log](spec/events.md#the-audit-log)), and a write point may take that action in its
 argument as `<action>`, for the first such write, or `<action>@<n>`, so a
 request that makes other writes first does not shift the count. `fail:audit`
-also counts each entry of a page under `atomic: false`, which records its own
-audit entry: `fail:audit=items.bulk@2` fails the second entry, and its page
-writes the others. A write point
+also counts each entry of a page under `atomic: false` that is written or
+skipped, and then the page's commit: `fail:audit=items.bulk@2` fails the
+second entry, and its page writes the others. A write point
 without an action counts every write. A `fail` fault at a write point may take `<action>@always`
 instead, and then acts on every such write until it is cleared, as a fault
 that does not clear would.
