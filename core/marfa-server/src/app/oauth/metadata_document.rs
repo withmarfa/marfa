@@ -307,8 +307,7 @@ pub fn parse_document(
             "token_endpoint_auth_method must be among token_endpoint_auth_methods_supported.",
         ));
     }
-    // The plural field lists every method the client can use, and this server
-    // takes only none; the singular is a preference (MCP SEP-3149).
+    // The list is authoritative; the singular is only a preference (MCP SEP-3149).
     let registration = if stated.is_some() && supported.contains(&"none") {
         let mut public = object.clone();
         public.remove("token_endpoint_auth_method");

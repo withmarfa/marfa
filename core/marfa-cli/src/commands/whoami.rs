@@ -29,8 +29,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 record["scope"] = json!(scope);
                 record["expires_at"] = json!(expires_at);
             }
-            // A server on another contract is described, not asked, and the
-            // credential is not sent to it. A dead credential is refused 401.
+            // A server on another contract never receives the credential.
             if kind == "token" {
                 record["person"] = if held {
                     remote.json(&Request::get(&["profile"]))?
