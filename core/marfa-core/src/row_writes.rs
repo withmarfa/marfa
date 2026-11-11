@@ -36,6 +36,14 @@ impl Op {
         }
     }
 
+    pub(crate) fn name(&self) -> &'static str {
+        match self {
+            Op::Put { .. } => "put",
+            Op::Patch { .. } => "patch",
+            Op::Delete { .. } => "delete",
+        }
+    }
+
     fn values(&self) -> Option<&Map<String, Value>> {
         match self {
             Op::Put { values, .. } | Op::Patch { values, .. } => Some(values),
@@ -208,22 +216,8 @@ fn whole(conn: &Connection, item: &str, table: &str) -> Result<bool> {
     Ok(tables::state(conn, item, table)?.as_deref() == Some(tables::WHOLE))
 }
 
-/// Its type's tables and, under `core.table`, its own.
-fn declared(conn: &Connection, item: &str) -> Result<Map<String, Value>> {
-    let (type_id, properties): (String, String) = conn.query_row(
-        "SELECT type, properties FROM items WHERE id = ?1",
-        [item],
-        |row| Ok((row.get(0)?, row.get(1)?)),
-    )?;
-    let properties = match serde_json::from_str(&properties)? {
-        Value::Object(properties) => properties,
-        _ => Map::new(),
-    };
-    crate::catalog::item_tables(conn, &type_id, &properties)
-}
-
 fn columns_of(conn: &Connection, item: &str, table: &str) -> Result<Map<String, Value>> {
-    let tables = declared(conn, item)?;
+    let tables = tables::of_item(conn, item)?;
     let definition = tables.get(table).ok_or_else(|| CoreError::NotFound {
         code: "table_not_found".into(),
         message: format!("the type of {item} declares no table {table}"),
@@ -714,6 +708,104 @@ pub(crate) fn applied_batch(conn: &Connection, item: &str, table: &str, batch: &
     let ids: BTreeSet<String> = released.into_iter().collect();
     for id in ids {
         lay(conn, item, table, &id)?;
+    }
+    Ok(())
+}
+
+/// Kept so a late answer under the spent key is not read as the next one's.
+pub(crate) fn spend_key(conn: &Connection, id: &str) -> Result<()> {
+    let (key, spent): (String, Option<String>) = conn.query_row(
+        "SELECT idempotency_key, spent_keys FROM queue WHERE id = ?1",
+        [id],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let mut keys: Vec<String> = match spent {
+        Some(json) => serde_json::from_str(&json)?,
+        None => Vec::new(),
+    };
+    keys.push(key);
+    conn.execute(
+        "UPDATE queue SET spent_keys = ?2, idempotency_key = ?3 WHERE id = ?1",
+        params![
+            id,
+            serde_json::to_string(&keys)?,
+            Uuid::now_v7().to_string()
+        ],
+    )?;
+    Ok(())
+}
+
+/// For a write of a sent batch about to go apart from it: every waiting write
+/// of the batch goes on its own, and the first under a key of its own.
+pub(crate) fn break_batch(conn: &Connection, id: &str) -> Result<()> {
+    let Some(lead) = conn
+        .query_row(
+            "SELECT COALESCE(batched_with, id) FROM queue WHERE id = ?1 AND kind = ?2",
+            params![id, WriteKind::WriteRows.as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+    else {
+        return Ok(());
+    };
+    let waiting = "(verdict IS NULL OR verdict = 'blocked')";
+    let released = conn.execute(
+        &format!("UPDATE queue SET batched_with = NULL WHERE batched_with = ?1 AND {waiting}"),
+        [&lead],
+    )?;
+    let open = conn
+        .query_row(
+            &format!("SELECT 1 FROM queue WHERE id = ?1 AND {waiting}"),
+            [&lead],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some();
+    if released > 0 && open {
+        spend_key(conn, &lead)?;
+    }
+    Ok(())
+}
+
+/// A row the server answers once a write may have reached it can hold that
+/// write already, so it says nothing of what the write replaced.
+pub(crate) fn unjudge(conn: &Connection, item: &str, table: &str, row: Option<&str>) -> Result<()> {
+    let judged: Vec<(String, String)> = {
+        let mut query = conn.prepare_cached(
+            "SELECT id, read FROM queue
+              WHERE item_id = ?1 AND row_table = ?2 AND kind = ?3 AND read IS NOT NULL
+                AND last_sent_seq IS NOT NULL AND (verdict IS NULL OR verdict = ?4)",
+        )?;
+        let rows = query.query_map(
+            params![
+                item,
+                table,
+                WriteKind::WriteRows.as_str(),
+                Verdict::Blocked.as_str()
+            ],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        rows.collect::<rusqlite::Result<_>>()?
+    };
+    for (id, read) in judged {
+        let kept = match row {
+            None => None,
+            Some(row) => {
+                let mut read: Value = serde_json::from_str(&read)?;
+                let Some(rows) = read.get_mut("rows").and_then(Value::as_object_mut) else {
+                    continue;
+                };
+                if rows.remove(row).is_none() {
+                    continue;
+                }
+                let left = !rows.is_empty();
+                left.then(|| read.to_string())
+            }
+        };
+        conn.execute(
+            "UPDATE queue SET read = ?2 WHERE id = ?1",
+            params![id, kept],
+        )?;
     }
     Ok(())
 }

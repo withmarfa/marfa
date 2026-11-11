@@ -1,19 +1,21 @@
 //! Row writes in batches recorded before they go, so a resend is the same request.
+//!
+//! A batch is settled in one transaction: every write of it takes its verdict,
+//! or none does.
 
 use std::collections::{HashMap, HashSet};
 
 use rusqlite::{Connection, params};
-use serde_json::{Value, json};
-use uuid::Uuid;
+use serde_json::{Map, Value, json};
 
 use super::{
-    Classified, ReachChange, Readiness, Settled, Shape, readiness, recorded, same_attempt,
+    Classified, Readiness, Settled, readiness, recorded, same_attempt, store_fault, unavailable,
     verdict_of,
 };
 use crate::error::CoreError;
 use crate::http::{Answer, REQUEST_LIMIT};
 use crate::model::{QueuedWrite, RowConflict, Verdict, WriteKind};
-use crate::row_writes::{self, MAX_OPERATIONS, Taken};
+use crate::row_writes::{self, MAX_OPERATIONS, Op, Taken};
 use crate::{Core, Result, store};
 
 pub(super) struct Standing<'a> {
@@ -139,32 +141,181 @@ fn unjoin(conn: &Connection, writes: &[&QueuedWrite]) -> Result<()> {
     Ok(())
 }
 
+fn batch_of<'a>(lead: &'a QueuedWrite, members: &'a [QueuedWrite]) -> Vec<&'a QueuedWrite> {
+    std::iter::once(lead).chain(members).collect()
+}
+
+/// Each write of the batch as it now stands, as a drain tells it.
+fn told_as(
+    core: &Core,
+    writes: &[&QueuedWrite],
+    settle: impl Fn(&QueuedWrite) -> Settled,
+) -> Result<Vec<(Settled, crate::drain::DrainVerdict)>> {
+    let conn = core.conn()?;
+    writes
+        .iter()
+        .map(|write| {
+            let now = store::queued_write(&conn, &write.id)?.unwrap_or_else(|| (*write).clone());
+            let settled = settle(&now);
+            let told = verdict_of(&now, &settled, now.answer.as_deref());
+            Ok((settled, told))
+        })
+        .collect()
+}
+
+/// The first write's settlement, with the others told beside it.
+fn lead_with_joined(mut told: Vec<(Settled, crate::drain::DrainVerdict)>) -> Result<Settled> {
+    if told.is_empty() {
+        return Err(CoreError::Store("a batch settled no write".into()));
+    }
+    let (mut lead, _) = told.remove(0);
+    lead.joined = told.into_iter().map(|(_, told)| told).collect();
+    Ok(lead)
+}
+
 pub(super) fn settle(
     core: &Core,
     row: &QueuedWrite,
     answer: &std::result::Result<Answer, CoreError>,
     class: Classified,
-    pass: &mut ReachChange,
 ) -> Result<Settled> {
     let members = joined(&*core.conn()?, &row.id)?;
+    let writes = batch_of(row, &members);
     match (row.kind, &class, answer) {
-        (WriteKind::UndoRows, Classified::Success | Classified::Delivered, Ok(answer)) => {
-            undone(core, row, answer)
+        (WriteKind::UndoRows, Classified::Success, Ok(answer)) => {
+            match undo_answer(row, &answer.body) {
+                Ok(()) => undone(core, row, Some(answer)),
+                Err(why) => counted(core, &writes, Some(&answer.body), Some(why)),
+            }
         }
+        (WriteKind::UndoRows, Classified::Delivered, Ok(_)) => undone(core, row, None),
         (WriteKind::WriteRows, Classified::Success, Ok(answer)) => {
-            taken(core, row, &members, Some(answer))
+            match rows_answer(&writes, &answer.body) {
+                Ok(read) => taken(core, &writes, Some((answer, read))),
+                Err(why) => counted(core, &writes, Some(&answer.body), Some(why)),
+            }
         }
-        (WriteKind::WriteRows, Classified::Delivered, Ok(_)) => taken(core, row, &members, None),
-        (WriteKind::WriteRows, Classified::Contract, Ok(refused)) => match operation_of(refused) {
-            Some(at) => split(core, row, &members, refused, at),
-            None => whole(core, row, &members, answer, class, pass),
-        },
-        _ => whole(core, row, &members, answer, class, pass),
+        (WriteKind::WriteRows, Classified::Delivered, Ok(_)) => taken(core, &writes, None),
+        (WriteKind::WriteRows, Classified::Contract, Ok(refused)) => {
+            match operation_of(refused, &writes) {
+                Some(at) => split(core, &writes, refused, at),
+                None => whole(core, &writes, answer, class),
+            }
+        }
+        _ => whole(core, &writes, answer, class),
     }
 }
 
-fn undone(core: &Core, row: &QueuedWrite, answer: &Answer) -> Result<Settled> {
-    let body = (!answer.body.is_empty()).then_some(answer.body.as_str());
+struct RowsAnswer {
+    batch: Option<String>,
+    last_activity_at: Option<Value>,
+    results: Vec<Value>,
+}
+
+fn valid_id(value: Option<&Value>) -> Option<&str> {
+    value
+        .and_then(Value::as_str)
+        .filter(|id| marfa_rules::validation::id("id", id).is_ok())
+}
+
+fn answer_object(body: &str) -> std::result::Result<Map<String, Value>, String> {
+    match serde_json::from_str::<Value>(body) {
+        Ok(Value::Object(answer)) => Ok(answer),
+        Ok(_) => Err("the answer is not an object".into()),
+        Err(error) => Err(format!("the answer is not JSON: {error}")),
+    }
+}
+
+fn answered_batch(answer: &Map<String, Value>) -> std::result::Result<Option<String>, String> {
+    match answer.get("batch") {
+        Some(Value::Null) => Ok(None),
+        batch => valid_id(batch)
+            .map(|batch| Some(batch.to_string()))
+            .ok_or_else(|| "the answer names no batch".into()),
+    }
+}
+
+fn rows_answer(writes: &[&QueuedWrite], body: &str) -> std::result::Result<RowsAnswer, String> {
+    let answer = answer_object(body)?;
+    let results = answer
+        .get("results")
+        .and_then(Value::as_array)
+        .ok_or("the answer holds no results")?;
+    let ops: Vec<Op> = writes
+        .iter()
+        .map(|write| row_writes::queued_ops(&write.body))
+        .collect::<Result<Vec<_>>>()
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .flatten()
+        .collect();
+    if results.len() != ops.len() {
+        return Err(format!(
+            "the answer holds {} results for {} operations",
+            results.len(),
+            ops.len()
+        ));
+    }
+    let mut changed = false;
+    for (at, (result, op)) in results.iter().zip(&ops).enumerate() {
+        let outcome = result.get("outcome").and_then(Value::as_str);
+        let fits = match op {
+            Op::Put { .. } => matches!(outcome, Some("created" | "replaced" | "unchanged")),
+            Op::Patch { .. } => matches!(outcome, Some("patched" | "unchanged")),
+            Op::Delete { .. } => matches!(outcome, Some("deleted" | "absent")),
+        };
+        if result.get("id").and_then(Value::as_str) != Some(op.id()) || !fits {
+            return Err(format!(
+                "result {at} does not answer operation {at}, {} of row {}",
+                op.name(),
+                op.id()
+            ));
+        }
+        changed |= !matches!(outcome, Some("unchanged" | "absent"));
+    }
+    let batch = answered_batch(&answer)?;
+    if batch.is_some() != changed {
+        return Err(if changed {
+            "the answer names no batch for the rows it changed".into()
+        } else {
+            "the answer names a batch that changed no row".into()
+        });
+    }
+    Ok(RowsAnswer {
+        batch,
+        last_activity_at: answer.get("last_activity_at").cloned(),
+        results: results.clone(),
+    })
+}
+
+fn undo_answer(row: &QueuedWrite, body: &str) -> std::result::Result<(), String> {
+    let answer = answer_object(body)?;
+    let results = answer
+        .get("results")
+        .and_then(Value::as_array)
+        .ok_or("the answer holds no results")?;
+    for (at, result) in results.iter().enumerate() {
+        let outcome = result.get("outcome").and_then(Value::as_str);
+        if valid_id(result.get("id")).is_none()
+            || !matches!(
+                outcome,
+                Some("created" | "replaced" | "deleted" | "unchanged")
+            )
+        {
+            return Err(format!("result {at} is not a row an undo answers"));
+        }
+    }
+    if answered_batch(&answer)?.is_some()
+        && answer.get("undoes").and_then(Value::as_str)
+            != row.body.get("batch").and_then(Value::as_str)
+    {
+        return Err("the answer undoes another batch".into());
+    }
+    Ok(())
+}
+
+/// `answer` is `None` where the server kept no answer to repeat.
+fn undone(core: &Core, row: &QueuedWrite, answer: Option<&Answer>) -> Result<Settled> {
     recorded(core, || {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
@@ -175,7 +326,7 @@ fn undone(core: &Core, row: &QueuedWrite, answer: &Answer) -> Result<Settled> {
             &store::Answered {
                 verdict: Verdict::Accepted,
                 reason: None,
-                answer: body,
+                answer: answer.map(|answer| answer.body.as_str()),
                 conflicted_copy_id: None,
             },
         )?;
@@ -183,41 +334,83 @@ fn undone(core: &Core, row: &QueuedWrite, answer: &Answer) -> Result<Settled> {
         Ok(())
     })?;
     Ok(Settled {
-        replayed: answer.replayed,
+        replayed: answer.is_none_or(|answer| answer.replayed),
         ..Settled::plain(Some(Verdict::Accepted), None, row.refusals)
     })
+}
+
+/// One refusal counted against each write, and `dead` at the ceiling.
+pub(super) fn counted(
+    core: &Core,
+    writes: &[&QueuedWrite],
+    envelope: Option<&str>,
+    reason: Option<String>,
+) -> Result<Settled> {
+    let ends = recorded(core, || {
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        let mut ends = Vec::with_capacity(writes.len());
+        for write in writes {
+            same_attempt(&tx, write)?;
+            let refusals = store::count_refusal(&tx, &write.id)?;
+            let dead = refusals >= store::CEILING;
+            if dead {
+                store::record_verdict(
+                    &tx,
+                    &write.id,
+                    &store::Answered {
+                        verdict: Verdict::Dead,
+                        reason: None,
+                        answer: envelope,
+                        conflicted_copy_id: None,
+                    },
+                )?;
+            }
+            ends.push((write.id.clone(), refusals, dead));
+        }
+        row_writes::flush(&tx)?;
+        tx.commit()?;
+        Ok(ends)
+    })?;
+    let told = told_as(core, writes, |now| {
+        let (_, refusals, dead) = ends
+            .iter()
+            .find(|(id, _, _)| *id == now.id)
+            .cloned()
+            .unwrap_or((now.id.clone(), now.refusals, false));
+        if dead {
+            Settled::plain(Some(Verdict::Dead), None, refusals)
+        } else {
+            Settled::plain(None, reason.clone(), refusals)
+        }
+    })?;
+    lead_with_joined(told)
 }
 
 /// `answer` is `None` where the server kept no answer to repeat.
 fn taken(
     core: &Core,
-    lead: &QueuedWrite,
-    members: &[QueuedWrite],
-    answer: Option<&Answer>,
+    writes: &[&QueuedWrite],
+    answer: Option<(&Answer, RowsAnswer)>,
 ) -> Result<Settled> {
-    let parsed: Value = answer
-        .and_then(|answer| serde_json::from_str(&answer.body).ok())
-        .unwrap_or(Value::Null);
-    let batch = parsed.get("batch").and_then(Value::as_str);
-    let results = parsed
-        .get("results")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let writes: Vec<&QueuedWrite> = std::iter::once(lead).chain(members).collect();
+    let lead = writes[0];
+    let (answered, read) = match answer {
+        Some((answered, read)) => (Some(answered), Some(read)),
+        None => (None, None),
+    };
+    let batch = read.as_ref().and_then(|read| read.batch.as_deref());
     let counts: Vec<usize> = writes
         .iter()
         .map(|write| operations_of(write).len())
         .collect();
-    let results = if results.len() == counts.iter().sum::<usize>() {
-        results
-    } else {
-        Vec::new()
-    };
     let mut shares: Vec<&[Value]> = Vec::with_capacity(writes.len());
     let mut from = 0;
     for count in &counts {
-        shares.push(results.get(from..from + count).unwrap_or(&[]));
+        shares.push(
+            read.as_ref()
+                .and_then(|read| read.results.get(from..from + count))
+                .unwrap_or(&[]),
+        );
         from += count;
     }
     let item = lead.item_id.as_deref().unwrap_or_default();
@@ -225,7 +418,7 @@ fn taken(
     let verdicts = recorded(core, || {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
-        for write in &writes {
+        for write in writes {
             same_attempt(&tx, write)?;
         }
         #[cfg(debug_assertions)]
@@ -238,15 +431,18 @@ fn taken(
         let conflicts = row_writes::taken(&tx, item, table, batch, &takens)?;
         let mut verdicts = Vec::with_capacity(writes.len());
         for ((write, results), conflicts) in writes.iter().zip(&shares).zip(conflicts) {
+            if let Some(error) = store_fault(write) {
+                return Err(error);
+            }
             let verdict = if conflicts.is_empty() {
                 Verdict::Accepted
             } else {
                 Verdict::Conflicted
             };
-            let own = answer.map(|_| {
+            let own = read.as_ref().map(|read| {
                 json!({
                     "batch": batch,
-                    "last_activity_at": parsed.get("last_activity_at"),
+                    "last_activity_at": read.last_activity_at,
                     "results": results,
                 })
                 .to_string()
@@ -268,73 +464,53 @@ fn taken(
                 "UPDATE queue SET conflicts = ?2 WHERE id = ?1",
                 params![write.id, named],
             )?;
-            verdicts.push((verdict, conflicts));
+            verdicts.push((write.id.clone(), verdict, conflicts));
         }
         row_writes::flush(&tx)?;
         tx.commit()?;
         Ok(verdicts)
     })?;
-    let replayed = answer.is_none_or(|answer| answer.replayed);
-    let told = |write: &QueuedWrite, verdict: Verdict, conflicts: Vec<RowConflict>| -> Result<_> {
-        let now = store::queued_write(&*core.conn()?, &write.id)?.unwrap_or_else(|| write.clone());
-        let mut told = verdict_of(
-            &now,
-            &Settled {
-                replayed,
-                ..Settled::plain(Some(verdict), None, now.refusals)
-            },
-            now.answer.as_deref(),
-        );
-        told.conflicts = conflicts;
-        Ok(told)
+    let replayed = answered.is_none_or(|answered| answered.replayed);
+    let conflicts_of = |id: &str| -> (Verdict, Vec<RowConflict>) {
+        verdicts
+            .iter()
+            .find(|(write, _, _)| write == id)
+            .map(|(_, verdict, conflicts)| (*verdict, conflicts.clone()))
+            .unwrap_or((Verdict::Accepted, Vec::new()))
     };
-    let mut verdicts = verdicts.into_iter();
-    let (verdict, conflicts) = verdicts
-        .next()
-        .ok_or_else(|| CoreError::Store("a batch's answer settled no write".into()))?;
-    let joined = members
-        .iter()
-        .zip(verdicts)
-        .map(|(member, (verdict, conflicts))| told(member, verdict, conflicts))
-        .collect::<Result<_>>()?;
-    Ok(Settled {
-        replayed,
-        conflicts,
-        joined,
-        ..Settled::plain(Some(verdict), None, lead.refusals)
-    })
+    let told = told_as(core, writes, |now| {
+        let (verdict, conflicts) = conflicts_of(&now.id);
+        Settled {
+            replayed,
+            conflicts,
+            ..Settled::plain(Some(verdict), None, now.refusals)
+        }
+    })?;
+    lead_with_joined(told)
 }
 
-fn operation_of(refused: &Answer) -> Option<usize> {
+/// The operation a refusal names, where it is one of the batch's.
+fn operation_of(refused: &Answer, writes: &[&QueuedWrite]) -> Option<usize> {
     let body: Value = serde_json::from_str(&refused.body).ok()?;
-    let at = body.pointer("/error/details/operation")?.as_u64()?;
-    usize::try_from(at).ok()
+    let at = usize::try_from(body.pointer("/error/details/operation")?.as_u64()?).ok()?;
+    let total: usize = writes.iter().map(|write| operations_of(write).len()).sum();
+    (at < total).then_some(at)
 }
 
 /// The server wrote none of the batch, so only the named write is refused.
-fn split(
-    core: &Core,
-    lead: &QueuedWrite,
-    members: &[QueuedWrite],
-    refused: &Answer,
-    at: usize,
-) -> Result<Settled> {
-    let writes: Vec<&QueuedWrite> = std::iter::once(lead).chain(members).collect();
+fn split(core: &Core, writes: &[&QueuedWrite], refused: &Answer, at: usize) -> Result<Settled> {
+    let lead = writes[0];
     let mut from = 0;
-    let mut owner = None;
+    let mut owner = (0, 0);
     for (index, write) in writes.iter().enumerate() {
         let count = operations_of(write).len();
         if at < from + count {
-            owner = Some((index, at - from));
+            owner = (index, at - from);
             break;
         }
         from += count;
     }
-    let Some((owner, local)) = owner else {
-        return Err(CoreError::Store(format!(
-            "the server refused operation {at} of a batch of {from}"
-        )));
-    };
+    let (owner, local) = owner;
     let mut envelope: Value = serde_json::from_str(&refused.body)?;
     if let Some(operation) = envelope.pointer_mut("/error/details/operation") {
         *operation = json!(local);
@@ -348,10 +524,13 @@ fn split(
     recorded(core, || {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
-        for write in &writes {
+        for write in writes {
             same_attempt(&tx, write)?;
+            if let Some(error) = store_fault(write) {
+                return Err(error);
+            }
         }
-        unjoin(&tx, &writes)?;
+        unjoin(&tx, writes)?;
         store::record_verdict(
             &tx,
             &writes[owner].id,
@@ -368,7 +547,7 @@ fn split(
             }
             store::mark_unsent(&tx, &write.id)?;
             if index == 0 {
-                spend_key(&tx, write)?;
+                row_writes::spend_key(&tx, &write.id)?;
             }
         }
         row_writes::flush(&tx)?;
@@ -377,77 +556,88 @@ fn split(
     })?;
     let refused_write = store::queued_write(&*core.conn()?, &writes[owner].id)?
         .unwrap_or_else(|| writes[owner].clone());
-    let told = verdict_of(
-        &refused_write,
-        &Settled::plain(
-            Some(Verdict::Refused),
-            Some(code.clone()),
-            refused_write.refusals,
-        ),
-        refused_write.answer.as_deref(),
+    let refusal = Settled::plain(
+        Some(Verdict::Refused),
+        Some(code.clone()),
+        refused_write.refusals,
     );
     if owner == 0 {
-        return Ok(Settled::plain(
-            Some(Verdict::Refused),
-            Some(code),
-            lead.refusals,
-        ));
+        return Ok(refusal);
     }
     Ok(Settled {
         again: true,
-        joined: vec![told],
+        joined: vec![verdict_of(
+            &refused_write,
+            &refusal,
+            refused_write.answer.as_deref(),
+        )],
         ..Settled::plain(None, None, lead.refusals)
     })
 }
 
-/// Kept so a late answer to the refused batch is not read as the next one's.
-fn spend_key(conn: &Connection, write: &QueuedWrite) -> Result<()> {
-    let spent: Option<String> = conn.query_row(
-        "SELECT spent_keys FROM queue WHERE id = ?1",
-        [&write.id],
-        |row| row.get(0),
-    )?;
-    let mut keys: Vec<String> = match spent {
-        Some(json) => serde_json::from_str(&json)?,
-        None => Vec::new(),
-    };
-    keys.push(write.idempotency_key.clone());
-    conn.execute(
-        "UPDATE queue SET spent_keys = ?2, idempotency_key = ?3 WHERE id = ?1",
-        params![
-            write.id,
-            serde_json::to_string(&keys)?,
-            Uuid::now_v7().to_string()
-        ],
-    )?;
-    Ok(())
-}
-
-/// Settles each write as one sent alone.
+/// Each write as the answer settles one sent on its own.
 fn whole(
     core: &Core,
-    lead: &QueuedWrite,
-    members: &[QueuedWrite],
+    writes: &[&QueuedWrite],
     answer: &std::result::Result<Answer, CoreError>,
     class: Classified,
-    pass: &mut ReachChange,
 ) -> Result<Settled> {
-    let mut settled = super::settle(core, lead, answer, class.clone(), Shape::Rows, pass)?;
-    for member in members {
-        let own = super::settle(core, member, answer, class.clone(), Shape::Rows, pass)?;
-        let now =
-            store::queued_write(&*core.conn()?, &member.id)?.unwrap_or_else(|| member.clone());
-        settled
-            .joined
-            .push(verdict_of(&now, &own, now.answer.as_deref()));
-    }
-    if settled.verdict.is_some() {
-        let writes: Vec<&QueuedWrite> = std::iter::once(lead).chain(members).collect();
+    let envelope = answer.as_ref().ok().map(|answer| answer.body.as_str());
+    let (verdict, reason) = match &class {
+        Classified::Environmental => {
+            let retry_after_seconds = answer
+                .as_ref()
+                .err()
+                .and_then(CoreError::retry_after)
+                .map(|wait| wait.as_secs());
+            let told = told_as(core, writes, |now| Settled {
+                retry_after_seconds,
+                unavailable: unavailable(answer),
+                ..Settled::plain(None, None, now.refusals)
+            })?;
+            return lead_with_joined(told);
+        }
+        Classified::Contract => (
+            Verdict::Refused,
+            answer
+                .as_ref()
+                .ok()
+                .map(|answer| answer.code.clone())
+                .filter(|code| !code.is_empty())
+                .unwrap_or_else(|| "unknown".into()),
+        ),
+        Classified::Block(reason) | Classified::BlockQueue(reason) => {
+            (Verdict::Blocked, reason.as_str().to_string())
+        }
+        _ => return counted(core, writes, envelope, None),
+    };
+    recorded(core, || {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
-        unjoin(&tx, &writes)?;
+        for write in writes {
+            same_attempt(&tx, write)?;
+            if let Some(error) = store_fault(write) {
+                return Err(error);
+            }
+            store::record_verdict(
+                &tx,
+                &write.id,
+                &store::Answered {
+                    verdict,
+                    reason: Some(&reason),
+                    answer: envelope,
+                    conflicted_copy_id: None,
+                },
+            )?;
+        }
         row_writes::flush(&tx)?;
         tx.commit()?;
-    }
-    Ok(settled)
+        Ok(())
+    })?;
+    let stops_the_drain = matches!(class, Classified::BlockQueue(_));
+    let told = told_as(core, writes, |now| Settled {
+        stops_the_drain,
+        ..Settled::plain(Some(verdict), Some(reason.clone()), now.refusals)
+    })?;
+    lead_with_joined(told)
 }

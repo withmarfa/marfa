@@ -5861,6 +5861,7 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
             Uuid::now_v7().to_string()
         ],
     )?;
+    crate::row_writes::break_batch(conn, id)?;
     let released = queued_write(conn, id)?.expect("released row exists");
     let original_fields = edit_fields(conn, &released)?;
     let mut excluded_attempts = HashSet::new();
@@ -6004,6 +6005,7 @@ fn take_out(
         record_refusal(conn, dependant, &reason, None, false)?;
     }
     let ends = edge_write_ends(conn, &row.id)?;
+    crate::row_writes::break_batch(conn, &row.id)?;
     conn.execute("DELETE FROM queue WHERE id = ?1", [&row.id])?;
     meta_delete(conn, &effect_key(&row.id))?;
     meta_delete(conn, &chosen_tier_key(&row.id))?;

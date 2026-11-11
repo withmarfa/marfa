@@ -296,6 +296,21 @@ fn leave_waiting(stuck: &Suspect, report: &mut DrainReport) {
     }
 }
 
+/// Puts the write's entry in place of the one it has, or last, answering
+/// whether it had none.
+fn tell(report: &mut DrainReport, entry: DrainVerdict) -> bool {
+    match report.verdicts.iter_mut().find(|told| told.id == entry.id) {
+        Some(told) => {
+            *told = entry;
+            false
+        }
+        None => {
+            report.verdicts.push(entry);
+            true
+        }
+    }
+}
+
 /// Puts the write's entry in the report: in place of the one it already has,
 /// where it has one, and last otherwise.
 fn put_verdict(report: &mut DrainReport, replacing: Option<usize>, entry: DrainVerdict) {
@@ -372,6 +387,8 @@ fn set_aside(
     // The later edit read this edit's optimistic fields, which will not reach
     // the server until a person releases it.
     move_edits_back(&tx, &row)?;
+    crate::row_writes::break_batch(&tx, &row.id)?;
+    crate::row_writes::flush(&tx)?;
     let set_aside = store::queued_write(&tx, &row.id)?.unwrap_or(row);
     tx.commit()?;
     answers.insert(set_aside.id.clone(), Some(Verdict::Blocked));
@@ -1609,7 +1626,7 @@ fn send_queue(
         let landed = matches!(class, Classified::Landed { .. } | Classified::Delivered);
         let taken = match store_fault(row) {
             Some(error) => Err(error),
-            None if row.kind.rows() => rows::settle(core, row, &answer, class, pass),
+            None if row.kind.rows() => rows::settle(core, row, &answer, class),
             None => settle(core, row, &answer, class, shape, pass),
         };
         let mut settled = match taken {
@@ -1636,6 +1653,15 @@ fn send_queue(
                             current.answer.as_deref(),
                         ),
                     );
+                    if row.kind.rows() {
+                        for member in rows::joined(&*core.conn()?, &row.id)? {
+                            let settled = committed(&member, None, shape, false);
+                            tell(
+                                report,
+                                verdict_of(&member, &settled, member.answer.as_deref()),
+                            );
+                        }
+                    }
                     return Err(error);
                 }
                 if matches!(
@@ -1654,25 +1680,29 @@ fn send_queue(
                 }
                 // The server answered and the copy could not take the answer:
                 // a further attempt may clear it, nothing clears it on its own.
-                let refusals = store::count_refusal(&*core.conn()?, &row.id)?;
-                let mut settled = finish_counted(
-                    core,
-                    row,
-                    refusals,
-                    answer.as_ref().ok().map(|answer| answer.body.clone()),
-                )?;
-                // A dead write carries no reason, in the queue or here.
-                if settled.verdict.is_none() {
-                    settled.reason = Some(format!("the copy could not take the answer: {error}"));
+                let reason = format!("the copy could not take the answer: {error}");
+                let envelope = answer.as_ref().ok().map(|answer| answer.body.clone());
+                if row.kind.rows() {
+                    let members = rows::joined(&*core.conn()?, &row.id)?;
+                    let writes: Vec<&QueuedWrite> = std::iter::once(row).chain(&members).collect();
+                    rows::counted(core, &writes, envelope.as_deref(), Some(reason))?
+                } else {
+                    let refusals = store::count_refusal(&*core.conn()?, &row.id)?;
+                    let mut settled = finish_counted(core, row, refusals, envelope)?;
+                    // A dead write carries no reason, in the queue or here.
+                    if settled.verdict.is_none() {
+                        settled.reason = Some(reason);
+                    }
+                    settled
                 }
-                settled
             }
         };
         if settled.again {
             for entry in std::mem::take(&mut settled.joined) {
                 answers.insert(entry.id.clone(), entry.verdict);
-                report.answered += 1;
-                report.verdicts.push(entry);
+                if tell(report, entry) {
+                    report.answered += 1;
+                }
             }
             if role == Role::Walk {
                 cursor -= 1;
@@ -1755,20 +1785,20 @@ fn send_queue(
         );
         for entry in std::mem::take(&mut settled.joined) {
             answers.insert(entry.id.clone(), entry.verdict);
-            match entry.verdict {
-                Some(_) => report.answered += 1,
-                None => {
-                    waiting.insert(entry.id.clone());
-                    if settled.unavailable.is_some() {
-                        report.undelivered += 1;
-                    } else if answer.is_ok() {
-                        report.answered += 1;
-                    } else {
-                        report.unmade += 1;
-                    }
-                }
+            let verdict = entry.verdict;
+            if verdict.is_none() {
+                waiting.insert(entry.id.clone());
             }
-            report.verdicts.push(entry);
+            if !tell(report, entry) {
+                continue;
+            }
+            if verdict.is_some() || settled.unavailable.is_none() && answer.is_ok() {
+                report.answered += 1;
+            } else if settled.unavailable.is_some() {
+                report.undelivered += 1;
+            } else {
+                report.unmade += 1;
+            }
         }
         // The write has met the failure in three drains in a row, the first
         // five minutes ago: it waits for a write to test it.
@@ -1779,7 +1809,11 @@ fn send_queue(
                 key: row.idempotency_key.clone(),
                 at: cursor - 1,
                 unavailable: settled.unavailable.clone().unwrap_or_default(),
-                verdict_at: report.verdicts.len() - 1,
+                verdict_at: report
+                    .verdicts
+                    .iter()
+                    .position(|told| told.id == row.id)
+                    .unwrap_or(report.verdicts.len() - 1),
                 phase: Phase::Testing,
             });
         }

@@ -270,7 +270,8 @@ CREATE TABLE IF NOT EXISTS queue (
   blob TEXT,
   -- The table a row write or an undo names.
   row_table TEXT,
-  -- The write whose batch this one went in; cleared when each goes on its own.
+  -- The write whose batch this one went in, while the queue holds that write;
+  -- cleared where the batch's writes go on their own.
   batched_with TEXT,
   base_version INTEGER,
   -- `UNIQUE` because the server answers a reused key from the first write's
@@ -358,6 +359,11 @@ BEGIN
   INSERT OR IGNORE INTO rows_dirty (item_id, name, id)
     SELECT item_id, name, id FROM rows_laid WHERE write_id = OLD.id AND batch IS NULL;
   DELETE FROM rows_laid WHERE write_id = OLD.id AND batch IS NULL;
+END;
+CREATE TRIGGER IF NOT EXISTS queue_batch_gone AFTER DELETE ON queue
+  WHEN OLD.kind = 'write_rows'
+BEGIN
+  UPDATE queue SET batched_with = NULL WHERE batched_with = OLD.id;
 END;
 -- No index on `depends_on`: finding rows whose JSON array contains an id is a
 -- scan whatever is indexed, and an index would only make it look cheap.

@@ -436,7 +436,8 @@ export interface QueuedWrite {
   /** The table a row write or an undo names. */
   table: string | null;
   /** The write whose batch a row write was sent in, where it was not the first
-   *  (`queue-and-verdicts/rows-joined`). */
+   *  (`queue-and-verdicts/rows-joined`), until its writes go apart
+   *  (`queue-and-verdicts/rows-taken-out-apart`) or the queue no longer holds that write. */
   batched_with: string | null;
   conflicts: RowConflict[];
   queued_at: string;

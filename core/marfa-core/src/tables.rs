@@ -109,12 +109,33 @@ fn names(pattern: &str, type_id: &str, catalog: &Catalog) -> bool {
     }
 }
 
-fn declared(conn: &Connection, type_id: &str) -> Result<Map<String, Value>> {
-    match crate::catalog::item_type(conn, type_id) {
-        Ok(resolved) => Ok(resolved.tables),
-        Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => Ok(Map::new()),
-        Err(error) => Err(error),
+/// The tables every item of the type has: those it declares and, from
+/// `core.table` down, the one each item keeps.
+fn type_tables(conn: &Connection, catalog: &Catalog, type_id: &str) -> Result<Vec<String>> {
+    let mut names: Vec<String> = match crate::catalog::item_type(conn, type_id) {
+        Ok(resolved) => resolved.tables.into_iter().map(|(name, _)| name).collect(),
+        Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => Vec::new(),
+        Err(error) => return Err(error),
+    };
+    if catalog.keeps_own_table(type_id) {
+        names.push(marfa_rules::schema::OWN_TABLE.to_string());
     }
+    Ok(names)
+}
+
+/// An item's tables, with their columns: its type's and, from `core.table`
+/// down, its own from its `columns`.
+pub(crate) fn of_item(conn: &Connection, item: &str) -> Result<Map<String, Value>> {
+    let (type_id, properties): (String, String) = conn.query_row(
+        "SELECT type, properties FROM items WHERE id = ?1",
+        [item],
+        |row| Ok((row.get(0)?, row.get(1)?)),
+    )?;
+    let properties = match serde_json::from_str(&properties)? {
+        Value::Object(properties) => properties,
+        _ => Map::new(),
+    };
+    crate::catalog::item_tables(conn, &type_id, &properties)
 }
 
 fn wanted(
@@ -131,10 +152,10 @@ fn wanted(
     if named.is_empty() {
         return Ok(Vec::new());
     }
-    let declared = declared(conn, type_id)?;
+    let declared = type_tables(conn, catalog, type_id)?;
     let mut tables: Vec<String> = named
         .into_iter()
-        .filter(|table| declared.contains_key(table.as_str()))
+        .filter(|table| declared.contains(table))
         .cloned()
         .collect();
     tables.sort();
@@ -351,10 +372,10 @@ pub(crate) fn choose(conn: &mut Connection, type_id: &str, table: &str) -> Resul
     let declares = held
         .iter()
         .filter(|(id, _)| names(type_id, id, &catalog))
-        .map(|(id, _)| declared(conn, id))
+        .map(|(id, _)| type_tables(conn, &catalog, id))
         .collect::<Result<Vec<_>>>()?
         .iter()
-        .any(|tables| tables.contains_key(table));
+        .any(|tables| tables.iter().any(|name| name == table));
     if !declares {
         return Err(CoreError::Invalid(format!(
             "no type the copy holds under {type_id} declares a table {table}"
@@ -510,7 +531,14 @@ fn hold_answered(conn: &Connection, item: &str, table: &str, row: &Value) -> Res
         .and_then(Value::as_str)
         .ok_or_else(invalid)?;
     let withheld = withheld_of(row)?;
+    crate::row_writes::unjudge(conn, item, table, Some(id))?;
     crate::row_writes::take_server_row(conn, item, table, id, Some((values, &withheld, updated_at)))
+}
+
+/// A row a read found gone.
+fn read_gone(conn: &Connection, item: &str, table: &str, id: &str) -> Result<bool> {
+    crate::row_writes::unjudge(conn, item, table, Some(id))?;
+    crate::row_writes::take_server_row(conn, item, table, id, None)
 }
 
 fn withheld_of(row: &Value) -> Result<Vec<String>> {
@@ -541,6 +569,7 @@ pub(crate) fn past_cap(conn: &Connection, item: &str, table: &str) -> Result<boo
 /// A table the copy holds whole, with the row writes still laid over it.
 fn become_whole(conn: &Connection, item: &str, table: &str) -> Result<()> {
     set_state(conn, item, table, WHOLE, None)?;
+    crate::row_writes::unjudge(conn, item, table, None)?;
     crate::row_writes::lay_table(conn, item, table)?;
     past_cap(conn, item, table)?;
     Ok(())
@@ -1131,7 +1160,7 @@ pub(crate) fn take_reread(conn: &Connection, reread: &Reread) -> Result<Vec<(Str
                 Some(answer) => {
                     hold_answered(conn, &item, &table, &serde_json::from_str(&answer)?)?
                 }
-                None => crate::row_writes::take_server_row(conn, &item, &table, &id, None)?,
+                None => read_gone(conn, &item, &table, &id)?,
             };
         }
         if past_cap(conn, &item, &table)? || moved {
@@ -1195,7 +1224,7 @@ pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) 
         };
         match read.get(&row.id) {
             Some(answered) => hold_answered(conn, item, table, answered)?,
-            None => crate::row_writes::take_server_row(conn, item, table, &row.id, None)?,
+            None => read_gone(conn, item, table, &row.id)?,
         };
     }
     crate::row_writes::applied_batch(conn, item, table, &event.batch)?;
@@ -1204,24 +1233,23 @@ pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) 
 }
 
 fn local_table(conn: &Connection, item: &str, table: &str) -> Result<Option<Map<String, Value>>> {
-    let held: Option<(String, String)> = conn
+    let state: Option<String> = conn
         .query_row(
-            "SELECT t.state, i.type FROM item_tables t JOIN items i ON i.id = t.item_id
+            "SELECT t.state FROM item_tables t JOIN items i ON i.id = t.item_id
               WHERE t.item_id = ?1 AND t.name = ?2 AND i.state <> 'trashed'",
             params![item, table],
-            |row| Ok((row.get(0)?, row.get(1)?)),
+            |row| row.get(0),
         )
         .optional()?;
-    let Some((state, type_id)) = held else {
-        return Ok(None);
-    };
-    if state != WHOLE {
+    if state.as_deref() != Some(WHOLE) {
         return Ok(None);
     }
-    Ok(declared(conn, &type_id)?
-        .get(table)
-        .and_then(Value::as_object)
-        .cloned())
+    let tables = match of_item(conn, item) {
+        Ok(tables) => tables,
+        Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    Ok(tables.get(table).and_then(Value::as_object).cloned())
 }
 
 fn marked(mut answer: Value, held: bool) -> Value {

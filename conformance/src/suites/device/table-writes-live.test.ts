@@ -1,5 +1,13 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  createServer,
+  type IncomingMessage,
+  type Server,
+  type ServerResponse,
+} from "node:http";
+import type { AddressInfo } from "node:net";
 import { dirname, join } from "node:path";
+import { Readable } from "node:stream";
 import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
@@ -32,6 +40,7 @@ let working: MarfaClient;
 let minter: MarfaClient;
 let counter = 0;
 const bindings: BindingDevice[] = [];
+const proxies: RowsProxy[] = [];
 
 beforeAll(async () => {
   server = await bootFreshServer("device-table-writes", QUIET_SCHEDULE);
@@ -42,6 +51,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   for (const binding of bindings) await binding.close();
+  for (const proxy of proxies) await proxy.stop();
   await server.stop();
 }, FRESH_SERVER_TIMEOUT_MS);
 
@@ -140,12 +150,16 @@ async function deviceRows(
   return Object.fromEntries(page.data.map((row) => [row.id, row.values]));
 }
 
-function deviceFor(label: string, key = server.workingKey): CliDevice {
+function deviceFor(
+  label: string,
+  key = server.workingKey,
+  url = server.apiUrl,
+): CliDevice {
   counter += 1;
   return new CliDevice({
     binary: requireBinary(),
     store: newStore(`table-writes-${label}-${String(counter)}`),
-    url: server.apiUrl,
+    url,
     key,
   });
 }
@@ -155,8 +169,9 @@ async function holding(
   type: string,
   label: string,
   key = server.workingKey,
+  url = server.apiUrl,
 ): Promise<CliDevice> {
-  const device = deviceFor(label, key);
+  const device = deviceFor(label, key, url);
   value(await device.hydrate([type], "library"));
   value(await device.holdTable(type, "steps"));
   return device;
@@ -221,6 +236,142 @@ class Gate {
   }
 }
 
+/** What the proxy answers a row write or an undo in place of the server. */
+type Reply =
+  | { forward: boolean; status: number; body: string }
+  | { forward: true; lose: true }
+  | { forward: false; gateway: number };
+
+/** Between a device and the server, answering row writes and undos as told. */
+class RowsProxy {
+  /** Taken one per row write or undo, in order; the server answers the rest. */
+  readonly replies: Reply[] = [];
+  /** Answers every row write to `item` while set. */
+  refusing: { item: string; gateway: number } | null = null;
+  private contract = "";
+
+  private constructor(
+    private readonly listener: Server,
+    readonly url: string,
+  ) {}
+
+  static async start(): Promise<RowsProxy> {
+    const listener = createServer();
+    await new Promise<void>((resolve) =>
+      listener.listen(0, "127.0.0.1", resolve),
+    );
+    const { port } = listener.address() as AddressInfo;
+    const proxy = new RowsProxy(listener, `http://127.0.0.1:${String(port)}`);
+    listener.on("request", (request, response) => {
+      proxy.pass(request, response).catch(() => response.destroy());
+    });
+    return proxy;
+  }
+
+  private async pass(
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(Buffer.from(chunk));
+    const body = Buffer.concat(chunks);
+    const headers = new Headers();
+    for (const [name, sent] of Object.entries(request.headers)) {
+      if (
+        sent !== undefined &&
+        !["host", "connection", "content-length"].includes(name)
+      )
+        headers.set(name, Array.isArray(sent) ? sent.join(", ") : sent);
+    }
+    const path = request.url ?? "/";
+    const rows =
+      request.method === "POST" &&
+      /^\/items\/[^/]+\/tables\/[^/]+\/(rows|batches\/[^/]+\/undo)$/.test(path);
+    const reply = !rows
+      ? undefined
+      : this.refusing !== null &&
+          path.startsWith(`/items/${this.refusing.item}/`)
+        ? ({ forward: false, gateway: this.refusing.gateway } as const)
+        : this.replies.shift();
+    if (reply !== undefined && "gateway" in reply) {
+      response.writeHead(reply.gateway, { "content-type": "text/html" });
+      response.end("<html>refused by a gateway</html>");
+      return;
+    }
+    if (reply !== undefined && !reply.forward && "status" in reply) {
+      response.writeHead(reply.status, {
+        "content-type": "application/json",
+        "x-marfa-contract": this.contract,
+      });
+      response.end(reply.body);
+      return;
+    }
+    const upstream = await fetch(`${server.apiUrl}${path}`, {
+      method: request.method,
+      headers,
+      ...(body.length === 0 ? {} : { body }),
+      redirect: "manual",
+    });
+    this.contract = upstream.headers.get("x-marfa-contract") ?? this.contract;
+    const returned: Record<string, string> = {};
+    upstream.headers.forEach((kept, name) => {
+      if (
+        !["content-length", "content-encoding", "transfer-encoding"].includes(
+          name,
+        )
+      )
+        returned[name] = kept;
+    });
+    if (reply !== undefined) {
+      await upstream.text();
+      if ("lose" in reply) {
+        request.socket.destroy();
+        return;
+      }
+      response.writeHead(reply.status, returned);
+      response.end(reply.body);
+      return;
+    }
+    response.writeHead(upstream.status, returned);
+    if (upstream.body === null) {
+      response.end();
+      return;
+    }
+    const stream = Readable.fromWeb(upstream.body as never);
+    stream.on("error", () => response.destroy());
+    response.on("close", () => stream.destroy());
+    stream.pipe(response);
+  }
+
+  async stop(): Promise<void> {
+    this.listener.closeAllConnections();
+    await new Promise<void>((resolve) => this.listener.close(() => resolve()));
+  }
+}
+
+async function proxied(): Promise<RowsProxy> {
+  const proxy = await RowsProxy.start();
+  proxies.push(proxy);
+  return proxy;
+}
+
+/** A drain with `fault` set for the binary it starts. */
+async function drainWith(
+  device: CliDevice,
+  fault: string,
+): Promise<Outcome<DrainReport>> {
+  process.env.MARFA_TEST_FAULT = fault;
+  try {
+    return await device.drain();
+  } finally {
+    delete process.env.MARFA_TEST_FAULT;
+  }
+}
+
+function told(report: DrainReport, id: string): DrainReport["verdicts"] {
+  return report.verdicts.filter((entry) => entry.id === id);
+}
+
 async function until(
   check: () => Promise<boolean> | boolean,
   what: string,
@@ -282,7 +433,12 @@ describe("a write the copy shows at once", () => {
     });
   });
 
-  it("refuses a write it can judge from the copy as the server would, queueing nothing", async () => {
+  /** A device holding one row whose `ref` its key may not read. */
+  async function judging(label: string): Promise<{
+    device: CliDevice;
+    item: string;
+    row: string;
+  }> {
     const type = await tableType();
     const item = await itemOf(type);
     const row = uuidv7();
@@ -295,10 +451,21 @@ describe("a write the copy shows at once", () => {
       { op: "put", id: row, values: { count: 1, ref: note.data.item.id } },
     ]);
     const narrow = await keyFor({ [type]: "write" });
-    const device = await holding(type, "judged", narrow.key);
+    const device = await holding(type, label, narrow.key);
     const held = await devicePage(device, item);
     expect(held.data[0]?.withheld).toEqual(["ref"]);
+    return { device, item, row };
+  }
 
+  async function unchanged(device: CliDevice, item: string): Promise<void> {
+    expect(value(await device.queue())).toEqual([]);
+    expect(Object.values(await deviceRows(device, item))).toEqual([
+      { count: 1 },
+    ]);
+  }
+
+  it("refuses a write to an item the copy does not hold or a table its item does not have", async () => {
+    const { device, item } = await judging("unnamed");
     const other = await tableType();
     const unheld = await itemOf(other);
     const notHeld = refused(
@@ -309,14 +476,20 @@ describe("a write the copy shows at once", () => {
     expect(notHeld.code).toBe("not_found");
     expect(notHeld.raw).toContain("item_not_found");
 
-    const undeclared = refused(
-      await device.writeRows(item, "nothing", [
-        { op: "put", values: { count: 1 } },
-      ]),
-    );
-    expect(undeclared.code).toBe("not_found");
-    expect(undeclared.raw).toContain("table_not_found");
+    for (const table of ["nothing", "table"]) {
+      const undeclared = refused(
+        await device.writeRows(item, table, [
+          { op: "put", values: { count: 1 } },
+        ]),
+      );
+      expect(undeclared.code).toBe("not_found");
+      expect(undeclared.raw).toContain("table_not_found");
+    }
+    await unchanged(device, item);
+  });
 
+  it("refuses a write whose operations the server would refuse, naming the operation", async () => {
+    const { device, item, row } = await judging("judged");
     for (const [operations, named] of [
       [[], "operations"],
       [[{ op: "move", id: row }], "operations.0.op"],
@@ -346,7 +519,11 @@ describe("a write the copy shows at once", () => {
       );
       expect(judged.raw).toContain(named);
     }
+    await unchanged(device, item);
+  });
 
+  it("refuses a write naming a column the row it holds withholds", async () => {
+    const { device, item, row } = await judging("withheld");
     const withheld = refused(
       await device.writeRows(item, "steps", [
         { op: "patch", id: row, values: { ref: null } },
@@ -355,11 +532,7 @@ describe("a write the copy shows at once", () => {
     expect(withheld.code).toBe("forbidden");
     expect(withheld.raw).toContain("ref");
     expect(withheld.raw).toContain("operation 0");
-
-    expect(value(await device.queue())).toEqual([]);
-    expect(Object.values(await deviceRows(device, item))).toEqual([
-      { count: 1 },
-    ]);
+    await unchanged(device, item);
   });
 });
 
@@ -879,5 +1052,462 @@ describe("how a drain sends row writes", () => {
         code: "item_not_found",
       });
     }
+  });
+});
+
+describe("a batch the drain cannot settle at once", () => {
+  it("lets the other writes of a batch go on their own once its first write is set aside or withdrawn, telling each write once", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [{ op: "put", id: row, values: { count: 1 } }]);
+    const proxy = await proxied();
+    const device = await holding(
+      type,
+      "set-aside",
+      server.workingKey,
+      proxy.url,
+    );
+    const [first, second] = [
+      value(
+        await device.writeRows(item, "steps", [
+          { op: "patch", id: row, values: { count: 2 } },
+        ]),
+      ),
+      value(
+        await device.writeRows(item, "steps", [
+          { op: "patch", id: row, values: { note: "second" } },
+        ]),
+      ),
+    ];
+    value(await device.addTag(item, "witness"));
+    proxy.refusing = { item, gateway: 413 };
+    for (let pass = 0; pass < 3; pass += 1) value(await device.drain());
+    expect((await queued(device, second.id)).batched_with).toBe(first.id);
+
+    const stuck = value(await drainWith(device, "clock-offset=360000"));
+    expect(told(stuck, first.id).map((entry) => entry.verdict)).toEqual([
+      "blocked",
+    ]);
+    expect(told(stuck, first.id)[0]?.reason).toBe("failing_alone");
+    expect(told(stuck, second.id)).toHaveLength(1);
+    const released = await queued(device, second.id);
+    expect(released.batched_with).toBeNull();
+    expect(released.idempotency_key).toBe(second.idempotency_key);
+    expect((await queued(device, first.id)).idempotency_key).not.toBe(
+      first.idempotency_key,
+    );
+
+    value(await device.withdraw(first.id));
+    proxy.refusing = null;
+    const after = value(await device.drain());
+    expect(told(after, second.id).map((entry) => entry.verdict)).toEqual([
+      "accepted",
+    ]);
+    expect(await serverRows(item)).toEqual({
+      [row]: { count: 1, note: "second" },
+    });
+    expect(await deviceRows(device, item)).toEqual({
+      [row]: { count: 1, note: "second" },
+    });
+  });
+
+  it("counts a refusal against every write of a batch answered 200 with a body that is not the batch's answer, keeping the rows it shows, and sends it again under its key", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [{ op: "put", id: row, values: { count: 1 } }]);
+    const proxy = await proxied();
+    const device = await holding(
+      type,
+      "unreadable",
+      server.workingKey,
+      proxy.url,
+    );
+    const writes = [
+      value(
+        await device.writeRows(item, "steps", [
+          { op: "patch", id: row, values: { count: 2 } },
+        ]),
+      ),
+      value(
+        await device.writeRows(item, "steps", [
+          { op: "put", values: { count: 3 } },
+        ]),
+      ),
+    ];
+    const [patched, added] = writes.map(
+      (one) => (one.body as { operations: { id: string }[] }).operations[0]!.id,
+    );
+    const shown = await deviceRows(device, item);
+    expect(shown).toEqual({ [row]: { count: 2 }, [added!]: { count: 3 } });
+    const unreadable: Reply[] = [
+      { forward: false, status: 200, body: "{}" },
+      { forward: false, status: 200, body: "not json" },
+      {
+        forward: true,
+        status: 200,
+        body: JSON.stringify({
+          batch: uuidv7(),
+          results: [{ id: patched, outcome: "patched" }],
+        }),
+      },
+      {
+        forward: false,
+        status: 200,
+        body: JSON.stringify({
+          batch: uuidv7(),
+          results: [
+            { id: patched, outcome: "patched" },
+            { id: uuidv7(), outcome: "created" },
+          ],
+        }),
+      },
+    ];
+    proxy.replies.push(...unreadable);
+    for (let pass = 1; pass <= unreadable.length; pass += 1) {
+      const report = value(await device.drain());
+      for (const one of writes) {
+        const [entry] = told(report, one.id);
+        expect(
+          [entry?.verdict, entry?.refusals],
+          `pass ${String(pass)}`,
+        ).toEqual([null, pass]);
+      }
+      expect(await deviceRows(device, item)).toEqual(shown);
+    }
+    expect(value(await device.queue()).map((one) => one.verdict)).toEqual([
+      null,
+      null,
+    ]);
+    expect(await serverRows(item)).toEqual({
+      [row]: { count: 2 },
+      [added!]: { count: 3 },
+    });
+
+    const report = value(await device.drain());
+    expect(writes.map((one) => verdictOf(report, one.id))).toEqual([
+      "accepted",
+      "accepted",
+    ]);
+    expect(told(report, writes[0]!.id)[0]?.replayed).toBe(true);
+    const batches = await working.rawRequest<{ data: unknown[] }>(
+      `/items/${item}/tables/steps/batches`,
+    );
+    expect(batches.data.data).toHaveLength(2);
+  });
+
+  it("counts a refusal against an undo answered 200 with a body that is not an undo's answer, and sends it again under its key", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [{ op: "put", id: row, values: { count: 1 } }]);
+    const changed = await write(item, [
+      { op: "patch", id: row, values: { count: 7 } },
+    ]);
+    const proxy = await proxied();
+    const device = await holding(
+      type,
+      "undo-unreadable",
+      server.workingKey,
+      proxy.url,
+    );
+    const undo = value(await device.undoRows(item, "steps", changed.batch!));
+    proxy.replies.push(
+      { forward: false, status: 200, body: "{}" },
+      {
+        forward: true,
+        status: 200,
+        body: JSON.stringify({ batch: uuidv7(), results: "all" }),
+      },
+    );
+    for (let pass = 1; pass <= 2; pass += 1) {
+      const [entry] = told(value(await device.drain()), undo.id);
+      expect([entry?.verdict, entry?.refusals]).toEqual([null, pass]);
+    }
+    const [entry] = told(value(await device.drain()), undo.id);
+    expect([entry?.verdict, entry?.replayed]).toEqual(["accepted", true]);
+    expect(await serverRows(item)).toEqual({ [row]: { count: 1 } });
+  });
+
+  it("counts a refusal against every write of a batch whose answer the store fails to record at a later write, and sends the same batch again under its key", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [{ op: "put", id: row, values: { count: 1 } }]);
+    const device = await holding(type, "store-fails");
+    const writes = [
+      value(
+        await device.writeRows(item, "steps", [
+          { op: "patch", id: row, values: { count: 2 } },
+        ]),
+      ),
+      value(
+        await device.writeRows(item, "steps", [
+          { op: "patch", id: row, values: { note: "b" } },
+        ]),
+      ),
+    ];
+    const failed = value(
+      await drainWith(device, `store-fails-at-answer=${writes[1]!.id}`),
+    );
+    for (const one of writes) {
+      const entries = told(failed, one.id);
+      expect(entries.map((entry) => [entry.verdict, entry.refusals])).toEqual([
+        [null, 1],
+      ]);
+      expect(entries[0]?.reason).toContain("could not take the answer");
+    }
+    const kept = value(await device.queue());
+    expect(kept.map((one) => [one.verdict, one.batched_with])).toEqual([
+      [null, null],
+      [null, writes[0]!.id],
+    ]);
+
+    const report = value(await device.drain());
+    expect(writes.map((one) => verdictOf(report, one.id))).toEqual([
+      "accepted",
+      "accepted",
+    ]);
+    expect(told(report, writes[1]!.id)[0]?.replayed).toBe(true);
+    expect(await serverRows(item)).toEqual({ [row]: { count: 2, note: "b" } });
+  });
+
+  it("settles every write of a batch the server refuses whole once a store failure at a later write is behind it, leaving none waiting on the first", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const device = await holding(type, "refusal-fails");
+    const writes = [
+      value(
+        await device.writeRows(item, "steps", [
+          { op: "put", values: { count: 1 } },
+        ]),
+      ),
+      value(
+        await device.writeRows(item, "steps", [
+          { op: "put", values: { count: 2 } },
+        ]),
+      ),
+    ];
+    const trashed = await working.deleteItem(item);
+    expect(trashed.ok, JSON.stringify(trashed.error)).toBe(true);
+    const failed = value(
+      await drainWith(device, `store-fails-at-answer=${writes[1]!.id}`),
+    );
+    expect(
+      writes.map((one) => told(failed, one.id).map((entry) => entry.verdict)),
+    ).toEqual([[null], [null]]);
+    const report = value(await device.drain());
+    expect(writes.map((one) => verdictOf(report, one.id))).toEqual([
+      "refused",
+      "refused",
+    ]);
+    expect(
+      value(await device.queue()).map((one) => one.refusal?.code ?? null),
+    ).toEqual(["item_not_found", "item_not_found"]);
+  });
+
+  it("sends a write of a batch blocked whole on its own once a caller releases it, and the first write under a fresh key", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [{ op: "put", id: row, values: { count: 1 } }]);
+    const proxy = await proxied();
+    const device = await holding(
+      type,
+      "released",
+      server.workingKey,
+      proxy.url,
+    );
+    const [first, second] = [
+      value(
+        await device.writeRows(item, "steps", [
+          { op: "patch", id: row, values: { count: 2 } },
+        ]),
+      ),
+      value(
+        await device.writeRows(item, "steps", [
+          { op: "patch", id: row, values: { note: "second" } },
+        ]),
+      ),
+    ];
+    proxy.replies.push({
+      forward: false,
+      status: 422,
+      body: JSON.stringify({
+        error: {
+          code: "idempotency_key_reused",
+          message: "The key names another request.",
+        },
+      }),
+    });
+    const blocked = value(await device.drain());
+    expect(
+      [first, second].map((one) => told(blocked, one.id)[0]?.reason),
+    ).toEqual(["key_spent", "key_spent"]);
+    expect((await queued(device, second.id)).batched_with).toBe(first.id);
+
+    expect(value(await device.release({ id: second.id }))).toBeTruthy();
+    expect((await queued(device, second.id)).batched_with).toBeNull();
+    const firstKey = (await queued(device, first.id)).idempotency_key;
+    expect(firstKey).not.toBe(first.idempotency_key);
+    const apart = value(await device.drain());
+    expect(told(apart, second.id).map((entry) => entry.verdict)).toEqual([
+      "accepted",
+    ]);
+    expect((await queued(device, first.id)).verdict).toBe("blocked");
+    expect(await serverRows(item)).toEqual({
+      [row]: { count: 1, note: "second" },
+    });
+
+    expect(value(await device.release({ id: first.id }))).toBeTruthy();
+    const last = value(await device.drain());
+    expect(told(last, first.id).map((entry) => entry.verdict)).toEqual([
+      "accepted",
+    ]);
+    expect(await serverRows(item)).toEqual({
+      [row]: { count: 2, note: "second" },
+    });
+  });
+
+  it("judges no conflict from a fill made after a write was sent whose answer was lost, taking the write as its own", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [{ op: "put", id: row, values: { count: 1 } }]);
+    const proxy = await proxied();
+    const device = await holding(
+      type,
+      "lost-refill",
+      server.workingKey,
+      proxy.url,
+    );
+    const mine = value(
+      await device.writeRows(item, "steps", [
+        { op: "patch", id: row, values: { count: 2 } },
+      ]),
+    );
+    proxy.replies.push({ forward: true, lose: true });
+    expect(told(value(await device.drain()), mine.id)[0]?.verdict).toBeNull();
+    expect(await serverRows(item)).toEqual({ [row]: { count: 2 } });
+
+    value(await device.letGoTable(type, "steps"));
+    value(await device.holdTable(type, "steps"));
+    expect(await deviceRows(device, item)).toEqual({ [row]: { count: 2 } });
+    const [entry] = told(value(await device.drain()), mine.id);
+    expect([entry?.verdict, entry?.replayed, entry?.conflicts]).toEqual([
+      "accepted",
+      true,
+      [],
+    ]);
+  });
+});
+
+describe("the table an item of core.table keeps", () => {
+  const COLUMNS = { name: { type: "string" }, amount: { type: "number" } };
+
+  async function ledger(): Promise<{ id: string; version: number }> {
+    const made = await working.createItem({
+      type: "core.table",
+      properties: { title: "Ledger", columns: COLUMNS },
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    return made.data.item;
+  }
+
+  async function ownRows(item: string): Promise<Record<string, unknown>> {
+    const answer = await working.rawRequest<{ data: Row[] }>(
+      `/items/${item}/tables/table/rows?limit=1000`,
+    );
+    expect(answer.status, JSON.stringify(answer.error)).toBe(200);
+    return Object.fromEntries(
+      answer.data.data.map((row) => [row.id, row.values]),
+    );
+  }
+
+  async function heldRows(
+    device: CliDevice,
+    item: string,
+    ...asked: string[]
+  ): Promise<Page> {
+    return value(
+      await device.tableRead<Page>([
+        "list",
+        item,
+        "table",
+        "--limit",
+        "1000",
+        ...asked,
+      ]),
+    );
+  }
+
+  it("holds, fills, follows, reads and writes the table an item keeps, by the item's columns as they last changed", async () => {
+    const item = await ledger();
+    const first = uuidv7();
+    const own = await working.writeRows(item.id, "table", {
+      operations: [
+        { op: "put", id: first, values: { name: "rent", amount: 5 } },
+      ],
+    });
+    expect(own.status, JSON.stringify(own.error)).toBe(200);
+    const device = deviceFor("own-table");
+    value(await device.hydrate(["core.table"], "library"));
+    expect(
+      value(await device.holdTable("core.table", "table")).fill,
+    ).toMatchObject({ whole: 1 });
+    const filled = await heldRows(device, item.id);
+    expect(filled.held).toBe(true);
+    expect(filled.data.map((row) => row.values)).toEqual([
+      { name: "rent", amount: 5 },
+    ]);
+
+    const second = uuidv7();
+    const more = await working.writeRows(item.id, "table", {
+      operations: [
+        { op: "put", id: second, values: { name: "food", amount: 2 } },
+      ],
+    });
+    expect(more.status, JSON.stringify(more.error)).toBe(200);
+    value(await device.catchUp());
+    const sorted = await heldRows(device, item.id, "--sort", "values.amount");
+    expect(sorted.held).toBe(true);
+    expect(sorted.data.map((row) => row.id)).toEqual([second, first]);
+
+    const unknown = refused(
+      await device.writeRows(item.id, "table", [
+        { op: "patch", id: first, values: { paid: true } },
+      ]),
+    );
+    expect(unknown.code).toBe("invalid");
+    expect(unknown.raw).toContain("operations.0.values.paid");
+
+    const columns = { ...COLUMNS, paid: { type: "boolean" } };
+    const changed = await working.updateItem(item.id, {
+      properties: { columns },
+      version: item.version,
+    } as never);
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+    value(await device.catchUp());
+    const mine = value(
+      await device.writeRows(item.id, "table", [
+        { op: "patch", id: first, values: { paid: true } },
+      ]),
+    );
+    const paid = await heldRows(
+      device,
+      item.id,
+      "--filter",
+      "values.paid eq true",
+    );
+    expect(paid.held).toBe(true);
+    expect(paid.data.map((row) => row.values)).toEqual([
+      { name: "rent", amount: 5, paid: true },
+    ]);
+    expect(verdictOf(value(await device.drain()), mine.id)).toBe("accepted");
+    expect(await ownRows(item.id)).toEqual({
+      [first]: { name: "rent", amount: 5, paid: true },
+      [second]: { name: "food", amount: 2 },
+    });
   });
 });

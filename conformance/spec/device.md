@@ -5916,6 +5916,20 @@ When an app holds a table by a type and a name, a device MUST hold the table of 
 
 **Tests:** `device/tables-live.test.ts › holds the table of each item of the type it names, and no table it was not asked to hold`.
 
+### `device/table-hold-own`
+
+When an app holds the table `table` by `core.table`, or by a type below it, a device MUST hold the table that each item its copy holds of a type the type names keeps (`tables/own-table-listed`).
+
+**Tests:** `device/table-writes-live.test.ts › holds, fills, follows, reads and writes the table an item keeps, by the item's columns as they last changed`.
+
+### `device/table-own-columns`
+
+When a device judges a row write to, or answers a read from the copy of, the table an item of `core.table` or of a type below it keeps, a device MUST take the table's columns from the item's `columns` as the copy holds them.
+
+**Reason:** the columns are the item's data, so they change with the item, and the server judges the next batch by them (`tables/own-rows-follow`).
+
+**Tests:** `device/table-writes-live.test.ts › holds, fills, follows, reads and writes the table an item keeps, by the item's columns as they last changed`.
+
 ### `device/table-hold-only`
 
 A device MUST NOT hold a row of a table no app has held.
@@ -5926,7 +5940,7 @@ A device MUST NOT hold a row of a table no app has held.
 
 ### `device/table-hold-unknown`
 
-If an app holds a table that no type the copy's catalog holds under the type it names declares, then a device MUST refuse it `invalid`, naming the table.
+If an app holds a table that no type the copy's catalog holds under the type it names declares or keeps under `device/table-hold-own`, then a device MUST refuse it `invalid`, naming the table.
 
 **Tests:** `device/tables-live.test.ts › refuses to hold a table no type it names declares`.
 
@@ -6164,33 +6178,39 @@ When an app writes rows to a table of an item its copy holds, a device MUST queu
 
 ### `device/table-write-unheld-item`
 
-If an app writes rows to a table of an item its copy does not hold, then a device MUST refuse the write `not_found` with the code `item_not_found`, queueing nothing.
+If an app writes rows to a table of an item its copy does not hold, then a device MUST refuse the write `not_found` with the code `item_not_found`.
 
 **Reason:** the table a write names is judged against the item's type, which only an item the copy holds gives.
 
-**Tests:** `device/table-writes-live.test.ts › refuses a write it can judge from the copy as the server would, queueing nothing`.
+**Tests:** `device/table-writes-live.test.ts › refuses a write to an item the copy does not hold or a table its item does not have`.
 
 ### `device/table-write-undeclared`
 
-If an app writes rows to a table that the item's type in the copy's catalog does not declare, then a device MUST refuse the write `not_found` with the code `table_not_found`, queueing nothing.
+If an app writes rows to a table that the item does not have, by its type in the copy's catalog or by its own `columns` (`tables/own-table-listed`), then a device MUST refuse the write `not_found` with the code `table_not_found`.
 
-**Tests:** `device/table-writes-live.test.ts › refuses a write it can judge from the copy as the server would, queueing nothing`.
+**Tests:** `device/table-writes-live.test.ts › refuses a write to an item the copy does not hold or a table its item does not have`.
 
 ### `device/table-write-judged`
 
-If the server would refuse an operation of a batch under `tables/rows-operations-required`, `tables/rows-batch-limit`, `tables/rows-op-refused`, `tables/rows-id-refused`, `tables/rows-op-member-refused`, `tables/rows-values-refused`, `tables/rows-unknown-column` or `tables/rows-value-rules`, then a device MUST refuse the write `invalid`, naming the operation, queueing nothing.
+If the server would refuse an operation of a batch under `tables/rows-operations-required`, `tables/rows-batch-limit`, `tables/rows-op-refused`, `tables/rows-id-refused`, `tables/rows-op-member-refused`, `tables/rows-values-refused`, `tables/rows-unknown-column` or `tables/rows-value-rules`, then a device MUST refuse the write `invalid`, naming the operation.
 
-**Reason:** the device holds the type's columns, so a write the server cannot take is refused while the person who made it is still there.
+**Reason:** the device holds the table's columns, so a write the server cannot take is refused while the person who made it is still there.
 
-**Tests:** `device/table-writes-live.test.ts › refuses a write it can judge from the copy as the server would, queueing nothing`.
+**Tests:** `device/table-writes-live.test.ts › refuses a write whose operations the server would refuse, naming the operation`.
 
 ### `device/table-write-withheld`
 
-If an operation of a batch names in `values` a column that the row the device holds names in `withheld`, then a device MUST refuse the write `forbidden`, naming the operation and the column, queueing nothing.
+If an operation of a batch names in `values` a column that the row the device holds names in `withheld`, then a device MUST refuse the write `forbidden`, naming the operation and the column.
 
 **Reason:** the server refuses it (`tables/rows-withheld-write`), and the copy holds no value for the column to show.
 
-**Tests:** `device/table-writes-live.test.ts › refuses a write it can judge from the copy as the server would, queueing nothing`.
+**Tests:** `device/table-writes-live.test.ts › refuses a write naming a column the row it holds withholds`.
+
+### `device/table-write-refused-unqueued`
+
+When a device refuses a row write under `device/table-write-unheld-item`, `device/table-write-undeclared`, `device/table-write-judged` or `device/table-write-withheld`, a device MUST NOT queue it.
+
+**Tests:** `device/table-writes-live.test.ts › refuses a write to an item the copy does not hold or a table its item does not have`, `› refuses a write whose operations the server would refuse, naming the operation`, `› refuses a write naming a column the row it holds withholds`.
 
 ### `device/table-write-shown`
 
@@ -6260,7 +6280,13 @@ When a `write_rows` write is refused or `dead`, a device MUST answer the rows it
 
 ### `device/table-write-undo`
 
-When an app undoes a batch of a table of an item its copy holds, a device MUST queue the undo as one `undo_rows` write without changing a row it holds.
+When an app undoes a batch of a table of an item its copy holds, a device MUST queue the undo as one `undo_rows` write.
+
+**Tests:** `device/table-writes-live.test.ts › queues an undo, sends it under its key, and takes the rows it put back from its rows.changed`.
+
+### `device/table-write-undo-unlaid`
+
+When a device queues an `undo_rows` write, a device MUST NOT change a row it holds.
 
 **Reason:** the before-images an undo puts back are in the server's change log, which a device does not hold; the undo's `rows.changed` brings the rows it put back.
 
