@@ -663,6 +663,47 @@ fn tune(conn: &Connection) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// The pages the log may reach during a hydration before SQLite copies it
+/// into the store. At the default a page of rows is checkpointed several
+/// times over, and each checkpoint writes the same interior pages again and
+/// waits on the disk.
+const HYDRATION_LOG_PAGES: i64 = 32_768;
+
+/// Lets the log grow to `HYDRATION_LOG_PAGES` and answers the interval it
+/// replaces, for `restore_log_interval`.
+pub(crate) fn lengthen_log_interval(conn: &Connection) -> Result<i64, CoreError> {
+    let kept: i64 = conn.query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))?;
+    conn.execute_batch(&format!(
+        "PRAGMA wal_autocheckpoint = {HYDRATION_LOG_PAGES}"
+    ))?;
+    Ok(kept)
+}
+
+/// Gives back the interval `kept`, and where `done`, copies the log into the
+/// store and empties it, so the copy is one file. A reader that holds the log
+/// leaves it for the next checkpoint.
+pub(crate) fn restore_log_interval(
+    conn: &Connection,
+    kept: i64,
+    done: bool,
+) -> Result<(), CoreError> {
+    conn.execute_batch(&format!("PRAGMA wal_autocheckpoint = {kept}"))?;
+    if done {
+        match conn.query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(())) {
+            Err(error)
+                if !matches!(
+                    error.sqlite_error_code(),
+                    Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+                ) =>
+            {
+                return Err(error.into());
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 /// `write` in a transaction whose statement journals are held in memory.
 ///
 /// Every write to an indexed table inside a transaction keeps a statement
@@ -2981,6 +3022,18 @@ fn attachments_touching(conn: &Connection, ids: &[&str]) -> Result<Vec<Attachmen
         return Ok(Vec::new());
     }
     let marks = vec!["?"; ids.len()].join(", ");
+    // A file is an attachment only with an `attached-to` edge, so where none
+    // starts or ends at `ids` there is nothing to find, which the two indexes
+    // on `edges` answer without reading a row.
+    let attached: bool = conn
+        .prepare_cached(&format!(
+            "SELECT EXISTS (SELECT 1 FROM edges WHERE edge_type = '{ATTACHED_TO}' AND source_id IN ({marks}))
+                 OR EXISTS (SELECT 1 FROM edges WHERE edge_type = '{ATTACHED_TO}' AND target_id IN ({marks}))"
+        ))?
+        .query_row(params_from_iter([ids, ids].concat()), |row| row.get(0))?;
+    if !attached {
+        return Ok(Vec::new());
+    }
     attachments_where(
         conn,
         &format!(
@@ -4024,11 +4077,26 @@ fn index_row(
     properties: &Map<String, Value>,
     indexing: &Indexing,
 ) -> Result<(), CoreError> {
-    let tags = tags_for_one(conn, id)?;
-    let text = fts_text(properties, indexing);
+    let text = (ItemState::from_str_checked(state)? != ItemState::Trashed)
+        .then(|| fts_text(properties, indexing));
+    if let Some(text) = hold_index(seq, text) {
+        write_index(conn, seq, id, text)?;
+    }
+    Ok(())
+}
+
+/// Replaces the index entry of the row at `seq`, leaving it out where `text`
+/// is `None`.
+fn write_index(
+    conn: &Connection,
+    seq: i64,
+    id: &str,
+    text: Option<marfa_rules::search::FtsText>,
+) -> Result<(), CoreError> {
     conn.prepare_cached("DELETE FROM items_fts WHERE rowid = ?1")?
         .execute([seq])?;
-    if ItemState::from_str_checked(state)? != ItemState::Trashed {
+    if let Some(text) = text {
+        let tags = tags_for_one(conn, id)?;
         conn.prepare_cached(
             "INSERT INTO items_fts (rowid, title, body, description, name, extra, tags)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -4044,6 +4112,81 @@ fn index_row(
         ])?;
     }
     Ok(())
+}
+
+thread_local! {
+    /// The index entries a page write holds back, by the row's `seq`.
+    static HELD_INDEX: std::cell::RefCell<Option<std::collections::BTreeMap<i64, Option<marfa_rules::search::FtsText>>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Holds the entry back while a page write is open on this thread, answering
+/// `None`; hands it back to be written at once otherwise.
+fn hold_index(
+    seq: i64,
+    text: Option<marfa_rules::search::FtsText>,
+) -> Option<Option<marfa_rules::search::FtsText>> {
+    HELD_INDEX.with(|held| match held.borrow_mut().as_mut() {
+        Some(held) => {
+            held.insert(seq, text);
+            None
+        }
+        None => Some(text),
+    })
+}
+
+/// Ends the hold at the end of the page write, whether it succeeded or not.
+struct IndexHold;
+
+impl IndexHold {
+    fn begin() -> Self {
+        HELD_INDEX.with(|held| *held.borrow_mut() = Some(std::collections::BTreeMap::new()));
+        IndexHold
+    }
+
+    /// Writes the entries held, those of rows the copy still holds, in `seq`
+    /// order. An entry written beside every other statement of the page
+    /// would have the index flush its pending rows as a segment of their own
+    /// at each statement that can fail partway, which is nearly every one.
+    fn write(&self, conn: &Connection) -> Result<(), CoreError> {
+        let held = HELD_INDEX
+            .with(|held| held.borrow_mut().as_mut().map(std::mem::take))
+            .unwrap_or_default();
+        let mut id = conn.prepare_cached("SELECT id FROM items WHERE seq = ?1")?;
+        for (seq, text) in held {
+            match id
+                .query_row([seq], |row| row.get::<_, String>(0))
+                .optional()?
+            {
+                Some(id) => write_index(conn, seq, &id, text)?,
+                None => {
+                    conn.prepare_cached("DELETE FROM items_fts WHERE rowid = ?1")?
+                        .execute([seq])?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for IndexHold {
+    fn drop(&mut self) {
+        HELD_INDEX.with(|held| *held.borrow_mut() = None);
+    }
+}
+
+/// `with_journals_in_memory` for a page of a server's rows, which indexes the
+/// rows the page wrote once all of it is written.
+pub(crate) fn with_page_write<T>(
+    conn: &mut Connection,
+    write: impl FnOnce(&rusqlite::Transaction) -> Result<T, CoreError>,
+) -> Result<T, CoreError> {
+    with_journals_in_memory(conn, |tx| {
+        let hold = IndexHold::begin();
+        let written = write(tx)?;
+        hold.write(tx)?;
+        Ok(written)
+    })
 }
 
 pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
@@ -7191,6 +7334,103 @@ mod tests {
             default,
             "a failed write left journals in memory"
         );
+    }
+
+    fn indexed(conn: &rusqlite::Connection, word: &str) -> Vec<String> {
+        conn.prepare(
+            "SELECT items.id FROM items_fts JOIN items ON items.seq = items_fts.rowid
+             WHERE items_fts MATCH ?1 ORDER BY items.id",
+        )
+        .unwrap()
+        .query_map([word], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+    }
+
+    #[test]
+    fn a_page_write_indexes_the_rows_it_wrote_once_it_has_written_all_of_them() {
+        let mut conn = conn();
+        let note = |id: &str, state: &str, title: &str| {
+            wire_item(
+                id,
+                "core.note",
+                state,
+                "2026-01-01T00:00:00Z",
+                json!({ "title": title }),
+            )
+        };
+        let indexing = Indexing::default();
+        upsert_item(&conn, &note("a", "active", "alpha"), None, &indexing).unwrap();
+        assert_eq!(indexed(&conn, "alpha"), ["a"], "a write outside a page");
+        super::with_page_write(&mut conn, |tx| {
+            upsert_item(tx, &note("a", "active", "gamma"), None, &indexing)?;
+            upsert_item(tx, &note("b", "active", "gamma"), None, &indexing)?;
+            upsert_item(tx, &note("c", "trashed", "gamma"), None, &indexing)?;
+            upsert_item(tx, &note("d", "active", "gamma"), None, &indexing)?;
+            forget_item(tx, "d")?;
+            assert_eq!(
+                indexed(tx, "alpha"),
+                ["a"],
+                "held until the page is written"
+            );
+            assert!(indexed(tx, "gamma").is_empty());
+            Ok(())
+        })
+        .unwrap();
+        assert!(indexed(&conn, "alpha").is_empty());
+        assert_eq!(indexed(&conn, "gamma"), ["a", "b"]);
+        upsert_item(&conn, &note("e", "active", "delta"), None, &indexing).unwrap();
+        assert_eq!(indexed(&conn, "delta"), ["e"], "a write after the page");
+    }
+
+    #[test]
+    fn a_page_write_that_fails_leaves_nothing_held_for_the_next_write() {
+        let mut conn = conn();
+        let note = wire_item(
+            "a",
+            "core.note",
+            "active",
+            "2026-01-01T00:00:00Z",
+            json!({ "title": "alpha" }),
+        );
+        let failed = super::with_page_write(&mut conn, |tx| {
+            upsert_item(tx, &note, None, &Indexing::default())?;
+            Err::<(), _>(super::CoreError::Canceled)
+        });
+        assert!(matches!(failed, Err(super::CoreError::Canceled)));
+        assert!(indexed(&conn, "alpha").is_empty());
+        upsert_item(&conn, &note, None, &Indexing::default()).unwrap();
+        assert_eq!(indexed(&conn, "alpha"), ["a"]);
+    }
+
+    #[test]
+    fn the_log_may_grow_through_a_hydration_and_is_emptied_after_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("core.sqlite");
+        let conn = super::open(&path).unwrap();
+        let interval = |conn: &rusqlite::Connection| -> i64 {
+            conn.query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))
+                .unwrap()
+        };
+        let kept = interval(&conn);
+        assert_eq!(super::lengthen_log_interval(&conn).unwrap(), kept);
+        assert!(interval(&conn) > kept);
+        for n in 0..3000 {
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)",
+                params![format!("filler/{n}"), "x".repeat(2000)],
+            )
+            .unwrap();
+        }
+        let log = temp.path().join("core.sqlite-wal");
+        assert!(
+            std::fs::metadata(&log).unwrap().len() > 4_000_000,
+            "the log held what was written"
+        );
+        super::restore_log_interval(&conn, kept, true).unwrap();
+        assert_eq!(interval(&conn), kept);
+        assert_eq!(std::fs::metadata(&log).unwrap().len(), 0);
     }
 
     #[test]
