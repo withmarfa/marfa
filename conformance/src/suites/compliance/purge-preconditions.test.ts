@@ -83,7 +83,7 @@ describe("POST /items/{id}/purge with version", () => {
       error: { status: number };
       current: { id: string; version: number };
     };
-    expect(body.error.status).toBe(409);
+    expect(body.error).not.toHaveProperty("status");
     expect(body.current).toMatchObject({ id, version: 2 });
     expect(await trashedIds(tag)).toEqual([id]);
 

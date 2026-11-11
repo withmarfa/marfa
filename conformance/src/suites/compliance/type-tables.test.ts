@@ -235,7 +235,7 @@ describe("a table the server refuses", () => {
           columns: {
             kind: { type: "enum" },
             count: { type: "integer", minimum: 5, maximum: 1 },
-            name: { type: "boolean", maxLength: 3 },
+            name: { type: "boolean", max_length: 3 },
             need: { type: "string", required: "yes" },
           },
         },
@@ -243,7 +243,7 @@ describe("a table the server refuses", () => {
       [
         "tables.lines.columns.kind.enum_values",
         "tables.lines.columns.count.minimum",
-        "tables.lines.columns.name.maxLength",
+        "tables.lines.columns.name.max_length",
         "tables.lines.columns.need.required",
       ],
     );
@@ -397,7 +397,7 @@ describe("a table the server refuses", () => {
         lines: {
           columns: {
             a: { type: "string", type_constraints: ["core.note"] },
-            b: { type: "item", maxLength: 3 },
+            b: { type: "item", max_length: 3 },
             c: { type: "item", enum_values: ["x"] },
             d: { type: "item", format: "url" },
           },
@@ -405,7 +405,7 @@ describe("a table the server refuses", () => {
       },
       [
         "tables.lines.columns.a.type_constraints",
-        "tables.lines.columns.b.maxLength",
+        "tables.lines.columns.b.max_length",
         "tables.lines.columns.c.enum_values",
         "tables.lines.columns.d.format",
       ],

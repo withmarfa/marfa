@@ -650,10 +650,10 @@ describe("type registration and listing", () => {
         mended: { fields },
       },
       {
-        what: "a misspelled rule of a string field",
-        bad: { fields: { title: { type: "string", max_length: 10 } } },
-        paths: ["fields.title.max_length"],
-        mended: { fields: { title: { type: "string", maxLength: 10 } } },
+        what: "a rule of a string field under its old camelCase name",
+        bad: { fields: { title: { type: "string", maxLength: 10 } } },
+        paths: ["fields.title.maxLength"],
+        mended: { fields: { title: { type: "string", max_length: 10 } } },
       },
       {
         what: "a key in display_hints, version_policy, merge_policy and retention_policy",

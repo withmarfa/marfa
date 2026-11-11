@@ -433,13 +433,13 @@ pub fn status_declaration(kind: &str, definition: &Value) -> Option<String> {
     None
 }
 
-/// Refuses a `maxLength` on a currency, `items_fields` on anything but an array of objects, no member in it, or a member that is not an object with a plain value's kind. A member is held to a field's checks: no status word list, no currency `maxLength`, no `items_fields`.
+/// Refuses a `max_length` on a currency, `items_fields` on anything but an array of objects, no member in it, or a member that is not an object with a plain value's kind. A member is held to a field's checks: no status word list, no currency `max_length`, no `items_fields`.
 fn entries_declaration(kind: &str, definition: &Value) -> Result<Option<String>, RuleError> {
     let currency_length = |definition: &Value| {
         definition.get("format").and_then(Value::as_str) == Some("currency")
-            && definition.get("maxLength").is_some()
+            && definition.get("max_length").is_some()
     };
-    let bound = "with a maxLength on a currency, which is always three capital letters";
+    let bound = "with a max_length on a currency, which is always three capital letters";
     if currency_length(definition) {
         return Ok(Some(bound.into()));
     }
@@ -905,7 +905,7 @@ impl Catalog {
             .filter(|definition| definition.get("type").and_then(Value::as_str) == Some("string"))
         {
             definition
-                .entry("maxLength")
+                .entry("max_length")
                 .or_insert(json!(crate::validation::BODY_MAX_LENGTH));
         }
         let every: Vec<(&str, Value)> = EVERY_TYPE_TAKES
@@ -1563,7 +1563,7 @@ mod tests {
         let declaring = |max: u64| {
             let mut catalog = with_bodies(Some("body"), None);
             catalog.entries.get_mut("parent").unwrap().definitions = serde_json::json!({
-                "body": {"type": "string", "maxLength": max},
+                "body": {"type": "string", "max_length": max},
             })
             .as_object()
             .unwrap()

@@ -29,7 +29,7 @@ const CONTACTS: FieldDefinition = {
   items_type: "object",
   items_fields: {
     value: { type: "email", required: true },
-    label: { type: "string", maxLength: 10 },
+    label: { type: "string", max_length: 10 },
     rank: { type: "integer", minimum: 1, maximum: 5 },
   },
 };
@@ -104,23 +104,23 @@ describe("a range, a currency and a list of entries in a type", () => {
       mended: { x: { type: "string", format: "currency" } },
     },
     {
-      what: "a maxLength on a currency field",
-      bad: { x: { type: "string", format: "currency", maxLength: 2 } },
-      named: "fields.x.maxLength",
+      what: "a max_length on a currency field",
+      bad: { x: { type: "string", format: "currency", max_length: 2 } },
+      named: "fields.x.max_length",
       mended: { x: { type: "string", format: "currency" } },
     },
     {
-      what: "a maxLength on a currency member",
+      what: "a max_length on a currency member",
       bad: {
         x: {
           type: "array",
           items_type: "object",
           items_fields: {
-            m: { type: "string", format: "currency", maxLength: 2 },
+            m: { type: "string", format: "currency", max_length: 2 },
           },
         },
       },
-      named: "fields.x.items_fields.m.maxLength",
+      named: "fields.x.items_fields.m.max_length",
       mended: {
         x: {
           type: "array",
@@ -330,7 +330,7 @@ describe("a value in a field with a range, a currency or entries", () => {
     ).toContain("score");
 
     // A type that gains a range leaves the values stored before it, and the
-    // next write of properties meets it, as it meets a new maxLength.
+    // next write of properties meets it, as it meets a new max_length.
     const id = nextId();
     expect(
       (await client.registerType({ id, fields: { n: { type: "integer" } } }))
@@ -390,7 +390,7 @@ describe("a value in a field with a range, a currency or entries", () => {
     ["a member of the wrong kind", { value: 5 }, "contacts.1.value"],
     ["a member the kind refuses", { value: "no" }, "contacts.1.value"],
     [
-      "a member over its maxLength",
+      "a member over its max_length",
       { value: "b@example.test", label: "x".repeat(11) },
       "contacts.1.label",
     ],

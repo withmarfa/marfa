@@ -4719,11 +4719,11 @@ mod tests {
         parent.rest.insert(
             "fields".into(),
             serde_json::json!({
-                "title": {"type": "string", "required": true, "maxLength": 4},
+                "title": {"type": "string", "required": true, "max_length": 4},
                 "read": {"type": "boolean"},
                 "choice": {"type": "enum", "enum_values": ["yes", "no"]},
                 "count": {"type": "integer"},
-                "list": {"type": "array", "maxItems": 2, "items": {"type": "string"}},
+                "list": {"type": "array", "max_items": 2, "items": {"type": "string"}},
                 "date": {"type": "date"}, "time": {"type": "datetime"},
                 "email": {"type": "email"}, "url": {"type": "url"},
                 "image": {"type": "thumbnail"}, "object": {"type": "object"},
@@ -4734,7 +4734,7 @@ mod tests {
         child.rest.insert(
             "fields".into(),
             serde_json::json!({
-                "title": {"type": "string", "required": true, "maxLength": 5}
+                "title": {"type": "string", "required": true, "max_length": 5}
             }),
         );
         store::replace_types(&core.conn().unwrap(), &[parent, child]).unwrap();
@@ -6609,13 +6609,13 @@ mod tests {
                 serde_json::json!({ "type": "array", "items_type": "string", "items_fields": { "m": { "type": "string" } } }),
             ),
             (
-                "a maxLength on a currency field",
-                serde_json::json!({ "type": "string", "format": "currency", "maxLength": 2 }),
+                "a max_length on a currency field",
+                serde_json::json!({ "type": "string", "format": "currency", "max_length": 2 }),
             ),
             (
-                "a maxLength on a currency member",
+                "a max_length on a currency member",
                 entries(
-                    serde_json::json!({ "m": { "type": "string", "format": "currency", "maxLength": 2 } }),
+                    serde_json::json!({ "m": { "type": "string", "format": "currency", "max_length": 2 } }),
                 ),
             ),
         ];
@@ -6669,8 +6669,8 @@ mod tests {
                 serde_json::json!({ "type": "string", "items_type": "status" }),
             ),
             (
-                "a maxLength on a currency",
-                serde_json::json!({ "type": "string", "format": "currency", "maxLength": 3 }),
+                "a max_length on a currency",
+                serde_json::json!({ "type": "string", "format": "currency", "max_length": 3 }),
             ),
         ];
         for (what, check) in checks {

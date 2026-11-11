@@ -447,7 +447,7 @@ describe("a delete may name the version it read", () => {
       current: { version: number; properties: Record<string, unknown> };
       ancestor?: unknown;
     };
-    expect(body.error.status).toBe(409);
+    expect(body.error).not.toHaveProperty("status");
     expect(body.current.version).toBe(version + 1);
     expect(body.current.properties.body).toBe("moved on");
     expect(body.ancestor).toBeUndefined();

@@ -80,33 +80,33 @@ describe("a field's definition", () => {
       mended: { fields: { x: { type: "array", items_type: "string" } } },
     },
     {
-      what: "a maxLength of 0",
-      bad: { fields: { x: { type: "string", maxLength: 0 } } },
-      named: "fields.x.maxLength",
-      mended: { fields: { x: { type: "string", maxLength: 1 } } },
+      what: "a max_length of 0",
+      bad: { fields: { x: { type: "string", max_length: 0 } } },
+      named: "fields.x.max_length",
+      mended: { fields: { x: { type: "string", max_length: 1 } } },
     },
     {
-      what: "a maxLength on a number",
-      bad: { fields: { x: { type: "number", maxLength: 5 } } },
-      named: "fields.x.maxLength",
-      mended: { fields: { x: { type: "string", maxLength: 5 } } },
+      what: "a max_length on a number",
+      bad: { fields: { x: { type: "number", max_length: 5 } } },
+      named: "fields.x.max_length",
+      mended: { fields: { x: { type: "string", max_length: 5 } } },
     },
     {
-      what: "a maxItems of 0",
+      what: "a max_items of 0",
       bad: {
-        fields: { x: { type: "array", items_type: "string", maxItems: 0 } },
+        fields: { x: { type: "array", items_type: "string", max_items: 0 } },
       },
-      named: "fields.x.maxItems",
+      named: "fields.x.max_items",
       mended: {
-        fields: { x: { type: "array", items_type: "string", maxItems: 1 } },
+        fields: { x: { type: "array", items_type: "string", max_items: 1 } },
       },
     },
     {
-      what: "a maxItems on a string",
-      bad: { fields: { x: { type: "string", maxItems: 5 } } },
-      named: "fields.x.maxItems",
+      what: "a max_items on a string",
+      bad: { fields: { x: { type: "string", max_items: 5 } } },
+      named: "fields.x.max_items",
       mended: {
-        fields: { x: { type: "array", items_type: "string", maxItems: 5 } },
+        fields: { x: { type: "array", items_type: "string", max_items: 5 } },
       },
     },
     {
@@ -349,7 +349,7 @@ describe("an array field", () => {
         names: { type: "array", items_type: "string" },
         sites: { type: "array", items_type: "url" },
         things: { type: "array", items_type: "object" },
-        capped: { type: "array", items_type: "string", maxItems: 2 },
+        capped: { type: "array", items_type: "string", max_items: 2 },
         loose: { type: "array", items_type: "somethingelse" as never },
       },
     });
@@ -422,7 +422,7 @@ describe("an array field", () => {
       { attachments: ["x"] },
       "attachments.0",
     ],
-    ["an array over maxItems", { capped: ["a", "b", "c"] }, "capped"],
+    ["an array over max_items", { capped: ["a", "b", "c"] }, "capped"],
   ];
 
   it.each(REFUSED)(

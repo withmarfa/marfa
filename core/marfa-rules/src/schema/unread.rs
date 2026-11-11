@@ -33,8 +33,8 @@ const FIELD_KEYS: [&str; 14] = [
     "items_fields",
     "format",
     "searchable",
-    "maxLength",
-    "maxItems",
+    "max_length",
+    "max_items",
     "minimum",
     "maximum",
 ];
@@ -45,7 +45,7 @@ const MEMBER_KEYS: [&str; 9] = [
     "required",
     "enum_values",
     "format",
-    "maxLength",
+    "max_length",
     "minimum",
     "maximum",
 ];
@@ -57,7 +57,7 @@ const COLUMN_KEYS: [&str; 12] = [
     "required",
     "enum_values",
     "format",
-    "maxLength",
+    "max_length",
     "minimum",
     "maximum",
     "type_constraints",

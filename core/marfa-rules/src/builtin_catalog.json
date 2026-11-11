@@ -2303,7 +2303,7 @@
     },
     "columns": {
      "type": "object",
-     "description": "The table's columns, by name. A column has a `type` and may have a `label`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum`, `maximum`, `type_constraints`, `adds_up` and `searchable`, as a column a type declares does.",
+     "description": "The table's columns, by name. A column has a `type` and may have a `label`, `description`, `required`, `enum_values`, `format`, `max_length`, `minimum`, `maximum`, `type_constraints`, `adds_up` and `searchable`, as a column a type declares does.",
      "required": true
     }
    },

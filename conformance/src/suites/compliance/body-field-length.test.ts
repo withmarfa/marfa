@@ -95,12 +95,12 @@ beforeAll(async () => {
   await register({ id: UNNAMED, fields: { body: text } });
   await register({
     id: LOWER,
-    fields: { body: { type: "string", maxLength: 50 } },
+    fields: { body: { type: "string", max_length: 50 } },
     display_hints: { body_field: "body" },
   });
   await register({
     id: HIGHER,
-    fields: { body: { type: "string", maxLength: 1_200_000 } },
+    fields: { body: { type: "string", max_length: 1_200_000 } },
     display_hints: { body_field: "body" },
   });
 });
@@ -170,7 +170,7 @@ describe("the length a text field allows", () => {
     ]);
   });
 
-  it("lets a body field's own maxLength win, lower or higher", async () => {
+  it("lets a body field's own max_length win, lower or higher", async () => {
     expect(await verdict(LOWER, "body", "x".repeat(50))).toBe("accepted");
     expect(await verdict(LOWER, "body", "x".repeat(51))).toEqual(["body"]);
     // Over the default, through the door whose request size allows it.

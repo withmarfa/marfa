@@ -479,7 +479,7 @@ describe("custom edge-type registration", () => {
       cascade: "orphan",
       property_schema: {
         rank: { type: "number", minimum: 0, maximum: 5 },
-        note: { type: "string", maxLength: 10 },
+        note: { type: "string", max_length: 10 },
       },
     } as never);
     expect(refused.status).toBe(400);
@@ -490,7 +490,7 @@ describe("custom edge-type registration", () => {
       "cascade",
       "property_schema.rank.minimum",
       "property_schema.rank.maximum",
-      "property_schema.note.maxLength",
+      "property_schema.note.max_length",
     ]);
     const listed = await client.listEdgeTypes();
     expect(listed.data.data.map((t) => t.id)).not.toContain(id);

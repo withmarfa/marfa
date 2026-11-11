@@ -458,15 +458,15 @@ If a write leaves an item with a string property longer than the length its fiel
 
 ### `items/property-length-declared`
 
-Where a string field declares a `maxLength`, the server MUST allow it that many characters and no more.
+Where a string field declares a `max_length`, the server MUST allow it that many characters and no more.
 
-**Reason:** a field's own `maxLength` wins over either default, lower or higher.
+**Reason:** a field's own `max_length` wins over either default, lower or higher.
 
-**Tests:** `compliance/body-field-length.test.ts › lets a body field's own maxLength win, lower or higher`.
+**Tests:** `compliance/body-field-length.test.ts › lets a body field's own max_length win, lower or higher`.
 
 ### `items/property-length-body`
 
-Where a string field declares no `maxLength` and its type names it as `display_hints.body_field`, the server MUST allow it 1,000,000 characters and no more.
+Where a string field declares no `max_length` and its type names it as `display_hints.body_field`, the server MUST allow it 1,000,000 characters and no more.
 
 **Reason:** a body holds a whole document. The hint is read nearest type first (`types/read-display-hint`), so a child naming another field gives its parent's body the default for other text. The next limit is the request size, which 1,000,000 characters of multi-byte text, or of text JSON escapes, can pass.
 
@@ -474,7 +474,7 @@ Where a string field declares no `maxLength` and its type names it as `display_h
 
 ### `items/property-length-default`
 
-Where a string field declares no `maxLength` and its type does not name it as `display_hints.body_field`, the server MUST allow it 100,000 characters and no more.
+Where a string field declares no `max_length` and its type does not name it as `display_hints.body_field`, the server MUST allow it 100,000 characters and no more.
 
 **Reason:** the limit follows what a type names, not what a field is called, so a field called `body` on a type that names no body takes this default.
 

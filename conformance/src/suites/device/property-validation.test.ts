@@ -15,12 +15,12 @@ import {
 const TYPE = "fixture.fields";
 const ROW = "01a00000-0000-7000-8000-00000000000a";
 const fields = {
-  title: { type: "string", required: true, maxLength: 5 },
+  title: { type: "string", required: true, max_length: 5 },
   body: { type: "string" },
   read: { type: "boolean" },
   count: { type: "integer" },
   choice: { type: "enum", enum_values: ["yes", "no"] },
-  list: { type: "array", maxItems: 2, items_type: "string" },
+  list: { type: "array", max_items: 2, items_type: "string" },
   sites: { type: "array", items_type: "url" },
   things: { type: "array", items_type: "object" },
   loose: { type: "array", items_type: "somethingelse" },
@@ -168,7 +168,7 @@ describe("a working copy checks the fields its catalog holds", () => {
     // The child redeclares the parent's field as required, which is the one
     // change a subtype may make to it (`types.md`); the grandchild declares
     // nothing of its own.
-    const code = { type: "string", maxLength: 3 };
+    const code = { type: "string", max_length: 3 };
     scriptHydration(harness.server, {
       head: "10",
       catalog: typeCatalog([
@@ -604,7 +604,7 @@ describe("a working copy checks the fields its catalog holds", () => {
           ...types[0],
           fields: {
             ...fields,
-            title: { type: "string", required: true, maxLength: 7 },
+            title: { type: "string", required: true, max_length: 7 },
           },
         },
       ]),

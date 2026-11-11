@@ -39,7 +39,7 @@ beforeAll(async () => {
           label: "Lines",
           columns: {
             amount: { type: "number", required: true, adds_up: "sum" },
-            memo: { type: "string", maxLength: 20 },
+            memo: { type: "string", max_length: 20 },
             kind: { type: "enum", enum_values: ["food", "travel"] },
           },
         },

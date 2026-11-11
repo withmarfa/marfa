@@ -237,7 +237,7 @@ describe("edges CRUD", () => {
       edge?: unknown;
     };
     expect(body.error.code).toBe("version_conflict");
-    expect(body.error.status).toBe(409);
+    expect(body.error).not.toHaveProperty("status");
     expect(body.current?.id).toBe(created.data.edge.id);
     expect(body.current?.version).toBe(advanced.data.edge.version);
     expect(body.current?.properties).toEqual({ note: "winner" });

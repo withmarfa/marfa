@@ -1151,7 +1151,6 @@ export const answers = {
       error: {
         code: "version_conflict",
         message: "The item has been modified since the version you read",
-        status: 409,
       },
       current,
       ancestor,
@@ -1170,7 +1169,6 @@ export const answers = {
     body: {
       error: {
         code: "version_conflict",
-        status: 409,
         message:
           `Version ${String(requestedVersion)} is stale; current version is ` +
           `${String(current.version)}. Re-read the item and send again at version ${String(current.version)}.`,
@@ -1269,7 +1267,6 @@ export const answers = {
       error: {
         code: "version_conflict",
         message: "The edge has been modified since the version you read",
-        status: 409,
       },
       current,
     },
@@ -1284,7 +1281,6 @@ export const answers = {
       error: {
         code: "ancestor_unavailable",
         message: "No snapshot is retained for the version named",
-        status: 409,
       },
       current,
       requested_version: requestedVersion,
