@@ -46,7 +46,8 @@ const KEPT_ON_SUCCESS = new Set([
   "ci.yml:rust-contract:Keep the server",
   "ci.yml:rust-contract:Keep the server without test hooks",
   "ci.yml:rust-contract-shards:Keep the report",
-  // `Conformance statuses` reads the statuses the Rust shards drew.
+  // A shard passes when a test fails, which only the score reports, so its
+  // log is kept for that failure.
   "ci.yml:rust-contract-shards:Keep the server log",
   // Both nightly jobs download it, so it is an input and not a diagnostic.
   "benchmarks.yml:server:Keep the server",

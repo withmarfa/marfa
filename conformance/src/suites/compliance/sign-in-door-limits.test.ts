@@ -126,7 +126,9 @@ describe("the limits one address is held to", () => {
   });
 
   it("answers the thirty-first device code from one address in a minute 429", async () => {
-    const app = await registerApp(limited, "items.read");
+    const app = await registerApp(limited, "core.note:read", {
+      grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
+    });
     const address = nextAddress();
     const code = () =>
       fetch(`${limited.apiUrl}/auth/device/code`, {
@@ -137,7 +139,7 @@ describe("the limits one address is held to", () => {
         },
         body: new URLSearchParams({
           client_id: app.clientId,
-          scope: "items.read",
+          scope: "core.note:read",
         }),
       });
     const first = await code();
@@ -204,14 +206,14 @@ describe("what a page and a redirect take from the request", () => {
   });
 
   it("takes a loopback redirect URI on any port for one registered on the loopback", async () => {
-    const app = await registerApp(limited, "items.read");
-    const elsewhere = authorizeQuery(app.clientId, "items.read", pkce(), {
+    const app = await registerApp(limited, "core.note:read");
+    const elsewhere = authorizeQuery(app.clientId, "core.note:read", pkce(), {
       redirect_uri: "http://127.0.0.1:54321/callback",
     });
     const taken = await sentTo(limited, await authorize(limited, elsewhere));
     expect(taken?.pathname).toBe("/auth/sign-in");
     // The witness: another path on the loopback is not the registered URI.
-    const other = authorizeQuery(app.clientId, "items.read", pkce(), {
+    const other = authorizeQuery(app.clientId, "core.note:read", pkce(), {
       redirect_uri: "http://127.0.0.1:54321/elsewhere",
     });
     const refused = await authorize(limited, other);
@@ -221,9 +223,15 @@ describe("what a page and a redirect take from the request", () => {
   });
 
   it("issues an access token that lasts an hour", async () => {
-    const app = await registerApp(limited, "items.read");
+    const app = await registerApp(limited, "core.note:read");
     const cookie = await ownerCookie(limited, origin);
-    const tokens = await connect(limited, origin, cookie, app, "items.read");
+    const tokens = await connect(
+      limited,
+      origin,
+      cookie,
+      app,
+      "core.note:read",
+    );
     expect(tokens.access_token).toBeTruthy();
     expect(tokens.expires_in).toBe(3600);
   });

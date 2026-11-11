@@ -183,6 +183,16 @@ describe("the Rust contract shards", () => {
     expect(step(shards, "Stop the server").if).toBe("always()");
   });
 
+  it("hold every status the server answered to its declaration, before the stop clears the log", () => {
+    const names = shards?.steps.map((s) => s.name) ?? [];
+    const held = names.indexOf("Hold every status observed to its declaration");
+    expect(held).toBeGreaterThan(names.indexOf("Run the shard"));
+    expect(held).toBeLessThan(names.indexOf("Stop the server"));
+    expect(
+      step(shards, "Hold every status observed to its declaration").run,
+    ).toBe('pnpm check:statuses --state "$RUNNER_TEMP/marfa"');
+  });
+
   it("start nothing that is for the TypeScript server", () => {
     const text = JSON.stringify(shards?.steps);
     expect(text).not.toContain("@withmarfa/server...");

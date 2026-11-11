@@ -944,9 +944,11 @@ a dispatch with `macos` runs them there too.
   file. Each split shard compares the time of every file it ran with its
   weight, warns about one that took more than half as long again or half as
   long, and writes the slow files to the job summary
-  (`pnpm check:shard-drift`); update the weight when it does. A shard writes
-  Vitest's JSON report as an artifact and fails only when it wrote none, not
-  when a test failed. `Rust contract score` counts the reports as described
+  (`pnpm check:shard-drift`); update the weight when it does. Each shard
+  holds every status its server answered to its declaration in the document
+  (`pnpm check:statuses --state <dir>`), and fails when one is not. A shard writes
+  Vitest's JSON report as an artifact and fails when it wrote none, not when a
+  test failed. `Rust contract score` counts the reports as described
   above and fails when a file in `RUST_JUDGED` did not pass whole. `Full CI`
   waits for it.
 - **On macOS.** `Rust contract on macOS` builds the server natively with its
