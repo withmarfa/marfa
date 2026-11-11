@@ -162,14 +162,15 @@ pub fn register(conn: &Connection) -> rusqlite::Result<()> {
         ffi::sqlite3_step(statement);
         ffi::sqlite3_finalize(statement);
     }
-    if api.is_null() {
+    // SAFETY: a non-null API from FTS5 lives as long as the connection.
+    let Some(fts5) = (unsafe { api.as_ref() }) else {
         return Err(failure(ffi::SQLITE_ERROR, "FTS5 gave no API"));
-    }
-    // SAFETY: FTS5 gave a valid API, which lives as long as the connection.
+    };
+    let Some(create) = fts5.xCreateFunction else {
+        return Err(failure(ffi::SQLITE_ERROR, "FTS5 takes no functions"));
+    };
+    // SAFETY: `create` and `api` come from the same live FTS5 API.
     let rc = unsafe {
-        let Some(create) = (*api).xCreateFunction else {
-            return Err(failure(ffi::SQLITE_ERROR, "FTS5 takes no functions"));
-        };
         create(
             api,
             c"bm25_within".as_ptr(),
