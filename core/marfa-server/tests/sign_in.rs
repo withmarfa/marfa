@@ -197,7 +197,7 @@ async fn a_full_disk_costs_a_session_its_renewal_and_not_the_request() {
     instance
         .app
         .faults
-        .set("fail:commit-full", Some("auth.session.use"))
+        .set("fail:commit-full", Some("auth.sign_in.used"))
         .unwrap();
     let admitted = send(instance.public.clone(), on_the_passkey_list(&cookie)).await;
     assert_eq!(admitted.status, StatusCode::OK);
@@ -286,7 +286,7 @@ async fn an_email_changed_during_a_sign_in_ends_that_sign_in() {
 
 #[tokio::test]
 async fn an_unknown_outcome_changes_no_cookie() {
-    for (path, body, action) in [("/auth/sign-out", json!({}), "auth.session.delete")] {
+    for (path, body, action) in [("/auth/sign-out", json!({}), "auth.sign_in.ended")] {
         let instance = Instance::claimed().await;
         let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
         instance.app.clock.advance(120_000).unwrap();
@@ -491,7 +491,7 @@ async fn a_session_past_its_end_leaves_no_entry_when_all_are_ended() {
         .db
         .read(|tx| {
             Ok(tx.query_row(
-                "SELECT (SELECT count(*) FROM audit_log WHERE action = 'auth.session.delete'), \
+                "SELECT (SELECT count(*) FROM audit_log WHERE action = 'auth.sign_in.ended'), \
                  (SELECT count(*) FROM sign_ins)",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),

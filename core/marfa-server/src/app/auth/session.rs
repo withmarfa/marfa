@@ -18,10 +18,10 @@ const TOKEN_BYTES: usize = 32;
 const IDLE_MS: i64 = (7 * 24 * 3600 + 60) * 1000;
 const USE_EVERY_MS: i64 = 60 * 1000;
 const RECENT_MS: i64 = 5 * 60 * 1000;
-pub(super) const ENDED: &str = "auth.session.delete";
+pub(super) const ENDED: &str = "auth.sign_in.ended";
 /// Bookkeeping, named so a fault can reach it. It leaves no audit entry.
 const USE: Write = Write {
-    action: Some("auth.session.use"),
+    action: Some("auth.sign_in.used"),
     for_caller: false,
 };
 

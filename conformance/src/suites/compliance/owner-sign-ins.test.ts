@@ -741,7 +741,7 @@ describe("ending a sign-in", () => {
     const page = await new MarfaClient({
       baseUrl: server.apiUrl,
       apiKey: server.managementKey,
-    }).listAudit({ action: "auth.session.delete", limit: 200 });
+    }).listAudit({ action: "auth.sign_in.ended", limit: 200 });
     expect(page.status, JSON.stringify(page.error)).toBe(200);
     expect(page.data.data.map((row) => row.resource_id)).toContain(id);
   });

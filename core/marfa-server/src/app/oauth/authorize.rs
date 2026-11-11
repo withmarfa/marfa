@@ -29,7 +29,7 @@ use crate::app::refusal::{Code as RefusalCode, Refusal, Result};
 use crate::app::unit::Unit;
 use crate::db::Write;
 
-const CODE_WRITE: &str = "auth.verification.create";
+const CODE_WRITE: &str = "auth.code.issued";
 const CONSENT_PATH: &str = "/auth/authorize";
 const REQUEST_PATH: &str = "/auth/oauth2/authorize";
 const NO_DESTINATION: &str = "/auth/error?error=invalid_redirect";

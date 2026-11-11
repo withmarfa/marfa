@@ -109,17 +109,17 @@ describe("a credential change", () => {
 
 describe("a sign-in credential", () => {
   it("is in the audit log when a client's registration answers", async () => {
-    const before = await logged("auth.oauthClient.create");
+    const before = await logged("auth.client.created");
     await registerApp(server, NOTES);
-    expect(await logged("auth.oauthClient.create")).toBe(before + 1);
+    expect(await logged("auth.client.created")).toBe(before + 1);
   });
 
   it("is in the audit log when an authorization answers with a code", async () => {
     const app = await registerApp(server, NOTES);
     await codeFor(server, origin, cookie, app, NOTES);
-    const before = await logged("auth.verification.create");
+    const before = await logged("auth.code.issued");
     await codeFor(server, origin, cookie, app, NOTES);
-    expect(await logged("auth.verification.create")).toBeGreaterThan(before);
+    expect(await logged("auth.code.issued")).toBeGreaterThan(before);
   });
 
   it("is in the audit log when a password sign-in answers", async () => {
@@ -151,7 +151,7 @@ describe("a sign-in's audit entry", () => {
     };
     const failedBefore = await count("auth.sign_in.failed", "owner");
     const signedBefore = await count("auth.sign_in.success", "owner");
-    const endedBefore = await count("auth.session.delete", "sign_in");
+    const endedBefore = await count("auth.sign_in.ended", "sign_in");
 
     const failed = await fetch(`${server.apiUrl}/auth/sign-in`, {
       method: "POST",
@@ -170,9 +170,9 @@ describe("a sign-in's audit entry", () => {
 
     expect(await count("auth.sign_in.failed", "owner")).toBe(failedBefore + 1);
     expect(await count("auth.sign_in.success", "owner")).toBe(signedBefore + 1);
-    expect(await count("auth.session.delete", "sign_in")).toBe(endedBefore + 1);
+    expect(await count("auth.sign_in.ended", "sign_in")).toBe(endedBefore + 1);
     // The filter narrows: no sign-in entry is filed under another resource.
-    expect(await count("auth.session.delete", "owner")).toBe(0);
+    expect(await count("auth.sign_in.ended", "owner")).toBe(0);
   });
 });
 

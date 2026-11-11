@@ -16,7 +16,7 @@ use crate::app::auth::Visit;
 use crate::app::keys::digest_of;
 use crate::app::refusal::Result;
 
-const TOKEN_REVOKED: &str = "auth.credentials.revoked";
+const TOKEN_REVOKED: &str = "auth.token.revoked";
 pub(super) const GRANT_REVOKED: &str = "auth.grant.revoked";
 
 pub async fn revoke(app: &Arc<App>, form: Form, visit: &Visit) -> Result<Answered<()>> {

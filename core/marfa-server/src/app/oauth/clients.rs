@@ -20,7 +20,7 @@ use crate::db::Write;
 
 const MOST_FETCHES_AT_ONCE: usize = 4;
 const DOCUMENT_FRESH_MS: i64 = 3_600_000;
-pub(super) const CLIENT_CREATED: &str = "auth.oauthClient.create";
+pub(super) const CLIENT_CREATED: &str = "auth.client.created";
 
 #[derive(Debug)]
 pub struct Documents {

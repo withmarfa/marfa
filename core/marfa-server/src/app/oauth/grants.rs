@@ -21,7 +21,7 @@ use crate::app::{App, instance, keys};
 const COMMAND_LINE_SOFTWARE_ID: &str = "so.marfa.cli";
 const APP_SOURCE_PREFIX: &str = "oauth:";
 const NARROWED: &str = "auth.grant.narrowed";
-pub(crate) const RENAMED: &str = "auth.grant.rename";
+pub(crate) const RENAMED: &str = "auth.grant.renamed";
 pub(crate) const REVOKED: &str = GRANT_REVOKED;
 
 fn no_such_grant() -> Refusal {

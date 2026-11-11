@@ -2421,7 +2421,7 @@ async fn a_failed_audit_keeps_a_browser_session_and_a_retry_ends_it() {
     let own = rows.iter().find(|row| row["kind"] == "browser").unwrap();
     let id = text_at(own, "id");
 
-    let aim = Some("auth.session.delete");
+    let aim = Some("auth.sign_in.ended");
     instance.app.faults.set("fail:audit", aim).unwrap();
     let failed = instance.end_sign_in(id).await;
     instance.app.faults.clear(None);
@@ -2565,7 +2565,7 @@ async fn a_silent_code_reads_its_destination_inside_the_write() {
     instance
         .app
         .faults
-        .set("hold:write", Some("auth.verification.create"))
+        .set("hold:write", Some("auth.code.issued"))
         .unwrap();
     let asked = instance.authorize(&client, NOTES, CALLBACK);
     let moved = async {

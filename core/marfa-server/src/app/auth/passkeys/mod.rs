@@ -30,7 +30,7 @@ use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 
-const CHALLENGE_ISSUED: &str = "auth.passkey.challenge";
+const CHALLENGE_ISSUED: &str = "auth.passkey.challenged";
 const ADDED: &str = "owner.passkey.added";
 const RENAMED: &str = "owner.passkey.renamed";
 const REMOVED: &str = "owner.passkey.removed";

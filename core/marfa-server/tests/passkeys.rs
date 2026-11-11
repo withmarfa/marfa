@@ -666,7 +666,7 @@ async fn a_challenge_whose_commit_is_unknown_sets_no_cookie() {
     let instance = Instance::claimed().await;
     let faults = &instance.app.faults;
     faults
-        .set("fail:commit-full", Some("auth.passkey.challenge"))
+        .set("fail:commit-full", Some("auth.passkey.challenged"))
         .unwrap();
     let unknown = instance.ask("/auth/passkeys/sign-in/options", "").await;
     assert!(unknown.status.is_server_error());
