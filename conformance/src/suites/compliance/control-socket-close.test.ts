@@ -6,6 +6,7 @@ import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
+import { serverProgram } from "../../../scripts/marfa-server.js";
 import { controlRequest } from "../../utils/control-request.js";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -43,8 +44,9 @@ async function holdRequest(socketPath: string): Promise<() => Promise<number>> {
 }
 
 async function fixture() {
-  const program = process.env.MARFA_SERVER_BIN;
-  if (!program) throw new Error("MARFA_SERVER_BIN names no server");
+  const found = serverProgram();
+  if (!found) throw new Error("MARFA_SERVER_BIN names no server");
+  const program: string = found;
   const root = await mkdtemp(join(await realpath(tmpdir()), "marfa-restart-"));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const socket = join(root, "control.sock");
@@ -60,7 +62,7 @@ async function fixture() {
     MARFA_ENRICHMENT_OCR_ENABLED: "false",
   };
   function start() {
-    const child = spawn(program as string, [], {
+    const child = spawn(program, [], {
       env,
       stdio: ["ignore", "pipe", "pipe"],
     });
