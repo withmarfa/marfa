@@ -349,6 +349,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/src\/client\/owner-session\.ts$/,
     ["workspace", ...CONTRACT, "restore-drill", "mcp-conformance"],
   ],
+  // The typed client, which the restore drill drives the server through.
+  [/^conformance\/src\/client\//, ["workspace", ...CONTRACT, "restore-drill"]],
   [/^conformance\/src\//, ["workspace", ...CONTRACT]],
   [
     /^conformance\//,

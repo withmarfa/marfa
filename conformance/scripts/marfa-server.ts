@@ -10,11 +10,12 @@ import { createServer } from "node:net";
  *   tsx scripts/marfa-server.ts up [--state <dir>] [--port <n>] [--env K=V ...]
  *
  * The server listens on IPv4 loopback, on `--port`, else `MARFA_PORT`, else a
- * free port this script picks, and is reached at `http://localhost:<port>`,
- * which is also its sign-in address: passkeys refuse an IP address. Port zero
- * leaves the sign-in address unset, and so does `--env MARFA_SIGN_IN_ADDRESS=`;
- * a server with no sign-in address, or one elsewhere, is reached at
- * `127.0.0.1`.
+ * free port this script picks. On a port it picks, the server is reached at
+ * `http://localhost:<port>`, which is also its sign-in address: passkeys
+ * refuse an IP address. A named port leaves the sign-in address unset, and so
+ * do `--env MARFA_SIGN_IN_ADDRESS=` and a server without its test hooks, which
+ * reads no seed; a server with no sign-in address, or one elsewhere, is
+ * reached at `127.0.0.1`.
  * Readiness comes from this boot's log before any health request is sent. Each `--env K=V` is a setting for the boot
  * (`conformance/README.md` lists the ones a fixture may pass), and wins over
  * the script's own defaults and the caller's environment.
@@ -716,8 +717,9 @@ async function startServer(args: BootOptions): Promise<Started> {
     MARFA_DATABASE_PATH: p.db,
     MARFA_BLOB_PATH: p.blobs,
     // Passkeys need a host name, and an instance people reach has its
-    // sign-in address set. A boot on port zero leaves it unset.
-    MARFA_SIGN_IN_ADDRESS: port > 0 ? `http://localhost:${port}` : undefined,
+    // sign-in address set. A port the caller names is left as it is.
+    MARFA_SIGN_IN_ADDRESS:
+      named === undefined ? `http://localhost:${port}` : undefined,
     // Enrichment rewrites file items in the background, which would make
     // exact-property assertions on blobs depend on timing. Off unless the
     // caller says otherwise, as the limiter below is, so a fixture about
@@ -765,9 +767,14 @@ async function startServer(args: BootOptions): Promise<Started> {
   // which adds to the defaults, and only where the hooks are on.
   const defaultTuning = env.MARFA_TEST_TUNING;
   Object.assign(env, args.env);
-  // An empty value asks for a boot with no sign-in address set.
-  if (env.MARFA_SIGN_IN_ADDRESS === "") delete env.MARFA_SIGN_IN_ADDRESS;
   const hooksOn = /^(true|1|yes|on)$/i.test(env.MARFA_TEST_HOOKS ?? "");
+  // An empty value asks for a boot with no sign-in address set, and a server
+  // without hooks reads no seed.
+  if (
+    env.MARFA_SIGN_IN_ADDRESS === "" ||
+    (!hooksOn && args.env?.MARFA_SIGN_IN_ADDRESS === undefined)
+  )
+    delete env.MARFA_SIGN_IN_ADDRESS;
   const tuning = [
     hooksOn ? defaultTuning : undefined,
     args.env?.MARFA_TEST_TUNING,
@@ -1015,22 +1022,6 @@ export async function bootServer(args: BootOptions): Promise<void> {
     if (!set.ok) {
       throw new Error(
         `Setting the instance up for measuring answered ${String(set.status)}: ${(await set.text()).slice(0, 300)}`,
-      );
-    }
-  }
-  // Without hooks the server reads no seed, so the address is stored, and
-  // again on every boot, since the port may have moved.
-  if (serverProgram() !== undefined && hookFreeRun()) {
-    const address = await controlRequest(controlSocket, "/config", {
-      method: "PATCH",
-      body: {
-        sign_in_address: new URL(url).origin,
-        confirm_sign_in_address_change: true,
-      },
-    });
-    if (address.status !== 200) {
-      throw new Error(
-        `Setting the sign-in address answered ${String(address.status)}: ${JSON.stringify(address.body).slice(0, 300)}`,
       );
     }
   }

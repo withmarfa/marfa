@@ -37,12 +37,10 @@ const jobsOf = (file: string): [string, Job][] =>
   );
 
 /**
- * Artifacts kept whatever the verdict, with the reason. The shard's log is the
- * input of `Conformance statuses`, which reads every shard's; the load reports
- * are what the benchmarks exist to produce.
+ * Artifacts kept whatever the verdict, with the reason. The load reports are
+ * what the benchmarks exist to produce.
  */
 const KEPT_ON_SUCCESS = new Set([
-  "ci.yml:conformance-shards:Keep the server log",
   // The score job reads every shard's report, and each shard downloads the
   // server the build job made, so both are inputs and not diagnostics.
   "ci.yml:rust-contract:Keep the server",

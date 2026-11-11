@@ -111,10 +111,12 @@ production claim service, signs in, mints explicit ordinary fixture keys,
 and writes `.marfa-state/env`. The state directory holds the
 SQLite file, the disk store, the server log, what the server printed to stderr, the pid, the clock offset and the env file; pass
 `--state <dir>` to put it elsewhere and `--port <n>` to choose the port.
-The server listens on `127.0.0.1` and is reached, and signs people in, at
-`http://localhost:<port>`, since passkeys refuse an IP address. With no port
-given, the adapter asks the system for a free one and starts on it, and starts
-again on another if a different process took it first. It reads the port from
+The server listens on `127.0.0.1`. With no port given, the adapter asks the
+system for a free one, starts on it, and starts again on another if a
+different process took it first; the server is then reached, and signs people
+in, at `http://localhost:<port>`, its sign-in address, since passkeys refuse an
+IP address. On a port given with `--port` or `MARFA_PORT` it is reached at
+`127.0.0.1` with no sign-in address set. It reads the port from
 this boot's readiness log record before requesting `/health`. A restart
 ignores earlier readiness records. An explicitly occupied IPv4 port fails the
 boot instead of accepting another listener's health response.
