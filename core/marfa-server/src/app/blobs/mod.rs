@@ -915,7 +915,13 @@ impl App {
             unit.caller
                 .require_upload(catalog.provenance.keys().map(String::as_str))?;
             let holder = unit.caller.credential_handle();
-            recording.record(unit.tx(), Some(&holder), &unit.at)
+            let blob = recording.record(unit.tx(), Some(&holder), &unit.at)?;
+            unit.audit(
+                "blob",
+                blob.hash.as_str(),
+                Some(json!({ "size_bytes": blob.size_bytes, "mime_type": blob.mime_type })),
+            )?;
+            Ok(blob)
         })
         .await
     }

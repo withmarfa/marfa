@@ -1722,7 +1722,7 @@ While the subscriptions of one maker have receivers that do not answer, the serv
 
 `GET /audit` lists what the server recorded about the writes the events above announce, and about the exports it accepts.
 
-Each entry names what it records in `action`. The table gives the `action` of each write the audit log records for items, edges, types, sources, keys, settings, webhooks, connectors, exports and tables, and of each job the server runs on itself, with the `kind` that `events/audit-kind` sorts it under. The actions a sign-in or an OAuth client records are not in it.
+Each entry names what it records in `action`. The table gives the `action` of each write the audit log records for items, edges, types, sources, keys, settings, webhooks, connectors, exports and tables, and of each job the server runs on itself, with the `kind` that `events/audit-kind` sorts it under. The actions of a sign-in, of an OAuth client and of the owner's account (its profile, its passkeys and its setup code) are not in it, and `events/audit-kind` sorts them by their first part.
 
 | Action                       | Written when                                                                    | Kind           |
 | ---------------------------- | ------------------------------------------------------------------------------- | -------------- |
@@ -1739,6 +1739,7 @@ Each entry names what it records in `action`. The table gives the `action` of ea
 | `item.restore`               | A restore takes an item out of the bin.                                         | `data`         |
 | `item.purge`                 | A purge destroys an item.                                                       | `data`         |
 | `items.bulk`                 | A write of `POST /items/bulk` commits an entry or an atomic page.               | `data`         |
+| `items.tombstones`           | A request settles the tombstones of a source's items.                           | `data`         |
 | `edge.create`                | A write creates an edge.                                                        | `data`         |
 | `edge.update`                | A write changes an edge.                                                        | `data`         |
 | `edge.delete`                | A write deletes an edge.                                                        | `data`         |
@@ -1748,11 +1749,15 @@ Each entry names what it records in `action`. The table gives the `action` of ea
 | `type.register`              | A write registers a type.                                                       | `data`         |
 | `type.replace`               | A write replaces a type.                                                        | `data`         |
 | `type.delete`                | A write deletes a type.                                                         | `data`         |
+| `type.icon.set`              | The owner sets the icon of a type.                                              | `data`         |
+| `type.icon.clear`            | The owner clears the icon of a type.                                            | `data`         |
 | `edge_type.register`         | A write registers an edge type.                                                 | `data`         |
 | `edge_type.update`           | A write changes an edge type.                                                   | `data`         |
 | `edge_type.delete`           | A write deletes an edge type.                                                   | `data`         |
 | `source.update`              | A write changes a source.                                                       | `data`         |
 | `export.run`                 | The server accepts an export.                                                   | `data`         |
+| `restore_archive`            | The owner restores an archive.                                                  | `data`         |
+| `blob.upload`                | A caller uploads a blob.                                                        | `data`         |
 | `mcp.file_fetch`             | An MCP tool fetches a file from an address.                                     | `data`         |
 | `items.bulk_action`          | A bulk action is queued.                                                        | `data`         |
 | `items.bulk_action.chunk`    | A bulk action commits a chunk.                                                  | `data`         |
@@ -1771,7 +1776,6 @@ Each entry names what it records in `action`. The table gives the `action` of ea
 | `connector_state.delete`     | A connector's state is deleted.                                                 | `settings`     |
 | `inbound_endpoint.create`    | An inbound endpoint is created.                                                 | `settings`     |
 | `inbound_endpoint.retire`    | An inbound endpoint is retired.                                                 | `settings`     |
-| `blob.stores_configured`     | The blob stores are configured.                                                 | `settings`     |
 | `items.trash_purged`         | The trash retention job purges items that stayed in the bin past the retention. | `housekeeping` |
 | `items.feed_expired`         | The feed expiry job moves expired feed items to the bin.                        | `housekeeping` |
 | `item.versions_thinned`      | The version thinning job removes versions of an item.                           | `housekeeping` |
@@ -1791,7 +1795,7 @@ When the server records an audit entry for a write or a job in the table above, 
 
 **Reason:** a client filters `GET /audit` by `action` (`events/audit-filter`), and a second server that names an action otherwise answers a different log.
 
-**Tests:** `compliance/audit.test.ts › records a write with the acting key, the resource and the action`, `› filters by action and resource type with an excluded control`, `› records export.run before the export's stream begins, and none for an export it refuses`, `compliance/audit-jobs.test.ts › records the enqueue and each committed chunk of a job, and nothing for a dry run`, `› records the cancellation of a queued job, and none for a cancel that changes nothing`.
+**Tests:** `compliance/audit.test.ts › records a write with the acting key, the resource and the action`, `› filters by action and resource type with an excluded control`, `› records export.run before the export's stream begins, and none for an export it refuses`, `compliance/audit-actions.test.ts › names each write of an item with the action the table gives it`, `› names a transition and a bulk write with the action the table gives it`, `› names each write of an edge and of an edge type with the action the table gives it`, `› names each write of a type with the action the table gives it`, `› names the writes of a key and of a webhook with the action the table gives it`, `› names the writes of a connector and of an upload with the action the table gives it`, `› names an export with the action the table gives it`, `compliance/type-icons.test.ts › records the owner's icon change in the audit log`, `compliance/audit-jobs.test.ts › records the enqueue and each committed chunk of a job, and nothing for a dry run`, `› records the cancellation of a queued job, and none for a cancel that changes nothing`.
 
 ### `events/audit-records-write`
 
