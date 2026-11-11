@@ -248,6 +248,8 @@ class RowsProxy {
   readonly replies: Reply[] = [];
   /** Answers every row write to `item` while set. */
   refusing: { item: string; gateway: number } | null = null;
+  /** Each row write that reached the proxy, in order. */
+  readonly sent: { key: string | undefined; body: unknown }[] = [];
   private contract = "";
 
   private constructor(
@@ -287,6 +289,11 @@ class RowsProxy {
     const rows =
       request.method === "POST" &&
       /^\/items\/[^/]+\/tables\/[^/]+\/(rows|batches\/[^/]+\/undo)$/.test(path);
+    if (rows && path.endsWith("/rows"))
+      this.sent.push({
+        key: headers.get("idempotency-key") ?? undefined,
+        body: JSON.parse(body.toString("utf8")) as unknown,
+      });
     const reply = !rows
       ? undefined
       : this.refusing !== null &&
@@ -1024,7 +1031,7 @@ describe("how a drain sends row writes", () => {
     expect(first.idempotency_key).not.toBe(writes[0]!.idempotency_key);
   });
 
-  it("refuses every write of a batch the server refuses naming no operation", async () => {
+  it("refuses every write of a batch the server refuses naming no operation, and discards them all when a caller discards one", async () => {
     const type = await tableType();
     const item = await itemOf(type);
     const device = await holding(type, "whole-refusal");
@@ -1052,63 +1059,216 @@ describe("how a drain sends row writes", () => {
         code: "item_not_found",
       });
     }
+
+    expect(value(await device.discard(writes[1]!.id))).toBe(true);
+    const left = value(await device.queue()).map((one) => one.id);
+    expect(left).not.toContain(writes[0]!.id);
+    expect(left).not.toContain(writes[1]!.id);
   });
 });
 
 describe("a batch the drain cannot settle at once", () => {
-  it("lets the other writes of a batch go on their own once its first write is set aside or withdrawn, telling each write once", async () => {
+  /** Two writes to one row, which a drain sends in one batch. */
+  async function twoWrites(label: string) {
     const type = await tableType();
     const item = await itemOf(type);
     const row = uuidv7();
     await write(item, [{ op: "put", id: row, values: { count: 1 } }]);
     const proxy = await proxied();
-    const device = await holding(
-      type,
-      "set-aside",
-      server.workingKey,
-      proxy.url,
+    const device = await holding(type, label, server.workingKey, proxy.url);
+    const first = value(
+      await device.writeRows(item, "steps", [
+        { op: "patch", id: row, values: { count: 2 } },
+      ]),
     );
-    const [first, second] = [
-      value(
-        await device.writeRows(item, "steps", [
-          { op: "patch", id: row, values: { count: 2 } },
-        ]),
+    const second = value(
+      await device.writeRows(item, "steps", [
+        { op: "patch", id: row, values: { note: "second" } },
+      ]),
+    );
+    const batch = {
+      operations: [
+        { op: "patch", id: row, values: { count: 2 } },
+        { op: "patch", id: row, values: { note: "second" } },
+      ],
+    };
+    return { type, item, row, proxy, device, first, second, batch };
+  }
+
+  async function batchesOf(item: string): Promise<number> {
+    const batches = await working.rawRequest<{ data: unknown[] }>(
+      `/items/${item}/tables/steps/batches`,
+    );
+    return batches.data.data.length;
+  }
+
+  it("sets a batch whose answer was lost aside whole under its key, telling each write once, and sends it again as it went once a caller releases one of its writes", async () => {
+    const { item, row, proxy, device, first, second, batch } =
+      await twoWrites("set-aside");
+    value(await device.addTag(item, "witness"));
+    for (let pass = 0; pass < 5; pass += 1)
+      proxy.replies.push({ forward: true, lose: true });
+    for (let pass = 0; pass < 3; pass += 1) value(await device.drain());
+    expect(await serverRows(item)).toEqual({
+      [row]: { count: 2, note: "second" },
+    });
+    await write(item, [{ op: "patch", id: row, values: { note: "other" } }]);
+    const held = await batchesOf(item);
+
+    const stuck = value(await drainWith(device, "clock-offset=360000"));
+    for (const one of [first, second]) {
+      expect(
+        told(stuck, one.id).map((entry) => [entry.verdict, entry.reason]),
+      ).toEqual([["blocked", "failing_alone"]]);
+      expect((await queued(device, one.id)).idempotency_key).toBe(
+        one.idempotency_key,
+      );
+    }
+    expect((await queued(device, second.id)).batched_with).toBe(first.id);
+    const sent = proxy.sent.length;
+    value(await device.drain());
+    expect(proxy.sent).toHaveLength(sent);
+
+    expect(value(await device.release({ id: second.id }))).toBeTruthy();
+    for (const one of [first, second])
+      expect((await queued(device, one.id)).verdict).toBeNull();
+    const again = value(await device.drain());
+    expect(
+      [first, second].map((one) =>
+        told(again, one.id).map((entry) => [entry.verdict, entry.replayed]),
       ),
-      value(
-        await device.writeRows(item, "steps", [
-          { op: "patch", id: row, values: { note: "second" } },
-        ]),
-      ),
-    ];
+    ).toEqual([[["accepted", true]], [["accepted", true]]]);
+    expect(proxy.sent).toEqual(
+      proxy.sent.map(() => ({ key: first.idempotency_key, body: batch })),
+    );
+    expect(await serverRows(item)).toEqual({
+      [row]: { count: 2, note: "other" },
+    });
+    expect(await batchesOf(item)).toBe(held);
+  });
+
+  it("refuses every write of a batch it sent before that the server refuses naming an operation, sending none of it again", async () => {
+    const { item, row, proxy, device, first, second, batch } =
+      await twoWrites("resent-refused");
+    proxy.replies.push(
+      { forward: true, lose: true },
+      {
+        forward: false,
+        status: 404,
+        body: JSON.stringify({
+          error: {
+            code: "row_not_found",
+            message: "No row has that id.",
+            details: { operation: 1 },
+          },
+        }),
+      },
+    );
+    value(await device.drain());
+    expect(await serverRows(item)).toEqual({
+      [row]: { count: 2, note: "second" },
+    });
+
+    const report = value(await device.drain());
+    expect([first, second].map((one) => verdictOf(report, one.id))).toEqual([
+      "refused",
+      "refused",
+    ]);
+    value(await device.drain());
+    expect(proxy.sent).toEqual([
+      { key: first.idempotency_key, body: batch },
+      { key: first.idempotency_key, body: batch },
+    ]);
+    expect(await serverRows(item)).toEqual({
+      [row]: { count: 2, note: "second" },
+    });
+  });
+
+  it("withdraws every write of a batch set aside whole when a caller withdraws one of them", async () => {
+    const { item, row, proxy, device, first, second } =
+      await twoWrites("withdrawn");
     value(await device.addTag(item, "witness"));
     proxy.refusing = { item, gateway: 413 };
     for (let pass = 0; pass < 3; pass += 1) value(await device.drain());
+    const stuck = value(await drainWith(device, "clock-offset=360000"));
+    expect(
+      [first, second].map((one) => told(stuck, one.id)[0]?.reason),
+    ).toEqual(["failing_alone", "failing_alone"]);
+
+    expect(value(await device.withdraw(first.id))).toBe(true);
+    const left = value(await device.queue()).map((one) => one.id);
+    expect(left).not.toContain(first.id);
+    expect(left).not.toContain(second.id);
+    expect(await deviceRows(device, item)).toEqual({ [row]: { count: 1 } });
+    proxy.refusing = null;
+    const sent = proxy.sent.length;
+    value(await device.drain());
+    expect(proxy.sent).toHaveLength(sent);
+    expect(await serverRows(item)).toEqual({ [row]: { count: 1 } });
+  });
+
+  it("releases every write of a dead batch when a caller releases one, and sends the batch again as it went under its key", async () => {
+    const { item, row, proxy, device, first, second, batch } =
+      await twoWrites("dead");
+    for (let pass = 0; pass < 5; pass += 1)
+      proxy.replies.push({ forward: false, status: 200, body: "{}" });
+    for (let pass = 0; pass < 5; pass += 1) value(await device.drain());
+    for (const one of [first, second])
+      expect((await queued(device, one.id)).verdict).toBe("dead");
     expect((await queued(device, second.id)).batched_with).toBe(first.id);
 
-    const stuck = value(await drainWith(device, "clock-offset=360000"));
-    expect(told(stuck, first.id).map((entry) => entry.verdict)).toEqual([
-      "blocked",
-    ]);
-    expect(told(stuck, first.id)[0]?.reason).toBe("failing_alone");
-    expect(told(stuck, second.id)).toHaveLength(1);
-    const released = await queued(device, second.id);
-    expect(released.batched_with).toBeNull();
-    expect(released.idempotency_key).toBe(second.idempotency_key);
-    expect((await queued(device, first.id)).idempotency_key).not.toBe(
-      first.idempotency_key,
+    expect(value(await device.release({ id: first.id }))).toBeTruthy();
+    for (const one of [first, second]) {
+      const now = await queued(device, one.id);
+      expect([now.verdict, now.idempotency_key]).toEqual([
+        null,
+        one.idempotency_key,
+      ]);
+    }
+    const again = value(await device.drain());
+    expect(
+      [first, second].map((one) =>
+        told(again, one.id).map((entry) => entry.verdict),
+      ),
+    ).toEqual([["accepted"], ["accepted"]]);
+    expect(proxy.sent).toEqual(
+      Array.from({ length: 6 }, () => ({
+        key: first.idempotency_key,
+        body: batch,
+      })),
     );
+    expect(await serverRows(item)).toEqual({
+      [row]: { count: 2, note: "second" },
+    });
+  });
 
-    value(await device.withdraw(first.id));
-    proxy.refusing = null;
-    const after = value(await device.drain());
-    expect(told(after, second.id).map((entry) => entry.verdict)).toEqual([
-      "accepted",
+  it("marks every write of a batch another instance answers unsent and out of the batch, and sends them together again", async () => {
+    const { type, item, row, proxy, device, first, second, batch } =
+      await twoWrites("instance");
+    proxy.replies.push({
+      forward: false,
+      status: 409,
+      body: JSON.stringify({
+        error: { code: "instance_changed", message: "Another instance." },
+      }),
+    });
+    expect(refused(await device.drain()).code).toBe("copy_expired");
+    for (const one of [first, second])
+      expect((await queued(device, one.id)).batched_with).toBeNull();
+
+    value(await device.hydrate([type], "library"));
+    const again = value(await device.drain());
+    expect(
+      [first, second].map((one) =>
+        told(again, one.id).map((entry) => entry.verdict),
+      ),
+    ).toEqual([["accepted"], ["accepted"]]);
+    expect(proxy.sent).toEqual([
+      { key: first.idempotency_key, body: batch },
+      { key: first.idempotency_key, body: batch },
     ]);
     expect(await serverRows(item)).toEqual({
-      [row]: { count: 1, note: "second" },
-    });
-    expect(await deviceRows(device, item)).toEqual({
-      [row]: { count: 1, note: "second" },
+      [row]: { count: 2, note: "second" },
     });
   });
 
@@ -1307,30 +1467,9 @@ describe("a batch the drain cannot settle at once", () => {
     ).toEqual(["item_not_found", "item_not_found"]);
   });
 
-  it("sends a write of a batch blocked whole on its own once a caller releases it, and the first write under a fresh key", async () => {
-    const type = await tableType();
-    const item = await itemOf(type);
-    const row = uuidv7();
-    await write(item, [{ op: "put", id: row, values: { count: 1 } }]);
-    const proxy = await proxied();
-    const device = await holding(
-      type,
-      "released",
-      server.workingKey,
-      proxy.url,
-    );
-    const [first, second] = [
-      value(
-        await device.writeRows(item, "steps", [
-          { op: "patch", id: row, values: { count: 2 } },
-        ]),
-      ),
-      value(
-        await device.writeRows(item, "steps", [
-          { op: "patch", id: row, values: { note: "second" } },
-        ]),
-      ),
-    ];
+  it("releases every write of a batch blocked key_spent when a caller releases one, and sends the batch as it went under a fresh key", async () => {
+    const { item, row, proxy, device, first, second, batch } =
+      await twoWrites("released");
     proxy.replies.push({
       forward: false,
       status: 422,
@@ -1348,22 +1487,20 @@ describe("a batch the drain cannot settle at once", () => {
     expect((await queued(device, second.id)).batched_with).toBe(first.id);
 
     expect(value(await device.release({ id: second.id }))).toBeTruthy();
-    expect((await queued(device, second.id)).batched_with).toBeNull();
-    const firstKey = (await queued(device, first.id)).idempotency_key;
-    expect(firstKey).not.toBe(first.idempotency_key);
-    const apart = value(await device.drain());
-    expect(told(apart, second.id).map((entry) => entry.verdict)).toEqual([
-      "accepted",
-    ]);
-    expect((await queued(device, first.id)).verdict).toBe("blocked");
-    expect(await serverRows(item)).toEqual({
-      [row]: { count: 1, note: "second" },
-    });
-
-    expect(value(await device.release({ id: first.id }))).toBeTruthy();
-    const last = value(await device.drain());
-    expect(told(last, first.id).map((entry) => entry.verdict)).toEqual([
-      "accepted",
+    for (const one of [first, second])
+      expect((await queued(device, one.id)).verdict).toBeNull();
+    expect((await queued(device, second.id)).batched_with).toBe(first.id);
+    const fresh = (await queued(device, first.id)).idempotency_key;
+    expect(fresh).not.toBe(first.idempotency_key);
+    const again = value(await device.drain());
+    expect(
+      [first, second].map((one) =>
+        told(again, one.id).map((entry) => entry.verdict),
+      ),
+    ).toEqual([["accepted"], ["accepted"]]);
+    expect(proxy.sent).toEqual([
+      { key: first.idempotency_key, body: batch },
+      { key: fresh, body: batch },
     ]);
     expect(await serverRows(item)).toEqual({
       [row]: { count: 2, note: "second" },
