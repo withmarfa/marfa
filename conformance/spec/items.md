@@ -1064,11 +1064,11 @@ If a credential sends an `Idempotency-Key` it used with another request, differi
 
 ### `items/idempotency-contract`
 
-If a credential repeats a request under its `Idempotency-Key` after the server has moved to another contract version, then the server MUST answer `422 idempotency_key_reused`.
+If a credential repeats a request under its `Idempotency-Key` after the server has moved to another contract version, then the server MUST answer `422 idempotency_contract_changed`.
 
-**Reason:** the kept answer is shaped for the contract it was made under.
+**Reason:** the kept answer is shaped for the contract it was made under, so it cannot be replayed, and the request is the same one, so the key was not reused.
 
-**Tests:** `compliance/idempotency-refusals.test.ts › answers 422 idempotency_key_reused and writes nothing again`.
+**Tests:** `compliance/idempotency-refusals.test.ts › answers 422 idempotency_contract_changed, naming the first status, and writes nothing again`.
 
 ### `items/idempotency-credential`
 

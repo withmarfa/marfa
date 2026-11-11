@@ -648,8 +648,8 @@ async fn every_cleanup_keeps_a_row_whose_stored_time_does_not_read_and_finishes(
              UPDATE api_keys SET revoked_at = '0' WHERE id = '{key}'; \
              UPDATE webhook_deliveries SET created_at = '0' WHERE id = 'dead'; \
              UPDATE audit_log SET created_at = '0' WHERE id = (SELECT min(id) FROM audit_log); \
-             INSERT INTO idempotency_records (credential, idempotency_key, fingerprint, state, \
-             created_at) VALUES ('kept', 'kept', 'kept', 'complete', '0'); \
+             INSERT INTO idempotency_records (credential, idempotency_key, fingerprint, contract, \
+             state, created_at) VALUES ('kept', 'kept', 'kept', 0, 'complete', '0'); \
              INSERT INTO bulk_jobs (id, action, input, key_id, status, matched, created_at, \
              finished_at) VALUES ('kept', 'trash', '{{}}', '{key}', 'completed', 0, '{at}', '0'); \
              INSERT INTO blobs (hash, mime_type, size_bytes, recorded_at) \

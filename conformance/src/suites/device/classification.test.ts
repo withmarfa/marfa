@@ -939,6 +939,33 @@ describe("the three refusals that park a write", () => {
     ).toBe(0);
   });
 
+  it.each([
+    [409, "blocked", "key_spent"],
+    [201, "accepted", null],
+  ] as const)(
+    "takes idempotency_contract_changed naming a first %i as %s",
+    async (originalStatus, verdict, reason) => {
+      harness = await hydratedHarness(
+        `class-contract-changed-${String(originalStatus)}`,
+        { items: held() },
+      );
+      const [first] = await drainAgainst(harness, {
+        update: [
+          refusal(
+            422,
+            "idempotency_contract_changed",
+            "made under another contract version",
+            { original_status: originalStatus },
+          ),
+        ],
+      });
+      expect(
+        [first?.verdicts[0]?.verdict, first?.verdicts[0]?.reason ?? null],
+        "the device took the answer to a key the server ran the write under as one that applied none of it, or the reverse",
+      ).toEqual([verdict, reason]);
+    },
+  );
+
   it("blocks a write whose base version the server no longer holds", async () => {
     harness = await hydratedHarness("class-ancestor", { items: held() });
     const [first] = await drainAgainst(harness, {

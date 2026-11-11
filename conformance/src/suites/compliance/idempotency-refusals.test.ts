@@ -202,7 +202,7 @@ describe("an Idempotency-Key repeated after the server's contract version change
   }
 
   it(
-    "answers 422 idempotency_key_reused and writes nothing again",
+    "answers 422 idempotency_contract_changed, naming the first status, and writes nothing again",
     async () => {
       const key = "contract-change";
       const request = { type: "core.note", properties: { body: "contract" } };
@@ -233,9 +233,25 @@ describe("an Idempotency-Key repeated after the server's contract version change
         });
         expect(repeat.status).toBe(422);
         expect(repeat.headers.get("X-Error-Code")).toBe(
-          "idempotency_key_reused",
+          "idempotency_contract_changed",
         );
         expect(repeat.headers.get("Idempotency-Replayed")).toBeNull();
+        const refused = (await repeat.json()) as {
+          error: { details?: { original_status?: number } };
+        };
+        expect(refused.error.details?.original_status).toBe(201);
+        // The witness: another request under the key is still told the key
+        // was reused, so the code belongs to the contract.
+        const other = await send(
+          "POST",
+          "/items",
+          { ...request, properties: { body: "another" } },
+          { "Idempotency-Key": key },
+        );
+        expect(other.status).toBe(422);
+        expect(other.headers.get("X-Error-Code")).toBe(
+          "idempotency_key_reused",
+        );
         expect(await liveItems()).toBe(before + 1);
       } finally {
         // The boot after this one is back on the first contract.

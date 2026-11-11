@@ -8,6 +8,11 @@ import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { DrainReport, Outcome } from "../../device/protocol.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
 import { cleanup, createTestContext, trackItem } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
 
@@ -23,6 +28,7 @@ let apiUrl: string;
 let apiKey: string;
 const proxies: Server[] = [];
 const stores: string[] = [];
+const servers: FreshServer[] = [];
 
 beforeAll(async () => {
   ({ client, ctx, apiUrl, apiKey } = await createTestContext(
@@ -38,8 +44,9 @@ afterAll(async () => {
   }
   for (const store of stores)
     rmSync(dirname(store), { recursive: true, force: true });
+  for (const server of servers) await server.stop();
   if (ctx) await cleanup(ctx);
-});
+}, FRESH_SERVER_TIMEOUT_MS);
 
 function value<T>(answer: Outcome<T>): T {
   expect(answer.ok, JSON.stringify(answer)).toBe(true);
@@ -54,19 +61,23 @@ interface Sent {
   key: string | undefined;
   body: string;
   replayed: boolean;
+  code: string | null;
 }
 
 /**
  * Passes every request to the server. A request to `watched` is written by
  * the server whatever `fate` says, and then answered as it says.
  */
-async function proxy(watched: (request: IncomingMessage) => boolean): Promise<{
+async function proxy(
+  watched: (request: IncomingMessage) => boolean,
+  upstreamUrl: () => string = () => apiUrl,
+): Promise<{
   url: string;
   sent: Sent[];
-  fate: { next: Fate };
+  fate: { next: Fate; contract?: string };
 }> {
   const sent: Sent[] = [];
-  const fate: { next: Fate } = { next: "pass" };
+  const fate: { next: Fate; contract?: string } = { next: "pass" };
   const listener = createServer((request, response) => {
     void (async () => {
       const chunks: Buffer[] = [];
@@ -81,7 +92,7 @@ async function proxy(watched: (request: IncomingMessage) => boolean): Promise<{
           headers.set(name, Array.isArray(held) ? held.join(", ") : held);
       }
       const upstream = await fetch(
-        `${apiUrl.replace(/\/$/, "")}${request.url}`,
+        `${upstreamUrl().replace(/\/$/, "")}${request.url}`,
         {
           method: request.method,
           headers,
@@ -98,11 +109,14 @@ async function proxy(watched: (request: IncomingMessage) => boolean): Promise<{
         )
           returned[name] = kept;
       });
+      if (fate.contract !== undefined)
+        returned["x-marfa-contract"] = fate.contract;
       if (watched(request)) {
         sent.push({
           key: headers.get("idempotency-key") ?? undefined,
           body: body.toString("utf8"),
           replayed: upstream.headers.get("idempotency-replayed") === "true",
+          code: upstream.headers.get("x-error-code"),
         });
         if (fate.next === "lose") {
           await upstream.arrayBuffer();
@@ -324,3 +338,82 @@ it("sends a write blocked conflict_unresolved again under a fresh key once a cal
     [released.idempotency_key, false],
   ]);
 });
+
+it(
+  "takes a write the server applied before it moved to another contract version as accepted, and never writes it again",
+  async () => {
+    const server = await bootFreshServer("release-key-contract");
+    servers.push(server);
+    const call = (method: string, path: string, body?: unknown) =>
+      fetch(`${server.apiUrl}${path}`, {
+        method,
+        headers: {
+          Authorization: `Bearer ${server.workingKey}`,
+          "Content-Type": "application/json",
+        },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+    const tags = async (id: string) => {
+      const read = await call("GET", `/items/${id}/metadata`);
+      expect(read.status).toBe(200);
+      return ((await read.json()) as { metadata: { tags: string[] } }).metadata
+        .tags;
+    };
+    const made = await call("POST", "/items", {
+      type: "core.note",
+      tier: "library",
+      properties: { title: "across contracts", body: "held" },
+    });
+    expect(made.status).toBe(201);
+    const { id } = ((await made.json()) as { item: { id: string } }).item;
+    const { url, sent, fate } = await proxy(
+      (request) =>
+        request.method === "PUT" && request.url === `/items/${id}/metadata`,
+      () => server.apiUrl,
+    );
+    const store = newStore("release-key-contract");
+    stores.push(store);
+    const device = new CliDevice({
+      binary: requireBinary(),
+      store,
+      url,
+      key: server.workingKey,
+    });
+    value(await device.hydrate(["core.note"], "library"));
+    const write = value(await device.replaceMetadata(id, ["mine"]));
+
+    // The write reaches the server before it moves on to the device's
+    // contract, and its answer is lost.
+    await server.restart({ env: { MARFA_TEST_CONTRACT_VERSION: "1" } });
+    fate.contract = "0";
+    fate.next = "lose";
+    value(await device.drain());
+    expect((await queued(device, write.id)).verdict).toBeNull();
+    expect(
+      await tags(id),
+      "the server did not write the metadata on the other contract, so nothing below is about a write applied twice",
+    ).toEqual(["mine"]);
+    const since = await call("PUT", `/items/${id}/metadata`, {
+      tags: ["theirs"],
+    });
+    expect(since.status).toBe(200);
+
+    await server.restart();
+    delete fate.contract;
+    fate.next = "pass";
+    const back = value(await device.drain());
+    expect(
+      told(back, write.id),
+      "a write the server applied under its key was taken as one it never applied",
+    ).toEqual([["accepted", null]]);
+    expect(sent.map((one) => [one.key, one.code])).toEqual([
+      [write.idempotency_key, null],
+      [write.idempotency_key, "idempotency_contract_changed"],
+    ]);
+    expect(
+      await tags(id),
+      "the write was applied a second time, undoing the change made since",
+    ).toEqual(["theirs"]);
+  },
+  4 * FRESH_SERVER_TIMEOUT_MS,
+);
