@@ -63,7 +63,7 @@ afterAll(async () => {
 
 describe("GET /health while a long job runs", () => {
   it("is answered between two pages of an NDJSON export", async () => {
-    // The later page is far enough on for dozens of turns between the holds.
+    // A page well on in the export, so many turns lie between the holds.
     const held = await heldWhenHealthAnswered(server, {
       start: "hold:read-hydration",
       later: "hold:export-page=30",
@@ -88,6 +88,7 @@ describe("GET /health while a long job runs", () => {
   }, 600_000);
 
   it("is answered between two pages of an archive export", async () => {
+    // The last page of the notes, so several pages lie between the holds.
     const held = await heldWhenHealthAnswered(server, {
       start: "hold:read-hydration",
       later: "hold:export-page=8",
