@@ -821,9 +821,7 @@ async fn approving_with_nothing_chosen_denies() {
             .any(|(n, v)| n == "error" && v == "access_denied")
     );
     assert_eq!(
-        instance
-            .count("SELECT count(*) FROM oauth_consents")
-            .await,
+        instance.count("SELECT count(*) FROM oauth_consents").await,
         0
     );
 }

@@ -322,8 +322,7 @@ impl Instance {
     }
 
     async fn asked_to_prove(&self) -> Asked {
-        self.asked("/auth/passkeys/sign-in/options", "")
-            .await
+        self.asked("/auth/passkeys/sign-in/options", "").await
     }
 
     async fn verify_registration(&self, cookie: &str, response: Value) -> Reply {
@@ -334,8 +333,7 @@ impl Instance {
 
     async fn verify_assertion(&self, cookie: &str, response: Value) -> Reply {
         let body = json!({ "response": response });
-        self.post("/auth/passkeys/sign-in", cookie, &body)
-            .await
+        self.post("/auth/passkeys/sign-in", cookie, &body).await
     }
 
     async fn add(&self, device: &Device) -> String {
@@ -443,9 +441,7 @@ async fn a_passkey_added_signs_in_and_the_table_holds_no_token() {
         text(&device.id)
     );
 
-    let proving = instance
-        .ask("/auth/passkeys/sign-in/options", "")
-        .await;
+    let proving = instance.ask("/auth/passkeys/sign-in/options", "").await;
     assert_eq!(proving.body["rpId"], HOST);
     assert_eq!(proving.body["userVerification"], "required");
     assert_eq!(proving.body["allowCredentials"], json!([]));
@@ -601,14 +597,8 @@ async fn a_passkey_of_another_host_cannot_sign_in_and_stays_listed() {
     assert_eq!(stranded_by(HOST).await.unwrap(), 0);
     assert_eq!(stranded_by("marfa.example").await.unwrap(), 1);
     instance.move_to("https://marfa.example");
-    let asked = instance
-        .asked("/auth/passkeys/sign-in/options", "")
-        .await;
-    assert!(
-        asked
-            .cookie
-            .contains("__Host-marfa_passkey_challenge=")
-    );
+    let asked = instance.asked("/auth/passkeys/sign-in/options", "").await;
+    assert!(asked.cookie.contains("__Host-marfa_passkey_challenge="));
     let saying = Saying {
         host: "marfa.example".to_string(),
         ..instance.saying()
@@ -678,9 +668,7 @@ async fn a_challenge_whose_commit_is_unknown_sets_no_cookie() {
     faults
         .set("fail:commit-full", Some("auth.passkey.challenge"))
         .unwrap();
-    let unknown = instance
-        .ask("/auth/passkeys/sign-in/options", "")
-        .await;
+    let unknown = instance.ask("/auth/passkeys/sign-in/options", "").await;
     assert!(unknown.status.is_server_error());
     assert!(unknown.cookie().is_none());
 }
@@ -1009,15 +997,10 @@ async fn a_foreign_page_cannot_start_or_finish_a_sign_in() {
     let asked = request(Method::POST, door, "", foreign);
     let reply = send(instance.public.clone(), asked.body(Body::empty()).unwrap()).await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
-    let finish = request(
-        Method::POST,
-        "/auth/passkeys/sign-in",
-        "",
-        foreign,
-    )
-    .header(header::CONTENT_TYPE, "application/json")
-    .body(Body::from(json!({ "response": {} }).to_string()))
-    .unwrap();
+    let finish = request(Method::POST, "/auth/passkeys/sign-in", "", foreign)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(json!({ "response": {} }).to_string()))
+        .unwrap();
     let reply = send(instance.public.clone(), finish).await;
     assert_eq!(reply.status, StatusCode::FORBIDDEN);
 }

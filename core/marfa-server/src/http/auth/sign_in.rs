@@ -94,8 +94,7 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
     if email.is_empty() || password.is_empty() {
         return failed("missing_field", "");
     }
-    let outcome =
-        sign_in::with_password(app, email.to_string(), password.to_string(), visit).await;
+    let outcome = sign_in::with_password(app, email.to_string(), password.to_string(), visit).await;
     let Opened { token, .. } = match outcome {
         Ok(opened) => opened,
         Err(refusal) if refusal.code == Code::Unauthorized => {

@@ -73,7 +73,10 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "answers 405: the endpoint holds no session",
     ),
     ("GET /auth/sign-in", "the sign-in page"),
-    ("POST /auth/sign-in", "password sign-in, by its form or by JSON"),
+    (
+        "POST /auth/sign-in",
+        "password sign-in, by its form or by JSON",
+    ),
     ("POST /auth/sign-out", "a browser's sign-out"),
     (
         "POST /auth/confirm",

@@ -415,7 +415,12 @@ pub fn origin_approved(tx: &Connection, origin: &str) -> Result<bool> {
     )?)
 }
 
-pub fn withdraw_consent(tx: &Connection, client_id: &str, owner_id: &str, now: Stamp) -> Result<()> {
+pub fn withdraw_consent(
+    tx: &Connection,
+    client_id: &str,
+    owner_id: &str,
+    now: Stamp,
+) -> Result<()> {
     tx.execute(
         "UPDATE oauth_consents SET withdrawn_at = ?3, updated_at = ?3 \
          WHERE client_id = ?1 AND owner_id = ?2",
