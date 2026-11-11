@@ -136,13 +136,25 @@ afterEach(async () => {
 });
 
 afterAll(async () => {
-  for (const command of held) await command.stop();
-  rmSync(gateDir, { recursive: true, force: true });
-  await server.stop();
+  const failures: unknown[] = [];
+  const attempt = async (step: () => unknown) => {
+    try {
+      await step();
+    } catch (error) {
+      failures.push(error);
+    }
+  };
+  for (const command of held) await attempt(() => command.stop());
+  if (gateDir !== undefined) {
+    await attempt(() => rmSync(gateDir, { recursive: true, force: true }));
+  }
+  if (server !== undefined) await attempt(() => server.stop());
   const report = process.env.MARFA_TWO_DEVICES_REPORT;
   const text = JSON.stringify({ timings_ms: timings, load_1m: loads }, null, 2);
   console.log(`two devices: ${text}`);
   if (report !== undefined && report !== "") writeFileSync(report, text);
+  if (failures.length > 0)
+    throw new AggregateError(failures, "teardown failed");
 }, FRESH_SERVER_TIMEOUT_MS);
 
 async function serverRows(): Promise<Row[]> {
@@ -583,6 +595,7 @@ describe("one table on two devices", () => {
 
   it("answers a batch device B's process was killed in the middle of sending once, never writing it twice", async () => {
     const batchesBefore = (await serverBatches()).length;
+    const tableBefore = valuesById(await serverRows());
     value(await b.catchUp());
     const cursor = value(await b.status()).event_cursor!;
     const writes = [
@@ -634,8 +647,17 @@ describe("one table on two devices", () => {
     expect(await serverBatches()).toHaveLength(batchesBefore + 1);
 
     const rows = await serverRows();
-    expect(rows.filter((row) => row.values.name === "minted")).toHaveLength(1);
-    expect(valuesById(rows)[r1]).toMatchObject({ amount: 950 });
+    const minted = rows.filter((row) => row.values.name === "minted");
+    expect(minted.map((row) => row.values)).toEqual([
+      { name: "minted", amount: 1 },
+    ]);
+    expect(
+      valuesById(rows.filter((row) => row.values.name !== "minted")),
+    ).toEqual({
+      ...tableBefore,
+      [r1]: { ...tableBefore[r1], amount: 950 },
+      [r9]: { name: "tickets", amount: 60 },
+    });
 
     const marker = await everything.createItem({
       type: "core.note",
