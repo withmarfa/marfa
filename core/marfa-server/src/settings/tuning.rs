@@ -2,7 +2,8 @@
 
 use std::time::Duration;
 
-/// A job's name follows this, or `*` for every job a name does not give.
+/// A job's name follows this, or `*` for every job a name does not give. Neither reaches a job
+/// whose interval is a stored setting, `backup`, so `interval.backup` is refused by name.
 #[cfg(feature = "test-hooks")]
 const INTERVAL: &str = "interval.";
 
@@ -12,7 +13,8 @@ pub struct Tuning {
     pub write_wait: Duration,
     pub upload_idle: Duration,
     pub blob_read_idle: Duration,
-    pub inbound_read: Duration,
+    /// How long a delivery's body may go without a byte before it is ended.
+    pub inbound_idle: Duration,
     pub connector_hold: Duration,
     pub enrichment_batch: u64,
     pub blob_replicate_batch: u64,
@@ -29,7 +31,7 @@ impl Default for Tuning {
             write_wait: Duration::from_secs(5),
             upload_idle: Duration::from_secs(60),
             blob_read_idle: Duration::from_secs(30),
-            inbound_read: Duration::from_secs(30),
+            inbound_idle: Duration::from_secs(30),
             connector_hold: Duration::from_secs(180),
             enrichment_batch: 8,
             blob_replicate_batch: 100,
@@ -72,7 +74,7 @@ impl Tuning {
                 "write_wait_ms" => tuning.write_wait = millis,
                 "upload_idle_ms" => tuning.upload_idle = millis,
                 "blob_read_idle_ms" => tuning.blob_read_idle = millis,
-                "inbound_read_ms" => tuning.inbound_read = millis,
+                "inbound_idle_ms" => tuning.inbound_idle = millis,
                 "connector_hold_ms" => tuning.connector_hold = millis,
                 "enrichment_batch" => tuning.enrichment_batch = number,
                 "blob_replicate_batch" => tuning.blob_replicate_batch = number,
@@ -111,6 +113,17 @@ mod tests {
         );
         let later = Tuning::read("interval.feed-expiry=5,interval.feed-expiry=9", &JOBS).unwrap();
         assert_eq!(later.interval_ms("feed-expiry", 1), 9);
+    }
+
+    #[test]
+    fn an_interval_is_named_only_for_a_job_whose_interval_the_server_fixes() {
+        let jobs = crate::app::housekeeping::job_names();
+        assert!(Tuning::read("interval.feed-expiry=1000", &jobs).is_ok());
+        let refused = Tuning::read("interval.backup=1000", &jobs).unwrap_err();
+        assert!(refused.contains("interval.backup"), "{refused}");
+        // The wildcard is accepted and leaves a stored interval alone.
+        let wild = Tuning::read("interval.*=1000", &jobs).unwrap();
+        assert_eq!(wild.interval_ms("feed-expiry", 3_600_000), 1_000);
     }
 
     #[test]

@@ -340,11 +340,21 @@ If a body sent without a `Content-Length` passes the limit across its chunks, th
 
 **Tests:** `compliance/inbound-bounds.test.ts › stores a body of exactly MARFA_INBOUND_MAX_BYTES and refuses one byte more`.
 
-### `inbound-webhooks/body-timeout`
+### `inbound-webhooks/body-idle`
 
-If a body has not arrived whole within 30 seconds, then the server MUST answer `408 request_timeout`.
+If no byte of the body of a delivery arrives for 30 seconds, then the server MUST answer `408 request_timeout`.
+
+**Reason:** a sender that has gone quiet would otherwise hold its request and the bytes it has sent. The time counts the server's wait for the sender.
 
 **Tests:** `compliance/inbound-webhooks.test.ts › answers request_timeout to a body that does not arrive in time, and stores nothing`, `compliance/inbound-check-order.test.ts › answers a declared length over the limit 413 before the body's 408`.
+
+### `inbound-webhooks/body-duration`
+
+While a part of the body of a delivery arrives at least once in every 30 seconds, the server MUST NOT end the request for the time the body takes.
+
+**Reason:** the limit on a body is its size (`inbound_max_bytes`, which the owner may raise), so a large one over a slow link outlasts any fixed deadline for the whole body. The limit on a body that stops arriving is `inbound-webhooks/body-idle`.
+
+**Tests:** `compliance/inbound-webhooks.test.ts › takes a body that arrives slowly, a part at a time, for longer than the idle limit in all`.
 
 ### `inbound-webhooks/body-timeout-stores-nothing`
 

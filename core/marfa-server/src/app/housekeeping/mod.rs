@@ -25,8 +25,12 @@ use crate::settings::registry::Setting;
 pub use cleanups::{drain, report_kept};
 use jobs::JOBS;
 
+/// The jobs whose interval the server fixes, which a test-hooks server may shorten.
 pub fn job_names() -> Vec<&'static str> {
-    JOBS.iter().map(|job| job.name).collect()
+    JOBS.iter()
+        .filter(|job| matches!(job.interval, Interval::Fixed(_)))
+        .map(|job| job.name)
+        .collect()
 }
 
 pub const HOUR_MS: i64 = 3_600_000;

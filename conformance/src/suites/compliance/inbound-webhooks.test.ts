@@ -24,6 +24,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { HOUR_MS, movedClock } from "../../utils/moved-clock.js";
+import { pause, slowPost } from "../../utils/slow-body.js";
 
 let ctx: TestContext;
 let client: MarfaClient;
@@ -664,7 +665,7 @@ describe("the receiving door on an instance that names its limits", () => {
       MARFA_INBOUND_BACKLOG_BYTES: "6",
       MARFA_INBOUND_MAX_BYTES: "64",
       MARFA_INBOUND_IN_FLIGHT_BYTES: "65536",
-      MARFA_TEST_TUNING: "inbound_read_ms=1000",
+      MARFA_TEST_TUNING: "inbound_idle_ms=1000",
     });
   }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -825,6 +826,40 @@ describe("the receiving door on an instance that names its limits", () => {
     expect(await pending(owner)).toEqual([]);
     // Witness: a body that arrives whole is taken at the same address.
     idOf(await send(server!.apiUrl, made.path, "whole"));
+  });
+
+  it("takes a body that arrives slowly, a part at a time, for longer than the idle limit in all", async () => {
+    // The server is booted with an idle limit of one second.
+    const owner = await freshConnector("steady");
+    const made = await endpoint(owner);
+    const parts = [
+      "a body ",
+      "that ",
+      "keeps ",
+      "arriving ",
+      "a part ",
+      "at a time",
+    ];
+    const steady = slowPost({ apiUrl: server!.apiUrl }, made.path, {});
+    const started = Date.now();
+    for (const part of parts) {
+      await steady.write(Buffer.from(part));
+      await pause(400);
+    }
+    steady.end();
+    const taken = await steady.answered;
+    expect(Date.now() - started).toBeGreaterThan(2000);
+    expect(taken.status, taken.body).toBe(202);
+    expect((await pending(owner)).map((d) => d.size)).toEqual([
+      parts.join("").length,
+    ]);
+
+    // Witness: the same body, with a stall after its first part, is ended.
+    const stalled = slowPost({ apiUrl: server!.apiUrl }, made.path, {});
+    await stalled.write(Buffer.from(parts[0]));
+    const ended = await stalled.answered;
+    expect(ended.status).toBe(408);
+    expect((await pending(owner)).length).toBe(1);
   });
 
   it(

@@ -282,17 +282,16 @@ pub async fn receive(
     app.faults.hold(HOLD_INBOUND_RESERVED, None).await;
     let query = request.uri().query().unwrap_or("").to_string();
     let headers = headers_of(&request);
-    let deadline = tokio::time::sleep(app.settings.start.tuning.inbound_read);
-    tokio::pin!(deadline);
+    let idle = app.settings.start.tuning.inbound_idle;
     let mut body = request.into_body();
     let mut bytes = Gathered::new(declared);
     loop {
-        let frame = tokio::select! {
-            frame = body.frame() => frame,
-            () = &mut deadline => {
+        let frame = match tokio::time::timeout(idle, body.frame()).await {
+            Ok(frame) => frame,
+            Err(_) => {
                 return refused(&Refusal::new(
                     Code::RequestTimeout,
-                    "The body did not arrive in the time allowed.",
+                    "The body stopped arriving; the delivery was ended.",
                 ));
             }
         };

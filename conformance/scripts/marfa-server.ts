@@ -172,7 +172,7 @@ const TUNING_NAMES: ReadonlyMap<string, string> = new Map([
   ["write_wait_ms", "MARFA_WRITE_WAIT_MS"],
   ["upload_idle_ms", "MARFA_UPLOAD_IDLE_TIMEOUT_MS"],
   ["blob_read_idle_ms", "MARFA_BLOB_READ_IDLE_TIMEOUT_MS"],
-  ["inbound_read_ms", "MARFA_INBOUND_READ_TIMEOUT_MS"],
+  ["inbound_idle_ms", "MARFA_INBOUND_READ_TIMEOUT_MS"],
   ["connector_hold_ms", "MARFA_CONNECTOR_HOLD_MS"],
   ["enrichment_batch", "MARFA_ENRICHMENT_BATCH_SIZE"],
   ["blob_replicate_batch", "MARFA_BLOB_REPLICATE_BATCH"],

@@ -2,9 +2,9 @@
  * `MARFA_TEST_TUNING` shortens a timing or a batch the server fixes in code,
  * for a server booted with test hooks: comma-separated `name=value` pairs.
  * A name is `interval.<job>` or `interval.*` (every job a name does not give)
- * in milliseconds, one of the timings in milliseconds
+ * in milliseconds, neither reaching `backup`, whose interval is stored, one of the timings in milliseconds
  * (`housekeeping_poll_ms`, `write_wait_ms`, `upload_idle_ms`,
- * `blob_read_idle_ms`, `inbound_read_ms`, `connector_hold_ms`), or one of the
+ * `blob_read_idle_ms`, `inbound_idle_ms`, `connector_hold_ms`), or one of the
  * batch sizes (`enrichment_batch`, `blob_replicate_batch`,
  * `blob_replicate_batch_bytes`, `blob_integrity_batch`,
  * `blob_integrity_batch_bytes`).
