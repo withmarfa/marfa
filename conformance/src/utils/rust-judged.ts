@@ -9,6 +9,10 @@ import { resolve } from "node:path";
  * pass fails the run, and in no TypeScript shard: a run without
  * `MARFA_SERVER_BIN` leaves it out (`withoutRustJudged`). A file is listed
  * once it passes whole on the Rust server, and stays passing.
+ *
+ * The performance, load and hydration projects are not listed: no job but the
+ * nightly benchmarks runs them, and it boots the Rust server, whose exit
+ * status judges them (`.github/workflows/benchmarks.yml`).
  */
 export const RUST_JUDGED: readonly string[] = [
   "src/suites/cli/access-words.test.ts",

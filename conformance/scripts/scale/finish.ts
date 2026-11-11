@@ -40,9 +40,13 @@ import { log, readFragment, REPORTS_DIR, targetItems } from "./context.js";
 const DISTINCT_ID = "marfa-nightly-benchmarks";
 export const FIGURES_FILE = resolve(REPORTS_DIR, "figures.json");
 
-/** The profile's name, which says what shape and size the figures were measured at. */
+/**
+ * The profile's name, which says what shape and size the figures were
+ * measured at, and on which server: the first Rust night starts a new
+ * baseline, since the nights before it measured another program.
+ */
 function profileName(): string {
-  return `scale-${targetItems()}`;
+  return `scale-${targetItems()}-rust`;
 }
 
 /** How many of the newest runs on `main` are looked through for figures. */
@@ -100,9 +104,15 @@ function previousNight(): FiguresFile | null {
       { stdio: "pipe" },
     );
     const file = resolve(directory, "figures.json");
-    return existsSync(file)
-      ? parseFiguresFile(readFileSync(file, "utf8"))
-      : null;
+    if (!existsSync(file)) return null;
+    const previous = parseFiguresFile(readFileSync(file, "utf8"));
+    if (previous !== null && previous.profile !== profileName()) {
+      log(
+        `the previous night ran profile ${previous.profile || "unknown"}, so tonight starts a new baseline`,
+      );
+      return null;
+    }
+    return previous;
   } catch (error) {
     log(`could not read the previous night: ${String(error).slice(0, 300)}`);
     return null;

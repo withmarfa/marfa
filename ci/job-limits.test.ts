@@ -50,6 +50,8 @@ const KEPT_ON_SUCCESS = new Set([
   "ci.yml:rust-contract-shards:Keep the report",
   // `Conformance statuses` reads the statuses the Rust shards drew.
   "ci.yml:rust-contract-shards:Keep the server log",
+  // Both nightly jobs download it, so it is an input and not a diagnostic.
+  "benchmarks.yml:server:Keep the server",
   "benchmarks.yml:benchmarks:Keep the load reports",
   // The next night reads it to show a change, so a passing night keeps it too.
   "benchmarks.yml:scale:Keep the scale figures",

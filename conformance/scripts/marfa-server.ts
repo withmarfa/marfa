@@ -71,8 +71,11 @@ import { tmpdir } from "node:os";
  * directory and log, and with the state directory as its working directory.
  * Nothing in the workspace is built for it. It must carry its test hooks (a
  * Rust server built with `--features test-hooks`), which the settings below
- * switch on. The claim and the keys go through
- * the private socket as for this server. A target whose sign-in door answers
+ * switch on, unless the run's environment sets
+ * `CONFORMANCE_SERVER_HOOK_FREE=true`: then it is a release build started as a
+ * person starts it, and the boot turns the limiter and file reading off
+ * through `PATCH /config`. The claim and the keys go through the private
+ * socket as for this server. A target whose sign-in door answers
  * `404 not_found` has no owner sign-in, and the env file then carries no
  * owner cookie or session file. `clock` and `fault` fail plainly against a
  * target without the hooks.
@@ -428,6 +431,25 @@ export function builtServer(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.MARFA_SERVER_BUILT === "true";
 }
 
+/**
+ * Whether the run's own environment says the program is a release build
+ * without test hooks, which a measuring run starts as a person does.
+ */
+function hookFreeRun(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.CONFORMANCE_SERVER_HOOK_FREE === "true";
+}
+
+/**
+ * What the environment cannot set on a program without test hooks, since it
+ * reads no setting from the environment there: a measuring run turns the
+ * limiter and file reading off through `PATCH /config` once it has claimed.
+ */
+const MEASURING_SETTINGS = {
+  rate_limit_enabled: false,
+  enrichment_enabled: false,
+  enrichment_ocr_enabled: false,
+};
+
 /** The program `MARFA_SERVER_BIN` names, when it names one. */
 export function serverProgram(
   env: NodeJS.ProcessEnv = process.env,
@@ -704,8 +726,9 @@ async function startServer(args: BootOptions): Promise<Started> {
       process.env.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES || "true",
   };
   // The built TypeScript server is started as a person starts it, without the
-  // hooks. Any other target is built with them.
-  const hooks = !built;
+  // hooks. Any other target is built with them, unless the run says it is a
+  // release build with `CONFORMANCE_SERVER_HOOK_FREE=true`.
+  const hooks = !built && !(program !== undefined && hookFreeRun());
   env.MARFA_TEST_HOOKS = String(hooks);
   delete env.MARFA_TEST_CLOCK_OFFSET_MS;
   // A throwaway server reports nothing, whatever the shell sets; a setting the
@@ -916,6 +939,25 @@ export async function bootServer(args: BootOptions): Promise<void> {
       throw new Error("Authorised fixture key creation failed");
     apiKey = working.body.key;
     managementKey = management.body.key;
+  }
+  if (
+    status.body.claimed !== true &&
+    serverProgram() !== undefined &&
+    hookFreeRun()
+  ) {
+    const set = await fetch(`${url}/config`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${managementKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(MEASURING_SETTINGS),
+    });
+    if (!set.ok) {
+      throw new Error(
+        `Setting the instance up for measuring answered ${String(set.status)}: ${(await set.text()).slice(0, 300)}`,
+      );
+    }
   }
   const ownerCookie = await signInOwner(url, previous.MARFA_OWNER_COOKIE);
   maskInActions(
