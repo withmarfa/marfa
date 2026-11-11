@@ -246,10 +246,10 @@ async fn a_large_restore_leaves_the_database_log_emptied_once_it_has_committed()
     let restored = fresh.restore(archive).await;
     assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
     assert_eq!(restored.body["imported"], 2_000);
+    wait_for("the log was never emptied", || fresh.log_size() == 0);
     // The witness that the log held the restore: the database file has grown past it.
     let database = std::fs::metadata(fresh.dir.path().join("marfa.db")).unwrap();
     assert!(database.len() > 1_000_000, "{}", database.len());
-    wait_for("the log was never emptied", || fresh.log_size() == 0);
     assert!(Path::new(&fresh.dir.path().join("marfa.db-wal")).exists());
 }
 
