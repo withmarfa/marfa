@@ -1,7 +1,7 @@
 name: Benchmarks
 
-# The conformance suite's performance, load and hydration projects, off the
-# gate: their budgets measure a shared runner as much as the server, so a
+# The conformance suite's performance, load and hydration projects, and the
+# scale benchmark, against the Rust server, off the gate: their budgets measure a shared runner as much as the server, so a
 # slow night should not block a merge, but a failure still has to land
 # somewhere it is seen. A scheduled run that fails opens an issue, or
 # comments on the one that is open.
@@ -27,10 +27,56 @@ permissions:
   contents: read
 
 jobs:
+  # The program a person runs: the release build with the file readers linked
+  # in and no test hooks, built the way `Rust server (release build)` builds
+  # it in `ci.yml`. The figures are those of a program with no clock shim or
+  # fault routes, and the suites below set what the hooks would have
+  # (`CONFORMANCE_SERVER_HOOK_FREE=true`: the boot turns the limiter and file reading
+  # off through `PATCH /config`).
+  server:
+    name: Rust server (release build)
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    env:
+      TARGET: x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v7
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Choose the folder for downloads and results
+        run: echo "MARFA_NATIVE_ROOT=$RUNNER_TEMP/marfa-native" >> "$GITHUB_ENV"
+      - name: Key the cache on the pins, the patches and the build scripts
+        id: key
+        run: echo "key=marfa-native-$RUNNER_OS-${{ hashFiles('core/marfa-enrichment/native/manifest.txt', 'core/marfa-enrichment/native/patches/**', 'core/marfa-enrichment/native/build.sh', 'core/marfa-enrichment/native/pdfium.sh', 'core/marfa-enrichment/native/tesseract.sh', 'core/marfa-enrichment/native/models.sh', 'core/marfa-enrichment/native/lib.sh', 'core/marfa-enrichment/native/linux/**') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the downloads and the PDFium library
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ runner.temp }}/marfa-native/downloads
+            ${{ runner.temp }}/marfa-native/archives
+          key: ${{ steps.key.outputs.key }}
+      - name: Make the build image
+        uses: ./.github/actions/native-build-image
+      - name: Build the Rust server
+        run: core/marfa-enrichment/native/release.sh "$TARGET" --server
+      # An input of the jobs below, so it is kept on success.
+      - name: Keep the server
+        uses: actions/upload-artifact@v7
+        with:
+          name: benchmark-server
+          path: ${{ runner.temp }}/marfa-native/out/${{ env.TARGET }}/marfa-server
+          if-no-files-found: error
+          retention-days: 1
+
   benchmarks:
     name: Performance, load and hydration
+    needs: server
     timeout-minutes: 100
     runs-on: ubuntu-latest
+    env:
+      CONFORMANCE_SERVER_HOOK_FREE: "true"
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -40,13 +86,21 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter "@withmarfa/server..." build
+      - uses: actions/download-artifact@v8
+        with:
+          name: benchmark-server
+          path: ${{ runner.temp }}/benchmark-server
+      - name: Name the server under test
+        run: |
+          chmod +x "$RUNNER_TEMP/benchmark-server/marfa-server"
+          echo "MARFA_SERVER_BIN=$RUNNER_TEMP/benchmark-server/marfa-server" >> "$GITHUB_ENV"
 
-      - name: Witness concurrent HTTP reads
-        run: pnpm exec vitest run packages/server/src/read-concurrency.test.ts
-
-      - name: Boot the server from this checkout
+      # One server for the whole job, which a long suite can leave quiet for
+      # longer than the harness's idle limit.
+      - name: Boot the server
         working-directory: conformance
+        env:
+          CONFORMANCE_SERVER_IDLE_MS: "0"
         run: |
           pnpm marfa:up --state "$RUNNER_TEMP/marfa"
           cat "$RUNNER_TEMP/marfa/env" >> "$GITHUB_ENV"
@@ -135,8 +189,9 @@ jobs:
   # Each of these stops only the processes it started, by process ID, and keeps
   # what it measured if one hangs. Every measuring step has a limit of its own,
   # and they add up, with room for the report, the upload and the verdict, to
-  # no more than the job's. A full-size run takes 45 to 75 minutes, the seed 15
-  # to 45, depending on the host; the device and folder steps stay above their
+  # no more than the job's. On the Rust server the seed took 5 minutes and the
+  # whole run about 12 on a Mac; a hosted runner is slower, and the first
+  # night's own figures set the limits down further; the device and folder steps stay above their
   # own 20-minute stops.
   # Each step writes a fragment under conformance/reports/scale/, so a step
   # that crashes or times out keeps the figures of the others. The `finish`
@@ -151,17 +206,17 @@ jobs:
   # memory and size still fail it, and a partial seed excuses nothing.
   scale:
     name: Scale
+    needs: server
     timeout-minutes: 180
     runs-on: ubuntu-latest
     permissions:
       contents: read
       actions: read
     env:
-      # The memory and restart figures are of the built server a person runs,
-      # not the sources through tsx. The build is the step above. The built
-      # server has no test hooks (clock shim, fault routes), which nothing
-      # here uses.
-      MARFA_SERVER_BUILT: "true"
+      # The memory and restart figures are of the release server a person runs,
+      # built by the `server` job. It has no test hooks (clock shim, fault
+      # routes), which nothing here uses.
+      CONFORMANCE_SERVER_HOOK_FREE: "true"
       MARFA_DEVICE_BIN: ${{ github.workspace }}/core/target/release/marfa
     steps:
       # A step, since a job's `env` cannot read the `runner` context. No `..`
@@ -176,7 +231,14 @@ jobs:
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter "@withmarfa/server..." build
+      - uses: actions/download-artifact@v8
+        with:
+          name: benchmark-server
+          path: ${{ runner.temp }}/benchmark-server
+      - name: Name the server under test
+        run: |
+          chmod +x "$RUNNER_TEMP/benchmark-server/marfa-server"
+          echo "MARFA_SERVER_BIN=$RUNNER_TEMP/benchmark-server/marfa-server" >> "$GITHUB_ENV"
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -187,13 +249,13 @@ jobs:
         working-directory: core
         run: cargo build --locked --release -p marfa-cli
 
-      - name: Boot the server from this checkout
+      - name: Boot the server
         timeout-minutes: 2
         working-directory: conformance
         run: pnpm marfa:up --state "$MARFA_SCALE_STATE"
 
       - name: Seed
-        timeout-minutes: 60
+        timeout-minutes: 30
         working-directory: conformance
         run: pnpm scale seed
       - name: Restart
@@ -244,6 +306,26 @@ jobs:
         working-directory: conformance
         run: pnpm scale watch
 
+      # Last, so the object store's settings (written to GITHUB_ENV) reach
+      # only this step, and the figures above are of a server without one.
+      - name: Put an object store beside a second server
+        if: ${{ !cancelled() }}
+        timeout-minutes: 2
+        working-directory: conformance
+        run: |
+          curl --fail --location --retry 3 https://garagehq.deuxfleurs.fr/_releases/v2.4.1/x86_64-unknown-linux-musl/garage -o "$RUNNER_TEMP/garage-bin"
+          sudo install -m 755 "$RUNNER_TEMP/garage-bin" /usr/local/bin/garage
+          pnpm garage:up --state "$RUNNER_TEMP/garage"
+      - name: Memory with an object store
+        if: ${{ !cancelled() }}
+        timeout-minutes: 3
+        working-directory: conformance
+        run: pnpm scale store
+      - name: Stop the object store
+        if: always()
+        working-directory: conformance
+        run: pnpm garage:down --state "$RUNNER_TEMP/garage"
+
       - name: Merge, compare and report
         if: ${{ !cancelled() }}
         working-directory: conformance
@@ -288,7 +370,7 @@ jobs:
 
   report-failure:
     name: Report a failed scheduled run
-    needs: [benchmarks, scale]
+    needs: [server, benchmarks, scale]
     if: ${{ failure() && github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

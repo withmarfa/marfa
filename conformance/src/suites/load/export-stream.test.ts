@@ -25,6 +25,12 @@ import { computeMetrics } from "./results.js";
 const profile = getLoadProfile();
 const { corpusItems, batchSize } = profile.bench;
 
+/**
+ * Fewest items to export. An export of 80 records is one chunk that arrives in
+ * about a millisecond, which has no first record to measure apart from the end.
+ */
+const MIN_EXPORTED_ITEMS = 600;
+
 /** Repeats of the full export. Three points give a median without overspending. */
 const EXPORT_REPEATS = 3;
 
@@ -43,7 +49,7 @@ describe("export stream performance", () => {
     ));
     const warmMs = await warmTarget(client);
     const seeded = await seedCorpus(client, ctx, {
-      count: corpusItems,
+      count: Math.max(corpusItems, MIN_EXPORTED_ITEMS),
       batchSize,
       seed: 4409,
     });

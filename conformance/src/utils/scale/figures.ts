@@ -97,6 +97,8 @@ export const CEILINGS: Record<string, CeilingEntry> = {
 
   // Resident memory of the server process.
   rss_at_rest: { ceiling: 300, issue: 2609 },
+  // An empty instance with an object store attached.
+  rss_at_rest_with_store: { ceiling: 300, issue: 2609 },
   rss_after_bulk_1min: { ceiling: 300, issue: 2609 },
   // At rest plus RSS_MARGIN_AFTER_BULK_MB; the bulk step works the bound out.
   rss_after_bulk_10s: { ceiling: null, issue: 2609, relative: true },
@@ -203,8 +205,6 @@ export const CEILINGS: Record<string, CeilingEntry> = {
  */
 export const KNOWN_OVER: Readonly<Record<string, number>> = {
   search_common: 2656,
-  archive_export: 2657,
-  bulk_page_ratio: 2658,
   device_hydrate: 2659,
 };
 

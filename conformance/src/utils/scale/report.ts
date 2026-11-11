@@ -27,6 +27,7 @@ export const EXPECTED_STEPS = [
   "edges",
   "export",
   "storage",
+  "store",
   "device",
   "folder",
   "watch",
