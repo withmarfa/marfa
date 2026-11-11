@@ -181,9 +181,10 @@ pub async fn enter(app: &App, caller: &Caller, key: &str, fingerprint: String) -
     let clock = app.clock.clone();
     let contract = app.contract();
     let (who, named) = (credential.clone(), key.to_string());
+    // The claim confirms nothing by itself; the write that completes it syncs both.
     let taken = app
         .db
-        .write(Write::own(), move |tx| {
+        .write(Write::own().unsynced(), move |tx| {
             let at = clock.stamp();
             let Some(record) = held(tx, &who, &named)? else {
                 tx.execute(

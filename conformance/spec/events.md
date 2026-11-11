@@ -554,7 +554,7 @@ If a change has committed, then the server MUST NOT answer it with a `5xx` statu
 
 **Reason:** a `5xx` tells the caller nothing was written, so it sends the change again. No idempotency key catches it, because an operation that takes one releases it on a `5xx` and the bulk operations take none.
 
-**Tests:** `compliance/write-faults.test.ts › is never answered with a 5xx: a single write whose commit answer is lost answers 201 and is stored once`, `compliance/write-faults.test.ts › is never answered with a 5xx: a page entry whose commit answer is lost is reported created, and the page answers 200`, `compliance/write-faults.test.ts › is never answered with a 5xx: an edge entry whose commit answer is lost is reported created`, `compliance/write-faults.test.ts › is never answered with a 5xx: an atomic page whose commit answer is lost answers 200 and is stored once`.
+**Tests:** `compliance/write-faults.test.ts › is never answered with a 5xx: a single write whose commit answer is lost answers 201 and is stored once`, `compliance/write-faults.test.ts › is never answered with a 5xx: a page under atomic: false whose commit answer is lost reports its entries created, and answers 200`, `compliance/write-faults.test.ts › is never answered with a 5xx: an edge page under atomic: false whose commit answer is lost reports its entries created`, `compliance/write-faults.test.ts › is never answered with a 5xx: an atomic page whose commit answer is lost answers 200 and is stored once`.
 
 ### `events/sweep-purge-announced`
 
@@ -1861,7 +1861,7 @@ When a best-effort bulk entry is skipped or refused, the server MUST NOT record 
 
 ### `events/audit-best-effort-kept`
 
-When a later entry of a best-effort page is refused, the server MUST keep the audit entries of the earlier entries it committed.
+When a later entry of a best-effort page is refused, the server MUST keep the audit entries of the earlier entries it wrote.
 
 **Tests:** `compliance/audit.test.ts › exposes each committed best-effort entry immediately with one operation context`.
 

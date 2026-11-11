@@ -23,6 +23,7 @@ pub(super) const ENDED: &str = "auth.sign_in.ended";
 const USE: Write = Write {
     action: Some("auth.sign_in.used"),
     for_caller: false,
+    sync: true,
 };
 
 #[derive(Clone, Debug)]

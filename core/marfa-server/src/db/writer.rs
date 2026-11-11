@@ -2,7 +2,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use rusqlite::ffi;
@@ -26,6 +26,23 @@ const RUNNING: u8 = 1;
 const ABANDONED: u8 = 2;
 
 type Job = Box<dyn FnOnce(&mut Connection) + Send>;
+
+/// Whether the writer's connection is set to leave its next commit unsynced.
+#[derive(Default)]
+struct Unsynced(AtomicBool);
+
+impl Unsynced {
+    /// Set before every transaction, so a synced write never inherits an unsynced one's setting.
+    fn set(&self, conn: &Connection, write: Write) -> rusqlite::Result<()> {
+        let unsynced = !write.sync;
+        if self.0.load(Ordering::Relaxed) != unsynced {
+            let level = if unsynced { "NORMAL" } else { "FULL" };
+            conn.pragma_update(None, "synchronous", level)?;
+            self.0.store(unsynced, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+}
 
 enum Message {
     Run(Job),
@@ -59,6 +76,7 @@ impl Pulse {
 }
 
 pub struct Writer {
+    unsynced: Arc<Unsynced>,
     queue: mpsc::Sender<Message>,
     faults: Arc<Faults>,
     pulse: Pulse,
@@ -126,9 +144,11 @@ fn run_transaction<T>(
     deadline: Instant,
     faults: &Faults,
     commits: &watch::Sender<u64>,
+    unsynced: &Unsynced,
     job: impl FnOnce(&Transaction<'_>) -> Result<T>,
 ) -> Result<T> {
     conn.busy_timeout(deadline.saturating_duration_since(Instant::now()))?;
+    unsynced.set(conn, write)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     match catch_unwind(AssertUnwindSafe(|| job(&tx))) {
         Ok(Ok(value)) => finish(tx, value, write, faults, commits),
@@ -181,6 +201,7 @@ impl Writer {
             .name("marfa-writer".into())
             .spawn(move || run_thread(conn, receiver))?;
         Ok(Writer {
+            unsynced: Arc::default(),
             queue,
             faults,
             pulse: Pulse::new(),
@@ -217,6 +238,7 @@ impl Writer {
         let (answer, mut answered) = oneshot::channel();
         let faults = self.faults.clone();
         let commits = self.commits.clone();
+        let unsynced = self.unsynced.clone();
         let claim = ticket.clone();
         let run: Job = Box::new(move |conn| {
             if claim
@@ -224,7 +246,7 @@ impl Writer {
                 .is_ok()
             {
                 let _ = answer.send(run_transaction(
-                    conn, write, deadline, &faults, &commits, job,
+                    conn, write, deadline, &faults, &commits, &unsynced, job,
                 ));
             }
         });

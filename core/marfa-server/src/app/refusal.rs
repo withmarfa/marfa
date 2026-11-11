@@ -229,6 +229,14 @@ impl Refusal {
             None => self.message.to_string(),
         }
     }
+
+    /// The file answered with pages SQLite cannot read.
+    pub fn is_damage(&self) -> bool {
+        matches!(
+            self.database_code(),
+            Some("SQLITE_CORRUPT" | "SQLITE_NOTADB")
+        )
+    }
 }
 
 /// The name of SQLite's primary result code, which is all of a failed

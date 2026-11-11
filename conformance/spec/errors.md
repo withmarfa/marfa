@@ -344,11 +344,11 @@ When a write meets a write lock that is released inside the instance's write wai
 
 ### `errors/contention-bulk-wait`
 
-While a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: true` holds the write lock and writes an entry within every write wait, the server MUST hold a write that waits for the lock until the page ends, rather than answer it `503 write_contention`.
+While a `POST /items/bulk` or `POST /edges/bulk` page holds the write lock and writes an entry within every write wait, whatever its `atomic` says, the server MUST hold a write that waits for the lock until the page ends, rather than answer it `503 write_contention`.
 
 **Reason:** the server answers other requests while a page is written (`items/bulk-answers-reads`), so a write can arrive behind a page that holds the lock for longer than the budget. The wait ends when the page does; a refusal would turn an ordinary wait into a retry. A holder that writes nothing for the budget still meets `errors/contention`.
 
-**Tests:** `compliance/bulk-page-answers-others.test.ts › lands after an atomic page that holds the lock longer than the write wait`, `compliance/bulk-page-answers-others.test.ts › counts a sign-in attempt after an atomic page that holds the lock longer than the write wait`.
+**Tests:** `compliance/bulk-page-answers-others.test.ts › lands after an atomic page that holds the lock longer than the write wait`, `compliance/bulk-page-answers-others.test.ts › lands after a best-effort page that holds the lock longer than the write wait`, `compliance/bulk-page-answers-others.test.ts › counts a sign-in attempt after an atomic page that holds the lock longer than the write wait`.
 
 ### `errors/contention-read`
 
@@ -396,19 +396,11 @@ If `POST /auth/oauth2/register` cannot get the write lock within the write wait,
 
 ### `errors/contention-bulk-page`
 
-If a `POST /items/bulk` or `POST /edges/bulk` page meets the write lock before any of its entries has committed or may have committed, then the server MUST answer the page `503 write_contention`, whatever its `atomic` says.
+If a `POST /items/bulk` or `POST /edges/bulk` page meets the write lock, then the server MUST answer the page `503 write_contention`, whatever its `atomic` says.
 
 **Reason:** nothing was written and the next attempt would land, and a `200` that carried the refusal would tell a device there is nothing to retry.
 
 **Tests:** `compliance/write-contention.test.ts › refuses a non-atomic bulk page rather than reporting it entry by entry`.
-
-### `errors/contention-bulk-entry`
-
-If a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` meets the write lock at an entry after an earlier entry has committed or may have committed, then the server MUST report that entry `errored` with the code `write_contention`, in a `200` answer.
-
-**Reason:** a `5xx` would say nothing was written of entries that were, and the caller would send the page again and write them twice.
-
-**Tests:** `compliance/write-faults.test.ts › after an earlier entry has committed is reported errored with write_contention in a 200 answer, and the entries around it land`, `compliance/write-faults.test.ts › is reported the same way on an entry of an edge page`.
 
 ## A volume with no room
 
@@ -566,7 +558,7 @@ When the server answers `500 internal_error`, the server MUST send exactly the b
 
 ### `errors/internal-error-entry`
 
-If a fault for which the server holds no refusal meets an entry of a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` after an earlier entry has committed or may have committed, then the server MUST report that entry `errored` with an `error` of exactly `{ "code": "internal_error", "message": "The entry could not be written, and nothing of it was" }`.
+If a fault for which the server holds no refusal meets an entry of a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` after the page has written an earlier entry, then the server MUST report that entry `errored` with an `error` of exactly `{ "code": "internal_error", "message": "The entry could not be written, and nothing of it was" }`.
 
 **Reason:** the page answers `200` for the entries that landed, and the entry's `error` names nothing of what failed, as `errors/internal-error-body` names nothing.
 
@@ -582,11 +574,11 @@ If a fault for which the server holds no refusal meets an entry of a `POST /item
 
 ### `errors/internal-error-unknown`
 
-If the server cannot confirm whether an entry of a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` committed, then the server MUST give the entry reported `errored` the code `internal_error`.
+If the server cannot confirm whether a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` committed, then the server MUST give each entry it reports `errored` for that the code `internal_error`.
 
 **Reason:** `items/bulk-outcome-unknown` and `edges/bulk-outcome-unknown` state the rest of the entry's answer, which the caller reads to reconcile that entry before it retries it.
 
-**Tests:** `compliance/write-faults.test.ts › is reported errored with write_outcome unknown and the code internal_error, counted under errored alone, while the entries around it land`, `compliance/write-faults.test.ts › is reported the same way on an entry of an edge page, with the entries around it kept`.
+**Tests:** `compliance/write-faults.test.ts › reports each entry it wrote errored with write_outcome unknown and the code internal_error, counted under errored alone, and a refused entry as refused`, `› reports each entry of an edge page the same way`.
 
 ## The limits of a stream and of a job
 

@@ -16,6 +16,8 @@ use crate::settings::registry::{DISK_RESERVE_BYTES, Seeds, Snapshot};
 const HEADER: &[u8; 16] = b"SQLite format 3\0";
 /// What the log is cut back to once a checkpoint has moved it into the file.
 const JOURNAL_SIZE_LIMIT: i64 = 64 * 1024 * 1024;
+/// Each checkpoint syncs the log and the file in full, so they come about every 32 MiB of log.
+const AUTOCHECKPOINT_PAGES: i64 = 8192;
 
 #[derive(Debug)]
 pub struct Options {
@@ -254,20 +256,36 @@ fn copy_before_upgrade(
     Ok(())
 }
 
+/// On macOS only the full flush gets past the drive's cache.
+fn make_durable(conn: &Connection) -> rusqlite::Result<()> {
+    conn.pragma_update(None, "synchronous", "FULL")?;
+    conn.pragma_update(None, "fullfsync", true)?;
+    conn.pragma_update(None, "checkpoint_fullfsync", true)
+}
+
 fn prepare_writer(conn: &Connection, options: &Options) -> rusqlite::Result<()> {
     conn.busy_timeout(options.write_wait)?;
     conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
-    conn.pragma_update(None, "synchronous", "NORMAL")?;
+    make_durable(conn)?;
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.pragma_update(None, "journal_size_limit", JOURNAL_SIZE_LIMIT)?;
+    conn.pragma_update(None, "wal_autocheckpoint", AUTOCHECKPOINT_PAGES)?;
     super::rank::register(conn)
 }
 
 fn prepare_reader(conn: &Connection, options: &Options) -> rusqlite::Result<()> {
     conn.busy_timeout(options.write_wait)?;
+    make_durable(conn)?;
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.pragma_update(None, "query_only", true)?;
     super::rank::register(conn)
+}
+
+/// So a new or upgraded file holds its schema without its log.
+fn move_schema_into_file(conn: &Connection) {
+    if let Err(error) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)") {
+        tracing::warn!(error = %error, "The database log was not moved into its file");
+    }
 }
 
 /// Nothing is written until the judgment has passed.
@@ -310,9 +328,11 @@ pub fn open(options: &Options, faults: &Faults) -> Result<Opened, Failure> {
         Standing::Current => {}
         Standing::Unfinished => {
             migrate::complete(&mut writer, options.migrations).map_err(refused)?;
+            move_schema_into_file(&writer);
         }
         Standing::Behind(from) => {
             migrate::upgrade(&mut writer, options.migrations, from).map_err(refused)?;
+            move_schema_into_file(&writer);
         }
     }
 

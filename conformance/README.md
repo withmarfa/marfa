@@ -394,7 +394,7 @@ Write holds act before admission because SQLite admits only one writer at a time
 | `hold:bulk-job:in-chunk`               | The worker waits, once a chunk's items are written and before the chunk is committed with its checkpoint.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `hold:bulk-job:between-chunks[=<n>]`   | The worker waits, once a chunk is committed and the job has more, before it begins the next. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `hold:bulk-job:finishing`              | The worker waits, once every chunk of a job is committed and before the job's last step: a type move's settings and the job's end.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `hold:bulk-page[=<n>]`                 | A request of `POST /items/bulk` or `POST /edges/bulk` waits before an entry of its page until the fault is cleared; an atomic page keeps its write open while it waits. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `hold:bulk-page[=<n>]`                 | A request of `POST /items/bulk` or `POST /edges/bulk` waits before an entry of its page until the fault is cleared, keeping its write open meanwhile. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `deadline:<job>=<ms>`                  | Shortens the run deadline of the job.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `hold:blob-orphans:purge`              | A run of `blob-orphans` waits, for each blob it has chosen to purge, before it purges the blob.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `hold:restore:item[=<n>]`              | A restore waits, before it writes an item, once its blobs are placed. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -470,13 +470,14 @@ letters, digits, underscores, periods, or hyphens. The target validates this
 syntax; an action that no write records never fires.
 
 A _write_ is one change made for a caller: a request that changes stored
-state, or one entry of a page sent with `atomic: false`. An atomic page is one
-write. A write that records an audit entry names it by the entry's `action`
+state. A bulk page is one write, whatever its `atomic` says. A write that
+records an audit entry names it by the entry's `action`
 ([The audit log](spec/events.md#the-audit-log)), and a write point may take that action in its
 argument as `<action>`, for the first such write, or `<action>@<n>`, so a
-request that makes other writes first does not shift the count: a
-`POST /items/bulk` page under `atomic: false` is a run of `items.bulk` writes,
-and `fail:commit=items.bulk@2` fails the second entry's commit. A write point
+request that makes other writes first does not shift the count. `fail:audit`
+also counts each entry of a page under `atomic: false` that is written or
+skipped, and then the page's commit: `fail:audit=items.bulk@2` fails the
+second entry, and its page writes the others. A write point
 without an action counts every write. A `fail` fault at a write point may take `<action>@always`
 instead, and then acts on every such write until it is cleared, as a fault
 that does not clear would.
@@ -544,10 +545,14 @@ which `src/utils/store-faults.ts` wraps. With `?hash=<sha256:...>` it answers ea
 name), without a `lose:blob` or `damage:blob` fault changing the answer. It always answers
 `spool`, the name and size in bytes of each file the disk store keeps while it receives bytes.
 
+`GET /_control/test/database` answers the `journal_mode`, `synchronous`, `fullfsync`,
+`checkpoint_fullfsync` and `foreign_keys` settings of the writer connection and of each reader
+connection, as numbers where SQLite answers one.
+
 ### Who can reach the hooks
 
-The clock, fault and blob-store routes (`/_control/test/clock`, `/_control/test/faults`
-and `/_control/test/blob-stores`) exist only on the private control socket, and only when `MARFA_TEST_HOOKS` is
+The clock, fault, blob-store and database routes (`/_control/test/clock`, `/_control/test/faults`,
+`/_control/test/blob-stores` and `/_control/test/database`) exist only on the private control socket, and only when `MARFA_TEST_HOOKS` is
 `true`. They are never on the HTTP listener, and a Rust server built without the
 `test-hooks` feature, as a release is, refuses to start with the setting. It logs
 a warning at boot when the hooks are on. `spec/instance.md`, "Test hooks", holds

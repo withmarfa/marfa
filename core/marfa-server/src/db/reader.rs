@@ -113,6 +113,15 @@ impl Pool {
             .unwrap_or_else(|_| Err(Refusal::internal("a background read panicked")))
     }
 
+    /// Applies `look` to every connection, holding all of them idle meanwhile.
+    #[cfg(feature = "test-hooks")]
+    pub async fn each<T>(&self, look: impl Fn(&Connection) -> T) -> Result<Vec<T>> {
+        let closed = |_| Refusal::internal("the read pool has closed");
+        let _all = self.permits.acquire_many(self.size).await.map_err(closed)?;
+        let idle = self.idle.lock().unwrap_or_else(PoisonError::into_inner);
+        Ok(idle.iter().map(look).collect())
+    }
+
     pub async fn close(&self) {
         let all = self.permits.acquire_many(self.size);
         let _ = tokio::time::timeout(CLOSE_WAIT, all).await;

@@ -168,6 +168,10 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "the private control socket, with test hooks on",
     ),
     (
+        "GET /_control/test/database",
+        "the private control socket, with test hooks on",
+    ),
+    (
         "GET /_control/test/blob-stores",
         "the private control socket, with test hooks on",
     ),

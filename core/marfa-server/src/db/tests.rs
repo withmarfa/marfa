@@ -4,12 +4,13 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use rusqlite::{Connection, Transaction};
+use rusqlite::{Connection, Transaction, ffi};
 use tempfile::TempDir;
 
 use super::migrate::{MIGRATIONS, Migration};
 use super::{Db, Options, Write};
 use crate::app::faults::Faults;
+use crate::app::items::bulk::each;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::failure::Failure;
 use crate::settings::DatabasePath;
@@ -893,4 +894,91 @@ async fn a_reader_woken_by_a_commit_never_misses_one_that_follows() {
         .unwrap()
         .unwrap();
     assert_eq!(reached, 40);
+}
+
+fn synchronous(tx: &Transaction<'_>) -> Result<i64> {
+    Ok(tx.pragma_query_value(None, "synchronous", |row| row.get(0))?)
+}
+
+#[tokio::test]
+async fn every_connection_syncs_each_commit_in_full() {
+    let place = folder();
+    let db = open(&place.file);
+    let settings = db.connection_settings().await.unwrap();
+    let full = serde_json::json!({
+        "journal_mode": "wal",
+        "synchronous": 2,
+        "fullfsync": 1,
+        "checkpoint_fullfsync": 1,
+        "foreign_keys": 1,
+    });
+    assert_eq!(settings["writer"], full);
+    let readers = settings["readers"].as_array().unwrap();
+    assert_eq!(readers.len(), 2);
+    for reader in readers {
+        assert_eq!(reader["synchronous"], 2);
+        assert_eq!(reader["fullfsync"], 1);
+        assert_eq!(reader["checkpoint_fullfsync"], 1);
+    }
+}
+
+#[tokio::test]
+async fn only_an_unsynced_write_commits_unsynced() {
+    let place = folder();
+    let db = open(&place.file);
+    let during = db
+        .write(WRITE.unsynced(), |tx| {
+            add(tx, 1)?;
+            synchronous(tx)
+        })
+        .await
+        .unwrap();
+    assert_eq!(during, 1);
+    assert_eq!(db.write(WRITE, synchronous).await.unwrap(), 2);
+
+    let refused = db
+        .write(WRITE.unsynced(), |_| -> Result<()> {
+            Err(Refusal::internal("refused"))
+        })
+        .await;
+    assert!(refused.is_err());
+    assert_eq!(db.write(WRITE, synchronous).await.unwrap(), 2);
+    assert_eq!(ids(&db).await, [1]);
+}
+
+#[tokio::test]
+async fn a_damaged_page_met_after_an_entry_landed_ends_the_page_and_marks_the_file() {
+    let folder = folder();
+    let db = open(&folder.file);
+    let faults = Faults::default();
+    let pulse = db.pulse();
+
+    let refused = db
+        .write(WRITE, move |tx| {
+            each(
+                tx,
+                "items.bulk",
+                &faults,
+                &pulse,
+                vec![Ok(1), Ok(2)],
+                |index, id: i64| {
+                    if index == 1 {
+                        let corrupt = ffi::Error::new(ffi::SQLITE_CORRUPT);
+                        return Err(rusqlite::Error::SqliteFailure(corrupt, None).into());
+                    }
+                    tx.execute("INSERT INTO notes (id, body) VALUES (?1, 'kept')", [id])?;
+                    Ok(serde_json::json!({ "index": index, "outcome": "created" }))
+                },
+            )
+        })
+        .await
+        .map(drop);
+
+    assert_eq!(refused.unwrap_err().code, Code::InternalError);
+    assert!(db.damaged());
+    let notes: i64 = db
+        .read(|tx| Ok(tx.query_row("SELECT count(*) FROM notes", [], |row| row.get(0))?))
+        .await
+        .unwrap();
+    assert_eq!(notes, 0);
 }
