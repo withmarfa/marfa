@@ -10,13 +10,13 @@ use super::{Body, EDGE_PAGE, Sender, channel, reads_row};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::edges;
-use crate::app::faults::{FAIL_EXPORT_READ, HOLD_EXPORT_PAGE};
+use crate::app::faults::{FAIL_EXPORT_READ, HOLD_EXPORT_CHECK, HOLD_EXPORT_PAGE};
 use crate::app::items::{self, reading};
 use crate::app::query::{self, Ask};
 use crate::app::refusal::Result;
 use crate::db::io_refusal;
 
-/// Items in one page, so a credential that ends or narrows stops the export within a page.
+/// Items per credential check; checked pages can remain queued for the socket.
 const PAGE: i64 = 100;
 
 /// One page: its lines, where the next begins, and whether the credential now reads all of it.
@@ -157,6 +157,7 @@ async fn send(
         let read = match page.take() {
             Some(first) => first,
             None => {
+                app.faults.hold(HOLD_EXPORT_CHECK, None).await;
                 item_page(app, admitted, Some(admitted), ask, after)
                     .await
                     .map_err(|refusal| cut(refusal.message.into_owned()))?
@@ -177,6 +178,7 @@ async fn send(
     let mut after = 0;
     loop {
         let permit = room(app, sender).await.ok_or(None)?;
+        app.faults.hold(HOLD_EXPORT_CHECK, None).await;
         let read = edge_page(app, admitted, exported.clone(), after)
             .await
             .map_err(|refusal| cut(refusal.message.into_owned()))?;

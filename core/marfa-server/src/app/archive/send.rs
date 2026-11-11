@@ -16,6 +16,7 @@ use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::blobs::Hash;
 use crate::app::blobs::carry::{self, Carried};
+use crate::app::faults::HOLD_EXPORT_CHECK;
 use crate::app::items::{Reader, reading};
 
 /// How many bytes of a blob pass between asking whether the credential still reads it.
@@ -96,6 +97,7 @@ impl Out<'_> {
     where
         F: FnOnce(&Reader<'_, '_>) -> crate::app::refusal::Result<bool> + Send + 'static,
     {
+        self.app.faults.hold(HOLD_EXPORT_CHECK, None).await;
         match reading(self.app, self.caller, check).await {
             Ok(true) => Ok(()),
             Ok(false) => Err(failed(
