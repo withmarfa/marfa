@@ -256,8 +256,7 @@ fn copy_before_upgrade(
     Ok(())
 }
 
-/// A commit reaches stable storage before it is confirmed. On macOS a plain `fsync` leaves the
-/// data in the drive's cache, so the full flush is asked for, at commit and at checkpoint.
+/// On macOS only the full flush gets past the drive's cache.
 fn make_durable(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "synchronous", "FULL")?;
     conn.pragma_update(None, "fullfsync", true)?;
@@ -282,8 +281,7 @@ fn prepare_reader(conn: &Connection, options: &Options) -> rusqlite::Result<()> 
     super::rank::register(conn)
 }
 
-/// A new or upgraded file holds its schema without its log, which the first checkpoint would
-/// otherwise leave until much later.
+/// So a new or upgraded file holds its schema without its log.
 fn move_schema_into_file(conn: &Connection) {
     if let Err(error) = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE)") {
         tracing::warn!(error = %error, "The database log was not moved into its file");
