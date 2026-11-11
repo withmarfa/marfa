@@ -361,6 +361,11 @@ describe("the contract the binary was built for", () => {
         status: 200,
         body: {},
       });
+      server.copyAnswer(
+        "GET",
+        "/keys/current",
+        answers.currentKey("fixture-key", { "*": "write" }),
+      );
       const outcome = await marfa([
         "--json",
         "--url",
@@ -378,6 +383,12 @@ describe("the contract the binary was built for", () => {
         served: header,
         built_for: builtFor,
       });
+      if (command === "whoami") {
+        // The key goes only to a server on the built-for contract.
+        expect(sent(server).includes("GET /keys/current"), label).toBe(
+          header === builtFor,
+        );
+      }
       await server.stop();
       server = undefined;
     }

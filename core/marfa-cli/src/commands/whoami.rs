@@ -29,14 +29,16 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                 record["scope"] = json!(scope);
                 record["expires_at"] = json!(expires_at);
             }
+            // A server on another contract is described, not asked, and the
+            // credential is not sent to it. A dead credential is refused 401.
             if kind == "token" {
-                // A server on another contract is described, not asked, and
-                // the token is not sent to it. A dead token is refused 401.
                 record["person"] = if held {
                     remote.json(&Request::get(&["profile"]))?
                 } else {
                     json!(null)
                 };
+            } else if held {
+                record["key"] = remote.json(&Request::get(&["keys", "current"]))?;
             }
             record
         }
@@ -84,13 +86,23 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
                     .filter(|name| !name.is_empty())
                     .map(|name| format!(" as {name}"))
                     .unwrap_or_default();
+                let named = credential
+                    .get("key")
+                    .map(|key| field(key, "label"))
+                    .filter(|label| !label.is_empty())
+                    .map(|label| format!(" named {label}"))
+                    .unwrap_or_default();
                 let from = match source {
                     CredentialSource::Flag => "--key",
                     CredentialSource::Environment => "MARFA_API_KEY",
                     CredentialSource::Keychain => "the keychain",
                     CredentialSource::KeyCommand => "the profile's key_command",
                 };
-                let line = format!("a {kind} from {from}{who}");
+                let what = match kind.as_str() {
+                    "token" | "key" => format!("a {kind}"),
+                    _ => "an unknown credential".to_string(),
+                };
+                let line = format!("{what}{named} from {from}{who}");
                 match credential.get("scope").and_then(Value::as_str) {
                     Some(scope) => {
                         lines.push(access::indented(&line, &access::lines_for_scope(scope)))
