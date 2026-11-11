@@ -20,7 +20,6 @@ use super::access::Caller;
 use super::addresses::Address;
 use super::audit::{self, Entry};
 use super::refusal::{Code, Refusal, Result};
-use crate::settings::Start;
 use crate::settings::registry::{CORS_ORIGINS, SIGN_IN_ADDRESS};
 
 #[derive(Clone, Debug, Default)]
@@ -39,27 +38,12 @@ pub fn carries_sessions(address: &Address) -> bool {
     address.is_https() || matches!(address.host(), "localhost" | "127.0.0.1" | "[::1]")
 }
 
-/// Under test hooks a server is held to the loopback, so callers named behind it never left this machine.
-#[cfg(feature = "test-hooks")]
-fn takes_fixture_callers(start: &Start) -> bool {
-    let held = |host: &str| host.parse().is_ok_and(|ip: IpAddr| ip.is_loopback());
-    start.test_hooks && start.listen_host.as_deref().is_some_and(held)
-}
-
-#[cfg(not(feature = "test-hooks"))]
-fn takes_fixture_callers(_start: &Start) -> bool {
-    false
-}
-
 /// A connection with no network address counts as on this machine.
 pub fn require_set_address(app: &App, visit: &Visit) -> Result<()> {
     let here = visit
         .address
         .is_none_or(|address| address.to_canonical().is_loopback());
-    if here
-        || app.settings.live().get(SIGN_IN_ADDRESS).is_some()
-        || takes_fixture_callers(&app.settings.start)
-    {
+    if here || app.settings.live().get(SIGN_IN_ADDRESS).is_some() {
         return Ok(());
     }
     Err(Refusal::new(

@@ -556,16 +556,15 @@ describe("the instance from the terminal", () => {
         .getSetCookie()
         .map((value) => value.split(";")[0])
         .join("; ");
-    const signedIn = await fetch(`${origin}/auth/sign-in/email`, {
-      method: "POST",
-      headers: { origin, "content-type": "application/json" },
-      body: JSON.stringify(TEST_OWNER),
-    });
-    expect(signedIn.status).toBe(200);
-    const ownerCookie = cookies(signedIn);
+    const ownerCookie = await signInOwnerWithPassword(
+      origin,
+      origin,
+      TEST_OWNER,
+    );
     const options = await fetch(
-      `${origin}/auth/passkey/generate-register-options`,
+      `${origin}/auth/passkeys/registration/options`,
       {
+        method: "POST",
         headers: { origin, cookie: ownerCookie },
       },
     );
@@ -573,7 +572,7 @@ describe("the instance from the terminal", () => {
     const challenge = (await options.json()) as { challenge: string };
     const name = unique("cli-passkey");
     const registered = await fetch(
-      `${origin}/auth/passkey/verify-registration`,
+      `${origin}/auth/passkeys/registration`,
       {
         method: "POST",
         headers: {
@@ -591,7 +590,7 @@ describe("the instance from the terminal", () => {
         }),
       },
     );
-    expect(registered.status).toBe(200);
+    expect(registered.status).toBe(201);
     const { id } = (await registered.json()) as { id: string };
     interface Passkey {
       id: string;
@@ -934,8 +933,7 @@ describe("the instance from the terminal", () => {
       data: { id: string; kind: string }[];
       min_copies: number;
     }>(["blobs", "stores"]);
-    expect(stores.data.length).toBeGreaterThan(0);
-    expect(stores.data[0]?.kind).toBe("disk");
+    expect(stores.data.map((store) => store.kind)).toContain("disk");
     expect(stores.min_copies).toBeGreaterThan(0);
     // Two blobs of this scenario's own, one referenced and one not, so the
     // report is read for the hashes this scenario uploaded rather than for

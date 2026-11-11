@@ -1,6 +1,7 @@
 import { controlRequest } from "../src/utils/control-request.js";
 import { mkdtempSync, realpathSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 /**
  * Boot the server in this repository on SQLite for the suite, mint its first
  * key, and write the env file the run sources. The restore drill imports
@@ -8,9 +9,11 @@ import { tmpdir } from "node:os";
  *
  *   tsx scripts/marfa-server.ts up [--state <dir>] [--port <n>] [--env K=V ...]
  *
- * The port is `--port`, else `MARFA_PORT`, else zero for the server to bind an
- * assigned port on IPv4 loopback. Readiness comes from this boot's log before
- * any health request is sent. Each `--env K=V` is a setting for the boot
+ * The server listens on IPv4 loopback, on `--port`, else `MARFA_PORT`, else a
+ * free port this script picks, and is reached at `http://localhost:<port>`,
+ * which is also its sign-in address: passkeys refuse an IP address. Port zero
+ * leaves the sign-in address unset, and so does `--env MARFA_SIGN_IN_ADDRESS=`.
+ * Readiness comes from this boot's log before any health request is sent. Each `--env K=V` is a setting for the boot
  * (`conformance/README.md` lists the ones a fixture may pass), and wins over
  * the script's own defaults and the caller's environment.
  *   tsx scripts/marfa-server.ts down [--state <dir>]
@@ -578,7 +581,7 @@ async function waitForHealth(
         );
         if (match) {
           const port = Number(match[1]);
-          if (port > 0 && port <= 65_535) url = `http://127.0.0.1:${port}`;
+          if (port > 0 && port <= 65_535) url = `http://localhost:${port}`;
         }
       }
     }
@@ -614,6 +617,24 @@ interface Started {
   ended: () => boolean;
   controlSocket: string;
   authSecret: string;
+  /** Whether this script chose the port, so a taken one is worth another try. */
+  picked: boolean;
+}
+
+/** A port the system has just handed out on loopback and taken back. */
+function freePort(): Promise<number> {
+  return new Promise((resolvePort, reject) => {
+    const probe = createServer();
+    probe.once("error", reject);
+    probe.listen(0, "127.0.0.1", () => {
+      const address = probe.address();
+      probe.close(() => {
+        if (address !== null && typeof address === "object")
+          resolvePort(address.port);
+        else reject(new Error("no port was handed out"));
+      });
+    });
+  });
 }
 
 /** The offset the last `clock advance` left, in ms; zero when none did. */
@@ -651,15 +672,16 @@ async function startServer(args: BootOptions): Promise<Started> {
     if (!built) ensurePageAssets();
   }
 
-  const port =
+  const named =
     args.port ??
     namedPort(args.env?.MARFA_PORT) ??
-    namedPort(process.env.MARFA_PORT) ??
-    0;
+    namedPort(process.env.MARFA_PORT);
+  // The port is known before the start, so the sign-in address can name it.
+  const port = named ?? (await freePort());
   // A caller that names the socket owns its folder and what stands there.
-  const named = args.env?.MARFA_CONTROL_SOCKET;
+  const namedSocket = args.env?.MARFA_CONTROL_SOCKET;
   let controlSocket: string;
-  if (named === undefined) {
+  if (namedSocket === undefined) {
     const controlDir = realpathSync(
       mkdtempSync(resolve(tmpdir(), "marfa-control-")),
     );
@@ -669,7 +691,7 @@ async function startServer(args: BootOptions): Promise<Started> {
       mode: 0o600,
     });
   } else {
-    controlSocket = resolve(named);
+    controlSocket = resolve(namedSocket);
   }
   const retainedEnv = existsSync(p.env)
     ? parseEnvFile(readFileSync(p.env, "utf8"))
@@ -689,8 +711,9 @@ async function startServer(args: BootOptions): Promise<Started> {
     MARFA_AUTH_SECRET: authSecret,
     MARFA_DATABASE_PATH: p.db,
     MARFA_BLOB_PATH: p.blobs,
-    // The sign-in address is the server's own, on its assigned port.
-    MARFA_SIGN_IN_ADDRESS: undefined,
+    // Passkeys need a host name, and an instance people reach has its
+    // sign-in address set. A boot on port zero leaves it unset.
+    MARFA_SIGN_IN_ADDRESS: port > 0 ? `http://localhost:${port}` : undefined,
     // Enrichment rewrites file items in the background, which would make
     // exact-property assertions on blobs depend on timing. Off unless the
     // caller says otherwise, as the limiter below is, so a fixture about
@@ -738,6 +761,8 @@ async function startServer(args: BootOptions): Promise<Started> {
   // which adds to the defaults, and only where the hooks are on.
   const defaultTuning = env.MARFA_TEST_TUNING;
   Object.assign(env, args.env);
+  // An empty value asks for a boot with no sign-in address set.
+  if (env.MARFA_SIGN_IN_ADDRESS === "") delete env.MARFA_SIGN_IN_ADDRESS;
   const hooksOn = /^(true|1|yes|on)$/i.test(env.MARFA_TEST_HOOKS ?? "");
   const tuning = [
     hooksOn ? defaultTuning : undefined,
@@ -789,15 +814,43 @@ async function startServer(args: BootOptions): Promise<Started> {
   console.log(
     `[marfa-server] started pid ${String(child.pid)} with requested port ${String(port)}; log at ${p.log}`,
   );
-  return { child, logStart, ended: () => ended, controlSocket, authSecret };
+  return {
+    child,
+    logStart,
+    ended: () => ended,
+    controlSocket,
+    authSecret,
+    picked: named === undefined,
+  };
+}
+
+/** Attempts at a boot whose chosen port another process took first. */
+const PORT_ATTEMPTS = 3;
+
+/** Starts the server and waits for `/health`, on another port if the chosen one was taken. */
+async function startAndWait(
+  args: BootOptions,
+): Promise<{ started: Started; url: string }> {
+  const p = paths(args.state);
+  for (let attempt = 1; ; attempt++) {
+    const started = await startServer(args);
+    try {
+      return { started, url: await waitForHealth(started, p) };
+    } catch (error) {
+      const taken = started.picked && logTail(p).includes("EADDRINUSE");
+      if (!taken || attempt === PORT_ATTEMPTS) throw error;
+      console.log(
+        "[marfa-server] the chosen port was taken first; starting on another",
+      );
+    }
+  }
 }
 
 /** Starts the real server without claiming it, for claim-operation tests. */
 export async function bootUnclaimedServer(
   args: BootOptions,
 ): Promise<{ url: string; controlSocket: string }> {
-  const started = await startServer(args);
-  const url = await waitForHealth(started, paths(args.state));
+  const { started, url } = await startAndWait(args);
   return { url, controlSocket: started.controlSocket };
 }
 
@@ -863,9 +916,8 @@ async function signInDoorAbsent(url: string): Promise<boolean> {
 
 export async function bootServer(args: BootOptions): Promise<void> {
   const p = paths(args.state);
-  const started = await startServer(args);
+  const { started, url } = await startAndWait(args);
   const { controlSocket, authSecret } = started;
-  const url = await waitForHealth(started, p);
   const status = await controlRequest(controlSocket, "/_control/setup/status");
   if (status.status !== 200)
     throw new Error(`Claim status answered ${status.status}`);
@@ -956,6 +1008,22 @@ export async function bootServer(args: BootOptions): Promise<void> {
     if (!set.ok) {
       throw new Error(
         `Setting the instance up for measuring answered ${String(set.status)}: ${(await set.text()).slice(0, 300)}`,
+      );
+    }
+  }
+  // Without hooks the server reads no seed, so the address is stored, and
+  // again on every boot, since the port may have moved.
+  if (serverProgram() !== undefined && hookFreeRun()) {
+    const address = await controlRequest(controlSocket, "/config", {
+      method: "PATCH",
+      body: {
+        sign_in_address: new URL(url).origin,
+        confirm_sign_in_address_change: true,
+      },
+    });
+    if (address.status !== 200) {
+      throw new Error(
+        `Setting the sign-in address answered ${String(address.status)}: ${JSON.stringify(address.body).slice(0, 300)}`,
       );
     }
   }
