@@ -292,6 +292,14 @@ If the server refuses a batch the device had not sent before, or answers a batch
 
 **Tests:** `device/table-writes-live.test.ts › refuses only the write whose operation the server refuses, and sends the batch's other writes again in the same drain`, `› refuses only the write whose operation the server refuses from its record for a batch it sent before, and sends the others again in the same drain`.
 
+### `queue-and-verdicts/rows-refused-numbering`
+
+When a device refuses a write under `queue-and-verdicts/rows-refused-operation`, a device MUST number the refused operation by its place in that write in every `operations.<n>` the server's refusal carries for it: in each `details.errors` path and in the message the server built from that path.
+
+**Reason:** the write holds the operations the person made, not the batch the device joined it to. An app shows the refusal, and a path or a message that names an operation the write does not have points the person at the wrong one. A path or a message that does not name the refused operation is not the device's to change.
+
+**Tests:** `device/table-writes-live.test.ts › keeps a refused write's refusal numbered by the write's own operation, in its message and in every error's path`.
+
 ### `queue-and-verdicts/rows-refused-others`
 
 When the server refuses a batch the device had not sent before, or answers a batch with a refusal from its record, naming an operation of one of its writes, a device MUST send the batch's other writes again in the same drain, in a batch of their own under a fresh key.

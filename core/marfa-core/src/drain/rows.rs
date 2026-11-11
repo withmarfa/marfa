@@ -500,6 +500,51 @@ fn operation_of(refused: &Answer, writes: &[&QueuedWrite]) -> Option<usize> {
     (at < total).then_some(at)
 }
 
+/// `operations.<at>` or a path inside it, as `operations.<local>`; any other path is `None`.
+fn renumbered_path(path: &str, at: usize, local: usize) -> Option<String> {
+    let rest = path.strip_prefix("operations.")?;
+    let rest = rest.strip_prefix(&at.to_string())?;
+    (rest.is_empty() || rest.starts_with('.')).then(|| format!("operations.{local}{rest}"))
+}
+
+/// Numbers the refused operation as its own write does, in the details, the paths and the message.
+fn renumber(envelope: &mut Value, at: usize, local: usize) {
+    let Some(error) = envelope.get_mut("error") else {
+        return;
+    };
+    let mut first = None;
+    if let Some(errors) = error
+        .pointer_mut("/details/errors")
+        .and_then(Value::as_array_mut)
+    {
+        for (index, entry) in errors.iter_mut().enumerate() {
+            let Some(path) = entry.get("path").and_then(Value::as_str) else {
+                continue;
+            };
+            let Some(renumbered) = renumbered_path(path, at, local) else {
+                continue;
+            };
+            if index == 0 {
+                first = Some((
+                    path.to_string(),
+                    renumbered.clone(),
+                    entry.get("message").cloned(),
+                ));
+            }
+            entry["path"] = json!(renumbered);
+        }
+    }
+    if let Some(operation) = error.pointer_mut("/details/operation") {
+        *operation = json!(local);
+    }
+    let Some((was, now, Some(Value::String(problem)))) = first else {
+        return;
+    };
+    if error.get("message").and_then(Value::as_str) == Some(format!("{was}: {problem}").as_str()) {
+        error["message"] = json!(format!("{now}: {problem}"));
+    }
+}
+
 /// The server wrote none of the batch, so only the named write is refused.
 fn split(core: &Core, writes: &[&QueuedWrite], refused: &Answer, at: usize) -> Result<Settled> {
     let lead = writes[0];
@@ -515,9 +560,7 @@ fn split(core: &Core, writes: &[&QueuedWrite], refused: &Answer, at: usize) -> R
     }
     let (owner, local) = owner;
     let mut envelope: Value = serde_json::from_str(&refused.body)?;
-    if let Some(operation) = envelope.pointer_mut("/error/details/operation") {
-        *operation = json!(local);
-    }
+    renumber(&mut envelope, at, local);
     let envelope = envelope.to_string();
     let code = if refused.code.is_empty() {
         "unknown".to_string()
@@ -643,4 +686,69 @@ fn whole(
         ..Settled::plain(Some(verdict), Some(reason.clone()), now.refusals)
     })?;
     lead_with_joined(told)
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::{Value, json};
+
+    use super::{renumber, renumbered_path};
+
+    #[test]
+    fn a_path_is_renumbered_only_where_it_names_the_refused_operation() {
+        assert_eq!(
+            renumbered_path("operations.5", 5, 0).as_deref(),
+            Some("operations.0")
+        );
+        assert_eq!(
+            renumbered_path("operations.5.values.qty", 5, 1).as_deref(),
+            Some("operations.1.values.qty")
+        );
+        assert_eq!(renumbered_path("operations.50.values", 5, 0), None);
+        assert_eq!(renumbered_path("operations.4.values", 5, 0), None);
+        assert_eq!(renumbered_path("operations", 5, 0), None);
+        assert_eq!(renumbered_path("values.operations.5", 5, 0), None);
+    }
+
+    #[test]
+    fn a_refusal_is_numbered_in_its_details_paths_and_message() {
+        let mut envelope = json!({"error": {
+            "code": "validation_error",
+            "message": "operations.5.values.qty: The table declares no such column",
+            "details": {"operation": 5, "errors": [
+                {"path": "operations.5.values.qty", "message": "The table declares no such column"},
+                {"path": "operations.7.values.qty", "message": "Another operation's"},
+            ]},
+        }});
+        renumber(&mut envelope, 5, 0);
+        assert_eq!(
+            envelope,
+            json!({"error": {
+                "code": "validation_error",
+                "message": "operations.0.values.qty: The table declares no such column",
+                "details": {"operation": 0, "errors": [
+                    {"path": "operations.0.values.qty", "message": "The table declares no such column"},
+                    {"path": "operations.7.values.qty", "message": "Another operation's"},
+                ]},
+            }})
+        );
+    }
+
+    #[test]
+    fn a_message_the_server_did_not_build_from_the_path_is_left_as_it_was() {
+        let mut envelope: Value = json!({"error": {
+            "code": "row_not_found",
+            "message": "The table holds no row with this id.",
+            "details": {"operation": 3, "id": "x"},
+        }});
+        renumber(&mut envelope, 3, 1);
+        assert_eq!(
+            envelope,
+            json!({"error": {
+                "code": "row_not_found",
+                "message": "The table holds no row with this id.",
+                "details": {"operation": 1, "id": "x"},
+            }})
+        );
+    }
 }

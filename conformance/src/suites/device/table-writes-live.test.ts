@@ -1772,4 +1772,67 @@ describe("the table an item of core.table keeps", () => {
       [second]: { name: "food", amount: 2 },
     });
   });
+
+  it("keeps a refused write's refusal numbered by the write's own operation, in its message and in every error's path", async () => {
+    const withPaid = { ...COLUMNS, paid: { type: "boolean" } };
+    const made = await working.createItem({
+      type: "core.table",
+      properties: { title: "Ledger", columns: withPaid },
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const item = made.data.item;
+    const row = uuidv7();
+    const own = await working.writeRows(item.id, "table", {
+      operations: [{ op: "put", id: row, values: { name: "rent", amount: 5 } }],
+    });
+    expect(own.status, JSON.stringify(own.error)).toBe(200);
+    const device = deviceFor("own-refusal");
+    value(await device.hydrate(["core.table"], "library"));
+    value(await device.holdTable("core.table", "table"));
+
+    const writes = [];
+    for (const amount of [6, 7, 8, 9])
+      writes.push(
+        value(
+          await device.writeRows(item.id, "table", [
+            { op: "patch", id: row, values: { amount } },
+          ]),
+        ),
+      );
+    writes.push(
+      value(
+        await device.writeRows(item.id, "table", [
+          { op: "patch", id: row, values: { paid: true } },
+        ]),
+      ),
+    );
+    const removed = await working.updateItem(item.id, {
+      properties: { columns: COLUMNS },
+      version: item.version,
+    } as never);
+    expect(removed.status, JSON.stringify(removed.error)).toBe(200);
+
+    const report = value(await device.drain());
+    expect(writes.map((one) => verdictOf(report, one.id))).toEqual([
+      "accepted",
+      "accepted",
+      "accepted",
+      "accepted",
+      "refused",
+    ]);
+    const refusal = JSON.parse((await queued(device, writes[4]!.id)).answer!);
+    expect(refusal.error).toMatchObject({
+      code: "validation_error",
+      message: "operations.0.values.paid: The table declares no such column",
+      details: {
+        operation: 0,
+        errors: [
+          {
+            path: "operations.0.values.paid",
+            message: "The table declares no such column",
+          },
+        ],
+      },
+    });
+  });
 });
