@@ -64,7 +64,7 @@ async function unname(server: FreshServer, id: string) {
 async function objectsOf(hash: string): Promise<string[]> {
   const hex = hash.replace(/^sha256:/, "");
   return (await bucket.keys()).filter((key) =>
-    key.startsWith(`${store.S3_PREFIX}/${hex}/`),
+    key.startsWith(`${store.S3_PREFIX}/blobs/${hex}/`),
   );
 }
 

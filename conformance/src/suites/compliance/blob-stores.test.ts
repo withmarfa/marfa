@@ -58,7 +58,7 @@ describe("the stores an instance keeps bytes in", () => {
     // with, and nothing else: an exact match is what leaves no room for a
     // credential in it. The run's own `S3_*` values name them.
     const s3 = stores.data.data.find((store) => store.kind === "s3");
-    const prefix = process.env.S3_PREFIX ?? "blobs";
+    const prefix = process.env.S3_PREFIX ?? "marfa";
     expect(s3?.locator).toBe(`s3://${objectStoreEnv("S3_BUCKET")}/${prefix}`);
   });
 

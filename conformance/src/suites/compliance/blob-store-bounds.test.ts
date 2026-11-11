@@ -100,12 +100,12 @@ async function objectStoreOf(operator: MarfaClient): Promise<{
     const listed = await objects.send(
       new ListObjectsV2Command({
         Bucket: process.env.S3_BUCKET!,
-        Prefix: `${prefix}/${hash.slice("sha256:".length)}`,
+        Prefix: `${prefix}/blobs/${hash.slice("sha256:".length)}`,
       }),
     );
     return (listed.Contents ?? []).map((object) => object.Key!).sort();
   };
-  return { id: s3.id, objects, marker: `${prefix}/.marfa-store`, keysOf };
+  return { id: s3.id, objects, marker: `${prefix}/blobs/.marfa-store`, keysOf };
 }
 
 describe("a replication run that is bounded by count", () => {

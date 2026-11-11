@@ -222,6 +222,30 @@ While an attached object store does not answer with the `.marfa-store` marker of
 
 **Tests:** `compliance/blob-store-bounds.test.ts › changes no copy on the answers of an object store that holds another store's marker`.
 
+### `stores/object-layout`
+
+Where an object store is attached, the server MUST keep each copy's object and the store's `.marfa-store` marker under `<S3_PREFIX>/blobs/`.
+
+**Reason:** a prefix holds one instance: its files under `blobs/` and its backups under `backups/` (`instance/backup-object`), so each can take a lifecycle rule of its own.
+
+**Tests:** `compliance/bucket-sharing.test.ts › keeps the files and the store's marker under the prefix's blobs folder and the backups under its backups folder`.
+
+### `stores/object-layout-root-ignored`
+
+When the server starts on a prefix that holds a `.marfa-store` marker or copies directly under `<S3_PREFIX>/`, the server MUST NOT read them as the store's.
+
+**Reason:** an earlier build kept them there, and nothing is carried from earlier builds.
+
+**Tests:** `compliance/bucket-sharing.test.ts › starts beside objects an older layout left at the prefix's root, and never reads or deletes them`.
+
+### `stores/delete-only-written`
+
+The server MUST NOT delete an object in an object store that it did not write.
+
+**Reason:** another server can work on the same prefix, as one that replaces an instance does, and a restore records an object it finds there as a copy (`instance/backup-restore`). When the server drops, strikes or purges such a copy, it takes the copy out of the copy record and leaves the object. An object it found that it had written and not yet deleted counts as its own.
+
+**Tests:** `compliance/bucket-sharing.test.ts › deletes none of the first server's objects from a server restored from its backup, through every clean-up, so the first server's backup still restores`, `compliance/bucket-sharing.test.ts › starts beside objects an older layout left at the prefix's root, and never reads or deletes them`.
+
 ## Links
 
 A link to a blob's bytes names the instance or the object store as its host, and the lifetime and the signature are `blobs.md`'s.
@@ -360,9 +384,11 @@ When the server answers a drop with `200`, the server MUST remove the copy's row
 
 ### `stores/drop-removes-bytes`
 
-When the server answers a drop with `200`, the server MUST remove the copy's bytes from its store.
+When the server answers a drop with `200` for a copy whose object it wrote, the server MUST remove the copy's bytes from its store.
 
-**Tests:** `compliance/blob-rules.test.ts › removes a dropped copy's bytes from its store`.
+**Reason:** a copy whose object the server did not write leaves the copy record and keeps its object (`stores/delete-only-written`).
+
+**Tests:** `compliance/blob-rules.test.ts › removes a dropped copy's bytes from its store`, `compliance/bucket-sharing.test.ts › deletes none of the first server's objects from a server restored from its backup, through every clean-up, so the first server's backup still restores`.
 
 ### `stores/drop-below-minimum`
 
@@ -692,9 +718,9 @@ When a run of `blob-orphans` purges a blob, the server MUST take it off the repo
 
 ### `stores/orphan-purge-bytes`
 
-When a run of `blob-orphans` purges a blob, the server MUST remove its bytes from every attached store.
+When a run of `blob-orphans` purges a blob, the server MUST remove its bytes from every attached store but an object it did not write.
 
-**Tests:** `compliance/blob-rules.test.ts › removes a purged blob's bytes from every store`.
+**Tests:** `compliance/blob-rules.test.ts › removes a purged blob's bytes from every store`, `compliance/bucket-sharing.test.ts › deletes none of the first server's objects from a server restored from its backup, through every clean-up, so the first server's backup still restores`.
 
 ### `stores/orphan-switched-off-unlisted`
 
