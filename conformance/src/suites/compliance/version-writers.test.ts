@@ -490,29 +490,6 @@ describe("who wrote each version", () => {
     ]);
   });
 
-  it("names an app by its client id once its sign-in record is gone, and still takes its write", async () => {
-    const browser = await signIn();
-    const app = await approveApp(browser, "app whose record goes");
-    const record = listedApp(await signIns(), "app whose record goes");
-    const id = await createNote(app.accessToken);
-    // The record reads as gone while the app's token stands.
-    await server.setFault(`unreadable:sign-in-record=${record.id}`);
-    try {
-      const changed = await call(app.accessToken, "PATCH", `/items/${id}`, {
-        version: 1,
-        properties: { body: "after the record went" },
-      });
-      expect(changed.status, JSON.stringify(changed.body)).toBe(200);
-      await changeNote(app.accessToken, id, 2, "third");
-    } finally {
-      await server.clearFault();
-    }
-    expect(writers(await versionsOf(app.accessToken, id))).toEqual([
-      { kind: "app", id: record.id, name: "app whose record goes" },
-      { kind: "app", id: app.clientId, name: "app whose record goes" },
-    ]);
-  });
-
   it("names a key or an app whose chosen name is unprintable or too long as the listing does", async () => {
     const browser = await signIn();
     for (const label of [

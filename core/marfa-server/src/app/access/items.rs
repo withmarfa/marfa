@@ -2,6 +2,7 @@ use serde_json::json;
 
 use super::levers::Holding;
 use super::{Axis, Caller, Level};
+use crate::app::auth::names;
 use crate::app::items::Writer;
 use crate::app::refusal::{Code, Refusal, Result};
 
@@ -42,7 +43,9 @@ impl Caller {
             Caller::Key(key) => Writer {
                 kind: "key".to_string(),
                 id: key.id.clone(),
-                name: printable(&key.label),
+                name: names::usable(Some(&key.label))
+                    .unwrap_or(&key.id)
+                    .to_string(),
             },
             Caller::Owner(session) => Writer {
                 kind: "browser".to_string(),
@@ -52,7 +55,7 @@ impl Caller {
             Caller::App { key, grant } => Writer {
                 kind: "app".to_string(),
                 id: grant.grant_id.clone(),
-                name: printable(&key.label),
+                name: key.label.clone(),
             },
         };
         Some(writer)

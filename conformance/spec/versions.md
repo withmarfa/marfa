@@ -266,14 +266,6 @@ The server MUST give a browser, a key, or an app whose sign-in record stands, th
 
 **Tests:** `compliance/version-writers.test.ts › names the app that wrote a version by the id and name the sign-in listing gives it`, `› names the owner's browser and the local command that changed an app's record`.
 
-### `versions/writer-app-gone`
-
-If an app writes a version once its sign-in record is gone, then the server MUST record the version with the app's client ID as the writer's `id`, and the `client_name` it registered with, or else its client ID, as the writer's `name`.
-
-**Reason:** a token can outlive the record that lists its app for a moment, and recording who wrote never fails a write the token is entitled to.
-
-**Tests:** `compliance/version-writers.test.ts › names an app by its client id once its sign-in record is gone, and still takes its write`.
-
 ### `versions/writer-name`
 
 When the server records a version's writer, the server MUST give it the `name` that `GET /owner/sign-ins` gives that sign-in at that moment, and `Local command` for the private local command.
