@@ -260,7 +260,7 @@ The server MUST give a writer the `kind` `browser` for the owner's browser sessi
 
 ### `versions/writer-id`
 
-The server MUST give a browser, a key, or an app whose sign-in record stands, that wrote a version the `id` that `GET /owner/sign-ins` lists it under, and the private local command the `id` `local`.
+The server MUST give a browser, a key or an app that wrote a version the `id` that `GET /owner/sign-ins` lists it under, and the private local command the `id` `local`.
 
 **Reason:** a reader can tell which listed sign-in wrote a version, and end it by that id.
 

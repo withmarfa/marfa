@@ -105,8 +105,9 @@ it("refuses startup until a closing listener has finished its socket cleanup", a
   const { socket, start } = await fixture();
   const first = start();
   await first.ready();
-  expect((await controlRequest(socket, "/health")).status).toBe(200);
   const finish = await holdRequest(socket);
+  // Answered after the held connection, so the server has taken that one in.
+  expect((await controlRequest(socket, "/health")).status).toBe(200);
   first.child.kill("SIGTERM");
   await expect
     .poll(
