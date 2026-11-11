@@ -414,10 +414,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
     tokenize = 'porter unicode61'
 );
 
--- Each `items_fts` entry's length in tokens, summed by type and source in `items_fts_totals`.
+-- Each `items_fts` entry's item and length in tokens, summed by type and source in `items_fts_totals`.
+-- A search filters its hits on these columns, which a page of the table holds for many more items than
+-- the wide rows of `items` do.
 CREATE TABLE IF NOT EXISTS items_fts_sizes (
     seq INTEGER PRIMARY KEY,
+    id TEXT NOT NULL,
     type TEXT NOT NULL,
+    state TEXT NOT NULL,
     source TEXT NOT NULL,
     tokens INTEGER NOT NULL CHECK (tokens >= 0)
 ) STRICT;
@@ -440,7 +444,7 @@ CREATE TRIGGER IF NOT EXISTS items_fts_unsized AFTER DELETE ON items_fts_sizes B
     UPDATE items_fts_totals SET entries = entries - 1, tokens = tokens - OLD.tokens
     WHERE type = OLD.type AND source = OLD.source;
 END;
-CREATE TRIGGER IF NOT EXISTS items_fts_resized AFTER UPDATE ON items_fts_sizes BEGIN
+CREATE TRIGGER IF NOT EXISTS items_fts_resized AFTER UPDATE OF type, source, tokens ON items_fts_sizes BEGIN
     UPDATE items_fts_totals SET entries = entries - 1, tokens = tokens - OLD.tokens
     WHERE type = OLD.type AND source = OLD.source;
     INSERT INTO items_fts_totals (type, source, entries, tokens)
@@ -448,10 +452,11 @@ CREATE TRIGGER IF NOT EXISTS items_fts_resized AFTER UPDATE ON items_fts_sizes B
     ON CONFLICT (type, source) DO UPDATE
     SET entries = entries + 1, tokens = tokens + excluded.tokens;
 END;
-CREATE TRIGGER IF NOT EXISTS items_fts_moved AFTER UPDATE OF type, source ON items
-WHEN NEW.type IS NOT OLD.type OR NEW.source IS NOT OLD.source
+CREATE TRIGGER IF NOT EXISTS items_fts_moved AFTER UPDATE OF type, source, state ON items
+WHEN NEW.type IS NOT OLD.type OR NEW.source IS NOT OLD.source OR NEW.state IS NOT OLD.state
 BEGIN
-    UPDATE items_fts_sizes SET type = NEW.type, source = NEW.source WHERE seq = NEW.seq;
+    UPDATE items_fts_sizes SET type = NEW.type, source = NEW.source, state = NEW.state
+    WHERE seq = NEW.seq;
 END;
 
 -- The rows whose indexed text a write may have changed. The item write function

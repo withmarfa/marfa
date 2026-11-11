@@ -106,6 +106,7 @@ fn key_of(by: &str, descending: bool, catalog: &Catalog) -> Option<Key> {
         expression,
         descending,
         nullable,
+        relevance: false,
     })
 }
 

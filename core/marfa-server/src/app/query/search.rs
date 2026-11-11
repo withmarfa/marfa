@@ -33,6 +33,8 @@ pub struct Search {
 struct Source {
     fts: &'static str,
     from: &'static str,
+    /// What `from` reads from for an ask that only the columns of the index's own item table can judge.
+    narrow_from: &'static str,
     named: &'static str,
     /// Every entry of an item `i`, for a reach to narrow.
     corpus: &'static str,
@@ -44,14 +46,16 @@ const SOURCES: [Source; 2] = [
     Source {
         fts: "items_fts",
         from: "items_fts CROSS JOIN items i ON i.seq = items_fts.rowid",
+        narrow_from: "items_fts CROSS JOIN items_fts_sizes i ON i.seq = items_fts.rowid",
         named: "0 AS hit, i.seq AS seq, NULL AS tname, NULL AS rid, NULL AS entry, NULL AS columns",
-        corpus: "items_fts CROSS JOIN items i ON i.seq = items_fts.rowid",
+        corpus: "items_fts CROSS JOIN items_fts_sizes i ON i.seq = items_fts.rowid",
         totals: "SELECT coalesce(sum(i.entries), 0), coalesce(sum(i.tokens), 0) \
              FROM items_fts_totals i",
     },
     Source {
         fts: "rows_fts",
         from: tables::search::HITS_FROM,
+        narrow_from: tables::search::HITS_FROM,
         named: "1 AS hit, i.seq AS seq, s.table_name AS tname, m.id AS rid, m.seq AS entry, \
              s.searched_by AS columns",
         corpus: tables::search::CORPUS_FROM,
@@ -138,6 +142,18 @@ impl Ranking {
     }
 }
 
+/// Whether a hit's type, source and state judge the ask, with nothing of the item itself to read.
+fn narrow(ask: &Ask) -> bool {
+    ask.filter.is_none()
+        && ask.tags.is_empty()
+        && ask.beneath.is_none()
+        && ask.tier.is_none()
+        && ask.occurred_after.is_none()
+        && ask.occurred_before.is_none()
+        && ask.updated_after.is_none()
+        && ask.updated_before.is_none()
+}
+
 fn matched(
     sql: &mut Sql,
     source: &Source,
@@ -146,10 +162,12 @@ fn matched(
     catalog: &Catalog,
     expression: &str,
 ) -> Result<()> {
-    sql.push(&format!(
-        " FROM {} WHERE {} MATCH ",
-        source.from, source.fts
-    ));
+    let from = if narrow(ask) {
+        source.narrow_from
+    } else {
+        source.from
+    };
+    sql.push(&format!(" FROM {from} WHERE {} MATCH ", source.fts));
     sql.bind(expression.to_string());
     sql.push(" AND ");
     sql.append(&selection(reach, ask, catalog, false)?);
@@ -174,7 +192,7 @@ pub(super) fn search_sql(
         sql.push(&format!("SELECT {}, ", source.named));
         sql.append(&rank);
         sql.push(" AS rank, ");
-        order.ranked_by(&rank).columns(&mut sql);
+        order.columns(&mut sql);
         sql.push(" AS id");
         matched(&mut sql, source, reach, ask, catalog, expression)?;
     }
