@@ -850,7 +850,17 @@ BEGIN
     WHERE kind = 'edge' AND seq = NEW.seq;
 END;
 
--- Blobs that nothing references, and when a run first found each.
+-- Digests the properties an open `update_properties` or `type_move` job writes name: each keeps
+-- its blob as a reference does, and lends no read.
+CREATE TABLE IF NOT EXISTS blob_job_holds (
+    hash TEXT NOT NULL,
+    job_id TEXT NOT NULL REFERENCES bulk_jobs (id) ON DELETE CASCADE,
+    PRIMARY KEY (hash, job_id)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS blob_job_holds_job ON blob_job_holds (job_id);
+
+-- Blobs that nothing references or holds, and when a run first found each.
 CREATE TABLE IF NOT EXISTS blob_orphans (
     hash TEXT PRIMARY KEY NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
     reported_at TEXT NOT NULL

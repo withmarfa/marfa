@@ -109,6 +109,19 @@ impl Decided {
     }
 }
 
+/// An open job's properties keep every blob they name, and lend no read.
+pub fn hold_for_job(tx: &Transaction<'_>, job_id: &str, patch: &Map<String, Value>) -> Result<()> {
+    for digest in digests(patch) {
+        rows::hold_for_job(tx, job_id, &digest)?;
+    }
+    Ok(())
+}
+
+/// A job that ends keeps nothing.
+pub fn release_job(tx: &Transaction<'_>, job_id: &str) -> Result<()> {
+    rows::release_job(tx, job_id)
+}
+
 /// A row gone takes its references with it.
 pub fn forget(tx: &Transaction<'_>, row: Row<'_>) -> Result<()> {
     rows::forget(tx, row)

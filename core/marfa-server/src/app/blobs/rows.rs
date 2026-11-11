@@ -731,17 +731,48 @@ pub fn verified(
     Ok(stamped > 0)
 }
 
-/// Adds every blob nothing references to the report, keeping the time of an earlier report,
-/// and takes off any that something references now. Answers the report's size.
+/// Whether something keeps the blob `{hash}` names: a row's reference or an open job's properties.
+fn kept(hash: &str) -> String {
+    format!(
+        "(EXISTS (SELECT 1 FROM blob_references r WHERE r.hash = {hash}) \
+         OR EXISTS (SELECT 1 FROM blob_job_holds j WHERE j.hash = {hash}))"
+    )
+}
+
+/// An open job's properties keep each digest they name until the job ends.
+pub fn hold_for_job(tx: &Transaction<'_>, job_id: &str, hash: &str) -> Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO blob_job_holds (hash, job_id) VALUES (?1, ?2) \
+         ON CONFLICT (hash, job_id) DO NOTHING",
+    )?
+    .execute(params![hash, job_id])?;
+    tx.prepare_cached("DELETE FROM blob_orphans WHERE hash = ?1")?
+        .execute([hash])?;
+    Ok(())
+}
+
+pub fn release_job(tx: &Transaction<'_>, job_id: &str) -> Result<()> {
+    tx.prepare_cached("DELETE FROM blob_job_holds WHERE job_id = ?1")?
+        .execute([job_id])?;
+    Ok(())
+}
+
+/// Adds every blob nothing keeps to the report, keeping the time of an earlier report, and
+/// takes off any that something keeps now. Answers the report's size.
 pub fn report_orphans(tx: &Transaction<'_>, at: &str) -> Result<u64> {
     tx.execute(
-        "INSERT INTO blob_orphans (hash, reported_at) SELECT b.hash, ?1 FROM blobs b \
-         WHERE NOT EXISTS (SELECT 1 FROM blob_references r WHERE r.hash = b.hash) \
-         ON CONFLICT (hash) DO NOTHING",
+        &format!(
+            "INSERT INTO blob_orphans (hash, reported_at) SELECT b.hash, ?1 FROM blobs b \
+             WHERE NOT {} ON CONFLICT (hash) DO NOTHING",
+            kept("b.hash")
+        ),
         [at],
     )?;
     tx.execute(
-        "DELETE FROM blob_orphans WHERE hash IN (SELECT hash FROM blob_references)",
+        &format!(
+            "DELETE FROM blob_orphans WHERE {}",
+            kept("blob_orphans.hash")
+        ),
         [],
     )?;
     report_size(tx)
@@ -758,13 +789,13 @@ pub const UNREAD_ORPHANS: Unread<'static> = Unread {
     scope: "1",
 };
 
-/// Blobs reported at or before `cutoff` that the index says nothing references.
+/// Blobs reported at or before `cutoff` that the index says nothing keeps.
 pub fn purge_candidates(tx: &Transaction<'_>, cutoff: &str) -> Result<Vec<Hash>> {
     let mut statement = tx.prepare_cached(&format!(
         "SELECT o.hash FROM blob_orphans o WHERE {} AND o.reported_at <= ?1 \
-         AND NOT EXISTS (SELECT 1 FROM blob_references r WHERE r.hash = o.hash) \
-         ORDER BY o.reported_at, o.hash",
-        readable("o.reported_at")
+         AND NOT {} ORDER BY o.reported_at, o.hash",
+        readable("o.reported_at"),
+        kept("o.hash")
     ))?;
     let rows = statement.query_map([cutoff], |row| row.get::<_, String>(0))?;
     let mut found = Vec::new();
@@ -947,6 +978,49 @@ mod tests {
             params![hash.as_str(), kind, seq, types[2], types[0], types[1]],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn an_open_jobs_hold_keeps_a_blob_off_the_report_and_out_of_the_purge_until_released() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let tx = conn.transaction().unwrap();
+        let hash = Hash::parse(&format!("sha256:{}", "c".repeat(64))).unwrap();
+        let at = "2026-01-01T00:00:00.000Z";
+        tx.execute(
+            "INSERT INTO blobs (hash, mime_type, size_bytes, recorded_at) \
+             VALUES (?1, 'text/plain', 1, ?2)",
+            params![hash.as_str(), at],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO bulk_jobs (id, action, input, key_id, status, matched, created_at) \
+             VALUES ('job', 'update_properties', '{}', 'key', 'queued', 0, ?1)",
+            [at],
+        )
+        .unwrap();
+
+        assert_eq!(report_orphans(&tx, at).unwrap(), 1);
+        hold_for_job(&tx, "job", hash.as_str()).unwrap();
+        assert_eq!(report_size(&tx).unwrap(), 0, "the hold lifts the report");
+        tx.execute(
+            "INSERT INTO blob_orphans (hash, reported_at) VALUES (?1, ?2)",
+            params![hash.as_str(), at],
+        )
+        .unwrap();
+        assert!(purge_candidates(&tx, at).unwrap().is_empty());
+        assert_eq!(report_orphans(&tx, at).unwrap(), 0);
+
+        release_job(&tx, "job").unwrap();
+        let later = "2026-01-01T00:00:01.000Z";
+        assert_eq!(report_orphans(&tx, later).unwrap(), 1);
+        assert!(
+            purge_candidates(&tx, "2026-01-01T00:00:00.999Z")
+                .unwrap()
+                .is_empty(),
+            "a report younger than the grace is kept"
+        );
+        assert_eq!(purge_candidates(&tx, later).unwrap(), vec![hash]);
     }
 
     #[test]

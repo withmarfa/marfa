@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import type { BulkActionInput } from "../../client/types.js";
+import type { BulkActionInput, BulkActionJob } from "../../client/types.js";
 import { HOLD, queue } from "../../utils/bulk-jobs.js";
 import {
   bootFreshServer,
@@ -255,6 +255,21 @@ describe("a property-update job that has ended", () => {
   });
 });
 
+/** Two types of one publisher, of which the first holds no item. */
+async function registerPair(): Promise<{ from: string; to: string }> {
+  const ns = `jobhold${crypto.randomUUID().replaceAll("-", "").slice(0, 12)}`;
+  const from = `${ns}.deal`;
+  const to = `${ns}.contract`;
+  for (const id of [from, to]) {
+    const res = await working.registerType({
+      id,
+      fields: { covers: { type: "array", items_type: "string" } },
+    } as never);
+    expect(res.ok, JSON.stringify(res.error)).toBe(true);
+  }
+  return { from, to };
+}
+
 /** Where a job that has not ended is. */
 type Stage = "queued" | "in progress";
 const STAGES: readonly Stage[] = ["queued", "in progress"];
@@ -278,6 +293,14 @@ describe("a property-update job that has not ended", () => {
    * nothing, with the asked-about job behind it, when it is `queued`.
    */
   async function holdJob(stage: Stage, input: PropertyUpdate): Promise<string> {
+    return holdBehind(stage, () => queue(working, input));
+  }
+
+  /** As `holdJob`, for a job that `enqueue` queues. */
+  async function holdBehind(
+    stage: Stage,
+    enqueue: () => Promise<string>,
+  ): Promise<string> {
     await server!.setFault(HOLD.claimed);
     if (stage === "queued") {
       queuedHere.push(
@@ -289,7 +312,7 @@ describe("a property-update job that has not ended", () => {
       );
       await server!.waitForHold(HOLD.claimed);
     }
-    const id = await queue(working, input);
+    const id = await enqueue();
     queuedHere.push(id);
     if (stage === "in progress") await server!.waitForHold(HOLD.claimed);
     const read = (await working.bulkActionStatus(id)).data.status;
@@ -362,6 +385,31 @@ describe("a property-update job that has not ended", () => {
       },
       60_000,
     );
+
+    it("keeps a blob a type move's properties name", async () => {
+      const hash = await upload(`named by a type move, ${stage}`);
+      await runJob(operator, "blob-orphans");
+      expect(await reported()).toContain(hash);
+
+      const { from, to } = await registerPair();
+      await holdBehind(stage, async () => {
+        const queued = await working.moveType(from, {
+          to,
+          properties: { covers: [hash] },
+        });
+        expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+        return (queued.data as BulkActionJob).id;
+      });
+      expect(await reported()).not.toContain(hash);
+      await sweepsTwice();
+      expect(await reported()).not.toContain(hash);
+      expect((await operator.downloadBlob(hash)).status).toBe(200);
+      expect(await readingDoors(working, hash)).toEqual(UNKNOWN);
+
+      // The witness: once the move ends its properties hold nothing.
+      await end();
+      await reportedAfterEnd(hash, stage);
+    }, 60_000);
 
     it.each(FILTERS)(
       "does not count a digest in %s as a reference",
@@ -485,5 +533,36 @@ describe("a property-update job whose patch names a digest no blob holds", () =>
     expect(
       (await working.getItem(note.data.item.id)).data.item.properties.body,
     ).toBe(unknown);
+  });
+});
+
+describe("a type move whose properties name a digest no blob holds", () => {
+  it("completes a type move whose properties name a digest no blob holds", async () => {
+    const unknown = `sha256:${createHash("sha256")
+      .update(`held by no blob ${crypto.randomUUID()}`)
+      .digest("hex")}`;
+    expect((await operator.downloadBlob(unknown)).status).toBe(404);
+
+    const { from, to } = await registerPair();
+    const item = await working.createItem({
+      type: from,
+      source: "blob-store-jobs",
+      properties: { covers: [] },
+    });
+    expect(item.status, JSON.stringify(item.error)).toBe(201);
+
+    const queued = await working.moveType(from, {
+      to,
+      properties: { covers: [unknown] },
+    });
+    expect(queued.status, JSON.stringify(queued.error)).toBe(202);
+    const job = await working.pollBulkActionToTerminal(
+      (queued.data as BulkActionJob).id,
+    );
+    expect(job.status, job.error ?? "").toBe("completed");
+    expect(job.result).toMatchObject({ matched: 1, succeeded: 1, errored: 0 });
+    const moved = (await working.getItem(item.data.item.id)).data.item;
+    expect(moved.type).toBe(to);
+    expect(moved.properties.covers).toEqual([unknown]);
   });
 });

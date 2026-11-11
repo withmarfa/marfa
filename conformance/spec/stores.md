@@ -610,11 +610,11 @@ When a caller authorized by `instance.read` or local authority sends `GET /blobs
 
 ### `stores/orphan-enqueue-lifts`
 
-When an `update_properties` job whose patch names a blob's digest is enqueued through `POST /items/bulk-actions`, the server MUST take the blob off the orphan report.
+When an `update_properties` job whose patch names a blob's digest is enqueued through `POST /items/bulk-actions`, or a type move whose `properties` name it is enqueued through `POST /types/{id}/move`, the server MUST take the blob off the orphan report.
 
-**Reason:** the job's patch is a reference while the job is queued or in progress (`stores/reference-job-patch`), so the report is lifted at once, as an upload's and a write's are.
+**Reason:** the job's patch or properties are a reference while the job is queued or in progress (`stores/reference-job-patch`), so the report is lifted at once, as an upload's and a write's are.
 
-**Tests:** `compliance/blob-store-jobs.test.ts › lifts the report when an update_properties job naming the digest is enqueued`.
+**Tests:** `compliance/blob-store-jobs.test.ts › lifts the report when an update_properties job naming the digest is enqueued`, `› keeps a blob a type move's properties name`.
 
 ### `stores/orphan-listing-order`
 
@@ -826,31 +826,31 @@ When a run of `blob-orphans` finds a blob that only an earlier version of an ite
 
 ### `stores/orphan-keeps-job-patch`
 
-While a queued or in-progress `update_properties` job's patch holds a blob's digest, the server MUST keep the blob.
+While a queued or in-progress `update_properties` job's patch or `type_move` job's `properties` holds a blob's digest, the server MUST keep the blob.
 
 **Reason:** enqueueing such a job takes the blob off the report at once, and a run that was already walking the corpus cannot start or keep a report for it.
 
-**Tests:** `compliance/blob-store-jobs.test.ts › keeps a blob the patch names as %s`.
+**Tests:** `compliance/blob-store-jobs.test.ts › keeps a blob the patch names as %s`, `› keeps a blob a type move's properties name`.
 
 ### `stores/orphan-job-ended`
 
-When an `update_properties` job ends `completed`, `canceled` or `failed`, the server MUST count none of its patch as a reference, so a blob nothing else references is reported afresh and a later run may purge it only after the grace.
+When an `update_properties` or `type_move` job ends `completed`, `canceled` or `failed`, the server MUST count none of its patch or `properties` as a reference, so a blob nothing else references is reported afresh and a later run may purge it only after the grace.
 
-**Tests:** `compliance/blob-store-jobs.test.ts › reports a blob afresh once the job whose patch named it ends`, `› reports a blob afresh once a queued job naming it is canceled`, `› reports a blob afresh once a queued job naming it fails`.
+**Tests:** `compliance/blob-store-jobs.test.ts › reports a blob afresh once the job whose patch named it ends`, `› reports a blob afresh once a queued job naming it is canceled`, `› reports a blob afresh once a queued job naming it fails`, `› keeps a blob a type move's properties name`.
 
 ### `stores/job-patch-no-reach`
 
-While a queued or in-progress `update_properties` job's patch names a blob's digest, the server MUST NOT serve the blob to a key or app token lacking `blobs.manage` that never held the bytes.
+While a queued or in-progress `update_properties` job's patch or `type_move` job's `properties` names a blob's digest, the server MUST NOT serve the blob to a key or app token lacking `blobs.manage` that never held the bytes.
 
 **Reason:** retention grants no read.
 
-**Tests:** `compliance/blob-store-jobs.test.ts › serves the blob its patch names to no key that did not already hold the bytes`.
+**Tests:** `compliance/blob-store-jobs.test.ts › serves the blob its patch names to no key that did not already hold the bytes`, `› keeps a blob a type move's properties name`.
 
 ### `stores/job-patch-unknown-digest`
 
-When a queued or in-progress `update_properties` job's patch names a digest no blob holds, the server MUST NOT fail the job for it.
+When a queued or in-progress `update_properties` job's patch or `type_move` job's `properties` names a digest no blob holds, the server MUST NOT fail the job for it.
 
-**Tests:** `compliance/blob-store-jobs.test.ts › completes a job whose patch names a digest no blob holds`.
+**Tests:** `compliance/blob-store-jobs.test.ts › completes a job whose patch names a digest no blob holds`, `› completes a type move whose properties name a digest no blob holds`.
 
 ## What counts as a reference
 
@@ -870,9 +870,9 @@ When a string holds a run of lowercase hexadecimal characters that is 63 charact
 
 ### `stores/reference-job-patch`
 
-When a queued or in-progress `update_properties` job's patch holds a string with a digest at any depth, the server MUST count it as a reference.
+When a queued or in-progress `update_properties` job's patch or `type_move` job's `properties` holds a string with a digest at any depth, the server MUST count it as a reference.
 
-**Tests:** `compliance/blob-store-jobs.test.ts › keeps a blob the patch names as %s`.
+**Tests:** `compliance/blob-store-jobs.test.ts › keeps a blob the patch names as %s`, `› keeps a blob a type move's properties name`.
 
 ### `stores/reference-job-inputs`
 

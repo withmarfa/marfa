@@ -428,12 +428,13 @@ impl Caller {
         }
     }
 
-    pub fn audit_id(&self) -> String {
+    /// The credential an audit entry names; the server's own writes name none.
+    pub fn audit_id(&self) -> Option<String> {
         match self {
-            Caller::Local(_) => "local:process".to_string(),
-            Caller::Server => "server".to_string(),
-            Caller::Key(key) | Caller::App { key, .. } => key.id.clone(),
-            Caller::Owner(session) => format!("owner:{}", session.id),
+            Caller::Local(_) => Some("local:process".to_string()),
+            Caller::Server => None,
+            Caller::Key(key) | Caller::App { key, .. } => Some(key.id.clone()),
+            Caller::Owner(session) => Some(format!("owner:{}", session.id)),
         }
     }
 
