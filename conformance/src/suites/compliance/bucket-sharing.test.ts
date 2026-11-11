@@ -284,7 +284,10 @@ describe("two servers on one prefix", () => {
     const bucket = bucketAt(store.S3_PREFIX);
     const first = await boot("bucket-own-first", store);
     const firstId = await instanceIdOf(first);
-    const kept = await file(first, "a file the second server copies for itself");
+    const kept = await file(
+      first,
+      "a file the second server copies for itself",
+    );
     const backup = await ownerOf(first).runBackup();
     expect(backup.status, JSON.stringify(backup.error)).toBe(200);
     const hex = kept.hash.replace(/^sha256:/, "");
