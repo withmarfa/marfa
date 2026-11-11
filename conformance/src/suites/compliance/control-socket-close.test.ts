@@ -1,12 +1,11 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 import { randomBytes } from "node:crypto";
-import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
+import { connect } from "node:net";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { typeScriptSettingNames } from "../../../scripts/marfa-server.js";
 import { controlRequest } from "../../utils/control-request.js";
 
 const cleanups: (() => Promise<void>)[] = [];
@@ -14,34 +13,41 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
+/**
+ * Opens a request on the private socket whose body is only partly sent, so
+ * the server holds it in flight, and answers a way to send the rest.
+ */
+async function holdRequest(socketPath: string): Promise<() => Promise<number>> {
+  const body = '{"setup_code":"held"}';
+  const socket = connect(socketPath);
+  await once(socket, "connect");
+  let reply = "";
+  socket.setEncoding("utf8");
+  socket.on("data", (part: string) => {
+    reply += part;
+  });
+  socket.write(
+    "POST /_control/setup/claim HTTP/1.1\r\nhost: marfa\r\n" +
+      `content-type: application/json\r\ncontent-length: ${String(body.length)}\r\n\r\n` +
+      body.slice(0, 5),
+  );
+  cleanups.push(async () => {
+    socket.destroy();
+  });
+  return async () => {
+    const closed = once(socket, "close");
+    socket.write(body.slice(5));
+    await closed;
+    return Number(/^HTTP\/1\.1 (\d{3})/.exec(reply)?.[1]);
+  };
+}
+
 async function fixture() {
+  const program = process.env.MARFA_SERVER_BIN;
+  if (!program) throw new Error("MARFA_SERVER_BIN names no server");
   const root = await mkdtemp(join(await realpath(tmpdir()), "marfa-restart-"));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const socket = join(root, "control.sock");
-  const closeProbe = join(root, "close-probe.mjs");
-  await writeFile(
-    closeProbe,
-    String.raw`
-import fs from "node:fs";
-import { syncBuiltinESMExports } from "node:module";
-let closing = false;
-process.on("SIGTERM", () => { closing = true; });
-const original = fs.lstatSync;
-fs.lstatSync = (path, ...args) => {
-  const stat = original(path, ...args);
-  if (closing && path === process.env.MARFA_CONTROL_SOCKET) {
-    process.stdout.write("control-close-checked\n");
-    const deadline = Date.now() + 30000;
-    while (!fs.existsSync(path + ".release")) {
-      if (Date.now() > deadline) throw new Error("close probe deadline");
-      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
-    }
-  }
-  return stat;
-};
-syncBuiltinESMExports();
-`,
-  );
   const env = {
     PATH: process.env.PATH,
     HOME: process.env.HOME,
@@ -53,18 +59,11 @@ syncBuiltinESMExports();
     MARFA_ENRICHMENT_ENABLED: "false",
     MARFA_ENRICHMENT_OCR_ENABLED: "false",
   };
-  function start(pauseOnClose = false) {
-    const child = spawn(
-      process.execPath,
-      [
-        ...(pauseOnClose ? ["--import", pathToFileURL(closeProbe).href] : []),
-        resolve("../packages/server/dist/index.js"),
-      ],
-      {
-        env: typeScriptSettingNames(env),
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
+  function start() {
+    const child = spawn(program as string, [], {
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
     let output = "";
     child.stdout.on("data", (chunk: Buffer) => {
       output += chunk.toString();
@@ -82,17 +81,6 @@ syncBuiltinESMExports();
       child,
       exited,
       output: () => output,
-      async startup() {
-        const deadline = Date.now() + 30_000;
-        while (Date.now() < deadline) {
-          if (output.includes("Private control socket listening"))
-            return "ready";
-          if (child.exitCode !== null || child.signalCode !== null)
-            return "refused";
-          await new Promise((done) => setTimeout(done, 25));
-        }
-        throw new Error(`Server did not finish startup: ${output}`);
-      },
       async ready() {
         const deadline = Date.now() + 30_000;
         while (Date.now() < deadline) {
@@ -115,22 +103,28 @@ syncBuiltinESMExports();
 
 it("refuses startup until a closing listener has finished its socket cleanup", async () => {
   const { socket, start } = await fixture();
-  const first = start(true);
+  const first = start();
   await first.ready();
   expect((await controlRequest(socket, "/health")).status).toBe(200);
+  const finish = await holdRequest(socket);
   first.child.kill("SIGTERM");
   await expect
-    .poll(first.output, { timeout: 30_000 })
-    .toContain("control-close-checked");
-  await expect(controlRequest(socket, "/health")).rejects.toMatchObject({
-    code: "ECONNREFUSED",
-  });
+    .poll(
+      async () =>
+        controlRequest(socket, "/health").then(
+          () => "listening",
+          (error: NodeJS.ErrnoException) => error.code,
+        ),
+      { timeout: 30_000 },
+    )
+    .toBe("ECONNREFUSED");
   const second = start();
   expect(await second.exited).toEqual([1, null]);
   expect(second.output()).toContain(
     `Control socket path is already in use: ${socket}`,
   );
-  await writeFile(`${socket}.release`, "release");
+  expect(first.child.exitCode).toBeNull();
+  expect(await finish()).toBe(400);
   expect(await first.exited).toEqual([0, null]);
   const third = start();
   await third.ready();

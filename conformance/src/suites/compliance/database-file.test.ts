@@ -68,16 +68,16 @@ function itemIdsInFileAlone(sqlitePath: string): Set<string> {
   const copy = mkdtempSync(join(tmpdir(), "marfa-file-alone-"));
   try {
     cpSync(sqlitePath, join(copy, "marfa.db"));
-    return withInstanceDatabase(
-      join(copy, "marfa.db"),
-      (db) =>
-        new Set(
-          db
-            .prepare("SELECT id FROM items")
-            .all()
-            .map((row) => String(row.id)),
-        ),
-    );
+    return withInstanceDatabase(join(copy, "marfa.db"), (db) => {
+      // A file the log still holds every table of has none of its own yet.
+      if (!tablesIn(db).includes("items")) return new Set<string>();
+      return new Set(
+        db
+          .prepare("SELECT id FROM items")
+          .all()
+          .map((row) => String(row.id)),
+      );
+    });
   } finally {
     rmSync(copy, { recursive: true, force: true });
   }
@@ -731,7 +731,9 @@ describe("starting on a database this build did not write", () => {
 
 /** Every row of every table this build keeps removed (the tables SQLite keeps
  *  for a virtual table excepted), then `drop` taken out: the file a start
- *  leaves when it stops partway through making its tables. */
+ *  leaves when it stops partway through making its tables. A delete can fire
+ *  a trigger that writes a counter row, so a second pass clears what the
+ *  first one left. */
 function emptyThenDrop(db: Database, drop: readonly string[]): void {
   db.exec("PRAGMA foreign_keys = OFF");
   const tables = db
@@ -741,6 +743,11 @@ function emptyThenDrop(db: Database, drop: readonly string[]): void {
     .all()
     .map((row) => String(row.name));
   for (const table of tables) db.exec(`DELETE FROM \`${table}\``);
+  for (const table of tables) {
+    if (db.prepare(`SELECT 1 FROM \`${table}\` LIMIT 1`).get()) {
+      db.exec(`DELETE FROM \`${table}\``);
+    }
+  }
   for (const table of drop) db.exec(`DROP TABLE \`${table}\``);
 }
 

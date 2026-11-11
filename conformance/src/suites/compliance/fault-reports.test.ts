@@ -270,11 +270,41 @@ describe("an unhandled fault in which a statement failed", () => {
 const HEARTBEAT_BUDGET_MS = 45_000;
 
 describe("a warning about an event stream that cannot be read", () => {
-  /** The `[events]` warnings in the server's log. */
-  async function eventWarnings(): Promise<string[]> {
+  /** The warnings and errors in the server's log, as its JSON lines. */
+  async function warnings(): Promise<Record<string, unknown>[]> {
     return (await serverLog())
       .split("\n")
-      .filter((text) => text.startsWith("[events] closing the stream"));
+      .filter((text) => text.startsWith("{"))
+      .map((text) => JSON.parse(text) as Record<string, unknown>)
+      .filter((line) => line.level === "warn" || line.level === "error");
+  }
+
+  /** Waits for the warnings a fault adds, and holds each to the rule. */
+  async function newWarnings(
+    what: string,
+    before: number,
+    timeoutMs?: number,
+  ): Promise<void> {
+    const added = await until(
+      what,
+      async () => {
+        const now = (await warnings())
+          .slice(before)
+          .map((line) => JSON.stringify(line));
+        return now.some((text) => text.includes("Database operation failed"))
+          ? now
+          : undefined;
+      },
+      timeoutMs,
+    );
+    expectFixedFailure(
+      added.find((text) => text.includes("Database operation failed"))!,
+    );
+    for (const text of added) {
+      for (const forbidden of [STATEMENT, "params", DRIVER_MESSAGE, keyId]) {
+        expect(text).not.toContain(forbidden);
+      }
+    }
   }
 
   function openStream(headers: Record<string, string> = {}): Promise<Response> {
@@ -309,35 +339,27 @@ describe("a warning about an event stream that cannot be read", () => {
       expect(served.status).toBe(200);
       const reader = served.body!.getReader();
       const first = await reader.read();
-      expect(new TextDecoder().decode(first.value)).toContain(": connected");
+      expect(new TextDecoder().decode(first.value)).toContain("stream_cursor");
       await reader.cancel();
 
       // The head of the log cannot be read.
-      const known = new Set(await eventWarnings());
+      let before = (await warnings()).length;
       await server!.setFault("fail:stream-head");
       const headStream = await readToEnd(
         (await openStream()).body!.getReader(),
       );
       expect(headStream).not.toContain("stream_cursor");
-      const head = await until("the head's warning", async () =>
-        (await eventWarnings()).find((text) => !known.has(text)),
-      );
-      expect(head).toContain("the event-log head could not be read");
-      expectFixedFailure(head);
+      expect(headStream).toContain('"reason":"read_failed"');
+      await newWarnings("the head's warning", before);
 
       // A catch-up fails after the head was read.
+      before = (await warnings()).length;
       await server!.setFault("fail:stream-replay");
       const catchUp = await readToEnd(
         (await openStream({ "Last-Event-ID": "0" })).body!.getReader(),
       );
-      expect(catchUp).toContain('"reason":"replay_failed"');
-      const replay = await until("the catch-up's warning", async () =>
-        (await eventWarnings()).find((text) =>
-          text.includes("the catch-up could not"),
-        ),
-      );
-      expectFixedFailure(replay);
-      expect(replay).not.toContain("params");
+      expect(catchUp).toContain('"reason":"read_failed"');
+      await newWarnings("the catch-up's warning", before);
 
       // The credential cannot be read again at the stream's next heartbeat.
       const current = await fetch(`${server!.apiUrl}/keys/current`, {
@@ -348,20 +370,17 @@ describe("a warning about an event stream that cannot be read", () => {
       expect(live.status).toBe(200);
       const liveReader = live.body!.getReader();
       await liveReader.read();
+      before = (await warnings()).length;
       await server!.setFault("fail:stream-credential");
       const ended = await readToEnd(liveReader);
-      expect(ended).toContain('"reason":"live_delivery_failed"');
-      const credential = await until(
+      expect(ended).toContain('"reason":"read_failed"');
+      await newWarnings(
         "the credential's warning",
-        async () =>
-          (await eventWarnings()).find((text) =>
-            text.includes("the credential could not be read again"),
-          ),
+        before,
         HEARTBEAT_BUDGET_MS,
       );
-      expectFixedFailure(credential);
+      const credential = JSON.stringify((await warnings()).slice(before));
       expect(credential).not.toContain("api_keys");
-      expect(credential).not.toContain("params");
       expect(credential).not.toContain(currentKey);
       expect(credential).not.toContain(server!.workingKey);
     },

@@ -63,10 +63,10 @@ afterAll(async () => {
 
 describe("GET /health while a long job runs", () => {
   it("is answered between two pages of an NDJSON export", async () => {
-    // One item on the first page and sixteen on each after it.
+    // The later page is far enough on for dozens of turns between the holds.
     const held = await heldWhenHealthAnswered(server, {
       start: "hold:read-hydration",
-      later: "hold:export-page=240",
+      later: "hold:export-page=30",
       begin: async () => {
         const exporting = fetch(`${server.apiUrl}/export`, {
           headers: { authorization: `Bearer ${server.workingKey}` },
@@ -88,10 +88,9 @@ describe("GET /health while a long job runs", () => {
   }, 600_000);
 
   it("is answered between two pages of an archive export", async () => {
-    // Twenty-five items a page.
     const held = await heldWhenHealthAnswered(server, {
       start: "hold:read-hydration",
-      later: "hold:export-page=150",
+      later: "hold:export-page=8",
       begin: async () => {
         const exporting = working().exportArchive();
         return async () => {

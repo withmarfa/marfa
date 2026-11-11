@@ -66,7 +66,7 @@ beforeAll(async () => {
     const changed = withInstanceDatabase(server!.sqlitePath, (db) =>
       db
         .prepare(
-          "UPDATE types SET schema = replace(schema, 'assignees_pending', 'assignees') WHERE id = ?",
+          "UPDATE types SET definition = replace(definition, 'assignees_pending', 'assignees') WHERE id = ?",
         )
         .run(CONFLICTING),
     );
