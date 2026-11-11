@@ -27,18 +27,6 @@ import { QUIET_SCHEDULE, quiet } from "../../utils/moved-clock.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 import { requireBinary } from "./harness.js";
 
-/**
- * One table kept on two devices, written on both and drained from both, one of
- * them offline for a while, against one server: what each write is told, and
- * that both copies end as the server holds the table.
- *
- * The table is an item of `core.table` that device A made, so its columns are
- * the item's own and change with the item. A holds its table and B holds it
- * too. A device's store has one writer, so a `follow` that holds the stream
- * is the observer of a window in which the other device acts, and a command
- * that writes runs while no follow holds the store.
- */
-
 interface Row {
   id: string;
   values: Record<string, unknown>;
@@ -181,7 +169,6 @@ async function serverBatches(): Promise<
   return answer.data.data;
 }
 
-/** Waits until a device's copy holds the table as the server does. */
 async function converged(device: CliDevice, what: string): Promise<void> {
   const reader = device.reopen({ reader: true });
   const started = performance.now();
@@ -213,7 +200,6 @@ function rowsChanged(command: HeldCommand): Change[] {
     );
 }
 
-/** The follow's lines for the table, until it has told `count`; when the last arrived. */
 async function toldRowsChanged(
   command: HeldCommand,
   count: number,
@@ -233,6 +219,7 @@ async function toldRowsChanged(
   return performance.now();
 }
 
+// A follow owns the store's writer, so only the other device may write.
 function follow(device: CliDevice): HeldCommand {
   const command = device.holdFollow();
   held.push(command);
