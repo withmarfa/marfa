@@ -81,6 +81,7 @@ export const CEILINGS: Record<string, CeilingEntry> = {
   list_50: { ceiling: 50, issue: null },
   search_common: { ceiling: 150, issue: null },
   search_rare: recorded,
+  list_notes_by_title: { ceiling: 50, issue: 2725 },
   // No issue asks for a sorted task list yet, so it is recorded only.
   list_tasks_by_due: recorded,
 

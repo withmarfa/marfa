@@ -1,3 +1,5 @@
+use marfa_rules::query::SortField;
+use rusqlite::Transaction;
 use rusqlite::types::Value;
 use serde_json::{Map, Value as Json, json};
 
@@ -5,10 +7,12 @@ use super::compile::{Ask, Sql, judge, selection};
 use super::cursor::Position;
 use super::order::{Order, Sort};
 use super::reach::Reach;
+use super::sorted::{self, Reading};
 use crate::app::App;
 use crate::app::access::Caller;
-use crate::app::items::{self, Many, Reader, reading};
+use crate::app::items::{self, Many, Reader, reading, sort_keys};
 use crate::app::refusal::Result;
+use crate::db::Write;
 
 #[derive(Clone, Debug)]
 pub struct Listing {
@@ -62,8 +66,8 @@ pub(super) fn page_sql(
     sql
 }
 
-pub(super) fn found(read: &Reader<'_, '_>, sql: &Sql, width: usize) -> Result<Vec<Found>> {
-    let mut statement = read.tx.prepare_cached(&sql.text)?;
+pub(super) fn found(tx: &Transaction<'_>, sql: &Sql, width: usize) -> Result<Vec<Found>> {
+    let mut statement = tx.prepare_cached(&sql.text)?;
     let rows = statement.query_map(rusqlite::params_from_iter(&sql.values), |row| {
         let keys = (1..=width)
             .map(|at| row.get::<_, Value>(at))
@@ -102,7 +106,7 @@ pub(super) fn answered(
 
 pub async fn list(app: &App, caller: &Caller, listing: Listing) -> Result<String> {
     let secret = app.cursor_secret.clone();
-    reading(app, caller, move |read| {
+    let (page, add) = reading(app, caller, move |read| {
         let reach = Reach::of(read)?;
         let Listing {
             ask,
@@ -127,18 +131,67 @@ pub async fn list(app: &App, caller: &Caller, listing: Listing) -> Result<String
                 Position::from_payload(&payload, order.width())
             })
             .transpose()?;
-        let selected = selection(&reach, ask, &read.catalog, order.walked())?;
-        let sql = page_sql(&selected, ask, &order, position.as_ref(), *limit);
-        let rows = found(read, &sql, order.width())?;
-        answered(
+        let served = match (&sort.field, &ask.updated_after) {
+            (Some(SortField::Property(name)), None) => sorted::reading(read, &reach, ask, name)?,
+            _ => Reading::Scan(None),
+        };
+        let (rows, add) = match (served, &sort.field) {
+            (Reading::Keys(type_id), Some(SortField::Property(name))) => {
+                let selected = selection(&reach, ask, &read.catalog, true)?;
+                let descending = order.keys.first().is_some_and(|key| key.descending);
+                let pair = (type_id.as_str(), name.as_str());
+                let rows = sorted::page(
+                    read.tx,
+                    &selected,
+                    pair,
+                    descending,
+                    position.as_ref(),
+                    *limit,
+                )?;
+                (rows, None)
+            }
+            (served, _) => {
+                let selected = selection(&reach, ask, &read.catalog, order.walked())?;
+                let sql = page_sql(&selected, ask, &order, position.as_ref(), *limit);
+                let add = match served {
+                    Reading::Scan(add) => add,
+                    Reading::Keys(_) => None,
+                };
+                (found(read.tx, &sql, order.width())?, add)
+            }
+        };
+        let page = answered(
             read,
             rows,
             *limit,
             |last| secret.issue(&scope, &last.payload()),
             |seqs| items::listed(read, seqs, include),
-        )
+        )?;
+        Ok((page, add))
     })
-    .await
+    .await?;
+    if let Some((type_id, name)) = add {
+        keep_sort_keys(app, type_id, name).await;
+    }
+    Ok(page)
+}
+
+/// A refusal here costs a later listing its speed and nothing else, so the listing that asked does not fail.
+async fn keep_sort_keys(app: &App, type_id: String, name: String) {
+    let added = app
+        .db
+        .write(Write::own(), move |tx| sort_keys::add(tx, &type_id, &name))
+        .await;
+    match added {
+        Ok(true) => app.reindexing.notify_one(),
+        Ok(false) => {}
+        Err(refusal) => {
+            tracing::warn!(
+                code = refusal.code.wire(),
+                "Keys for a property sort were not added"
+            );
+        }
+    }
 }
 
 pub(super) fn stats_sql(

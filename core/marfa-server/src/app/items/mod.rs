@@ -8,6 +8,7 @@ mod plan;
 mod read;
 pub mod restored;
 mod rows;
+pub(crate) mod sort_keys;
 pub mod sweep;
 pub mod thinning;
 pub mod write;
@@ -562,7 +563,9 @@ pub fn reindex_changed(tx: &Transaction<'_>, before: &Rules, after: &Rules) -> R
 }
 
 pub fn reindex_page(tx: &Transaction<'_>, rules: &Rules) -> Result<bool> {
-    index::reindex_page(tx, rules, index::REINDEX_PAGE)
+    let indexing = index::reindex_page(tx, rules, index::REINDEX_PAGE)?;
+    let sorting = sort_keys::fill_page(tx)?;
+    Ok(indexing || sorting)
 }
 
 pub fn rekey_changed(

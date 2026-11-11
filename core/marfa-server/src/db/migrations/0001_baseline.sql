@@ -495,6 +495,61 @@ CREATE TABLE IF NOT EXISTS items_fts_stale (
     PRIMARY KEY (type, state)
 ) STRICT, WITHOUT ROWID;
 
+-- The (type, property) pairs a sorted listing reads from `item_sort_keys` instead of walking every
+-- item of the type. A pair is added when a listing of a large type asks for it, and `filled_through`
+-- is how far the walk of `items.seq` that gives the existing items their keys has reached; the
+-- triggers below keep every pair's keys true from the moment it is added, so `ready` only says that
+-- the walk is over.
+CREATE TABLE IF NOT EXISTS sort_indexes (
+    type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    filled_through INTEGER NOT NULL DEFAULT 0,
+    ready INTEGER NOT NULL DEFAULT 0 CHECK (ready IN (0, 1)),
+    PRIMARY KEY (type, name)
+) STRICT, WITHOUT ROWID;
+
+-- The sort value of a property: a number or boolean as a REAL, text as itself, and the empty blob
+-- where the item holds none, which sorts after every other value. `item_sort_keys_descending`
+-- holds the same keys in descending value order with ids still ascending, the order of a listing
+-- sorted down.
+CREATE TABLE IF NOT EXISTS item_sort_keys (
+    type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    value ANY NOT NULL,
+    id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    PRIMARY KEY (type, name, value, id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS item_sort_keys_descending
+    ON item_sort_keys (type, name, value DESC, id, seq);
+
+CREATE TRIGGER IF NOT EXISTS item_sort_keys_inserted AFTER INSERT ON items
+WHEN EXISTS (SELECT 1 FROM sort_indexes WHERE type = NEW.type)
+BEGIN
+    INSERT OR IGNORE INTO item_sort_keys (type, name, value, id, seq)
+    SELECT NEW.type, s.name, COALESCE(CASE json_type(NEW.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(NEW.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), NEW.id, NEW.seq
+    FROM sort_indexes s WHERE s.type = NEW.type;
+END;
+CREATE TRIGGER IF NOT EXISTS item_sort_keys_changed AFTER UPDATE OF type, properties ON items
+WHEN (NEW.type IS NOT OLD.type OR NEW.properties IS NOT OLD.properties)
+    AND (EXISTS (SELECT 1 FROM sort_indexes WHERE type = OLD.type)
+        OR EXISTS (SELECT 1 FROM sort_indexes WHERE type = NEW.type))
+BEGIN
+    DELETE FROM item_sort_keys WHERE (type, name, value, id) IN (
+        SELECT OLD.type, s.name, COALESCE(CASE json_type(OLD.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(OLD.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), OLD.id
+        FROM sort_indexes s WHERE s.type = OLD.type);
+    INSERT OR IGNORE INTO item_sort_keys (type, name, value, id, seq)
+    SELECT NEW.type, s.name, COALESCE(CASE json_type(NEW.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(NEW.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), NEW.id, NEW.seq
+    FROM sort_indexes s WHERE s.type = NEW.type;
+END;
+CREATE TRIGGER IF NOT EXISTS item_sort_keys_deleted AFTER DELETE ON items
+WHEN EXISTS (SELECT 1 FROM sort_indexes WHERE type = OLD.type)
+BEGIN
+    DELETE FROM item_sort_keys WHERE (type, name, value, id) IN (
+        SELECT OLD.type, s.name, COALESCE(CASE json_type(OLD.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(OLD.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), OLD.id
+        FROM sort_indexes s WHERE s.type = OLD.type);
+END;
+
 CREATE TABLE IF NOT EXISTS auth_user (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,

@@ -84,6 +84,14 @@ impl Reach {
         }
     }
 
+    /// The one type this reach reads whole, when it reads no other.
+    pub fn only_type(&self) -> Option<&str> {
+        match (self.open.as_slice(), self.held.is_empty()) {
+            ([only], true) => Some(only),
+            _ => None,
+        }
+    }
+
     /// Whether a type here is held to `sources`. `OR` across the two lists
     /// takes the type index out of order, so such a reach walks the order.
     pub fn narrows_by_source(&self) -> bool {
