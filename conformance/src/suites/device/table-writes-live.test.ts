@@ -1184,6 +1184,62 @@ describe("a batch the drain cannot settle at once", () => {
     });
   });
 
+  it("refuses only the write whose operation the server refuses from its record for a batch it sent before, and sends the others again in the same drain", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const [kept, gone] = [uuidv7(), uuidv7()];
+    await write(item, [
+      { op: "put", id: kept, values: { count: 1 } },
+      { op: "put", id: gone, values: { count: 2 } },
+    ]);
+    const proxy = await proxied();
+    const device = await holding(
+      type,
+      "replayed-refusal",
+      server.workingKey,
+      proxy.url,
+    );
+    await write(item, [{ op: "delete", id: gone }]);
+    const first = value(
+      await device.writeRows(item, "steps", [
+        { op: "patch", id: kept, values: { note: "kept" } },
+      ]),
+    );
+    const second = value(
+      await device.writeRows(item, "steps", [
+        { op: "patch", id: gone, values: { note: "lost" } },
+      ]),
+    );
+    const batch = {
+      operations: [
+        { op: "patch", id: kept, values: { note: "kept" } },
+        { op: "patch", id: gone, values: { note: "lost" } },
+      ],
+    };
+    proxy.replies.push({ forward: true, lose: true });
+    value(await device.drain());
+    expect(await serverRows(item)).toEqual({ [kept]: { count: 1 } });
+
+    const report = value(await device.drain());
+    expect([first, second].map((one) => verdictOf(report, one.id))).toEqual([
+      "accepted",
+      "refused",
+    ]);
+    expect(JSON.parse((await queued(device, second.id)).answer!)).toMatchObject(
+      { error: { code: "row_not_found", details: { operation: 0 } } },
+    );
+    const fresh = (await queued(device, first.id)).idempotency_key;
+    expect(fresh).not.toBe(first.idempotency_key);
+    expect(proxy.sent).toEqual([
+      { key: first.idempotency_key, body: batch },
+      { key: first.idempotency_key, body: batch },
+      { key: fresh, body: { operations: [batch.operations[0]] } },
+    ]);
+    expect(await serverRows(item)).toEqual({
+      [kept]: { count: 1, note: "kept" },
+    });
+  });
+
   it("withdraws every write of a batch set aside whole when a caller withdraws one of them", async () => {
     const { item, row, proxy, device, first, second } =
       await twoWrites("withdrawn");
@@ -1387,6 +1443,75 @@ describe("a batch the drain cannot settle at once", () => {
     }
     const [entry] = told(value(await device.drain()), undo.id);
     expect([entry?.verdict, entry?.replayed]).toEqual(["accepted", true]);
+    expect(await serverRows(item)).toEqual({ [row]: { count: 1 } });
+  });
+
+  it("sends a dead undo again under its key once a caller releases it, so the server answers it from its record and puts back no row deleted since", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [{ op: "put", id: row, values: { count: 1 } }]);
+    const deleted = await write(item, [{ op: "delete", id: row }]);
+    const proxy = await proxied();
+    const device = await holding(
+      type,
+      "undo-released",
+      server.workingKey,
+      proxy.url,
+    );
+    const undo = value(await device.undoRows(item, "steps", deleted.batch!));
+    for (let pass = 0; pass < 5; pass += 1)
+      proxy.replies.push({ forward: true, status: 200, body: "{}" });
+    for (let pass = 0; pass < 5; pass += 1) value(await device.drain());
+    expect((await queued(device, undo.id)).verdict).toBe("dead");
+    expect(await serverRows(item)).toEqual({ [row]: { count: 1 } });
+    await write(item, [{ op: "delete", id: row }]);
+
+    expect(value(await device.release({ id: undo.id }))).toBeTruthy();
+    const [entry] = told(value(await device.drain()), undo.id);
+    expect(await serverRows(item)).toEqual({});
+    expect([entry?.verdict, entry?.replayed]).toEqual(["accepted", true]);
+    expect((await queued(device, undo.id)).idempotency_key).toBe(
+      undo.idempotency_key,
+    );
+  });
+
+  it("sends an undo blocked key_spent under a fresh key once a caller releases it", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [{ op: "put", id: row, values: { count: 1 } }]);
+    const changed = await write(item, [
+      { op: "patch", id: row, values: { count: 7 } },
+    ]);
+    const proxy = await proxied();
+    const device = await holding(
+      type,
+      "undo-key-spent",
+      server.workingKey,
+      proxy.url,
+    );
+    const undo = value(await device.undoRows(item, "steps", changed.batch!));
+    proxy.replies.push({
+      forward: false,
+      status: 422,
+      body: JSON.stringify({
+        error: {
+          code: "idempotency_key_reused",
+          message: "The key names another request.",
+        },
+      }),
+    });
+    expect(told(value(await device.drain()), undo.id)[0]?.reason).toBe(
+      "key_spent",
+    );
+
+    expect(value(await device.release({ id: undo.id }))).toBeTruthy();
+    expect((await queued(device, undo.id)).idempotency_key).not.toBe(
+      undo.idempotency_key,
+    );
+    const [entry] = told(value(await device.drain()), undo.id);
+    expect([entry?.verdict, entry?.replayed]).toEqual(["accepted", false]);
     expect(await serverRows(item)).toEqual({ [row]: { count: 1 } });
   });
 
