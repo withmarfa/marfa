@@ -33,7 +33,7 @@ pub enum ItemsCommand {
         #[command(subcommand)]
         command: TrashCommand,
     },
-    /// One item by id.
+    /// One item by id, in any state, the bin included.
     Get {
         /// The item id.
         id: String,
@@ -678,7 +678,9 @@ pub fn list_request(args: &ListArgs) -> Result<Request, CliError> {
 }
 
 pub fn get_request(id: &str, include: Option<&str>) -> Request {
-    Request::get(&["items", id]).query_opt("include", include.map(str::to_string))
+    Request::get(&["items", id])
+        .query_opt("include", include.map(str::to_string))
+        .query("state", "any")
 }
 
 pub fn create_request(args: &CreateArgs) -> Result<Request, CliError> {

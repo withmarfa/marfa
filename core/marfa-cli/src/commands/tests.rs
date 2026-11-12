@@ -673,6 +673,51 @@ fn a_row_write_is_one_batch_of_operations() {
 }
 
 #[test]
+fn a_refusal_for_one_row_names_the_column_not_the_batch_place() {
+    let refusal = |message: &str, path: &str| CliError::Refused {
+        status: 400,
+        code: "validation_error".into(),
+        message: message.into(),
+        retry_after_seconds: None,
+        details: Some(Box::new(json!({
+            "operation": 0,
+            "errors": [{ "path": path, "message": "Expected a number" }],
+        }))),
+    };
+    let CliError::Refused {
+        message, details, ..
+    } = rows::for_one_row(refusal(
+        "operations.0.values.amount: Expected a number",
+        "operations.0.values.amount",
+    ))
+    else {
+        panic!("still a refusal");
+    };
+    assert_eq!(message, "values.amount: Expected a number");
+    assert_eq!(
+        details.as_deref(),
+        Some(&json!({ "errors": [{ "path": "values.amount", "message": "Expected a number" }] }))
+    );
+    let CliError::Refused {
+        message, details, ..
+    } = rows::for_one_row(refusal("operations.0: Not an object", "operations.0"))
+    else {
+        panic!("still a refusal");
+    };
+    assert_eq!(message, "Not an object");
+    assert_eq!(
+        details.as_deref(),
+        Some(&json!({ "errors": [{ "message": "Expected a number" }] }))
+    );
+    let CliError::Refused { message, .. } =
+        rows::for_one_row(refusal("operations.07: odd", "operations.07"))
+    else {
+        panic!("still a refusal");
+    };
+    assert_eq!(message, "operations.07: odd");
+}
+
+#[test]
 fn types_are_reached_at_their_doors_and_a_forced_delete_says_so() {
     assert_eq!(types::get_request("core.note").path(), "/types/core.note");
     assert_eq!(types::register_request(json!({})).method, Method::Post);

@@ -682,9 +682,23 @@ If an operation on an item or a folder names an id that is not a lowercase UUIDv
 
 ### `items/get-missing`
 
-If `GET /items/{id}` names an id no item holds, an item in the bin or an item of a type the key may not read, then the server MUST answer `404 item_not_found`.
+If `GET /items/{id}` names an id no item holds, an item of a type the key may not read, or, with no `state`, an item in the bin, then the server MUST answer `404 item_not_found`.
 
 **Tests:** `compliance/error-codes.test.ts › returns 404 for non-existent item`, `correctness/trash.test.ts › deleted item returns 404 on direct get`, `compliance/state-default.test.ts › a read by id answers an archived item and refuses one in the bin`.
+
+### `items/get-state`
+
+When `GET /items/{id}` names a `state` and the item is of a type the key may read, the server MUST answer `200` with the item if the states `state` names hold the item's state, and `404 item_not_found` if they do not, reading `state` as a listing reads it (`search-and-filters/state-named`).
+
+**Reason:** a client that holds the id of an item in the bin reads it with `state=trashed` or `state=any`, as the listing of the bin already shows it, instead of meeting a `404` it cannot act on.
+
+**Tests:** `compliance/state-default.test.ts › a read by id that names states answers an item in one of them, the bin included, and refuses the rest`.
+
+### `items/get-state-invalid`
+
+If `GET /items/{id}` names a `state` that is empty, holds a value that is not a state, or holds `any` beside another state, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/state-default.test.ts › refuses a state that is not a state, on every door that reads items`.
 
 ### `items/bulk-get`
 

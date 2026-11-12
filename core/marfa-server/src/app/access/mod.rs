@@ -217,10 +217,13 @@ impl Caller {
         match self {
             Caller::Local(_) => Ok(Caller::Local(config::standing(tx, None)?)),
             Caller::Server => Ok(Caller::Server),
-            Caller::Key(key) => {
-                let key = keys::live_by_id(tx, &key.id, at)?.ok_or_else(unauthorized)?;
-                Ok(Caller::Key(Box::new(standing_key(tx, key)?)))
-            }
+            Caller::Key(key) => match keys::live_by_id(tx, &key.id, at)? {
+                Some(key) => Ok(Caller::Key(Box::new(standing_key(tx, key)?))),
+                None => Err(match keys::expired_at(tx, &key.id, at)? {
+                    Some(end) => expired(&end),
+                    None => unauthorized(),
+                }),
+            },
             Caller::Owner(session) => {
                 let mut session = session::live_by_id(tx, &session.id, Stamp::read(at)?)?
                     .ok_or_else(unauthorized)?;
@@ -466,6 +469,15 @@ fn standing_key(tx: &Transaction<'_>, mut key: Key) -> Result<Key> {
 
 pub fn unauthorized() -> Refusal {
     Refusal::new(Code::Unauthorized, "A valid credential is required.")
+}
+
+/// Told only to a request bearing the key's own secret.
+pub fn expired(at: &str) -> Refusal {
+    Refusal::new(
+        Code::Unauthorized,
+        format!("This key expired at {at}. Use a key that has not expired."),
+    )
+    .with_detail("expired_at", at)
 }
 
 #[cfg(test)]

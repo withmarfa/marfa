@@ -555,7 +555,7 @@ mod tests {
 
     use super::*;
     use crate::app::items::write::{Change, Put, Update};
-    use crate::app::items::{self, Detail};
+    use crate::app::items::{self, Detail, Door};
     use crate::settings::{Environment, Settings};
 
     async fn started() -> (TempDir, Arc<App>) {
@@ -608,9 +608,15 @@ mod tests {
     }
 
     async fn properties(app: &App, id: &str) -> Value {
-        let found = items::detail(app, &Caller::local(), id.to_string(), Detail::default())
-            .await
-            .unwrap();
+        let found = items::detail(
+            app,
+            &Caller::local(),
+            id.to_string(),
+            Detail::default(),
+            Door::Read,
+        )
+        .await
+        .unwrap();
         serde_json::from_str::<Value>(&found).unwrap()["item"]["properties"].clone()
     }
 

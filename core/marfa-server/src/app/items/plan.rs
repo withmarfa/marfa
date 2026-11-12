@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use super::write::stale_bare;
-use super::{Item, Mark, is_system, not_found, parsed, rows};
+use super::{Door, Item, Mark, is_system, not_found, parsed, rows};
 use crate::app::access::{Caller, Level, Permission};
 use crate::app::catalog::Catalog;
 use crate::app::edges::write::touching;
@@ -102,7 +102,7 @@ impl<'c> Gate<'_, 'c> {
                 type_id: row.type_id.clone(),
                 write: false,
             });
-            return Err(not_found().with_detail("trashed", true));
+            return Err(Door::Write.in_the_bin());
         }
         self.row_gate(&row)?;
         Ok(row)

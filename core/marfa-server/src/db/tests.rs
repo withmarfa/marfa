@@ -170,7 +170,29 @@ async fn a_failed_commit_on_a_full_volume_says_its_outcome_is_unknown() {
     let db = open_with(&place.file, faults.clone());
     faults.set("fail:commit-full", None).unwrap();
     let refusal = db.write(WRITE, |tx| add(tx, 1)).await.unwrap_err();
+    assert_eq!(refusal.code, Code::InsufficientStorage);
     assert_eq!(refusal.details.unwrap()["write_outcome"], "unknown");
+    assert!(refusal.message.contains("may or may not have been saved"));
+    assert!(ids(&db).await.is_empty());
+}
+
+#[tokio::test]
+async fn a_volume_full_before_the_commit_is_refused_as_not_written() {
+    let place = folder();
+    let db = open(&place.file);
+    let refusal = db
+        .write(WRITE, |tx| {
+            let pages: i64 = tx.query_row("PRAGMA page_count", [], |row| row.get(0))?;
+            tx.query_row(&format!("PRAGMA max_page_count = {pages}"), [], |_| Ok(()))?;
+            let body = "x".repeat(65_536);
+            tx.execute("INSERT INTO notes (id, body) VALUES (1, ?1)", [body])?;
+            Ok(())
+        })
+        .await
+        .unwrap_err();
+    assert_eq!(refusal.code, Code::InsufficientStorage);
+    assert!(!refusal.commit_failed);
+    assert!(refusal.details.is_none());
     assert!(ids(&db).await.is_empty());
 }
 

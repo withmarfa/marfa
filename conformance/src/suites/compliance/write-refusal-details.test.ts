@@ -391,7 +391,7 @@ describe("a write to an item in the bin says so", () => {
       const refused = await read();
       expect(refused.status, door).toBe(404);
       expect(refused.error?.error.code, door).toBe("item_not_found");
-      expect(refused.error?.error.details, door).toBeUndefined();
+      expect(refused.error?.error.details, door).toEqual({ trashed: true });
     }
 
     const blind = await keyWith("blind-bin", {
@@ -403,6 +403,18 @@ describe("a write to an item in the bin says so", () => {
     });
     expect(hidden.status).toBe(404);
     expect(hidden.error?.error.details).toBeUndefined();
+    for (const [door, read] of Object.entries({
+      "GET /items/{id}": () => blind.getItem(id),
+      "GET /items/{id}?state=any": () => blind.getItem(id, "any"),
+      "GET /items/{id}/metadata": () => blind.getMetadata(id),
+      "GET /items/{id}/versions": () => blind.getVersions(id),
+      "GET /items/{id}/extensions": () => blind.listItemExtensions(id),
+    })) {
+      const unseen = await read();
+      expect(unseen.status, door).toBe(404);
+      expect(unseen.error?.error.code, door).toBe("item_not_found");
+      expect(unseen.error?.error.details, door).toBeUndefined();
+    }
   });
   it("answers a delete of an extension namespace on an item in the bin 404 with details.trashed, and nothing to a key that may not read the type", async () => {
     const { id } = await note("binned extension");

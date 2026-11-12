@@ -620,7 +620,7 @@ marfa items trash empty [OPTIONS] --confirm <CONFIRM>
 
 ### marfa items get
 
-One item by id.
+One item by id, in any state, the bin included.
 
 ```text
 marfa items get [OPTIONS] <ID>

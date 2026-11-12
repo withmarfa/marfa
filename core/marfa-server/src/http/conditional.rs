@@ -8,11 +8,10 @@ use axum::middleware::Next;
 use axum::response::Response;
 
 use super::answer::{Page, refusal_answer};
-use super::caller::identify;
+use super::caller::{identify, refused};
 use super::query;
 use crate::app::App;
 use crate::app::access::reach::{Demand, Judge};
-use crate::app::access::unauthorized;
 use crate::app::refusal::{Code, Refusal};
 
 pub const REACH_HEADER: &str = "x-marfa-reach";
@@ -123,7 +122,7 @@ pub async fn judged(
     let (mut parts, body) = request.into_parts();
     let caller = match identify(&mut parts, &app).await {
         Ok(Some(caller)) => caller,
-        Ok(None) => return refusal_answer(&unauthorized()),
+        Ok(None) => return refusal_answer(&refused(&parts)),
         Err(refusal) => return refusal_answer(&refusal),
     };
     if !is_conditional(&method, &route) {

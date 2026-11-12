@@ -172,7 +172,10 @@ pub(crate) fn check_query(value: &Value, catalog: &Catalog, every_type: bool) ->
     }
     if let Some(text) = query.get("filter") {
         let Some(text) = text.as_str() else {
-            return Err(at("query.filter", "query.filter must be a string."));
+            return Err(at(
+                "query.filter",
+                "query.filter must be a filter expression as text, such as properties.status eq \"open\".",
+            ));
         };
         filter::parse(text).map_err(|error| at("query.filter", error.message))?;
     }

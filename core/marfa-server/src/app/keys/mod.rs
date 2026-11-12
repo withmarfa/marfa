@@ -150,6 +150,13 @@ pub fn live_by_id(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Option<Key
     Ok(unrevoked_where(tx, "id", id)?.filter(|key| key.lives_at(at)))
 }
 
+/// The `expires_at` of an unrevoked key that is past it at `at`.
+pub fn expired_at(tx: &Transaction<'_>, id: &str, at: &str) -> Result<Option<String>> {
+    Ok(unrevoked_where(tx, "id", id)?
+        .filter(|key| !key.lives_at(at))
+        .and_then(|key| key.expires_at))
+}
+
 /// Rows of `(id, text, expires_at)` whose key lives at `at`. A stored expiry that does not read refuses.
 fn live_rows(
     tx: &Transaction<'_>,
@@ -600,20 +607,34 @@ pub async fn current(app: &App, caller: &Caller) -> Result<Option<Map<String, Va
     .await
 }
 
-pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Option<Key>> {
+/// What a presented key secret is.
+pub enum Presented {
+    Live(Box<Key>),
+    /// A stored key past its `expires_at`, which it carries.
+    Expired(String),
+    Unknown,
+}
+
+pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Presented> {
     if !secret::looks_like_a_key(token) {
-        return Ok(None);
+        return Ok(Presented::Unknown);
     }
     let hash = secret::hash(&app.settings.start.key_salt, token)?;
     let at = app.clock.stamp();
-    let key = app
+    let found = app
         .db
-        .read(move |tx| Ok(unrevoked_where(tx, "hash", &hash)?.filter(|key| key.lives_at(&at))))
+        .read(move |tx| unrevoked_where(tx, "hash", &hash))
         .await?;
-    if let Some(key) = &key {
-        usage::note(app, key);
-    }
-    Ok(key)
+    Ok(match found {
+        None => Presented::Unknown,
+        Some(key) => match key.expires_at {
+            Some(end) if !key.lives_at(&at) => Presented::Expired(end),
+            _ => {
+                usage::note(app, &key);
+                Presented::Live(Box::new(key))
+            }
+        },
+    })
 }
 
 pub fn check_id(id: &str) -> Result<()> {
@@ -655,6 +676,33 @@ mod tests {
             params![id, at(NOW - 60_000), expires, revoked],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn a_caller_whose_key_expired_since_it_was_read_is_told_when() {
+        let mut db = keys();
+        let tx = db.transaction().unwrap();
+        keyed(&tx, "soon", Some(&at(NOW)), None);
+        keyed(&tx, "gone", Some(&at(NOW)), None);
+        let before = at(NOW - 1);
+        let after = at(NOW);
+        let caller = |id: &str| {
+            let key = unrevoked_where(&tx, "id", id).unwrap().unwrap();
+            Caller::Key(Box::new(key))
+        };
+        let (soon, gone) = (caller("soon"), caller("gone"));
+        tx.execute(
+            "UPDATE api_keys SET revoked_at = ?1 WHERE id = 'gone'",
+            [at(NOW - 1)],
+        )
+        .unwrap();
+        assert!(soon.current(&tx, &before).is_ok());
+        let refusal = soon.current(&tx, &after).unwrap_err();
+        assert_eq!(refusal.code, Code::Unauthorized);
+        assert_eq!(refusal.details.unwrap()["expired_at"], after);
+        let refusal = gone.current(&tx, &after).unwrap_err();
+        assert_eq!(refusal.code, Code::Unauthorized);
+        assert!(refusal.details.is_none());
     }
 
     #[test]

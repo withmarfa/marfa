@@ -104,7 +104,14 @@ fn commit_refused(error: rusqlite::Error) -> Refusal {
         ..Refusal::from(error)
     };
     if full {
-        refusal.with_detail("write_outcome", "unknown")
+        Refusal {
+            message: "The volume the instance writes to ran out of room while this change was \
+                      being saved, so it may or may not have been saved. Once there is room, \
+                      read what you changed before you send it again."
+                .into(),
+            ..refusal
+        }
+        .with_detail("write_outcome", "unknown")
     } else {
         refusal
     }

@@ -1218,6 +1218,15 @@ export const answers = {
   /** An item read by id that the server does not hold, or holds of a type
    *  the key may not read (`keys-and-oauth/unreadable-as-missing`). */
   itemNotFound: (): Answer => refusal(404, "item_not_found", "Item not found"),
+  /** An item read by id that is in the bin, to a key that may read its type: the
+   *  same refusal, naming the bin and the way to read it. */
+  itemInTheBin: (): Answer =>
+    refusal(
+      404,
+      "item_not_found",
+      "This item is in the trash. Read it with state=trashed, or restore it.",
+      { trashed: true },
+    ),
   /** An edge end a move names that the server does not hold (`edges/move-end-missing`). */
   edgeEndNotFound: (end: "source" | "target", id: string): Answer =>
     refusal(404, "item_not_found", `Edge ${end} item not found: ${id}`),

@@ -783,10 +783,11 @@ describe("who may read and write rows", () => {
       await client.listRows(item, "lines"),
       await client.getRow(item, "lines", id),
       await client.rowTotals(item, "lines"),
+      await client.listBatches(item, "lines"),
     ]) {
       expect(res.status).toBe(404);
       expect(res.error?.error.code).toBe("item_not_found");
-      expect(res.error?.error.details).toBeUndefined();
+      expect(res.error?.error.details).toEqual({ trashed: true });
     }
     const write = await client.writeRows(item, "lines", {
       operations: [{ op: "delete", id }],

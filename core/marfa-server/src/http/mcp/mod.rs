@@ -15,7 +15,7 @@ use serde_json::{Map, Value, json};
 
 use super::answer::{Unhandled, refusal_answer};
 use super::body::JsonBody;
-use super::caller::identify;
+use super::caller::{identify, refused};
 use super::query;
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
@@ -50,9 +50,9 @@ fn challenged(mut response: Response, challenge: &str) -> Response {
     response
 }
 
-fn unauthenticated(app: &App, group: Group) -> Response {
+fn unauthenticated(app: &App, group: Group, refusal: &Refusal) -> Response {
     challenged(
-        refusal_answer(&unauthorized()),
+        refusal_answer(refusal),
         &format!(
             "Bearer resource_metadata=\"{}\"",
             resource_metadata(app, group)
@@ -272,7 +272,8 @@ async fn post(app: Arc<App>, group: Group, request: Request) -> Response {
     }
     let caller = match identify(&mut parts, &app).await {
         Ok(Some(caller @ (Caller::Key(_) | Caller::App { .. }))) => caller,
-        Ok(_) => return unauthenticated(&app, group),
+        Ok(None) => return unauthenticated(&app, group, &refused(&parts)),
+        Ok(Some(_)) => return unauthenticated(&app, group, &unauthorized()),
         Err(refusal) => return refusal_answer(&refusal),
     };
     if let Err(refusal) = query::only(&parts.uri, &[]) {

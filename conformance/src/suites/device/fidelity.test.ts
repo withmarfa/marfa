@@ -908,8 +908,7 @@ describe("the scripted answers match the server's", () => {
       },
     );
     await readBoth("a read of an item in the bin", [realId, doorId], {
-      same: ["error.code"],
-      shape: ["error.message"],
+      same: ["error.code", "error.message", "error.details.trashed"],
     });
     const acknowledged = await decide(
       "a keyed create onto an item in the bin",

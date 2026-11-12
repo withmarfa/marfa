@@ -16,13 +16,14 @@ use serde_json::{Map, Value, json};
 
 use super::answer::{Answer, Stopped, refusal_body, text_answer};
 use super::body::{Bag, JsonBody, ReadBody, only_declared};
+use super::listing::{Params, states_of};
 use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::edges::write::Inline;
 use crate::app::idempotency::{self, Claim, Entry, Kept, MAX_KEY_CHARACTERS};
 use crate::app::items::write::{self, Change, Done, Put, Settle, Update, ruled};
-use crate::app::items::{self, Detail, Many};
+use crate::app::items::{self, Detail, Door, Many};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::types::{check_id, missing_field};
 
@@ -539,7 +540,7 @@ pub async fn update(
 }
 
 fn detail_of(uri: &Uri) -> Result<Detail> {
-    query::only(uri, &["include"])?;
+    query::only(uri, &["include", "state"])?;
     let mut detail = Detail::default();
     for (name, value) in query::pairs(uri)? {
         if name != "include" {
@@ -572,8 +573,10 @@ pub async fn read(
 ) -> Answer {
     caller.require_reach()?;
     let include = detail_of(&uri)?;
+    let params = Params::from_pairs(query::pairs(&uri)?, &["include", "state"])?;
+    let states = params.one("state")?.map(states_of).transpose()?;
     check_item_id(&id)?;
-    let answer = items::detail(&app, &caller, id, include).await?;
+    let answer = items::detail(&app, &caller, id, include, Door::Get(states)).await?;
     Ok(text_answer(StatusCode::OK, answer))
 }
 
