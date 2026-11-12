@@ -302,12 +302,18 @@ impl Unproven {
         }
     }
 
-    fn noted(self, tx: &Transaction<'_>, at: &str, visit: &Visit) -> Result<Refusal> {
+    fn noted(
+        self,
+        tx: &Transaction<'_>,
+        at: &str,
+        actor: Option<&Caller>,
+        visit: &Visit,
+    ) -> Result<Refusal> {
         if let Some((id, reason)) = &self.passkey {
             note(
                 tx,
                 at,
-                None,
+                actor,
                 visit,
                 Note {
                     action: SIGN_IN_FAILED,
@@ -413,7 +419,7 @@ pub async fn sign_in(app: Arc<App>, assertion: Assertion, visit: Visit) -> Resul
             let proven = match prove(tx, &judging, assertion)? {
                 Ok(proven) => proven,
                 Err(unproven) => {
-                    return Ok(Verdict::Refused(unproven.noted(tx, &at, &visit)?));
+                    return Ok(Verdict::Refused(unproven.noted(tx, &at, None, &visit)?));
                 }
             };
             let opened = session::open(
@@ -469,7 +475,8 @@ pub async fn confirm(
         let proven = match prove(tx, &judging, assertion)? {
             Ok(proven) => proven,
             Err(unproven) => {
-                return Ok(Verdict::Refused(unproven.noted(tx, &unit.at, &visit)?));
+                let refusal = unproven.noted(tx, &unit.at, Some(&unit.caller), &visit)?;
+                return Ok(Verdict::Refused(refusal));
             }
         };
         let opened = session::open(
