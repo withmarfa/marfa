@@ -1152,9 +1152,14 @@ export class CliDevice implements DeviceUnderTest {
   }
 
   /** What the binary runs under: the run's keychain, and the registry this
-   *  device names, where it names one. */
+   *  device names, where it names one. The shell's own server, key and profile
+   *  stay out: a key in the environment is the credential the binary uses
+   *  before any kept sign-in, and it cannot be renewed. */
   private env(): NodeJS.ProcessEnv {
     const env: NodeJS.ProcessEnv = { ...process.env, ...keychainEnv() };
+    delete env.MARFA_API_KEY;
+    delete env.MARFA_API_URL;
+    delete env.MARFA_PROFILE;
     if (this.options.home !== undefined) {
       env.HOME = this.options.home;
       delete env.MARFA_FOLDER_REGISTRY;

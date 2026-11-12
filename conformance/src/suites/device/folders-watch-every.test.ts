@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import {
   copyItemEvent,
   refusal,
@@ -655,6 +655,16 @@ describe("a watch of every folder", () => {
   });
 
   describe("a folder whose sign-in ended", ON_MACOS, () => {
+    // Runs set a server and a key for the whole suite, as the shell does: the
+    // device must run under neither, or the kept sign-in is never the credential.
+    beforeEach(() => {
+      vi.stubEnv("MARFA_API_URL", "http://127.0.0.1:9");
+      vi.stubEnv("MARFA_API_KEY", "marfa_k1_ambient");
+    });
+    afterEach(() => {
+      vi.unstubAllEnvs();
+    });
+
     /** A folder on a second server, which the keychain holds a sign-in for and
      *  the server has since ended: the write it meets is refused, and the
      *  token that would renew the sign-in is refused too. */
