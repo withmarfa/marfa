@@ -363,7 +363,7 @@ pub async fn update_profile(
 }
 
 pub async fn recover(app: &App, new_password: String) -> Result<()> {
-    password::check_new(&new_password)?;
+    password::check_new(&new_password, "password")?;
     if find(app).await?.is_none() {
         return Err(not_found());
     }

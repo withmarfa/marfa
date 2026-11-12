@@ -129,7 +129,8 @@ struct Proven {
     replacement: Option<String>,
 }
 
-async fn prove(app: &App, email: &str, password: String) -> Result<Option<Proven>> {
+/// `rehash` replaces a hash made under older settings once the password proves right.
+async fn prove(app: &App, email: &str, password: String, rehash: bool) -> Result<Option<Proven>> {
     let email = email.to_string();
     let found = app
         .db
@@ -150,7 +151,7 @@ async fn prove(app: &App, email: &str, password: String) -> Result<Option<Proven
         return Ok(None);
     };
     let replacement = match checked {
-        Checked::RightButDated => Some(app.passwords.hash(password).await?),
+        Checked::RightButDated if rehash => Some(app.passwords.hash(password).await?),
         _ => None,
     };
     Ok(Some(Proven {
@@ -181,8 +182,15 @@ impl Proven {
     }
 }
 
-async fn refused_sign_in(app: &App, email: &str, reason: &str, visit: &Visit) -> Result<()> {
+async fn refused_sign_in(
+    app: &App,
+    actor: Option<&Caller>,
+    email: &str,
+    reason: &str,
+    visit: &Visit,
+) -> Result<()> {
     let clock = app.clock.clone();
+    let actor = actor.cloned();
     let email = email.to_string();
     let reason = reason.to_string();
     let visit = visit.clone();
@@ -191,7 +199,7 @@ async fn refused_sign_in(app: &App, email: &str, reason: &str, visit: &Visit) ->
             note(
                 tx,
                 &clock.stamp(),
-                None,
+                actor.as_ref(),
                 &visit,
                 Note {
                     action: SIGN_IN_FAILED,
@@ -224,7 +232,7 @@ pub async fn with_password(
     match counted(app, &email, owner, known.as_ref(), &visit, attempt).await? {
         Ok(opening) => opening.signed_in(app, known.as_ref()),
         Err(wait) => {
-            refused_sign_in(app, &email, TOO_MANY, &visit).await?;
+            refused_sign_in(app, None, &email, TOO_MANY, &visit).await?;
             Err(too_many_passwords(wait))
         }
     }
@@ -232,12 +240,13 @@ pub async fn with_password(
 
 async fn refused<T>(
     app: &App,
+    actor: Option<&Caller>,
     email: &str,
     reason: &str,
     visit: &Visit,
     refusal: Refusal,
 ) -> Result<T> {
-    refused_sign_in(app, email, reason, visit).await?;
+    refused_sign_in(app, actor, email, reason, visit).await?;
     Err(refusal)
 }
 
@@ -247,13 +256,15 @@ async fn open_with_password(
     password: String,
     visit: &Visit,
 ) -> Tried<Opening> {
-    let proven = match prove(app, email, password).await {
+    let proven = match prove(app, email, password, true).await {
         Ok(Some(proven)) => proven,
         Ok(None) => {
-            return Tried::unproven(refused(app, email, INVALID, visit, wrong_credentials()).await);
+            return Tried::unproven(
+                refused(app, None, email, INVALID, visit, wrong_credentials()).await,
+            );
         }
         Err(refusal) if refusal.code == Code::RateLimited => {
-            return Tried::unproven(refused(app, email, TOO_MANY, visit, refusal).await);
+            return Tried::unproven(refused(app, None, email, TOO_MANY, visit, refusal).await);
         }
         Err(refusal) => return Tried::unproven(Err(refusal)),
     };
@@ -306,7 +317,7 @@ async fn open(app: &App, email: &str, proven: Proven, visit: &Visit) -> Result<O
         .await?;
     match opened {
         Some(opening) => Ok(opening),
-        None => refused(app, email, INVALID, visit, wrong_credentials()).await,
+        None => refused(app, None, email, INVALID, visit, wrong_credentials()).await,
     }
 }
 
@@ -341,7 +352,7 @@ async fn reopen(
     password: String,
     visit: Visit,
 ) -> Tried<Opening> {
-    match prove(app, email, password).await {
+    match prove(app, email, password, true).await {
         Ok(Some(proven)) => Tried {
             proven: true,
             outcome: confirmed(app, caller, session, proven, visit).await,
@@ -409,7 +420,7 @@ pub async fn change_password(
     visit: Visit,
 ) -> Result<String> {
     let session = caller.session().ok_or_else(unauthorized)?.clone();
-    password::check_new(&new_password)?;
+    password::check_new(&new_password, "new_password")?;
     let current = current(app).await?.ok_or_else(unauthorized)?;
     let known = known(app, Some(&current), mark);
     let email = current.owner.email.clone();
@@ -431,7 +442,10 @@ pub async fn change_password(
             };
             app.devices.mark(holder, known.as_ref(), app.clock.now_ms())
         }
-        Err(wait) => Err(too_many_passwords(wait)),
+        Err(wait) => {
+            refused_sign_in(app, Some(caller), &email, TOO_MANY, &visit).await?;
+            Err(too_many_passwords(wait))
+        }
     }
 }
 
@@ -448,12 +462,26 @@ async fn replace(
     new_password: String,
     visit: Visit,
 ) -> Tried<(String, i64)> {
-    match prove(app, email, current_password).await {
-        Ok(Some(proven)) => Tried {
-            proven: true,
-            outcome: replaced(app, caller, session, proven, new_password, visit).await,
-        },
-        Ok(None) => Tried::unproven(Err(current_not_right())),
+    let actor = Some(caller);
+    match prove(app, email, current_password, false).await {
+        Ok(Some(proven)) => {
+            let changed = replaced(app, caller, session, proven, new_password, visit.clone());
+            let outcome = match changed.await {
+                Ok(Some(changed)) => Ok(changed),
+                Ok(None) => refused(app, actor, email, INVALID, &visit, current_not_right()).await,
+                Err(refusal) => Err(refusal),
+            };
+            Tried {
+                proven: true,
+                outcome,
+            }
+        }
+        Ok(None) => {
+            Tried::unproven(refused(app, actor, email, INVALID, &visit, current_not_right()).await)
+        }
+        Err(refusal) if refusal.code == Code::RateLimited => {
+            Tried::unproven(refused(app, actor, email, TOO_MANY, &visit, refusal).await)
+        }
         Err(refusal) => Tried::unproven(Err(refusal)),
     }
 }
@@ -465,12 +493,12 @@ async fn replaced(
     proven: Proven,
     new_password: String,
     visit: Visit,
-) -> Result<(String, i64)> {
+) -> Result<Option<(String, i64)>> {
     let hash = app.passwords.hash(new_password).await?;
     app.write(caller, PASSWORD_CHANGED, move |unit| {
         let tx = unit.tx();
         if !proven.stands(tx, &unit.at)? {
-            return Err(current_not_right());
+            return Ok(None);
         }
         let owner_id = &proven.owner.id;
         owner::set_password(tx, owner_id, &hash, unit.instant)?;
@@ -494,7 +522,7 @@ async fn replaced(
                 details: None,
             },
         )?;
-        Ok((owner_id.clone(), proven.credentials(tx)?))
+        Ok(Some((owner_id.clone(), proven.credentials(tx)?)))
     })
     .await
 }
