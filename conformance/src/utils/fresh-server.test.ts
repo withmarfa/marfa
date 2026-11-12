@@ -34,9 +34,6 @@ describe("fixture listener ownership", () => {
     let requests = 0;
     let port = 0;
     const squatter = createServer((request, response) => {
-      // Another process on a shared machine can probe a local port as
-      // `127.0.0.1:<port>`; only a request addressed as the harness
-      // addresses it counts.
       if (request.headers.host === `localhost:${String(port)}`) requests++;
       response.end("healthy impostor");
     });

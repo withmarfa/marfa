@@ -238,8 +238,7 @@ fn field(text: &str, name: &str) -> String {
         .to_string()
 }
 
-/// The origin the server signs people in at, which its sign-in form trusts and
-/// which need not be the address the test calls.
+// Sign-in may use a different origin from the API address.
 fn sign_in_origin(url: &str) -> String {
     let found = ureq::get(format!("{url}/auth/.well-known/oauth-authorization-server"))
         .call()

@@ -871,12 +871,6 @@ async function startServer(args: BootOptions): Promise<Started> {
   };
 }
 
-/**
- * The host this machine reaches the server at: its sign-in address's where
- * that is `localhost`, and `localhost` where none is set, since that is the
- * address the server then uses. A sign-in address elsewhere cannot be reached
- * from here, so the server is called by IP.
- */
 function reachedAt(signInAddress: string | undefined): string {
   return signInAddress === undefined ||
     signInAddress === "" ||
