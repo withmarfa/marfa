@@ -101,16 +101,25 @@ impl Instance {
         answer["key"].as_str().unwrap().to_string()
     }
 
-    /// Holds the sender at the start of its next pass, which an item written now begins.
+    /// Holds the sender at the start of a pass begun after this call. A pass already under way
+    /// takes in every item committed before its own write, so an item can end without waking
+    /// the sender; another item written once that pass is over does.
     async fn sender_parked(&self, writer: &str) {
         self.app.faults.set("hold:webhook-schedule", None).unwrap();
+        let began = Instant::now();
+        let mut written = Instant::now();
         announce(self, writer).await;
-        until(
-            "the sender did not begin another pass",
-            Duration::from_secs(5),
-            || self.app.faults.list().iter().any(|fault| fault.waiting > 0),
-        )
-        .await;
+        while !self.app.faults.list().iter().any(|fault| fault.waiting > 0) {
+            assert!(
+                began.elapsed() < Duration::from_secs(5),
+                "the sender did not begin another pass"
+            );
+            if written.elapsed() >= Duration::from_millis(250) {
+                announce(self, writer).await;
+                written = Instant::now();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     fn sender_released(&self) {

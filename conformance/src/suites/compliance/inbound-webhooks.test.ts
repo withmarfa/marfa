@@ -594,7 +594,7 @@ describe("the receiving door", () => {
       apiKey: minted.data.key,
     });
     expect((await reader.getCurrentKey()).status).toBe(200);
-    expect(await lastUsed()).toBeTruthy();
+    await expect.poll(lastUsed, { timeout: 5000 }).toBeTruthy();
   });
 
   it("answers an address no endpoint holds as a path the server does not serve", async () => {
