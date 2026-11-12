@@ -110,6 +110,21 @@ async function code(response: Response): Promise<string> {
   return body.error.code;
 }
 
+interface AuditEntry {
+  resource_type: string;
+  details: Record<string, unknown> | null;
+}
+
+/** The audit log's entries of one action, newest first. */
+async function audited(action: string): Promise<AuditEntry[]> {
+  const response = await fetch(
+    `${server.apiUrl}/audit?${new URLSearchParams({ action, limit: "200" })}`,
+    { headers: { authorization: `Bearer ${server.managementKey}` } },
+  );
+  expect(response.status).toBe(200);
+  return ((await response.json()) as { data: AuditEntry[] }).data;
+}
+
 function rootPage(cookie?: string): Promise<Response> {
   return fetch(`${server.apiUrl}/`, {
     headers: {
@@ -155,6 +170,17 @@ describe("the root in a browser", () => {
     const ended = await (await rootPage(cookie)).text();
     expect(ended).toContain('href="/auth/sign-in"');
     expect(ended).not.toContain(TEST_OWNER.email);
+  });
+
+  it("sends a signed-in browser no cookie from the root", async () => {
+    const cookie = await signIn();
+    // Past the minute after which a counted use of the session sends its cookie again.
+    await server.advanceClock(2 * 60 * 1000);
+    const page = await rootPage(cookie);
+    expect(page.status).toBe(200);
+    expect(await page.text()).toContain(TEST_OWNER.email);
+    expect(page.headers.get("set-cookie")).toBeNull();
+    expect(await lives(cookie)).toBe(true);
   });
 });
 
@@ -240,16 +266,34 @@ describe("changing the password", () => {
 
   it("refuses a new password the claim would refuse, and one with no current password, and keeps the password", async () => {
     const here = await signIn();
-    for (const body of [
-      { current_password: TEST_OWNER.password, new_password: "short" },
-      { current_password: TEST_OWNER.password, new_password: "x".repeat(129) },
-      { current_password: "", new_password: NEW_PASSWORD },
-      { new_password: NEW_PASSWORD },
-      { current_password: TEST_OWNER.password },
-    ]) {
+    const refusals: [Record<string, string>, string | undefined][] = [
+      [
+        { current_password: TEST_OWNER.password, new_password: "short" },
+        "new_password",
+      ],
+      [
+        {
+          current_password: TEST_OWNER.password,
+          new_password: "x".repeat(129),
+        },
+        "new_password",
+      ],
+      [{ current_password: "", new_password: NEW_PASSWORD }, undefined],
+      [{ new_password: NEW_PASSWORD }, undefined],
+      [{ current_password: TEST_OWNER.password }, undefined],
+    ];
+    for (const [body, path] of refusals) {
       const refused = await change(body, here);
       expect(refused.status, JSON.stringify(body).slice(0, 80)).toBe(400);
-      expect(await code(refused)).toBe("validation_error");
+      const error = (
+        (await refused.json()) as {
+          error: { code: string; details?: { errors?: { path: string }[] } };
+        }
+      ).error;
+      expect(error.code).toBe("validation_error");
+      if (path) {
+        expect(error.details?.errors?.map((e) => e.path)).toEqual([path]);
+      }
     }
     expect(await lives(here)).toBe(true);
     expect(await signsIn(TEST_OWNER.password)).toBe(true);
@@ -273,10 +317,13 @@ describe("changing the password", () => {
     const gone = await change(body, ended);
     expect(gone.status).toBe(401);
 
-    const keyed = await change(body, undefined, {
+    const here = await signIn();
+    const keyed = await change(body, here, {
       headers: { authorization: `Bearer ${server.managementKey}` },
     });
     expect(keyed.status).toBe(401);
+    expect(await code(keyed)).toBe("unauthorized");
+    expect(await lives(here)).toBe(true);
 
     expect(await signsIn(NEW_PASSWORD)).toBe(false);
     expect(await signsIn(TEST_OWNER.password)).toBe(true);
@@ -307,6 +354,70 @@ describe("changing the password", () => {
 
     expect(await lives(here)).toBe(true);
     expect(await signsIn(NEW_PASSWORD)).toBe(false);
+    expect(await signsIn(TEST_OWNER.password)).toBe(true);
+  });
+
+  it("records a change in the audit log", async () => {
+    const here = await signIn();
+    const before = await audited("owner.password.changed");
+    const changed = await change(
+      { current_password: TEST_OWNER.password, new_password: NEW_PASSWORD },
+      here,
+    );
+    expect(changed.status).toBe(200);
+    const after = await audited("owner.password.changed");
+    expect(after).toHaveLength(before.length + 1);
+    expect(after[0]?.resource_type).toBe("owner");
+
+    const back = await change(
+      { current_password: NEW_PASSWORD, new_password: TEST_OWNER.password },
+      here,
+    );
+    expect(back.status).toBe(200);
+    expect(await audited("owner.password.changed")).toHaveLength(
+      before.length + 2,
+    );
+  });
+
+  it("records a refused change in the audit log as a refused password sign-in, with its reason", async () => {
+    const here = await signIn();
+    const failed = "auth.sign_in.failed";
+    const before = (await audited(failed)).length;
+    const wrong = await change(
+      { current_password: "not the password", new_password: NEW_PASSWORD },
+      here,
+    );
+    expect(wrong.status).toBe(401);
+    const refused = await audited(failed);
+    expect(refused).toHaveLength(before + 1);
+    expect(refused[0]?.resource_type).toBe("owner");
+    expect(refused[0]?.details).toMatchObject({
+      method: "password",
+      reason: "invalid_credentials",
+    });
+
+    const address = nextAddress();
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const spent = await change(
+        { current_password: "wrong again", new_password: NEW_PASSWORD },
+        here,
+        { address },
+      );
+      expect(spent.status).toBe(401);
+    }
+    const locked = await change(
+      { current_password: TEST_OWNER.password, new_password: NEW_PASSWORD },
+      here,
+      { address },
+    );
+    expect(locked.status).toBe(429);
+    const held = await audited(failed);
+    expect(held).toHaveLength(before + 12);
+    expect(held[0]?.resource_type).toBe("owner");
+    expect(held[0]?.details).toMatchObject({
+      method: "password",
+      reason: "too_many_attempts",
+    });
     expect(await signsIn(TEST_OWNER.password)).toBe(true);
   });
 });

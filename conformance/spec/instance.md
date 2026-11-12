@@ -1204,6 +1204,14 @@ When the server answers `GET /` with an HTML page to a request that carries the 
 
 **Tests:** `compliance/owner-pages.test.ts › names the signed-in owner at the root, with the passkeys page and sign-out, and asks anyone else to sign in`.
 
+### `instance/root-page-session-unused`
+
+When the server answers `GET /` with an HTML page to a request that carries the owner's live browser session, the server MUST NOT send a `Set-Cookie` header.
+
+**Reason:** Looking at the root is not a use of the session, so it neither extends the session nor sends its cookie again.
+
+**Tests:** `compliance/owner-pages.test.ts › sends a signed-in browser no cookie from the root`.
+
 ### `instance/root-page-signed-out`
 
 When the server answers `GET /` with an HTML page to a request that carries no live owner browser session, the server MUST put on the page a link to `/auth/sign-in`.

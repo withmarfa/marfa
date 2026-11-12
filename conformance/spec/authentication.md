@@ -294,6 +294,14 @@ If the current password sent to `POST /auth/owner/password` is wrong, then the s
 
 **Tests:** `compliance/owner-pages.test.ts › answers a wrong current password 401 and changes nothing`.
 
+### `authentication/password-change-wrong-audit`
+
+When the server refuses `POST /auth/owner/password` because the current password is wrong, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `resource_type` `owner`, `details.method` `password` and `details.reason` `invalid_credentials`, readable at `GET /audit`.
+
+**Reason:** A wrong current password is a password attempt, and the audit log records it as it records a refused password sign-in.
+
+**Tests:** `compliance/owner-pages.test.ts › records a refused change in the audit log as a refused password sign-in, with its reason`.
+
 ### `authentication/password-change-lanes`
 
 When a request to `POST /auth/owner/password` carries a current password, the server MUST count it against the attempt windows of a password sign-in to the owner's account from the same address.
@@ -307,6 +315,18 @@ When a request to `POST /auth/owner/password` carries a current password, the se
 If the attempt windows `authentication/password-change-lanes` names are spent, then the server MUST answer `429 rate_limited` with the `Retry-After` a password sign-in would be given, without judging the current password or changing the password.
 
 **Tests:** `compliance/owner-pages.test.ts › counts a wrong current password where a password sign-in counts, and refuses a locked owner with the wait`.
+
+### `authentication/password-change-locked-audit`
+
+When the server refuses `POST /auth/owner/password` because the attempt windows `authentication/password-change-lanes` names are spent, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `resource_type` `owner`, `details.method` `password` and `details.reason` `too_many_attempts`, readable at `GET /audit`.
+
+**Tests:** `compliance/owner-pages.test.ts › records a refused change in the audit log as a refused password sign-in, with its reason`.
+
+### `authentication/password-change-audit`
+
+When `POST /auth/owner/password` answers `200`, the server MUST already hold an `owner.password.changed` audit record with `resource_type` `owner`, readable at `GET /audit`.
+
+**Tests:** `compliance/owner-pages.test.ts › records a change in the audit log`.
 
 ### `authentication/password-change-needs-session`
 
