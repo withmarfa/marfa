@@ -246,16 +246,17 @@ fn is_json_media_type(value: &str) -> bool {
 fn named_methods<'a>(
     object: &'a Map<String, Value>,
     name: &str,
-) -> Result<Vec<&'a str>, RegistrationError> {
+) -> Result<Option<Vec<&'a str>>, RegistrationError> {
     let not_a_list = || RegistrationError::metadata(format!("{name} must be a list of strings."));
     match object.get(name) {
-        None | Some(Value::Null) => Ok(Vec::new()),
+        None | Some(Value::Null) => Ok(None),
         Some(value) => value
             .as_array()
             .ok_or_else(not_a_list)?
             .iter()
             .map(|entry| entry.as_str().ok_or_else(not_a_list))
-            .collect(),
+            .collect::<Result<_, _>>()
+            .map(Some),
     }
 }
 
@@ -290,6 +291,7 @@ pub fn parse_document(
     let supported = named_methods(object, "token_endpoint_auth_methods_supported")?;
     if let Some(method) = supported
         .iter()
+        .flatten()
         .find(|method| SYMMETRIC_METHODS.contains(method))
     {
         return Err(RegistrationError::metadata(format!(
@@ -299,21 +301,26 @@ pub fn parse_document(
     let stated = object
         .get("token_endpoint_auth_method")
         .and_then(Value::as_str);
-    if let Some(method) = stated
-        && !supported.is_empty()
-        && !supported.contains(&method)
-    {
-        return Err(RegistrationError::metadata(
-            "token_endpoint_auth_method must be among token_endpoint_auth_methods_supported.",
-        ));
-    }
-    // The list is authoritative; the singular is only a preference (MCP SEP-3149).
-    let registration = if stated.is_some() && supported.contains(&"none") {
-        let mut public = object.clone();
-        public.remove("token_endpoint_auth_method");
-        client::read(&public, Source::Document, allowed)?
-    } else {
-        client::read(object, Source::Document, allowed)?
+    let registration = match supported {
+        None => client::read(object, Source::Document, allowed)?,
+        Some(methods) => {
+            if let Some(method) = stated
+                && !methods.contains(&method)
+            {
+                return Err(RegistrationError::metadata(
+                    "token_endpoint_auth_method must be among token_endpoint_auth_methods_supported.",
+                ));
+            }
+            // The list is authoritative; the singular is only a preference (MCP SEP-3149).
+            if !methods.contains(&"none") {
+                return Err(RegistrationError::metadata(
+                    "token_endpoint_auth_methods_supported must include none.",
+                ));
+            }
+            let mut public = object.clone();
+            public.remove("token_endpoint_auth_method");
+            client::read(&public, Source::Document, allowed)?
+        }
     };
     if registration
         .client_name
@@ -910,7 +917,24 @@ mod tests {
             "token_endpoint_auth_methods_supported",
             json!(["tls_client_auth"]),
         );
-        assert!(parse(&unstated).is_ok());
+        assert!(parse(&unstated).is_err());
+        let empty = with(
+            document(),
+            "token_endpoint_auth_methods_supported",
+            json!([]),
+        );
+        assert!(parse(&empty).is_err());
+        let public = with(
+            document(),
+            "token_endpoint_auth_methods_supported",
+            json!(["tls_client_auth", "none"]),
+        );
+        assert_eq!(
+            parse(&public)
+                .expect("registered")
+                .token_endpoint_auth_method,
+            AuthMethod::None
+        );
     }
 
     #[test]
