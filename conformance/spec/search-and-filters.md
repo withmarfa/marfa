@@ -314,11 +314,11 @@ When `GET /items`, `GET /items/stats`, `GET /search` or `POST /items/bulk-action
 
 ### `search-and-filters/tags-blank-search`
 
-When `GET /search` names a `tags` list that holds a blank entry beside a tag, the server MUST ignore the blank entry.
+When `GET /items`, `GET /items/stats` or `GET /search` names a `tags` list that holds a blank entry beside a tag, the server MUST ignore the blank entry.
 
-**Reason:** a client that builds the list by joining values can leave a trailing comma, and an empty page would read as no item carrying the tag.
+**Reason:** a client that builds the list by joining values can leave a trailing comma, and an empty page or an empty count would read as no item carrying the tag.
 
-**Tests:** `correctness/tags.test.ts › ignores a blank entry of a tags list on the search`.
+**Tests:** `correctness/tags.test.ts › ignores a blank entry of a tags list on the listing, the stats and the search`.
 
 ### `search-and-filters/tier-narrows`
 
@@ -1696,7 +1696,7 @@ When a list or a search answers, the server MUST carry the items under `data` an
 
 **Reason:** a client reads every page from one shape, and the siblings are `occurrences/answer-keys`, the `min_copies` of `GET /blobs/stores`, and the `retention_days` of `GET /trash`.
 
-**Tests:** `compliance/envelope.test.ts › GET %s answers data and next_cursor`, `› names thirty-one doors, every one the document publishes as a page`.
+**Tests:** `compliance/envelope.test.ts › GET %s answers data and next_cursor`, `› names thirty-five doors, every one the document publishes as a page`.
 
 ### `search-and-filters/page-whole-set`
 
@@ -1810,9 +1810,9 @@ The server MUST write an archive's entries in this order: `manifest.json`, then 
 
 ### `search-and-filters/archive-manifest`
 
-The server MUST write into the manifest of an archive its `version`, its `format` of `marfa-archive-v0`, a `created_at` instant, and in `item_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `connector_state_count` and `connector_agreement_count` the number of each kind of entry or line the archive holds.
+The server MUST write into the manifest of an archive its `version`, its `written_by`, a `created_at` instant, and in `item_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `connector_state_count` and `connector_agreement_count` the number of each kind of entry or line the archive holds.
 
-**Reason:** `instance/archive-version` and `instance/id-in-archive` state the version and the instance's name in the manifest.
+**Reason:** `instance/archive-version`, `instance/archive-written-by` and `instance/id-in-archive` state the version, the writing build and the instance's name in the manifest, and a restore checks every count against what it read (`search-and-filters/restore-line-counts`).
 
 **Tests:** `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`, `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`.
 
@@ -2040,6 +2040,14 @@ If the `instance.ndjson.gz` of an archive carries more than one `setting` line f
 
 **Tests:** `compliance/export-instance-lines.test.ts › refuses an archive that carries one setting twice, and stores neither value`.
 
+### `search-and-filters/restore-setting-unknown`
+
+When `POST /restore` reads a `setting` line that names a setting this instance does not have, the server MUST leave the line out and name its key in `settings_dropped`.
+
+**Reason:** an archive from before a setting was removed or renamed still restores, and the owner is told what it did not carry over instead of finding a setting silently reset.
+
+**Tests:** `compliance/export-instance-lines.test.ts › leaves out a setting the instance does not have, names it, and restores the rest`.
+
 ### `search-and-filters/archive-connector-state`
 
 When the credential requesting `GET /export?format=archive` holds `connectors.manage`, the server MUST carry in `instance.ndjson.gz` one `connector_state` line, holding the `source` and its `state` document, for each source with a connector state document.
@@ -2264,7 +2272,7 @@ When local authority sends `POST /restore` with an archive that `GET /export?for
 
 ### `search-and-filters/restore-counts`
 
-When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts.
+When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `settings_dropped`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts.
 
 **Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
 
@@ -2560,15 +2568,15 @@ When the server refuses a body of `POST /restore` that it cannot read, the serve
 
 ### `search-and-filters/restore-version`
 
-If the `manifest.json` of an archive names a `version` other than 0, then the server MUST answer `400 validation_error` with a message saying that the archive is read only by the build that wrote it.
+If the `manifest.json` of an archive names a `version` other than 1, then the server MUST answer `400 validation_error` with a message naming the archive's `written_by` and the version a restore reads.
 
-**Reason:** a version of 0 promises nothing between builds, so what a restore into another build does with an archive is outside the contract. Nothing is stated about archives after the first public release.
+**Reason:** a restore reads exactly the version its build writes, so an archive of another version is for the build that wrote it, and the message says which that was.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses an archive at another format version, saying it is read only by the build that wrote it`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive at another format version, naming the build that wrote it`.
 
 ### `search-and-filters/restore-manifest`
 
-If the `manifest.json` of an archive is missing `version`, `blobs`, `item_count`, `edge_count` or `row_count`, or mistypes them, each count holding a non-negative integer, `missing_blobs`, an entry of `blobs`, which holds a string `mime_type` and a non-negative integer `size_bytes`, or an entry of `missing_blobs`, which holds the same or `null` for either, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a dotted `path`.
+If the `manifest.json` of an archive is missing `version`, `written_by`, `blobs`, `item_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `connector_state_count` or `connector_agreement_count`, or mistypes them, each count holding a non-negative integer, `written_by` a string, `missing_blobs`, an entry of `blobs`, which holds a string `mime_type` and a non-negative integer `size_bytes`, or an entry of `missing_blobs`, which holds the same or `null` for either, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a dotted `path`.
 
 **Reason:** another version is free to lay its fields out differently, so a manifest naming one is refused for its version and not its shape.
 
@@ -2576,11 +2584,19 @@ If the `manifest.json` of an archive is missing `version`, `blobs`, `item_count`
 
 ### `search-and-filters/restore-line-counts`
 
-If the `item_count`, `edge_count` or `row_count` of an archive's manifest is not the number of lines that `items.ndjson.gz`, `edges.ndjson.gz` or `rows.ndjson.gz` holds, then the server MUST answer `400 validation_error` naming the count in `details.field`.
+If a count in an archive's manifest is not the number it counts, being the lines of `items.ndjson.gz`, `edges.ndjson.gz` or `rows.ndjson.gz` for `item_count`, `edge_count` or `row_count`, the lines of each kind in `instance.ndjson.gz` for the seven other `_count` fields that name a kind of line, or the `blobs/` entries for `blob_count`, then the server MUST answer `400 validation_error` naming the count in `details.field`.
 
-**Reason:** the manifest says what the archive holds before a reader reads the rest (`search-and-filters/archive-entries`), so a line file that holds other than it says was cut or changed after the export.
+**Reason:** the manifest says what the archive holds before a reader reads the rest (`search-and-filters/archive-entries`), so an archive that holds other than it says was cut or changed after the export, and a restore that took it would restore less than was exported without saying so.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses an archive whose %s is not the number of lines its file holds, and writes nothing`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive whose %s is not the number of lines its file holds, and writes nothing`, `› refuses an archive whose manifest counts more than the archive carries, however it was cut`.
+
+### `search-and-filters/restore-item-fields`
+
+If an item line of an archive lacks `id`, `version`, `created_at`, `updated_at`, `last_activity_at`, `occurred_at`, `state` or `properties` in its `item`, then the server MUST answer `400 validation_error` naming the line in `details.line` and the field in `details.field`, and write nothing.
+
+**Reason:** an export writes all of them for every item, so a line without one is damaged, and a restore that filled in a version or a date would write a history the instance never had.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an item line lacking %s, naming the line and the field, and writes nothing`.
 
 ### `search-and-filters/restore-state`
 
@@ -2638,7 +2654,7 @@ When an archive records an invalid `version` or `tier` for an item that the inst
 
 ### `search-and-filters/restore-scalars-kept`
 
-When `POST /restore` writes an item or an edge, the server MUST keep the `version` and the item's `tier` that the archive records, and write `1` and `library` where it records none.
+When `POST /restore` writes an item or an edge, the server MUST keep the `version` and the item's `tier` that the archive records, and write `library` where it records no tier and `1` for an edge that records no version.
 
 **Reason:** zero can be a write precondition but is never a stored version (`versions/create-claim-none`), and resetting a version can make an old write precondition match unrelated content.
 
@@ -2832,7 +2848,7 @@ Where the volume has room for an archive beside the instance's reserve (`blobs/r
 
 ### `search-and-filters/restore-duration`
 
-While a part of the body of `POST /restore` arrives at least once in every `upload_idle_timeout_ms`, the server MUST NOT end the request for the time the body takes.
+While a part of the body of `POST /restore` arrives at least once in every 60 seconds, the server MUST NOT end the request for the time the body takes.
 
 **Reason:** an archive has no size cap (`search-and-filters/restore-blob-size`), so a large one over a slow link outlasts any fixed request deadline. The limit on a body that stops arriving is `search-and-filters/restore-idle`.
 
@@ -2840,7 +2856,7 @@ While a part of the body of `POST /restore` arrives at least once in every `uplo
 
 ### `search-and-filters/restore-idle`
 
-If no byte of the body of `POST /restore` arrives for `upload_idle_timeout_ms`, 60000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
+If no byte of the body of `POST /restore` arrives for 60 seconds, then the server MUST answer `408 request_timeout`.
 
 **Reason:** a sender that has gone quiet would otherwise hold its request and the bytes it has sent for ever. The time counts the server's wait for the sender, not the time it takes to write what has arrived.
 
@@ -2848,7 +2864,7 @@ If no byte of the body of `POST /restore` arrives for `upload_idle_timeout_ms`, 
 
 ### `search-and-filters/restore-refused-read`
 
-When the server refuses `POST /restore` after it has started to read the body, the server MUST read the rest of the body, until it ends or no byte arrives for `MARFA_UPLOAD_IDLE_TIMEOUT_MS`, before it answers.
+When the server refuses `POST /restore` after it has started to read the body, the server MUST read the rest of the body, until it ends or no byte arrives for 60 seconds, before it answers.
 
 **Reason:** a client that is still sending reads no answer until its body is sent, so a server that stopped reading would leave it with a broken connection in place of the refusal.
 

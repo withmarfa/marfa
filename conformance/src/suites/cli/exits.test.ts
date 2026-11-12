@@ -5,10 +5,11 @@ import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { cleanup, trackFolder } from "../../utils/setup.js";
 import { cliContext } from "./harness.js";
-import type { CliContext } from "./harness.js";
+import type { CliContext, Refusal } from "./harness.js";
 import { keychainEnv } from "../../utils/keychain.js";
 import { ScriptedServer } from "../../device/scripted-server.js";
 import { answers } from "../../device/marfa-answers.js";
+import { ON_MACOS } from "../../utils/platform.js";
 
 /**
  * The exit codes `marfa --help` documents but Ctrl-C's 130, which
@@ -80,8 +81,9 @@ describe("the exit codes", () => {
     expect(queue.some((write) => write.id === pending.id)).toBe(true);
   });
 
-  it.runIf(process.platform === "darwin")(
+  it(
     "keeps an ended folder renewal local while reaching a real server",
+    ON_MACOS,
     async () => {
       const folder = await c.cli.json<{ item: { id: string } }>(
         ["folders", "create", "--file", "-", "--title", "renewal fixture"],
@@ -222,5 +224,28 @@ describe("the exit codes", () => {
     expect(wrong.code).toBe(5);
     expect(wrong.envelope.error.code).toBe("unauthorized");
     expect(wrong.envelope.error.server?.status).toBe(401);
+  });
+
+  it("leaves whoami by 5 when the server refuses the key, and names a key it accepts", async () => {
+    const live = await c.cli.json<{
+      credential: { kind: string; key: { id: string; label: string } };
+    }>(["whoami"]);
+    expect(live.credential.kind).toBe("key");
+    expect(typeof live.credential.key.id).toBe("string");
+    expect(typeof live.credential.key.label).toBe("string");
+
+    for (const credential of [
+      "marfa_k1_not_a_key_the_server_minted",
+      "not_a_marfa_credential_at_all",
+    ]) {
+      const refused = await c.cli.as(credential).run(["--json", "whoami"]);
+      expect(refused.code, refused.stdout).toBe(5);
+      expect(refused.stdout).toBe("");
+      const envelope = JSON.parse(
+        refused.stderr.trim().split("\n").at(-1) ?? "",
+      ) as Refusal;
+      expect(envelope.error.code).toBe("unauthorized");
+      expect(envelope.error.server?.status).toBe(401);
+    }
   });
 });

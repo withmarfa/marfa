@@ -308,6 +308,14 @@ impl JsonBody {
         buffered(self.body, self.limit).await
     }
 
+    pub fn require_json(&self) -> Result<(), Refusal> {
+        if self.declares_json() {
+            Ok(())
+        } else {
+            Err(not_json())
+        }
+    }
+
     fn declares_json(&self) -> bool {
         self.headers
             .get(header::CONTENT_TYPE)

@@ -127,9 +127,8 @@ describe("a time the server keeps", () => {
       const held = storedTimes(server);
       const tables = new Set(held.map((time) => time.table));
       for (const table of [
-        "auth_user",
-        "auth_account",
-        "auth_session",
+        "owner",
+        "sign_ins",
         "api_keys",
         "items",
         "audit_log",
@@ -182,7 +181,7 @@ describe("a time the server keeps", () => {
       const server = await bootFreshServer("stored-times-session");
       const ending = (value: string) =>
         withInstanceDatabase(server.sqlitePath, (db) =>
-          db.prepare("UPDATE auth_session SET expires_at = ?").run(value),
+          db.prepare("UPDATE sign_ins SET expires_at = ?").run(value),
         );
       expect(
         (await send(server, "/owner/passkeys", { cookie: server.ownerCookie }))

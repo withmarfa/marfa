@@ -87,10 +87,7 @@ fn edge_event(kind: &str, edge: Value) -> String {
 fn replay(events: &[(&str, &str, String)]) -> Answer {
     let first = events.first().map_or("10", |(id, ..)| id);
     let last = events.last().map_or("10", |(id, ..)| id);
-    let mut frames = vec![
-        scripted::connected(),
-        scripted::copy_marker("stream_cursor", first),
-    ];
+    let mut frames = vec![scripted::copy_marker("stream_cursor", first)];
     frames.extend(
         events
             .iter()

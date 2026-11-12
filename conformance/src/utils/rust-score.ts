@@ -10,13 +10,42 @@ export const CONTRACT_PROJECTS = [
   "cli",
 ] as const;
 
+export type ContractProject = (typeof CONTRACT_PROJECTS)[number];
+
 /** The part of Vitest's JSON report the score reads. */
 export interface VitestReport {
   testResults: {
     name: string;
     status: string;
-    assertionResults: { status: string }[];
+    assertionResults: ReportedTest[];
   }[];
+}
+
+/** A test as Vitest's JSON report lists it, with the metadata `platform.ts` sets. */
+export interface ReportedTest {
+  status: string;
+  fullName?: string;
+  meta?: { onlyOn?: unknown; unobservable?: unknown };
+}
+
+/**
+ * Why a test was skipped for the machine alone, or `undefined` when it was
+ * not: it runs only on another platform than the one `platform` names, or it
+ * says this machine cannot show what it asserts. Any other skip does not pass.
+ */
+export function excuse(
+  test: ReportedTest,
+  platform: string,
+): string | undefined {
+  if (test.status !== "skipped") return undefined;
+  const { onlyOn, unobservable } = test.meta ?? {};
+  if (typeof onlyOn === "string" && onlyOn !== platform) {
+    return `runs only on ${onlyOn}`;
+  }
+  if (typeof unobservable === "string" && unobservable !== "") {
+    return unobservable;
+  }
+  return undefined;
 }
 
 export interface FileScore {
@@ -25,8 +54,13 @@ export interface FileScore {
   project: string;
   /** Tests that passed. A skipped, todo or failed test is not one. */
   passed: number;
-  /** The larger of the tests collected from the file and those reported. */
+  /**
+   * The larger of the tests collected from the file and those reported, less
+   * the tests skipped for the machine alone.
+   */
   total: number;
+  /** The tests skipped for the machine alone, by name, with the reason. */
+  excused: string[];
   /** Whether a report names the file. */
   reported: boolean;
   /** Whether the file failed to load or a hook failed around its tests. */
@@ -50,6 +84,15 @@ export interface Score {
   filesPassing: number;
   /** The Rust-judged files that did not pass whole, with the reason. */
   failures: string[];
+  /** The platform whose tests the reports hold. */
+  platform: string;
+}
+
+export interface ScoreOptions {
+  /** Test counts by file, from listing the contract's tests. */
+  collected?: ReadonlyMap<string, number>;
+  /** The platform the reports were written on, as `process.platform` names it. */
+  platform: string;
 }
 
 /** A fixture's path from `conformance/`, from the absolute path Vitest reports. */
@@ -125,12 +168,16 @@ export function collectionNotes(
 const projectOf = (file: string): string => file.split("/")[2] ?? "";
 
 const whole = (file: FileScore): boolean =>
-  file.reported && !file.broken && file.total > 0 && file.passed === file.total;
+  file.reported &&
+  !file.broken &&
+  (file.total > 0 || file.excused.length > 0) &&
+  file.passed === file.total;
 
 /**
  * The score of a run of the contract: tests passing out of all the contract's
  * tests, by test file. A test Vitest skipped, left todo or failed does not
- * pass. A file's total is the larger of the tests `collected` from it and
+ * pass, but for a test skipped for the machine alone ({@link excuse}), which
+ * is left out of the count and listed. A file's total is the larger of the tests `collected` from it and
  * those a report lists, so a file that did not load, or that no report names,
  * counts every test it holds as not passing. A report of a file outside the
  * five projects is ignored. A Rust-judged file fails the score unless
@@ -140,7 +187,7 @@ export function scoreRun(
   reports: readonly VitestReport[],
   files: readonly string[],
   judged: readonly string[],
-  collected: ReadonlyMap<string, number> = new Map(),
+  { collected = new Map(), platform }: ScoreOptions,
 ): Score {
   const byFile = new Map<string, FileScore>();
   const judgedSet = new Set(judged);
@@ -151,6 +198,7 @@ export function scoreRun(
     total: 0,
     reported: false,
     broken: false,
+    excused: [],
     judged: judgedSet.has(file),
   });
   for (const file of [...files, ...judged]) {
@@ -167,17 +215,25 @@ export function scoreRun(
         throw new Error(`two reports name ${file}`);
       }
       score.reported = true;
-      const listed = result.assertionResults.length;
-      score.total = listed;
+      score.excused = result.assertionResults.flatMap((test) => {
+        const why = excuse(test, platform);
+        return why === undefined
+          ? []
+          : [`${test.fullName ?? "a test"}: ${why}`];
+      });
+      score.total = result.assertionResults.length - score.excused.length;
       score.passed = result.assertionResults.filter(
         (test) => test.status === "passed",
       ).length;
-      score.broken = result.status === "failed" && score.passed === listed;
+      score.broken = result.status === "failed" && score.passed === score.total;
       byFile.set(file, score);
     }
   }
   for (const score of byFile.values()) {
-    score.total = Math.max(score.total, collected.get(score.file) ?? 0);
+    score.total = Math.max(
+      score.total,
+      (collected.get(score.file) ?? 0) - score.excused.length,
+    );
   }
   const scores = [...byFile.values()].sort(
     (a, b) =>
@@ -202,7 +258,7 @@ export function scoreRun(
         ? `${score.file}: no report names it`
         : score.broken
           ? `${score.file}: the file failed around its tests`
-          : score.total === 0
+          : score.total === 0 && score.excused.length === 0
             ? `${score.file}: it lists no tests`
             : `${score.file}: ${String(score.passed)} of ${String(score.total)} tests passed`,
     );
@@ -213,6 +269,7 @@ export function scoreRun(
     total: scores.reduce((sum, score) => sum + score.total, 0),
     filesPassing: scores.filter(whole).length,
     failures,
+    platform,
   };
 }
 
@@ -225,7 +282,7 @@ export function renderScore(
   notes: readonly string[] = [],
 ): string {
   const lines = [
-    "## Rust contract score",
+    `## Rust contract score (${score.platform})`,
     "",
     `**${String(score.passed)} of ${String(score.total)} tests pass (${share(score.passed, score.total)}).** ${String(score.filesPassing)} of ${String(score.files.length)} test files pass whole.`,
     "",
@@ -237,6 +294,17 @@ export function renderScore(
       "Rust-judged files that do not pass:",
       "",
       ...score.failures.map((failure) => `- ${failure}`),
+      "",
+    );
+  }
+  const excused = score.files.flatMap((file) =>
+    file.excused.map((test) => `- ${file.file} › ${test}`),
+  );
+  if (excused.length > 0) {
+    lines.push(
+      "Skipped for the machine alone, and left out of the count:",
+      "",
+      ...excused,
       "",
     );
   }

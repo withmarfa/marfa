@@ -99,11 +99,11 @@ async fn owner_by_cookie(
             .notes
             .key_id
             .set(format!("owner:{}", seen.session.id));
-        if seen.recorded && seen.session.remembered {
+        if seen.recorded {
             let _ = context
                 .notes
                 .renewal
-                .set(cookies::session(&address, token, true)?);
+                .set(cookies::session(&address, token)?);
         }
     }
     Ok(Some(Caller::Owner(Box::new(seen.session))))
@@ -123,8 +123,8 @@ async fn read_credential(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>
             .await?
             .map(|key| Caller::Key(Box::new(key))),
     };
-    if let (Some(caller), Some(context)) = (&caller, context) {
-        let _ = context.notes.key_id.set(caller.audit_id());
+    if let (Some(id), Some(context)) = (caller.as_ref().and_then(Caller::audit_id), context) {
+        let _ = context.notes.key_id.set(id);
     }
     Ok(caller)
 }

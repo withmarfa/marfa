@@ -90,6 +90,15 @@ impl Action {
         }
     }
 
+    /// The properties the job writes into each item, which hold the blobs they name.
+    pub fn patch(&self) -> Option<&Map<String, Value>> {
+        match self {
+            Action::UpdateProperties { patch } => Some(patch),
+            Action::TypeMove { properties, .. } => properties.as_ref(),
+            _ => None,
+        }
+    }
+
     pub fn purges(&self) -> bool {
         matches!(self, Action::Purge)
     }

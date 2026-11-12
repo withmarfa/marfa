@@ -50,7 +50,7 @@ const longBlobBytes = Buffer.from("a blob sent a part at a time ".repeat(2000));
 beforeAll(async () => {
   server = await bootFreshServer("upload-timing", {
     ...DISK_ONLY,
-    MARFA_UPLOAD_IDLE_TIMEOUT_MS: String(IDLE_MS),
+    MARFA_TEST_TUNING: `upload_idle_ms=${String(IDLE_MS)}`,
   });
   ({ operator: management, working } = clientsFor(server));
   longRestore = sendSlowly(

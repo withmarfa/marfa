@@ -33,6 +33,10 @@ pub struct Search {
 struct Source {
     fts: &'static str,
     from: &'static str,
+    /// `from` for an ask that the columns of `items_fts_sizes` can judge.
+    narrow_from: &'static str,
+    /// A hit's token count in `narrow_from` and in `from`, NULL where FTS5 reads it.
+    lengths: (&'static str, &'static str),
     named: &'static str,
     /// Every entry of an item `i`, for a reach to narrow.
     corpus: &'static str,
@@ -43,15 +47,20 @@ struct Source {
 const SOURCES: [Source; 2] = [
     Source {
         fts: "items_fts",
-        from: "items_fts CROSS JOIN items i ON i.seq = items_fts.rowid",
+        from: "items_fts CROSS JOIN items_fts_sizes z ON z.seq = items_fts.rowid \
+             CROSS JOIN items i ON i.seq = z.seq",
+        narrow_from: "items_fts CROSS JOIN items_fts_sizes i ON i.seq = items_fts.rowid",
+        lengths: ("i.tokens", "z.tokens"),
         named: "0 AS hit, i.seq AS seq, NULL AS tname, NULL AS rid, NULL AS entry, NULL AS columns",
-        corpus: "items_fts CROSS JOIN items i ON i.seq = items_fts.rowid",
+        corpus: "items_fts CROSS JOIN items_fts_sizes i ON i.seq = items_fts.rowid",
         totals: "SELECT coalesce(sum(i.entries), 0), coalesce(sum(i.tokens), 0) \
              FROM items_fts_totals i",
     },
     Source {
         fts: "rows_fts",
         from: tables::search::HITS_FROM,
+        narrow_from: tables::search::HITS_FROM,
+        lengths: ("NULL", "NULL"),
         named: "1 AS hit, i.seq AS seq, s.table_name AS tname, m.id AS rid, m.seq AS entry, \
              s.searched_by AS columns",
         corpus: tables::search::CORPUS_FROM,
@@ -99,43 +108,74 @@ fn counts(read: &Reader<'_, '_>, sql: &Sql, columns: usize) -> Result<Vec<i64>> 
     )
 }
 
-/// BM25's statistics, from the entries of each index whose item the caller may read.
-pub(super) enum Ranking {
-    /// Every entry is within reach, so FTS5's own statistics are the caller's.
-    Whole,
-    /// For each index, what `bm25_within` takes after the table.
-    Within([Vec<i64>; 2]),
-}
+/// Each index's BM25 statistics as `bm25_within` takes them, or none for FTS5's own.
+pub(super) struct Ranking(pub(super) [Option<Vec<i64>>; 2]);
 
 impl Ranking {
     fn of(read: &Reader<'_, '_>, reach: &Reach, phrases: &[String]) -> Result<Ranking> {
-        if reach.is_whole() && !tables::search::purge_pending(read.tx)? {
-            return Ok(Ranking::Whole);
+        if !reach.is_whole() || tables::search::purge_pending(read.tx)? {
+            return Self::within(read, reach, phrases);
         }
-        let mut within = [Vec::new(), Vec::new()];
+        // The items' own statistics are FTS5's, given here so that each hit's length comes from the join.
+        let mut items = counts(read, &Sql::new(SOURCES[0].totals), 2)?;
+        for phrase in phrases {
+            let mut sql = Sql::new("SELECT count(*) FROM items_fts WHERE items_fts MATCH ");
+            sql.bind(phrase.clone());
+            let hits = counts(read, &sql, 1)?;
+            items.extend(hits.into_iter().filter(|hits| *hits > 0));
+        }
+        Ok(Ranking([Some(items), None]))
+    }
+
+    fn within(read: &Reader<'_, '_>, reach: &Reach, phrases: &[String]) -> Result<Ranking> {
+        let mut within = [None, None];
         for (source, arguments) in SOURCES.iter().zip(&mut within) {
-            arguments.extend(counts(read, &totals_sql(source, reach), 2)?);
+            let mut held = counts(read, &totals_sql(source, reach), 2)?;
             for phrase in phrases {
                 let hits = counts(read, &hits_sql(source, reach, phrase), 1)?;
                 // FTS5 drops a wordless phrase; one with no hit in reach leaves no row to rank.
-                arguments.extend(hits.into_iter().filter(|hits| *hits > 0));
+                held.extend(hits.into_iter().filter(|hits| *hits > 0));
             }
+            *arguments = Some(held);
         }
-        Ok(Ranking::Within(within))
+        Ok(Ranking(within))
     }
 
-    fn rank(&self, source: &Source, at: usize) -> Sql {
-        let Ranking::Within(within) = self else {
+    fn rank(&self, source: &Source, at: usize, narrow: bool) -> Sql {
+        let Some(held) = &self.0[at] else {
             return Sql::new(&format!("bm25({})", source.fts));
         };
+        let length = if narrow {
+            source.lengths.0
+        } else {
+            source.lengths.1
+        };
         let mut sql = Sql::new(&format!("bm25_within({}", source.fts));
-        for argument in within.get(at).into_iter().flatten() {
+        for (place, argument) in held.iter().enumerate() {
+            if place == 2 {
+                sql.push(&format!(", {length}"));
+            }
             sql.push(", ");
             sql.bind(*argument);
+        }
+        if held.len() <= 2 {
+            sql.push(&format!(", {length}"));
         }
         sql.push(")");
         sql
     }
+}
+
+/// Whether a hit's type, source and state judge the ask, with nothing of the item itself to read.
+fn narrow(ask: &Ask) -> bool {
+    ask.filter.is_none()
+        && ask.tags.is_empty()
+        && ask.beneath.is_none()
+        && ask.tier.is_none()
+        && ask.occurred_after.is_none()
+        && ask.occurred_before.is_none()
+        && ask.updated_after.is_none()
+        && ask.updated_before.is_none()
 }
 
 fn matched(
@@ -144,12 +184,14 @@ fn matched(
     reach: &Reach,
     ask: &Ask,
     catalog: &Catalog,
-    expression: &str,
+    (expression, narrow): (&str, bool),
 ) -> Result<()> {
-    sql.push(&format!(
-        " FROM {} WHERE {} MATCH ",
-        source.from, source.fts
-    ));
+    let from = if narrow {
+        source.narrow_from
+    } else {
+        source.from
+    };
+    sql.push(&format!(" FROM {from} WHERE {} MATCH ", source.fts));
     sql.bind(expression.to_string());
     sql.push(" AND ");
     sql.append(&selection(reach, ask, catalog, false)?);
@@ -170,13 +212,14 @@ pub(super) fn search_sql(
         if at > 0 {
             sql.push(" UNION ALL ");
         }
-        let rank = ranking.rank(source, at);
+        let narrow = narrow(ask) && order.ranks_alone();
+        let rank = ranking.rank(source, at, narrow);
         sql.push(&format!("SELECT {}, ", source.named));
         sql.append(&rank);
         sql.push(" AS rank, ");
-        order.ranked_by(&rank).columns(&mut sql);
+        order.columns(&mut sql);
         sql.push(" AS id");
-        matched(&mut sql, source, reach, ask, catalog, expression)?;
+        matched(&mut sql, source, reach, ask, catalog, (expression, narrow))?;
     }
     sql.push(")");
     order.order_by_named(&mut sql, "id");
@@ -199,10 +242,18 @@ fn best_rank(
         if at > 0 {
             sql.push(" UNION ALL ");
         }
+        let narrow = narrow(ask);
         sql.push("SELECT ");
-        sql.append(&ranking.rank(source, at));
+        sql.append(&ranking.rank(source, at, narrow));
         sql.push(" AS rank");
-        matched(&mut sql, source, reach, ask, &read.catalog, expression)?;
+        matched(
+            &mut sql,
+            source,
+            reach,
+            ask,
+            &read.catalog,
+            (expression, narrow),
+        )?;
     }
     sql.push(")");
     let mut statement = read.tx.prepare_cached(&sql.text)?;

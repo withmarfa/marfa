@@ -53,6 +53,8 @@ const RUST_SERVER_ONLY: Record<string, string> = {
     "`DELETE /blobs/{hash}/copies/{store}`, for a backed-up copy",
   export_entry_unrestorable:
     "`GET /export?format=archive`, for an item or an edge a restore would refuse",
+  idempotency_contract_changed:
+    "every door that takes an `Idempotency-Key`, for a key repeated under another contract version",
   no_bucket: "the backup doors, `/backups`",
   row_not_found: "the row doors, `/items/{id}/tables/{table}/rows`",
   table_not_found: "the table doors, `/items/{id}/tables/{table}`",

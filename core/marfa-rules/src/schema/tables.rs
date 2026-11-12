@@ -26,7 +26,8 @@ pub const ADDS_UP: [&str; 5] = ["sum", "average", "min", "max", "count"];
 pub const ORDER_KINDS: [&str; 4] = ["datetime", "number", "integer", "string"];
 
 const TEXT_KINDS: [&str; 3] = ["string", "email", "url"];
-const ITEM_COLUMN_REFUSES: [&str; 5] = ["enum_values", "format", "maxLength", "minimum", "maximum"];
+const ITEM_COLUMN_REFUSES: [&str; 5] =
+    ["enum_values", "format", "max_length", "minimum", "maximum"];
 const NAME_RULE: &str =
     "a lowercase letter, then up to 63 lowercase letters, digits and underscores";
 
@@ -1021,7 +1022,7 @@ mod tests {
             "b": {"type": "item", "type_constraints": []},
             "c": {"type": "item", "type_constraints": "user.file"},
             "d": {"type": "item", "type_constraints": [7]},
-            "e": {"type": "item", "maxLength": 3},
+            "e": {"type": "item", "max_length": 3},
             "f": {"type": "string", "type_constraints": ["user.file"]}
         })));
         for field in [
@@ -1029,7 +1030,7 @@ mod tests {
             "tables.lines.columns.b.type_constraints",
             "tables.lines.columns.c.type_constraints",
             "tables.lines.columns.d.type_constraints",
-            "tables.lines.columns.e.maxLength",
+            "tables.lines.columns.e.max_length",
             "tables.lines.columns.f.type_constraints",
         ] {
             assert!(found.iter().any(|f| f == field), "{field}: {found:?}");

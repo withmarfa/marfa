@@ -934,7 +934,7 @@ it("keeps dead file effects current until an accepted replacement, survives clea
   if (releasedQueue.ok) {
     const released = releasedQueue.value.find((row) => row.id === dead.id);
     expect(released?.body).toEqual(dead.body);
-    expect(released?.idempotency_key).not.toBe(dead.idempotency_key);
+    expect(released?.idempotency_key).toBe(dead.idempotency_key);
   }
 });
 

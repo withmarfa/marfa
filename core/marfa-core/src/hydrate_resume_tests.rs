@@ -963,3 +963,36 @@ fn a_hydration_about_to_replace_the_copy_leaves_the_store_to_other_callers() {
         assert!(hydration.join().unwrap().is_ok());
     });
 }
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_hydration_whose_final_checkpoint_fails_still_reports_every_row_it_wrote() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = crate::stop_tests::copy_in_keyed(&server, dir.path(), "k");
+    let ids: Vec<String> = (0..450).map(|at| format!("n{at:03}")).collect();
+    let all: Vec<&str> = ids.iter().map(String::as_str).collect();
+    server.on(
+        "/items",
+        vec![page(&all[..200], Some("2")), page(&all[200..], None)],
+    );
+    server.on("/items/bulk-get", vec![bulk(&[])]);
+    server.on("/events", vec![head("10"), replay(vec![], "10")]);
+
+    let report = {
+        let _full = crate::fault::fail_on_this_thread("hydration-checkpoint");
+        hydrate(&core, SliceTier::Library)
+    }
+    .unwrap();
+
+    assert_eq!(report.items, 450);
+    assert_eq!(held(&core).len(), 450);
+    assert!(point(&core).is_none());
+    let log = dir.path().join("core.sqlite-wal");
+    assert!(
+        std::fs::metadata(&log).unwrap().len() > 0,
+        "the failed checkpoint left the log as it was"
+    );
+    assert!(crate::reclaim::checkpointed(&core.conn().unwrap()).unwrap());
+    assert_eq!(std::fs::metadata(&log).unwrap().len(), 0);
+}

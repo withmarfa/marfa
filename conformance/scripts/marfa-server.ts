@@ -1,6 +1,7 @@
 import { controlRequest } from "../src/utils/control-request.js";
 import { mkdtempSync, realpathSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { createServer } from "node:net";
 /**
  * Boot the server in this repository on SQLite for the suite, mint its first
  * key, and write the env file the run sources. The restore drill imports
@@ -8,9 +9,15 @@ import { tmpdir } from "node:os";
  *
  *   tsx scripts/marfa-server.ts up [--state <dir>] [--port <n>] [--env K=V ...]
  *
- * The port is `--port`, else `MARFA_PORT`, else zero for the server to bind an
- * assigned port on IPv4 loopback. Readiness comes from this boot's log before
- * any health request is sent. Each `--env K=V` is a setting for the boot
+ * The server listens on IPv4 loopback, on `--port`, else `MARFA_PORT`, else a
+ * free port this script picks. On a port it picks, the server is reached at
+ * `http://localhost:<port>`, which is also its sign-in address: passkeys
+ * refuse an IP address. A named port keeps the address the last boot of the
+ * same state had on that port, and otherwise leaves it unset, and so
+ * do `--env MARFA_SIGN_IN_ADDRESS=` and a server without its test hooks, which
+ * reads no seed; a server with no sign-in address, or one elsewhere, is
+ * reached at `127.0.0.1`.
+ * Readiness comes from this boot's log before any health request is sent. Each `--env K=V` is a setting for the boot
  * (`conformance/README.md` lists the ones a fixture may pass), and wins over
  * the script's own defaults and the caller's environment.
  *   tsx scripts/marfa-server.ts down [--state <dir>]
@@ -71,8 +78,11 @@ import { tmpdir } from "node:os";
  * directory and log, and with the state directory as its working directory.
  * Nothing in the workspace is built for it. It must carry its test hooks (a
  * Rust server built with `--features test-hooks`), which the settings below
- * switch on. The claim and the keys go through
- * the private socket as for this server. A target whose sign-in door answers
+ * switch on, unless the run's environment sets
+ * `CONFORMANCE_SERVER_HOOK_FREE=true`: then it is a release build started as a
+ * person starts it, and the boot turns the limiter and file reading off
+ * through `PATCH /config`. The claim and the keys go through the private
+ * socket as for this server. A target whose sign-in door answers
  * `404 not_found` has no owner sign-in, and the env file then carries no
  * owner cookie or session file. `clock` and `fault` fail plainly against a
  * target without the hooks.
@@ -166,10 +176,90 @@ const TYPESCRIPT_SETTING_NAMES: ReadonlyMap<string, string> = new Map([
   ].map((name): [string, string] => [`MARFA_${name}`, name]),
 ]);
 
+/** The timings `MARFA_TEST_TUNING` names, by the setting the TypeScript server reads each as. */
+const TUNING_NAMES: ReadonlyMap<string, string> = new Map([
+  ["housekeeping_poll_ms", "MARFA_HOUSEKEEPING_POLL_INTERVAL_MS"],
+  ["write_wait_ms", "MARFA_WRITE_WAIT_MS"],
+  ["upload_idle_ms", "MARFA_UPLOAD_IDLE_TIMEOUT_MS"],
+  ["blob_read_idle_ms", "MARFA_BLOB_READ_IDLE_TIMEOUT_MS"],
+  ["inbound_idle_ms", "MARFA_INBOUND_READ_TIMEOUT_MS"],
+  ["connector_hold_ms", "MARFA_CONNECTOR_HOLD_MS"],
+  ["enrichment_batch", "MARFA_ENRICHMENT_BATCH_SIZE"],
+  ["blob_replicate_batch", "MARFA_BLOB_REPLICATE_BATCH"],
+  ["blob_replicate_batch_bytes", "MARFA_BLOB_REPLICATE_BATCH_BYTES"],
+  ["blob_integrity_batch", "MARFA_BLOB_INTEGRITY_BATCH"],
+  ["blob_integrity_batch_bytes", "MARFA_BLOB_INTEGRITY_BATCH_BYTES"],
+]);
+
+/** The jobs whose interval the TypeScript server takes as a setting, by that setting. */
+const JOB_INTERVAL_NAMES: ReadonlyMap<string, string> = new Map([
+  ["heartbeat", "MARFA_HEARTBEAT_INTERVAL_MS"],
+  ["enrichment-sweep", "MARFA_ENRICHMENT_INTERVAL_MS"],
+  ["audit-cleanup", "MARFA_AUDIT_CLEANUP_INTERVAL_MS"],
+  ["trash-purge", "MARFA_TRASH_PURGE_INTERVAL_MS"],
+  ["version-thinning", "MARFA_VERSION_THINNING_INTERVAL_MS"],
+  ["feed-expiry", "MARFA_FEED_EXPIRY_INTERVAL_MS"],
+  ["event-log-cleanup", "MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS"],
+  ["inbound-delivery-cleanup", "MARFA_INBOUND_CLEANUP_INTERVAL_MS"],
+  ["credential-cleanup", "MARFA_CREDENTIAL_CLEANUP_INTERVAL_MS"],
+  ["blob-replicate", "MARFA_BLOB_REPLICATE_INTERVAL_MS"],
+  ["blob-orphans", "MARFA_BLOB_CLEANUP_INTERVAL_MS"],
+  ["blob-integrity", "MARFA_BLOB_INTEGRITY_INTERVAL_MS"],
+]);
+
+/** Settings the contract gives in seconds that the TypeScript server reads in milliseconds. */
+const SECONDS_AS_MILLISECONDS: ReadonlyMap<string, string> = new Map([
+  ["MARFA_BACKUP_INTERVAL_SECONDS", "MARFA_BACKUP_INTERVAL_MS"],
+  ["MARFA_BLOB_CLEANUP_GRACE_SECONDS", "MARFA_BLOB_CLEANUP_GRACE_MS"],
+  ["MARFA_RATE_LIMIT_WINDOW_SECONDS", "MARFA_RATE_LIMIT_WINDOW_MS"],
+  ["MARFA_MCP_FETCH_TIMEOUT_SECONDS", "MARFA_MCP_FETCH_TIMEOUT_MS"],
+]);
+
+/** The settings the TypeScript server has under another shape than the contract's. */
+function reshapedForTypeScript(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  const tuned = new Map<string, string>();
+  const everyJob = new Map<string, string>();
+  for (const [name, value] of Object.entries(env)) {
+    const seconds = SECONDS_AS_MILLISECONDS.get(name);
+    if (name === "MARFA_TEST_TUNING" && value !== undefined) {
+      for (const pair of value.split(",").filter((text) => text.trim())) {
+        const [key = "", given = ""] = pair.trim().split("=");
+        if (key.startsWith("interval.")) {
+          const job = key.slice("interval.".length);
+          if (job === "*") {
+            for (const setting of JOB_INTERVAL_NAMES.values()) {
+              everyJob.set(setting, given);
+            }
+          } else {
+            const setting = JOB_INTERVAL_NAMES.get(job);
+            if (setting !== undefined) tuned.set(setting, given);
+          }
+        } else {
+          const setting = TUNING_NAMES.get(key);
+          if (setting !== undefined) tuned.set(setting, given);
+        }
+      }
+    } else if (seconds !== undefined) {
+      out[seconds] = value === undefined ? value : String(Number(value) * 1000);
+    } else if (name === "MARFA_BLOB_CLEANUP_ENABLED") {
+      if (value !== undefined && /^(false|0|no|off)$/i.test(value)) {
+        out.MARFA_BLOB_CLEANUP_INTERVAL_MS = "0";
+      }
+    } else {
+      out[name] = value;
+    }
+  }
+  for (const [name, value] of everyJob) out[name] ??= value;
+  for (const [name, value] of tuned) out[name] = value;
+  return out;
+}
+
 /** The environment with each setting under the name the TypeScript server reads. */
 export function typeScriptSettingNames(
-  env: NodeJS.ProcessEnv,
+  environment: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
+  const env = reshapedForTypeScript(environment);
   const out: NodeJS.ProcessEnv = {};
   const renamed: [string, string | undefined][] = [];
   for (const [name, value] of Object.entries(env)) {
@@ -348,6 +438,25 @@ export function builtServer(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.MARFA_SERVER_BUILT === "true";
 }
 
+/**
+ * Whether the run's own environment says the program is a release build
+ * without test hooks, which a measuring run starts as a person does.
+ */
+function hookFreeRun(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.CONFORMANCE_SERVER_HOOK_FREE === "true";
+}
+
+/**
+ * What the environment cannot set on a program without test hooks, since it
+ * reads no setting from the environment there: a measuring run turns the
+ * limiter and file reading off through `PATCH /config` once it has claimed.
+ */
+const MEASURING_SETTINGS = {
+  rate_limit_enabled: false,
+  enrichment_enabled: false,
+  enrichment_ocr_enabled: false,
+};
+
 /** The program `MARFA_SERVER_BIN` names, when it names one. */
 export function serverProgram(
   env: NodeJS.ProcessEnv = process.env,
@@ -432,6 +541,13 @@ function logTail(p: ReturnType<typeof paths>): string {
   return err === "" ? out : `${out}\n--- stderr ---\n${err}`;
 }
 
+/** What this boot alone wrote to the log and to stderr. */
+function bootOutput(started: Started, p: ReturnType<typeof paths>): string {
+  const since = (path: string, start: number) =>
+    existsSync(path) ? readFileSync(path).subarray(start).toString("utf8") : "";
+  return `${since(p.log, started.logStart)}\n${since(p.stderr, started.errStart)}`;
+}
+
 /** How the server ended, as the supervisor recorded it. */
 function describeExit(exitFile: string): string {
   return existsSync(exitFile)
@@ -476,7 +592,8 @@ async function waitForHealth(
         );
         if (match) {
           const port = Number(match[1]);
-          if (port > 0 && port <= 65_535) url = `http://127.0.0.1:${port}`;
+          if (port > 0 && port <= 65_535)
+            url = `http://${started.host}:${port}`;
         }
       }
     }
@@ -508,10 +625,49 @@ interface Started {
   child: ChildProcess;
   /** Where in the log this boot begins, in bytes. */
   logStart: number;
+  /** Where its stderr file ended before this boot. */
+  errStart: number;
   /** Whether the supervisor has ended, which it does when the server does. */
   ended: () => boolean;
   controlSocket: string;
   authSecret: string;
+  /** Whether this script chose the port, so a taken one is worth another try. */
+  picked: boolean;
+  /** The host the server is reached at: its sign-in address's, where that is this machine's name. */
+  host: string;
+}
+
+/** Whether `port` can be bound on `host` now; a host this machine lacks counts as free. */
+function bindable(port: number, host: string): Promise<boolean> {
+  return new Promise((resolveBindable) => {
+    const probe = createServer();
+    probe.once("error", (error: NodeJS.ErrnoException) =>
+      resolveBindable(
+        error.code === "EADDRNOTAVAIL" || error.code === "EAFNOSUPPORT",
+      ),
+    );
+    probe.listen(port, host, () => probe.close(() => resolveBindable(true)));
+  });
+}
+
+/** A port the system has just handed out on loopback and taken back, free on `::1` too. */
+async function freePort(): Promise<number> {
+  for (let tries = 0; tries < 20; tries++) {
+    const port = await new Promise<number>((resolvePort, reject) => {
+      const probe = createServer();
+      probe.once("error", reject);
+      probe.listen(0, "127.0.0.1", () => {
+        const address = probe.address();
+        probe.close(() => {
+          if (address !== null && typeof address === "object")
+            resolvePort(address.port);
+          else reject(new Error("no port was handed out"));
+        });
+      });
+    });
+    if (await bindable(port, "::1")) return port;
+  }
+  throw new Error("no port was free on both loopback addresses");
 }
 
 /** The offset the last `clock advance` left, in ms; zero when none did. */
@@ -549,15 +705,16 @@ async function startServer(args: BootOptions): Promise<Started> {
     if (!built) ensurePageAssets();
   }
 
-  const port =
+  const named =
     args.port ??
     namedPort(args.env?.MARFA_PORT) ??
-    namedPort(process.env.MARFA_PORT) ??
-    0;
+    namedPort(process.env.MARFA_PORT);
+  // The port is known before the start, so the sign-in address can name it.
+  const port = named ?? (await freePort());
   // A caller that names the socket owns its folder and what stands there.
-  const named = args.env?.MARFA_CONTROL_SOCKET;
+  const namedSocket = args.env?.MARFA_CONTROL_SOCKET;
   let controlSocket: string;
-  if (named === undefined) {
+  if (namedSocket === undefined) {
     const controlDir = realpathSync(
       mkdtempSync(resolve(tmpdir(), "marfa-control-")),
     );
@@ -567,7 +724,7 @@ async function startServer(args: BootOptions): Promise<Started> {
       mode: 0o600,
     });
   } else {
-    controlSocket = resolve(named);
+    controlSocket = resolve(namedSocket);
   }
   const retainedEnv = existsSync(p.env)
     ? parseEnvFile(readFileSync(p.env, "utf8"))
@@ -587,8 +744,14 @@ async function startServer(args: BootOptions): Promise<Started> {
     MARFA_AUTH_SECRET: authSecret,
     MARFA_DATABASE_PATH: p.db,
     MARFA_BLOB_PATH: p.blobs,
-    // The sign-in address is the server's own, on its assigned port.
-    MARFA_SIGN_IN_ADDRESS: undefined,
+    // Passkeys need a host name, and an instance people reach has its
+    // sign-in address set. A port the caller names keeps what the last boot
+    // of this state had there.
+    MARFA_SIGN_IN_ADDRESS:
+      named === undefined ||
+      retainedEnv.MARFA_API_URL === `http://localhost:${port}`
+        ? `http://localhost:${port}`
+        : undefined,
     // Enrichment rewrites file items in the background, which would make
     // exact-property assertions on blobs depend on timing. Off unless the
     // caller says otherwise, as the limiter below is, so a fixture about
@@ -606,8 +769,9 @@ async function startServer(args: BootOptions): Promise<Started> {
     // wake and the fixture's runs nothing copies on a clock of its own.
     // Overridable, as the limiter is below: a fixture about a positive grace
     // boots a server of its own with one, and `marfa:up` pins zero outright.
-    MARFA_BLOB_CLEANUP_GRACE_MS: process.env.MARFA_BLOB_CLEANUP_GRACE_MS || "0",
-    MARFA_BLOB_REPLICATE_INTERVAL_MS: "3600000",
+    MARFA_BLOB_CLEANUP_GRACE_SECONDS:
+      process.env.MARFA_BLOB_CLEANUP_GRACE_SECONDS || "0",
+    MARFA_TEST_TUNING: "interval.blob-replicate=3600000",
     // Off unless the caller says otherwise. A fixture about the limiter
     // boots a server of its own with it on, and this literal sits after
     // the spread — pinned, it would overwrite what such a fixture asked
@@ -623,15 +787,34 @@ async function startServer(args: BootOptions): Promise<Started> {
       process.env.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES || "true",
   };
   // The built TypeScript server is started as a person starts it, without the
-  // hooks. Any other target is built with them.
-  const hooks = !built;
+  // hooks. Any other target is built with them, unless the run says it is a
+  // release build with `CONFORMANCE_SERVER_HOOK_FREE=true`.
+  const hooks = !built && !(program !== undefined && hookFreeRun());
   env.MARFA_TEST_HOOKS = String(hooks);
   delete env.MARFA_TEST_CLOCK_OFFSET_MS;
   // A throwaway server reports nothing, whatever the shell sets; a setting the
   // caller names below still wins.
   silenceTelemetry(env);
-  // What the caller names wins over every default above.
+  // What the caller names wins over every default above, but for the tuning,
+  // which adds to the defaults, and only where the hooks are on.
+  const defaultTuning = env.MARFA_TEST_TUNING;
   Object.assign(env, args.env);
+  const hooksOn = /^(true|1|yes|on)$/i.test(env.MARFA_TEST_HOOKS ?? "");
+  // An empty value asks for a boot with no sign-in address set, and a server
+  // without hooks reads no seed.
+  if (
+    env.MARFA_SIGN_IN_ADDRESS === "" ||
+    (!hooksOn && args.env?.MARFA_SIGN_IN_ADDRESS === undefined)
+  )
+    delete env.MARFA_SIGN_IN_ADDRESS;
+  const tuning = [
+    hooksOn ? defaultTuning : undefined,
+    args.env?.MARFA_TEST_TUNING,
+  ]
+    .filter((text) => text)
+    .join(",");
+  if (tuning === "") delete env.MARFA_TEST_TUNING;
+  else env.MARFA_TEST_TUNING = tuning;
   // The command-line port wins over the environment, including --env MARFA_PORT.
   env.MARFA_PORT = String(port);
   // A restart inherits the latest move, never the original boot setting.
@@ -644,6 +827,7 @@ async function startServer(args: BootOptions): Promise<Started> {
   // `check:statuses` reads. Whatever else the process prints, a Node warning
   // or a trace, goes to its own file.
   const logStart = existsSync(p.log) ? statSync(p.log).size : 0;
+  const errStart = existsSync(p.stderr) ? statSync(p.stderr).size : 0;
   const logFd = openSync(p.log, "a");
   const errFd = openSync(p.stderr, "a");
   // The supervisor leads the group and the server joins it, so the group's
@@ -674,15 +858,48 @@ async function startServer(args: BootOptions): Promise<Started> {
   console.log(
     `[marfa-server] started pid ${String(child.pid)} with requested port ${String(port)}; log at ${p.log}`,
   );
-  return { child, logStart, ended: () => ended, controlSocket, authSecret };
+  return {
+    child,
+    logStart,
+    errStart,
+    ended: () => ended,
+    controlSocket,
+    authSecret,
+    picked: named === undefined,
+    host: env.MARFA_SIGN_IN_ADDRESS?.startsWith("http://localhost:")
+      ? "localhost"
+      : "127.0.0.1",
+  };
+}
+
+/** Attempts at a boot whose chosen port another process took first. */
+const PORT_ATTEMPTS = 3;
+
+/** Starts the server and waits for `/health`, on another port if the chosen one was taken. */
+async function startAndWait(
+  args: BootOptions,
+): Promise<{ started: Started; url: string }> {
+  const p = paths(args.state);
+  for (let attempt = 1; ; attempt++) {
+    const started = await startServer(args);
+    try {
+      return { started, url: await waitForHealth(started, p) };
+    } catch (error) {
+      const taken =
+        started.picked && bootOutput(started, p).includes("EADDRINUSE");
+      if (!taken || attempt === PORT_ATTEMPTS) throw error;
+      console.log(
+        "[marfa-server] the chosen port was taken first; starting on another",
+      );
+    }
+  }
 }
 
 /** Starts the real server without claiming it, for claim-operation tests. */
 export async function bootUnclaimedServer(
   args: BootOptions,
 ): Promise<{ url: string; controlSocket: string }> {
-  const started = await startServer(args);
-  const url = await waitForHealth(started, paths(args.state));
+  const { started, url } = await startAndWait(args);
   return { url, controlSocket: started.controlSocket };
 }
 
@@ -712,7 +929,7 @@ export async function bootControlServer(
   );
 }
 
-const SIGN_IN_DOOR = "/auth/sign-in/email";
+const SIGN_IN_DOOR = "/auth/sign-in";
 
 /**
  * The owner's session cookie, or undefined for a target with no owner
@@ -748,9 +965,8 @@ async function signInDoorAbsent(url: string): Promise<boolean> {
 
 export async function bootServer(args: BootOptions): Promise<void> {
   const p = paths(args.state);
-  const started = await startServer(args);
+  const { started, url } = await startAndWait(args);
   const { controlSocket, authSecret } = started;
-  const url = await waitForHealth(started, p);
   const status = await controlRequest(controlSocket, "/_control/setup/status");
   if (status.status !== 200)
     throw new Error(`Claim status answered ${status.status}`);
@@ -824,6 +1040,25 @@ export async function bootServer(args: BootOptions): Promise<void> {
       throw new Error("Authorised fixture key creation failed");
     apiKey = working.body.key;
     managementKey = management.body.key;
+  }
+  if (
+    status.body.claimed !== true &&
+    serverProgram() !== undefined &&
+    hookFreeRun()
+  ) {
+    const set = await fetch(`${url}/config`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${managementKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify(MEASURING_SETTINGS),
+    });
+    if (!set.ok) {
+      throw new Error(
+        `Setting the instance up for measuring answered ${String(set.status)}: ${(await set.text()).slice(0, 300)}`,
+      );
+    }
   }
   const ownerCookie = await signInOwner(url, previous.MARFA_OWNER_COOKIE);
   maskInActions(

@@ -20,17 +20,11 @@ When the server carries `details` in the `error` object of a refusal, the server
 
 ### `errors/status-absent`
 
-The server MUST NOT carry a `status` member in the `error` object of a refusal other than `409 version_conflict` and `409 ancestor_unavailable`.
+The server MUST NOT carry a `status` member in the `error` object of a refusal.
 
-**Tests:** `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`, `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`.
+**Reason:** the HTTP status is the answer's own, so the `error` object has the same members at every door: `code`, `message` and, where there is one, `details`.
 
-### `errors/status-version-envelope`
-
-When the server answers `409 version_conflict` or `409 ancestor_unavailable`, the server MUST carry `409` as `error.status`.
-
-**Reason:** `versions.md` states the rest of each envelope. The member is the one thing that sets these two answers apart from every other refusal.
-
-**Tests:** `correctness/item-versioning.test.ts › a stale write answers version_conflict with a three-way envelope`, `› a version no client ever read answers ancestor_unavailable`, `› answers an edges-only stale write with the envelope minus its merge half`, `› answers an update that carries only edges or names the item's own type version_conflict with no ancestor, whichever version it names`, `compliance/error-codes.test.ts › rejects a stale write whose base version is retained`, `› rejects an update naming a version that never existed`, `correctness/edges/edges-crud.test.ts › refuses a stale edge update, under current and not under edge`, `compliance/edge-refusals.test.ts › answers a stale edge update with the edge as it stands and none of ancestor, conflicting_fields or merge_policy`, `compliance/purge-preconditions.test.ts › refuses a stale version with version_conflict, and the item survives`.
+**Tests:** `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`, `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `compliance/internal-error.test.ts › answers 500 internal_error with the code and a fixed message and nothing else, and the instance answers again once it is gone`, `correctness/item-versioning.test.ts › a stale write answers version_conflict with a three-way envelope`, `› a version no client ever read answers ancestor_unavailable`.
 
 ### `errors/code-closed`
 
@@ -66,7 +60,7 @@ When the server answers a refusal with the page of `errors/html-page`, the serve
 
 ### `errors/request-id`
 
-The server MUST carry an `X-Request-ID` header on every answer to `POST /auth/oauth2/register` and to a path outside `/auth/` and `/.well-known/`, a refusal included.
+The server MUST carry an `X-Request-ID` header on every answer, a refusal included.
 
 **Reason:** it is the value a caller quotes to find its request in the server's log.
 
@@ -74,7 +68,7 @@ The server MUST carry an `X-Request-ID` header on every answer to `POST /auth/oa
 
 ### `errors/request-id-echo`
 
-When a request to `POST /auth/oauth2/register` or to a path outside `/auth/`, `/.well-known/` and `/inbound/` carries an `X-Request-ID` of 1 to 128 letters, digits, underscores and hyphens, the server MUST answer with that value in `X-Request-ID`, whether it serves the request or refuses it.
+When a request to a path outside `/inbound/` carries an `X-Request-ID` of 1 to 128 letters, digits, underscores and hyphens, the server MUST answer with that value in `X-Request-ID`, whether it serves the request or refuses it.
 
 **Reason:** a request to `/inbound/` comes from a sender and not a Marfa client, and its headers are content (`inbound-webhooks/request-id-own`).
 
@@ -82,13 +76,13 @@ When a request to `POST /auth/oauth2/register` or to a path outside `/auth/`, `/
 
 ### `errors/request-id-replaced`
 
-If a request to `POST /auth/oauth2/register` or to a path outside `/auth/` and `/.well-known/` carries an `X-Request-ID` of more than 128 characters, or one with a character other than a letter, digit, underscore or hyphen, then the server MUST answer with an `X-Request-ID` of its own, of 1 to 128 letters, digits, underscores and hyphens.
+If a request to a path outside `/inbound/` carries an `X-Request-ID` of more than 128 characters, or one with a character other than a letter, digit, underscore or hyphen, then the server MUST answer with an `X-Request-ID` of its own, of 1 to 128 letters, digits, underscores and hyphens.
 
 **Tests:** `compliance/refusal-headers.test.ts › is one of the server's own, not the caller's, when the caller sent more than 128 characters or one outside letters, digits, underscore and hyphen`.
 
 ### `errors/request-id-fresh`
 
-When a request to `POST /auth/oauth2/register` or to a path outside `/auth/` and `/.well-known/` carries no `X-Request-ID`, the server MUST answer with an `X-Request-ID` that differs from the one it gave every other request that sent none.
+When a request to a path outside `/inbound/` carries no `X-Request-ID`, the server MUST answer with an `X-Request-ID` that differs from the one it gave every other request that sent none.
 
 **Tests:** `compliance/refusal-headers.test.ts › is a different one of the server's own for each request that sent none`.
 
@@ -206,9 +200,9 @@ When `POST /auth/oauth2/register` sends, as JSON, a registration the server acce
 
 ### `errors/register-415-headers`
 
-When the sign-in library answers `POST /auth/oauth2/register` with `415`, the server MUST NOT carry `X-Error-Code` on the answer.
+When the server answers `POST /auth/oauth2/register` with `415`, the server MUST NOT carry `X-Error-Code` on the answer.
 
-**Reason:** the answer is the library's own and is not the envelope, where a refusal of the server's own carries the header.
+**Reason:** the answer is in the registration standard's shape and not the envelope, where a refusal carries the header.
 
 **Tests:** `compliance/refusal-headers.test.ts › answers a body that is not JSON with a 415 that carries X-Request-ID and no X-Error-Code, where Marfa's own doors carry both`.
 
@@ -274,19 +268,33 @@ When the server answers `422 idempotency_result_not_retained`, the server MUST N
 
 **Tests:** `compliance/idempotency-refusals.test.ts › answers 422 idempotency_result_not_retained, naming the first status, and writes nothing again`.
 
+### `errors/idem-contract-changed-status`
+
+When the server answers `422 idempotency_contract_changed`, the server MUST carry the status the first answer carried in `details.original_status`.
+
+**Reason:** a device learns whether the first attempt took effect, so it neither takes a write that applied for one that did not nor sends it again under a fresh key.
+
+**Tests:** `compliance/idempotency-refusals.test.ts › answers 422 idempotency_contract_changed, naming the first status, and writes nothing again`.
+
+### `errors/idem-contract-changed-nothing`
+
+When the server answers `422 idempotency_contract_changed`, the server MUST NOT run the write again.
+
+**Tests:** `compliance/idempotency-refusals.test.ts › answers 422 idempotency_contract_changed, naming the first status, and writes nothing again`.
+
 ## A path or method no operation serves
 
 ### `errors/unmatched-path`
 
-When a request other than `OPTIONS` names a path no operation serves, and is neither a `GET` or `POST` under `/auth/`, which the sign-in library answers, nor a `GET` that carries `X-Marfa-Reach`, the server MUST answer `404 not_found`, to a caller with a credential and to one without.
+When a request other than `OPTIONS` names a path no operation serves, and is not a `GET` that carries `X-Marfa-Reach`, the server MUST answer `404 not_found`, to a caller with a credential and to one without.
 
-**Tests:** `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `› answers a method other than GET to a path no door serves 404 not_found even when it carries X-Marfa-Reach`, `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`.
+**Tests:** `compliance/unmatched-paths.test.ts › answers a GET to a path no door serves 404 not_found in the envelope, to a caller with a credential and to one without`, `› answers a method other than GET to a path no door serves 404 not_found even when it carries X-Marfa-Reach`, `› answers a GET or POST under /auth/ that no door serves 404 not_found, and a method no door serves there`, `compliance/instance.test.ts › answers 404 not_found in the standard envelope for a path it does not serve`.
 
 ### `errors/unmatched-method`
 
-When a request other than `OPTIONS` names a method no operation serves on a path that another method serves, and is not a `GET` or `POST` under `/auth/`, which the sign-in library answers, the server MUST answer `404 not_found` and not `405`.
+When a request other than `OPTIONS` names a method no operation serves on a path that another method serves, the server MUST answer `404 not_found` and not `405`.
 
-**Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`, `› answers a PATCH to an item's metadata 404 not_found, under an Idempotency-Key it then keeps no record of, and writes nothing`, `› answers a method no door serves 404 not_found whatever instance it names`.
+**Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`, `› answers a PATCH to an item's metadata 404 not_found, under an Idempotency-Key it then keeps no record of, and writes nothing`, `› answers a method no door serves 404 not_found whatever instance it names`, `› answers a GET or POST under /auth/ that no door serves 404 not_found, and a method no door serves there`.
 
 ### `errors/unmatched-options`
 
@@ -308,9 +316,9 @@ When a `GET` that names a path no operation serves carries `X-Marfa-Reach`, the 
 
 ### `errors/contention`
 
-If a write cannot get the store's write lock within the instance's write wait (`MARFA_WRITE_WAIT_MS`), and the lock is not held by a bulk page that `errors/contention-bulk-wait` describes, then the server MUST answer `503 write_contention`.
+If a write cannot get the store's write lock within the instance's write wait of five seconds, and the lock is not held by a bulk page that `errors/contention-bulk-wait` describes, then the server MUST answer `503 write_contention`.
 
-**Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's `MARFA_WRITE_WAIT_MS`.
+**Reason:** a device retries a `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`), and contention is the case that retry exists for. A `500` would name the wrong cause, and a `409` would stop a write that the next attempt would land. The budget is the instance's write wait.
 
 **Tests:** `compliance/write-contention.test.ts › answers 503 write_contention, never 500`, `compliance/bulk-page-answers-others.test.ts › is still refused 503 write_contention behind a lock held for longer than the budget`.
 
@@ -336,11 +344,11 @@ When a write meets a write lock that is released inside the instance's write wai
 
 ### `errors/contention-bulk-wait`
 
-While a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: true` holds the write lock and writes an entry within every write wait, the server MUST hold a write that waits for the lock until the page ends, rather than answer it `503 write_contention`.
+While a `POST /items/bulk` or `POST /edges/bulk` page holds the write lock and writes an entry within every write wait, whatever its `atomic` says, the server MUST hold a write that waits for the lock until the page ends, rather than answer it `503 write_contention`.
 
 **Reason:** the server answers other requests while a page is written (`items/bulk-answers-reads`), so a write can arrive behind a page that holds the lock for longer than the budget. The wait ends when the page does; a refusal would turn an ordinary wait into a retry. A holder that writes nothing for the budget still meets `errors/contention`.
 
-**Tests:** `compliance/bulk-page-answers-others.test.ts › lands after an atomic page that holds the lock longer than the write wait`, `compliance/bulk-page-answers-others.test.ts › counts a sign-in attempt after an atomic page that holds the lock longer than the write wait`.
+**Tests:** `compliance/bulk-page-answers-others.test.ts › lands after an atomic page that holds the lock longer than the write wait`, `compliance/bulk-page-answers-others.test.ts › lands after a best-effort page that holds the lock longer than the write wait`, `compliance/bulk-page-answers-others.test.ts › counts a sign-in attempt after an atomic page that holds the lock longer than the write wait`.
 
 ### `errors/contention-read`
 
@@ -388,19 +396,11 @@ If `POST /auth/oauth2/register` cannot get the write lock within the write wait,
 
 ### `errors/contention-bulk-page`
 
-If a `POST /items/bulk` or `POST /edges/bulk` page meets the write lock before any of its entries has committed or may have committed, then the server MUST answer the page `503 write_contention`, whatever its `atomic` says.
+If a `POST /items/bulk` or `POST /edges/bulk` page meets the write lock, then the server MUST answer the page `503 write_contention`, whatever its `atomic` says.
 
 **Reason:** nothing was written and the next attempt would land, and a `200` that carried the refusal would tell a device there is nothing to retry.
 
 **Tests:** `compliance/write-contention.test.ts › refuses a non-atomic bulk page rather than reporting it entry by entry`.
-
-### `errors/contention-bulk-entry`
-
-If a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` meets the write lock at an entry after an earlier entry has committed or may have committed, then the server MUST report that entry `errored` with the code `write_contention`, in a `200` answer.
-
-**Reason:** a `5xx` would say nothing was written of entries that were, and the caller would send the page again and write them twice.
-
-**Tests:** `compliance/write-faults.test.ts › after an earlier entry has committed is reported errored with write_contention in a 200 answer, and the entries around it land`, `compliance/write-faults.test.ts › is reported the same way on an entry of an edge page`.
 
 ## A volume with no room
 
@@ -558,7 +558,7 @@ When the server answers `500 internal_error`, the server MUST send exactly the b
 
 ### `errors/internal-error-entry`
 
-If a fault for which the server holds no refusal meets an entry of a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` after an earlier entry has committed or may have committed, then the server MUST report that entry `errored` with an `error` of exactly `{ "code": "internal_error", "message": "The entry could not be written, and nothing of it was" }`.
+If a fault for which the server holds no refusal meets an entry of a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` after the page has written an earlier entry, then the server MUST report that entry `errored` with an `error` of exactly `{ "code": "internal_error", "message": "The entry could not be written, and nothing of it was" }`.
 
 **Reason:** the page answers `200` for the entries that landed, and the entry's `error` names nothing of what failed, as `errors/internal-error-body` names nothing.
 
@@ -574,11 +574,11 @@ If a fault for which the server holds no refusal meets an entry of a `POST /item
 
 ### `errors/internal-error-unknown`
 
-If the server cannot confirm whether an entry of a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` committed, then the server MUST give the entry reported `errored` the code `internal_error`.
+If the server cannot confirm whether a `POST /items/bulk` or `POST /edges/bulk` page under `atomic: false` committed, then the server MUST give each entry it reports `errored` for that the code `internal_error`.
 
 **Reason:** `items/bulk-outcome-unknown` and `edges/bulk-outcome-unknown` state the rest of the entry's answer, which the caller reads to reconcile that entry before it retries it.
 
-**Tests:** `compliance/write-faults.test.ts › is reported errored with write_outcome unknown and the code internal_error, counted under errored alone, while the entries around it land`, `compliance/write-faults.test.ts › is reported the same way on an entry of an edge page, with the entries around it kept`.
+**Tests:** `compliance/write-faults.test.ts › reports each entry it wrote errored with write_outcome unknown and the code internal_error, counted under errored alone, and a refused entry as refused`, `› reports each entry of an edge page the same way`.
 
 ## The limits of a stream and of a job
 
@@ -780,7 +780,7 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `table_not_found`                    | 404                 | The item's type declares no table of this name.                                                                                                                                                           |
 | `type_not_found`                     | 404                 | No registered type has this identifier.                                                                                                                                                                   |
 | `webhook_not_found`                  | 404                 | No webhook subscription the caller can reach has this id.                                                                                                                                                 |
-| `request_timeout`                    | 408                 | A body did not arrive in time: an inbound webhook delivery did not finish before its deadline, or a restore or a blob upload received no bytes for the upload idle limit.                                 |
+| `request_timeout`                    | 408                 | A body did not arrive in time: an inbound webhook delivery, a restore or a blob upload received no bytes for its idle limit.                                                                              |
 | `ancestor_unavailable`               | 409                 | The write names a version that has no snapshot the caller may merge against.                                                                                                                              |
 | `conflict`                           | 409                 | The request collides with the current state in a way that no other code names.                                                                                                                            |
 | `connector_held`                     | 409                 | Another process holds the connector's registration until `details.expires_at`.                                                                                                                            |
@@ -811,6 +811,7 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `request_too_large`                  | 413                 | The request body is over the cap for its operation.                                                                                                                                                       |
 | `range_not_satisfiable`              | 416                 | A `Range` request asks for bytes the blob does not have. `Content-Range` names its size.                                                                                                                  |
 | `compatible_with_violation`          | 422                 | A `compatible_with` claim is invalid, or a change breaks another type's claim. `details.dependent_type_ids` names dependents whose claims the change would break.                                         |
+| `idempotency_contract_changed`       | 422                 | An `Idempotency-Key` repeats a request whose first answer was made under another contract version. `details.original_status` is the status it carried.                                                    |
 | `idempotency_key_reused`             | 422                 | An `Idempotency-Key` is sent with a different request than the one it first named.                                                                                                                        |
 | `idempotency_result_not_retained`    | 422                 | An `Idempotency-Key` repeats a request whose first answer was too large to keep. `details.original_status` is the status it carried.                                                                      |
 | `rate_limited`                       | 429                 | A credential, an address or an inbound endpoint is past a limit for its current window. `Retry-After` names the wait.                                                                                     |

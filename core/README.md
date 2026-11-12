@@ -142,7 +142,7 @@ Three jobs check the core. `scripts/ci-required.ts` decides from the changed pat
 
 A push to `main` runs `ci.yml` in full unless it reaches only the format check and `ci.yml` passed on the commit before it. It runs `core.yml`, which calls the live job, when it changes the core, `openapi.json`, `core.yml`, `core-live.yml`, or `package.json`, which sets the pnpm version. The nightly run and a manual dispatch run every job.
 
-A pull request that changes only the Rust server (`core/marfa-server/`) runs `Core checks (Linux)` and the Rust contract jobs, and leaves the macOS jobs, the live one included, to the push to `main`. A server change that breaks the live tests or the Node binding's proof is therefore found there, not before the merge. The Ubuntu jobs in `ci.yml` that run the conformance suite and the CLI scenarios build the `marfa` binary and run no Rust tests.
+A pull request that changes only the Rust server (`core/marfa-server/`) runs `Core checks (Linux)`, the Rust contract jobs, `MCP conformance` and the `Restore drill`, and leaves the macOS jobs, the live one included, to the push to `main`. A server change that breaks the live tests or the Node binding's proof is therefore found there, not before the merge. The Rust contract shards in `ci.yml` build the `marfa` binary and run no Rust tests.
 
 ## Telemetry
 

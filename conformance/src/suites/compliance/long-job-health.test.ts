@@ -9,13 +9,13 @@ import {
 } from "../../utils/fresh-server.js";
 import {
   operatorOf,
-  QUIET_SCHEDULE,
   quiet,
   runJob,
   writerOf,
 } from "../../utils/moved-clock.js";
 import { DISK_ONLY } from "../../utils/own-blob-server.js";
 import { heldWhenHealthAnswered } from "../../utils/held-when-answered.js";
+import { NEVER_MS, QUIET_TUNING, tuning } from "../../utils/tuning.js";
 
 /**
  * `GET /health` answered while each long job runs, between two of its steps
@@ -29,15 +29,13 @@ let server: FreshServer;
 /** Notes enough that each job has dozens of steps between its two holds. */
 const ROWS = 4_000;
 const TAG = "long-job-health";
-const NEVER_MS = "31536000000";
 
 const working = (): MarfaClient => writerOf(server);
 
 beforeAll(async () => {
   server = await bootFreshServer("long-job-health", {
     ...DISK_ONLY,
-    ...QUIET_SCHEDULE,
-    MARFA_BLOB_CLEANUP_INTERVAL_MS: NEVER_MS,
+    ...tuning(...QUIET_TUNING, `interval.blob-orphans=${NEVER_MS}`),
   });
   await quiet(server, ["version-thinning", "blob-orphans"]);
   await seed(working(), TAG, ROWS);
@@ -63,10 +61,10 @@ afterAll(async () => {
 
 describe("GET /health while a long job runs", () => {
   it("is answered between two pages of an NDJSON export", async () => {
-    // One item on the first page and sixteen on each after it.
+    // A page well on in the export, so many turns lie between the holds.
     const held = await heldWhenHealthAnswered(server, {
       start: "hold:read-hydration",
-      later: "hold:export-page=240",
+      later: "hold:export-page=30",
       begin: async () => {
         const exporting = fetch(`${server.apiUrl}/export`, {
           headers: { authorization: `Bearer ${server.workingKey}` },
@@ -88,10 +86,10 @@ describe("GET /health while a long job runs", () => {
   }, 600_000);
 
   it("is answered between two pages of an archive export", async () => {
-    // Twenty-five items a page.
+    // The last page of the notes, so several pages lie between the holds.
     const held = await heldWhenHealthAnswered(server, {
       start: "hold:read-hydration",
-      later: "hold:export-page=150",
+      later: "hold:export-page=8",
       begin: async () => {
         const exporting = working().exportArchive();
         return async () => {

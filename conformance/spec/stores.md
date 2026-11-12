@@ -112,6 +112,12 @@ While a copy sits in a store the configuration no longer names, the server MUST 
 
 **Tests:** `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
+### `stores/held-not-live`
+
+While a copy's object is one the server did not write, the server MUST NOT count it among the live copies a drop keeps at `min_copies`.
+
+**Tests:** `compliance/bucket-sharing.test.ts › refuses to drop the disk copy of each file a restore found in the bucket until it writes a copy of its own, and then drops it`.
+
 ### `stores/min-copies-reported`
 
 When a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer `min_copies` as the instance's `blob_min_copies`, which is 1 unless set.
@@ -222,6 +228,30 @@ While an attached object store does not answer with the `.marfa-store` marker of
 
 **Tests:** `compliance/blob-store-bounds.test.ts › changes no copy on the answers of an object store that holds another store's marker`.
 
+### `stores/object-layout`
+
+Where an object store is attached, the server MUST keep each copy's object and the store's `.marfa-store` marker under `<S3_PREFIX>/blobs/`.
+
+**Reason:** a prefix holds one instance: its files under `blobs/` and its backups under `backups/` (`instance/backup-object`), so each can take a lifecycle rule of its own.
+
+**Tests:** `compliance/bucket-sharing.test.ts › keeps the files and the store's marker under the prefix's blobs folder and the backups under its backups folder`.
+
+### `stores/object-layout-root-ignored`
+
+When the server starts on a prefix that holds a `.marfa-store` marker or copies directly under `<S3_PREFIX>/`, the server MUST NOT read them as the store's.
+
+**Reason:** an earlier build kept them there, and nothing is carried from earlier builds.
+
+**Tests:** `compliance/bucket-sharing.test.ts › starts beside objects an older layout left at the prefix's root, and never reads or deletes them`.
+
+### `stores/delete-only-written`
+
+The server MUST NOT delete an object in an object store that it did not write.
+
+**Reason:** another server can work on the same prefix, as one that replaces an instance does, and a restore records an object it finds there as a copy (`instance/backup-restore`). When the server drops, strikes or purges such a copy, it takes the copy out of the copy record and leaves the object. An object it found that it had written and not yet deleted counts as its own.
+
+**Tests:** `compliance/bucket-sharing.test.ts › deletes none of the first server's objects from a server restored from its backup, through every clean-up, so the first server's backup still restores`, `compliance/bucket-sharing.test.ts › starts beside objects an older layout left at the prefix's root, and never reads or deletes them`.
+
 ## Links
 
 A link to a blob's bytes names the instance or the object store as its host, and the lifetime and the signature are `blobs.md`'s.
@@ -256,6 +286,14 @@ When a run of `blob-replicate` finds a blob that an attached store lacks and ano
 
 **Tests:** `compliance/blob-rules.test.ts › replicates every blob to the object store and records the copies, and the link becomes the store's own`, `› stamps a good copy and strikes a corrupt one, which replication then restores`, `› removes a dropped copy's bytes from its store`.
 
+### `stores/replicate-own-copy`
+
+When a run of `blob-replicate` finds an attached object store whose copy of a blob is an object the server did not write, the server MUST write its own copy of the blob to that store.
+
+**Reason:** a copy whose object the server did not write does not count toward `min_copies` (`stores/held-not-live`).
+
+**Tests:** `compliance/bucket-sharing.test.ts › refuses to drop the disk copy of each file a restore found in the bucket until it writes a copy of its own, and then drops it`.
+
 ### `stores/replicate-verifies`
 
 When a run of `blob-replicate` copies bytes that do not hash to the blob's name, the server MUST NOT record a copy in the receiving store.
@@ -272,19 +310,19 @@ When a caller authorized by `instance.maintain` or local authority runs `blob-re
 
 ### `stores/replicate-count-bound`
 
-When a run of `blob-replicate` has blobs to copy, the server MUST copy at most `blob_replicate_batch` of them.
+When a run of `blob-replicate` has blobs to copy, the server MUST copy at most 100 of them.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › copies at most the batch, answers what it did, and runs again on its own for the rest`.
 
 ### `stores/replicate-byte-bound`
 
-When a run of `blob-replicate` has copied a blob, the server MUST NOT copy another blob in that run whose size would push the bytes it copied past `blob_replicate_batch_bytes`.
+When a run of `blob-replicate` has copied a blob, the server MUST NOT copy another blob in that run whose size would push the bytes it copied past 1073741824 bytes.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › stops before the blob that would push the copied bytes past the bound`.
 
 ### `stores/replicate-first-blob`
 
-When a run of `blob-replicate` has a blob larger than `blob_replicate_batch_bytes` to copy as its first, the server MUST copy it and no more.
+When a run of `blob-replicate` has a blob larger than 1073741824 bytes to copy as its first, the server MUST copy it and no more.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › copies a blob larger than the bound when it is the run's first, and nothing more`.
 
@@ -348,7 +386,7 @@ While a write or a deletion of a blob's bytes that the server stopped waiting fo
 
 ### `stores/drop-allowed`
 
-When a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs/{hash}/copies/{store}` for a copy that an attached store holds, and at least `min_copies` live copies would remain, the server MUST answer `200`.
+When a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs/{hash}/copies/{store}` for a copy that an attached store holds, and at least `min_copies` live copies, counted under `stores/detached-not-live` and `stores/held-not-live`, would remain, the server MUST answer `200`.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `› answers the drop door's refusals in their order`.
 
@@ -360,9 +398,11 @@ When the server answers a drop with `200`, the server MUST remove the copy's row
 
 ### `stores/drop-removes-bytes`
 
-When the server answers a drop with `200`, the server MUST remove the copy's bytes from its store.
+When the server answers a drop with `200` for a copy whose object it wrote, the server MUST remove the copy's bytes from its store.
 
-**Tests:** `compliance/blob-rules.test.ts › removes a dropped copy's bytes from its store`.
+**Reason:** a copy whose object the server did not write leaves the copy record and keeps its object (`stores/delete-only-written`).
+
+**Tests:** `compliance/blob-rules.test.ts › removes a dropped copy's bytes from its store`, `compliance/bucket-sharing.test.ts › deletes none of the first server's objects from a server restored from its backup, through every clean-up, so the first server's backup still restores`.
 
 ### `stores/drop-below-minimum`
 
@@ -386,7 +426,7 @@ When the server answers a drop with `409 copies_below_minimum`, the server MUST 
 
 If a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs/{hash}/copies/{store}`, and fewer than `min_copies` of the other live copies are confirmed by their stores, each asked within 15 seconds, then the server MUST answer `409 copies_below_minimum`.
 
-**Reason:** the copy record can name a copy its store no longer holds, such as one removed from the store by hand or lost with a disk. A drop that trusted the copy record could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing, and neither does an object store that answers with another store's marker (`stores/object-store-itself`) or for an object that does not name it (`stores/object-answer-names-store`).
+**Reason:** the copy record can name a copy its store no longer holds, such as one removed from the store by hand or lost with a disk. A drop that trusted the copy record could remove the last copy that holds the bytes. A store that fails or does not answer confirms nothing, and neither does an object store that answers with another store's marker (`stores/object-store-itself`) or for an object that does not name it (`stores/object-answer-names-store`). A copy whose object the server did not write confirms nothing either (`stores/held-not-live`).
 
 **Tests:** `compliance/blob-rules.test.ts › refuses a drop the copy record allows when the other copy is gone from its store, and keeps the copy`.
 
@@ -532,7 +572,7 @@ When a run of `blob-integrity` cannot reach a store, the server MUST count the s
 
 When a run of `blob-integrity` cannot reach one store, the server MUST still check the copies in the stores it can reach.
 
-**Reason:** the unreachable store's copies are never stamped, so they would otherwise stay first in the order and fill every run's `blob_integrity_batch` copies.
+**Reason:** the unreachable store's copies are never stamped, so they would otherwise stay first in the order and fill every run's 500 copies.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › checks the copies of a store that can answer when another cannot be reached`.
 
@@ -582,19 +622,19 @@ When a run of `blob-integrity` takes copies to check, the server MUST take first
 
 ### `stores/integrity-count-bound`
 
-When a run of `blob-integrity` has copies to check, the server MUST check at most `blob_integrity_batch` of them.
+When a run of `blob-integrity` has copies to check, the server MUST check at most 500 of them.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › checks no more copies than the batch in one run, least recently checked first and across the stores`.
 
 ### `stores/integrity-byte-bound`
 
-When a run of `blob-integrity` has copies to check, the server MUST stop before the copy whose blob's size would push the run's `bytes` past `blob_integrity_batch_bytes`.
+When a run of `blob-integrity` has copies to check, the server MUST stop before the copy whose blob's size would push the run's `bytes` past 1073741824 bytes.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › stops before the copy that would push the bytes read past the bound`.
 
 ### `stores/integrity-first-copy`
 
-When a run of `blob-integrity` has a copy larger than `blob_integrity_batch_bytes` to check as its first, the server MUST check it and no more.
+When a run of `blob-integrity` has a copy larger than 1073741824 bytes to check as its first, the server MUST check it and no more.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › checks a copy larger than the bound when it is the run's first, and nothing more`.
 
@@ -610,11 +650,11 @@ When a caller authorized by `instance.read` or local authority sends `GET /blobs
 
 ### `stores/orphan-enqueue-lifts`
 
-When an `update_properties` job whose patch names a blob's digest is enqueued through `POST /items/bulk-actions`, the server MUST take the blob off the orphan report.
+When an `update_properties` job whose patch names a blob's digest is enqueued through `POST /items/bulk-actions`, or a type move whose `properties` name it is enqueued through `POST /types/{id}/move`, the server MUST take the blob off the orphan report.
 
-**Reason:** the job's patch is a reference while the job is queued or in progress (`stores/reference-job-patch`), so the report is lifted at once, as an upload's and a write's are.
+**Reason:** the job's patch or properties are a reference while the job is queued or in progress (`stores/reference-job-patch`), so the report is lifted at once, as an upload's and a write's are.
 
-**Tests:** `compliance/blob-store-jobs.test.ts › lifts the report when an update_properties job naming the digest is enqueued`.
+**Tests:** `compliance/blob-store-jobs.test.ts › lifts the report when an update_properties job naming the digest is enqueued`, `› keeps a blob a type move's properties name`.
 
 ### `stores/orphan-listing-order`
 
@@ -666,7 +706,7 @@ When a run of `blob-orphans` finds a blob that something references, the server 
 
 ### `stores/orphan-purges-after-grace`
 
-When a run of `blob-orphans` finds a blob reported by an earlier run at least `blob_cleanup_grace_ms` ago, still unreferenced, and named by no backup the server began in the attached object store since the oldest one it keeps there, the server MUST purge it.
+When a run of `blob-orphans` finds a blob reported by an earlier run at least `blob_cleanup_grace_seconds` ago, still unreferenced, and named by no backup the server began in the attached object store since the oldest one it keeps there, the server MUST purge it.
 
 **Reason:** a report made by the run itself waits for the next run. At a grace of zero, the next run purges even when it starts in the same millisecond as the report.
 
@@ -674,7 +714,7 @@ When a run of `blob-orphans` finds a blob reported by an earlier run at least `b
 
 ### `stores/orphan-keeps-within-grace`
 
-While a blob's report is younger than `blob_cleanup_grace_ms`, the server MUST NOT purge it.
+While a blob's report is younger than `blob_cleanup_grace_seconds`, the server MUST NOT purge it.
 
 **Tests:** `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`, `compliance/blob-rules.test.ts › reports an unreferenced blob on one run and purges it on the next, never one an item names`.
 
@@ -692,25 +732,25 @@ When a run of `blob-orphans` purges a blob, the server MUST take it off the repo
 
 ### `stores/orphan-purge-bytes`
 
-When a run of `blob-orphans` purges a blob, the server MUST remove its bytes from every attached store.
+When a run of `blob-orphans` purges a blob, the server MUST remove its bytes from every attached store but an object it did not write.
 
-**Tests:** `compliance/blob-rules.test.ts › removes a purged blob's bytes from every store`.
+**Tests:** `compliance/blob-rules.test.ts › removes a purged blob's bytes from every store`, `compliance/bucket-sharing.test.ts › deletes none of the first server's objects from a server restored from its backup, through every clean-up, so the first server's backup still restores`.
 
 ### `stores/orphan-switched-off-unlisted`
 
-Where `blob_cleanup_interval_ms` is 0, the server MUST leave `blob-orphans` out of the housekeeping listing.
+Where `blob_cleanup_enabled` is false, the server MUST leave `blob-orphans` out of the housekeeping listing.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`.
 
 ### `stores/orphan-switched-off-not-run`
 
-Where `blob_cleanup_interval_ms` is 0, when a caller authorized by `instance.maintain` or local authority asks to run `blob-orphans`, the server MUST answer `404 housekeeping_job_not_found`.
+Where `blob_cleanup_enabled` is false, when a caller authorized by `instance.maintain` or local authority asks to run `blob-orphans`, the server MUST answer `404 housekeeping_job_not_found`.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`.
 
 ### `stores/orphan-switched-off-report`
 
-Where `blob_cleanup_interval_ms` is 0 on an instance that has never run `blob-orphans`, when a caller authorized by `instance.read` or local authority sends `GET /blobs/orphans`, the server MUST answer `200` with an empty report.
+Where `blob_cleanup_enabled` is false on an instance that has never run `blob-orphans`, when a caller authorized by `instance.read` or local authority sends `GET /blobs/orphans`, the server MUST answer `200` with an empty report.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`.
 
@@ -826,31 +866,31 @@ When a run of `blob-orphans` finds a blob that only an earlier version of an ite
 
 ### `stores/orphan-keeps-job-patch`
 
-While a queued or in-progress `update_properties` job's patch holds a blob's digest, the server MUST keep the blob.
+While a queued or in-progress `update_properties` job's patch or `type_move` job's `properties` holds a blob's digest, the server MUST keep the blob.
 
 **Reason:** enqueueing such a job takes the blob off the report at once, and a run that was already walking the corpus cannot start or keep a report for it.
 
-**Tests:** `compliance/blob-store-jobs.test.ts › keeps a blob the patch names as %s`.
+**Tests:** `compliance/blob-store-jobs.test.ts › keeps a blob the patch names as %s`, `› keeps a blob a type move's properties name`.
 
 ### `stores/orphan-job-ended`
 
-When an `update_properties` job ends `completed`, `canceled` or `failed`, the server MUST count none of its patch as a reference, so a blob nothing else references is reported afresh and a later run may purge it only after the grace.
+When an `update_properties` or `type_move` job ends `completed`, `canceled` or `failed`, the server MUST count none of its patch or `properties` as a reference, so a blob nothing else references is reported afresh and a later run may purge it only after the grace.
 
-**Tests:** `compliance/blob-store-jobs.test.ts › reports a blob afresh once the job whose patch named it ends`, `› reports a blob afresh once a queued job naming it is canceled`, `› reports a blob afresh once a queued job naming it fails`.
+**Tests:** `compliance/blob-store-jobs.test.ts › reports a blob afresh once the job whose patch named it ends`, `› reports a blob afresh once a queued job naming it is canceled`, `› reports a blob afresh once a queued job naming it fails`, `› keeps a blob a type move's properties name`.
 
 ### `stores/job-patch-no-reach`
 
-While a queued or in-progress `update_properties` job's patch names a blob's digest, the server MUST NOT serve the blob to a key or app token lacking `blobs.manage` that never held the bytes.
+While a queued or in-progress `update_properties` job's patch or `type_move` job's `properties` names a blob's digest, the server MUST NOT serve the blob to a key or app token lacking `blobs.manage` that never held the bytes.
 
 **Reason:** retention grants no read.
 
-**Tests:** `compliance/blob-store-jobs.test.ts › serves the blob its patch names to no key that did not already hold the bytes`.
+**Tests:** `compliance/blob-store-jobs.test.ts › serves the blob its patch names to no key that did not already hold the bytes`, `› keeps a blob a type move's properties name`.
 
 ### `stores/job-patch-unknown-digest`
 
-When a queued or in-progress `update_properties` job's patch names a digest no blob holds, the server MUST NOT fail the job for it.
+When a queued or in-progress `update_properties` job's patch or `type_move` job's `properties` names a digest no blob holds, the server MUST NOT fail the job for it.
 
-**Tests:** `compliance/blob-store-jobs.test.ts › completes a job whose patch names a digest no blob holds`.
+**Tests:** `compliance/blob-store-jobs.test.ts › completes a job whose patch names a digest no blob holds`, `› completes a type move whose properties name a digest no blob holds`.
 
 ## What counts as a reference
 
@@ -870,9 +910,9 @@ When a string holds a run of lowercase hexadecimal characters that is 63 charact
 
 ### `stores/reference-job-patch`
 
-When a queued or in-progress `update_properties` job's patch holds a string with a digest at any depth, the server MUST count it as a reference.
+When a queued or in-progress `update_properties` job's patch or `type_move` job's `properties` holds a string with a digest at any depth, the server MUST count it as a reference.
 
-**Tests:** `compliance/blob-store-jobs.test.ts › keeps a blob the patch names as %s`.
+**Tests:** `compliance/blob-store-jobs.test.ts › keeps a blob the patch names as %s`, `› keeps a blob a type move's properties name`.
 
 ### `stores/reference-job-inputs`
 

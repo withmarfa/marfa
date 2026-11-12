@@ -2,7 +2,7 @@
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use rusqlite::ffi;
@@ -27,8 +27,29 @@ const ABANDONED: u8 = 2;
 
 type Job = Box<dyn FnOnce(&mut Connection) + Send>;
 
+/// Whether the writer's connection is set to leave its next commit unsynced.
+#[derive(Default)]
+struct Unsynced(AtomicBool);
+
+impl Unsynced {
+    /// Set before every transaction, so a synced write never inherits an unsynced one's setting.
+    fn set(&self, conn: &Connection, write: Write) -> rusqlite::Result<()> {
+        let unsynced = !write.sync;
+        if self.0.load(Ordering::Relaxed) != unsynced {
+            let level = if unsynced { "NORMAL" } else { "FULL" };
+            conn.pragma_update(None, "synchronous", level)?;
+            self.0.store(unsynced, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+}
+
+/// Runs on the writer's thread after each job, with the connection between jobs.
+pub type Watcher = Box<dyn FnMut(&Connection) + Send>;
+
 enum Message {
     Run(Job),
+    Watch(Watcher),
     Stop(oneshot::Sender<()>),
 }
 
@@ -59,6 +80,7 @@ impl Pulse {
 }
 
 pub struct Writer {
+    unsynced: Arc<Unsynced>,
     queue: mpsc::Sender<Message>,
     faults: Arc<Faults>,
     pulse: Pulse,
@@ -126,9 +148,11 @@ fn run_transaction<T>(
     deadline: Instant,
     faults: &Faults,
     commits: &watch::Sender<u64>,
+    unsynced: &Unsynced,
     job: impl FnOnce(&Transaction<'_>) -> Result<T>,
 ) -> Result<T> {
     conn.busy_timeout(deadline.saturating_duration_since(Instant::now()))?;
+    unsynced.set(conn, write)?;
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
     match catch_unwind(AssertUnwindSafe(|| job(&tx))) {
         Ok(Ok(value)) => finish(tx, value, write, faults, commits),
@@ -157,11 +181,19 @@ fn checkpoint_and_close(conn: Connection) {
 }
 
 fn run_thread(mut conn: Connection, mut queue: mpsc::Receiver<Message>) {
+    let mut watcher: Option<Watcher> = None;
     while let Some(message) = queue.blocking_recv() {
         match message {
             Message::Run(job) => {
                 job(&mut conn);
                 ensure_closed(&conn);
+                if let Some(watch) = watcher.as_mut() {
+                    watch(&conn);
+                }
+            }
+            Message::Watch(mut watch) => {
+                watch(&conn);
+                watcher = Some(watch);
             }
             Message::Stop(done) => {
                 checkpoint_and_close(conn);
@@ -181,6 +213,7 @@ impl Writer {
             .name("marfa-writer".into())
             .spawn(move || run_thread(conn, receiver))?;
         Ok(Writer {
+            unsynced: Arc::default(),
             queue,
             faults,
             pulse: Pulse::new(),
@@ -197,19 +230,34 @@ impl Writer {
         self.pulse.clone()
     }
 
-    /// A job withdrawn after `budget` never ran; a started job always finishes.
-    pub async fn submit<T, F>(&self, write: Write, budget: Duration, job: F) -> Result<T>
+    /// Replaces the watcher, which then runs once at once and after every job.
+    pub async fn watch(&self, watcher: Watcher) {
+        if self.queue.send(Message::Watch(watcher)).await.is_err() {
+            tracing::error!("The writer has stopped");
+        }
+    }
+
+    /// A job withdrawn after `budget` never ran; a started job always finishes. With a `cap`,
+    /// the wait to start is that long at most, however long the running job beats the pulse.
+    pub async fn submit<T, F>(
+        &self,
+        write: Write,
+        budget: Duration,
+        cap: Option<Duration>,
+        job: F,
+    ) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce(&Transaction<'_>) -> Result<T> + Send + 'static,
     {
         let started = Instant::now();
         let deadline = started + budget;
-        let mut wait = started + budget.max(QUEUE_FLOOR);
+        let mut wait = started + cap.unwrap_or_else(|| budget.max(QUEUE_FLOOR));
         let ticket = Arc::new(AtomicU8::new(QUEUED));
         let (answer, mut answered) = oneshot::channel();
         let faults = self.faults.clone();
         let commits = self.commits.clone();
+        let unsynced = self.unsynced.clone();
         let claim = ticket.clone();
         let run: Job = Box::new(move |conn| {
             if claim
@@ -217,7 +265,7 @@ impl Writer {
                 .is_ok()
             {
                 let _ = answer.send(run_transaction(
-                    conn, write, deadline, &faults, &commits, job,
+                    conn, write, deadline, &faults, &commits, &unsynced, job,
                 ));
             }
         });
@@ -227,7 +275,7 @@ impl Writer {
             match tokio::time::timeout_at(wait.into(), &mut send).await {
                 Ok(Ok(())) => break,
                 Ok(Err(_)) => return Err(Refusal::internal("the writer has stopped")),
-                Err(_) => match self.waiting_on(budget) {
+                Err(_) => match self.waiting_on(budget, cap) {
                     Some(later) => wait = later,
                     None => return Err(contention()),
                 },
@@ -238,7 +286,7 @@ impl Writer {
             match tokio::time::timeout_at(wait.into(), &mut answered).await {
                 Ok(result) => return result.map_err(lost)?,
                 Err(_) => {
-                    if let Some(later) = self.waiting_on(budget) {
+                    if let Some(later) = self.waiting_on(budget, cap) {
                         wait = later;
                         continue;
                     }
@@ -255,7 +303,10 @@ impl Writer {
         }
     }
 
-    fn waiting_on(&self, budget: Duration) -> Option<Instant> {
+    fn waiting_on(&self, budget: Duration, cap: Option<Duration>) -> Option<Instant> {
+        if cap.is_some() {
+            return None;
+        }
         let until = self.pulse.last() + budget.max(QUEUE_FLOOR);
         (until > Instant::now()).then_some(until)
     }

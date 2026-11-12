@@ -13,7 +13,7 @@ describe("background jobs after the requesting key is revoked", () => {
       let server: Awaited<ReturnType<typeof bootFreshServer>> | undefined;
       try {
         server = await bootFreshServer("background-authority", {
-          MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: "3600000",
+          MARFA_TEST_TUNING: "housekeeping_poll_ms=3600000",
           MARFA_ENRICHMENT_ENABLED: "true",
         });
         const operator = operatorOf(server);

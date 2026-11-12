@@ -106,7 +106,7 @@ impl Instance {
         assert_eq!(claimed.status, StatusCode::CREATED, "{}", claimed.body);
         let signing_in = Request::builder()
             .method(Method::POST)
-            .uri("/auth/sign-in/email")
+            .uri("/auth/sign-in")
             .header(header::CONTENT_TYPE, "application/json")
             .header(header::ORIGIN, ORIGIN)
             .body(Body::from(claim.to_string()))

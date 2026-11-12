@@ -100,12 +100,12 @@ async function objectStoreOf(operator: MarfaClient): Promise<{
     const listed = await objects.send(
       new ListObjectsV2Command({
         Bucket: process.env.S3_BUCKET!,
-        Prefix: `${prefix}/${hash.slice("sha256:".length)}`,
+        Prefix: `${prefix}/blobs/${hash.slice("sha256:".length)}`,
       }),
     );
     return (listed.Contents ?? []).map((object) => object.Key!).sort();
   };
-  return { id: s3.id, objects, marker: `${prefix}/.marfa-store`, keysOf };
+  return { id: s3.id, objects, marker: `${prefix}/blobs/.marfa-store`, keysOf };
 }
 
 describe("a replication run that is bounded by count", () => {
@@ -114,9 +114,8 @@ describe("a replication run that is bounded by count", () => {
 
   beforeAll(async () => {
     ({ operator, working } = await boot("blob-store-count-bounds", {
-      MARFA_BLOB_REPLICATE_BATCH: "2",
-      MARFA_BLOB_INTEGRITY_BATCH: "1",
-      MARFA_BLOB_CLEANUP_INTERVAL_MS: "0",
+      MARFA_TEST_TUNING: "blob_replicate_batch=2,blob_integrity_batch=1",
+      MARFA_BLOB_CLEANUP_ENABLED: "false",
     }));
   }, FRESH_SERVER_TIMEOUT_MS);
 
@@ -237,7 +236,7 @@ describe("a replication run that is bounded by bytes", () => {
 
   beforeAll(async () => {
     ({ operator, working } = await boot("blob-store-replication-bytes", {
-      MARFA_BLOB_REPLICATE_BATCH_BYTES: "200",
+      MARFA_TEST_TUNING: "blob_replicate_batch_bytes=200",
     }));
   }, FRESH_SERVER_TIMEOUT_MS);
 
@@ -272,7 +271,7 @@ describe("an integrity run that is bounded by bytes", () => {
 
   beforeAll(async () => {
     ({ operator, working } = await boot("blob-store-integrity-bytes", {
-      MARFA_BLOB_INTEGRITY_BATCH_BYTES: "200",
+      MARFA_TEST_TUNING: "blob_integrity_batch_bytes=200",
     }));
   }, FRESH_SERVER_TIMEOUT_MS);
 
@@ -347,7 +346,7 @@ describe("an integrity run while the disk store cannot be reached", () => {
     async () => {
       const { server, operator, working } = await boot(
         "blob-store-unreachable-others",
-        { MARFA_BLOB_INTEGRITY_BATCH: "3" },
+        { MARFA_TEST_TUNING: "blob_integrity_batch=3" },
       );
       const hashes: string[] = [];
       for (const label of ["one", "two", "three"]) {
@@ -543,7 +542,7 @@ describe("an object store's copies of one blob", () => {
     "writes each object-store copy of a blob to an object of its own",
     async () => {
       const { operator, working } = await boot("blob-store-object-per-write", {
-        MARFA_BLOB_CLEANUP_INTERVAL_MS: "0",
+        MARFA_BLOB_CLEANUP_ENABLED: "false",
       });
       const s3 = await objectStoreOf(operator);
       const upload = await working.uploadBlob(
@@ -579,7 +578,7 @@ describe("an object store's answer for an object it did not write", () => {
     "names the store in each object and takes no answer for an object that does not name it",
     async () => {
       const { operator, working } = await boot("blob-store-object-writer", {
-        MARFA_BLOB_CLEANUP_INTERVAL_MS: "0",
+        MARFA_BLOB_CLEANUP_ENABLED: "false",
       });
       const s3 = await objectStoreOf(operator);
       const bucket = process.env.S3_BUCKET!;
@@ -658,7 +657,7 @@ describe("an object store that answers with another store's marker", () => {
     "changes no copy on the answers of an object store that holds another store's marker",
     async () => {
       const { operator, working } = await boot("blob-store-not-itself", {
-        MARFA_BLOB_CLEANUP_INTERVAL_MS: "0",
+        MARFA_BLOB_CLEANUP_ENABLED: "false",
       });
       const s3 = await objectStoreOf(operator);
       const bucket = process.env.S3_BUCKET!;

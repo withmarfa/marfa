@@ -14,7 +14,7 @@ use super::refusal::{Code, Refusal};
 use super::stored;
 use crate::db::{Write, volume};
 
-const PROBE_KEY: &str = "health_probe";
+pub(super) const PROBE_KEY: &str = "health_probe";
 const PROBE_WAIT: Duration = Duration::from_secs(2);
 const WRITE_REUSE: Duration = Duration::from_secs(10);
 const DISK_DOWN_BELOW: u64 = 1024 * 1024;
@@ -176,6 +176,9 @@ impl Health {
 }
 
 async fn database(app: &App) -> Component {
+    if app.db.damaged() {
+        return Component::not_ok(Status::Down, "the database file is damaged");
+    }
     let started = Instant::now();
     let read = app.db.read(|tx| {
         tx.query_row(

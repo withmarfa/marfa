@@ -50,9 +50,11 @@ pub async fn narrow(
     State(app): State<Arc<App>>,
     Path(id): Path<String>,
     caller: Caller,
+    uri: Uri,
     body: JsonBody,
 ) -> Answer {
     caller.require_local()?;
+    query::only(&uri, &[])?;
     let body = body.object(&NARROW_FIELDS).await?;
     let asked = Narrowing {
         scopes: scopes_in(&body, "scopes")?,

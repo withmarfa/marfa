@@ -428,12 +428,13 @@ impl Caller {
         }
     }
 
-    pub fn audit_id(&self) -> String {
+    /// The credential an audit entry names; the server's own writes name none.
+    pub fn audit_id(&self) -> Option<String> {
         match self {
-            Caller::Local(_) => "local:process".to_string(),
-            Caller::Server => "server".to_string(),
-            Caller::Key(key) | Caller::App { key, .. } => key.id.clone(),
-            Caller::Owner(session) => format!("owner:{}", session.id),
+            Caller::Local(_) => Some("local:process".to_string()),
+            Caller::Server => None,
+            Caller::Key(key) | Caller::App { key, .. } => Some(key.id.clone()),
+            Caller::Owner(session) => Some(format!("owner:{}", session.id)),
         }
     }
 
@@ -441,12 +442,12 @@ impl Caller {
         match self {
             Caller::Local(_) => json!({ "kind": "local", "id": "local", "name": "Local command" }),
             Caller::Server => json!({ "kind": "server", "id": "server", "name": "Marfa" }),
-            Caller::Key(key) => json!({ "kind": "key", "id": key.id, "name": key.label }),
+            Caller::Key(key) => json!({ "kind": "key", "id": key.id, "name": key.shown_name() }),
             Caller::Owner(session) => {
                 json!({ "kind": "browser", "id": session.id, "name": session.name() })
             }
             Caller::App { key, grant } => {
-                json!({ "kind": "app", "id": grant.grant_id, "name": key.label })
+                json!({ "kind": "app", "id": grant.grant_id, "name": key.shown_name() })
             }
         }
     }
@@ -513,7 +514,7 @@ mod tests {
             key: Box::new(wide.clone()),
             grant: Box::new(oauth::Granted {
                 client_id: "client".into(),
-                user_id: "owner".into(),
+                owner_id: "owner".into(),
                 grant_id: "grant".into(),
             }),
         };

@@ -183,7 +183,10 @@ describe("an archive that lacks a blob it names", () => {
       tar([
         {
           name: "manifest.json",
-          body: JSON.stringify({ version: 99, format: "marfa-archive-v0" }),
+          body: JSON.stringify({
+            version: 99,
+            written_by: "marfa-server 0.0.1",
+          }),
         },
         { name: "padding.bin", body: new Uint8Array(64 * 1024 * 1024) },
       ]),

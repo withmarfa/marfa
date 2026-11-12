@@ -34,13 +34,13 @@ beforeAll(async () => {
   );
   origin = new URL(((await discovery.json()) as { issuer: string }).issuer)
     .origin;
-  const signedIn = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
+  const signedIn = await fetch(`${server.apiUrl}/auth/sign-in`, {
     method: "POST",
     headers: { "content-type": "application/json", origin },
     body: JSON.stringify(OWNER),
   });
   expect(signedIn.status).toBe(200);
-  const session = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+  const session = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
     signedIn.headers.get("set-cookie") ?? "",
   )?.[1];
   expect(session, "sign-in set no session cookie").toBeTruthy();

@@ -1101,7 +1101,7 @@ If a signed-in app mints a key naming any extension namespace, then the server M
 
 ## The rate limiter
 
-One limiter, held in the server's memory, counts every limit in this chapter. Every count starts afresh when the server starts. The limiter holds a bounded number of windows for each kind of limit. When one kind is full, it drops that kind's window that ends soonest, and the key that window counted starts afresh. It never drops the account windows of password sign-in once the instance has an owner, the owner's device code lookup window or the instance-wide windows. The limits on a credential's requests are off for a run, so their rules are asserted against a server booted with the limiter on.
+One limiter, held in the server's memory, counts every limit in this chapter. Every count starts afresh when the server starts. The limiter holds a bounded number of windows for each kind of limit. When one kind is full, it drops that kind's window that ends soonest, and the key that window counted starts afresh. It never drops the windows that count password sign-in attempts at an account from every address once the instance has an owner, with a known device cookie or without one, the owner's device code lookup window or the instance-wide windows. The limits on a credential's requests are off for a run, so their rules are asserted against a server booted with the limiter on.
 
 ### `keys-and-oauth/keys-rate-cap`
 
@@ -1295,6 +1295,14 @@ When a native client's registration names an `http` redirect URI on the loopback
 
 **Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `compliance/oauth-registration-schema.test.ts › describes the public metadata registration accepts and echoes`.
 
+### `keys-and-oauth/redirect-loopback-any-port`
+
+When an authorization request names an `http` redirect URI on the loopback that differs from one the client registered on the loopback only in its port, the server MUST take it as the registered redirect URI.
+
+**Reason:** A native app listens on whatever port the system gives it when it signs in (RFC 8252, section 7.3), so it cannot register the port in advance.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › takes a loopback redirect URI on any port for one registered on the loopback`.
+
 ### `keys-and-oauth/register-native-private-use`
 
 When a native client's registration names a redirect URI in a private-use scheme that is a reverse domain name, with a path and no authority, such as `com.example.app:/callback`, the server MUST register it.
@@ -1479,13 +1487,13 @@ When an app refreshes a token that was issued for types chosen in place of an al
 
 ### `keys-and-oauth/authorize-nothing-grantable`
 
-If an authorization request names no scope the instance can grant, then the server MUST send the browser to the redirect URI with `error=invalid_scope`.
+Where the redirect URI is on the loopback or in a private-use scheme, or the signed-in person's standing consent to the app covers it, if an authorization request names no scope the instance can grant, then the server MUST send the browser to the redirect URI with `error=invalid_scope`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a request in which no scope can be granted to the redirect URI as invalid_scope`.
 
 ### `keys-and-oauth/authorize-pkce`
 
-If an authorization request carries no PKCE challenge, then the server MUST send the browser to the redirect URI with `error=invalid_request`.
+Where the redirect URI is on the loopback or in a private-use scheme, or the signed-in person's standing consent to the app covers it, if an authorization request carries no PKCE challenge, then the server MUST send the browser to the redirect URI with `error=invalid_request`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › is refused at the redirect URI without a PKCE challenge`.
 
@@ -1495,6 +1503,30 @@ If an authorization request names a redirect URI the client did not register, th
 
 **Tests:** `compliance/oauth-authorize.test.ts › is sent to the error page, never to a redirect URI the app did not register`, `› sends a request naming a private-use redirect URI the app did not register to the error page`.
 
+### `keys-and-oauth/authorize-error-web-unapproved`
+
+If an authorization request is refused for a redirect URI the client registered that is a web address off the loopback, and the signed-in person's standing consent to the app does not cover that URI, then the server MUST send the browser to its own `/auth/error` page with the error, never to that URI.
+
+**Reason:** RFC 9700 section 4.11.2: anyone can register an app with a web address, so sending an error there would make the server an open redirector. A loopback or private-use URI reaches a program on the person's device, and a standing consent means the person chose that address.
+
+**Tests:** `compliance/oauth-authorize.test.ts › sends a refusal for a web app nobody approved to the error page, and to its redirect URI once the person approves it`.
+
+### `keys-and-oauth/authorize-response-issuer`
+
+When the server sends the browser to a redirect URI with an authorization response, a code or an error, the server MUST carry `iss` in it, equal to the `issuer` its authorization server metadata names.
+
+**Reason:** the metadata sets `authorization_response_iss_parameter_supported` to `true` (RFC 9207), and a client that relies on it, as an MCP host does, rejects a response without `iss`.
+
+**Tests:** `compliance/oauth-authorize.test.ts › sends its issuer with the code and with each error it sends to a redirect URI`.
+
+### `keys-and-oauth/authorize-error-description`
+
+When the server sends the browser to a redirect URI with an authorization error, the server MUST carry an `error_description` in it that says in words why the request was refused.
+
+**Reason:** the error code alone does not tell a person who reads the app's failure screen what to change.
+
+**Tests:** `compliance/oauth-authorize.test.ts › says why in an error_description with each error it sends to a redirect URI`.
+
 ### `keys-and-oauth/authorize-private-use`
 
 When a person accepts an authorization request that names a private-use redirect URI the client registered, the server MUST send the browser to that URI, with the scheme and path as registered, carrying the code and the request's `state`.
@@ -1503,13 +1535,13 @@ When a person accepts an authorization request that names a private-use redirect
 
 ### `keys-and-oauth/prompt-none-login`
 
-If an authorization request naming `prompt=none` comes from nobody signed in, then the server MUST send the browser to the redirect URI with `error=login_required` and the request's `state`.
+Where the redirect URI is on the loopback or in a private-use scheme, if an authorization request naming `prompt=none` comes from nobody signed in, then the server MUST send the browser to the redirect URI with `error=login_required` and the request's `state`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a request from nobody signed in to the redirect URI as login_required`, `compliance/signed-in-apps.test.ts › is answered login_required under prompt=none from nobody signed in, and is not caught up`.
 
 ### `keys-and-oauth/prompt-none-consent`
 
-If a signed-in person's authorization request naming `prompt=none` names a scope no standing consent covers, then the server MUST send the browser to the redirect URI with `error=consent_required` and the request's `state`.
+Where the redirect URI is on the loopback or in a private-use scheme, or the signed-in person's standing consent to the app covers it, if a signed-in person's authorization request naming `prompt=none` names a scope no standing consent covers, then the server MUST send the browser to the redirect URI with `error=consent_required` and the request's `state`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a request no consent covers to the redirect URI as consent_required`.
 
@@ -1965,6 +1997,14 @@ When the server issues an access token, the server MUST accept that token at its
 
 **Tests:** `compliance/oauth-tokens.test.ts › accepts a token at the API and at /mcp, whichever of the server's resources it was issued for`.
 
+### `keys-and-oauth/access-token-lifetime`
+
+When the server issues an access token, the server MUST answer `expires_in` of 3600.
+
+**Reason:** An app refreshes, or asks again, within the hour, so a token that leaks is good for an hour at most.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › issues an access token that lasts an hour`.
+
 ### `keys-and-oauth/resource-one-value`
 
 If a token request names `resource` more than once, then the server MUST answer `400 invalid_target`.
@@ -1975,7 +2015,7 @@ If a token request names `resource` more than once, then the server MUST answer 
 
 ### `keys-and-oauth/resource-authorize-refused`
 
-If an authorization request names as `resource` anything other than this server's origin or one of its MCP endpoints, with a redirect URI the client registered or its client ID metadata document lists, then the server MUST send the browser to that redirect URI with `error=invalid_target`, the request's `state` and no code.
+Where the redirect URI is on the loopback or in a private-use scheme, or the signed-in person's standing consent to the app covers it, if an authorization request names as `resource` anything other than this server's origin or one of its MCP endpoints, with a redirect URI the client registered or its client ID metadata document lists, then the server MUST send the browser to that redirect URI with `error=invalid_target`, the request's `state` and no code.
 
 **Tests:** `compliance/oauth-tokens.test.ts › is refused at authorization to the redirect URI the app registered, with the request's state`.
 
@@ -2413,7 +2453,7 @@ If `POST /auth/sign-in`, `POST /auth/device`, `POST /auth/device/consent` or `PO
 
 ### `keys-and-oauth/browser-no-origin`
 
-When a browser form post carries neither `Origin` nor `Referer`, the server MUST answer it as that operation answers a form rather than refuse it for its origin.
+When a form post to `POST /auth/device`, `POST /auth/device/consent` or `POST /auth/authorize/decision` carries neither `Origin` nor `Referer`, the server MUST answer it as that operation answers a form rather than refuse it for its origin.
 
 **Tests:** `compliance/sign-in-surface.test.ts › refuses a form post from an origin it does not trust, on every browser door`.
 
@@ -2431,9 +2471,9 @@ When the sign-in form receives a `return_to` that resolves to a path on the inst
 
 ### `keys-and-oauth/sign-in-address-limit`
 
-If one address has made ten password sign-in attempts at an account in fifteen minutes, then the server MUST answer its next attempt `429` with `Retry-After`, before it judges the password.
+If one address has made ten counted password sign-in attempts at an account in fifteen minutes, then the server MUST answer its next attempt `429` with `Retry-After`, before it judges the password.
 
-**Reason:** Every attempt counts, the right password included, so the answer cannot tell a guesser it found the password.
+**Reason:** The refusal comes before the password is judged, so it cannot tell anyone whether the password was right.
 
 **Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at an account, and leaves the owner signing in from another`.
 
@@ -2465,13 +2505,73 @@ When `GET /auth/sign-in` carries `error=too_many_attempts` and a `retry_after` o
 
 **Tests:** `compliance/sign-in-surface.test.ts › tells a locked-out person how long to wait, in whole minutes rounded up, and that a passkey still signs in`.
 
+### `keys-and-oauth/sign-in-only-wrong-counted`
+
+When a password sign-in attempt, or a password sent to `POST /auth/confirm`, proves to be the right password, the server MUST leave it counted in none of the password sign-in limits.
+
+**Reason:** Only wrong passwords are counted, so the owner's own sign-ins and confirmations spend nothing. Each attempt is counted when it arrives and taken back once its password proves right, so attempts sent together are all held to the limits.
+
+**Tests:** `compliance/sign-in-limits.test.ts › counts only wrong passwords, so the owner's own sign-ins and confirmations spend nothing`.
+
 ### `keys-and-oauth/sign-in-account-limit`
 
-If every address together has made a hundred counted password sign-in attempts at an account in an hour, then the server MUST answer the next attempt from any address `429` with `Retry-After`.
+If every address together has made a hundred counted password sign-in attempts at an account in an hour without a known device cookie, then the server MUST answer the next such attempt from any address `429` with `Retry-After`.
 
 **Reason:** An attempt one address makes past its own limit is not counted here, so one guessing address cannot hold the owner out.
 
 **Tests:** `compliance/sign-in-limits.test.ts › holds every address together to a hundred attempts at an account in an hour, counting none an address made past its own limit`.
+
+### `keys-and-oauth/sign-in-device-cookie`
+
+When a password sign-in or a password sent to `POST /auth/confirm` signs the owner in, the server MUST set a device cookie, named `__Host-marfa_device` over HTTPS and `marfa_device` on this machine, with `HttpOnly`, `SameSite=Lax` and a `Max-Age` of 400 days, that holds only a random id, the time it was set and a signature from the instance's secret.
+
+**Reason:** The cookie marks a browser the right password has signed in from, and names no person.
+
+**Tests:** `compliance/sign-in-limits.test.ts › keeps a known device signing in while strangers are limited`.
+
+### `keys-and-oauth/sign-in-known-device`
+
+While the account limit (`keys-and-oauth/sign-in-account-limit`) is spent, when a password sign-in carries a device cookie the server set for the current credentials within the last 400 days, the server MUST NOT refuse the attempt for the account limit.
+
+**Reason:** A known device keeps signing in while strangers are limited, so the account limit cannot hold the owner out.
+
+**Tests:** `compliance/sign-in-limits.test.ts › keeps a known device signing in while strangers are limited`.
+
+### `keys-and-oauth/sign-in-known-device-limit`
+
+If one device cookie has made ten counted password sign-in attempts at an account in fifteen minutes, then the server MUST answer its next attempt `429` with `Retry-After`, before it judges the password.
+
+**Tests:** `compliance/sign-in-limits.test.ts › holds a known device to ten wrong passwords across addresses`.
+
+### `keys-and-oauth/sign-in-known-devices-limit`
+
+If every device cookie together has made a hundred counted password sign-in attempts at an account in an hour, then the server MUST answer the next attempt that carries a device cookie `429` with `Retry-After`, before it judges the password.
+
+**Reason:** A device cookie only lifts the account limit for a browser the password signed in from, so many cookies together are held to the same hundred as every address without one.
+
+**Tests:** `compliance/sign-in-limits.test.ts › holds every known device together to a hundred wrong passwords an hour`.
+
+### `keys-and-oauth/sign-in-device-reset`
+
+When the owner's password is recovered, the server MUST count each later password sign-in that carries a device cookie set before the recovery as one with no device cookie.
+
+**Reason:** A device cookie stands only for the current password, so a recovery leaves no browser known.
+
+**Tests:** `compliance/sign-in-limits.test.ts › forgets every known device when the password is recovered`.
+
+### `keys-and-oauth/sign-in-unknown-device`
+
+If a password sign-in carries a device cookie the server did not sign, or set more than 400 days ago, then the server MUST count the attempt as one with no device cookie.
+
+**Tests:** `compliance/sign-in-limits.test.ts › keeps a known device signing in while strangers are limited`.
+
+### `keys-and-oauth/device-cookie-not-a-session`
+
+If a request carries a device cookie and no session, then the server MUST answer it as a request with no credential.
+
+**Reason:** The device cookie only changes how sign-in attempts are counted, and proves nothing about who sent the request.
+
+**Tests:** `compliance/sign-in-limits.test.ts › keeps a known device signing in while strangers are limited`.
 
 ### `keys-and-oauth/sign-in-other-address`
 
@@ -2484,6 +2584,52 @@ When one address is held to its sign-in limit, the server MUST still answer a si
 The server MUST count an IPv6 address by its /64 for the password sign-in limits.
 
 **Tests:** `compliance/sign-in-limits.test.ts › counts an IPv6 address as its /64`.
+
+### `keys-and-oauth/sign-in-other-emails-limit`
+
+If one address has made ten password sign-in attempts in fifteen minutes at emails that are not the owner's, then the server MUST answer its next attempt at an email that is not the owner's `429` with `Retry-After`, before it judges the password.
+
+**Reason:** Every email but the owner's has no account to guess, so all of them share one count, and an address cannot spread its attempts over made-up emails.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › counts password sign-ins at every email but the owner's together, and still judges the owner's password`.
+
+### `keys-and-oauth/sign-in-decoy-queue`
+
+If eight password sign-ins at emails that are not the owner's are already waiting for their password check, then the server MUST answer the next such sign-in `429` with `Retry-After`.
+
+**Reason:** A sign-in at an email with no account still does the work of a password check, so it cannot be told from a wrong password by its time; those checks wait in a queue of their own, so they can never hold up the owner's.
+
+**Tests:** waiting on #2892.
+
+### `keys-and-oauth/register-address-limit`
+
+Where `rate_limit_enabled` is `true`, if one address has sent ten `POST /auth/oauth2/register` requests in a minute, then the server MUST answer its next one `429` with `Retry-After`.
+
+**Reason:** Registration needs no credential, and each one stores a client.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › answers the eleventh client registration from one address in a minute 429`.
+
+### `keys-and-oauth/device-code-address-limit`
+
+Where `rate_limit_enabled` is `true`, if one address has sent thirty `POST /auth/device/code` requests in a minute, then the server MUST answer its next one `429` with `Retry-After`.
+
+**Reason:** A device code request needs no credential, and each one stores a code a person may be asked to type.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › answers the thirty-first device code from one address in a minute 429`.
+
+### `keys-and-oauth/client-document-limits`
+
+If one address has made ten requests in a minute that fetch a client ID metadata document, or every address together thirty, then the server MUST NOT fetch the document for the next such request.
+
+**Reason:** Each request makes the server fetch from an address the caller names, so the count holds what one caller can make the server send.
+
+**Tests:** waiting on #2892.
+
+### `keys-and-oauth/client-document-limit-answer`
+
+If a client document limit keeps the server from fetching a client's metadata document, then the server MUST answer the request as it would with the copy it keeps of that client, or, with none kept, refuse it with `temporarily_unavailable`.
+
+**Tests:** waiting on #2892.
 
 ### `keys-and-oauth/device-lookup-address-limit`
 
@@ -2526,6 +2672,14 @@ When `GET /auth/device` carries `error=expired_code`, the server MUST answer a p
 The server MUST say, on the page where a device code is typed, that codes end after 10 minutes, the `expires_in` of 600 it issues them with.
 
 **Tests:** `compliance/sign-in-surface.test.ts › says how long codes last`.
+
+### `keys-and-oauth/device-page-code`
+
+When `GET /auth/device` carries `user_code`, the server MUST answer a page whose code field holds it.
+
+**Reason:** `verification_uri_complete` carries the code, so a person who follows it only checks the code against the device.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › fills the device page's code field with the user_code it is opened with`.
 
 ### `keys-and-oauth/device-lookup-instance-limit`
 
@@ -2575,21 +2729,71 @@ When an owner's device code lookup window or the owner lane's collective window 
 
 **Tests:** `compliance/device-owner-limits.test.ts › shares ten lookups across owner sessions, addresses and routes`, `› holds the owner lane aggregate to its limit and resets its fifteen-minute window`.
 
-## The sign-in library's routes
+## Password sign-in
 
-The sign-in surface is served through a library that offers more routes than Marfa uses.
+`POST /auth/sign-in` takes the sign-in page's form, which it answers with a redirect, or a JSON body.
 
-### `keys-and-oauth/auth-other-paths`
+### `keys-and-oauth/password-sign-in-answer`
 
-If a request names a path under `/auth/` that the sign-in surface does not serve, with or without a trailing slash, then the server MUST answer `404 not_found`.
+When `POST /auth/sign-in` sends, as JSON, the owner's `email` and `password` and signs the owner in, the server MUST answer `200` with only `{"ok": true}` and set the owner's session cookie, `HttpOnly` and `SameSite=Lax`.
 
-**Reason:** Of the library's routes, the surface serves password sign-in and sign-out, the confirmation of a recent sign-in, passkey sign-in and registration, the OAuth protocol routes, the device code request, and the discovery and error documents. Every other one, such as profile and account editing, social and email flows, the browser session's own reads and revocations, a password change, session and account listings, a password check and a signed session token, answers as a path nothing serves.
+**Reason:** A script that signs in needs the cookie and nothing else, and the session it opens is listed at `GET /owner/sign-ins`.
 
-**Tests:** `compliance/sign-in-library-routes.test.ts › answer 404 not_found on every path no Marfa client uses, either spelling, to a signed-in owner`.
+**Tests:** `compliance/sign-in-surface.test.ts › answers a password sign-in sent as JSON with only ok, and its session cookie`.
+
+### `keys-and-oauth/password-sign-in-fields`
+
+If `POST /auth/sign-in` sends, as JSON, a key other than `email` and `password`, then the server MUST answer `400 validation_error` naming each such key in `details.unknown_body_fields`, and set no cookie.
+
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a password sign-in sent as JSON with a field it does not take, and sets no cookie`.
+
+### `keys-and-oauth/session-cookie-name`
+
+Where the sign-in address is plain HTTP on this machine, the server MUST name the owner's session cookie `marfa_session`.
+
+**Reason:** A browser takes a `__Host-` cookie only over HTTPS.
+
+**Tests:** `compliance/sign-in-surface.test.ts › answers a password sign-in sent as JSON with only ok, and its session cookie`.
+
+### `keys-and-oauth/session-cookie-https`
+
+Where the sign-in address is HTTPS, the server MUST set the owner's session cookie as `__Host-marfa_session`, with `Secure`, `Path=/` and no `Domain`.
+
+**Reason:** The prefix binds the cookie to the instance's host, so no other host under the same domain can set or read it.
+
+**Tests:** `compliance/session-cookie-https.test.ts › is __Host-marfa_session, Secure, on path / and with no Domain`.
+
+### `keys-and-oauth/session-renewal-not-on-error`
+
+If the server answers a request that would renew a browser session with a `5xx` status, then the server MUST NOT send the renewal cookie.
+
+**Reason:** The request may not have done what it set out to do, and a renewal on it would keep a session alive on the strength of a failure.
+
+**Tests:** waiting on #2892.
+
+### `keys-and-oauth/session-cookie-other-name`
+
+If a request carries a live browser session's token under a cookie name other than the one the sign-in address calls for, then the server MUST answer the request as one that carries no session.
+
+**Tests:** `compliance/session-cookie-https.test.ts › signs no one in when its token comes under the name a plain HTTP address uses`.
+
+### `keys-and-oauth/sign-in-unsaid-origin`
+
+If `POST /auth/sign-in` or `POST /auth/passkeys/sign-in` carries neither `Origin` nor `Referer`, then the server MUST answer `403 forbidden`.
+
+**Reason:** A door that opens a browser session takes a post, as a form or as JSON, only from a page it trusts, so a post that does not say where it came from is refused.
+
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a sign-in that says neither Origin nor Referer, as a form or as JSON, and sets no cookie`, `compliance/passkeys.test.ts › refuses a passkey sign-in that says neither Origin nor Referer, and opens no session`.
+
+### `keys-and-oauth/sign-out-answer`
+
+When `POST /auth/sign-out` ends the browser session, the server MUST answer `200` with only `{"ok": true}`.
+
+**Tests:** `compliance/sign-in-surface.test.ts › answers a sign-out with only ok, and ends the session cookie`.
 
 ### `keys-and-oauth/library-origin`
 
-If `POST /auth/sign-in/email` carries an `Origin` that is neither the issuer's origin nor one `cors_origins` names, an approved web page's origin included, then the server MUST answer `403`.
+If `POST /auth/sign-in` carries an `Origin` that is neither the issuer's origin nor one `cors_origins` names, an approved web page's origin included, then the server MUST answer `403`.
 
 **Reason:** A password sign-in sets the owner's session cookie, so the origins it trusts are the operator's and never widen with an approval.
 
@@ -2957,7 +3161,7 @@ If `PATCH /owner/sign-ins/{id}` names no live sign-in of the owner, then the ser
 
 ## A browser session's idle week
 
-A browser session expires seven days and one minute after its last recorded use. A use is recorded at most once a minute; a use that storage refuses does not renew the expiry. A session signed in to be remembered keeps a cookie that lasts longer, and one signed in not to be remembered keeps a cookie that ends with the browser. The stored session is what ends either.
+A browser session expires seven days and one minute after its last recorded use. A use is recorded at most once a minute; a use that storage refuses does not renew the expiry. The session's cookie lasts longer, so the stored session is what ends it.
 
 ### `keys-and-oauth/session-use-recorded`
 
@@ -2971,7 +3175,7 @@ When the server admits a request on a browser session whose last recorded use is
 
 When the server records a use of a browser session, the server MUST set the session's `expires_at` to seven days and one minute after that use.
 
-**Reason:** The sign-in library renews a session only once its last renewal is a day old, so a session used within that day would end a week after the older renewal rather than a week after its last use.
+**Reason:** A session renewed only once its last renewal is a day old would end a week after that renewal rather than a week after its last use.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › records a request as the last use and moves the expiry to a week and a minute after it, where a renewal a day old would not`.
 
@@ -2979,31 +3183,23 @@ When the server records a use of a browser session, the server MUST set the sess
 
 When a password sign-in creates a browser session, the server MUST set the session's `expires_at` to seven days and one minute after the sign-in.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › gives a new session a week and a minute, and its cookie 400 days`, `› keeps a sign-in not to be remembered on a cookie with no Max-Age, and its idle week on the server`.
+**Tests:** `compliance/owner-sign-ins.test.ts › gives a new session a week and a minute, and its cookie 400 days`.
 
 ### `keys-and-oauth/session-cookie-lifetime`
 
-When a password sign-in that asks to be remembered sets a browser session's cookie, the server MUST give the cookie a `Max-Age` of 400 days.
+When a password sign-in sets a browser session's cookie, the server MUST give the cookie a `Max-Age` of 400 days.
 
 **Reason:** The stored session is the only clock, so the cookie only has to outlive it. A cookie that tracked the session's expiry would be dropped while the session lived whenever the answer that renewed it did not reach the browser.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › gives a new session a week and a minute, and its cookie 400 days`.
 
-### `keys-and-oauth/session-cookie-forgotten`
-
-When a password sign-in asks not to be remembered, the server MUST set the session's cookie without a `Max-Age`.
-
-**Reason:** The browser drops such a cookie when it closes, as the person asked.
-
-**Tests:** `compliance/owner-sign-ins.test.ts › keeps a sign-in not to be remembered on a cookie with no Max-Age, and its idle week on the server`.
-
 ### `keys-and-oauth/session-use-cookie`
 
-When the server records a use of a browser session signed in to be remembered, the server MUST send the browser's session cookie again with a `Max-Age` of 400 days, in any answer other than `401` or one that ends that session.
+When the server records a use of a browser session, the server MUST send the browser's session cookie again with a `Max-Age` of 400 days, in any answer other than `401` or one that ends that session.
 
 **Reason:** A session in use for longer than 400 days keeps its cookie. An answer that refuses the request still records the use, a `401` means the session ended while the request was in flight, and an answer that ends the session clears its cookie instead.
 
-**Tests:** `compliance/owner-sign-ins.test.ts › sends the cookie again for 400 days when it records a use, in a refusal too`, `› keeps a sign-in not to be remembered on a cookie with no Max-Age, and its idle week on the server`.
+**Tests:** `compliance/owner-sign-ins.test.ts › sends the cookie again for 400 days when it records a use, in a refusal too`.
 
 ### `keys-and-oauth/session-use-unwritten`
 

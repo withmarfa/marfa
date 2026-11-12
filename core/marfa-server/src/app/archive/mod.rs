@@ -32,8 +32,7 @@ use crate::db::io_refusal;
 use crate::settings::registry::{self, ADDRESSES, SIGN_IN_ADDRESS};
 use spool::{Lines, Spooled};
 
-pub const FORMAT: &str = "marfa-archive-v0";
-pub const VERSION: u64 = 0;
+pub const VERSION: u64 = 1;
 const PAGE: i64 = 500;
 const EDGE_PAGE: i64 = 1000;
 const QUEUED: usize = 4;
@@ -146,7 +145,7 @@ pub struct Backup {
     pub limit: std::time::Duration,
     /// Each file its rows name that the registry held in its snapshot.
     pub files: Vec<String>,
-    /// The files its manifest lists under `bucket_blobs`.
+    /// The files the bucket held a recorded copy of.
     pub in_bucket: Vec<String>,
 }
 
@@ -169,6 +168,11 @@ struct Selected {
     listed: Vec<Carried>,
     missing: BTreeMap<String, Value>,
     backup: Option<Snapshot>,
+}
+
+/// The build that writes an archive, as its manifest names it.
+pub fn writer() -> String {
+    format!("marfa-server {}", super::instance::VERSION)
 }
 
 fn print(value: &impl serde::Serialize) -> Result<String> {
@@ -335,7 +339,7 @@ impl App {
         }
         let mut manifest = Map::new();
         manifest.insert("version".into(), VERSION.into());
-        manifest.insert("format".into(), FORMAT.into());
+        manifest.insert("written_by".into(), writer().into());
         manifest.insert("created_at".into(), created_at.text().into());
         manifest.insert("instance_id".into(), self.instance_id.clone().into());
         manifest.insert("item_count".into(), selected.items.lines.into());
@@ -348,9 +352,7 @@ impl App {
             "missing_blobs".into(),
             Value::Object(missing.into_iter().collect()),
         );
-        let snapshot = selected.backup.inspect(|snapshot| {
-            manifest.insert("bucket_blobs".into(), snapshot.in_bucket.clone().into());
-        });
+        let snapshot = selected.backup;
         reading(self, caller, |_| Ok(())).await?;
         let prepared = Prepared {
             created_at,
@@ -406,11 +408,15 @@ fn select(
         if read.faults().fail(FAIL_EXPORT_READ, None) {
             return Err(io_refusal());
         }
-        let seqs = query::selected(read, ask, after, PAGE)?;
+        let seqs: Vec<i64> = query::selected(read, ask, after, PAGE)?
+            .into_iter()
+            .map(|chosen| chosen.seq)
+            .collect();
         let Some(last) = seqs.last() else {
             break;
         };
         after = *last;
+        read.hydrating();
         let rows = items::archived(read.tx, caller, catalog, &read.read_only, &seqs, true)?;
         for row in rows {
             let line = line_value(&row.line)?;

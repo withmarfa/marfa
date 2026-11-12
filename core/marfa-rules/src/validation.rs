@@ -11,10 +11,10 @@ pub const MAX_TAG_LENGTH: usize = 128;
 
 pub const MAX_TAGS_PER_ITEM: usize = 100;
 
-/// Longest string field value with no `maxLength` of its own.
+/// Longest string field value with no `max_length` of its own.
 const STRING_MAX_LENGTH: u64 = 100_000;
 
-/// Longest value of a type's body field with no `maxLength` of its own.
+/// Longest value of a type's body field with no `max_length` of its own.
 pub const BODY_MAX_LENGTH: u64 = 1_000_000;
 
 struct Problem {
@@ -356,7 +356,7 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<Problem
             .unwrap_or(default)
     };
     let bounded = |text: &str| {
-        let max = limit("maxLength", STRING_MAX_LENGTH);
+        let max = limit("max_length", STRING_MAX_LENGTH);
         if text.chars().count() as u64 > max {
             Some(Problem::new(
                 field_code::TOO_LONG,
@@ -389,7 +389,7 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<Problem
         "boolean" => if value.is_boolean() { None } else { expected("boolean") },
         "array" => match value.as_array() {
             None => expected("array"),
-            Some(values) if values.len() as u64 > limit("maxItems", 10_000) => Some(Problem::new(field_code::TOO_MANY, format!("Must contain at most {} items", limit("maxItems", 10_000)))),
+            Some(values) if values.len() as u64 > limit("max_items", 10_000) => Some(Problem::new(field_code::TOO_MANY, format!("Must contain at most {} items", limit("max_items", 10_000)))),
             Some(values) => elements(definition, values)?,
         },
         "object" => if value.is_object() { None } else { expected("object") },
@@ -955,7 +955,7 @@ mod tests {
 
     #[test]
     fn enums_with_no_values_use_string_rules_and_populated_enums_use_only_membership() {
-        let open = serde_json::json!({"enum_values": [], "maxLength": 2});
+        let open = serde_json::json!({"enum_values": [], "max_length": 2});
         assert_eq!(
             field("enum", &open, &serde_json::json!("ok")).unwrap(),
             None
@@ -970,7 +970,7 @@ mod tests {
                 .unwrap()
                 .is_some()
         );
-        let closed = serde_json::json!({"enum_values": ["long", "\u{0000}"], "maxLength": 2});
+        let closed = serde_json::json!({"enum_values": ["long", "\u{0000}"], "max_length": 2});
         assert_eq!(
             field("enum", &closed, &serde_json::json!("long")).unwrap(),
             None

@@ -19,7 +19,7 @@ use marfa_server::app::{App, housekeeping};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
 use marfa_server::settings::registry::{
-    BLOB_CLEANUP_GRACE_MS, BLOB_CLEANUP_INTERVAL_MS, BLOB_MIN_COPIES,
+    BLOB_CLEANUP_ENABLED, BLOB_CLEANUP_GRACE_SECONDS, BLOB_MIN_COPIES,
 };
 use marfa_server::settings::{Accepted, Environment, Settings};
 use rusqlite::{Connection, OpenFlags};
@@ -446,10 +446,10 @@ async fn a_blob_held_only_by_a_detached_store_answers_503_and_an_unknown_one_404
 async fn the_orphan_job_keeps_what_settings_committed_before_they_are_live_keep() {
     let mut purged = Vec::new();
     for (key, value) in [
-        ("blob_cleanup_grace_ms", "86400000"),
-        ("blob_cleanup_interval_ms", "0"),
+        ("blob_cleanup_grace_seconds", "86400"),
+        ("blob_cleanup_enabled", "false"),
     ] {
-        let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_MS", "0")]).await;
+        let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_SECONDS", "0")]).await;
         let orphan = instance.stored(b"nothing names this").await;
         let first = instance.run("blob-orphans").await;
         assert_eq!(first["purged"], 0, "{first}");
@@ -461,8 +461,8 @@ async fn the_orphan_job_keeps_what_settings_committed_before_they_are_live_keep(
         instance.when_held().await;
         commit_unpublished(&instance.app, key, value).await;
         let live = instance.app.settings.live();
-        assert_eq!(live.get(BLOB_CLEANUP_GRACE_MS), 0);
-        assert_eq!(live.get(BLOB_CLEANUP_INTERVAL_MS), 86_400_000);
+        assert_eq!(live.get(BLOB_CLEANUP_GRACE_SECONDS), 0);
+        assert!(live.get(BLOB_CLEANUP_ENABLED));
         faults.clear(Some("hold:write"));
         let second = run.await.unwrap().unwrap();
         assert_eq!(second.outcome, "ok", "{:?}", second.error);
@@ -473,16 +473,16 @@ async fn the_orphan_job_keeps_what_settings_committed_before_they_are_live_keep(
         ));
     }
     let kept = [
-        ("blob_cleanup_grace_ms", json!(0), true),
-        ("blob_cleanup_interval_ms", json!(0), true),
+        ("blob_cleanup_grace_seconds", json!(0), true),
+        ("blob_cleanup_enabled", json!(0), true),
     ];
     assert_eq!(purged, kept);
 }
 
 #[tokio::test]
 async fn the_orphan_job_ends_in_error_and_purges_nothing_while_its_settings_do_not_read() {
-    for key in ["blob_cleanup_grace_ms", "blob_cleanup_interval_ms"] {
-        let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_MS", "0")]).await;
+    for key in ["blob_cleanup_grace_seconds", "blob_cleanup_enabled"] {
+        let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_SECONDS", "0")]).await;
         let orphan = instance.stored(b"nothing names this").await;
         let first = instance.run("blob-orphans").await;
         assert_eq!(first["purged"], 0, "{first}");
@@ -504,7 +504,7 @@ async fn the_orphan_job_ends_in_error_and_purges_nothing_while_its_settings_do_n
 
 #[tokio::test]
 async fn the_orphan_job_reports_then_purges_after_the_grace_and_keeps_what_an_item_names() {
-    let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_MS", "1000")]).await;
+    let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_SECONDS", "1")]).await;
     let orphan = instance.stored(b"nothing names this").await;
     let named = instance.stored(b"an item names this").await;
     instance.note(&format!("see {named}")).await;
@@ -539,7 +539,7 @@ async fn the_orphan_job_reports_then_purges_after_the_grace_and_keeps_what_an_it
 
 #[tokio::test]
 async fn at_a_grace_of_zero_the_run_after_a_report_purges_within_the_same_millisecond() {
-    let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_MS", "0")]).await;
+    let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_SECONDS", "0")]).await;
     let hash = instance.stored(b"reported and purged at one instant").await;
 
     let first = instance.run("blob-orphans").await;
@@ -551,7 +551,7 @@ async fn at_a_grace_of_zero_the_run_after_a_report_purges_within_the_same_millis
 
 #[tokio::test]
 async fn a_purge_cut_short_leaves_its_deletion_queued_and_the_next_run_finishes_it() {
-    let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_MS", "0")]).await;
+    let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_SECONDS", "0")]).await;
     let hash = instance.stored(b"purged in two runs").await;
     instance.run("blob-orphans").await;
     instance.app.clock.advance(1).unwrap();
@@ -579,7 +579,7 @@ async fn a_purge_cut_short_leaves_its_deletion_queued_and_the_next_run_finishes_
 
 #[tokio::test]
 async fn an_upload_waits_on_a_late_deletion_of_its_bytes_and_answers_503_until_it_ends() {
-    let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_MS", "0")]).await;
+    let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_SECONDS", "0")]).await;
     let bytes = b"deleted, then uploaded again".to_vec();
     let hash = instance.stored(&bytes).await;
     instance.run("blob-orphans").await;
@@ -719,7 +719,7 @@ const BUCKET: &str = "marfa";
 /// Where the keys of a blob's objects in the fake store, in `prefix`, start.
 fn objects_of(prefix: &str, hash: &str) -> String {
     format!(
-        "/{BUCKET}/{prefix}/{}",
+        "/{BUCKET}/{prefix}/blobs/{}",
         hash.strip_prefix("sha256:").unwrap()
     )
 }
@@ -732,7 +732,7 @@ fn object_key(s3: &FakeS3, prefix: &str, hash: &str) -> String {
 }
 
 fn marker_key(prefix: &str) -> String {
-    format!("/{BUCKET}/{prefix}/.marfa-store")
+    format!("/{BUCKET}/{prefix}/blobs/.marfa-store")
 }
 
 impl Instance {
@@ -904,7 +904,10 @@ async fn a_head_asks_the_object_store_and_reads_no_bytes() {
 async fn a_blob_that_never_copies_does_not_hold_back_the_others() {
     let s3 = FakeS3::start().await;
     let mut env = s3.settings(BUCKET, "blobs");
-    env.push(("MARFA_BLOB_REPLICATE_BATCH".to_string(), "1".to_string()));
+    env.push((
+        "MARFA_TEST_TUNING".to_string(),
+        "blob_replicate_batch=1".to_string(),
+    ));
     let instance = Instance::start(&pairs(&env)).await;
     let stuck = b"refused by the object store";
     s3.refuse_writes(&objects_of("blobs", &hash_of(stuck)));
@@ -1476,7 +1479,7 @@ async fn settle() {
 
 #[tokio::test]
 async fn an_upload_whose_client_goes_away_while_its_record_waits_behind_a_purge_keeps_its_file() {
-    let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_MS", "0")]).await;
+    let instance = Instance::start(&[("MARFA_BLOB_CLEANUP_GRACE_SECONDS", "0")]).await;
     let bytes = b"uploaded again while its purge waits for the writer".to_vec();
     let hash = instance.stored(&bytes).await;
     instance.run("blob-orphans").await;
@@ -1542,7 +1545,7 @@ fn jpeg(width: u8) -> Vec<u8> {
 impl Instance {
     async fn with_owner(more: &[(&str, &str)]) -> Instance {
         let mut pairs = vec![
-            ("MARFA_BLOB_CLEANUP_GRACE_MS", "0"),
+            ("MARFA_BLOB_CLEANUP_GRACE_SECONDS", "0"),
             ("MARFA_SIGN_IN_ADDRESS", "http://127.0.0.1:8600"),
         ];
         pairs.extend_from_slice(more);
@@ -1655,4 +1658,50 @@ async fn a_copy_that_runs_out_of_time_aborts_its_multipart_upload() {
         s3.objects_under(&format!("/{BUCKET}/blobs/stalled"))
             .is_empty()
     );
+}
+
+#[tokio::test]
+async fn a_file_whose_grace_ends_while_a_sweep_waits_to_choose_keeps_its_object_store_copy() {
+    let s3 = FakeS3::start().await;
+    let mut env = s3.settings(BUCKET, "blobs");
+    env.push(("MARFA_BLOB_CLEANUP_GRACE_SECONDS".into(), "1".into()));
+    let instance = Instance::start(&pairs(&env)).await;
+    let hash = instance
+        .replicated(&s3, b"its grace ends while the sweep waits")
+        .await;
+    instance.run("blob-orphans").await;
+    instance.app.clock.advance(999).unwrap();
+
+    // The writer's queue becomes: a hold, the sweep's claim, a second hold, then its choice.
+    let (first, first_began) = occupy_writer(&instance.app);
+    first_began.await.unwrap();
+    let control = instance.control.clone();
+    let sweep = tokio::spawn(async move {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri("/housekeeping/blob-orphans/run")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{}"))
+            .unwrap();
+        send(&control, request).await
+    });
+    settle().await;
+    let (second, second_began) = occupy_writer(&instance.app);
+    settle().await;
+    first.send(()).unwrap();
+    second_began.await.unwrap();
+    settle().await;
+    instance.app.clock.advance(2).unwrap();
+    second.send(()).unwrap();
+    let run = sweep.await.unwrap();
+    assert_eq!(run.body["outcome"], "ok", "{}", run.body);
+    assert_eq!(run.body["result"]["purged"], 0, "{}", run.body);
+    assert_eq!(instance.fetch(&hash).await.status, StatusCode::OK);
+    object_key(&s3, "blobs", &hash);
+
+    // The witness: the next sweep surveys the backups and purges the file.
+    let next = instance.run("blob-orphans").await;
+    assert_eq!(next["purged"], 1, "{next}");
+    assert_eq!(instance.fetch(&hash).await.status, StatusCode::NOT_FOUND);
+    assert!(s3.objects_under(&objects_of("blobs", &hash)).is_empty());
 }

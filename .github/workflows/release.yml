@@ -390,6 +390,11 @@ jobs:
             ${{ runner.temp }}/marfa-native/archives
           key: ${{ steps.key.outputs.key }}
 
+      # The image is restored from the cache, never built from the package
+      # archive when the cache holds it; `main` saves it.
+      - name: Make the build image
+        uses: ./.github/actions/native-build-image
+
       # The arm64 programs are built here on x86_64 and read a sample under emulation.
       - name: Set up emulation for arm64
         if: matrix.arch == 'aarch64'

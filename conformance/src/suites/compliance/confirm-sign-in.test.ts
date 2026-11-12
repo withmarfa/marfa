@@ -7,6 +7,7 @@ import {
 import { issuerOrigin } from "../../utils/signed-in.js";
 import { testAuthenticator } from "../../utils/passkey-authenticator.js";
 import { TEST_OWNER } from "../../utils/target.js";
+import { sessionCookieOf as sessionCookie } from "../../client/owner-session.js";
 
 /**
  * Confirming a stale sign-in in place: `POST /auth/confirm` replaces the
@@ -39,14 +40,9 @@ function nextAddress(): string {
   return `198.51.100.${String(addresses)}`;
 }
 
-const sessionCookie = (response: Response): string | undefined =>
-  /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-    response.headers.get("set-cookie") ?? "",
-  )?.[1];
-
 /** Signs in with the owner's password from `address`. */
 async function signIn(address = nextAddress()): Promise<string> {
-  const response = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
+  const response = await fetch(`${server.apiUrl}/auth/sign-in`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -94,6 +90,53 @@ function removeAbsent(cookie: string): Promise<Response> {
   return fetch(`${server.apiUrl}/owner/passkeys/absent`, {
     method: "DELETE",
     headers: { cookie, origin, [CLIENT_HEADER]: nextAddress() },
+  });
+}
+
+/** The challenge for a passkey registration or sign-in, with its cookie added to `cookie`. */
+async function passkeyOptions(
+  ceremony: "registration" | "sign-in",
+  cookie: string,
+): Promise<{ status: number; challenge: string; cookie: string }> {
+  const response = await fetch(
+    `${server.apiUrl}/auth/passkeys/${ceremony}/options`,
+    {
+      method: "POST",
+      headers: { cookie, origin, [CLIENT_HEADER]: nextAddress() },
+    },
+  );
+  const body = (await response.json()) as { challenge?: string };
+  return {
+    status: response.status,
+    challenge: body.challenge ?? "",
+    cookie: [cookie, cookiesOf(response)].filter(Boolean).join("; "),
+  };
+}
+
+/** Registers `device` as a passkey named `name` from the session in `cookie`. */
+async function registerPasskey(
+  cookie: string,
+  device: ReturnType<typeof testAuthenticator>,
+  name: string,
+): Promise<Response> {
+  const options = await passkeyOptions("registration", cookie);
+  expect(options.status).toBe(200);
+  return fetch(`${server.apiUrl}/auth/passkeys/registration`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      origin,
+      cookie: options.cookie,
+      [CLIENT_HEADER]: nextAddress(),
+    },
+    body: JSON.stringify({
+      name,
+      response: device.registration(
+        options.challenge,
+        origin,
+        new URL(origin).hostname,
+      ),
+    }),
   });
 }
 
@@ -183,7 +226,7 @@ describe("confirming with the password", () => {
       expect(
         (await confirm({ password: "wrong one" }, stale, address)).status,
       ).toBe(401);
-      const direct = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
+      const direct = await fetch(`${server.apiUrl}/auth/sign-in`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -268,38 +311,14 @@ describe("a confirmation names no account", () => {
     const rpID = new URL(origin).hostname;
     const registered = testAuthenticator();
     const stranger = testAuthenticator();
-    const options = await get("/auth/passkey/generate-register-options", owner);
-    expect(options.status).toBe(200);
-    const challenge = ((await options.json()) as { challenge: string })
-      .challenge;
-    const added = await fetch(
-      `${server.apiUrl}/auth/passkey/verify-registration`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          origin,
-          cookie: [owner, cookiesOf(options)].join("; "),
-          [CLIENT_HEADER]: nextAddress(),
-        },
-        body: JSON.stringify({
-          name: "Confirm key",
-          response: registered.registration(challenge, origin, rpID),
-        }),
-      },
-    );
-    expect(added.status).toBe(200);
+    const added = await registerPasskey(owner, registered, "Confirm key");
+    expect(added.status).toBe(201);
 
     await server.advanceClock(6 * MINUTE);
-    const asked = await get(
-      "/auth/passkey/generate-authenticate-options",
-      owner,
-    );
-    const heard = ((await asked.json()) as { challenge: string }).challenge;
-    const cookie = [owner, cookiesOf(asked)].join("; ");
+    const asked = await passkeyOptions("sign-in", owner);
     const refused = await confirm(
-      { passkey: stranger.authentication(heard, origin, 1, rpID) },
-      cookie,
+      { passkey: stranger.authentication(asked.challenge, origin, 1, rpID) },
+      asked.cookie,
     );
     expect(refused.status).toBe(401);
     expect(sendsNoOtherSession(refused, owner)).toBe(true);
@@ -313,37 +332,15 @@ describe("confirming with a passkey", () => {
     const stale = await signIn();
     const rpID = new URL(origin).hostname;
     const device = testAuthenticator();
-    const options = await get("/auth/passkey/generate-register-options", stale);
-    const challenge = ((await options.json()) as { challenge: string })
-      .challenge;
-    const added = await fetch(
-      `${server.apiUrl}/auth/passkey/verify-registration`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          origin,
-          cookie: [stale, cookiesOf(options)].join("; "),
-          [CLIENT_HEADER]: nextAddress(),
-        },
-        body: JSON.stringify({
-          name: "Confirm key",
-          response: device.registration(challenge, origin, rpID),
-        }),
-      },
-    );
-    expect(added.status).toBe(200);
+    const added = await registerPasskey(stale, device, "Confirm key");
+    expect(added.status).toBe(201);
 
     await server.advanceClock(6 * MINUTE);
     expect((await removeAbsent(stale)).status).toBe(403);
-    const asked = await get(
-      "/auth/passkey/generate-authenticate-options",
-      stale,
-    );
-    const heard = ((await asked.json()) as { challenge: string }).challenge;
+    const asked = await passkeyOptions("sign-in", stale);
     const confirmed = await confirm(
-      { passkey: device.authentication(heard, origin, 1, rpID) },
-      [stale, cookiesOf(asked)].join("; "),
+      { passkey: device.authentication(asked.challenge, origin, 1, rpID) },
+      asked.cookie,
     );
     expect(confirmed.status).toBe(200);
     const renewed = sessionCookie(confirmed);
@@ -356,30 +353,12 @@ describe("confirming with a passkey", () => {
 describe("a stale session changing a passkey", () => {
   it("refuses a rename and a removal from a session created more than five minutes ago, and a recent session makes both", async () => {
     const holder = await signIn();
-    const rpID = new URL(origin).hostname;
-    const options = await get(
-      "/auth/passkey/generate-register-options",
+    const added = await registerPasskey(
       holder,
+      testAuthenticator(),
+      "Kept by age",
     );
-    const challenge = ((await options.json()) as { challenge: string })
-      .challenge;
-    const added = await fetch(
-      `${server.apiUrl}/auth/passkey/verify-registration`,
-      {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          origin,
-          cookie: [holder, cookiesOf(options)].join("; "),
-          [CLIENT_HEADER]: nextAddress(),
-        },
-        body: JSON.stringify({
-          name: "Kept by age",
-          response: testAuthenticator().registration(challenge, origin, rpID),
-        }),
-      },
-    );
-    expect(added.status).toBe(200);
+    expect(added.status).toBe(201);
 
     await server.advanceClock(6 * MINUTE);
     const fresh = await signIn();
@@ -423,11 +402,14 @@ describe("a stale session changing a passkey", () => {
 describe("a stale session adding a passkey", () => {
   it("refuses a passkey registration from a stale session", async () => {
     const stale = await signIn();
-    expect(
-      (await get("/auth/passkey/generate-register-options", stale)).status,
-    ).toBe(200);
+    const options = () =>
+      fetch(`${server.apiUrl}/auth/passkeys/registration/options`, {
+        method: "POST",
+        headers: { cookie: stale, origin, [CLIENT_HEADER]: nextAddress() },
+      });
+    expect((await options()).status).toBe(200);
     await server.advanceClock(6 * MINUTE);
-    const refused = await get("/auth/passkey/generate-register-options", stale);
+    const refused = await options();
     expect(refused.status).toBe(403);
     expect(await code(refused)).toBe("forbidden");
   });

@@ -41,8 +41,8 @@ pub async fn write(
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, body| async move {
         query::only(&uri, &[])?;
-        check_item_id(&id)?;
         let sent = body.declared_object(&BATCH_FIELDS)?;
+        check_item_id(&id)?;
         let ops = tables::operations(sent.get("operations"), tables::MAX_OPERATIONS)?;
         tables::write(&door, &who, claim, id, table, ops).await
     })

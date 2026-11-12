@@ -140,13 +140,13 @@ describe("the owner", () => {
     // which is where the link points, the consent screen, an approval of
     // everything the screen offers.
     const origin = new URL(first.verification_uri_complete).origin;
-    const signIn = await fetch(`${origin}/auth/sign-in/email`, {
+    const signIn = await fetch(`${origin}/auth/sign-in`, {
       method: "POST",
       headers: { "content-type": "application/json", origin },
       body: JSON.stringify(TEST_OWNER),
     });
     expect(signIn.status).toBe(200);
-    const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+    const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
       signIn.headers.get("set-cookie") ?? "",
     )?.[1];
     expect(cookie, "sign-in set no session cookie").toBeTruthy();

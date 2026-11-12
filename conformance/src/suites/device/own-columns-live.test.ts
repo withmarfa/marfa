@@ -61,7 +61,7 @@ const BAD: [string, unknown][] = [
     "columns.a.type_constraints",
     { a: { type: "item", type_constraints: ["user.absent-type"] } },
   ],
-  ["columns.a.maxLength", { a: { type: "item", maxLength: 5 } }],
+  ["columns.a.max_length", { a: { type: "item", max_length: 5 } }],
   ["columns", {}],
   ["columns", null],
   ["columns", "text"],

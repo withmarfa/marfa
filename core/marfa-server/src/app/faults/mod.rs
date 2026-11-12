@@ -38,6 +38,7 @@ macro_rules! point_list {
         FAIL_STREAM_REPLAY_ROW = Fail "stream-replay-row" Nth;
         FAIL_STREAM_REPLAY_UNTYPED = Fail "stream-replay-untyped" Nth;
         FAIL_LOCK = Fail "lock" Nth;
+        FAIL_EVENT_STAMP = Fail "event-stamp" Nth;
         FAIL_AUDIT = Fail "audit" Write;
         FAIL_COMMIT = Fail "commit" Write;
         FAIL_COMMIT_FULL = Fail "commit-full" Write;

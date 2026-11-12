@@ -13,8 +13,9 @@ import {
   movedClock,
   type Moment,
   playOut,
-  QUIET_SCHEDULE,
+  quiet,
 } from "../../utils/moved-clock.js";
+import { QUIET_TUNING, tuning } from "../../utils/tuning.js";
 
 /**
  * How long a delivery is kept: a handled one for seven days after it was
@@ -26,6 +27,9 @@ import {
  * rather than waited for.
  */
 
+/** Past every year of clock the cases below move, which `QUIET_SCHEDULE`'s year is not. */
+const BEYOND_THE_CLOCK_MS = "3153600000000";
+
 let server: FreshServer;
 let clock: ReturnType<typeof movedClock>;
 let serial = 0;
@@ -33,10 +37,14 @@ let serial = 0;
 beforeAll(
   async () => {
     server = await bootFreshServer("inbound-retention", {
-      ...QUIET_SCHEDULE,
+      ...tuning(
+        ...QUIET_TUNING,
+        `interval.inbound-delivery-cleanup=${BEYOND_THE_CLOCK_MS}`,
+      ),
       // Room for a body past the 32 MiB a pass removes at most.
       MARFA_INBOUND_MAX_BYTES: String(40 * 1024 * 1024),
     });
+    await quiet(server, ["inbound-delivery-cleanup"]);
     clock = movedClock(server);
   },
   2 * FRESH_SERVER_TIMEOUT_MS + 60_000,
@@ -436,7 +444,7 @@ describe("the repeat of a delivery whose first was removed by age", () => {
 
 describe("the cleanup job's interval", () => {
   it(
-    "lists inbound-delivery-cleanup every 60000 milliseconds, or at the interval the instance names",
+    "lists inbound-delivery-cleanup every 60000 milliseconds",
     async () => {
       const own = await bootFreshServer("inbound-cleanup-interval");
       try {
@@ -451,10 +459,6 @@ describe("the cleanup job's interval", () => {
           )?.interval_ms;
         };
         expect(await interval()).toBe(60_000);
-        await own.restart({
-          env: { MARFA_INBOUND_CLEANUP_INTERVAL_MS: "123456" },
-        });
-        expect(await interval()).toBe(123_456);
       } finally {
         await own.stop();
       }

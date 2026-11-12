@@ -302,7 +302,7 @@ async fn two_uploads_of_the_same_bytes_at_once_both_answer_201_and_keep_one_file
 
 #[tokio::test]
 async fn a_reader_that_stalls_is_cut_off_and_one_that_leaves_changes_nothing() {
-    let instance = Instance::with(&[("MARFA_BLOB_READ_IDLE_TIMEOUT_MS", "200")]).await;
+    let instance = Instance::with(&[("MARFA_TEST_TUNING", "blob_read_idle_ms=200")]).await;
     let bytes = vec![3u8; 16 * 1024 * 1024];
     let hash = hash_of(&bytes);
     assert_eq!(instance.put(&bytes).await.status, StatusCode::CREATED);
@@ -455,7 +455,7 @@ fn closes(reply: &Reply) -> bool {
 
 const RESERVE: &[(&str, &str)] = &[
     ("MARFA_DISK_RESERVE_BYTES", "1000000"),
-    ("MARFA_UPLOAD_IDLE_TIMEOUT_MS", "200"),
+    ("MARFA_TEST_TUNING", "upload_idle_ms=200"),
 ];
 
 #[tokio::test]

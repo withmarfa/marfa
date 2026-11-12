@@ -8,6 +8,7 @@
  * up to the poll.
  */
 import { spawn } from "node:child_process";
+import { createGunzip } from "node:zlib";
 import { mkdirSync, readdirSync, rmSync, statSync } from "node:fs";
 import { resolve } from "node:path";
 import { scalar } from "../../src/utils/scale/figures.js";
@@ -32,34 +33,39 @@ function bytesIn(directory: string): number {
   }
 }
 
-/** How many lines a file inside the archive holds, read as the tar stream goes by. */
+/** How many lines a compressed file inside the archive holds, counted as the tar stream goes by. */
 function archiveLines(archive: string, entry: string): Promise<number> {
   return new Promise((done, fail) => {
-    const tar = spawn("tar", ["-xzOf", archive, entry], {
+    const tar = spawn("tar", ["-xOf", archive, entry], {
       stdio: ["ignore", "pipe", "pipe"],
     });
+    const gunzip = createGunzip();
     let lines = 0;
     let last = 10;
     let stderr = "";
-    tar.stdout.on("data", (chunk: Buffer) => {
+    gunzip.on("data", (chunk: Buffer) => {
       for (const byte of chunk) if (byte === 10) lines++;
       last = chunk[chunk.length - 1] ?? last;
     });
+    gunzip.once("error", fail);
+    tar.stdout.pipe(gunzip);
     tar.stderr.on("data", (chunk: Buffer) => {
       stderr = (stderr + chunk.toString()).slice(-500);
     });
     tar.once("error", fail);
     tar.once("close", (code) => {
       if (code !== 0) fail(new Error(`tar exited with ${code}: ${stderr}`));
+    });
+    gunzip.once("end", () => {
       // A last line with no newline is still a line.
-      else done(last === 10 ? lines : lines + 1);
+      done(last === 10 ? lines : lines + 1);
     });
   });
 }
 
 /**
  * What is wrong with the archive, or null. It must exist and hold bytes, and
- * its `items.ndjson` must hold as many lines as the instance holds items: the
+ * its `items.ndjson.gz` must hold as many lines as the instance holds items: the
  * export copies every state but trashed, and the seed trashes nothing.
  */
 async function archiveProblem(
@@ -75,7 +81,7 @@ async function archiveProblem(
   if (size === 0) return "the archive is empty";
   let lines: number;
   try {
-    lines = await archiveLines(archive, "items.ndjson");
+    lines = await archiveLines(archive, "items.ndjson.gz");
   } catch (error) {
     return `the archive could not be read: ${String(error).slice(0, 200)}`;
   }

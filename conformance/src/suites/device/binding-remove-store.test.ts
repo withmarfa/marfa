@@ -211,14 +211,11 @@ describe("removing a store", () => {
 
   it("removes a store the writer refuses wrong_schema under its own count", async () => {
     const { device } = await storeWithOneUnsent("remove-schema");
-    edit(
-      device.store,
-      "ALTER TABLE queue RENAME COLUMN follows TO after_write",
-    );
+    edit(device.store, "PRAGMA user_version = 0");
     const opened = await device.tryOpen();
     expect(
       opened.error?.code,
-      "the reshaped store was not refused, so it cannot stand for another build's",
+      "the store at another version was not refused, so it cannot stand for another build's",
     ).toBe("wrong_schema");
     const shown = (opened.error as { unsent?: number } | undefined)?.unsent;
     expect(shown).toBe(1);

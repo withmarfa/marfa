@@ -388,7 +388,7 @@ While a device holds a reading handle, a device MUST refuse every write `reading
 
 **Reason:** two writers of one file would each queue into it and neither would see the other's items.
 
-**Tests:** `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`, `device/local-refusals.test.ts › refuses a hydration, a catch-up and a follow from a reading handle`, `device/folders-watch-every.test.ts › leaves a store that lacks a table untouched while another process holds its folder, and adds the table once it is let go`.
+**Tests:** `device/working-copy.test.ts › gives a second opener a reading handle that refuses writes`, `device/local-refusals.test.ts › refuses a hydration, a catch-up and a follow from a reading handle`, `device/folders-watch-every.test.ts › leaves a folder's store untouched while another process holds its folder, and takes the folder up once it is let go`.
 
 ### `device/reading-handle-queues-nothing`
 
@@ -3108,6 +3108,20 @@ If the server answers `whoami`'s `GET /profile` with `401`, then the CLI MUST ex
 
 **Tests:** `cli/login.test.ts › signs in with a device code approved in a browser session, and the token reaches the data plane`.
 
+### `device/whoami-key`
+
+When `whoami` runs with a credential that is not an access token on a server on its own contract, the CLI MUST report the server's answer to `GET /keys/current` as the credential's `key`.
+
+**Tests:** `cli/exits.test.ts › leaves whoami by 5 when the server refuses the key, and names a key it accepts`, `device/contract.test.ts › takes the served contract from the answer's header, whatever the root's body says`.
+
+### `device/whoami-ended-key`
+
+If the server answers `whoami`'s `GET /keys/current` with `401`, then the CLI MUST exit 5 and print nothing on standard output.
+
+**Reason:** A key that was revoked, or never minted, reaches nothing, and a script that checks its credential must not read a success.
+
+**Tests:** `cli/exits.test.ts › leaves whoami by 5 when the server refuses the key, and names a key it accepts`.
+
 ### `device/status-counts-not-permitted`
 
 If the server refuses `status` the item counts `403 type_not_permitted`, then the CLI MUST still describe the server, say the counts need a working key and exit 0.
@@ -4250,45 +4264,27 @@ If a command opens a store to read at a path that holds a file that is not a sto
 
 **Tests:** `device/cli-outcomes.test.ts › reports an absent reading store: %j`.
 
-### `device/reader-missing-table`
-
-If a device opens to read a store that lacks a table this build adds, then a device MUST refuse it `invalid`, saying to open it once with this build's writer.
-
-**Tests:** `device/working-copy.test.ts › opens a store made before a table this build adds, and adds it`.
-
-### `device/added-table`
-
-When a device opens to write a store made before a table this build adds, a device MUST add the table and open the store.
-
-**Tests:** `device/working-copy.test.ts › opens a store made before a table this build adds, and adds it`, `device/folders-watch-every.test.ts › watches every folder whose store lacks a table this build makes, adding the table`.
-
-### `device/reader-missing-column`
-
-If a device opens to read a store made before a column this build adds to a table, then a device MUST refuse it `invalid`, saying to open it once with this build's writer.
-
-**Tests:** `device/working-copy.test.ts › opens a store made before a column this build adds, adds it, and sends the write it holds`.
-
-### `device/added-column`
-
-When a device opens to write a store made before a column this build adds to a table, a device MUST add the column and open the store.
-
-**Reason:** a column added to the end of a table leaves every other column as it was, so the store's writes the server has not taken can still be sent, and refusing the store would strand them after an update of the app.
-
-**Tests:** `device/working-copy.test.ts › opens a store made before a column this build adds, adds it, and sends the write it holds`, `device/folders-watch-every.test.ts › watches every folder whose store lacks a column this build makes, adding the column`.
-
 ### `device/wrong-schema`
 
-If a store was made by another build of the core, at another schema version or with tables of another shape than this build makes, then a device MUST refuse every open of it, as a writer or to read, `wrong_schema` before it reads anything, naming the store's path, unless the open replaces a folder's store (`folders/refused-store-replaced`).
+If a store records another schema version than the one this build makes, then a device MUST refuse every open of it, as a writer or to read, `wrong_schema` before it reads anything, naming the store's path, unless the open replaces a folder's store (`folders/refused-store-replaced`).
 
-**Reason:** the schema version does not move before the first public release, so a table's shape is what tells one build's store from another's. A table that lacks only a column this build adds at its end is not of another shape (`device/added-column`), and neither is a missing table (`device/added-table`).
+**Reason:** a store outlives the app that made it, and a build reads only the shape its own version names. A store that records no version is one an earlier build made.
 
-**Tests:** `device/working-copy.test.ts › refuses to read a store a writer of another schema version made`, `› refuses a store another build shaped, by name, with the writes it holds unsent`.
+**Tests:** `device/working-copy.test.ts › refuses to read a store a writer of another schema version made`, `› refuses a store an earlier build made, by name, with the writes it holds unsent`.
+
+### `device/schema-version-kept`
+
+If a device refuses a store `wrong_schema`, then a device MUST leave the store's version and the writes it holds unchanged.
+
+**Reason:** only the build that made the store can send those writes (`device/wrong-schema-no-delete`).
+
+**Tests:** `device/working-copy.test.ts › refuses a store an earlier build made, by name, with the writes it holds unsent`.
 
 ### `device/wrong-schema-says`
 
 When a device refuses a store `wrong_schema`, a device MUST say how many writes it holds that the server has not taken, waiting, blocked, refused or dead.
 
-**Tests:** `device/working-copy.test.ts › refuses a store another build shaped, by name, with the writes it holds unsent`, `› names a blocked write among the writes a store of another shape holds unsent`.
+**Tests:** `device/working-copy.test.ts › refuses a store an earlier build made, by name, with the writes it holds unsent`, `› names a blocked write among the writes a store of another version holds unsent`.
 
 ### `device/wrong-schema-names-kind`
 
@@ -4296,7 +4292,7 @@ When a device refuses a store `wrong_schema` and its queue holds a write the ser
 
 **Reason:** a store an earlier build made can hold a write of a kind this build no longer sends, such as a metadata merge; naming the kind tells the person which writes only the build that made the store can send, and the store keeps them.
 
-**Tests:** `device/working-copy.test.ts › names a write of a kind this build does not send, among the writes a store of another shape holds`.
+**Tests:** `device/working-copy.test.ts › names a write of a kind this build does not send, among the writes a store of another version holds`.
 
 ### `device/wrong-schema-no-delete`
 
@@ -4304,7 +4300,7 @@ When a device refuses a store `wrong_schema`, a device MUST NOT advise deleting 
 
 **Reason:** only the build that made the store can send or show the writes it holds.
 
-**Tests:** `device/working-copy.test.ts › refuses a store another build shaped, by name, with the writes it holds unsent`.
+**Tests:** `device/working-copy.test.ts › refuses a store an earlier build made, by name, with the writes it holds unsent`.
 
 ### `device/replace-refused`
 
@@ -4392,7 +4388,7 @@ When a device removes a store, a device MUST NOT remove any other file beside it
 
 When a device is asked to remove a store it refuses `wrong_schema`, and the store holds the number of writes the server has not taken that was agreed to be lost, a device MUST remove the store.
 
-**Reason:** a store another build shaped is the copy a person most often needs to discard, and the count the refusal said (`device/wrong-schema-says`) is the count they agreed to lose.
+**Reason:** a store another build made is the copy a person most often needs to discard, and the count the refusal said (`device/wrong-schema-says`) is the count they agreed to lose.
 
 **Tests:** `device/binding-remove-store.test.ts › removes a store the writer refuses wrong_schema under its own count`.
 
@@ -4836,9 +4832,9 @@ When an app reads an item from a working copy, a device MUST answer the `read_on
 
 Where a device holds no answer from the server for an item's `read_only`, a device MUST answer it `false`.
 
-**Reason:** an item saved here and not yet sent, an item from a server that leaves the field out and an item of a copy made before the field have no answer, and `false` offers the edit the server takes anyway.
+**Reason:** an item saved here and not yet sent and an item from a server that leaves the field out have no answer, and `false` offers the edit the server takes anyway.
 
-**Tests:** `device/read-only.test.ts › answers false for an item whose answer leaves read_only out`, `› answers false for an item saved here until the server answers`, `› opens a copy made before read_only with its unsent work, and takes the answer at the next sync`.
+**Tests:** `device/read-only.test.ts › answers false for an item whose answer leaves read_only out`, `› answers false for an item saved here until the server answers`.
 
 ### `device/read-only-refresh`
 
@@ -5118,7 +5114,7 @@ If a write to an item, or to an edge or an item's extension, names a value, at a
 
 **Reason:** the server refuses the number, so a write kept would come back refused, or be stored changed.
 
-**Tests:** `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`, `› keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`, `› refuses %s in the properties of an edge and the data of an extension on both paths with one message`, `› keeps a number a float keeps in the properties of an edge and the data of an extension on both paths`.
+**Tests:** `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`, `› keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`, `› keeps a number a float keeps in the properties of an edge and the data of an extension on both paths`, `device/property-validation-edges.test.ts › refuses %s in the properties of an edge and the data of an extension on both paths with one message`.
 
 ### `device/number-exact-folder-flagged`
 
@@ -5146,19 +5142,11 @@ When a device queues a write that names, in a property, a whole number that a 64
 
 ### `device/url-trimmed`
 
-When a write names a value for a `url` field, an element of an array of `url` or a `url` member of an entry of a list, a device MUST judge the value and queue and show it as `types/url-value`, `types/url-punycode`, `types/url-idna`, `types/url-host-refused` and `types/url-stored` have the server do, except as `device/url-idna-unassigned` states.
+When a write names a value for a `url` field, an element of an array of `url` or a `url` member of an entry of a list, a device MUST judge the value and queue and show it as `types/url-value`, `types/url-punycode`, `types/url-idna`, `types/url-host-refused` and `types/url-stored` have the server do.
 
 **Reason:** a value the server takes after trimming must not be refused offline, and the item shown before the answer must be the item stored after it.
 
 **Tests:** `device/property-validation-live.test.ts › treats %s in a url the same on both paths and stores the same value`, `› refuses the url %j on both paths`.
-
-### `device/url-idna-unassigned`
-
-If a write names a `url` value of a special scheme whose host has a code point that is unassigned in the Unicode version of the IDNA tables the device uses, then a device MUST refuse `validation` the write naming the field, and queue nothing, whether or not the server takes the value.
-
-**Reason:** the tables are those of the `idna` crate, which this repository does not own and does not copy, so `http://Ⴍ𿣍ꡨ֮.Ⴞ/` and `https://𾢬.ܩ.쯙5/` are taken by the server and refused by the device. The device refuses and does not change the text, so nothing is lost, and the server takes the same value written online.
-
-**Tests:** `device/property-validation-live.test.ts › refuses the url %j on the device where the server takes it`.
 
 ### `device/range-checked`
 
@@ -5200,7 +5188,7 @@ If an app declares a type whose identifier breaks the type grammar or uses a res
 
 ### `device/declaration-field-refused`
 
-If an app declares a field, or a member of a list's entries (`items_fields`), that has a `type` other than a field type (for a member, other than `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date` or `datetime`); that has `items_type` `status`; that has `status_values` where its `type` is not `status`; whose `type` is `status` with `enum_values`, or with `status_values` that is not a non-empty list of words, each exactly a `value` and a `group`, the `value` a lowercase letter then up to 63 lowercase letters, digits and underscores and named once, the `group` one of `not_started`, `in_progress`, `completed` and `canceled`; that is a `string` whose `format` is `currency` with a `maxLength`; or that has `items_fields` where it is not an `array` whose `items_type` is `object`, or that names no member, or a member that is not an object naming its `type`, then a device MUST refuse the declaration `invalid`, naming the field.
+If an app declares a field, or a member of a list's entries (`items_fields`), that has a `type` other than a field type (for a member, other than `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date` or `datetime`); that has `items_type` `status`; that has `status_values` where its `type` is not `status`; whose `type` is `status` with `enum_values`, or with `status_values` that is not a non-empty list of words, each exactly a `value` and a `group`, the `value` a lowercase letter then up to 63 lowercase letters, digits and underscores and named once, the `group` one of `not_started`, `in_progress`, `completed` and `canceled`; that is a `string` whose `format` is `currency` with a `max_length`; or that has `items_fields` where it is not an `array` whose `items_type` is `object`, or that names no member, or a member that is not an object naming its `type`, then a device MUST refuse the declaration `invalid`, naming the field.
 
 **Reason:** the server refuses these when the type is registered (`types/field-grammar`, `types/status-refused`, `types/items-fields-refused`). A list whose entry declaration a device took, with a member of no type or of a kind an entry does not have, would fail every later write of that list with a decoding error instead of a refusal. A device checks only these, the tables a type declares (`device/declaration-tables-refused`), the shape of an inherited field (`device/declaration-field-shape-refused`), and the status words and thumbnails a chain holds (`device/declaration-words-thumbnails-refused`). It leaves the rest of the field grammar to the server, which refuses it when a hydration registers the declaration (`device/hydrate-unregistered-said`): for example, in a field or in a member, an `enum` without `enum_values`, a `minimum` above its `maximum` or on a field that is not a number, a `format` it does not know or on a kind the format does not fit, and an `array` without `items_type`.
 
@@ -5216,7 +5204,7 @@ Where an app declares a `string` field, or a member of a list's entries, whose `
 
 ### `device/declaration-field-shape-refused`
 
-If an app declares a type that gives a field another `type`, `format`, `items_type`, `items_fields`, `searchable`, `maxLength`, `maxItems` or `enum_values` than a type above it gives it, whether that type is in the declaration or one Marfa ships, or a `minimum` or `maximum` looser than that type's, or makes an inherited required field optional, then a device MUST refuse the declaration `invalid`, naming the type and the field (`types/child-shape`, `types/child-range-refused`).
+If an app declares a type that gives a field another `type`, `format`, `items_type`, `items_fields`, `searchable`, `max_length`, `max_items` or `enum_values` than a type above it gives it, whether that type is in the declaration or one Marfa ships, or a `minimum` or `maximum` looser than that type's, or makes an inherited required field optional, then a device MUST refuse the declaration `invalid`, naming the type and the field (`types/child-shape`, `types/child-range-refused`).
 
 **Reason:** the server refuses these when the type is registered, and a type a device took would fail there instead of at the app's own declaration.
 
@@ -5274,6 +5262,22 @@ When a hydration registers declared types, a device MUST register each parent be
 
 **Tests:** `device/save-before-sync.test.ts › registers a declared parent before its child, and fails a hydration whose registration meets a failing server`.
 
+### `device/hydrate-registers-referenced`
+
+When a hydration registers declared types, a device MUST register each type after every other declared type the instance does not hold that a column of its tables names in `type_constraints`.
+
+**Reason:** the server refuses a column naming a type it does not hold (`tables/item-unregistered`), so a type registered before the type its column names would be left unregistered.
+
+**Tests:** `device/save-before-sync-live.test.ts › registers a declared type after a type its table column names, though the declaration names it first`.
+
+### `device/hydrate-needs-cycle`
+
+If declared types the instance does not hold each need another of them registered first, as its parent or in a table column's `type_constraints`, then a device MUST refuse the hydration `invalid`, naming the types, before it registers any declared type.
+
+**Reason:** the server refuses each of them until it holds the others, so no order registers any of them.
+
+**Tests:** `device/save-before-sync-live.test.ts › refuses a hydration whose declared types each need the other registered first, naming them and registering neither`.
+
 ### `device/hydrate-register-fails`
 
 If the server answers a registration with a failure that clears on its own, then a device MUST fail the hydration rather than report the type as one the key may not register.
@@ -5324,7 +5328,7 @@ If the server refuses to replace a declared type, then a device MUST leave the t
 
 **Reason:** a key that may register a type may still not change its fields, and the rest of the slice does not depend on it.
 
-**Tests:** `device/declare-replaces.test.ts › keeps the server's definition of a type it refuses to replace, says why, and finishes the hydration`, `device/declare-replaces-live.test.ts › keeps what the server holds of a type it will not replace, says why, and finishes the hydration`.
+**Tests:** `device/declare-replaces.test.ts › keeps the server's definition of a type it refuses to replace, says why, and finishes the hydration`, `device/declare-replaces-live.test.ts › keeps what the server holds of a type it will not replace, says why, and finishes the hydration`, `› asks the server to replace each held type whose declared parents loop, and finishes the hydration`.
 
 ### `device/hydrate-replaced-said`
 
@@ -7528,7 +7532,7 @@ If the `--parent` of `marfa types scaffold` breaks the type grammar or names the
 
 ### `device/types-scaffold-parent-shape-refused`
 
-If a `--field` of `marfa types scaffold` redeclares a field of a parent Marfa ships with another `type`, `format`, `items_type`, `searchable`, `maxLength`, `maxItems` or `enum_values`, or makes a field the parent requires optional (`types/child-shape`), then the CLI MUST exit 1 with `invalid`, naming the reason.
+If a `--field` of `marfa types scaffold` redeclares a field of a parent Marfa ships with another `type`, `format`, `items_type`, `searchable`, `max_length`, `max_items` or `enum_values`, or makes a field the parent requires optional (`types/child-shape`), then the CLI MUST exit 1 with `invalid`, naming the reason.
 
 **Reason:** the server refuses such a subtype with `inheritance_violation`, so the definition would not register.
 

@@ -236,7 +236,7 @@ async fn give_up(app: &App, id: &str, cause: &Refusal) -> Result<()> {
     let id = id.to_string();
     let reason = format!(
         "The job met a fault each time it was tried, so it wrote nothing further: {}.",
-        cause_of(cause)
+        cause.cause()
     );
     app.write(&Caller::Server, "items.bulk_action.fail", move |unit| {
         let tx = unit.tx();
@@ -267,15 +267,8 @@ fn fail(tx: &Transaction<'_>, job: &Job, reason: &str, at: &str) -> Result<()> {
     store::end(tx, &job.id, FAILED, at, Some(reason), Some(&result))
 }
 
-fn cause_of(refusal: &Refusal) -> String {
-    match refusal.database_code() {
-        Some(code) => format!("Database operation failed ({code})"),
-        None => refusal.message.to_string(),
-    }
-}
-
 fn error_entry(id: &str, refusal: &Refusal) -> Value {
-    let mut entry = json!({ "id": id, "code": refusal.code.wire(), "message": cause_of(refusal) });
+    let mut entry = json!({ "id": id, "code": refusal.code.wire(), "message": refusal.cause() });
     if let Some(details) = &refusal.details {
         entry["details"] = Value::Object((**details).clone());
     }

@@ -51,7 +51,7 @@ impl Instance {
             ("MARFA_RATE_LIMIT_ENABLED", "false"),
             ("MARFA_ENRICHMENT_ENABLED", "true"),
             ("MARFA_ENRICHMENT_OCR_ENABLED", "false"),
-            ("MARFA_ENRICHMENT_INTERVAL_MS", "3600000"),
+            ("MARFA_TEST_TUNING", "interval.enrichment-sweep=3600000"),
         ];
         pairs.extend_from_slice(settings);
         let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
@@ -650,7 +650,10 @@ async fn writes_nothing_from_a_reading_made_under_another_type() {
 }
 
 async fn does_not_run_again_at_once_for_files_it_handed_back() {
-    let batch = [("MARFA_ENRICHMENT_BATCH_SIZE", "2")];
+    let batch = [(
+        "MARFA_TEST_TUNING",
+        "interval.enrichment-sweep=3600000,enrichment_batch=2",
+    )];
     let one = Instance::start(&batch).await;
     for number in 0..3 {
         let bytes = format!("a ledger kept elsewhere, number {number}");

@@ -814,7 +814,7 @@ describe("a create that resolves an existing item", () => {
     // leave a queued client with nothing to rebase onto and no route to call
     // that the refusal did not already have the answer for.
     const body = refused.error as unknown as ConflictResponse;
-    expect(body.error.status).toBe(409);
+    expect(body.error).not.toHaveProperty("status");
     // The request named a key and not an id, so the envelope is the only
     // place a queued client learns which item refused it.
     expect(

@@ -10,6 +10,7 @@ mod order;
 mod overview;
 mod reach;
 mod search;
+mod sorted;
 mod sources;
 mod views;
 

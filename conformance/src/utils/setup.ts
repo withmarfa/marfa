@@ -285,7 +285,11 @@ export function trackType(
   parent?: string,
   compatibleWith?: string | string[],
 ): void {
-  if (ctx.trackedTypes.some((t) => t.id === id)) return;
+  const known = ctx.trackedTypes.find((t) => t.id === id);
+  if (known) {
+    if (parent !== undefined) known.parent = parent;
+    return;
+  }
   ctx.trackedTypes.push({
     id,
     createdBy,

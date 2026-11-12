@@ -149,6 +149,7 @@ impl Sender {
 
     /// Queues what the log holds past the sender's place, a page a write.
     async fn schedule(&mut self) {
+        let mut synced = false;
         while !self.stopping() {
             let faults = self.app.faults.clone();
             match self
@@ -170,10 +171,19 @@ impl Sender {
             // The pass sees every commit counted so far, and its own commit wakes nothing.
             let before = *self.commits.borrow_and_update();
             let app = self.app.clone();
+            // Only a pass that may queue a delivery is synced: a sent delivery keeps its ids.
+            let write = if synced {
+                Write::own()
+            } else {
+                Write::own().unsynced()
+            };
             let passed = self
                 .app
                 .db
-                .write(Write::own(), move |tx| {
+                .write(write, move |tx| {
+                    if !write.sync && store::any_active(tx)? {
+                        return Ok(None);
+                    }
                     let catalog =
                         catalog::current(&app.catalog_handle(), tx, catalog::Snapshot::Committed)?;
                     let pulse = app.db.pulse();
@@ -195,11 +205,16 @@ impl Sender {
                             now_ms: app.clock.now_ms(),
                         },
                     )
+                    .map(Some)
                 })
                 .await;
             if *self.commits.borrow() == before.wrapping_add(1) {
                 self.commits.borrow_and_update();
             }
+            let Some(passed) = passed.transpose() else {
+                synced = true;
+                continue;
+            };
             match passed {
                 Ok(Pass::More) => {}
                 Ok(Pass::Caught) => {

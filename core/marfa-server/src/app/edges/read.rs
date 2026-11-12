@@ -73,6 +73,7 @@ fn page_of(
         }
         None => None,
     };
+    read.hydrating();
     let mut printed = Vec::with_capacity(found.len());
     for edge in &found {
         if readable(tx, caller, edge)? {
@@ -157,7 +158,6 @@ pub async fn of_item(
         let row = items::row(read.tx, &id)?
             .filter(|row| read.caller.may_read_type(&row.type_id))
             .ok_or_else(|| Refusal::new(Code::ItemNotFound, format!("Item {id} not found")))?;
-        read.hydrating();
         let after: Option<Position> = listing
             .cursor
             .as_deref()

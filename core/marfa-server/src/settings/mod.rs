@@ -7,6 +7,8 @@ mod secrets;
 pub mod start;
 pub mod start_only;
 pub mod together;
+pub mod tuning;
+mod unknown;
 
 use std::fmt;
 use std::sync::Arc;
@@ -43,11 +45,17 @@ pub struct Accepted {
     given: Given,
     seeds: Seeds,
     start_only: Vec<start_only::Listed>,
+    unknown: Vec<unknown::Unknown>,
 }
 
 impl Accepted {
     pub fn fixed(&self) -> &Fixed {
         &self.fixed
+    }
+
+    /// Logged once nothing else refuses the start, so a refused start shows its refusal alone.
+    pub fn warn_of_unknown(&self) {
+        unknown::warn(&self.unknown);
     }
 
     /// Makes the secrets file on a first start; the server holds the control socket's claim before this.
@@ -111,7 +119,9 @@ impl Settings {
     /// only in place of its default.
     pub fn read(environment: Environment) -> Result<Accepted, Refused> {
         let mut problems = Vec::new();
+        let unknown = unknown::find(&environment);
         let read = Fixed::read(&environment, &mut problems);
+        problems.extend(unknown::refusals(&unknown));
         #[cfg(feature = "test-hooks")]
         let seeds = if Fixed::hooks_on(&environment) {
             registry::seeds(&environment, &mut problems)
@@ -141,6 +151,7 @@ impl Settings {
             given,
             seeds,
             start_only,
+            unknown,
         })
     }
 
@@ -392,10 +403,10 @@ mod tests {
     #[test]
     fn names_every_bad_setting_on_its_own_line() {
         assert_eq!(
-            refused(&[("MARFA_PORT", "70000"), ("MARFA_WRITE_WAIT_MS", "soon")]),
+            refused(&[("MARFA_PORT", "70000"), ("MARFA_MAX_CONNECTIONS", "soon")]),
             [
                 r#"MARFA_PORT must be a whole number, from 0 to 65535 (got "70000")"#,
-                r#"MARFA_WRITE_WAIT_MS must be a whole number, from 0 to 86400000 (got "soon")"#,
+                r#"MARFA_MAX_CONNECTIONS must be a whole number, from 1 to 1000000 (got "soon")"#,
             ]
         );
     }
@@ -430,6 +441,8 @@ mod tests {
     #[test]
     fn an_object_store_is_attached_by_its_bucket_and_read_with_its_defaults() {
         assert!(read(&[]).ok().unwrap().fixed().object_store.is_none());
+        let unprefixed = read(&[("S3_BUCKET", "marfa")]).ok().unwrap();
+        assert_eq!(unprefixed.fixed.object_store.unwrap().prefix, "marfa");
         let read_back = read(&[("S3_BUCKET", "marfa"), ("S3_PREFIX", "/one/two/")]);
         let store = read_back.ok().unwrap().fixed.object_store.unwrap();
         assert_eq!(
@@ -504,5 +517,21 @@ mod tests {
             refused(&[("MARFA_TEST_CLOCK_OFFSET_MS", "3600000")]),
             [r#"MARFA_TEST_CLOCK_OFFSET_MS needs MARFA_TEST_HOOKS to be true (got "3600000")"#]
         );
+        assert_eq!(
+            refused(&[("MARFA_TEST_TUNING", "upload_idle_ms=200")]),
+            [r#"MARFA_TEST_TUNING needs MARFA_TEST_HOOKS to be true (got "upload_idle_ms=200")"#]
+        );
+    }
+
+    #[test]
+    fn under_hooks_the_tuning_shortens_a_fixed_timing_and_refuses_one_the_server_lacks() {
+        let tuned = opened(&[HOOKS, ("MARFA_TEST_TUNING", "upload_idle_ms=200")]);
+        assert_eq!(
+            tuned.start.tuning.upload_idle,
+            std::time::Duration::from_millis(200)
+        );
+        let lines = refused(&[HOOKS, ("MARFA_TEST_TUNING", "interval.nothing=5")]);
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with("MARFA_TEST_TUNING "), "{lines:?}");
     }
 }

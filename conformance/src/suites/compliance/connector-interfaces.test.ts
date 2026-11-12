@@ -68,7 +68,7 @@ describe("connector interfaces", () => {
     const parent = {
       id: "user.interface_parent",
       fields: {
-        title: { type: "string", maxLength: 100, searchable: false },
+        title: { type: "string", max_length: 100, searchable: false },
         inherited: { type: "string" },
       },
       roles: ["container"],
@@ -82,7 +82,7 @@ describe("connector interfaces", () => {
       fields: {
         address: { type: "string", format: "url" },
         contacts: { type: "array", items_type: "string", format: "email" },
-        title: { type: "string", searchable: false, maxLength: 100 },
+        title: { type: "string", searchable: false, max_length: 100 },
       },
       required: ["title"],
       version: 7,
@@ -152,7 +152,7 @@ describe("connector interfaces", () => {
           type: "string",
           required: true,
           searchable: false,
-          maxLength: 100,
+          max_length: 100,
         },
       },
     };

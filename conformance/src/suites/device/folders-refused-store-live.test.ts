@@ -25,8 +25,8 @@ import {
 import { requireBinary } from "./harness.js";
 
 /**
- * A folder's store that another build of the core made, as a store from
- * before a column was added to a table: the folder's own commands replace it
+ * A folder's store that another build of the core made, at another schema
+ * version: the folder's own commands replace it
  * where it holds nothing unsent, and leave it, and the folder's files, where
  * it does.
  */
@@ -177,7 +177,7 @@ function untaken(store: string): number {
 function misshape(folder: CliFolder): void {
   const db = new DatabaseSync(folder.store);
   try {
-    db.exec("ALTER TABLE items ADD COLUMN stray TEXT");
+    db.exec("PRAGMA user_version = 0");
   } finally {
     db.close();
   }

@@ -648,8 +648,8 @@ async fn every_cleanup_keeps_a_row_whose_stored_time_does_not_read_and_finishes(
              UPDATE api_keys SET revoked_at = '0' WHERE id = '{key}'; \
              UPDATE webhook_deliveries SET created_at = '0' WHERE id = 'dead'; \
              UPDATE audit_log SET created_at = '0' WHERE id = (SELECT min(id) FROM audit_log); \
-             INSERT INTO idempotency_records (credential, idempotency_key, fingerprint, state, \
-             created_at) VALUES ('kept', 'kept', 'kept', 'complete', '0'); \
+             INSERT INTO idempotency_records (credential, idempotency_key, fingerprint, contract, \
+             state, created_at) VALUES ('kept', 'kept', 'kept', 0, 'complete', '0'); \
              INSERT INTO bulk_jobs (id, action, input, key_id, status, matched, created_at, \
              finished_at) VALUES ('kept', 'trash', '{{}}', '{key}', 'completed', 0, '{at}', '0'); \
              INSERT INTO blobs (hash, mime_type, size_bytes, recorded_at) \
@@ -1141,12 +1141,11 @@ async fn start_clears_an_unfinished_run_and_moves_no_schedule_later() {
 }
 
 #[tokio::test]
-async fn the_scheduler_follows_a_shortened_interval_and_repairs_a_schedule() {
-    let instance = Instance::start(&[
-        ("MARFA_HOUSEKEEPING_POLL_INTERVAL_MS", "5"),
-        ("MARFA_AUDIT_CLEANUP_INTERVAL_MS", "31536000000"),
-        ("MARFA_TRASH_PURGE_INTERVAL_MS", "31536000000"),
-    ])
+async fn the_scheduler_brings_a_schedule_past_its_interval_forward_and_repairs_an_unreadable_one() {
+    let instance = Instance::start(&[(
+        "MARFA_TEST_TUNING",
+        "housekeeping_poll_ms=5,interval.audit-cleanup=20,interval.trash-purge=31536000000",
+    )])
     .await;
     instance.app.clock.pause(false);
     instance.forward(0);
@@ -1165,10 +1164,6 @@ async fn the_scheduler_follows_a_shortened_interval_and_repairs_a_schedule() {
             instance.job("trash-purge").await["last_outcome"] == "ok"
         })
         .await;
-    let audit = instance.job("audit-cleanup").await;
-    assert!(audit["last_started_at"].is_null(), "{audit}");
-
-    instance.store("audit_cleanup_interval_ms", "20").await;
     instance
         .when("a run on the shortened interval", async |instance| {
             instance.job("audit-cleanup").await["last_outcome"] == "ok"
@@ -1185,18 +1180,93 @@ async fn the_scheduler_follows_a_shortened_interval_and_repairs_a_schedule() {
     assert!(began.elapsed() < Duration::from_secs(2));
 }
 
+/// A server whose scheduler has every job parked far ahead, so that only a wake can start one
+/// before the scheduler's longest wait, an hour, is over.
+async fn parked(settings: &[(&str, &str)]) -> Instance {
+    let mut pairs = vec![("MARFA_TEST_TUNING", "interval.*=31536000000")];
+    pairs.extend_from_slice(settings);
+    let instance = Instance::start(&pairs).await;
+    instance
+        .sql(
+            "UPDATE housekeeping_jobs \
+             SET next_run_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '+200 days')"
+                .to_string(),
+        )
+        .await;
+    housekeeping::start(&instance.app);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        instance.count("SELECT count(*) FROM housekeeping_jobs WHERE last_outcome IS NOT NULL"),
+        0
+    );
+    instance
+}
+
+async fn stopped(instance: &Instance) {
+    instance.app.housekeeping.stop();
+    instance
+        .app
+        .housekeeping
+        .settle(Duration::from_secs(7))
+        .await;
+}
+
 #[tokio::test]
-async fn the_credential_job_lists_the_interval_the_instance_sets() {
+async fn a_sleeping_scheduler_runs_a_job_when_the_clock_reaches_it() {
+    let instance = parked(&[]).await;
+    instance.forward(201 * DAY);
+    instance
+        .when(
+            "a run once the clock passed the schedule",
+            async |instance| instance.job("audit-cleanup").await["last_outcome"] == "ok",
+        )
+        .await;
+    stopped(&instance).await;
+}
+
+#[tokio::test]
+async fn a_sleeping_scheduler_runs_a_job_a_commit_brought_forward() {
+    let instance = parked(&[]).await;
+    let at = instance.app.clock.stamp();
+    instance
+        .sql(format!(
+            "UPDATE housekeeping_jobs SET next_run_at = '{at}' WHERE name = 'trash-purge'"
+        ))
+        .await;
+    instance
+        .when("a run of the job brought forward", async |instance| {
+            instance.job("trash-purge").await["last_outcome"] == "ok"
+        })
+        .await;
+    assert_eq!(
+        instance.job("audit-cleanup").await["last_outcome"],
+        Value::Null
+    );
+    stopped(&instance).await;
+}
+
+#[tokio::test]
+async fn a_sleeping_scheduler_enters_a_job_a_changed_setting_switches_on() {
+    let instance = parked(&[("MARFA_BLOB_CLEANUP_ENABLED", "false")]).await;
+    let entered = "SELECT count(*) FROM housekeeping_jobs WHERE name = 'blob-orphans'";
+    assert_eq!(instance.count(entered), 0);
+    instance.store("blob_cleanup_enabled", "true").await;
+    instance
+        .when("the job a setting switched on", async |instance| {
+            instance.count(entered) == 1
+        })
+        .await;
+    stopped(&instance).await;
+}
+
+#[tokio::test]
+async fn a_job_lists_the_interval_it_runs_at() {
     let instance = Instance::start(&[]).await;
     assert_eq!(
         instance.job("credential-cleanup").await["interval_ms"],
         3_600_000
     );
-    instance
-        .store("credential_cleanup_interval_ms", "60000")
-        .await;
-    assert_eq!(
-        instance.job("credential-cleanup").await["interval_ms"],
-        60_000
-    );
+    let tuned =
+        Instance::start(&[("MARFA_TEST_TUNING", "interval.credential-cleanup=60000")]).await;
+    assert_eq!(tuned.job("credential-cleanup").await["interval_ms"], 60_000);
 }

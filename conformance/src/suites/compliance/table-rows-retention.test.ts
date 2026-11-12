@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it, vi } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
@@ -9,17 +9,25 @@ import {
 import { withInstanceDatabase } from "../../utils/instance-database.js";
 import {
   DAY_MS,
+  jobs,
   movedClock,
-  QUIET_SCHEDULE,
+  quiet,
   runJob,
   writerOf,
 } from "../../utils/moved-clock.js";
+import { NEVER_MS, QUIET_TUNING, tuning } from "../../utils/tuning.js";
 
 /**
  * How long a table's change log keeps a batch. The age of a batch is a clock
  * a fixture cannot wait out, so each case writes its batches, moves the
  * server's clock forward and runs `table-row-cleanup` itself.
  */
+
+/** The scheduler leaves the cleanup to the case, which runs it when it means to. */
+const QUIET_CLEANUP = tuning(
+  ...QUIET_TUNING,
+  `interval.table-row-cleanup=${NEVER_MS}`,
+);
 
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -72,9 +80,10 @@ describe("the change log's retention", () => {
     "removes the batches older than row_log_retention_days at the next table-row-cleanup run, and keeps the newer",
     async () => {
       const server = await bootFreshServer("rows-retention", {
-        ...QUIET_SCHEDULE,
+        ...QUIET_CLEANUP,
         MARFA_ROW_LOG_RETENTION_DAYS: "30",
       });
+      await quiet(server, ["table-row-cleanup"]);
       const clock = movedClock(server);
       const { writer, item } = await ledger(server);
       const old = await batchOf(writer, item, 1);
@@ -104,9 +113,10 @@ describe("the change log's retention", () => {
     "keeps a batch whose stored time does not read and every batch after it, and removes the older batches before it",
     async () => {
       const server = await bootFreshServer("rows-retention-unread", {
-        ...QUIET_SCHEDULE,
+        ...QUIET_CLEANUP,
         MARFA_ROW_LOG_RETENTION_DAYS: "30",
       });
+      await quiet(server, ["table-row-cleanup"]);
       const clock = movedClock(server);
       const { writer, item } = await ledger(server);
       const first = await batchOf(writer, item, 1);
@@ -129,6 +139,19 @@ describe("the change log's retention", () => {
       expect(gone.status).toBe(404);
       expect(gone.error?.error.code).toBe("batch_not_found");
 
+      // The undo brought the cleanup forward, so the scheduler runs it now; its run is over
+      // before the batch's time is changed.
+      await vi.waitFor(
+        async () => {
+          const row = (await jobs(server))["table-row-cleanup"];
+          expect(row?.running_since).toBeNull();
+          expect(Date.parse(row?.next_run_at ?? "")).toBeGreaterThan(
+            clock.now(),
+          );
+        },
+        { timeout: 10_000, interval: 50 },
+      );
+
       // The witness: with an old time that reads, the same batch and the one after it go.
       storeAt("2000-01-01T00:00:00.000Z");
       expect(await held(writer, item)).toEqual([after, unread]);
@@ -143,9 +166,10 @@ describe("the change log's retention", () => {
     "keeps every batch while row_log_retention_days is 0, however far the clock moves",
     async () => {
       const server = await bootFreshServer("rows-retention-zero", {
-        ...QUIET_SCHEDULE,
+        ...QUIET_CLEANUP,
         MARFA_ROW_LOG_RETENTION_DAYS: "0",
       });
+      await quiet(server, ["table-row-cleanup"]);
       const clock = movedClock(server);
       const { writer, item } = await ledger(server);
       const first = await batchOf(writer, item, 1);

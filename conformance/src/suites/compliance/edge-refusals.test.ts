@@ -351,7 +351,7 @@ describe("PATCH /edges/{id} versions and grants", () => {
         current: { id: string };
       };
       expect(body.error.code, label).toBe("version_conflict");
-      expect(body.error.status, label).toBe(409);
+      expect(body.error, label).not.toHaveProperty("status");
       expect(body.current, label).toEqual(advanced.data.edge);
       for (const absent of ["ancestor", "conflicting_fields", "merge_policy"]) {
         expect(body, `${label}: ${absent}`).not.toHaveProperty(absent);

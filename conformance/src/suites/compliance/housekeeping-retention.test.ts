@@ -7,6 +7,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { idOf, send } from "../../utils/inbound-sender.js";
+import { QUIET_TUNING, tuning } from "../../utils/tuning.js";
 import {
   DAY_MS,
   jobs,
@@ -340,8 +341,7 @@ describe("a bin holding more than one run of trash-purge removes", () => {
       // after the one this case asks for is one the server scheduled for
       // itself.
       const server = await bootFreshServer("retention-trash-backlog", {
-        ...QUIET_SCHEDULE,
-        MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: "1000",
+        ...tuning(...QUIET_TUNING, "housekeeping_poll_ms=1000"),
       });
       await quiet(server, ["trash-purge"]);
       await settle(server, ["trash-purge"]);

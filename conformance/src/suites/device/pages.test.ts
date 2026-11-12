@@ -1045,7 +1045,7 @@ describe("a folder's first sync", () => {
           bodyField: "body",
           fields: {
             title: { type: "string" },
-            body: { type: "string", maxLength: 1_000_000 },
+            body: { type: "string", max_length: 1_000_000 },
           },
         }),
       ]),

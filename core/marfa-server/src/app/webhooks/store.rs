@@ -190,6 +190,14 @@ pub fn active(tx: &Transaction<'_>) -> Result<Vec<Subscription>> {
     Ok(rows.collect::<rusqlite::Result<_>>()?)
 }
 
+pub fn any_active(tx: &Transaction<'_>) -> Result<bool> {
+    Ok(tx.query_row(
+        "SELECT EXISTS (SELECT 1 FROM webhooks WHERE active = 1)",
+        [],
+        |row| row.get(0),
+    )?)
+}
+
 /// The newest log id deliveries have been queued through; `None` while the row is missing.
 pub fn position(tx: &Transaction<'_>) -> Result<Option<i64>> {
     Ok(tx

@@ -10,6 +10,7 @@ import { reads } from "./reads.js";
 import { restart } from "./restart.js";
 import { seed } from "./seed.js";
 import { storage } from "./storage.js";
+import { store } from "./store.js";
 import { tables } from "./tables.js";
 import { watch } from "./watch.js";
 
@@ -21,6 +22,7 @@ const STEPS: Record<string, () => Promise<void> | void> = {
   edges,
   export: exportArchive,
   storage,
+  store,
   tables,
   conversations,
   device,

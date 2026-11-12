@@ -188,8 +188,8 @@ describe("scripts/report-nightly-failure.sh", () => {
     jobs: [
       { name: "Classify changes", conclusion: "success" },
       { name: "Core checks (Linux)", conclusion: "failure" },
-      { name: "CLI scenarios", conclusion: "failure" },
-      { name: "Conformance statuses", conclusion: "skipped" },
+      { name: "Rust contract on macOS (cli)", conclusion: "failure" },
+      { name: "Restore drill", conclusion: "skipped" },
       { name: "Report a failed night", conclusion: null },
     ],
   });
@@ -271,10 +271,10 @@ describe("scripts/report-nightly-failure.sh", () => {
     );
     expect(result.body).toContain("0123456789abcdef0123456789abcdef01234567");
     expect(result.body).toContain("- Core checks (Linux)");
-    expect(result.body).toContain("- CLI scenarios");
+    expect(result.body).toContain("- Rust contract on macOS (cli)");
     // Only a job that failed is named.
     expect(result.body).not.toContain("Classify changes");
-    expect(result.body).not.toContain("Conformance statuses");
+    expect(result.body).not.toContain("Restore drill");
     expect(result.body).toContain("The nightly run passes.");
   });
 

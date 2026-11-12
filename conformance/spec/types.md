@@ -326,7 +326,7 @@ The server MUST let a subtype add fields, redeclare an inherited field unchanged
 
 ### `types/child-shape`
 
-If a type would give a field another `type`, `format`, `items_type`, `items_fields`, `searchable`, `maxLength`, `maxItems` or `enum_values` than a type in its chain gives it, or a status field's words in a way `types/status-inherit` does not take, or make an inherited required field optional, then the server MUST answer `400 inheritance_violation` naming the field.
+If a type would give a field another `type`, `format`, `items_type`, `items_fields`, `searchable`, `max_length`, `max_items` or `enum_values` than a type in its chain gives it, or a status field's words in a way `types/status-inherit` does not take, or make an inherited required field optional, then the server MUST answer `400 inheritance_violation` naming the field.
 
 **Tests:** `compliance/type-inheritance.test.ts › rejects a child type that changes an inherited field shape (inheritance_violation)`, `› rejects a parent gaining a field whose shape differs from one its child declares`, `› lets a child tighten an inherited field to required, and refuses one that loosens it`, `› refuses a replacement of a child that changes an inherited field's shape`, `compliance/thumbnails.test.ts › refuses a parent gaining a thumbnail under a name its child declares as text, and takes one its child declares as a thumbnail`, `compliance/status-groups.test.ts › refuses the inherited status field redeclared as another kind`, `compliance/field-rules.test.ts › refuses a child that changes the members of an inherited list`.
 
@@ -466,13 +466,13 @@ If a `merge_policy` names a field the type does not declare or inherit, or a str
 
 ### `types/field-grammar`
 
-If a type names a field definition with an unknown `type` or `format`, an `enum` whose `enum_values` is missing or empty or holds a value that is not a string, a status field `types/status-refused` refuses, an `array` with no `items_type`, or a `maxLength` or `maxItems` that is not a whole number of at least 1 or on a type it does not apply to, a `maxLength` on a `string` field whose `format` is `currency`, or a `minimum`, `maximum` or `items_fields` that `types/range-refused` or `types/items-fields-refused` refuses, or the type names `states`, `default_state` or `transitions`, a `required` entry naming a field that neither the type nor an ancestor declares, a role other than `container`, a `display_hints` `title_field` or `body_field` naming a field neither it nor an ancestor declares, or a `display_hints` `name_from_body` that is not `true` or `false`, then the server MUST answer `400 invalid_schema` naming the member.
+If a type names a field definition with an unknown `type` or `format`, an `enum` whose `enum_values` is missing or empty or holds a value that is not a string, a status field `types/status-refused` refuses, an `array` with no `items_type`, or a `max_length` or `max_items` that is not a whole number of at least 1 or on a type it does not apply to, a `max_length` on a `string` field whose `format` is `currency`, or a `minimum`, `maximum` or `items_fields` that `types/range-refused` or `types/items-fields-refused` refuses, or the type names `states`, `default_state` or `transitions`, a `required` entry naming a field that neither the type nor an ancestor declares, a role other than `container`, a `display_hints` `title_field` or `body_field` naming a field neither it nor an ancestor declares, or a `display_hints` `name_from_body` that is not `true` or `false`, then the server MUST answer `400 invalid_schema` naming the member.
 
 **Tests:** `compliance/field-types.test.ts › refuses a field definition the grammar does not take`, `› takes a required entry naming a field only an ancestor declares`, `compliance/field-rules.test.ts › refuses $what with invalid_schema, naming the member`, `› refuses a name_from_body that is not true or false with invalid_schema, naming the member`.
 
 ### `types/unknown-key`
 
-If `POST /types` or `PUT /types/{id}` names a key the type schema does not define, at the top level, in a field definition (which takes only `type`, `label`, `description`, `required`, `enum_values`, `status_values`, `items_type`, `items_fields`, `format`, `searchable`, `maxLength`, `maxItems`, `minimum` and `maximum`), in a member of `items_fields` (which takes only `type`, `label`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum` and `maximum`), or in `display_hints`, `version_policy`, `merge_policy` or `retention_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
+If `POST /types` or `PUT /types/{id}` names a key the type schema does not define, at the top level, in a field definition (which takes only `type`, `label`, `description`, `required`, `enum_values`, `status_values`, `items_type`, `items_fields`, `format`, `searchable`, `max_length`, `max_items`, `minimum` and `maximum`), in a member of `items_fields` (which takes only `type`, `label`, `description`, `required`, `enum_values`, `format`, `max_length`, `minimum` and `maximum`), or in `display_hints`, `version_policy`, `merge_policy` or `retention_policy`, then the server MUST answer `400 invalid_schema` with `details.errors` naming the path of each such key.
 
 **Reason:** a key the server ignored would let a misspelled rule, or an `exclusiveMinimum` on an `integer` field, register as though it held, and the type would then accept what its author meant it to refuse.
 
@@ -496,7 +496,7 @@ If a field or a member of `items_fields` names a `minimum` or `maximum` on a typ
 
 When a type names `items_fields` on an `array` field whose `items_type` is `object`, the server MUST store the members and answer them on `GET /types/{id}`.
 
-**Reason:** a type can then promise that each entry in a list has a given shape, as a list of contacts or of attendees needs. A member takes `type`, `label`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum` and `maximum`.
+**Reason:** a type can then promise that each entry in a list has a given shape, as a list of contacts or of attendees needs. A member takes `type`, `label`, `description`, `required`, `enum_values`, `format`, `max_length`, `minimum` and `maximum`.
 
 **Tests:** `compliance/field-rules.test.ts › registers a range, a currency format and a list of entries, and answers them`.
 
@@ -578,9 +578,9 @@ When a `url` value of a special scheme has a host that is ASCII once percent-dec
 
 ### `types/url-idna`
 
-If a `url` value of a special scheme has a host with a character that is not ASCII once percent-decoded, and the host is not valid IDNA, then the server MUST refuse the value `invalid_properties`.
+If a `url` value of a special scheme has a host with a character that is not ASCII once percent-decoded, and the host is not valid IDNA, including a host with a code point that Unicode 17.0 leaves unassigned, then the server MUST refuse the value `invalid_properties`.
 
-**Reason:** the standard runs only such a host through IDNA, so `http://bücher.xn--` is refused, because its `xn--` label is not Punycode and its host is not ASCII, while `http://xn--mnchen-3ya.de/` is taken.
+**Reason:** the standard runs only such a host through IDNA, so `http://bücher.xn--` is refused, because its `xn--` label is not Punycode and its host is not ASCII, while `http://xn--mnchen-3ya.de/` is taken. A host with an unassigned code point is not valid IDNA either, so `http://Ⴍ𿣍ꡨ֮.Ⴞ/` and `https://𾢬.ܩ.쯙5/` are refused by the server and by a device alike, and a value one takes the other takes. A code point that Unicode assigns only after 17.0 is outside the rule, so a server whose tables are newer may take it.
 
 **Tests:** `compliance/field-types.test.ts › refuses %s on a create, naming the field`, `device/property-validation-live.test.ts › refuses the url %j on both paths`.
 

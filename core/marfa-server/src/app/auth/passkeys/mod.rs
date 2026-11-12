@@ -30,7 +30,7 @@ use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
 
-const CHALLENGE_ISSUED: &str = "auth.passkey.challenge";
+const CHALLENGE_ISSUED: &str = "auth.passkey.challenged";
 const ADDED: &str = "owner.passkey.added";
 const RENAMED: &str = "owner.passkey.renamed";
 const REMOVED: &str = "owner.passkey.removed";
@@ -226,7 +226,7 @@ pub async fn add(app: Arc<App>, caller: &Caller, adding: Adding) -> Result<Liste
             tx,
             &store::New {
                 id: &id,
-                user_id: &owner.id,
+                owner_id: &owner.id,
                 credential_id: &encoded(passkey.cred_id()),
                 host: &party.host,
                 name: name.as_deref(),
@@ -331,7 +331,7 @@ struct Judging<'a> {
     now: Stamp,
     party: &'a Party,
     salt: &'a str,
-    user_id: Option<&'a str>,
+    owner_id: Option<&'a str>,
 }
 
 /// Spends the challenge whatever the verdict, and looks only at the credential the assertion names.
@@ -363,10 +363,10 @@ fn prove(
     let Some(mut held) = store::by_credential(tx, &encoded(answer.get_credential_id()))? else {
         return unknown();
     };
-    let Some(owner) = owner::read(tx)?.filter(|owner| owner.id == held.user_id) else {
+    let Some(owner) = owner::read(tx)?.filter(|owner| owner.id == held.owner_id) else {
         return unknown();
     };
-    if judging.user_id.is_some_and(|id| id != owner.id) {
+    if judging.owner_id.is_some_and(|id| id != owner.id) {
         return unknown();
     }
     if held.host != party.host {
@@ -408,7 +408,7 @@ pub async fn sign_in(app: Arc<App>, assertion: Assertion, visit: Visit) -> Resul
                 now: now_app.clock.instant(),
                 party: &party,
                 salt: &salt,
-                user_id: None,
+                owner_id: None,
             };
             let proven = match prove(tx, &judging, assertion)? {
                 Ok(proven) => proven,
@@ -421,8 +421,7 @@ pub async fn sign_in(app: Arc<App>, assertion: Assertion, visit: Visit) -> Resul
                 Stamp::read(&at)?,
                 New {
                     salt: &salt,
-                    user_id: &proven.owner.id,
-                    remembered: true,
+                    owner_id: &proven.owner.id,
                     visit: &visit,
                 },
             )?;
@@ -433,7 +432,7 @@ pub async fn sign_in(app: Arc<App>, assertion: Assertion, visit: Visit) -> Resul
                 &visit,
                 Note {
                     action: SIGNED_IN,
-                    resource_type: "auth_user",
+                    resource_type: "owner",
                     resource_id: &proven.owner.email,
                     details: Some(json!({
                         "email": proven.owner.email,
@@ -465,7 +464,7 @@ pub async fn confirm(
             now: now_app.clock.instant(),
             party: &party,
             salt: &salt,
-            user_id: Some(&session.user_id),
+            owner_id: Some(&session.owner_id),
         };
         let proven = match prove(tx, &judging, assertion)? {
             Ok(proven) => proven,
@@ -478,8 +477,7 @@ pub async fn confirm(
             unit.instant,
             New {
                 salt: &salt,
-                user_id: &session.user_id,
-                remembered: session.remembered,
+                owner_id: &session.owner_id,
                 visit: &visit,
             },
         )?;
@@ -491,7 +489,7 @@ pub async fn confirm(
             &visit,
             Note {
                 action: SIGNED_IN,
-                resource_type: "auth_user",
+                resource_type: "owner",
                 resource_id: &proven.owner.email,
                 details: Some(json!({
                     "email": proven.owner.email,

@@ -35,7 +35,7 @@ const BUDGET_MS = 50;
 beforeAll(async () => {
   ordered = await bootFreshServer("restore-order");
   impatient = await bootFreshServer("restore-writers", {
-    MARFA_WRITE_WAIT_MS: String(BUDGET_MS),
+    MARFA_TEST_TUNING: `write_wait_ms=${String(BUDGET_MS)}`,
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 

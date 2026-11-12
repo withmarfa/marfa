@@ -205,9 +205,11 @@
       .replace(/=+$/, "");
   }
 
-  async function getJson(path) {
+  /** Asks for a passkey challenge, which the server keeps for one answer. */
+  async function askForOptions(path) {
     try {
       const response = await fetch(path, {
+        method: "POST",
         credentials: "same-origin",
         cache: "no-store",
         headers: { accept: "application/json" },
@@ -224,7 +226,7 @@
 
   /** Asks the browser for an assertion. Null if the person cancelled. */
   async function askForAssertion() {
-    const asked = await getJson("/auth/passkey/generate-authenticate-options");
+    const asked = await askForOptions("/auth/passkeys/sign-in/options");
     if (!asked || asked.status !== 200) throw new Error("no options");
     const publicKey = {
       ...asked.body,
@@ -326,7 +328,7 @@
       try {
         const response = await askForAssertion();
         if (!response) return;
-        const answer = await postJson("/auth/passkey/verify-authentication", {
+        const answer = await postJson("/auth/passkeys/sign-in", {
           response,
         });
         if (answer && answer.status === 200) location.assign(returnTo() || "/");
@@ -359,7 +361,7 @@
       showPasskeyError("");
       try {
         const asked = await withRecentSignIn(() =>
-          getJson("/auth/passkey/generate-register-options"),
+          askForOptions("/auth/passkeys/registration/options"),
         );
         if (!asked) return;
         if (asked.status !== 200) {
@@ -370,11 +372,11 @@
         if (!response) return;
         const field = document.querySelector("[data-passkey-name]");
         const name = field.value.trim();
-        const answer = await postJson("/auth/passkey/verify-registration", {
+        const answer = await postJson("/auth/passkeys/registration", {
           ...(name ? { name } : {}),
           response,
         });
-        if (answer && answer.status === 200) location.reload();
+        if (answer && answer.status === 201) location.reload();
         else {
           showPasskeyError(answer?.body?.error?.message ?? SOMETHING_WENT_WRONG);
         }

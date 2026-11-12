@@ -40,6 +40,7 @@ import {
   sentTitles,
   sentUpdates,
 } from "./folders.shared.js";
+import { ON_MACOS } from "../../utils/platform.js";
 
 /**
  * `folders watch` with no directory: one process keeping every folder the
@@ -163,60 +164,6 @@ function storeOf(harness: FolderHarness): string {
   return join(harness.dir, ".marfa", "core.sqlite");
 }
 
-function holdsCopyChanges(store: string): boolean {
-  const db = new DatabaseSync(store, { readOnly: true });
-  try {
-    return (
-      db
-        .prepare("SELECT 1 FROM sqlite_master WHERE name = 'copy_changes'")
-        .get() !== undefined
-    );
-  } finally {
-    db.close();
-  }
-}
-
-function holdsReadOnly(store: string): boolean {
-  const db = new DatabaseSync(store, { readOnly: true });
-  try {
-    return (
-      db
-        .prepare(
-          "SELECT 1 FROM pragma_table_info('items') WHERE name = 'read_only'",
-        )
-        .get() !== undefined
-    );
-  } finally {
-    db.close();
-  }
-}
-
-function dropReadOnly(store: string): void {
-  const db = new DatabaseSync(store);
-  try {
-    db.exec(
-      "DROP INDEX items_read_only; ALTER TABLE items DROP COLUMN read_only",
-    );
-  } finally {
-    db.close();
-  }
-}
-
-function dropCopyChanges(store: string): void {
-  const db = new DatabaseSync(store);
-  try {
-    const triggers = db
-      .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND sql LIKE '%copy_changes%'",
-      )
-      .all() as Array<{ name: string }>;
-    for (const { name } of triggers) db.exec(`DROP TRIGGER "${name}"`);
-    db.exec("DROP TABLE copy_changes");
-  } finally {
-    db.close();
-  }
-}
-
 /** The store's bytes and its write-ahead log's, which hold any write. */
 function bytesOf(store: string): string[] {
   return [store, `${store}-wal`].map((file) =>
@@ -266,53 +213,11 @@ describe("a watch of every folder", () => {
     }
   });
 
-  it("watches every folder whose store lacks a table this build makes, adding the table", async () => {
-    const { a, b } = await twoFolders("every-lacking");
+  it("leaves a folder's store untouched while another process holds its folder, and takes the folder up once it is let go", async () => {
+    const { a, b } = await twoFolders("every-held");
     const stores = [a, b].map(storeOf);
-    for (const store of stores) dropCopyChanges(store);
-    expect(stores.map(holdsCopyChanges)).toEqual([false, false]);
-
     put(a, "Disk A.md", "---\ntitle: Disk A\n---\nwritten in a\n");
     put(b, "Disk B.md", "---\ntitle: Disk B\n---\nwritten in b\n");
-    const watch = hold(a.folder.watchEvery());
-    await vi.waitFor(() => {
-      for (const harness of [a, b]) {
-        expect(
-          watching(watch, harness.dir),
-          `${watch.stdout}${watch.stderr}`,
-        ).toBe(true);
-      }
-      expect(sentTitles(a).sort()).toEqual(["Disk A", "Disk B"]);
-    }, WAIT);
-    expect(stores.map(holdsCopyChanges)).toEqual([true, true]);
-  });
-
-  it("watches every folder whose store lacks a column this build makes, adding the column", async () => {
-    const { a, b } = await twoFolders("every-lacking-column");
-    const stores = [a, b].map(storeOf);
-    for (const store of stores) dropReadOnly(store);
-    expect(stores.map(holdsReadOnly)).toEqual([false, false]);
-
-    put(a, "Disk A.md", "---\ntitle: Disk A\n---\nwritten in a\n");
-    put(b, "Disk B.md", "---\ntitle: Disk B\n---\nwritten in b\n");
-    const watch = hold(a.folder.watchEvery());
-    await vi.waitFor(() => {
-      for (const harness of [a, b]) {
-        expect(
-          watching(watch, harness.dir),
-          `${watch.stdout}${watch.stderr}`,
-        ).toBe(true);
-      }
-      expect(sentTitles(a).sort()).toEqual(["Disk A", "Disk B"]);
-    }, WAIT);
-    expect(stores.map(holdsReadOnly)).toEqual([true, true]);
-  });
-
-  it("leaves a store that lacks a table untouched while another process holds its folder, and adds the table once it is let go", async () => {
-    const { a, b } = await twoFolders("every-lacking-held");
-    const stores = [a, b].map(storeOf);
-    for (const store of stores) dropCopyChanges(store);
-    expect(stores.map(holdsCopyChanges)).toEqual([false, false]);
     const before = stores.map(bytesOf);
     // Another process holds each folder's writer role.
     const locks = [a, b].map((harness) => {
@@ -358,7 +263,10 @@ describe("a watch of every folder", () => {
       },
       { ...WAIT, timeout: 60_000 },
     );
-    expect(stores.map(holdsCopyChanges)).toEqual([true, true]);
+    // The witness: once taken up, each folder sends its file.
+    await vi.waitFor(() => {
+      expect(sentTitles(a).sort()).toEqual(["Disk A", "Disk B"]);
+    }, WAIT);
   });
 
   it("says once why a listed folder cannot be watched, goes on with the others, and takes it up once it can be", async () => {
@@ -746,74 +654,71 @@ describe("a watch of every folder", () => {
     ).not.toBe("waiting");
   });
 
-  describe.runIf(process.platform === "darwin")(
-    "folders on two servers",
-    () => {
-      it("keeps each folder with its own server and credential, and one server down stops only its folder", async () => {
-        const a = await folderHarness("every-servers-a", {
-          settings: tagged("a"),
-        });
-        made.push(a);
-        scriptFolderWrites(a);
-        const b = await folderHarness("every-servers-b", {
-          settings: tagged("b"),
-          registry: a.registry,
-        });
-        made.push(b);
-        scriptFolderWrites(b);
-        expect(b.server.url).not.toBe(a.server.url);
-        const keychain = ownKeychain();
-        cleanups.push(keychain.remove);
-        const kept = "device-fixture-key-kept-for-b";
-        keepKey(keychain.path, b.server.url, kept);
-        const from = b.server.requests.length;
-        const watch = hold(
-          a.folder.watchEvery({ MARFA_KEYCHAIN: keychain.path }),
-        );
-        put(a, "On A.md", "---\ntitle: On A\n---\nfor the named server\n");
-        put(b, "On B.md", "---\ntitle: On B\n---\nfor its own server\n");
-        await vi.waitFor(() => {
-          expect(sentTitles(a), watch.stdout).toEqual(["On A"]);
-          expect(sentTitles(b), watch.stdout).toEqual(["On B"]);
-        }, WAIT);
-        // A server's root is read with no credential at all.
-        const sentToB = b.server.requests
-          .slice(from)
-          .map((request) => request.headers.authorization)
-          .filter((sent) => sent !== undefined);
-        expect(sentToB).toContain(`Bearer ${kept}`);
-        expect(
-          sentToB.filter((sent) => sent !== `Bearer ${kept}`),
-          "a folder's server was sent another credential than the one kept for it",
-        ).toEqual([]);
-
-        await b.server.offline();
-        await vi.waitFor(() => {
-          expect(
-            linesFor(watch, b.dir).filter((line) => line.reachable === false),
-            watch.stdout,
-          ).toHaveLength(1);
-        }, WAIT);
-        put(
-          a,
-          "While B is down.md",
-          "---\ntitle: While B is down\n---\na goes on\n",
-        );
-        put(b, "Waits.md", "---\ntitle: Waits\n---\nfor its server\n");
-        await vi.waitFor(
-          () => expect(sentTitles(a)).toContain("While B is down"),
-          WAIT,
-        );
-        expect(
-          linesFor(watch, a.dir).filter((line) => line.reachable === false),
-          "a folder on a server that answers was said to be cut off",
-        ).toEqual([]);
-        await b.server.online();
-        await vi.waitFor(() => expect(sentTitles(b)).toContain("Waits"), WAIT);
-        expect(watch.running(), watch.stderr).toBe(true);
+  describe("folders on two servers", ON_MACOS, () => {
+    it("keeps each folder with its own server and credential, and one server down stops only its folder", async () => {
+      const a = await folderHarness("every-servers-a", {
+        settings: tagged("a"),
       });
-    },
-  );
+      made.push(a);
+      scriptFolderWrites(a);
+      const b = await folderHarness("every-servers-b", {
+        settings: tagged("b"),
+        registry: a.registry,
+      });
+      made.push(b);
+      scriptFolderWrites(b);
+      expect(b.server.url).not.toBe(a.server.url);
+      const keychain = ownKeychain();
+      cleanups.push(keychain.remove);
+      const kept = "device-fixture-key-kept-for-b";
+      keepKey(keychain.path, b.server.url, kept);
+      const from = b.server.requests.length;
+      const watch = hold(
+        a.folder.watchEvery({ MARFA_KEYCHAIN: keychain.path }),
+      );
+      put(a, "On A.md", "---\ntitle: On A\n---\nfor the named server\n");
+      put(b, "On B.md", "---\ntitle: On B\n---\nfor its own server\n");
+      await vi.waitFor(() => {
+        expect(sentTitles(a), watch.stdout).toEqual(["On A"]);
+        expect(sentTitles(b), watch.stdout).toEqual(["On B"]);
+      }, WAIT);
+      // A server's root is read with no credential at all.
+      const sentToB = b.server.requests
+        .slice(from)
+        .map((request) => request.headers.authorization)
+        .filter((sent) => sent !== undefined);
+      expect(sentToB).toContain(`Bearer ${kept}`);
+      expect(
+        sentToB.filter((sent) => sent !== `Bearer ${kept}`),
+        "a folder's server was sent another credential than the one kept for it",
+      ).toEqual([]);
+
+      await b.server.offline();
+      await vi.waitFor(() => {
+        expect(
+          linesFor(watch, b.dir).filter((line) => line.reachable === false),
+          watch.stdout,
+        ).toHaveLength(1);
+      }, WAIT);
+      put(
+        a,
+        "While B is down.md",
+        "---\ntitle: While B is down\n---\na goes on\n",
+      );
+      put(b, "Waits.md", "---\ntitle: Waits\n---\nfor its server\n");
+      await vi.waitFor(
+        () => expect(sentTitles(a)).toContain("While B is down"),
+        WAIT,
+      );
+      expect(
+        linesFor(watch, a.dir).filter((line) => line.reachable === false),
+        "a folder on a server that answers was said to be cut off",
+      ).toEqual([]);
+      await b.server.online();
+      await vi.waitFor(() => expect(sentTitles(b)).toContain("Waits"), WAIT);
+      expect(watch.running(), watch.stderr).toBe(true);
+    });
+  });
 });
 
 /**

@@ -42,7 +42,7 @@ impl Caller {
             Caller::Key(key) => Writer {
                 kind: "key".to_string(),
                 id: key.id.clone(),
-                name: printable(&key.label),
+                name: key.shown_name().to_string(),
             },
             Caller::Owner(session) => Writer {
                 kind: "browser".to_string(),
@@ -52,7 +52,7 @@ impl Caller {
             Caller::App { key, grant } => Writer {
                 kind: "app".to_string(),
                 id: grant.grant_id.clone(),
-                name: printable(&key.label),
+                name: key.shown_name().to_string(),
             },
         };
         Some(writer)

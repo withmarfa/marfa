@@ -8,6 +8,7 @@ mod plan;
 mod read;
 pub mod restored;
 mod rows;
+pub(crate) mod sort_keys;
 pub mod sweep;
 pub mod thinning;
 pub mod write;
@@ -558,6 +559,7 @@ pub fn held_names(tx: &Transaction<'_>, types: &[String], names: &[String]) -> R
 pub fn reindex_changed(tx: &Transaction<'_>, before: &Rules, after: &Rules) -> Result<()> {
     index::queue_changed(tx, before, after)?;
     index::reindex_page(tx, after, index::REINDEX_PAGE)?;
+    sort_keys::drop_undeclared(tx, after)?;
     Ok(())
 }
 

@@ -73,6 +73,7 @@ import {
   settingsFile,
   withoutPlacements,
 } from "./folders.shared.js";
+import { ON_MACOS } from "../../utils/platform.js";
 
 /**
  * "A folder is a directory bound to a `system.folder`, whose query decides
@@ -4762,7 +4763,7 @@ describe("what a folder takes", () => {
 
   it(
     "excludes a directory only while its Finder bundle bit is set",
-    { skip: process.platform !== "darwin" },
+    ON_MACOS,
     async () => {
       harness = await folderHarness("folder-finder-package");
       const rows = scriptFolderWrites(harness);
@@ -5605,7 +5606,7 @@ describe("large removals, status and size", () => {
           bodyField: "body",
           fields: {
             title: { type: "string" },
-            body: { type: "string", required: true, maxLength: 1_000_000 },
+            body: { type: "string", required: true, max_length: 1_000_000 },
           },
         }),
       ]),

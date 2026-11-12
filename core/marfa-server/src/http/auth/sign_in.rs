@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode};
-use axum::response::Response;
+use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use serde_json::{Map, Value, json};
 
 use super::origin::{self, Source};
@@ -11,59 +10,84 @@ use crate::app::App;
 use crate::app::access::unauthorized;
 use crate::app::auth::passkeys::{self, Assertion};
 use crate::app::auth::return_to::kept;
-use crate::app::auth::session::{self, Opened, Session};
-use crate::app::auth::{Visit, form_origins, owner, sign_in};
+use crate::app::auth::session;
+use crate::app::auth::sign_in::SignedIn;
+use crate::app::auth::{Visit, form_origins, sign_in};
 use crate::app::refusal::{Code, Refusal};
 use crate::http::answer::{Answer, json_answer};
 use crate::http::body::JsonBody;
 use crate::http::caller::OnPage;
 
-const EMAIL_FIELDS: [&str; 3] = ["email", "password", "rememberMe"];
+const PASSWORD_FIELDS: [&str; 2] = ["email", "password"];
 const CONFIRM_FIELDS: [&str; 2] = ["password", "passkey"];
 const CONFIRM_PASSWORD_CHARS: usize = 1024;
 
+fn not_from_here() -> Refusal {
+    Refusal::new(
+        Code::Forbidden,
+        "This sign-in did not come from a page of this instance.",
+    )
+}
+
 pub(super) fn refuse_elsewhere(source: Source) -> Result<(), Refusal> {
-    if source == Source::Elsewhere {
-        return Err(Refusal::new(
-            Code::Forbidden,
-            "This sign-in did not come from a page of this instance.",
-        ));
+    match source {
+        Source::Elsewhere => Err(not_from_here()),
+        Source::Own | Source::Unsaid => Ok(()),
     }
-    Ok(())
 }
 
-pub(super) fn signed_in(app: &App, session: &Session, owner: &owner::Owner) -> Value {
-    let origin = app.addresses().sign_in().origin().to_string();
-    json!({ "session": session.to_json(), "user": owner.to_json(&origin) })
+/// A door that opens a browser session needs `Origin` or `Referer` to name a form origin.
+pub(super) fn require_own_page(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
+    match origin::said_by_form(headers, &form_origins(app)) {
+        Source::Own => Ok(()),
+        Source::Elsewhere | Source::Unsaid => Err(not_from_here()),
+    }
 }
 
-pub async fn email(
+pub(super) fn done(cookie: HeaderValue) -> Answer {
+    Ok(with_cookie(
+        json_answer(StatusCode::OK, &json!({ "ok": true })),
+        cookie,
+    ))
+}
+
+fn device_mark<'h>(app: &App, headers: &'h HeaderMap) -> Option<&'h str> {
+    cookies::device_mark(headers, &app.addresses().sign_in())
+}
+
+/// The cookies the right password leaves: the session, and the device's mark.
+pub(super) fn signed_in_cookies(app: &App, signed: &SignedIn) -> Result<[HeaderValue; 2], Refusal> {
+    let address = app.addresses().sign_in();
+    Ok([
+        cookies::session(&address, &signed.opened.token)?,
+        cookies::device(&address, &signed.device)?,
+    ])
+}
+
+fn signed_in(app: &App, response: axum::response::Response, signed: &SignedIn) -> Answer {
+    let [session, device] = signed_in_cookies(app, signed)?;
+    Ok(with_cookie(with_cookie(response, session), device))
+}
+
+/// The sign-in page's form gets a redirect; a JSON body gets `{"ok": true}`.
+pub async fn sign_in(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
     visit: Visit,
     body: JsonBody,
 ) -> Answer {
     require_safe_caller(&app, &visit)?;
-    refuse_elsewhere(origin::said(&headers, &form_origins(&app)))?;
-    let body = body.object(&EMAIL_FIELDS).await?;
-    let remembered = match body.get("rememberMe") {
-        None => true,
-        Some(Value::Bool(remembered)) => *remembered,
-        Some(_) => return Err(Refusal::validation("`rememberMe` must be true or false.").into()),
-    };
+    if body.declares_form() {
+        return form(&app, &headers, visit, body).await;
+    }
+    require_own_page(&app, &headers)?;
+    let body = body.object(&PASSWORD_FIELDS).await?;
     let email = text_field(&body, "email")?.to_string();
     let password = text_field(&body, "password")?.to_string();
-    let opened = sign_in::with_password(&app, email, password, remembered, visit).await?;
-    let found = owner::find(&app).await?.ok_or_else(owner::not_found)?;
-    let cookie = cookies::session(
-        &app.addresses().sign_in(),
-        &opened.token,
-        opened.session.remembered,
-    )?;
-    Ok(with_cookie(
-        json_answer(StatusCode::OK, &signed_in(&app, &opened.session, &found)),
-        cookie,
-    ))
+    let mark = device_mark(&app, &headers);
+    let signed = sign_in::with_password(&app, email, password, mark, visit).await?;
+    let ok = json_answer(StatusCode::OK, &json!({ "ok": true }));
+    signed_in(&app, ok, &signed)
 }
 
 fn back_to_sign_in(pairs: &[(&str, &str)]) -> String {
@@ -79,15 +103,8 @@ fn back_to_sign_in(pairs: &[(&str, &str)]) -> String {
     }
 }
 
-/// The sign-in form, which answers only by redirecting.
-pub async fn form(
-    State(app): State<Arc<App>>,
-    headers: HeaderMap,
-    visit: Visit,
-    body: JsonBody,
-) -> Answer {
-    require_safe_caller(&app, &visit)?;
-    refuse_elsewhere(origin::said_by_form(&headers, &form_origins(&app)))?;
+async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody) -> Answer {
+    require_own_page(app, headers)?;
     let fields = body.form().await?;
     let field = |name: &str| fields.get(name).and_then(Value::as_str).unwrap_or("");
     let address = app.addresses().sign_in();
@@ -110,9 +127,10 @@ pub async fn form(
     if email.is_empty() || password.is_empty() {
         return failed("missing_field", "");
     }
+    let mark = device_mark(app, headers);
     let outcome =
-        sign_in::with_password(&app, email.to_string(), password.to_string(), true, visit).await;
-    let Opened { token, session } = match outcome {
+        sign_in::with_password(app, email.to_string(), password.to_string(), mark, visit).await;
+    let signed = match outcome {
         Ok(opened) => opened,
         Err(refusal) if refusal.code == Code::Unauthorized => {
             return failed("invalid_credentials", "");
@@ -128,28 +146,17 @@ pub async fn form(
         }
         Err(refusal) => return Err(refusal.into()),
     };
-    let cookie = cookies::session(&address, &token, session.remembered)?;
-    Ok(with_cookie(
-        redirect(StatusCode::FOUND, &return_to)?,
-        cookie,
-    ))
+    signed_in(app, redirect(StatusCode::FOUND, &return_to)?, &signed)
 }
 
-fn ended_cookie(app: &App) -> Result<axum::http::HeaderValue, Refusal> {
+fn ended_cookie(app: &App) -> Result<HeaderValue, Refusal> {
     cookies::session_ended(&app.addresses().sign_in())
-}
-
-fn signed_out(app: &App, value: &Value) -> Result<Response, Refusal> {
-    Ok(with_cookie(
-        json_answer(StatusCode::OK, value),
-        ended_cookie(app)?,
-    ))
 }
 
 pub async fn sign_out(State(app): State<Arc<App>>, OnPage(caller): OnPage, visit: Visit) -> Answer {
     let caller = caller.ok_or_else(unauthorized)?;
     session::sign_out(&app, &caller, visit).await?;
-    Ok(signed_out(&app, &json!({ "success": true }))?)
+    done(ended_cookie(&app)?)
 }
 
 enum Proof {
@@ -185,17 +192,18 @@ pub async fn confirm(
     };
     let body = body.object(&CONFIRM_FIELDS).await?;
     let address = app.addresses().sign_in();
-    let opened = match passkey_or_password(&body)? {
-        Proof::Password(password) => sign_in::confirm(&app, &caller, password, visit).await?,
+    match passkey_or_password(&body)? {
+        Proof::Password(password) => {
+            let mark = device_mark(&app, &headers);
+            let signed = sign_in::confirm(&app, &caller, password, mark, visit).await?;
+            let ok = json_answer(StatusCode::OK, &json!({ "ok": true }));
+            signed_in(&app, ok, &signed)
+        }
         Proof::Passkey(response) => {
             let token = cookies::passkey_challenge_token(&headers, &address).map(str::to_string);
             let assertion = Assertion { token, response };
-            passkeys::confirm(app.clone(), &caller, assertion, visit).await?
+            let opened = passkeys::confirm(app.clone(), &caller, assertion, visit).await?;
+            done(cookies::session(&address, &opened.token)?)
         }
-    };
-    let cookie = cookies::session(&address, &opened.token, opened.session.remembered)?;
-    Ok(with_cookie(
-        json_answer(StatusCode::OK, &json!({ "ok": true })),
-        cookie,
-    ))
+    }
 }

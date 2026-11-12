@@ -1,18 +1,18 @@
 use std::sync::Arc;
 
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Map, Value, json};
 
 use super::origin;
-use super::sign_in::{refuse_elsewhere, signed_in};
+use super::sign_in::{done, refuse_elsewhere, require_own_page};
 use super::{
     cookies, redirect, require_safe_caller, require_safe_transport, text_field, with_cookie,
 };
 use crate::app::access::{Caller, unauthorized};
 use crate::app::auth::passkeys::{self, Adding, Assertion, Begun, Listed};
-use crate::app::auth::{Visit, form_origins, owner};
+use crate::app::auth::{Visit, form_origins};
 use crate::app::clock::Stamp;
 use crate::app::refusal::Refusal;
 use crate::app::{App, instance};
@@ -21,6 +21,7 @@ use crate::http::body::JsonBody;
 use crate::http::caller::OnPage;
 use crate::http::named_instance;
 use crate::http::pages::{self, OwnerPasskey, OwnerPasskeys};
+use crate::http::query;
 
 const REGISTRATION_FIELDS: [&str; 2] = ["name", "response"];
 const AUTHENTICATION_FIELDS: [&str; 1] = ["response"];
@@ -47,13 +48,13 @@ fn response_in(body: &mut Map<String, Value>) -> Result<Value, Refusal> {
     }
 }
 
-pub async fn register_options(State(app): State<Arc<App>>, OnPage(caller): OnPage) -> Answer {
+pub async fn registration_options(State(app): State<Arc<App>>, OnPage(caller): OnPage) -> Answer {
     let caller = caller.ok_or_else(unauthorized)?;
     let started = passkeys::begin_adding(app.clone(), &caller).await?;
     begun(&app, started)
 }
 
-pub async fn verify_registration(
+pub async fn register(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
     OnPage(caller): OnPage,
@@ -72,10 +73,10 @@ pub async fn verify_registration(
         response: response_in(&mut body)?,
     };
     let added = passkeys::add(app, &caller, adding).await?;
-    Ok(json_answer(StatusCode::OK, &added.to_json()))
+    Ok(json_answer(StatusCode::CREATED, &added.to_json()))
 }
 
-pub async fn authenticate_options(
+pub async fn sign_in_options(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
     visit: Visit,
@@ -85,34 +86,26 @@ pub async fn authenticate_options(
     begun(&app, started)
 }
 
-pub async fn verify_authentication(
+pub async fn sign_in(
     State(app): State<Arc<App>>,
     headers: HeaderMap,
     visit: Visit,
     body: JsonBody,
 ) -> Answer {
     require_safe_caller(&app, &visit)?;
-    refuse_elsewhere(origin::said(&headers, &form_origins(&app)))?;
+    require_own_page(&app, &headers)?;
     let mut body = body.object(&AUTHENTICATION_FIELDS).await?;
     let assertion = Assertion {
         token: challenge_token(&app, &headers),
         response: response_in(&mut body)?,
     };
     let opened = passkeys::sign_in(app.clone(), assertion, visit).await?;
-    let found = owner::find(&app).await?.ok_or_else(owner::not_found)?;
-    let cookie = cookies::session(
-        &app.addresses().sign_in(),
-        &opened.token,
-        opened.session.remembered,
-    )?;
-    Ok(with_cookie(
-        json_answer(StatusCode::OK, &signed_in(&app, &opened.session, &found)),
-        cookie,
-    ))
+    done(cookies::session(&app.addresses().sign_in(), &opened.token)?)
 }
 
-pub async fn list(State(app): State<Arc<App>>, OnPage(caller): OnPage) -> Answer {
+pub async fn list(State(app): State<Arc<App>>, OnPage(caller): OnPage, uri: Uri) -> Answer {
     let caller = caller.ok_or_else(unauthorized)?;
+    query::only(&uri, &[])?;
     let data: Vec<Value> = passkeys::list(&app, &caller)
         .await?
         .iter()
@@ -130,10 +123,12 @@ pub async fn rename(
     Path(id): Path<String>,
     headers: HeaderMap,
     OnPage(caller): OnPage,
+    uri: Uri,
     body: JsonBody,
 ) -> Answer {
     let caller = caller.ok_or_else(unauthorized)?;
     named_instance::judge(&app, &headers)?;
+    query::only(&uri, &[])?;
     let body = body.object(&RENAME_FIELDS).await?;
     let name = text_field(&body, "name")?;
     let renamed = passkeys::rename(&app, &caller, id, name).await?;
@@ -145,9 +140,11 @@ pub async fn remove(
     Path(id): Path<String>,
     headers: HeaderMap,
     OnPage(caller): OnPage,
+    uri: Uri,
 ) -> Answer {
     let caller = caller.ok_or_else(unauthorized)?;
     named_instance::judge(&app, &headers)?;
+    query::only(&uri, &[])?;
     passkeys::remove(&app, &caller, id).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }

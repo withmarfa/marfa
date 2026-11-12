@@ -67,7 +67,7 @@ function postForm(
 }
 
 function signIn(password: string, address: string): Promise<Response> {
-  return fetch(`${server!.apiUrl}/auth/sign-in/email`, {
+  return fetch(`${server!.apiUrl}/auth/sign-in`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -111,14 +111,65 @@ describe("the sign-in surface", () => {
     );
     expect(own.status).toBe(302);
     expect(own.headers.get("location")).toContain("error=missing_field");
-    // A post naming no origin at all is answered by the door too.
+    // A post naming no origin at all is answered by a door that opens no
+    // session.
     const unnamed = await postForm(
-      "/auth/sign-in",
-      { email: "", password: "", return_to: "/" },
-      {},
+      "/auth/device",
+      { user_code: "" },
+      { [CLIENT_HEADER]: "192.0.2.1" },
     );
     expect(unnamed.status).toBe(302);
-    expect(unnamed.headers.get("location")).toContain("error=missing_field");
+    expect(unnamed.headers.get("location")).toContain("error=missing_code");
+  });
+
+  it("refuses a sign-in that says neither Origin nor Referer, as a form or as JSON, and sets no cookie", async () => {
+    const unsaid = [
+      await postForm(
+        "/auth/sign-in",
+        { ...OWNER, return_to: "/" },
+        { [CLIENT_HEADER]: "192.0.2.5" },
+      ),
+      await fetch(`${server!.apiUrl}/auth/sign-in`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [CLIENT_HEADER]: "192.0.2.5",
+        },
+        body: JSON.stringify(OWNER),
+      }),
+    ];
+    for (const refused of unsaid) {
+      expect(refused.status).toBe(403);
+      expect(await errorCode(refused)).toBe("forbidden");
+      expect(refused.headers.get("set-cookie")).toBeNull();
+    }
+    // The witness: a form whose Referer is a page of the instance signs in.
+    const referred = await postForm(
+      "/auth/sign-in",
+      { ...OWNER, return_to: "/" },
+      { referer: `${origin}/auth/sign-in`, [CLIENT_HEADER]: "192.0.2.5" },
+    );
+    expect(referred.status).toBe(302);
+    expect(referred.headers.get("set-cookie")).toMatch(/^marfa_session=/);
+  });
+
+  it("answers a sign-out with only ok, and ends the session cookie", async () => {
+    const signedIn = await signIn(OWNER.password, "192.0.2.6");
+    const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0];
+    const ended = await fetch(`${server!.apiUrl}/auth/sign-out`, {
+      method: "POST",
+      headers: { "content-type": "application/json", origin, cookie },
+      body: "{}",
+    });
+    expect(ended.status).toBe(200);
+    expect(await ended.json()).toEqual({ ok: true });
+    const line = ended.headers.get("set-cookie") ?? "";
+    expect(line).toMatch(/^marfa_session=;/);
+    expect(line).toMatch(/;\s*Max-Age=0/i);
+    const after = await fetch(`${server!.apiUrl}/owner/passkeys`, {
+      headers: { cookie },
+    });
+    expect(after.status).toBe(401);
   });
 
   it("sends a signed-in browser only to a path on the instance", async () => {
@@ -156,6 +207,42 @@ describe("the sign-in surface", () => {
     expect(onInstance.headers.get("location")).toBe(
       "/auth/device?from=sign-in#entry",
     );
+  });
+
+  it("answers a password sign-in sent as JSON with only ok, and its session cookie", async () => {
+    const signedIn = await signIn(OWNER.password, "192.0.2.3");
+    expect(signedIn.status).toBe(200);
+    expect(await signedIn.json()).toEqual({ ok: true });
+    const line = signedIn.headers.get("set-cookie") ?? "";
+    expect(line).toMatch(/^marfa_session=[^;]+;/);
+    expect(line).toMatch(/;\s*HttpOnly/i);
+    expect(line).toMatch(/;\s*SameSite=Lax/i);
+    const cookie = line.split(";")[0];
+    const passkeys = await fetch(`${server!.apiUrl}/owner/passkeys`, {
+      headers: { cookie },
+    });
+    expect(passkeys.status).toBe(200);
+  });
+
+  it("refuses a password sign-in sent as JSON with a field it does not take, and sets no cookie", async () => {
+    const refused = await fetch(`${server!.apiUrl}/auth/sign-in`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin,
+        [CLIENT_HEADER]: "192.0.2.4",
+      },
+      body: JSON.stringify({ ...OWNER, rememberMe: false }),
+    });
+    expect(refused.status).toBe(400);
+    const body = (await refused.json()) as ErrorResponse & {
+      error: { details?: { unknown_body_fields?: string[] } };
+    };
+    expect(body.error.code).toBe("validation_error");
+    expect(body.error.details?.unknown_body_fields).toEqual(["rememberMe"]);
+    expect(refused.headers.get("set-cookie")).toBeNull();
+    // The witness: the same body without the field signs in.
+    expect((await signIn(OWNER.password, "192.0.2.4")).status).toBe(200);
   });
 
   it("holds one address to ten attempts at an account, and leaves the owner signing in from another", async () => {
@@ -220,7 +307,7 @@ describe("the sign-in surface", () => {
 
     const signedIn = await signIn(OWNER.password, "198.51.100.31");
     expect(signedIn.status).toBe(200);
-    const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+    const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
       signedIn.headers.get("set-cookie") ?? "",
     )?.[1];
     expect(cookie).toBeDefined();
@@ -270,7 +357,7 @@ const NAVIGATION = {
 async function sessionCookie(address: string): Promise<string> {
   const signedIn = await signIn(OWNER.password, address);
   expect(signedIn.status).toBe(200);
-  const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
+  const cookie = /(?:^|,\s*)([\w.-]*marfa_session=[^;]+)/.exec(
     signedIn.headers.get("set-cookie") ?? "",
   )?.[1];
   expect(cookie).toBeDefined();

@@ -148,10 +148,7 @@ fn binned(id: &str) -> String {
 fn replay(events: &[(&str, &str, String)]) -> Answer {
     let first = events.first().map_or("10", |(id, ..)| id);
     let last = events.last().map_or("10", |(id, ..)| id);
-    let mut frames = vec![
-        scripted::connected(),
-        scripted::copy_marker("stream_cursor", first),
-    ];
+    let mut frames = vec![scripted::copy_marker("stream_cursor", first)];
     frames.extend(
         events
             .iter()
@@ -165,7 +162,6 @@ fn replay(events: &[(&str, &str, String)]) -> Answer {
 fn at_head(cursor: &str) -> Answer {
     scripted::stream(
         vec![
-            scripted::connected(),
             scripted::copy_marker("stream_cursor", cursor),
             scripted::copy_marker("stream_live", cursor),
         ],
@@ -1922,7 +1918,6 @@ fn an_unpin_while_a_refill_lists_its_items_lets_go_of_nothing_under_the_root() {
         "/events",
         vec![scripted::stream(
             vec![
-                scripted::connected(),
                 scripted::copy_marker("stream_cursor", "60"),
                 "event: catchup_too_old\ndata: {\"event_type\":\"catchup_too_old\",\"min_retained_id\":\"50\",\"requested\":\"10\"}\n\n".into(),
             ],
@@ -2122,7 +2117,6 @@ fn a_refill_follows_no_edge_it_has_not_brought_again() {
         "/events",
         vec![scripted::stream(
             vec![
-                scripted::connected(),
                 scripted::copy_marker("stream_cursor", "60"),
                 "event: catchup_too_old\ndata: {\"event_type\":\"catchup_too_old\",\"min_retained_id\":\"50\",\"requested\":\"10\"}\n\n".into(),
             ],

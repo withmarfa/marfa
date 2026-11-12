@@ -221,7 +221,7 @@ describe("item versioning", () => {
     expect(conflict.status).toBe(409);
     expect(conflict.error?.error.code).toBe("ancestor_unavailable");
     const body = conflict.error as unknown as AncestorUnavailableResponse;
-    expect(body.error.status).toBe(409);
+    expect(body.error).not.toHaveProperty("status");
     expect(body.requested_version).toBe(0);
     expect(
       body.current.id,
@@ -257,7 +257,7 @@ describe("item versioning", () => {
     expect(conflict.error?.error.code).toBe("version_conflict");
 
     const body = conflict.error as unknown as ConflictResponse;
-    expect(body.error.status).toBe(409);
+    expect(body.error).not.toHaveProperty("status");
     expect(
       [body.current.id, body.ancestor.id],
       "the refusal did not name the item in current.id and ancestor.id",
@@ -1158,8 +1158,8 @@ describe("item versioning", () => {
   it("answers an edges-only stale write with the envelope minus its merge half", async () => {
     // The third shape this code is answered in, and the one a client is
     // most likely to be surprised by: there is nothing to merge, so there
-    // is no ancestor and no field list, but `error.status` and `current`
-    // are on every `version_conflict` the server answers.
+    // is no ancestor and no field list, but `current` is on every
+    // `version_conflict` the server answers.
     const r = await client.createItem(
       createNote({
         source: ctx.source,
@@ -1187,7 +1187,7 @@ describe("item versioning", () => {
 
     const body = stale.error as unknown as StaleVersionResponse &
       Partial<ConflictResponse>;
-    expect(body.error.status).toBe(409);
+    expect(body.error).not.toHaveProperty("status");
     expect(
       body.current.id,
       "the refusal did not name the item it is about in current.id",
@@ -1333,7 +1333,7 @@ describe("item versioning", () => {
           merge_policy?: unknown;
           requested_version?: unknown;
         };
-        expect(envelope.error.status, label).toBe(409);
+        expect(envelope.error, label).not.toHaveProperty("status");
         expect(envelope.current.id, label).toBe(r.data.item.id);
         expect(envelope.current.version, label).toBe(2);
         expect(envelope.ancestor, label).toBeUndefined();

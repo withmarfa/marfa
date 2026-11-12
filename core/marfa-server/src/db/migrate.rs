@@ -17,8 +17,9 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
 }];
 
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \
-                           restore the archive there. The restore can refuse an archive the \
-                           writing build did not write.";
+                           restore the archive there. A restore reads only the archive version \
+                           its own build writes, and refuses another, naming the build that \
+                           wrote it.";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Standing {

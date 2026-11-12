@@ -28,12 +28,12 @@ pub enum Lender {
     },
 }
 
-/// A recorded copy: the store, and the object it is kept in there, which is empty for the
-/// disk store, whose file the hash names.
+/// A recorded copy: its store, its object there (empty on disk) and whether this server wrote it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Held {
     pub store_id: String,
     pub object: String,
+    pub written: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -305,7 +305,7 @@ pub fn record_upload(
         params![blob.hash.as_str(), blob.mime_type, size, at],
     )?;
     tx.execute(
-        "INSERT INTO blob_copies (hash, store_id, recorded_at) VALUES (?1, ?2, ?3) \
+        "INSERT INTO blob_copies (hash, store_id, written, recorded_at) VALUES (?1, ?2, 1, ?3) \
          ON CONFLICT (hash, store_id) DO NOTHING",
         params![blob.hash.as_str(), store_id, at],
     )?;
@@ -460,7 +460,8 @@ pub fn held_in(
 /// The copies the copy record names in attached stores.
 pub fn holders(tx: &Transaction<'_>, hash: &Hash) -> Result<Vec<Held>> {
     let mut statement = tx.prepare_cached(
-        "SELECT c.store_id, s.kind, c.object FROM blob_copies c JOIN stores s ON s.id = c.store_id \
+        "SELECT c.store_id, s.kind, c.object, c.written FROM blob_copies c \
+         JOIN stores s ON s.id = c.store_id \
          WHERE c.hash = ?1 AND s.detached_at IS NULL ORDER BY c.store_id",
     )?;
     let rows = statement.query_map([hash.as_str()], |row| {
@@ -468,13 +469,18 @@ pub fn holders(tx: &Transaction<'_>, hash: &Hash) -> Result<Vec<Held>> {
             row.get::<_, String>(0)?,
             row.get::<_, String>(1)?,
             row.get::<_, String>(2)?,
+            row.get::<_, bool>(3)?,
         ))
     })?;
     let mut found = Vec::new();
     for row in rows {
-        let (store_id, kind, object) = row?;
+        let (store_id, kind, object, written) = row?;
         let object = object_of(hash, &kind, object)?;
-        found.push(Held { store_id, object });
+        found.push(Held {
+            store_id,
+            object,
+            written,
+        });
     }
     Ok(found)
 }
@@ -551,33 +557,49 @@ pub fn copy_failed(tx: &Transaction<'_>, hash: &Hash, store_id: &str) -> Result<
     Ok(())
 }
 
-/// Records a copy a store now holds in `object`, unless the blob has left the registry since.
-/// An object that a copy recorded meanwhile makes surplus stays queued for deletion.
+/// What `record_copy` did with an object.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recorded {
+    /// The object is the store's copy now.
+    Copy,
+    /// A copy recorded meanwhile makes the object surplus, and it stays queued for deletion.
+    Surplus,
+    /// The blob has left the registry.
+    Gone,
+}
+
+/// Records a copy a store now holds in `object`. An object this server wrote takes the place of
+/// a recorded copy it did not write.
 pub fn record_copy(
     tx: &Transaction<'_>,
     hash: &Hash,
     store_id: &str,
     object: &str,
+    written: bool,
     at: &str,
-) -> Result<bool> {
+) -> Result<Recorded> {
     if find(tx, hash)?.is_none() {
-        return Ok(false);
+        return Ok(Recorded::Gone);
     }
     let recorded = tx
         .prepare_cached(
-            "INSERT INTO blob_copies (hash, store_id, object, recorded_at) \
-             VALUES (?1, ?2, ?3, ?4) ON CONFLICT (hash, store_id) DO NOTHING",
+            "INSERT INTO blob_copies (hash, store_id, object, written, recorded_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (hash, store_id) DO UPDATE SET \
+             object = excluded.object, written = 1, recorded_at = excluded.recorded_at, \
+             verified_at = NULL WHERE blob_copies.written = 0 AND excluded.written = 1",
         )?
-        .execute(params![hash.as_str(), store_id, object, at])?;
+        .execute(params![hash.as_str(), store_id, object, written, at])?;
     tx.prepare_cached("DELETE FROM blob_copy_failures WHERE hash = ?1 AND store_id = ?2")?
         .execute(params![hash.as_str(), store_id])?;
-    if recorded > 0 {
-        deleted(tx, hash, store_id, object)?;
+    if recorded == 0 {
+        return Ok(Recorded::Surplus);
     }
-    Ok(true)
+    deleted(tx, hash, store_id, object)?;
+    Ok(Recorded::Copy)
 }
 
-/// Takes a copy out of the copy record and queues the deletion of its bytes, in one step.
+/// Takes a copy out of the copy record and, where the server wrote its bytes, queues their
+/// deletion, in one step.
 pub fn remove_copy(
     tx: &Transaction<'_>,
     hash: &Hash,
@@ -585,19 +607,49 @@ pub fn remove_copy(
     object: &str,
     at: &str,
 ) -> Result<bool> {
-    let removed = tx
+    let removed: Option<bool> = tx
         .prepare_cached(
-            "DELETE FROM blob_copies WHERE hash = ?1 AND store_id = ?2 AND object = ?3",
+            "DELETE FROM blob_copies WHERE hash = ?1 AND store_id = ?2 AND object = ?3 \
+             RETURNING written",
         )?
-        .execute(params![hash.as_str(), store_id, object])?;
-    if removed == 0 {
-        return Ok(false);
+        .query_row(params![hash.as_str(), store_id, object], |row| row.get(0))
+        .optional()?;
+    match removed {
+        None => Ok(false),
+        Some(written) => {
+            if written {
+                queue_deletion(tx, hash, store_id, object, at)?;
+            }
+            Ok(true)
+        }
     }
-    queue_deletion(tx, hash, store_id, object, at)?;
-    Ok(true)
 }
 
-/// A blob an attached store lacks while another attached store holds it.
+/// The objects in `store_id` for `hash` the server wrote and queued for deletion.
+pub fn queued_objects(
+    tx: &Transaction<'_>,
+    hash: &Hash,
+    store_id: &str,
+) -> Result<HashSet<String>> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT object FROM blob_pending_deletions WHERE hash = ?1 AND store_id = ?2",
+        )?
+        .query_map(params![hash.as_str(), store_id], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// Whether the server queued `object` in `store_id` for deletion, which it does for each object
+/// before it writes one.
+pub fn queued(tx: &Transaction<'_>, hash: &Hash, store_id: &str, object: &str) -> Result<bool> {
+    Ok(tx
+        .prepare_cached(
+            "SELECT 1 FROM blob_pending_deletions WHERE hash = ?1 AND store_id = ?2 AND object = ?3",
+        )?
+        .exists(params![hash.as_str(), store_id, object])?)
+}
+
+/// A blob of which an attached store holds no copy this server wrote, while some store holds one.
 #[derive(Debug)]
 pub struct Missing {
     pub blob: Blob,
@@ -606,7 +658,8 @@ pub struct Missing {
 
 const MISSING: &str = "FROM blobs b JOIN stores t ON t.detached_at IS NULL \
      LEFT JOIN blob_copy_failures f ON f.hash = b.hash AND f.store_id = t.id \
-     WHERE NOT EXISTS (SELECT 1 FROM blob_copies c WHERE c.hash = b.hash AND c.store_id = t.id) \
+     WHERE NOT EXISTS (SELECT 1 FROM blob_copies c \
+                       WHERE c.hash = b.hash AND c.store_id = t.id AND c.written = 1) \
      AND EXISTS (SELECT 1 FROM blob_copies c JOIN stores s ON s.id = c.store_id \
                  WHERE c.hash = b.hash AND s.detached_at IS NULL)";
 
@@ -731,17 +784,48 @@ pub fn verified(
     Ok(stamped > 0)
 }
 
-/// Adds every blob nothing references to the report, keeping the time of an earlier report,
-/// and takes off any that something references now. Answers the report's size.
+/// Whether something keeps the blob `{hash}` names: a row's reference or an open job's properties.
+fn kept(hash: &str) -> String {
+    format!(
+        "(EXISTS (SELECT 1 FROM blob_references r WHERE r.hash = {hash}) \
+         OR EXISTS (SELECT 1 FROM blob_job_holds j WHERE j.hash = {hash}))"
+    )
+}
+
+/// An open job's properties keep each digest they name until the job ends.
+pub fn hold_for_job(tx: &Transaction<'_>, job_id: &str, hash: &str) -> Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO blob_job_holds (hash, job_id) VALUES (?1, ?2) \
+         ON CONFLICT (hash, job_id) DO NOTHING",
+    )?
+    .execute(params![hash, job_id])?;
+    tx.prepare_cached("DELETE FROM blob_orphans WHERE hash = ?1")?
+        .execute([hash])?;
+    Ok(())
+}
+
+pub fn release_job(tx: &Transaction<'_>, job_id: &str) -> Result<()> {
+    tx.prepare_cached("DELETE FROM blob_job_holds WHERE job_id = ?1")?
+        .execute([job_id])?;
+    Ok(())
+}
+
+/// Adds every blob nothing keeps to the report, keeping the time of an earlier report, and
+/// takes off any that something keeps now. Answers the report's size.
 pub fn report_orphans(tx: &Transaction<'_>, at: &str) -> Result<u64> {
     tx.execute(
-        "INSERT INTO blob_orphans (hash, reported_at) SELECT b.hash, ?1 FROM blobs b \
-         WHERE NOT EXISTS (SELECT 1 FROM blob_references r WHERE r.hash = b.hash) \
-         ON CONFLICT (hash) DO NOTHING",
+        &format!(
+            "INSERT INTO blob_orphans (hash, reported_at) SELECT b.hash, ?1 FROM blobs b \
+             WHERE NOT {} ON CONFLICT (hash) DO NOTHING",
+            kept("b.hash")
+        ),
         [at],
     )?;
     tx.execute(
-        "DELETE FROM blob_orphans WHERE hash IN (SELECT hash FROM blob_references)",
+        &format!(
+            "DELETE FROM blob_orphans WHERE {}",
+            kept("blob_orphans.hash")
+        ),
         [],
     )?;
     report_size(tx)
@@ -758,13 +842,13 @@ pub const UNREAD_ORPHANS: Unread<'static> = Unread {
     scope: "1",
 };
 
-/// Blobs reported at or before `cutoff` that the index says nothing references.
+/// Blobs reported at or before `cutoff` that the index says nothing keeps.
 pub fn purge_candidates(tx: &Transaction<'_>, cutoff: &str) -> Result<Vec<Hash>> {
     let mut statement = tx.prepare_cached(&format!(
         "SELECT o.hash FROM blob_orphans o WHERE {} AND o.reported_at <= ?1 \
-         AND NOT EXISTS (SELECT 1 FROM blob_references r WHERE r.hash = o.hash) \
-         ORDER BY o.reported_at, o.hash",
-        readable("o.reported_at")
+         AND NOT {} ORDER BY o.reported_at, o.hash",
+        readable("o.reported_at"),
+        kept("o.hash")
     ))?;
     let rows = statement.query_map([cutoff], |row| row.get::<_, String>(0))?;
     let mut found = Vec::new();
@@ -868,13 +952,14 @@ fn may_name(raw: &[u8], names: &HashSet<&[u8]>) -> bool {
     false
 }
 
-/// Queues deletion of the blob's bytes in each store, including a file a failed write left.
+/// Queues deletion of the blob's bytes in each store, including a file a failed write left, but
+/// for an object the server did not write.
 pub fn purge(tx: &Transaction<'_>, hash: &Hash, at: &str) -> Result<()> {
     tx.prepare_cached(
         "INSERT INTO blob_pending_deletions (hash, store_id, object, queued_at) \
          SELECT c.hash, c.store_id, c.object, ?2 FROM blob_copies c \
          JOIN stores s ON s.id = c.store_id \
-         WHERE c.hash = ?1 AND s.kind = 's3' AND s.detached_at IS NULL \
+         WHERE c.hash = ?1 AND c.written = 1 AND s.kind = 's3' AND s.detached_at IS NULL \
          ON CONFLICT (hash, store_id, object) DO NOTHING",
     )?
     .execute(params![hash.as_str(), at])?;
@@ -947,6 +1032,49 @@ mod tests {
             params![hash.as_str(), kind, seq, types[2], types[0], types[1]],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn an_open_jobs_hold_keeps_a_blob_off_the_report_and_out_of_the_purge_until_released() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let tx = conn.transaction().unwrap();
+        let hash = Hash::parse(&format!("sha256:{}", "c".repeat(64))).unwrap();
+        let at = "2026-01-01T00:00:00.000Z";
+        tx.execute(
+            "INSERT INTO blobs (hash, mime_type, size_bytes, recorded_at) \
+             VALUES (?1, 'text/plain', 1, ?2)",
+            params![hash.as_str(), at],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO bulk_jobs (id, action, input, key_id, status, matched, created_at) \
+             VALUES ('job', 'update_properties', '{}', 'key', 'queued', 0, ?1)",
+            [at],
+        )
+        .unwrap();
+
+        assert_eq!(report_orphans(&tx, at).unwrap(), 1);
+        hold_for_job(&tx, "job", hash.as_str()).unwrap();
+        assert_eq!(report_size(&tx).unwrap(), 0, "the hold lifts the report");
+        tx.execute(
+            "INSERT INTO blob_orphans (hash, reported_at) VALUES (?1, ?2)",
+            params![hash.as_str(), at],
+        )
+        .unwrap();
+        assert!(purge_candidates(&tx, at).unwrap().is_empty());
+        assert_eq!(report_orphans(&tx, at).unwrap(), 0);
+
+        release_job(&tx, "job").unwrap();
+        let later = "2026-01-01T00:00:01.000Z";
+        assert_eq!(report_orphans(&tx, later).unwrap(), 1);
+        assert!(
+            purge_candidates(&tx, "2026-01-01T00:00:00.999Z")
+                .unwrap()
+                .is_empty(),
+            "a report younger than the grace is kept"
+        );
+        assert_eq!(purge_candidates(&tx, later).unwrap(), vec![hash]);
     }
 
     #[test]

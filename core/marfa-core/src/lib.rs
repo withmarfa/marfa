@@ -659,11 +659,6 @@ impl Core {
             Some(server) => Some(Arc::new(http::Http::new(&server.url, &server.key)?)),
             None => None,
         };
-        // Only the writer may replace triggers: another build's writer may
-        // hold the store with its own triggers (`device/reading-handle-refuses`).
-        if lock.handle() == Handle::Writer {
-            store::hold_triggers(&conn)?;
-        }
         let relocation = if let Some(http) = &http
             && let Some(expected) = store::meta_get(&conn, store::META_SERVER_ORIGIN)?
             && expected != http.origin()
@@ -4719,11 +4714,11 @@ mod tests {
         parent.rest.insert(
             "fields".into(),
             serde_json::json!({
-                "title": {"type": "string", "required": true, "maxLength": 4},
+                "title": {"type": "string", "required": true, "max_length": 4},
                 "read": {"type": "boolean"},
                 "choice": {"type": "enum", "enum_values": ["yes", "no"]},
                 "count": {"type": "integer"},
-                "list": {"type": "array", "maxItems": 2, "items": {"type": "string"}},
+                "list": {"type": "array", "max_items": 2, "items": {"type": "string"}},
                 "date": {"type": "date"}, "time": {"type": "datetime"},
                 "email": {"type": "email"}, "url": {"type": "url"},
                 "image": {"type": "thumbnail"}, "object": {"type": "object"},
@@ -4734,7 +4729,7 @@ mod tests {
         child.rest.insert(
             "fields".into(),
             serde_json::json!({
-                "title": {"type": "string", "required": true, "maxLength": 5}
+                "title": {"type": "string", "required": true, "max_length": 5}
             }),
         );
         store::replace_types(&core.conn().unwrap(), &[parent, child]).unwrap();
@@ -6609,13 +6604,13 @@ mod tests {
                 serde_json::json!({ "type": "array", "items_type": "string", "items_fields": { "m": { "type": "string" } } }),
             ),
             (
-                "a maxLength on a currency field",
-                serde_json::json!({ "type": "string", "format": "currency", "maxLength": 2 }),
+                "a max_length on a currency field",
+                serde_json::json!({ "type": "string", "format": "currency", "max_length": 2 }),
             ),
             (
-                "a maxLength on a currency member",
+                "a max_length on a currency member",
                 entries(
-                    serde_json::json!({ "m": { "type": "string", "format": "currency", "maxLength": 2 } }),
+                    serde_json::json!({ "m": { "type": "string", "format": "currency", "max_length": 2 } }),
                 ),
             ),
         ];
@@ -6669,8 +6664,8 @@ mod tests {
                 serde_json::json!({ "type": "string", "items_type": "status" }),
             ),
             (
-                "a maxLength on a currency",
-                serde_json::json!({ "type": "string", "format": "currency", "maxLength": 3 }),
+                "a max_length on a currency",
+                serde_json::json!({ "type": "string", "format": "currency", "max_length": 3 }),
             ),
         ];
         for (what, check) in checks {
@@ -9345,19 +9340,27 @@ mod tests {
         std::fs::write(&words, "words, not a database. ".repeat(40)).unwrap();
         assert!(not_a_store(&words).contains("has no schema to read"));
 
-        let odd = made("odd.sqlite", "CREATE TABLE meta (key TEXT);");
-        assert!(
-            matches!(refusal(&odd), CoreError::WrongSchema { reason, .. } if reason.contains("meta")),
-            "a store of another shape was not refused by name"
-        );
-
         let meta = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
         let older = made(
             "older.sqlite",
-            &format!("{meta} INSERT INTO meta VALUES ('schema_version', '1');"),
+            &format!("{meta} INSERT INTO meta VALUES ('schema_version', '0');"),
         );
         let unversioned = made("unversioned.sqlite", meta);
-        for (path, found) in [(&older, "schema 1"), (&unversioned, "no schema version")] {
+        let newer = made(
+            "newer.sqlite",
+            &format!(
+                "{meta} PRAGMA user_version = {};",
+                store::SCHEMA_VERSION + 1
+            ),
+        );
+        for (path, found) in [
+            (&older, "schema version 0".to_string()),
+            (&unversioned, "schema version 0".to_string()),
+            (
+                &newer,
+                format!("schema version {}", store::SCHEMA_VERSION + 1),
+            ),
+        ] {
             match refusal(path) {
                 CoreError::WrongSchema {
                     path: named,
@@ -9367,7 +9370,7 @@ mod tests {
                 } => {
                     assert!(folder.is_none(), "a device store was refused as a folder's");
                     assert_eq!(named, path.display().to_string());
-                    assert!(reason.contains(found), "{reason}");
+                    assert!(reason.contains(&found), "{reason}");
                     assert_eq!(unsent, None, "a store with no queue was counted");
                 }
                 other => panic!("{} was refused as {other:?}", path.display()),

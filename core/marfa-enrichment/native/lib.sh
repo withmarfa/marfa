@@ -220,14 +220,34 @@ licence_into() {
   cp "$DOWNLOADS/licence-$name.txt" "$out"
 }
 
+# build_image_recipe: the short hash of everything that decides what the build image
+# holds: the Dockerfile, the files it copies in (this script, the manifest, which
+# names the base image's digest and the snapshot date, and the Rust installer).
+build_image_recipe() {
+  recipe_hash "file:$NATIVE_DIR/linux/Dockerfile" "file:$NATIVE_DIR/lib.sh" \
+    "file:$MANIFEST" "file:$NATIVE_DIR/linux/install-rust.sh"
+}
+
+# build_image_name: the image every Linux build runs in, named as release.sh and
+# the release scripts name it.
+build_image_name() {
+  echo "${MARFA_RELEASE_PREFIX:-marfa-release}-build"
+}
+
 # make_build_image <name>: builds the image of native/linux/Dockerfile, the one every
 # Linux build and the VM's init program are made in, with the base image and the
-# snapshot date the manifest pins.
+# snapshot date the manifest pins. The image carries its recipe as a label, and one
+# already loaded under <name> with the same recipe is used as it is, so that a build
+# never reaches the package archive for an image a cache already holds.
 make_build_image() {
-  local image=$1 base snapshot
+  local image=$1 base snapshot recipe have
+  recipe=$(build_image_recipe)
+  have=$(docker image inspect --format '{{ index .Config.Labels "so.marfa.native.recipe" }}' "$image" 2>/dev/null || true)
+  [ "$have" = "$recipe" ] && return 0
   base=$(manifest_line image build | awk '{ print $3 }')
   snapshot=$(manifest_line apt-snapshot ubuntu | awk '{ print $3 }')
   docker build --quiet --platform linux/amd64 --build-arg "BASE=$base" --build-arg "SNAPSHOT=$snapshot" \
+    --label "so.marfa.native.recipe=$recipe" \
     -f "$NATIVE_DIR/linux/Dockerfile" -t "$image" "$NATIVE_DIR" >/dev/null || die "could not build $image"
 }
 

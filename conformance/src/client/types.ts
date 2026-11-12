@@ -135,8 +135,8 @@ export interface FieldDefinition {
   status_values?: { value: string; group: StatusGroup }[];
   /** Required on an `array` field: names the element type. */
   items_type?: FieldType;
-  maxLength?: number;
-  maxItems?: number;
+  max_length?: number;
+  max_items?: number;
   /** On a `number` or `integer` field: the lowest value it takes. */
   minimum?: number;
   /** On a `number` or `integer` field: the highest value it takes. */
@@ -174,7 +174,7 @@ export interface ColumnDefinition {
   searchable?: boolean;
   enum_values?: string[];
   format?: string;
-  maxLength?: number;
+  max_length?: number;
   minimum?: number;
   maximum?: number;
   /** On an `item` column: the types it accepts. */
@@ -557,7 +557,7 @@ export interface ConflictSnapshot {
 
 /** The 409 a stale write gets when its base version's snapshot is retained. */
 export interface ConflictResponse {
-  error: { code: "version_conflict"; status: 409; message: string };
+  error: { code: "version_conflict"; message: string };
   current: ConflictSnapshot;
   ancestor: ConflictSnapshot;
   conflicting_fields: string[];
@@ -573,13 +573,13 @@ export interface ConflictResponse {
  * refusal.
  */
 export interface StaleVersionResponse {
-  error: { code: "version_conflict"; status: 409; message: string };
+  error: { code: "version_conflict"; message: string };
   current: ConflictSnapshot;
 }
 
 /** The 409 a write gets when no snapshot exists for the version it names. */
 export interface AncestorUnavailableResponse {
-  error: { code: "ancestor_unavailable"; status: 409; message: string };
+  error: { code: "ancestor_unavailable"; message: string };
   current: ConflictSnapshot;
   requested_version: number;
 }
@@ -814,6 +814,7 @@ export interface RestoreArchiveResponse {
   sources_skipped_reasons: Record<string, number>;
   settings_added: number;
   settings_skipped: number;
+  settings_dropped: string[];
   connector_states_added: number;
   connector_states_skipped: number;
   connector_agreements_added: number;

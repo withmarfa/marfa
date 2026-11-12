@@ -97,6 +97,16 @@ impl At<'_> {
         self.refused(Some(field), Refusal::validation(message))
     }
 
+    fn missing(&self, field: &str) -> Box<Refused> {
+        let message = format!(
+            "{} {} on line {} of the archive: {field} is missing.",
+            capitalized(self.kind.word()),
+            self.id.unwrap_or("with no id"),
+            self.row
+        );
+        self.refused(Some(field), Refusal::validation(message))
+    }
+
     /// A line a restore skips rather than refuses, for `reason`.
     fn skipped(&self, field: Option<&str>, reason: &str, what: &str) -> Box<Refused> {
         let message = format!(
@@ -211,6 +221,18 @@ fn state_held(type_id: &str, state: &str) -> bool {
     STATES.contains(&state) && !(system && state == "trashed") && !(!system && state == "revoked")
 }
 
+/// The fields every item line carries.
+const ITEM_FIELDS: [&str; 8] = [
+    "id",
+    "version",
+    "created_at",
+    "updated_at",
+    "last_activity_at",
+    "occurred_at",
+    "state",
+    "properties",
+];
+
 /// Judges an `items.ndjson.gz` line as a restore would; `cap` is the bulk body limit.
 pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(), Box<Refused>> {
     let unnamed = At {
@@ -234,10 +256,12 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
         type_id,
         row,
     };
-    if item.get("id").is_some_and(|id| {
-        !id.as_str()
-            .is_some_and(|id| marfa_rules::validation::id("id", id).is_ok())
-    }) {
+    for field in ITEM_FIELDS {
+        if !item.contains_key(field) {
+            return Err(at.missing(field));
+        }
+    }
+    if !id.is_some_and(|id| marfa_rules::validation::id("id", id).is_ok()) {
         return Err(at.invalid("id", "an item ID"));
     }
     let Some(type_id) = type_id.filter(|type_id| is_type_id(type_id)) else {
@@ -249,13 +273,17 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
         "occurred_at",
         "last_activity_at",
     ] {
-        if item.get(field).is_some_and(|value| !is_instant(value)) {
+        if !item.get(field).is_some_and(is_instant) {
             return Err(at.invalid(field, "an instant"));
         }
     }
-    if item.get("version").is_some_and(|value| !is_version(value)) {
+    let Some(version) = item
+        .get("version")
+        .filter(|value| is_version(value))
+        .and_then(Value::as_i64)
+    else {
         return Err(at.invalid("version", "a positive safe integer"));
-    }
+    };
     let binned = matches!(
         item.get("state").and_then(Value::as_str),
         Some("trashed" | "revoked")
@@ -274,10 +302,10 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
     {
         return Err(at.invalid("tier", "library or feed"));
     }
-    if let Some(state) = item.get("state")
-        && !state
-            .as_str()
-            .is_some_and(|state| state_held(type_id, state))
+    if !item
+        .get("state")
+        .and_then(Value::as_str)
+        .is_some_and(|state| state_held(type_id, state))
     {
         let message = format!(
             "Item {} of type {type_id} is recorded in a state its lifecycle cannot produce.",
@@ -286,9 +314,8 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
         return Err(at.refused(Some("state"), Refusal::validation(message)));
     }
     let properties = match item.get("properties") {
-        None => None,
-        Some(Value::Object(properties)) => Some(properties),
-        Some(_) => {
+        Some(Value::Object(properties)) => properties,
+        _ => {
             let message = format!(
                 "Item {} holds properties that are not an object.",
                 id.unwrap_or("with no id")
@@ -310,7 +337,6 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
     {
         return Err(at.invalid("restored_at", "an instant or null"));
     }
-    let version = item.get("version").and_then(Value::as_i64).unwrap_or(1);
     history(&at, line.get("versions"), id, version)?;
     if let Some(refused) = item
         .get("properties")
@@ -328,8 +354,7 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
             }
         }
     }
-    let empty = Map::new();
-    shape(catalog, &at, type_id, properties.unwrap_or(&empty))
+    shape(catalog, &at, type_id, properties)
 }
 
 /// A shipped type holds its items to it; any type's schedule, recurrence and kept columns must still read.
@@ -619,6 +644,11 @@ mod tests {
             "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540",
             "type": "core.note",
             "version": 3,
+            "state": "active",
+            "created_at": "2026-11-09T00:00:00.000Z",
+            "updated_at": "2026-11-09T00:00:00.000Z",
+            "last_activity_at": "2026-11-09T00:00:00.000Z",
+            "occurred_at": "2026-11-09T00:00:00.000Z",
             "properties": { "title": "a note" },
         });
         if let (Some(item), Value::Object(extra)) = (item.as_object_mut(), extra) {
@@ -691,6 +721,22 @@ mod tests {
     }
 
     #[test]
+    fn an_item_line_lacking_a_field_the_server_writes_is_refused_naming_it() {
+        let catalog = Catalog::shipped();
+        for field in ITEM_FIELDS {
+            let mut held = note(json!({}));
+            held.as_object_mut().unwrap().remove(field);
+            let refused = item(&catalog, CAP, &line(held), 7).unwrap_err();
+            assert_eq!(refused.field.as_deref(), Some(field), "{field}");
+            let message = refused.refusal.message.to_string();
+            assert!(
+                message.contains("line 7") && message.contains("is missing"),
+                "{message}"
+            );
+        }
+    }
+
+    #[test]
     fn a_row_its_type_takes_passes() {
         let catalog = Catalog::shipped();
         assert!(item(&catalog, CAP, &line(note(json!({}))), 1).is_ok());
@@ -729,13 +775,13 @@ mod tests {
     fn properties_past_the_bulk_cap_are_refused_and_at_it_pass() {
         let catalog = Catalog::shipped();
         let at = CAP - r#"{"t":""}"#.len();
-        let fits = line(
-            json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.thing", "properties": { "t": "a".repeat(at) } }),
-        );
+        let fits = line(note(
+            json!({ "type": "user.thing", "properties": { "t": "a".repeat(at) } }),
+        ));
         assert!(item(&catalog, CAP, &fits, 1).is_ok());
-        let over = line(
-            json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.thing", "properties": { "t": "a".repeat(at + 1) } }),
-        );
+        let over = line(note(
+            json!({ "type": "user.thing", "properties": { "t": "a".repeat(at + 1) } }),
+        ));
         let refused = item(&catalog, CAP, &over, 1).unwrap_err();
         assert_eq!(refused.refusal.code, Code::RequestTooLarge);
         assert_eq!(refused.field.as_deref(), Some("properties"));
@@ -744,9 +790,9 @@ mod tests {
     #[test]
     fn the_cap_is_the_one_the_instance_sets() {
         let catalog = Catalog::shipped();
-        let row = line(
-            json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.thing", "properties": { "t": "a".repeat(100) } }),
-        );
+        let row = line(note(
+            json!({ "type": "user.thing", "properties": { "t": "a".repeat(100) } }),
+        ));
         let size = r#"{"t":""}"#.len() + 100;
         assert!(item(&catalog, size, &row, 1).is_ok());
         let refused = item(&catalog, size - 1, &row, 1).unwrap_err();
@@ -756,9 +802,9 @@ mod tests {
     #[test]
     fn a_row_of_a_type_nothing_registers_keeps_its_shape_and_a_shipped_type_does_not() {
         let catalog = Catalog::shipped();
-        let orphan = line(
-            json!({ "id": "01a1bdba-8640-72ba-b7d6-9e27d94e7540", "type": "user.gone", "properties": { "n": 1 } }),
-        );
+        let orphan = line(note(
+            json!({ "type": "user.gone", "properties": { "n": 1 } }),
+        ));
         assert!(item(&catalog, CAP, &orphan, 1).is_ok());
         let wrong = line(note(json!({ "properties": { "title": 7 } })));
         let refused = item(&catalog, CAP, &wrong, 1).unwrap_err();

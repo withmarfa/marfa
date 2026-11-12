@@ -532,7 +532,7 @@ fn a_stop_ends_a_drain_and_a_follow_whose_upload_the_server_never_answers() {
         vec![
             scripted::refusal(503, "unavailable"),
             scripted::stream(
-                vec![scripted::connected()],
+                vec![],
                 Then::Hold {
                     keepalive: Some(Duration::from_millis(50)),
                     lasting: None,

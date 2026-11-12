@@ -3428,7 +3428,7 @@ mod tests {
                         "display_hints": { "title_field": "title", "body_field": "body" },
                         "fields": {
                             "title": { "type": "string" },
-                            "body": { "type": "string", "maxLength": 1_000_000 },
+                            "body": { "type": "string", "max_length": 1_000_000 },
                         },
                     },
                 ])),
@@ -3624,7 +3624,7 @@ mod tests {
                     "display_hints": { "title_field": "title", "body_field": "body" },
                     "fields": {
                         "title": { "type": "string" },
-                        "body": { "type": "string", "maxLength": 1_000_000 },
+                        "body": { "type": "string", "max_length": 1_000_000 },
                     },
                 },
             ])),

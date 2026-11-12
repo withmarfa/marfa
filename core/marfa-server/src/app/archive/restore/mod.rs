@@ -1,6 +1,7 @@
 //! `POST /restore`: reads and checks the body as it arrives, then one write records everything or nothing.
 
 pub mod intake;
+pub mod named;
 mod untar;
 
 use std::collections::{BTreeMap, HashSet};
@@ -331,6 +332,7 @@ impl App {
                             "sources_skipped_reasons": named.reasons,
                             "settings_added": settings_added,
                             "settings_skipped": settings_skipped,
+                            "settings_dropped": registrations.dropped_settings,
                             "connector_states_added": states.added,
                             "connector_states_skipped": states.skipped,
                             "connector_agreements_added": agreements.added,
@@ -354,7 +356,7 @@ impl App {
                     })
                 })
                 .await;
-            placed.release(&app, written.is_ok());
+            drop(placed);
             let (mut answer, staged) = written?;
             let emptying = app.clone();
             tokio::spawn(async move { emptying.db.empty_log().await });

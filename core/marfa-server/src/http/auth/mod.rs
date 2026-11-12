@@ -37,12 +37,10 @@ impl FromRequestParts<Arc<App>> for Visit {
             .get(header::USER_AGENT)
             .and_then(|value| value.to_str().ok())
             .map(|value| value.chars().take(USER_AGENT_CHARS).collect());
-        let address = parts
-            .extensions
-            .get::<RequestContext>()
-            .and_then(|context| context.caller_address);
+        let context = parts.extensions.get::<RequestContext>();
         Ok(Visit {
-            address,
+            peer: context.and_then(|context| context.peer),
+            address: context.and_then(|context| context.caller_address),
             user_agent,
         })
     }
@@ -104,29 +102,22 @@ pub fn owner_doors() -> Routes {
 
 pub fn doors() -> Routes {
     Doors::new()
-        .route("/auth/sign-in", get(pages::sign_in).post(sign_in::form))
+        .route("/auth/sign-in", get(pages::sign_in).post(sign_in::sign_in))
         .route("/auth/error", get(pages::error))
         .route("/auth/device", get(pages::device))
         .route("/setup", get(pages::setup))
-        .route("/auth/sign-in/email", post(sign_in::email))
         .route("/auth/sign-out", post(sign_in::sign_out))
         .route("/auth/confirm", post(sign_in::confirm))
         .route(
-            "/auth/passkey/generate-register-options",
-            get(passkeys::register_options),
+            "/auth/passkeys/registration/options",
+            post(passkeys::registration_options),
         )
+        .route("/auth/passkeys/registration", post(passkeys::register))
         .route(
-            "/auth/passkey/verify-registration",
-            post(passkeys::verify_registration),
+            "/auth/passkeys/sign-in/options",
+            post(passkeys::sign_in_options),
         )
-        .route(
-            "/auth/passkey/generate-authenticate-options",
-            get(passkeys::authenticate_options),
-        )
-        .route(
-            "/auth/passkey/verify-authentication",
-            post(passkeys::verify_authentication),
-        )
+        .route("/auth/passkeys/sign-in", post(passkeys::sign_in))
         .route("/auth/owner/passkeys", get(passkeys::page))
         .route("/setup/exchange", post(setup::exchange))
         .route("/setup/claim", post(setup::claim))

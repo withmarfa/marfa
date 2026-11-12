@@ -26,8 +26,8 @@ const SHAPE_ATTRIBUTES: [&str; 6] = [
     "format",
     "items_type",
     "searchable",
-    "maxLength",
-    "maxItems",
+    "max_length",
+    "max_items",
 ];
 
 fn same(one: Option<&Value>, other: Option<&Value>) -> bool {

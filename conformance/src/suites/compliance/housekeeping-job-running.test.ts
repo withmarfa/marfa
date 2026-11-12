@@ -52,10 +52,8 @@ beforeAll(async () => {
   }
   server = await bootFreshServer("housekeeping-job-running", {
     MARFA_HEARTBEAT_URL: `http://127.0.0.1:${String(address.port)}/beat`,
-    // Past the file, so the one run in it is the one the boot starts.
-    MARFA_HEARTBEAT_INTERVAL_MS: "3600000",
-    // Falls due every second, so a due job exists while the heartbeat is held.
-    MARFA_FEED_EXPIRY_INTERVAL_MS: "1000",
+    // The heartbeat is past the file, so the one run in it is the one the boot starts; feed expiry falls due every second, so a due job exists while the heartbeat is held.
+    MARFA_TEST_TUNING: "interval.heartbeat=3600000,interval.feed-expiry=1000",
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 

@@ -64,11 +64,15 @@ pub(super) fn shown_scopes(tx: &Connection, id: &str) -> Result<Option<ScopeSet>
 }
 
 pub(super) fn own_name(tx: &Connection, id: &str) -> Result<Option<String>> {
-    Ok(shown(tx, id)?
-        .as_ref()
-        .and_then(|fields| fields.get("name"))
-        .and_then(Value::as_str)
-        .map(str::to_string))
+    Ok(tx
+        .query_row(
+            "SELECT CASE WHEN json_type(properties, '$.name') = 'text' \
+             THEN properties ->> '$.name' END FROM items WHERE id = ?1",
+            [id],
+            |row| row.get(0),
+        )
+        .optional()?
+        .flatten())
 }
 
 fn properties(pairs: Value) -> Map<String, Value> {
@@ -142,20 +146,20 @@ pub(super) fn stand(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
     client: &Client,
-    user_id: &str,
+    owner_id: &str,
     approved: &ScopeSet,
     source: &str,
 ) -> Result<Stood> {
     let tx = unit.tx();
     let now = unit.instant;
-    let Some(consent) = store::consent(tx, &client.id, user_id)? else {
+    let Some(consent) = store::consent(tx, &client.id, owner_id)? else {
         let grant_id = Uuid::now_v7().to_string();
         create_item(unit, cache, client, &grant_id, approved, source)?;
         store::insert_consent(
             tx,
             &Consent {
                 client_id: client.id.clone(),
-                user_id: user_id.to_string(),
+                owner_id: owner_id.to_string(),
                 grant_id: grant_id.clone(),
                 scopes: approved.clone(),
                 created_at: now,
@@ -164,7 +168,7 @@ pub(super) fn stand(
                 withdrawn_at: None,
             },
         )?;
-        store::approve_destinations(tx, client, user_id)?;
+        store::approve_destinations(tx, client, owner_id)?;
         return Ok(Stood {
             grant_id,
             scopes: approved.clone(),
@@ -193,9 +197,9 @@ pub(super) fn stand(
             )?,
             None => create_item(unit, cache, client, &consent.grant_id, &scopes, source)?,
         }
-        store::renew_consent(tx, &client.id, user_id, &scopes, now)?;
+        store::renew_consent(tx, &client.id, owner_id, &scopes, now)?;
     }
-    store::approve_destinations(tx, client, user_id)?;
+    store::approve_destinations(tx, client, owner_id)?;
     Ok(Stood {
         grant_id: consent.grant_id,
         scopes,
@@ -208,15 +212,15 @@ pub(super) fn end(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
     client_id: &str,
-    user_id: &str,
+    owner_id: &str,
 ) -> Result<bool> {
     let tx = unit.tx();
     let now = unit.instant;
-    let Some(consent) = store::consent(tx, client_id, user_id)?.filter(Consent::stands) else {
+    let Some(consent) = store::consent(tx, client_id, owner_id)?.filter(Consent::stands) else {
         return Ok(false);
     };
-    store::end_grant_credentials(tx, client_id, user_id, now)?;
-    store::withdraw_consent(tx, client_id, user_id, now)?;
+    store::end_grant_credentials(tx, client_id, owner_id, now)?;
+    store::withdraw_consent(tx, client_id, owner_id, now)?;
     webhooks::forget_grant(tx, &consent.grant_id)?;
     if let Some(version) = version_of(unit, &consent.grant_id)? {
         update_item(
@@ -238,7 +242,7 @@ pub(super) fn narrow(
     consent: &Consent,
     scopes: &ScopeSet,
 ) -> Result<()> {
-    store::narrow_consent(unit.tx(), &consent.client_id, &consent.user_id, scopes)?;
+    store::narrow_consent(unit.tx(), &consent.client_id, &consent.owner_id, scopes)?;
     if let Some(version) = version_of(unit, &consent.grant_id)? {
         update_item(
             unit,
@@ -274,10 +278,10 @@ pub(super) fn forget(
     unit: &Unit<'_, '_>,
     cache: &ArcSwap<Catalog>,
     client_id: &str,
-    user_id: &str,
+    owner_id: &str,
 ) -> Result<()> {
     let tx = unit.tx();
-    let Some(consent) = store::consent(tx, client_id, user_id)? else {
+    let Some(consent) = store::consent(tx, client_id, owner_id)? else {
         return Ok(());
     };
     if version_of(unit, &consent.grant_id)?.is_some() {
@@ -292,5 +296,5 @@ pub(super) fn forget(
         )?;
         applied(unit, cache, Change::Purge { id, version: None })?;
     }
-    store::remove_consent(tx, client_id, user_id)
+    store::remove_consent(tx, client_id, owner_id)
 }

@@ -11,7 +11,7 @@ const bytes = Buffer.alloc(8 * 1024 * 1024, 42);
 beforeAll(async () => {
   server = await bootFreshServer("blob-read-lifetime", {
     ...DISK_ONLY,
-    MARFA_BLOB_READ_IDLE_TIMEOUT_MS: "500",
+    MARFA_TEST_TUNING: "blob_read_idle_ms=500",
   });
   const { working } = clientsFor(server);
   const upload = await working.uploadBlob(bytes, "application/octet-stream");

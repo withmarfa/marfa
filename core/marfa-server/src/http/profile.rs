@@ -138,8 +138,10 @@ pub async fn update(
     State(app): State<Arc<App>>,
     caller: Caller,
     visit: Visit,
+    uri: Uri,
     body: JsonBody,
 ) -> Answer {
+    query::only(&uri, &[])?;
     let body = body.object(&PROFILE_FIELDS).await?;
     let change = ProfileUpdate::from_body(&body)?;
     owner::update_profile(&app, &caller, change, visit).await?;

@@ -20,11 +20,14 @@ use super::items::write::{
 };
 use super::refusal::{Code, Refusal, Result};
 use crate::settings::registry::{
-    ENRICHMENT_BATCH_SIZE, ENRICHMENT_ENABLED, ENRICHMENT_ITEM_TIMEOUT_MS, ENRICHMENT_MAX_ATTEMPTS,
-    ENRICHMENT_MAX_BLOB_BYTES, ENRICHMENT_MAX_INFLATED_BYTES, ENRICHMENT_MAX_MEMORY_BYTES,
-    ENRICHMENT_MAX_TEXT_CHARS, ENRICHMENT_OCR_ENABLED, Snapshot as Settings,
+    ENRICHMENT_ENABLED, ENRICHMENT_MAX_ATTEMPTS, ENRICHMENT_MAX_BLOB_BYTES,
+    ENRICHMENT_MAX_INFLATED_BYTES, ENRICHMENT_MAX_MEMORY_BYTES, ENRICHMENT_MAX_TEXT_CHARS,
+    ENRICHMENT_OCR_ENABLED, Snapshot as Settings,
 };
 use queue::{Cap, Signatures, Why};
+
+/// How long reading one file may take.
+const ITEM_TIME_LIMIT: Duration = Duration::from_secs(60);
 
 const ACTION: &str = "item.enrich";
 
@@ -45,10 +48,11 @@ impl Plan {
         Plan::with(
             &app.settings.live(),
             app.settings.start.enrichment_tessdata_dir.clone(),
+            app.settings.start.tuning.enrichment_batch,
         )
     }
 
-    fn with(live: &Settings, data_dir: Option<PathBuf>) -> Plan {
+    fn with(live: &Settings, data_dir: Option<PathBuf>, batch: u64) -> Plan {
         let ocr = live.get(ENRICHMENT_OCR_ENABLED);
         let max_blob_bytes = live.get(ENRICHMENT_MAX_BLOB_BYTES);
         let max_inflated = live.get(ENRICHMENT_MAX_INFLATED_BYTES);
@@ -62,7 +66,7 @@ impl Plan {
                 languages: DEFAULT_OCR_LANGUAGES.to_string(),
                 data_dir: data_dir.clone(),
             }),
-            time_limit: Duration::from_millis(live.get(ENRICHMENT_ITEM_TIMEOUT_MS)),
+            time_limit: ITEM_TIME_LIMIT,
             time_budget: None,
         };
         let languages = DEFAULT_OCR_LANGUAGES;
@@ -72,7 +76,7 @@ impl Plan {
         Plan {
             options,
             ocr,
-            batch: usize::try_from(live.get(ENRICHMENT_BATCH_SIZE)).unwrap_or(usize::MAX - 1),
+            batch: usize::try_from(batch).unwrap_or(usize::MAX - 1),
             max_attempts: live.get(ENRICHMENT_MAX_ATTEMPTS),
             max_blob_bytes,
             max_inflated_bytes: max_inflated,
@@ -879,6 +883,7 @@ mod tests {
         let mut plan = Plan::with(
             &crate::settings::registry::Snapshot::resolve(&Default::default(), &[], 0),
             None,
+            8,
         );
         plan.ocr = ocr;
         plan

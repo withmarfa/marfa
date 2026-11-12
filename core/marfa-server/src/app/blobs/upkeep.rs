@@ -18,16 +18,14 @@ use crate::app::refusal::Result;
 use crate::app::stored;
 use crate::db::Write;
 use crate::settings::registry::{
-    BLOB_CLEANUP_GRACE_MS, BLOB_CLEANUP_INTERVAL_MS, BLOB_INTEGRITY_BATCH,
-    BLOB_INTEGRITY_BATCH_BYTES, BLOB_REPLICATE_BATCH, BLOB_REPLICATE_BATCH_BYTES,
-    DISK_RESERVE_BYTES,
+    BLOB_CLEANUP_ENABLED, BLOB_CLEANUP_GRACE_SECONDS, DISK_RESERVE_BYTES,
 };
 
 /// The most leftover deletions of purged blobs one sweep retries.
 const LEFTOVERS: u64 = 500;
 
 pub fn sweeps(app: &App) -> bool {
-    app.settings.live().get(BLOB_CLEANUP_INTERVAL_MS) > 0
+    app.settings.live().get(BLOB_CLEANUP_ENABLED)
 }
 
 impl App {
@@ -91,8 +89,8 @@ enum Copy {
     TargetSilent,
 }
 
-/// Places one blob in `target`, read from the first other store that holds it and answers. An
-/// object store's copy goes to a new object, queued for deletion until its copy is recorded.
+/// Places one blob in `target` from the first holder that answers, `target`'s held copy included.
+/// An object store's copy goes to a new object, queued for deletion until it is recorded.
 async fn copy_to(
     app: &App,
     target: &Store,
@@ -103,7 +101,7 @@ async fn copy_to(
     let blobs = &app.blobs;
     for source in blobs.attached() {
         let id = source.id().to_string();
-        if id == target.id() || unreachable.contains(&id) {
+        if unreachable.contains(&id) {
             continue;
         }
         let Some(held) = holders.iter().find(|held| held.store_id == id) else {
@@ -197,10 +195,10 @@ async fn written_by_target(app: &App, target: &Store, blob: &super::Blob, object
 
 /// Failed copies yield to less-tried copies so one failure cannot monopolize the batch.
 pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
-    let live = app.settings.live();
+    let tuning = &app.settings.start.tuning;
     let (batch, batch_bytes) = (
-        live.get(BLOB_REPLICATE_BATCH),
-        live.get(BLOB_REPLICATE_BATCH_BYTES),
+        tuning.blob_replicate_batch,
+        tuning.blob_replicate_batch_bytes,
     );
     if app.blobs.attached().len() < 2 {
         return Ok(Report {
@@ -232,7 +230,10 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         }
         let blob = hash.clone();
         let holders = app.db.read(move |tx| rows::holders(tx, &blob)).await?;
-        if holders.iter().any(|held| held.store_id == pair.store_id) {
+        if holders
+            .iter()
+            .any(|held| held.store_id == pair.store_id && held.written)
+        {
             continue;
         }
         let cleared = match app.finish_deletion(&target, &hash).await {
@@ -272,7 +273,8 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         let (blob, to) = (hash.clone(), pair.store_id.clone());
         let recorded = app
             .write(&Caller::Server, "blob.copy_replicated", move |unit| {
-                if rows::record_copy(unit.tx(), &blob, &to, &object, &unit.at)? {
+                let recorded = rows::record_copy(unit.tx(), &blob, &to, &object, true, &unit.at)?;
+                if recorded == rows::Recorded::Copy {
                     unit.audit(
                         "blob",
                         blob.as_str(),
@@ -286,7 +288,7 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
             .await?;
         if !recorded {
             if let Err(failure) = app.finish_deletion(&target, &hash).await {
-                tracing::warn!(?failure, "The copy of a purged blob waits for a later run");
+                tracing::warn!(?failure, "A copy not recorded waits for a later run");
             }
             continue;
         }
@@ -364,10 +366,10 @@ async fn check(app: &App, store: &Store, copy: &rows::ToCheck) -> Checked {
 /// Finishes queued deletions, then checks the copies never checked and the least recently
 /// checked, striking each one found missing or altered.
 pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
-    let live = app.settings.live();
+    let tuning = &app.settings.start.tuning;
     let (batch, batch_bytes) = (
-        live.get(BLOB_INTEGRITY_BATCH),
-        live.get(BLOB_INTEGRITY_BATCH_BYTES),
+        tuning.blob_integrity_batch,
+        tuning.blob_integrity_batch_bytes,
     );
     let mut unreachable = BTreeSet::new();
     app.retry_deletions(&run, batch, false, &mut unreachable)
@@ -489,28 +491,39 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
     })))
 }
 
-/// Read from `tx`, since the live settings lag a committed change.
-fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Vec<Hash>> {
+/// Read from `tx`, since the live settings lag a committed change. Unless `surveyed`, a file
+/// with an object store copy stays.
+fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App, surveyed: bool) -> Result<Vec<Hash>> {
     let mut found = past_grace(tx, app)?;
     if let Some(bucket) = app.blobs.s3()
         && !found.is_empty()
     {
         let held = crate::app::backups::held(tx, bucket.id(), &found)?;
         found.retain(|hash| !held.contains(hash));
+        if !surveyed {
+            let stored: HashSet<String> = rows::held_in(
+                tx,
+                bucket.id(),
+                found.iter().map(|hash| hash.as_str().to_string()),
+            )?
+            .into_iter()
+            .collect();
+            found.retain(|hash| !stored.contains(hash.as_str()));
+        }
     }
     Ok(found)
 }
 
 fn grace_cutoff(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Option<String>> {
     let seeds = app.settings.seeds();
-    if stored::deciding(tx, &seeds, BLOB_CLEANUP_INTERVAL_MS)? == 0 {
+    if !stored::deciding(tx, &seeds, BLOB_CLEANUP_ENABLED)? {
         return Ok(None);
     }
-    let grace = stored::deciding(tx, &seeds, BLOB_CLEANUP_GRACE_MS)?;
+    let grace = stored::deciding(tx, &seeds, BLOB_CLEANUP_GRACE_SECONDS)?;
     Ok(app
         .clock
         .instant()
-        .earlier_by(i64::try_from(grace).unwrap_or(i64::MAX))
+        .earlier_by(i64::try_from(grace.saturating_mul(1_000)).unwrap_or(i64::MAX))
         .map(Stamp::text))
 }
 
@@ -526,12 +539,28 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
     let mut unreachable = BTreeSet::new();
     app.retry_deletions(&run, LEFTOVERS, true, &mut unreachable)
         .await?;
+    let looked = app.clone();
+    let due = app
+        .db
+        .read(move |tx| Ok(!past_grace(tx, &looked)?.is_empty()))
+        .await?;
+    let surveyed = if due {
+        match crate::app::backups::survey_folder(&app).await {
+            Ok(()) => true,
+            Err(error) => {
+                tracing::warn!(%error, "Files the object store holds wait for a survey of the backups");
+                false
+            }
+        }
+    } else {
+        false
+    };
     let (live, at, job) = (app.clone(), app.clock.stamp(), run.job);
     let (candidates, kept) = app
         .db
         .write(Write::own(), move |tx| {
             // Chosen before this run reports, so only an earlier run's report is purged.
-            let candidates = purgeable(tx, &live)?;
+            let candidates = purgeable(tx, &live, surveyed)?;
             let kept = match grace_cutoff(tx, &live)? {
                 Some(_) => rows::UNREAD_ORPHANS.report(tx, job, [])?,
                 None => 0,
@@ -554,7 +583,7 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
         let gone = app
             .write(&Caller::Server, "blob.purge", move |unit| {
                 let tx = unit.tx();
-                let still: HashSet<Hash> = purgeable(tx, &live)?.into_iter().collect();
+                let still: HashSet<Hash> = purgeable(tx, &live, surveyed)?.into_iter().collect();
                 let chosen: Vec<Hash> = candidates
                     .into_iter()
                     .filter(|hash| still.contains(hash))

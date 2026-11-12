@@ -15,6 +15,8 @@ import {
 import {
   tar,
   lineFile,
+  emptyManifest,
+  itemFields,
   readEntry,
   archiveLines,
   type LineFile,
@@ -630,8 +632,7 @@ describe("who may read and upload a blob", () => {
       {
         name: "manifest.json",
         body: JSON.stringify({
-          version: 0,
-          format: "marfa-archive-v0",
+          ...emptyManifest(),
           created_at: new Date().toISOString(),
           item_count: 2,
           edge_count: 0,
@@ -654,6 +655,7 @@ describe("who may read and upload a blob", () => {
           .map((line) =>
             JSON.stringify({
               item: {
+                ...itemFields(),
                 id: line.id,
                 type: "core.note",
                 source: ctx.source,
@@ -1965,6 +1967,7 @@ describe("which write that names a digest lends it", () => {
     const noteLine = (id: string, extensions: Record<string, unknown>) =>
       JSON.stringify({
         item: {
+          ...itemFields(),
           id,
           type: "core.note",
           source: ctx.source,
@@ -1994,8 +1997,7 @@ describe("which write that names a digest lends it", () => {
       {
         name: "manifest.json",
         body: JSON.stringify({
-          version: 0,
-          format: "marfa-archive-v0",
+          ...emptyManifest(),
           created_at: new Date().toISOString(),
           item_count: 2,
           edge_count: 2,

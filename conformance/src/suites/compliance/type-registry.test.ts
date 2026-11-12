@@ -235,6 +235,16 @@ describe("type registry", () => {
     const held = await scopedClient.registerType({ id, fields });
     expect(held.status).toBe(403);
     expect(held.error?.error.details?.required_scope).toBeUndefined();
+
+    // A root nothing is registered under has no wildcard an app can be granted,
+    // so the refusal names none.
+    const unheard = await scopedClient.registerType({
+      id: `unheard-${generateId().slice(-8).toLowerCase()}.recipe`,
+      fields,
+    });
+    expect(unheard.status).toBe(403);
+    expect(unheard.error?.error.code).toBe("type_not_permitted");
+    expect(unheard.error?.error.details?.required_scope).toBeUndefined();
   });
 
   it("replaces and deletes only the types the key's own type map grants write on", async () => {

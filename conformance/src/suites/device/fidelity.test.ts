@@ -614,7 +614,6 @@ describe("the scripted answers match the server's", () => {
       {
         same: [
           "error.code",
-          "error.status",
           "requested_version",
           "current.version",
           "current.properties",
@@ -640,7 +639,6 @@ describe("the scripted answers match the server's", () => {
       {
         same: [
           "error.code",
-          "error.status",
           "conflicting_fields",
           "merge_policy.fields",
           "merge_policy.default",
@@ -738,7 +736,6 @@ describe("the scripted answers match the server's", () => {
         ],
         shape: [
           "error.message",
-          "error.status",
           "current.id",
           "current.properties",
           "current.tier",
@@ -1213,7 +1210,6 @@ describe("the scripted answers match the server's", () => {
       {
         same: [
           "error.code",
-          "error.status",
           "current.id",
           "current.type",
           "ancestor.id",
@@ -1287,7 +1283,6 @@ describe("the scripted answers match the server's", () => {
       {
         same: [
           "error.code",
-          "error.status",
           "error.message",
           "current.id",
           "current.type",
@@ -1325,7 +1320,6 @@ describe("the scripted answers match the server's", () => {
       {
         same: [
           "error.code",
-          "error.status",
           "current.id",
           "current.type",
           "requested_version",
@@ -1684,7 +1678,6 @@ describe("the scripted answers match the server's", () => {
       {
         same: [
           "error.code",
-          "error.status",
           "current.id",
           "current.version",
           "current.properties",
@@ -2219,7 +2212,6 @@ describe("the scripted answers match the server's", () => {
       {
         same: [
           "error.code",
-          "error.status",
           "current.id",
           "current.source_id",
           "current.target_id",

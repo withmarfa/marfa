@@ -77,14 +77,11 @@ async function refusedStore(
       "UPDATE queue SET verdict = 'accepted', sent = 1",
     );
   }
-  edit(
-    started.device.store,
-    "ALTER TABLE queue RENAME COLUMN follows TO after_write",
-  );
+  edit(started.device.store, "PRAGMA user_version = 0");
   const opened = await started.device.tryOpen();
   expect(
     opened.error?.code,
-    "the reshaped store was not refused, so it cannot stand for another build's",
+    "the store at another version was not refused, so it cannot stand for another build's",
   ).toBe("wrong_schema");
   return { harness: started, note };
 }

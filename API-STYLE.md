@@ -84,6 +84,7 @@ So each operation, parameter, field and response says what it needs to on its ow
   - A boolean: "`true` if …", and, if it can be absent, what that means.
   - An optional field: when it is present.
 - **(checked: at most 250 characters)**
+- **Property names are snake_case, and a refusal's `error` object holds `code`, `message` and, where there is one, `details`**, never the HTTP status. A name that belongs to JSON Schema, such as `maxLength` in a schema, keeps its spelling.
 - An enum's own description says what each value means, one clause each. For a list of values, that description goes on `items`.
 - A schema used in several places has text that is true in all of them. A list that never pages says so on its own page schema: "Always `null`: Marfa returns every webhook in one page."
 - In a request body, the field says what happens when you leave it out.

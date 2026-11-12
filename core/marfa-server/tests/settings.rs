@@ -431,13 +431,13 @@ async fn a_refused_change_writes_nothing_of_itself() {
         set("health_probe", "a note is not a setting"),
     ] {
         let key = doomed.key.clone();
-        let changes = vec![set("rate_limit_window_ms", 1000), doomed];
+        let changes = vec![set("rate_limit_window_seconds", 1000), doomed];
         let refusal = stored::change(&instance.app, CHANGE, changes)
             .await
             .unwrap_err();
         assert_eq!(refusal.code, Code::ValidationError);
         assert!(refusal.message.contains(&key), "{}", refusal.message);
-        assert_eq!(instance.row("rate_limit_window_ms"), None);
+        assert_eq!(instance.row("rate_limit_window_seconds"), None);
     }
 }
 

@@ -69,9 +69,6 @@ fn envelope(refusal: &Refusal) -> Value {
     if let Some(details) = &refusal.details {
         error.insert("details".into(), Value::Object((**details).clone()));
     }
-    if refusal.members.is_some() {
-        error.insert("status".into(), refusal.code.status().into());
-    }
     let mut out = Map::new();
     out.insert("error".into(), Value::Object(error));
     if let Some(members) = &refusal.members {

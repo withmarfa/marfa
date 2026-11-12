@@ -37,9 +37,7 @@ use super::unit::Unit;
 use super::{housekeeping, stored};
 use crate::db::{Db, Write, volume};
 use crate::failure::Failure;
-use crate::settings::registry::{
-    BLOB_MIN_COPIES, BLOB_READ_IDLE_TIMEOUT_MS, DISK_RESERVE_BYTES, UPLOAD_IDLE_TIMEOUT_MS,
-};
+use crate::settings::registry::{BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
 use crate::settings::start::ObjectStoreSettings;
 use disk::{Disk, Staged};
 pub use disk::{MARKER, Scratch};
@@ -587,6 +585,14 @@ fn keep_held(tx: &rusqlite::Transaction<'_>, hash: &Hash, store_id: &str) -> Res
     }
 }
 
+/// The copies but the one in `store_id` that count toward the minimum: those this server wrote.
+fn own_others(holders: &[rows::Held], store_id: &str) -> usize {
+    holders
+        .iter()
+        .filter(|held| held.store_id != store_id && held.written)
+        .count()
+}
+
 fn below(live: usize, min_copies: u64) -> Refusal {
     Refusal::new(
         Code::CopiesBelowMinimum,
@@ -686,10 +692,10 @@ impl Room {
     }
 }
 
-/// Bytes on the disk that no record names yet, locked against deletion until `release_upload`.
+/// Bytes on the disk that no record names yet, locked against deletion until it is dropped, once the record's write has ended.
 struct Placed {
     recording: Recording,
-    held: store::Held,
+    _held: store::Held,
 }
 
 #[derive(Clone)]
@@ -784,7 +790,7 @@ impl App {
     }
 
     pub fn upload_idle(&self) -> Duration {
-        Duration::from_millis(self.settings.live().get(UPLOAD_IDLE_TIMEOUT_MS))
+        self.settings.start.tuning.upload_idle
     }
 
     pub fn room(&self) -> Room {
@@ -796,7 +802,7 @@ impl App {
     }
 
     pub fn blob_read_idle(&self) -> Duration {
-        Duration::from_millis(self.settings.live().get(BLOB_READ_IDLE_TIMEOUT_MS))
+        self.settings.start.tuning.blob_read_idle
     }
 
     /// A refusal is answered only once the staged file is gone.
@@ -870,17 +876,8 @@ impl App {
                 store_id: self.blobs.disk.id().to_string(),
                 replicates: self.blobs.s3.is_some(),
             },
-            held,
+            _held: held,
         })
-    }
-
-    /// Call only once the record's write has ended.
-    fn release_upload(&self, placed: Placed, committed: bool) {
-        let Placed { recording, held } = placed;
-        drop(held);
-        if committed && recording.replicates {
-            housekeeping::wake(self);
-        }
     }
 
     /// Holds the blob lock through the record's commit, even if the caller disconnects.
@@ -902,7 +899,7 @@ impl App {
             let written = app
                 .write(&caller, action, move |unit| job(unit, &recording))
                 .await;
-            app.release_upload(placed, written.is_ok());
+            drop(placed);
             written
         })
         .await
@@ -915,7 +912,13 @@ impl App {
             unit.caller
                 .require_upload(catalog.provenance.keys().map(String::as_str))?;
             let holder = unit.caller.credential_handle();
-            recording.record(unit.tx(), Some(&holder), &unit.at)
+            let blob = recording.record(unit.tx(), Some(&holder), &unit.at)?;
+            unit.audit(
+                "blob",
+                blob.hash.as_str(),
+                Some(json!({ "mime_type": blob.mime_type, "size_bytes": blob.size_bytes })),
+            )?;
+            Ok(blob)
         })
         .await
     }
@@ -1221,6 +1224,9 @@ impl App {
             .store(store_id)
             .filter(|_| holders.iter().any(|held| held.store_id == store_id))
             .ok_or_else(copy_not_found)?;
+        if matches!(store, Store::S3(_)) {
+            crate::app::backups::survey_folder(self).await?;
+        }
         let (blob, kept_in) = (hash.clone(), store_id.to_string());
         self.db
             .read(move |tx| keep_held(tx, &blob, &kept_in))
@@ -1230,8 +1236,9 @@ impl App {
             .db
             .read(move |tx| stored::deciding(tx, &seeds, BLOB_MIN_COPIES))
             .await?;
-        if ((holders.len() - 1) as u64) < min_copies {
-            return Err(below(holders.len(), min_copies));
+        let kept = own_others(&holders, store_id);
+        if (kept as u64) < min_copies {
+            return Err(below(kept + 1, min_copies));
         }
         let _held = self.blobs.gate.lock(hash).await;
         if self.blobs.gate.unfinished(hash) {
@@ -1244,7 +1251,7 @@ impl App {
         }
         let others: Vec<(Store, &str)> = holders
             .iter()
-            .filter(|held| held.store_id != store_id)
+            .filter(|held| held.store_id != store_id && held.written)
             .filter_map(|held| Some((self.blobs.store(&held.store_id)?, held.object.as_str())))
             .collect();
         let answers = join_all(
@@ -1274,8 +1281,9 @@ impl App {
             }
             keep_held(unit.tx(), &blob, &dropped)?;
             let min_copies = stored::deciding(unit.tx(), &seeds, BLOB_MIN_COPIES)?;
-            if ((holders.len() - 1) as u64) < min_copies {
-                return Err(below(holders.len(), min_copies));
+            let kept = own_others(&holders, &dropped);
+            if (kept as u64) < min_copies {
+                return Err(below(kept + 1, min_copies));
             }
             if (confirmed as u64) < min_copies {
                 return Err(below(confirmed + 1, min_copies));

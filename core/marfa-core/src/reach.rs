@@ -995,7 +995,7 @@ mod tests {
         server.on(
             "/events",
             vec![stream(
-                vec![connected()],
+                vec![],
                 Then::Hold {
                     keepalive: None,
                     lasting: None,

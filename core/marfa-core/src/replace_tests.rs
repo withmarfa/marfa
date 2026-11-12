@@ -50,8 +50,8 @@ fn queue_one(conn: &Connection) {
     .unwrap();
 }
 
-/// What another build would have left: this build's store with one column
-/// of its queue under another name, holding one unsent write where `unsent`.
+/// What another build would have left: this build's store at another
+/// schema version, holding one unsent write where `unsent`.
 fn refused_store(unsent: bool) -> (tempfile::TempDir, PathBuf) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("core.sqlite");
@@ -66,8 +66,7 @@ fn refused_store(unsent: bool) -> (tempfile::TempDir, PathBuf) {
         "https://earlier.example",
     )
     .unwrap();
-    conn.execute_batch("ALTER TABLE queue RENAME COLUMN follows TO after_write")
-        .unwrap();
+    conn.execute_batch("PRAGMA user_version = 0").unwrap();
     (dir, path)
 }
 
@@ -300,9 +299,10 @@ fn a_store_that_cannot_be_made_leaves_the_refused_one_where_it_was() {
     let (_dir, path) = refused_store(false);
     in_log(
         &path,
-        "UPDATE meta SET value = value WHERE key = 'schema_version'",
+        "INSERT INTO meta (key, value) VALUES ('in_log', '1')",
     );
     let before = files(&path);
+    assert!(before[1].1.is_some_and(|(length, _)| length > 0));
     let names = listing(&path);
     // The fault fires once the new store's file has been made, so what the
     // call removes is a real partial store.
@@ -394,8 +394,7 @@ fn replacements_in_a_row_after_a_leftover_set_aside_overwrite_nothing() {
         no_numbered_copy_beyond_leftovers(&path);
         // Another build refuses the store again.
         let conn = Connection::open(&path).unwrap();
-        conn.execute_batch("ALTER TABLE queue RENAME COLUMN follows TO after_write")
-            .unwrap();
+        conn.execute_batch("PRAGMA user_version = 0").unwrap();
     }
 }
 
@@ -461,7 +460,7 @@ fn a_store_with_every_set_aside_name_taken_is_refused_and_left_alone() {
     assert_eq!(listing(&path), names);
 }
 
-/// The refused store, with `sql` run on it before its queue is reshaped.
+/// The refused store, with `sql` run on it.
 fn refused_store_with(sql: &str) -> (tempfile::TempDir, PathBuf) {
     let (dir, path) = refused_store(false);
     Connection::open(&path).unwrap().execute_batch(sql).unwrap();
@@ -516,7 +515,6 @@ fn a_file_budget_in_the_log_of_the_refused_store_is_kept() {
 #[test]
 fn a_file_budget_the_refused_store_cannot_give_is_the_default_and_no_error() {
     for (label, sql) in [
-        ("no meta table", "DROP TABLE meta"),
         (
             "a value that is no setting",
             "INSERT INTO meta (key, value) VALUES ('file_budget', 'plenty')",

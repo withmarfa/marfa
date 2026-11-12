@@ -36,6 +36,22 @@ impl Reply {
         let line = self.headers.get(header::SET_COOKIE)?.to_str().ok()?;
         Some(line.split(';').next()?.to_string())
     }
+
+    /// The `name=value` of the cookie this reply sets under `name`.
+    fn named(&self, name: &str) -> Option<String> {
+        self.headers
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|line| line.to_str().ok()?.split(';').next())
+            .find(|pair| pair.split_once('=').is_some_and(|(key, _)| key == name))
+            .map(str::to_string)
+    }
+
+    /// The id the device cookie this reply sets carries.
+    fn device_id(&self) -> Option<String> {
+        let pair = self.named("marfa_device")?;
+        Some(pair.split_once('=')?.1.split('.').next()?.to_string())
+    }
 }
 
 async fn send(router: Router, request: Request<Body>) -> Reply {
@@ -151,7 +167,7 @@ impl Instance {
     async fn sign_in(&self, password: &str) -> Reply {
         send(
             self.public.clone(),
-            post("/auth/sign-in/email", &sign_in_body(password)),
+            post("/auth/sign-in", &sign_in_body(password)),
         )
         .await
     }
@@ -190,6 +206,24 @@ async fn a_restart_starts_every_count_afresh() {
 }
 
 #[tokio::test]
+async fn a_wrong_password_whose_refusal_is_not_recorded_stays_counted() {
+    let instance = Instance::claimed().await;
+    for failure in ["fail:commit", "fail:commit-full"] {
+        for _ in 0..5 {
+            instance
+                .app
+                .faults
+                .set(failure, Some("auth.sign_in.failed"))
+                .unwrap();
+            let wrong = instance.sign_in("not the password").await;
+            assert!(wrong.status.is_server_error(), "{failure}");
+        }
+    }
+    let held = instance.sign_in(PASSWORD).await;
+    assert_eq!(held.status, StatusCode::TOO_MANY_REQUESTS);
+}
+
+#[tokio::test]
 async fn a_full_disk_costs_a_session_its_renewal_and_not_the_request() {
     let instance = Instance::claimed().await;
     let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
@@ -197,7 +231,7 @@ async fn a_full_disk_costs_a_session_its_renewal_and_not_the_request() {
     instance
         .app
         .faults
-        .set("fail:commit-full", Some("auth.session.use"))
+        .set("fail:commit-full", Some("auth.sign_in.used"))
         .unwrap();
     let admitted = send(instance.public.clone(), on_the_passkey_list(&cookie)).await;
     assert_eq!(admitted.status, StatusCode::OK);
@@ -236,7 +270,7 @@ async fn a_password_changed_during_a_sign_in_ends_that_sign_in() {
         .unwrap();
     let signing_in = tokio::spawn(send(
         instance.public.clone(),
-        post("/auth/sign-in/email", &sign_in_body(PASSWORD)),
+        post("/auth/sign-in", &sign_in_body(PASSWORD)),
     ));
     while faults.list().iter().all(|fault| fault.waiting == 0) {
         tokio::time::sleep(Duration::from_millis(5)).await;
@@ -269,7 +303,7 @@ async fn an_email_changed_during_a_sign_in_ends_that_sign_in() {
         .unwrap();
     let signing_in = tokio::spawn(send(
         instance.public.clone(),
-        post("/auth/sign-in/email", &sign_in_body(PASSWORD)),
+        post("/auth/sign-in", &sign_in_body(PASSWORD)),
     ));
     while faults.list().iter().all(|fault| fault.waiting == 0) {
         tokio::time::sleep(Duration::from_millis(5)).await;
@@ -286,7 +320,7 @@ async fn an_email_changed_during_a_sign_in_ends_that_sign_in() {
 
 #[tokio::test]
 async fn an_unknown_outcome_changes_no_cookie() {
-    for (path, body, action) in [("/auth/sign-out", json!({}), "auth.session.delete")] {
+    for (path, body, action) in [("/auth/sign-out", json!({}), "auth.sign_in.ended")] {
         let instance = Instance::claimed().await;
         let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
         instance.app.clock.advance(120_000).unwrap();
@@ -316,7 +350,7 @@ const AWAY: &str = "203.0.113.9";
 const NO_ADDRESS_ORIGIN: &str = "http://localhost:8600";
 
 fn sign_in_at(origin: &str) -> Request<Body> {
-    let mut request = post("/auth/sign-in/email", &sign_in_body(PASSWORD));
+    let mut request = post("/auth/sign-in", &sign_in_body(PASSWORD));
     request
         .headers_mut()
         .insert(header::ORIGIN, origin.parse().unwrap());
@@ -331,11 +365,10 @@ async fn until_an_address_is_set_only_this_machine_gets_past_the_doors() {
         "/setup/claim",
         "/owner",
         "/auth/sign-in",
-        "/auth/sign-in/email",
         "/auth/confirm",
-        "/auth/passkey/verify-authentication",
+        "/auth/passkeys/sign-in",
     ] {
-        let cookie = "marfa.session_token=none";
+        let cookie = "marfa_session=none";
         let request = from(AWAY, post_signed_in(path, &json!({}), cookie));
         let refused = send(instance.public.clone(), request).await;
         assert_eq!(refused.status, StatusCode::FORBIDDEN, "{path}");
@@ -385,56 +418,52 @@ async fn a_seeded_address_counts_as_set_under_test_hooks() {
 }
 
 #[tokio::test]
-async fn only_test_hooks_excuse_a_caller_named_behind_a_loopback_listener() {
-    let held = [("MARFA_LISTEN_HOST", "127.0.0.1")];
-    let instance = Instance::claimed_with(&held).await;
-    let origin = "http://127.0.0.1:8600";
-    let refused = send(instance.public.clone(), from(AWAY, sign_in_at(origin))).await;
-    assert_eq!(refused.status, StatusCode::FORBIDDEN);
-    let hooked = [
-        ("MARFA_LISTEN_HOST", "127.0.0.1"),
-        ("MARFA_TEST_HOOKS", "true"),
-    ];
-    let instance = Instance::claimed_with(&hooked).await;
-    let away = send(instance.public.clone(), from(AWAY, sign_in_at(origin))).await;
-    assert_eq!(away.status, StatusCode::OK);
+async fn a_loopback_listener_excuses_no_caller_from_elsewhere() {
+    for hooks in ["false", "true"] {
+        let held = [
+            ("MARFA_LISTEN_HOST", "127.0.0.1"),
+            ("MARFA_TEST_HOOKS", hooks),
+        ];
+        let instance = Instance::claimed_with(&held).await;
+        let refused = send(instance.public.clone(), from(AWAY, sign_in_at(ORIGIN))).await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN, "hooks {hooks}");
+    }
 }
 
 #[tokio::test]
-async fn a_new_email_is_not_a_verified_one() {
-    let instance = Instance::claimed().await;
-    let verified = || async {
-        instance
-            .app
-            .db
-            .read(|tx| {
-                Ok(
-                    tx.query_row("SELECT email_verified FROM auth_user", [], |row| {
-                        row.get::<_, bool>(0)
-                    })?,
-                )
-            })
-            .await
-            .unwrap()
+async fn a_caller_is_on_this_machine_only_by_its_own_connection() {
+    let forwarded = |peer: &str, named: &str| {
+        let mut request = from(peer, sign_in_at(NO_ADDRESS_ORIGIN));
+        request
+            .headers_mut()
+            .insert("x-client", named.parse().unwrap());
+        request
     };
-    let change = |body: Value| {
-        let mut request = post("/owner", &body);
-        *request.method_mut() = Method::PATCH;
-        send(instance.control.clone(), request)
-    };
-    assert_eq!(
-        change(json!({ "name": "Owner" })).await.status,
-        StatusCode::OK
-    );
-    assert!(verified().await);
-    assert_eq!(
-        change(json!({ "email": EMAIL })).await.status,
-        StatusCode::OK
-    );
-    assert!(verified().await);
-    let moved = change(json!({ "email": "moved@example.test" })).await;
-    assert_eq!(moved.status, StatusCode::OK);
-    assert!(!verified().await);
+    for trust in [
+        vec![("MARFA_TRUSTED_PROXY_HEADER", "X-Client")],
+        vec![("MARFA_TRUSTED_PROXY_CIDRS", "0.0.0.0/0")],
+        vec![
+            ("MARFA_TRUSTED_PROXY_HEADER", "X-Client"),
+            ("MARFA_TRUSTED_PROXY_CIDRS", "0.0.0.0/0"),
+        ],
+    ] {
+        let instance = Instance::claimed_with(&trust).await;
+        let mut named_here = forwarded(AWAY, "127.0.0.1");
+        named_here
+            .headers_mut()
+            .insert("x-forwarded-for", "127.0.0.1".parse().unwrap());
+        let refused = send(instance.public.clone(), named_here).await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN, "{trust:?}");
+        let mut through_an_edge = forwarded("127.0.0.1", AWAY);
+        through_an_edge
+            .headers_mut()
+            .insert("x-forwarded-for", AWAY.parse().unwrap());
+        let refused = send(instance.public.clone(), through_an_edge).await;
+        assert_eq!(refused.status, StatusCode::FORBIDDEN, "{trust:?}");
+        // The witness: this machine, named as itself, gets past.
+        let here = send(instance.public.clone(), forwarded("127.0.0.1", "127.0.0.1")).await;
+        assert_eq!(here.status, StatusCode::OK, "{trust:?}");
+    }
 }
 
 #[tokio::test]
@@ -529,8 +558,8 @@ async fn a_session_past_its_end_leaves_no_entry_when_all_are_ended() {
         .db
         .read(|tx| {
             Ok(tx.query_row(
-                "SELECT (SELECT count(*) FROM audit_log WHERE action = 'auth.session.delete'), \
-                 (SELECT count(*) FROM auth_session)",
+                "SELECT (SELECT count(*) FROM audit_log WHERE action = 'auth.sign_in.ended'), \
+                 (SELECT count(*) FROM sign_ins)",
                 [],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )?)
@@ -561,6 +590,34 @@ async fn a_claim_through_the_owner_door_ends_the_setup_cookie_it_used() {
         .filter_map(|line| line.to_str().ok())
         .any(|line| line.starts_with(&format!("{name}=;")) && line.contains("Max-Age=0"));
     assert!(cleared, "{:?}", claimed.headers);
+    assert!(claimed.named("marfa_session").is_some());
+    assert!(claimed.device_id().is_some(), "{:?}", claimed.headers);
+}
+
+#[tokio::test]
+async fn a_device_cookie_set_before_a_recovery_is_no_cookie_after_it() {
+    let instance = Instance::claimed().await;
+    let first = instance.sign_in(PASSWORD).await;
+    let device = first.named("marfa_device").unwrap();
+    let id = first.device_id().unwrap();
+    let sign_in_from_device = || {
+        send(
+            instance.public.clone(),
+            post_signed_in("/auth/sign-in", &sign_in_body(PASSWORD), &device),
+        )
+    };
+    // The witness: before the recovery the cookie names its device again.
+    assert_eq!(sign_in_from_device().await.device_id(), Some(id.clone()));
+    let recovered = send(
+        instance.control.clone(),
+        post("/_control/owner/recover", &json!({ "password": PASSWORD })),
+    )
+    .await;
+    assert_eq!(recovered.status, StatusCode::OK);
+    let after = sign_in_from_device().await;
+    assert_eq!(after.status, StatusCode::OK);
+    let renewed = after.device_id().unwrap();
+    assert_ne!(renewed, id);
 }
 
 #[tokio::test]
@@ -626,8 +683,57 @@ async fn the_table_keeps_a_digest_and_never_the_token() {
     let held: String = instance
         .app
         .db
-        .read(|tx| Ok(tx.query_row("SELECT token FROM auth_session", [], |row| row.get(0))?))
+        .read(|tx| Ok(tx.query_row("SELECT token FROM sign_ins", [], |row| row.get(0))?))
         .await
         .unwrap();
     assert_ne!(held, token);
+}
+
+#[tokio::test]
+async fn a_json_sign_in_answers_ok_and_sets_the_session_cookie() {
+    let instance = Instance::claimed().await;
+    let signed = instance.sign_in(PASSWORD).await;
+    assert_eq!(signed.status, StatusCode::OK);
+    assert_eq!(signed.body, json!({ "ok": true }));
+    let line = signed.headers[header::SET_COOKIE].to_str().unwrap();
+    assert!(line.starts_with("marfa_session="), "{line}");
+    assert!(line.contains("Max-Age="), "{line}");
+
+    let wrong = instance.sign_in("not the password").await;
+    assert_eq!(wrong.status, StatusCode::UNAUTHORIZED);
+    assert!(wrong.cookie().is_none());
+
+    let asked = json!({ "email": EMAIL, "password": PASSWORD, "rememberMe": false });
+    let refused = send(instance.public.clone(), post("/auth/sign-in", &asked)).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
+    assert!(refused.cookie().is_none());
+}
+
+#[tokio::test]
+async fn a_session_token_under_an_old_cookie_name_signs_no_one_in() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let token = cookie.split_once('=').unwrap().1;
+    let held = send(instance.public.clone(), on_the_passkey_list(&cookie)).await;
+    assert_eq!(held.status, StatusCode::OK);
+    for name in ["marfa.session_token", "marfa.auth.session_token"] {
+        let old = format!("{name}={token}");
+        let refused = send(instance.public.clone(), on_the_passkey_list(&old)).await;
+        assert_eq!(refused.status, StatusCode::UNAUTHORIZED, "{name}");
+    }
+}
+
+#[tokio::test]
+async fn sign_out_answers_ok_and_ends_the_cookie() {
+    let instance = Instance::claimed().await;
+    let cookie = instance.sign_in(PASSWORD).await.cookie().unwrap();
+    let ended = send(
+        instance.public.clone(),
+        post_signed_in("/auth/sign-out", &json!({}), &cookie),
+    )
+    .await;
+    assert_eq!(ended.status, StatusCode::OK);
+    assert_eq!(ended.body, json!({ "ok": true }));
+    let gone = send(instance.public.clone(), on_the_passkey_list(&cookie)).await;
+    assert_eq!(gone.status, StatusCode::UNAUTHORIZED);
 }

@@ -2683,11 +2683,6 @@ export interface components {
              * @enum {string}
              */
             code: "version_conflict";
-            /**
-             * @description The HTTP status, always `409`.
-             * @enum {number}
-             */
-            status: 409;
             /** @description A description of the error for a person to read. It can change, so don't match on it. */
             message: string;
         };
@@ -2698,11 +2693,6 @@ export interface components {
              * @enum {string}
              */
             code: "ancestor_unavailable";
-            /**
-             * @description The HTTP status, always `409`.
-             * @enum {number}
-             */
-            status: 409;
             /** @description A description of the error for a person to read. It can change, so don't match on it. */
             message: string;
         };
@@ -2802,7 +2792,7 @@ export interface components {
         DisplayHints: {
             /** @description The field that holds an item's title for display. */
             title_field?: string;
-            /** @description The field that holds an item's body for display. The field holds Markdown, and a `string` field named here holds up to 1,000,000 UTF-16 code units unless its `maxLength` says otherwise. */
+            /** @description The field that holds an item's body for display. The field holds Markdown, and a `string` field named here holds up to 1,000,000 UTF-16 code units unless its `max_length` says otherwise. */
             body_field?: string;
             /** @description Whether an item with no title is named by the first line of its body. `false` where the body is not a name, such as a highlight's passage: such an item is named after what it comes from, or `Untitled`. Defaults to `true`. */
             name_from_body?: boolean;
@@ -3117,7 +3107,7 @@ export interface components {
                  */
                 status: "ok" | "failing" | "off";
                 /**
-                 * @description Why backups are `off`: `no_bucket` when the instance has no object store, `turned_off` when `backup_interval_ms` is 0.
+                 * @description Why backups are `off`: `no_bucket` when the instance has no object store, `turned_off` when `backup_interval_seconds` is 0.
                  * @enum {string}
                  */
                 reason?: "no_bucket" | "turned_off";
@@ -4311,9 +4301,9 @@ export interface components {
             /** @description `false` if full-text search should skip the field. Items still return it. */
             searchable?: boolean;
             /** @description The longest value a `string` or `enum` field allows, in UTF-16 code units. Defaults to 1,000,000 on the `string` field `display_hints.body_field` names, and to 100,000 on any other. */
-            maxLength?: number;
+            max_length?: number;
             /** @description The most elements an `array` field allows. */
-            maxItems?: number;
+            max_items?: number;
             /** @description The lowest value the field allows, itself included. Only a `number` or `integer` field takes it. A subtype may raise it, never lower or drop it. */
             minimum?: number;
             /** @description The highest value the field allows, itself included. Only a `number` or `integer` field takes it. A subtype may lower it, never raise or drop it. */
@@ -4352,7 +4342,7 @@ export interface components {
              */
             format?: "url" | "email" | "datetime" | "date" | "thumbnail" | "bcp47" | "iso3166" | "currency" | "phone";
             /** @description The longest value a `string` or `enum` member allows. */
-            maxLength?: number;
+            max_length?: number;
             /** @description The lowest value the member allows, itself included. Only a `number` or `integer` member takes it. */
             minimum?: number;
             /** @description The highest value the member allows, itself included. Only a `number` or `integer` member takes it. */
@@ -6617,14 +6607,14 @@ export interface components {
             };
         };
         /** @description An error response. */
-        IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal: {
+        IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "idempotency_key_reused" | "idempotency_result_not_retained";
+                code: "idempotency_contract_changed" | "idempotency_key_reused" | "idempotency_result_not_retained";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -6921,7 +6911,7 @@ export interface components {
              */
             format?: "url" | "email" | "datetime" | "date" | "bcp47" | "iso3166" | "currency" | "phone";
             /** @description The longest value a `string` or `enum` column allows. Not for an `item` column. */
-            maxLength?: number;
+            max_length?: number;
             /** @description The lowest value the column allows, itself included. Only a `number` or `integer` column takes it. */
             minimum?: number;
             /** @description The highest value the column allows, itself included. Only a `number` or `integer` column takes it. */
@@ -7617,7 +7607,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -7629,7 +7620,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -7951,7 +7942,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -7963,7 +7955,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -8197,7 +8189,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -8209,7 +8202,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -8554,7 +8547,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -8566,7 +8560,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -8733,7 +8727,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -8745,7 +8740,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -8921,7 +8916,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -8933,7 +8929,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -9118,7 +9114,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -9130,7 +9127,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -11466,7 +11463,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -11478,7 +11476,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -12050,7 +12048,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -12062,7 +12061,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -12239,7 +12238,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -12251,7 +12251,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -12422,7 +12422,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -12434,7 +12435,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -12854,7 +12855,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -12866,7 +12868,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -13037,7 +13039,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -13049,7 +13052,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -13392,6 +13395,18 @@ export interface operations {
                     "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
         };
     };
     writeTableRows: {
@@ -13560,7 +13575,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -13572,7 +13588,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -13759,6 +13775,18 @@ export interface operations {
                     "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
         };
     };
     listItemTables: {
@@ -13905,6 +13933,18 @@ export interface operations {
                     "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
         };
     };
     getTableTotals: {
@@ -14037,6 +14077,18 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
                 };
             };
         };
@@ -14181,6 +14233,18 @@ export interface operations {
                     "application/json": components["schemas"]["WriteContentionRefusal"];
                 };
             };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
         };
     };
     undoTableBatch: {
@@ -14308,7 +14372,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -14320,7 +14385,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -14665,7 +14730,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -14677,7 +14743,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -14986,7 +15052,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -14998,7 +15065,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -15188,7 +15255,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -15200,7 +15268,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -17762,7 +17830,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `request_timeout`: no bytes arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Marfa stores nothing. An upload has no other time limit while bytes keep arriving. */
+            /** @description - `request_timeout`: no bytes arrived for 60 seconds. Marfa stores nothing. An upload has no other time limit while bytes keep arriving. */
             408: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19981,7 +20049,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -19993,7 +20062,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -20194,7 +20263,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -20206,7 +20276,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -20373,7 +20443,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -20385,7 +20456,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -20876,7 +20947,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -20888,7 +20960,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -21188,7 +21260,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -21200,7 +21273,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -21386,7 +21459,8 @@ export interface operations {
                 };
             };
             /**
-             * @description - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
+             * @description - `idempotency_contract_changed`: the first response was made under another contract version, so Marfa can't replay it. The write isn't repeated.
+             *     - `idempotency_key_reused`: the key was first used for a different request. Nothing is written.
              *     - `idempotency_result_not_retained`: the first response was too large to keep, so Marfa can't replay it. The write isn't repeated.
              */
             422: {
@@ -21398,7 +21472,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
+                    "application/json": components["schemas"]["IdempotencyContractChangedOrIdempotencyKeyReusedOrIdempotencyResultNotRetainedRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -28843,6 +28917,30 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
         };
     };
     checkAddressChange: {
@@ -28940,6 +29038,30 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
                 };
             };
         };
@@ -29868,6 +29990,8 @@ export interface operations {
                         settings_added: number;
                         /** @description How many settings Marfa skipped because the instance already stores them. */
                         settings_skipped: number;
+                        /** @description The names of the settings the archive carried that this instance does not have. Marfa left them out and stored nothing for them. */
+                        settings_dropped: string[];
                         /** @description How many connector state documents Marfa stored, for sources the instance held none for. */
                         connector_states_added: number;
                         /** @description How many connector state documents Marfa skipped because the instance already holds one for the source. */
@@ -29925,7 +30049,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description - `request_timeout`: no bytes of the archive arrived for 60 seconds, or for the time `MARFA_UPLOAD_IDLE_TIMEOUT_MS` sets. Nothing was written. An upload has no other time limit while bytes keep arriving. */
+            /** @description - `request_timeout`: no bytes of the archive arrived for 60 seconds. Nothing was written. An upload has no other time limit while bytes keep arriving. */
             408: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30140,6 +30264,18 @@ export interface operations {
                     "application/json": components["schemas"]["BlobStoreUnavailableOrWriteContentionRefusal"];
                 };
             };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
         };
     };
     runBackup: {
@@ -30343,6 +30479,8 @@ export interface operations {
                         settings_added: number;
                         /** @description How many settings Marfa skipped because the instance already stores them. */
                         settings_skipped: number;
+                        /** @description The names of the settings the archive carried that this instance does not have. Marfa left them out and stored nothing for them. */
+                        settings_dropped: string[];
                         /** @description How many connector state documents Marfa stored, for sources the instance held none for. */
                         connector_states_added: number;
                         /** @description How many connector state documents Marfa skipped because the instance already holds one for the source. */

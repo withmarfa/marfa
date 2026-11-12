@@ -146,7 +146,6 @@ fn stream(mut frames: Vec<String>, then: Then) -> Answer {
         .unwrap_or("10")
         .to_string();
     frames.insert(0, scripted::copy_marker("stream_cursor", &head));
-    frames.insert(0, scripted::connected());
     scripted::stream(frames, then)
 }
 
@@ -160,7 +159,6 @@ fn held() -> Then {
 fn at_head(cursor: &str) -> Answer {
     scripted::stream(
         vec![
-            scripted::connected(),
             scripted::copy_marker("stream_cursor", cursor),
             scripted::copy_marker("stream_live", cursor),
         ],
@@ -518,7 +516,6 @@ fn a_held_stream_whose_event_cannot_be_taken_for_now_tells_only_that_the_server_
         "/events",
         vec![scripted::stream(
             vec![
-                scripted::connected(),
                 scripted::copy_marker("stream_cursor", "10"),
                 scripted::event("11", "item.updated", &entering),
             ],
@@ -878,13 +875,7 @@ fn an_outage_a_slow_listener_hears_late_does_not_owe_a_drain_the_follow_already_
             stream(vec![created("n1", "11")], Then::End),
             scripted::refusal(503, "unavailable"),
             // At the cursor the first stream left.
-            scripted::stream(
-                vec![
-                    scripted::connected(),
-                    scripted::copy_marker("stream_cursor", "11"),
-                ],
-                held(),
-            ),
+            scripted::stream(vec![scripted::copy_marker("stream_cursor", "11")], held()),
         ],
     );
     // Hears the first change slowly, so the dispatcher is behind the follow
@@ -1047,13 +1038,7 @@ fn server_reachable_after_a_catch_up_carries_the_cursor_the_catch_up_left() {
                 ],
                 Then::End,
             ),
-            scripted::stream(
-                vec![
-                    scripted::connected(),
-                    scripted::copy_marker("stream_cursor", "12"),
-                ],
-                held(),
-            ),
+            scripted::stream(vec![scripted::copy_marker("stream_cursor", "12")], held()),
         ],
     );
     let heard = listener();
@@ -1086,13 +1071,7 @@ fn a_joiner_is_told_the_state_as_of_its_join_not_a_later_one_a_slow_listener_has
             scripted::refusal(503, "unavailable"),
             until(
                 &ready,
-                scripted::stream(
-                    vec![
-                        scripted::connected(),
-                        scripted::copy_marker("stream_cursor", "11"),
-                    ],
-                    held(),
-                ),
+                scripted::stream(vec![scripted::copy_marker("stream_cursor", "11")], held()),
             ),
         ],
     );

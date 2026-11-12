@@ -14,7 +14,7 @@ use crate::settings::rule;
 const DEFAULT_SERVICE: &str = "marfa-server";
 const DEFAULT_RATIO: f64 = 0.05;
 const DEFAULT_ENVIRONMENT: &str = "production";
-const DEFAULT_WEBHOOK_TIMEOUT_MS: u64 = 5_000;
+const WEBHOOK_TIMEOUT: Duration = Duration::from_secs(5);
 const PAIRS_RULE: &str = "must be comma-separated key=value pairs with percent-encoded values";
 const URL_RULE: &str = "must be an absolute http or https URL";
 const POSTHOG_HOST: &str = "MARFA_POSTHOG_HOST";
@@ -141,24 +141,11 @@ impl Config {
             }),
         };
 
-        let timeout = match text(&get, "MARFA_ERROR_WEBHOOK_TIMEOUT_MS") {
-            None => DEFAULT_WEBHOOK_TIMEOUT_MS,
-            Some(given) => {
-                rule::whole_number(&given, 1, rule::DAY_MS).unwrap_or_else(|rule_text| {
-                    refuse(rule::line(
-                        "MARFA_ERROR_WEBHOOK_TIMEOUT_MS",
-                        &rule_text,
-                        &given,
-                    ));
-                    DEFAULT_WEBHOOK_TIMEOUT_MS
-                })
-            }
-        };
         let webhook = text(&get, "MARFA_ERROR_WEBHOOK_URL").and_then(|address| {
             if is_web_address(&address) {
                 Some(Webhook {
                     url: address,
-                    timeout: Duration::from_millis(timeout),
+                    timeout: WEBHOOK_TIMEOUT,
                 })
             } else {
                 refuse(format!("MARFA_ERROR_WEBHOOK_URL {URL_RULE}"));
@@ -391,7 +378,6 @@ mod tests {
         let lines = refused(&[
             ("OTEL_RESOURCE_ATTRIBUTES", "team"),
             ("MARFA_OTEL_SAMPLE_RATIO", "1.5"),
-            ("MARFA_ERROR_WEBHOOK_TIMEOUT_MS", "0"),
             ("MARFA_ERROR_WEBHOOK_URL", "nope-secret"),
             ("OTEL_EXPORTER_OTLP_ENDPOINT", "ftp://collector-secret"),
             ("OTEL_EXPORTER_OTLP_HEADERS", "broken-secret"),
@@ -406,15 +392,10 @@ mod tests {
         assert!(lines.iter().any(|line| {
             line.starts_with("MARFA_OTEL_SAMPLE_RATIO must be a number from 0 to 1 (got \"1.5\")")
         }));
-        assert!(
-            lines
-                .iter()
-                .any(|line| line.starts_with("MARFA_ERROR_WEBHOOK_TIMEOUT_MS "))
-        );
         assert!(lines.contains(&format!("MARFA_ERROR_WEBHOOK_URL {URL_RULE}")));
         assert!(lines.contains(&format!("OTEL_EXPORTER_OTLP_ENDPOINT {URL_RULE}")));
         assert!(lines.contains(&format!("OTEL_EXPORTER_OTLP_HEADERS {PAIRS_RULE}")));
-        assert_eq!(lines.len(), 6);
+        assert_eq!(lines.len(), 5);
         assert!(!lines.join("\n").contains("secret"));
     }
 

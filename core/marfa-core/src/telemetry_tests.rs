@@ -228,7 +228,6 @@ fn at_the_head(server: &Scripted) {
         "/events",
         vec![scripted::stream(
             vec![
-                scripted::connected(),
                 scripted::copy_marker("stream_cursor", "10"),
                 scripted::copy_marker("stream_live", "10"),
             ],
@@ -316,7 +315,7 @@ fn a_drain_a_follow_starts_when_its_server_is_back_records_its_span_on_the_follo
         vec![
             scripted::refusal(503, "unavailable"),
             scripted::stream(
-                vec![scripted::connected()],
+                vec![],
                 scripted::Then::Hold {
                     keepalive: Some(std::time::Duration::from_millis(50)),
                     lasting: None,

@@ -14,8 +14,8 @@ import { TEST_OWNER } from "../../utils/target.js";
  * **How a fixture knows the page is part way.** `hold:bulk-page=2` stops the
  * page at its second entry, so the first is done and the page has not yet
  * answered: the page is in flight for as long as the fixture says. An atomic
- * page holds its first entry uncommitted, and a page under `atomic: false`
- * has committed it.
+ * page and a page under `atomic: false` both hold their first entry
+ * uncommitted, since either commits once.
  *
  * **Its own server**, because one test sets the write wait and because the
  * limiter is on here: counting a request is a write, so a read that had to
@@ -31,8 +31,7 @@ let server: FreshServer;
 
 beforeAll(async () => {
   server = await bootFreshServer("bulk-page-answers-others", {
-    MARFA_WRITE_WAIT_MS: String(BUDGET_MS),
-    MARFA_HOUSEKEEPING_POLL_INTERVAL_MS: SCHEDULER_NEVER_POLLS_MS,
+    MARFA_TEST_TUNING: `write_wait_ms=${String(BUDGET_MS)},housekeeping_poll_ms=${SCHEDULER_NEVER_POLLS_MS}`,
     MARFA_RATE_LIMIT_ENABLED: "true",
     MARFA_RATE_LIMIT_REQUESTS: "1000000",
     MARFA_RATE_LIMIT_KEYS_REQUESTS: "1000",
@@ -129,18 +128,18 @@ describe("a bulk page leaves the server answering other requests", () => {
     expect(await bodyOf(ids[0]!)).toBe("after");
   }, 120_000);
 
-  it("answers a read in the middle of an items page under atomic: false", async () => {
+  it("answers a read of an item an items page under atomic: false is updating, with the item as it was", async () => {
     const ids = await seed("partial-read");
     const page = await heldPage(() =>
       send("POST", "/items/bulk", notes("partial-read", "after", false)),
     );
 
-    // The first entry is written and the last is not: answered mid-page.
-    expect(await bodyOf(ids[0]!)).toBe("after");
-    expect(await bodyOf(ids[PAGE - 1]!)).toBe("before");
+    // The first entry is written and the page has not committed it.
+    expect(await bodyOf(ids[0]!)).toBe("before");
     expect(page.state.answered).toBe(false);
 
     expect((await release(page)).status).toBe(200);
+    expect(await bodyOf(ids[0]!)).toBe("after");
     expect(await bodyOf(ids[PAGE - 1]!)).toBe("after");
   }, 120_000);
 
@@ -191,6 +190,25 @@ describe("a write that waits behind a bulk page", () => {
     expect((await single.response).status).toBe(201);
   }, 120_000);
 
+  it("lands after a best-effort page that holds the lock longer than the write wait", async () => {
+    await seed("waiting-partial");
+    const page = await heldPage(() =>
+      send("POST", "/items/bulk", notes("waiting-partial", "after", false)),
+    );
+
+    const single = track(
+      send("POST", "/items", {
+        type: "core.note",
+        properties: { title: "behind the best-effort page", body: "waited" },
+      }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 2 * BUDGET_MS));
+    expect(single.state.answered).toBe(false);
+
+    expect((await release(page)).status).toBe(200);
+    expect((await single.response).status).toBe(201);
+  }, 120_000);
+
   it("counts a sign-in attempt after an atomic page that holds the lock longer than the write wait", async () => {
     // A password attempt is counted before the password is checked, in a
     // write of its own outside any transaction.
@@ -201,7 +219,7 @@ describe("a write that waits behind a bulk page", () => {
     );
 
     const attempt = track(
-      fetch(`${server.apiUrl}/auth/sign-in/email`, {
+      fetch(`${server.apiUrl}/auth/sign-in`, {
         method: "POST",
         headers: { "content-type": "application/json", origin },
         body: JSON.stringify({

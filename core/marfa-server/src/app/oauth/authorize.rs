@@ -29,7 +29,7 @@ use crate::app::refusal::{Code as RefusalCode, Refusal, Result};
 use crate::app::unit::Unit;
 use crate::db::Write;
 
-const CODE_WRITE: &str = "auth.verification.create";
+const CODE_WRITE: &str = "auth.code.issued";
 const CONSENT_PATH: &str = "/auth/authorize";
 const REQUEST_PATH: &str = "/auth/oauth2/authorize";
 const NO_DESTINATION: &str = "/auth/error?error=invalid_redirect";
@@ -60,10 +60,9 @@ struct Asked {
 }
 
 impl Asked {
-    /// To the app only if the person's consent to it stands, otherwise to a page that names nothing
-    /// of the request.
+    /// RFC 9700 section 4.11.2: an unapproved web address gets a page naming none of the request.
     fn refused(&self, standing: bool, problem: &Problem) -> String {
-        if !standing {
+        if !standing && !self.destination.reaches_no_website() {
             return format!("/auth/error?error={}", problem.error);
         }
         to_app(
@@ -237,11 +236,11 @@ fn grantable(app: &App, client: &Client, asked: &Asked) -> bool {
 fn standing_consent(
     tx: &Connection,
     client_id: &str,
-    user_id: &str,
+    owner_id: &str,
     destination: &str,
 ) -> Result<Option<Consent>> {
-    let approved = store::approved_destinations(tx, client_id, user_id)?;
-    Ok(store::consent(tx, client_id, user_id)?
+    let approved = store::approved_destinations(tx, client_id, owner_id)?;
+    Ok(store::consent(tx, client_id, owner_id)?
         .filter(Consent::stands)
         .filter(|_| is_registered(&approved, destination)))
 }
@@ -250,11 +249,11 @@ async fn stands_for(app: &App, owner: Option<&Caller>, asked: &Asked) -> Result<
     let Some(session) = owner.and_then(Caller::session) else {
         return Ok(false);
     };
-    let user_id = session.user_id.clone();
+    let owner_id = session.owner_id.clone();
     let client_id = asked.client_id.clone();
     let destination = asked.destination.as_str().to_string();
     let read = move |tx: &Transaction<'_>| {
-        standing_consent(tx, &client_id, &user_id, &destination).map(|found| found.is_some())
+        standing_consent(tx, &client_id, &owner_id, &destination).map(|found| found.is_some())
     };
     app.db.read(read).await
 }
@@ -293,8 +292,7 @@ async fn answer_signed_in(app: &Arc<App>, owner: &Caller, asked: Asked) -> Resul
     let shared = app.clone();
     app.write(owner, CODE_WRITE, move |unit| {
         let Some(client) = store::client(unit.tx(), &asked.client_id)? else {
-            let gone = Problem::new("invalid_client", "This client is gone.");
-            return Ok(asked.refused(false, &gone));
+            return Ok(NO_CLIENT.to_string());
         };
         let Some(destination) = Destination::of(
             &client.registration.redirect_uris,
@@ -302,8 +300,8 @@ async fn answer_signed_in(app: &Arc<App>, owner: &Caller, asked: Asked) -> Resul
         ) else {
             return Ok(NO_DESTINATION.to_string());
         };
-        let user_id = user_of(unit)?;
-        let consent = standing_consent(unit.tx(), &client.id, &user_id, destination.as_str())?;
+        let owner_id = user_of(unit)?;
+        let consent = standing_consent(unit.tx(), &client.id, &owner_id, destination.as_str())?;
         let stands = consent.is_some();
         let registries = registries_in(unit, &cache)?;
         let judged = judge(&client.registration, &asked.scope, &registries);
@@ -340,7 +338,7 @@ async fn answer_signed_in(app: &Arc<App>, owner: &Caller, asked: Asked) -> Resul
                     &client.id,
                     Some(json!({
                         "client_id": client.id,
-                        "user_id": user_id,
+                        "owner_id": owner_id,
                         "scopes": judged.kept.literals(),
                         "grant_item_id": consent.grant_id,
                     })),
@@ -373,7 +371,7 @@ async fn answer_signed_in(app: &Arc<App>, owner: &Caller, asked: Asked) -> Resul
 fn user_of(unit: &Unit<'_, '_>) -> Result<String> {
     unit.caller
         .session()
-        .map(|session| session.user_id.clone())
+        .map(|session| session.owner_id.clone())
         .ok_or_else(|| Refusal::internal("an approval has no browser session"))
 }
 
@@ -399,7 +397,7 @@ fn issue_code(app: &App, unit: &Unit<'_, '_>, ticket: Ticket<'_>) -> Result<Stri
         &Code {
             digest: digest_of(&app.settings.start.key_salt, &code)?,
             client_id: ticket.client_id.to_string(),
-            user_id: session.user_id.clone(),
+            owner_id: session.owner_id.clone(),
             session_id: session.id.clone(),
             grant_id: ticket.grant_id.to_string(),
             redirect_uri: ticket.destination.as_str().to_string(),
@@ -415,7 +413,7 @@ fn issue_code(app: &App, unit: &Unit<'_, '_>, ticket: Ticket<'_>) -> Result<Stri
         CODE_WRITE,
         "oauth_client",
         ticket.client_id,
-        Some(json!({ "client_id": ticket.client_id, "user_id": session.user_id })),
+        Some(json!({ "client_id": ticket.client_id, "owner_id": session.owner_id })),
     )?;
     Ok(to_app(
         ticket.destination,
@@ -481,9 +479,9 @@ pub async fn screen(app: &Arc<App>, query: &str, owner: Option<&Caller>) -> Resu
         Ok(linked) => linked,
         Err(screen) => return Ok(screen),
     };
-    let Some(user_id) = owner
+    let Some(owner_id) = owner
         .and_then(Caller::session)
-        .map(|session| session.user_id.clone())
+        .map(|session| session.owner_id.clone())
     else {
         let back = format!("{CONSENT_PATH}?{query}");
         return Ok(Screen::SignIn(sign_in_for(app, query, &back)));
@@ -499,7 +497,7 @@ pub async fn screen(app: &Arc<App>, query: &str, owner: Option<&Caller>) -> Resu
             let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
             let registries = super::scope::Registries::of(&catalog);
             let named = narrow(&linked.scope, &registries.allowed()).kept;
-            let held = store::held_scopes(tx, &client.id, &user_id)?;
+            let held = store::held_scopes(tx, &client.id, &owner_id)?;
             let choosable = registries.choosable_types();
             let request = Request {
                 named: &named,
@@ -562,8 +560,8 @@ pub async fn decide(
         }
         let registries = registries_in(unit, &cache)?;
         let named = narrow(&linked.scope, &registries.allowed()).kept;
-        let user_id = user_of(unit)?;
-        let held = store::held_scopes(unit.tx(), &client.id, &user_id)?;
+        let owner_id = user_of(unit)?;
+        let held = store::held_scopes(unit.tx(), &client.id, &owner_id)?;
         let choosable = registries.choosable_types();
         let request = Request {
             named: &named,
@@ -588,14 +586,14 @@ pub async fn decide(
         }
         let lacking = ceiling_lacks(&client, &approved, &registries)?;
         clients::catch_up(unit, &client, &lacking, "authorize")?;
-        let stood = grant::stand(unit, &cache, &client, &user_id, &approved, CONSENT_SOURCE)?;
+        let stood = grant::stand(unit, &cache, &client, &owner_id, &approved, CONSENT_SOURCE)?;
         unit.audit_also(
             GRANT_CREATED,
             "oauth_grant",
             &client.id,
             Some(json!({
                 "client_id": client.id,
-                "user_id": user_id,
+                "owner_id": owner_id,
                 "scopes": approved.literals(),
                 "resulting_scopes": stood.scopes.literals(),
                 "grant_item_id": stood.grant_id,

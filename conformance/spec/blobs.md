@@ -130,7 +130,7 @@ When the server answers `POST /blobs` with `507 insufficient_storage`, the serve
 
 ### `blobs/upload-refused-read`
 
-When the server refuses `POST /blobs` after it has started to read the body, the server MUST read the rest of the body, until it ends or no byte arrives for `upload_idle_timeout_ms`, before it answers.
+When the server refuses `POST /blobs` after it has started to read the body, the server MUST read the rest of the body, until it ends or no byte arrives for 60 seconds, before it answers.
 
 **Reason:** a client that is still sending reads no answer until its body is sent, and a server that closed the connection with bytes unread would reset it, which can drop the refusal before the client reads it.
 
@@ -140,7 +140,7 @@ When the server refuses `POST /blobs` after it has started to read the body, the
 
 ### `blobs/upload-duration`
 
-While a part of the body of `POST /blobs` arrives at least once in every `upload_idle_timeout_ms`, the server MUST NOT end the request for the time the body takes.
+While a part of the body of `POST /blobs` arrives at least once in every 60 seconds, the server MUST NOT end the request for the time the body takes.
 
 **Reason:** an upload has no size cap (`blobs/upload-unlimited`), so a large one over a slow link outlasts any fixed request deadline. The limit on a body that stops arriving is `blobs/upload-idle`.
 
@@ -148,7 +148,7 @@ While a part of the body of `POST /blobs` arrives at least once in every `upload
 
 ### `blobs/upload-idle`
 
-If no byte of the body of `POST /blobs` arrives for `upload_idle_timeout_ms`, 60000 milliseconds unless named, then the server MUST answer `408 request_timeout`.
+If no byte of the body of `POST /blobs` arrives for 60 seconds, then the server MUST answer `408 request_timeout`.
 
 **Reason:** a sender that has gone quiet would otherwise hold its request, the bytes it has sent and its share of the disk reserve for ever. The time counts the server's wait for the sender, not the time it takes to write what has arrived.
 

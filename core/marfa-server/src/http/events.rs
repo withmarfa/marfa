@@ -18,6 +18,7 @@ use super::answer::Answer;
 use super::conditional;
 use super::items::invalid_field;
 use super::listening;
+use super::listing;
 use super::query;
 use crate::app::App;
 use crate::app::access::Caller;
@@ -250,7 +251,7 @@ pub async fn open(
         )
         .into());
     }
-    query::only(&uri, &DECLARED)?;
+    listing::Params::read(&uri, &DECLARED, false)?;
     let types = types_of(&uri)?;
     events::judge_types(&app, &caller, types.clone()).await?;
     let filter = Filter {

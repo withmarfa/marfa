@@ -4,7 +4,7 @@ What a type declares about the tables an item of it can hold: their names, their
 
 ## Declaring tables
 
-A type declares tables under `tables`, an object keyed by table name. A table has an optional `label`, `description` and `order`, and `columns`, an object keyed by column name. A column has a `type` and optionally a `label`, `description`, `required`, `enum_values`, `format`, `maxLength`, `minimum`, `maximum`, `type_constraints`, `adds_up` and `searchable`. A column's `type` is `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date`, `datetime` or `item`, a column of type `item` holding the ID of an item.
+A type declares tables under `tables`, an object keyed by table name. A table has an optional `label`, `description` and `order`, and `columns`, an object keyed by column name. A column has a `type` and optionally a `label`, `description`, `required`, `enum_values`, `format`, `max_length`, `minimum`, `maximum`, `type_constraints`, `adds_up` and `searchable`. A column's `type` is `string`, `email`, `url`, `enum`, `boolean`, `integer`, `number`, `date`, `datetime` or `item`, a column of type `item` holding the ID of an item.
 
 ### `tables/declare`
 
@@ -124,7 +124,7 @@ If a table declares no `columns`, or declares `columns` that is empty or is not 
 
 ### `tables/column-rules`
 
-If a column breaks a rule that a field of its type keeps, in its `enum_values`, `minimum`, `maximum` or `maxLength`, or has a `required` that is not `true` or `false`, then the server MUST answer `400 invalid_schema` naming the member.
+If a column breaks a rule that a field of its type keeps, in its `enum_values`, `minimum`, `maximum` or `max_length`, or has a `required` that is not `true` or `false`, then the server MUST answer `400 invalid_schema` naming the member.
 
 **Tests:** `compliance/type-tables.test.ts › refuses a column that breaks a rule a field of its kind keeps`.
 
@@ -164,7 +164,7 @@ If a column's `type_constraints` is empty, is not a list, or holds an entry that
 
 ### `tables/item-values-refused`
 
-If a column names `type_constraints` and is not of type `item`, or is of type `item` and names `enum_values`, `format`, `maxLength`, `minimum` or `maximum`, then the server MUST answer `400 invalid_schema` naming the member.
+If a column names `type_constraints` and is not of type `item`, or is of type `item` and names `enum_values`, `format`, `max_length`, `minimum` or `maximum`, then the server MUST answer `400 invalid_schema` naming the member.
 
 **Tests:** `compliance/type-tables.test.ts › refuses type_constraints on a column that is not an item, and a value rule on an item column`.
 
@@ -606,7 +606,7 @@ If an operation's `values` names a column the table does not declare, then the s
 
 ### `tables/rows-value-rules`
 
-If a value breaks a rule its column states, in its `type`, `enum_values`, `format`, `maxLength`, `minimum` or `maximum`, then the server MUST answer `400 validation_error` naming `operations.<index>.values.<column>`.
+If a value breaks a rule its column states, in its `type`, `enum_values`, `format`, `max_length`, `minimum` or `maximum`, then the server MUST answer `400 validation_error` naming `operations.<index>.values.<column>`.
 
 **Reason:** a column holds the values a field of its type holds.
 

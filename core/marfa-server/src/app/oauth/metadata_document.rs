@@ -8,7 +8,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tokio::runtime::Handle;
 use ureq::Agent;
 use ureq::http::header;
@@ -243,22 +243,6 @@ fn is_json_media_type(value: &str) -> bool {
             .is_some_and(|name| !name.is_empty())
 }
 
-fn named_methods<'a>(
-    object: &'a Map<String, Value>,
-    name: &str,
-) -> Result<Vec<&'a str>, RegistrationError> {
-    let not_a_list = || RegistrationError::metadata(format!("{name} must be a list of strings."));
-    match object.get(name) {
-        None | Some(Value::Null) => Ok(Vec::new()),
-        Some(value) => value
-            .as_array()
-            .ok_or_else(not_a_list)?
-            .iter()
-            .map(|entry| entry.as_str().ok_or_else(not_a_list))
-            .collect(),
-    }
-}
-
 /// Every error here is `invalid_client` to whoever asked; the description is only for the log.
 pub fn parse_document(
     client_id: &str,
@@ -287,24 +271,38 @@ pub fn parse_document(
             "A metadata document must not hold both jwks and jwks_uri.",
         ));
     }
-    let supported = named_methods(object, "token_endpoint_auth_methods_supported")?;
+    let supported = client::texts(object, "token_endpoint_auth_methods_supported")?;
     if let Some(method) = supported
         .iter()
+        .flatten()
         .find(|method| SYMMETRIC_METHODS.contains(method))
     {
         return Err(RegistrationError::metadata(format!(
             "A metadata document must not offer {method}."
         )));
     }
-    let registration = client::read(object, Source::Document, allowed)?;
-    if !supported.is_empty()
-        && object.contains_key("token_endpoint_auth_method")
-        && !supported.contains(&registration.token_endpoint_auth_method.word())
-    {
-        return Err(RegistrationError::metadata(
-            "token_endpoint_auth_method must be among token_endpoint_auth_methods_supported.",
-        ));
-    }
+    let stated = client::text(object, "token_endpoint_auth_method")?;
+    let registration = match supported {
+        None => client::read(object, Source::Document, allowed)?,
+        Some(methods) => {
+            if let Some(method) = stated
+                && !methods.contains(&method)
+            {
+                return Err(RegistrationError::metadata(
+                    "token_endpoint_auth_method must be among token_endpoint_auth_methods_supported.",
+                ));
+            }
+            // The list is authoritative; the singular is only a preference (MCP SEP-3149).
+            if !methods.contains(&"none") {
+                return Err(RegistrationError::metadata(
+                    "token_endpoint_auth_methods_supported must include none.",
+                ));
+            }
+            let mut public = object.clone();
+            public.remove("token_endpoint_auth_method");
+            client::read(&public, Source::Document, allowed)?
+        }
+    };
     if registration
         .client_name
         .as_deref()
@@ -337,7 +335,7 @@ mod tests {
     use serde_json::json;
     use ureq::tls::{Certificate, RootCerts};
 
-    use super::super::client::{GrantType, ResponseType};
+    use super::super::client::{AuthMethod, GrantType, ResponseType};
     use super::super::redirect::AppKind;
     use super::*;
 
@@ -900,7 +898,65 @@ mod tests {
             "token_endpoint_auth_methods_supported",
             json!(["tls_client_auth"]),
         );
-        assert!(parse(&unstated).is_ok());
+        assert!(parse(&unstated).is_err());
+        let empty = with(
+            document(),
+            "token_endpoint_auth_methods_supported",
+            json!([]),
+        );
+        assert!(parse(&empty).is_err());
+        let public = with(
+            document(),
+            "token_endpoint_auth_methods_supported",
+            json!(["tls_client_auth", "none"]),
+        );
+        assert_eq!(
+            parse(&public)
+                .expect("registered")
+                .token_endpoint_auth_method,
+            AuthMethod::None
+        );
+    }
+
+    #[test]
+    fn a_document_that_can_use_none_registers_public_whatever_it_prefers() {
+        // ChatGPT's published document, under this test's URL.
+        let published = json!({
+            "client_id": ID,
+            "client_uri": "https://chatgpt.com/",
+            "client_name": "ChatGPT",
+            "redirect_uris": ["https://chatgpt.com/connector_platform_oauth_redirect"],
+            "token_endpoint_auth_method": "private_key_jwt",
+            "token_endpoint_auth_methods_supported": ["none", "private_key_jwt"],
+            "grant_types": [
+                "authorization_code",
+                "refresh_token",
+                "urn:ietf:params:oauth:grant-type:jwt-bearer"
+            ],
+            "response_types": ["code"],
+            "token_endpoint_auth_signing_alg": "RS256",
+            "jwks_uri": "https://chatgpt.com/jwks.json",
+        });
+        let registered = parse(&published).expect("registered");
+        assert_eq!(registered.token_endpoint_auth_method, AuthMethod::None);
+        let without_none = with(
+            published,
+            "token_endpoint_auth_methods_supported",
+            json!(["private_key_jwt"]),
+        );
+        assert!(parse(&without_none).is_err());
+    }
+
+    #[test]
+    fn a_stated_method_that_is_not_text_is_refused() {
+        let listed = with(
+            document(),
+            "token_endpoint_auth_methods_supported",
+            json!(["none"]),
+        );
+        assert!(parse(&listed).is_ok());
+        let stated = with(listed, "token_endpoint_auth_method", json!(5));
+        assert!(parse(&stated).is_err());
     }
 
     #[test]

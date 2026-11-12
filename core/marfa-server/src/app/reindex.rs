@@ -35,10 +35,21 @@ async fn run(app: Weak<App>, wake: Arc<Notify>) {
 
 async fn page(app: &App) -> Result<bool> {
     let cache = app.catalog_handle();
-    app.db
+    let indexing = app
+        .db
         .write(Write::own(), move |tx| {
             let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
+            items::sort_keys::drop_undeclared(tx, &catalog.rules)?;
             items::reindex_page(tx, &catalog.rules)
         })
-        .await
+        .await?;
+    let sorting = app
+        .db
+        .write(Write::own(), items::sort_keys::fill_page)
+        .await;
+    let sorting = sorting.unwrap_or_else(|refusal| {
+        tracing::warn!(code = refusal.code.wire(), "A sort key page failed");
+        false
+    });
+    Ok(indexing || sorting)
 }

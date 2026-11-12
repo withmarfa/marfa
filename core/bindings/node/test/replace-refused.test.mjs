@@ -17,7 +17,7 @@ function digest(path) {
     : null;
 }
 
-/** A store this build refuses, as another build's queue would leave it. */
+/** A store this build refuses, as an earlier build would leave it. */
 function refusedStore(/** @type {string} */ path, /** @type {boolean} */ unsent) {
   // Made in a process of its own, whose exit lets go of the writer role.
   const made = spawnSync(process.execPath, [
@@ -32,7 +32,7 @@ function refusedStore(/** @type {string} */ path, /** @type {boolean} */ unsent)
     db.exec(`INSERT INTO queue (id, kind, idempotency_key, payload, queued_at)
              VALUES ('q1', 'create_item', 'k1', '{}', '2026-01-01T00:00:00Z')`);
   }
-  db.exec("ALTER TABLE queue RENAME COLUMN follows TO after_write");
+  db.exec("PRAGMA user_version = 0");
   db.close();
 }
 

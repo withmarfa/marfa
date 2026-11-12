@@ -1,3 +1,4 @@
+import { signInOwnerWithPassword } from "../../client/owner-session.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
@@ -62,26 +63,20 @@ interface Browser {
 async function signIn(userAgent = SAFARI): Promise<Browser> {
   const before = new Set((await signIns()).map((row) => row.id));
   addresses += 1;
-  const response = await fetch(`${server.apiUrl}/auth/sign-in/email`, {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      origin,
+  const cookie = await signInOwnerWithPassword(
+    server.apiUrl,
+    origin,
+    { email: OWNER.email, password: OWNER.password },
+    {
       "user-agent": userAgent,
       [CLIENT_HEADER]: `198.51.100.${String(addresses)}`,
     },
-    body: JSON.stringify({ email: OWNER.email, password: OWNER.password }),
-  });
-  expect(response.status).toBe(200);
-  const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-    response.headers.get("set-cookie") ?? "",
-  )?.[1];
-  expect(cookie, "sign-in set no session cookie").toBeTruthy();
+  );
   const own = (await signIns()).find(
     (row) => row.kind === "browser" && !before.has(row.id),
   );
   expect(own, "the listing holds no new browser session").toBeDefined();
-  return { cookie: cookie!, id: own!.id };
+  return { cookie, id: own!.id };
 }
 
 interface ListedSignIn {
@@ -487,29 +482,6 @@ describe("who wrote each version", () => {
     expect(writers(await versionsOf(minted.key, id))).toEqual([
       { kind: "key", id: minted.id, name: "file writer" },
       null,
-    ]);
-  });
-
-  it("names an app by its client id once its sign-in record is gone, and still takes its write", async () => {
-    const browser = await signIn();
-    const app = await approveApp(browser, "app whose record goes");
-    const record = listedApp(await signIns(), "app whose record goes");
-    const id = await createNote(app.accessToken);
-    // The record reads as gone while the app's token stands.
-    await server.setFault(`unreadable:sign-in-record=${record.id}`);
-    try {
-      const changed = await call(app.accessToken, "PATCH", `/items/${id}`, {
-        version: 1,
-        properties: { body: "after the record went" },
-      });
-      expect(changed.status, JSON.stringify(changed.body)).toBe(200);
-      await changeNote(app.accessToken, id, 2, "third");
-    } finally {
-      await server.clearFault();
-    }
-    expect(writers(await versionsOf(app.accessToken, id))).toEqual([
-      { kind: "app", id: record.id, name: "app whose record goes" },
-      { kind: "app", id: app.clientId, name: "app whose record goes" },
     ]);
   });
 

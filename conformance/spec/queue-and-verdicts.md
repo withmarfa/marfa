@@ -128,7 +128,7 @@ When a caller queues a write, a device MUST give it an idempotency key at once a
 
 When a drain sends a write again that it sent before, a device MUST send it under the idempotency key it carried, unless a caller released it in between.
 
-**Reason:** an attempt whose answer the device never read may have taken effect, and only the same key lets the server answer the next attempt from its record. A release mints a fresh key for a write other than a row write or an undo (`queue-and-verdicts/release-fresh-key`), and for either only where the server holds another request under the key (`queue-and-verdicts/rows-release-key-spent`, `queue-and-verdicts/undo-release-key-spent`).
+**Reason:** an attempt whose answer the device never read may have taken effect, and only the same key lets the server answer the next attempt from its record. A release mints a fresh key only where the server holds an answer under the key that applied none of the write (`queue-and-verdicts/release-fresh-key`, `queue-and-verdicts/rows-release-key-spent`, `queue-and-verdicts/undo-release-key-spent`). A server on another contract version says whether that answer applied the write (`queue-and-verdicts/contract-changed-accepted`, `queue-and-verdicts/contract-changed-key-spent`).
 
 **Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`, `device/grant-recovery.test.ts › keeps an edit blocked for $kind $level until its grant returns`, `device/versioned-deletes-live.test.ts › replays a lost delete answer without deleting a restored newer item`, `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
@@ -252,7 +252,7 @@ When a drain sends a `write_rows` write it has not sent before, a device MUST se
 
 ### `queue-and-verdicts/rows-joined-again`
 
-When a drain sends again a batch it sent before, a device MUST send the same writes in it, in the same order, under the same key, unless a caller released the batch from `key_spent` (`queue-and-verdicts/rows-release-key-spent`).
+When a drain sends again a batch it sent before, a device MUST send the same writes in it, in the same order, under the same key, unless a caller released the batch from a block that gives it a fresh key (`queue-and-verdicts/rows-release-key-spent`).
 
 **Reason:** the server may have taken the batch, and only its record under the key answers the batch sent again; a `patch` applied twice would overwrite a change made between the two sends.
 
@@ -368,19 +368,19 @@ When a caller releases a write of a batch, a device MUST release every write of 
 
 ### `queue-and-verdicts/rows-release-key`
 
-When a caller releases a `write_rows` write that is not `blocked` `key_spent`, a device MUST keep the key its batch went under.
+When a caller releases a `write_rows` write that is not `blocked` `key_spent`, `conflict_unresolved` or `ancestor_unavailable`, a device MUST keep the key its batch went under.
 
-**Reason:** whatever stopped the batch, the server may hold it under that key, and a fresh key would let the server write it twice.
+**Reason:** the device never read an answer that says whether the batch took effect, so the server may hold it under that key, and a fresh key would let the server write it twice.
 
 **Tests:** `device/table-writes-live.test.ts › sets a batch whose answer was lost aside whole under its key, telling each write once, and sends it again as it went once a caller releases one of its writes`, `› releases every write of a dead batch when a caller releases one, and sends the batch again as it went under its key`.
 
 ### `queue-and-verdicts/rows-release-key-spent`
 
-When a caller releases a `write_rows` write `blocked` `key_spent`, a device MUST send its batch again under a key no request has carried.
+When a caller releases a `write_rows` write `blocked` `key_spent`, `conflict_unresolved` or `ancestor_unavailable`, a device MUST send its batch again under a key no request has carried.
 
-**Reason:** the server holds another request under the key, so it holds nothing of this batch under it, and it would refuse the key again.
+**Reason:** the server holds under the key another request, or a refusal of the whole batch that applied none of it, and it would answer the key the same way again.
 
-**Tests:** `device/table-writes-live.test.ts › releases every write of a batch blocked key_spent when a caller releases one, and sends the batch as it went under a fresh key`.
+**Tests:** `device/table-writes-live.test.ts › releases every write of a batch blocked key_spent when a caller releases one, and sends the batch as it went under a fresh key`, `› sends a batch blocked conflict_unresolved as it went under a fresh key once a caller releases one of its writes`.
 
 ### `queue-and-verdicts/rows-withdrawn-whole`
 
@@ -414,17 +414,17 @@ When a drain sends an `undo_rows` write, a device MUST send it as `POST /items/{
 
 ### `queue-and-verdicts/undo-release-key`
 
-When a caller releases an `undo_rows` write that is not `blocked` `key_spent`, a device MUST keep its idempotency key.
+When a caller releases an `undo_rows` write that is not `blocked` `key_spent`, `conflict_unresolved` or `ancestor_unavailable`, a device MUST keep its idempotency key.
 
-**Reason:** whatever stopped the undo, the server may have applied it under that key and answers it again from its record. Under a fresh key the server would apply the undo again, putting back a row deleted since, or refuse it `undo_conflict` although it landed.
+**Reason:** unless the server refused it under the key, the server may have applied it under that key and answers it again from its record. Under a fresh key the server would apply the undo again, putting back a row deleted since, or refuse it `undo_conflict` although it landed.
 
 **Tests:** `device/table-writes-live.test.ts › sends a dead undo again under its key once a caller releases it, so the server answers it from its record and puts back no row deleted since`.
 
 ### `queue-and-verdicts/undo-release-key-spent`
 
-When a caller releases an `undo_rows` write `blocked` `key_spent`, a device MUST send it again under a key no request has carried.
+When a caller releases an `undo_rows` write `blocked` `key_spent`, `conflict_unresolved` or `ancestor_unavailable`, a device MUST send it again under a key no request has carried.
 
-**Reason:** the server holds another request under the key, so it holds nothing of this undo under it, and it would refuse the key again.
+**Reason:** the server holds under the key another request, or a refusal that applied none of the undo, and it would answer the key the same way again.
 
 **Tests:** `device/table-writes-live.test.ts › sends an undo blocked key_spent under a fresh key once a caller releases it`.
 
@@ -954,7 +954,7 @@ When the working copy holds a copy the server set aside, a device MUST hold its 
 
 ### `queue-and-verdicts/refused-contract`
 
-When the server answers a write with a `4xx` naming its contract, other than `408`, `425`, `429` and the answers `queue-and-verdicts/credential-blocks-queue`, `queue-and-verdicts/grant-blocks`, `queue-and-verdicts/unclaimed-source-blocks`, `queue-and-verdicts/key-spent-blocks`, `queue-and-verdicts/ancestor-blocks`, `queue-and-verdicts/conflict-blocks`, `queue-and-verdicts/in-flight-counted` and `queue-and-verdicts/not-retained-accepted` name, a device MUST give it the verdict `refused` on the first such answer, with the server's code as its reason, or `unknown` where the answer names none.
+When the server answers a write with a `4xx` naming its contract, other than `408`, `425`, `429` and the answers `queue-and-verdicts/credential-blocks-queue`, `queue-and-verdicts/grant-blocks`, `queue-and-verdicts/unclaimed-source-blocks`, `queue-and-verdicts/key-spent-blocks`, `queue-and-verdicts/ancestor-blocks`, `queue-and-verdicts/conflict-blocks`, `queue-and-verdicts/in-flight-counted`, `queue-and-verdicts/not-retained-accepted`, `queue-and-verdicts/contract-changed-accepted` and `queue-and-verdicts/contract-changed-key-spent` name, a device MUST give it the verdict `refused` on the first such answer, with the server's code as its reason, or `unknown` where the answer names none.
 
 **Reason:** the same request sent again is the same request: a device that retried it would spend the ceiling on identical refusals.
 
@@ -967,6 +967,22 @@ When the server answers a write `422 idempotency_result_not_retained` with a `de
 **Reason:** the server ran the write and kept only the status of its answer (`errors/idem-not-retained-status`), so the writes that wait on it can go. The answer carries no item, so a read by id takes its place. A create that names no `id` lands on the item its natural key resolves, and no read by id finds that item, so `queue-and-verdicts/refused-contract` refuses it.
 
 **Tests:** `device/verdicts.test.ts › takes idempotency_result_not_retained naming a first %i as %s, and sends the write waiting on it only after a success`.
+
+### `queue-and-verdicts/contract-changed-accepted`
+
+When the server answers a write `422 idempotency_contract_changed` with a `details.original_status` from `200` to `299`, and the write is not a create that names no `id`, a device MUST give it the verdict `accepted` and read again the item or edge it wrote, as `queue-and-verdicts/success-read-again` states for a `2xx`.
+
+**Reason:** the server ran the write under the contract it spoke before and cannot replay that answer (`errors/idem-contract-changed-status`). Under a fresh key it would run the write a second time, over any change made since.
+
+**Tests:** `device/classification.test.ts › takes idempotency_contract_changed naming a first %i as %s`, `device/release-key-live.test.ts › takes a write the server applied before it moved to another contract version as accepted, and never writes it again`.
+
+### `queue-and-verdicts/contract-changed-key-spent`
+
+When the server answers a write `422 idempotency_contract_changed` with a `details.original_status` from `400` to `599`, a device MUST block it `key_spent` on that first answer.
+
+**Reason:** the server keeps under the key a refusal that applied none of the write, and answers the key the same way again, so the write can go only under a fresh key (`queue-and-verdicts/release-fresh-key`).
+
+**Tests:** `device/classification.test.ts › takes idempotency_contract_changed naming a first %i as %s`.
 
 ### `queue-and-verdicts/refused-not-resent`
 
@@ -1630,11 +1646,19 @@ When a caller releases a write that is `dead`, or `blocked` for a reason other t
 
 ### `queue-and-verdicts/release-fresh-key`
 
-When a caller releases a write other than a `write_rows` or `undo_rows` write, a device MUST give it a fresh idempotency key.
+When a caller releases a write other than a `write_rows` or `undo_rows` write that is `blocked` `key_spent`, `conflict_unresolved` or `ancestor_unavailable`, a device MUST give it a fresh idempotency key.
 
-**Reason:** sent again under the spent key, the write would be answered from the server's record, which is the answer that stopped it. A row write keeps its batch's key (`queue-and-verdicts/rows-release-key`) and an undo its own (`queue-and-verdicts/undo-release-key`), unless the server holds another request under the key.
+**Reason:** the server holds under the key an answer that applied none of the write: another request's, or a refusal it keeps, whatever contract version it now speaks. Sent again under that key, the write would be answered from that record, which is the answer that stopped it.
 
-**Tests:** `device/classification.test.ts › sends a released write again under a fresh key`.
+**Tests:** `device/classification.test.ts › sends a released write again under a fresh key`, `device/release-key-live.test.ts › sends a write blocked conflict_unresolved again under a fresh key once a caller releases it, so the server judges it again`.
+
+### `queue-and-verdicts/release-keeps-key`
+
+When a caller releases a write other than a `write_rows` or `undo_rows` write that is `dead`, or `blocked` for a reason other than `key_spent`, `conflict_unresolved` or `ancestor_unavailable`, a device MUST keep the idempotency key it went under.
+
+**Reason:** the device never read an answer that says whether the write took effect, so the server may hold it applied under that key. Under a fresh key the server would apply it a second time, and a metadata, extension or tag write, which checks no version, would undo a change made since. A row write keeps its batch's key (`queue-and-verdicts/rows-release-key`) and an undo its own (`queue-and-verdicts/undo-release-key`) on the same rule.
+
+**Tests:** `device/release-key-live.test.ts › sends a set-aside write again under its key once a caller releases it, so the server answers it from its record and keeps the change made since`, `› sends a dead write again under its key once a caller releases it`, `device/classification.test.ts › releases by reason the writes blocked for it, and never a dead one`, `device/stuck-write.test.ts › sets aside a create the server answers with a 500 it names its contract for`, `device/folder-health.test.ts › keeps dead file effects current until an accepted replacement, survives clear and restart, and restores them on release`.
 
 ### `queue-and-verdicts/release-resets-count`
 

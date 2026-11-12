@@ -116,6 +116,7 @@ codes! {
     RequestTooLarge = "request_too_large", 413;
     RangeNotSatisfiable = "range_not_satisfiable", 416;
     CompatibleWithViolation = "compatible_with_violation", 422;
+    IdempotencyContractChanged = "idempotency_contract_changed", 422;
     IdempotencyKeyReused = "idempotency_key_reused", 422;
     IdempotencyResultNotRetained = "idempotency_result_not_retained", 422;
     RateLimited = "rate_limited", 429;
@@ -166,6 +167,14 @@ impl Refusal {
         Refusal::new(Code::ValidationError, message)
     }
 
+    /// A validation refusal that names the request field it is about.
+    pub fn invalid_at(path: &str, message: &str) -> Refusal {
+        Refusal::validation(message.to_string()).with_detail(
+            "errors",
+            serde_json::json!([{ "path": path, "message": message }]),
+        )
+    }
+
     /// A fault nothing foresaw. `context` goes to the log and nowhere else.
     pub fn internal(context: &str) -> Refusal {
         tracing::error!(context, "Internal error");
@@ -211,6 +220,22 @@ impl Refusal {
     /// read it. It never reaches the envelope.
     pub fn database_code(&self) -> Option<&'static str> {
         self.fault.as_deref().and_then(Fault::database_code)
+    }
+
+    /// What a log line or a job's error may say of the refusal.
+    pub fn cause(&self) -> String {
+        match self.database_code() {
+            Some(code) => format!("Database operation failed ({code})"),
+            None => self.message.to_string(),
+        }
+    }
+
+    /// The file answered with pages SQLite cannot read.
+    pub fn is_damage(&self) -> bool {
+        matches!(
+            self.database_code(),
+            Some("SQLITE_CORRUPT" | "SQLITE_NOTADB")
+        )
     }
 }
 

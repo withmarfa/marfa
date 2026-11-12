@@ -53,7 +53,7 @@ data/
 # The boot scripts write a `.gitignore` into the folder whatever it is
 # called; this catches a folder made another way under the names in use.
 .marfa-state*
-# The restore drill's two instances and its Litestream state, likewise.
+# The restore drill's two instances, likewise.
 .marfa-drill/
 
 # Load and performance reports the conformance suite writes.

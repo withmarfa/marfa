@@ -102,6 +102,11 @@ function serverName(name: string): string {
 
 /** Names in the docs that look like settings and are not the server's. */
 const NOT_SERVER_SETTINGS: Record<string, string> = {
+  MARFA_TEST_TUNING:
+    "the timings and batch sizes the Rust server shortens while its test hooks are on",
+  MARF_AUTH_SECRET:
+    "the misspelling of `MARFA_AUTH_SECRET` the Rust server refuses to start on",
+  ON_MACOS: "the conformance helper that marks a test as macOS-only",
   MARFA_MAX_CONNECTIONS: "the Rust server's cap on open connections",
   MARFA_MAX_CONNECTIONS_PER_ADDRESS:
     "the Rust server's cap on open connections for one caller address",

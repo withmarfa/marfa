@@ -27,9 +27,8 @@ trip, an export, a connector's registration and runs, instance management operat
 six exit codes, and a coverage scenario that reads `marfa operations` from the
 binary and holds it against the document the server serves, so an operation
 published without a command is red here. Every published operation is driven
-past its help. It is its own job in `ci.yml`, beside the referee rather than
-inside it, and `pnpm test:cli` runs it with the same environment the device
-fixtures take.
+past its help. CI runs it as a shard of the Rust contract, and `pnpm test:cli`
+runs it with the same environment the device fixtures take.
 
 ## Quick start
 
@@ -42,7 +41,10 @@ root:
 pnpm garage:up
 set -a; . .marfa-state/garage/garage.env; set +a
 
-# Boot the server in this checkout on SQLite, mint its first key, write an env file
+# Build the Rust server with its test hooks, then boot it on SQLite, mint its
+# first keys and write an env file
+(cd ../core && cargo build --release -p marfa-server --features test-hooks)
+export MARFA_SERVER_BIN="$PWD/../core/target/release/marfa-server"
 pnpm marfa:up
 
 # Build the device under test. The device fixtures drive this binary, and
@@ -85,11 +87,13 @@ server attaches an object store when `S3_BUCKET` is set, and the fixtures in
 `pnpm garage:down` stops the node and removes its state.
 
 `pnpm drill:restore` is the restore drill, which needs the same `S3_*` values
-plus `litestream` and `sqlite3` on the path: it boots an instance under
-`.marfa-drill/` with Litestream streaming its database to the bucket, writes
-to it, restores a second instance from the bucket alone and compares the two
-to the byte, then removes what it wrote to the bucket. The report goes to
-`reports/restore-drill.md`, and `deploy/README.md` is what it proves.
+and `MARFA_SERVER_BIN`: it boots a server under `.marfa-drill/` on the
+bucket, writes a type with a table, rows, notes with a history, one in the
+trash, files, edges and a setting, and takes a backup. It then deletes that
+server's data directory, restores the backup into a fresh server on the same
+bucket, and compares every instance, item, edge and row line of an archive
+export and every file's bytes, then removes what it wrote to the bucket. The
+report goes to `reports/restore-drill.md`.
 
 `pnpm mcp:conformance` runs the MCP project's conformance tool, at the version
 `package.json` pins, against `/mcp` on the server `marfa:up` booted. The tool
@@ -100,17 +104,24 @@ fail by design pinned in `scripts/mcp-conformance.ts`, each with its reason.
 Any other failing check fails the run, and so does a pinned check that passes,
 until its pin is removed.
 
-`pnpm marfa:up` builds the workspace packages if they are not built, starts
-the server as a direct Node child with the tsx loader (never watch mode), waits for `/health`, claims the owner through the private socket using the
+`pnpm marfa:up` starts the program `MARFA_SERVER_BIN` names under a small
+supervisor (with it unset, the TypeScript server's sources through the tsx
+loader, never watch mode), waits for `/health`, claims the owner through the private socket using the
 production claim service, signs in, mints explicit ordinary fixture keys,
 and writes `.marfa-state/env`. The state directory holds the
 SQLite file, the disk store, the server log, what the server printed to stderr, the pid, the clock offset and the env file; pass
 `--state <dir>` to put it elsewhere and `--port <n>` to choose the port.
-By default the server binds port 0 on `127.0.0.1`, keeping the assigned listener
-open. The adapter reads the assigned port from this boot's readiness log record
-before requesting `/health`; it does not probe and release a free port.
-A restart ignores earlier readiness records. An explicitly occupied IPv4 port
-fails the boot instead of accepting another listener's health response.
+The server listens on `127.0.0.1`. With no port given, the adapter asks the
+system for a free one, starts on it, and starts again on another if a
+different process took it first; the server is then reached, and signs people
+in, at `http://localhost:<port>`, its sign-in address, since passkeys refuse an
+IP address. On a port given with `--port` or `MARFA_PORT` it is reached at
+`127.0.0.1` with no sign-in address set, unless the last boot of the same
+state was reached at `localhost` on that port, as a restart on the same port
+is. It reads the port from
+this boot's readiness log record before requesting `/health`. A restart
+ignores earlier readiness records. An explicitly occupied IPv4 port fails the
+boot instead of accepting another listener's health response.
 
 `pnpm marfa:down` stops the server and removes its instance state, so every `up` is
 a fresh instance. A database that outlives the bucket it was pointed at
@@ -215,7 +226,7 @@ stays because that thing is what it checks.
 - `compliance/unreadable-deletion-settings.test.ts` and
   `compliance/blob-store-settings.test.ts` write and remove rows of the
   `settings` table (`trash_retention_days`, the version maximum,
-  `blob_min_copies`, `blob_cleanup_grace_ms`) with a value outside the
+  `blob_min_copies`, `blob_cleanup_grace_seconds`) with a value outside the
   setting's bounds. `PUT /config` and the start-up settings refuse such a
   value, and no fault damages a stored setting, so only a hand edit, or a
   release that narrows a bound, leaves one.
@@ -225,8 +236,9 @@ stays because that thing is what it checks.
   trigger that refuses the removal of one item. No door or fault fails the
   removal of a single item, and the run must pass over that item and go on.
 - `compliance/control-socket-close.test.ts` starts the server directly and
-  holds it inside its socket cleanup, where the private socket is already closed
-  and so no fault can be set or cleared.
+  holds a request open on its private socket through a stop, so the server is
+  inside its socket cleanup with the socket already closed, where no fault can
+  be set or cleared.
 - `blob-store-folders` moves, empties and unmarks the disk store's folder,
   and looks inside it. A store is its folder, so the folder and its marker
   are the subject.
@@ -251,9 +263,10 @@ and a value passed for one replaces its own:
 
 - The port, the paths of the database, the disk store and the private socket
   (`MARFA_CONTROL_SOCKET` names its path, and then its folder is the caller's),
-  `MARFA_LISTEN_HOST` and `MARFA_AUTH_SECRET`. By default `MARFA_SIGN_IN_ADDRESS`
-  is unset, so the sign-in address is the server's own on its assigned loopback
-  port.
+  `MARFA_LISTEN_HOST` and `MARFA_AUTH_SECRET`. On a port the adapter picks,
+  `MARFA_SIGN_IN_ADDRESS` is `http://localhost:<port>`. On a port the caller
+  names, it is unset unless the last boot of the same state had it there.
+  `MARFA_SIGN_IN_ADDRESS=` boots with none.
 - Enrichment, OCR and the request limiter off, a blob cleanup grace of 0, and
   webhook delivery to private addresses allowed, so the fixtures can use a
   receiver on the loopback address.
@@ -393,7 +406,7 @@ Write holds act before admission because SQLite admits only one writer at a time
 | `hold:bulk-job:in-chunk`               | The worker waits, once a chunk's items are written and before the chunk is committed with its checkpoint.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | `hold:bulk-job:between-chunks[=<n>]`   | The worker waits, once a chunk is committed and the job has more, before it begins the next. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `hold:bulk-job:finishing`              | The worker waits, once every chunk of a job is committed and before the job's last step: a type move's settings and the job's end.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `hold:bulk-page[=<n>]`                 | A request of `POST /items/bulk` or `POST /edges/bulk` waits before an entry of its page until the fault is cleared; an atomic page keeps its write open while it waits. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `hold:bulk-page[=<n>]`                 | A request of `POST /items/bulk` or `POST /edges/bulk` waits before an entry of its page until the fault is cleared, keeping its write open meanwhile. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 | `deadline:<job>=<ms>`                  | Shortens the run deadline of the job.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `hold:blob-orphans:purge`              | A run of `blob-orphans` waits, for each blob it has chosen to purge, before it purges the blob.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
 | `hold:restore:item[=<n>]`              | A restore waits, before it writes an item, once its blobs are placed. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
@@ -404,7 +417,6 @@ Write holds act before admission because SQLite admits only one writer at a time
 | `hold:disk-probe`                      | The free-space read and the blob folder check of `GET /health` wait until the fault is cleared, so each runs out of its two seconds and its component answers `degraded`, while the other requests are served.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | `hold:metrics`                         | The counting of `GET /metrics` waits inside its read snapshot until the fault is cleared, holding one read connection.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `limit:device-owner-instance=<n>`      | The owner lane that counts every device-code lookup an owner session makes across the instance allows `<n>` attempts a window in place of 100. The count stays in the database, so a restart keeps it and the fault is set again after one. One owner reaches its own ten-attempt cap first, so no run of requests reaches the aggregate. No fixture asserts the default of 100 that the statements name: each runs at the lowered count.                                                                                                                                                                                                                                                              |
-| `unreadable:sign-in-record=<id>`       | A server that keeps an app's sign-in record apart from its grant reads the record of the app whose record has that item ID as gone, while the app's token and grant stand, until the fault is cleared or set again. A version the app writes then names it by its client ID. A server that keeps no such record refuses the fault.                                                                                                                                                                                                                                                                                                                                                                     |
 | `unreadable:type-definition=<type id>` | A read of the type with that ID finds its stored definition damaged and answers `409 type_chain_unresolvable`, and a replacement of the type is still accepted, until the fault is cleared or set again.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | `free:<volume>=<bytes>`                | The target reads that many bytes of free space on the volume, `database` or `blobs`, until the fault is cleared. With `unknown` in place of a number it cannot read the volume's free space.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
 | `hold:stream-open`                     | A request for `GET /events` waits at the door of the stream, after it was authenticated and its reach checked, and before the target has read anything for it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
@@ -470,13 +482,14 @@ letters, digits, underscores, periods, or hyphens. The target validates this
 syntax; an action that no write records never fires.
 
 A _write_ is one change made for a caller: a request that changes stored
-state, or one entry of a page sent with `atomic: false`. An atomic page is one
-write. A write that records an audit entry names it by the entry's `action`
+state. A bulk page is one write, whatever its `atomic` says. A write that
+records an audit entry names it by the entry's `action`
 ([The audit log](spec/events.md#the-audit-log)), and a write point may take that action in its
 argument as `<action>`, for the first such write, or `<action>@<n>`, so a
-request that makes other writes first does not shift the count: a
-`POST /items/bulk` page under `atomic: false` is a run of `items.bulk` writes,
-and `fail:commit=items.bulk@2` fails the second entry's commit. A write point
+request that makes other writes first does not shift the count. `fail:audit`
+also counts each entry of a page under `atomic: false` that is written or
+skipped, and then the page's commit: `fail:audit=items.bulk@2` fails the
+second entry, and its page writes the others. A write point
 without an action counts every write. A `fail` fault at a write point may take `<action>@always`
 instead, and then acts on every such write until it is cleared, as a fault
 that does not clear would.
@@ -517,7 +530,7 @@ it.
 | `fail:attention=<check>`           | Each time `GET /attention` runs the check it names: `health`, `housekeeping`, `connectors`, `folders` or `keys`.                                                                                                 | The check fails, so the answer carries an `unavailable` item naming it. It acts once, on the first run after the fault is set.                                                                                                                                  |
 | `refuse:read`                      | Every read of the database, until the fault is cleared.                                                                                                                                                          | The read fails with `SQLITE_IOERR`.                                                                                                                                                                                                                             |
 | `refuse:write`                     | Every write, before it takes the write lock, until the fault is cleared.                                                                                                                                         | The write fails with `SQLITE_IOERR`.                                                                                                                                                                                                                            |
-| `refuse:write-lock`                | Every write, until the fault is cleared.                                                                                                                                                                         | The write waits for the lock as if another connection held it. When its write wait (`MARFA_WRITE_WAIT_MS`) is spent it is refused with `503 write_contention`; clearing the fault lets a write that still waits through.                                        |
+| `refuse:write-lock`                | Every write, until the fault is cleared.                                                                                                                                                                         | The write waits for the lock as if another connection held it. When its write wait is spent it is refused with `503 write_contention`; clearing the fault lets a write that still waits through.                                                                |
 | `refuse:blob-store`                | Each check of the disk store that `GET /health` makes.                                                                                                                                                           | The store does not answer, and `blob_storage` reports `down`.                                                                                                                                                                                                   |
 
 `<write>` stands for `<n>`, `<action>` or `<action>@<n>`. A target that
@@ -544,10 +557,14 @@ which `src/utils/store-faults.ts` wraps. With `?hash=<sha256:...>` it answers ea
 name), without a `lose:blob` or `damage:blob` fault changing the answer. It always answers
 `spool`, the name and size in bytes of each file the disk store keeps while it receives bytes.
 
+`GET /_control/test/database` answers the `journal_mode`, `synchronous`, `fullfsync`,
+`checkpoint_fullfsync` and `foreign_keys` settings of the writer connection and of each reader
+connection, as numbers where SQLite answers one.
+
 ### Who can reach the hooks
 
-The clock, fault and blob-store routes (`/_control/test/clock`, `/_control/test/faults`
-and `/_control/test/blob-stores`) exist only on the private control socket, and only when `MARFA_TEST_HOOKS` is
+The clock, fault, blob-store and database routes (`/_control/test/clock`, `/_control/test/faults`,
+`/_control/test/blob-stores` and `/_control/test/database`) exist only on the private control socket, and only when `MARFA_TEST_HOOKS` is
 `true`. They are never on the HTTP listener, and a Rust server built without the
 `test-hooks` feature, as a release is, refuses to start with the setting. It logs
 a warning at boot when the hooks are on. `spec/instance.md`, "Test hooks", holds
@@ -731,7 +748,9 @@ pnpm marfa:down --state /tmp/marfa
 ```
 
 The build needs the `test-hooks` feature: the fixtures turn the test hooks on,
-and a server built without it refuses to start with them on. Setting
+and a server built without it refuses to start with them on. A run that
+measures a release build sets `CONFORMANCE_SERVER_HOOK_FREE=true` and gives
+`marfa:up` a build without the feature (the nightly benchmarks do). Setting
 `MARFA_SERVER_BIN` also stops `vitest.config.ts` leaving out the files
 listed in `src/utils/rust-judged.ts` (see below). Do not set it together with
 `MARFA_SERVER_BUILT`. The object-store half of the blob chapters needs an
@@ -771,20 +790,30 @@ JSON report, so run with `--reporter=json --outputFile=<vitest.json>`.
 ### Which files the Rust server judges
 
 `RUST_JUDGED` in `src/utils/rust-judged.ts` lists, by path from `conformance/`,
-the contract test files that the Rust server must pass whole. A file joins it
-once the Rust server passes that file whole. A listed file runs
-in the Rust contract jobs only. `vitest.config.ts` leaves it out of the
-TypeScript server's shards, which run with `MARFA_SERVER_BIN` unset, so one
-file is judged by one server. A test checks that every listed path exists.
+the contract test files that the Rust server must pass whole: every file of
+the five server projects. A run with `MARFA_SERVER_BIN` unset, against the
+TypeScript server, leaves the listed files out (`vitest.config.ts`); no CI job
+runs one. A test checks that every listed path exists and that every contract
+file of the five projects is listed, so a new file is judged from the start.
 
 ### How the score is counted
 
-`pnpm rust:score --reports <dir> [--markdown <file>]` reads every `vitest.json`
-under `<dir>`, one per shard, and prints the score. CI writes it to the job
-summary of `Rust contract score`.
+`pnpm rust:score --reports <dir> [--platform <name>] [--projects <a,b>] [--markdown <file>]`
+reads every `vitest.json` under `<dir>`, one per shard, and prints the score.
+`--platform` names the machine the reports came from, `process.platform` by
+default, and `--projects` limits the score to some of the five projects. CI
+writes it to the job summary of `Rust contract score` and of
+`Rust contract score on macOS`.
 
 - A test passes when Vitest reports it `passed`. A skipped or todo test is not
-  passing, and still counts in the total.
+  passing, and still counts in the total, with two exceptions, which the
+  summary lists and leaves out of the count:
+  - A test that runs on one platform alone, which takes `ON_MACOS` from
+    `src/utils/platform.ts` and so carries `meta.onlyOn`, when it is skipped
+    on another platform. On its own platform its skip is not passing.
+  - A test that sets `meta.unobservable` to the reason just before it skips,
+    because the machine cannot show what it asserts. A test pins the one test
+    that does.
 - A file passes whole when a report names it, it lists at least one test, every
   test passed, and the file did not fail around its tests, as when an
   `afterAll` hook throws after every test passed.
@@ -824,7 +853,15 @@ CI runs the same projects as shards.
 `test:cli` is the scenario suite's own gate, run by its own job.
 `test:performance`, `test:load` and `test:hydration` sit off the gate, and run
 every night and on request in `.github/workflows/benchmarks.yml`, the load
-suites at the `smoke` profile.
+suites at the `smoke` profile. The workflow builds the Rust server the way a
+release does, with no test hooks, and boots it through `MARFA_SERVER_BIN` with
+`CONFORMANCE_SERVER_HOOK_FREE=true`, so the figures are those of the program a
+person runs. No other workflow runs these three projects, so that server is the one
+that judges them: a file that does not pass fails the night, and they are not
+listed in `src/utils/rust-judged.ts`, which lists the files the gate's shards
+hold the Rust server to. A server without test hooks reads no setting from the
+environment, so `marfa:up` turns the rate limiter and file reading off through
+`PATCH /config` after it claims the instance.
 
 `test:hydration` is a device filling a large image library, driven with a
 release build of the `marfa` binary (`MARFA_DEVICE_BIN`; a debug build would
@@ -899,52 +936,52 @@ such as the owner, boots its own server with `bootFreshServer` in
 
 ## CI
 
-The contract's gate is `Conformance` in `.github/workflows/ci.yml`, on every pull
-request that can affect it and every push to `main`, on Ubuntu. The nightly
-runs only what needs a Mac, the device shards and the CLI scenarios, on macOS,
-and a dispatch with `macos` runs those two there too. It is a
-check that collects the jobs below and passes when every one that ran passed,
-or when the classifier skipped them all.
+The contract runs in `.github/workflows/ci.yml`, on every pull request that
+can affect it and every push to `main`, on Ubuntu, against the Rust server.
+`Conformance` collects the offline lane and MCP conformance into one verdict,
+and passes when every one that ran passed, or when the classifier skipped them
+all; `Rust contract score` is the verdict on the server's fixtures. The
+nightly runs only what needs a Mac: the device and CLI fixtures on macOS, and
+a dispatch with `macos` runs them there too.
 
-- **Shards.** The server's fixtures run in three groups, each on runners of
-  its own that boot their own object store and server: correctness and sync on
-  one, compliance over eight and the device over six. The fixtures isolate
-  themselves by credential, so a runner takes any part of a group. A group of
-  more than one shard splits its files with `pnpm test:compliance --shard=1/8`,
-  weighed by the seconds each file takes (`src/utils/shard-weights.ts`) rather
-  than by Vitest's own split by path, which can leave one shard with far more
-  of the slow files than another. A file not in the weights is still run, by
-  exactly one shard, at the median time of every file. Each shard compares the
-  time of every file it ran with its weight, warns about a file that took more
-  than half as long again or half as long, and writes the slow files to the job
-  summary (`pnpm check:shard-drift`); update the weight when it does. Only the
-  device shards build or restore the `marfa` binary and the Node module.
+- **Rust contract.** `Rust server (release build)` builds `marfa-server` for
+  x86_64 Linux, with and without its test hooks, and uploads both. Twenty
+  `Rust contract shard` runners download it and boot it through the meter,
+  each with an object store of its own: correctness and sync on one, the
+  scenario suite on one, compliance over twelve and the device over six. The
+  fixtures isolate themselves by credential, so a runner takes any part of a
+  project. A split project's files are weighed by the seconds each takes
+  (`src/utils/shard-weights.ts`) rather than split by path, which can leave
+  one shard with far more of the slow files than another; a file not in the
+  weights is still run, by exactly one shard, at the median time of every
+  file. Each split shard compares the time of every file it ran with its
+  weight, warns about one that took more than half as long again or half as
+  long, and writes the slow files to the job summary
+  (`pnpm check:shard-drift`); update the weight when it does. A shard writes
+  Vitest's JSON report as an artifact and fails when it wrote none, not when a
+  test failed. `Rust contract score` counts the reports as described
+  above and fails when a file in `RUST_JUDGED` did not pass whole. `Full CI`
+  waits for it.
+- **Statuses.** The correctness, sync and CLI shards also run
+  `pnpm check:statuses` on their server's log, which fails on a status the
+  published document does not declare.
+- **On macOS.** `Rust server on macOS (build)` builds the server with its test
+  hooks, the command line and the Node module once, and uploads them. Four
+  `Rust contract on macOS` runners download them and run the CLI fixtures and
+  the device fixtures over three shards, for file watching, name case, Finder
+  packages and the login keychain, and each writes Vitest's JSON report.
+  `Rust contract score on macOS` scores the CLI and device projects with
+  `--platform darwin`, so every test that runs only on macOS is judged there,
+  and fails when one of their files in `RUST_JUDGED` did not pass whole.
+- **MCP conformance and the restore drill** boot the release build. The drill
+  is `pnpm drill:restore`, described above.
 - **Offline lane.** `pnpm test:generators` runs as a job of its own, with no
   server.
-- **Statuses.** Each shard holds the statuses its server answered to their
-  declaration and keeps its server log and the document it served.
-  `Conformance statuses` then merges every shard's log and holds the declared
-  statuses no request drew to the list of the ones nothing can draw
-  (`pnpm check:statuses --shards <dir> --complete`). That needs the whole
-  selection, so it runs when the change reaches all three groups; a change to
-  one group's fixtures runs that group, and the push to `main` that follows
-  runs them all.
-- **Rust contract.** Three jobs run the same fixtures against the Rust server.
-  `Rust server (release build)` builds `marfa-server` for x86_64 Linux and
-  uploads it. Sixteen `Rust contract shard` runners download it and boot it
-  through the meter: correctness and sync on one, the scenario suite on one,
-  compliance over eight and the device over six, split as above. A shard writes
-  Vitest's JSON report as an artifact and fails only when it wrote none, not
-  when a test failed. `Rust contract score` counts the reports as described
-  above and fails when a file in `RUST_JUDGED` did not pass whole. `Full CI`
-  waits for it. A change under `core/marfa-server/` runs these jobs and
-  `Core checks (Linux)`, and `Core checks` for the private socket's macOS
-  code, and none of the TypeScript server's.
 
-`scripts/ci-required.ts` says which groups a change reaches and writes the
-matrix. A change to `spec/` alone runs the offline lane, and the compliance
-shards only for `errors.md` and `coverage.md`, the two chapters a fixture reads
-while it runs.
+`scripts/ci-required.ts` says which jobs a change reaches. A change to `spec/`
+alone runs the offline lane, and the Rust contract only for `errors.md`,
+`coverage.md`, `instance.md` and `housekeeping.md`, which a fixture or a unit
+test of the Rust server reads.
 
 The tree under test is the tree the suite runs against and the device under
 test is the binary built from it: there is no pinned server commit and no

@@ -15,9 +15,7 @@ use crate::app::access::{Caller, Permission};
 use crate::app::keys::{self, MINT_FIELDS, Mint, UPDATE_FIELDS, Update};
 use crate::app::limiter::{KEY_OPERATIONS, Lane, retry_seconds};
 use crate::app::refusal::{Code, Refusal};
-use crate::settings::registry::{
-    RATE_LIMIT_ENABLED, RATE_LIMIT_KEYS_REQUESTS, RATE_LIMIT_WINDOW_MS,
-};
+use crate::settings::registry::{RATE_LIMIT_ENABLED, RATE_LIMIT_KEYS_REQUESTS};
 
 /// Takes one key operation from the caller's allowance, shared by every door that
 /// reaches the key operations, and answers the seconds to wait when none is left.
@@ -30,7 +28,7 @@ pub fn key_operation_wait(app: &App, caller: &Caller) -> Option<i64> {
         KEY_OPERATIONS,
         &caller.credential_handle(),
         live.get(RATE_LIMIT_KEYS_REQUESTS),
-        live.get(RATE_LIMIT_WINDOW_MS),
+        live.rate_limit_window_ms(),
     );
     app.limiter
         .admit(app.clock.now_ms(), &[lane])
@@ -56,8 +54,9 @@ pub async fn limited(State(app): State<Arc<App>>, request: Request, next: Next) 
     }
 }
 
-pub async fn mint(State(app): State<Arc<App>>, caller: Caller, body: JsonBody) -> Answer {
+pub async fn mint(State(app): State<Arc<App>>, caller: Caller, uri: Uri, body: JsonBody) -> Answer {
     caller.require(Permission::KeysMint)?;
+    query::only(&uri, &[])?;
     let request = Mint::from_body(&body.object(&MINT_FIELDS).await?)?;
     let (key, secret) = keys::mint(&app, &caller, request).await?;
     let mut answer = key.to_json();
@@ -93,17 +92,25 @@ pub async fn update(
     State(app): State<Arc<App>>,
     caller: Caller,
     Path(id): Path<String>,
+    uri: Uri,
     body: JsonBody,
 ) -> Answer {
     caller.require_key_door()?;
+    query::only(&uri, &[])?;
     keys::check_id(&id)?;
     let request = Update::from_body(&body.object(&UPDATE_FIELDS).await?)?;
     let key = keys::update(&app, &caller, id, request).await?;
     Ok(json_answer(StatusCode::OK, &Value::Object(key.to_json())))
 }
 
-pub async fn revoke(State(app): State<Arc<App>>, caller: Caller, Path(id): Path<String>) -> Answer {
+pub async fn revoke(
+    State(app): State<Arc<App>>,
+    caller: Caller,
+    Path(id): Path<String>,
+    uri: Uri,
+) -> Answer {
     caller.require_key_door()?;
+    query::only(&uri, &[])?;
     keys::check_id(&id)?;
     keys::revoke(&app, &caller, id).await?;
     Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))

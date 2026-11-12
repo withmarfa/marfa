@@ -12,16 +12,14 @@ import { generateId } from "../../generators/items.js";
 /**
  * An item write is judged by the key as it stands when it commits
  * (`items/write-race-key-narrowed`, `items/write-race-key-narrowed-atomic`,
- * `items/write-race-key-narrowed-entry`, `items/write-race-key-revoked`,
- * `items/write-race-key-revoked-entry`).
+ * `items/write-race-key-narrowed-entry`, `items/write-race-key-revoked`).
  *
  * Each case holds the key's write after the server has admitted it and before
  * it opens its transaction (`hold:write`), changes the key through the API,
  * and releases the write. A server that judged the write by the key it read
  * on admission would write with a grant already taken back. Each case first
  * sends the same write with no change to the key, which is written, so the
- * refusal is the change's and not the request's; in the later-entry cases,
- * the page's first entry, written before the change, is that witness.
+ * refusal is the change's and not the request's.
  */
 let server: FreshServer;
 let admin: MarfaClient;
@@ -344,70 +342,6 @@ it("refuses an atomic bulk page 401 when its key is revoked after the write is h
   await refusedAfter(bulk(true), revoke, ...REVOKED);
 });
 
-it("refuses a best-effort bulk page 401 when its key is revoked before its first entry is written", async () => {
+it("refuses a best-effort bulk page 401 when its key is revoked before it is written", async () => {
   await refusedAfter(bulk(false), revoke, ...REVOKED);
-});
-
-/** A best-effort page of two entries, held as its second entry is reached. */
-async function secondEntryHeld(change: Change) {
-  const key = await writer();
-  const ids = [generateId(), generateId()];
-  await server.setFault("hold:write=items.bulk@2");
-  const pending = key.client.bulkItems({
-    atomic: false,
-    items: ids.map((id) => ({
-      id,
-      type: "core.note",
-      properties: { body: "bulk" },
-    })),
-  });
-  await server.waitForHold("hold:write");
-  await change(key);
-  await server.clearFault("hold:write");
-  const answer = await pending;
-  expect(answer.status, JSON.stringify(answer.error)).toBe(200);
-  const { results } = answer.data as {
-    results: { outcome: string; error?: { code: string } }[];
-  };
-  return {
-    results,
-    first: await bodyOf(ids[0]!),
-    second: await bodyOf(ids[1]!),
-  };
-}
-
-it("errors a later best-effort bulk entry type_not_permitted when its key is narrowed to read after an earlier entry is written", async () => {
-  const { results, first, second } = await secondEntryHeld(narrow);
-  expect(results.map((r) => r.outcome)).toEqual(["created", "errored"]);
-  expect(results[1]?.error?.code).toBe("type_not_permitted");
-  expect(first).toBe("bulk");
-  expect(second).toBeUndefined();
-});
-
-it("errors a later best-effort bulk entry unauthorized when its key is revoked after an earlier entry is written", async () => {
-  const { results, first, second } = await secondEntryHeld(revoke);
-  expect(results.map((r) => r.outcome)).toEqual(["created", "errored"]);
-  expect(results[1]?.error?.code).toBe("unauthorized");
-  expect(first).toBe("bulk");
-  expect(second).toBeUndefined();
-});
-
-it("refuses a best-effort bulk page 401 when its key is revoked after a refused first entry and before its second", async () => {
-  const key = await writer();
-  const id = generateId();
-  await server.setFault("hold:write=items.bulk@2");
-  const pending = key.client.bulkItems({
-    atomic: false,
-    items: [
-      { type: "core.unregistered_type", properties: {} },
-      { id, type: "core.note", properties: { body: "bulk" } },
-    ],
-  });
-  await server.waitForHold("hold:write");
-  await revoke(key);
-  await server.clearFault("hold:write");
-  const answer = await pending;
-  expect(answer.status).toBe(401);
-  expect(answer.error?.error.code).toBe("unauthorized");
-  expect(await bodyOf(id)).toBeUndefined();
 });

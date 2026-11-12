@@ -47,7 +47,7 @@ fn kind_of(action: &str) -> &'static str {
         "housekeeping"
     } else if ACCESS_FAMILIES.contains(&family) {
         "access"
-    } else if SETTINGS_FAMILIES.contains(&family) || action == "blob.stores_configured" {
+    } else if SETTINGS_FAMILIES.contains(&family) {
         "settings"
     } else {
         "data"
@@ -80,7 +80,7 @@ pub fn record_from(
         params![
             uuid::Uuid::now_v7().to_string(),
             at,
-            caller.map(Caller::audit_id),
+            caller.and_then(Caller::audit_id),
             caller.map(|caller| caller.actor().to_string()),
             entry.action,
             kind_of(entry.action),
@@ -147,7 +147,10 @@ impl Filter {
                         .ok()
                         .filter(|limit| (1..=MAX_LIMIT).contains(limit))
                         .ok_or_else(|| {
-                            Refusal::validation("limit must be a whole number from 1 to 200.")
+                            Refusal::invalid_at(
+                                "limit",
+                                "limit must be a whole number from 1 to 200.",
+                            )
                         })?;
                 }
                 "cursor" => filter.cursor = Some(value.clone()),
@@ -290,7 +293,6 @@ mod tests {
             ("owner.claimed", "access"),
             ("keys.purged", "housekeeping"),
             ("config.update", "settings"),
-            ("blob.stores_configured", "settings"),
             ("blob.purge", "housekeeping"),
             ("source.update", "data"),
             ("item.create", "data"),

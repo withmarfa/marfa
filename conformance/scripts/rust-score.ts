@@ -3,11 +3,15 @@
  * Vitest JSON reports its shards wrote.
  *
  *   tsx scripts/rust-score.ts --reports <dir> [--markdown <file>]
+ *     [--platform <name>] [--projects <a,b>]
  *
  * Reads every `vitest.json` under `--reports`, prints the score as Markdown
  * and appends it to `--markdown` when given (CI passes the job summary).
- * Lists the tests of the five contract projects first, to count a file that
- * no report lists. Exits non-zero when a file listed in
+ * `--platform` names the platform the reports were written on, as
+ * `process.platform` does, and is this machine's by default; a test that runs
+ * only on another is left out. `--projects` scores only those contract
+ * projects, for a run of some of them. Lists the tests of the projects first,
+ * to count a file that no report lists. Exits non-zero when a file listed in
  * `src/utils/rust-judged.ts` did not pass whole or no report names it, and
  * when there is no report at all.
  * `conformance/README.md` says how the score is counted.
@@ -19,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { RUST_JUDGED } from "../src/utils/rust-judged.js";
 import {
   CONTRACT_PROJECTS,
+  type ContractProject,
   collectionNotes,
   contractFiles,
   countCollected,
@@ -30,20 +35,42 @@ import {
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
-function parseArgs(argv: string[]): { reports: string; markdown?: string } {
+interface Args {
+  reports: string;
+  markdown?: string;
+  platform: string;
+  projects: readonly ContractProject[];
+}
+
+const USAGE =
+  "usage: rust-score.ts --reports <dir> [--markdown <file>] [--platform <name>] [--projects <a,b>]";
+
+function parseArgs(argv: string[]): Args {
   const out: Record<string, string> = {};
   for (let i = 0; i < argv.length; i += 2) {
-    const name = /^--(reports|markdown)$/.exec(argv[i] ?? "")?.[1];
+    const name = /^--(reports|markdown|platform|projects)$/.exec(
+      argv[i] ?? "",
+    )?.[1];
     const value = argv[i + 1];
-    if (name === undefined || value === undefined) {
-      throw new Error(
-        "usage: rust-score.ts --reports <dir> [--markdown <file>]",
-      );
-    }
-    out[name] = resolve(value);
+    if (name === undefined || value === undefined) throw new Error(USAGE);
+    out[name] = value;
   }
   if (out.reports === undefined) throw new Error("--reports is required");
-  return { reports: out.reports, markdown: out.markdown };
+  const projects = (out.projects?.split(",") ?? [...CONTRACT_PROJECTS]).map(
+    (name) => {
+      const project = CONTRACT_PROJECTS.find((known) => known === name);
+      if (project === undefined) {
+        throw new Error(`--projects names ${name}, not a contract project`);
+      }
+      return project;
+    },
+  );
+  return {
+    reports: resolve(out.reports),
+    markdown: out.markdown === undefined ? undefined : resolve(out.markdown),
+    platform: out.platform ?? process.platform,
+    projects,
+  };
 }
 
 /**
@@ -55,7 +82,10 @@ function parseArgs(argv: string[]): { reports: string; markdown?: string } {
  * run count), and every other file keeps the count its report lists. The
  * summary says so.
  */
-function collect(): { counts: Map<string, number>; notes: string[] } {
+function collect(projects: readonly ContractProject[]): {
+  counts: Map<string, number>;
+  notes: string[];
+} {
   const run = (...extra: string[]) =>
     spawnSync(
       "pnpm",
@@ -65,7 +95,7 @@ function collect(): { counts: Map<string, number>; notes: string[] } {
         "list",
         "--json",
         ...extra,
-        ...CONTRACT_PROJECTS.flatMap((project) => ["--project", project]),
+        ...projects.flatMap((project) => ["--project", project]),
       ],
       {
         cwd: ROOT,
@@ -112,12 +142,14 @@ if (paths.length === 0) {
 const reports = paths.map(
   (path) => JSON.parse(readFileSync(path, "utf8")) as VitestReport,
 );
-const collected = collect();
+const inProjects = (file: string) =>
+  args.projects.some((project) => file.startsWith(`src/suites/${project}/`));
+const collected = collect(args.projects);
 const score = scoreRun(
   reports,
-  contractFiles(ROOT),
-  RUST_JUDGED,
-  collected.counts,
+  contractFiles(ROOT).filter(inProjects),
+  RUST_JUDGED.filter(inProjects),
+  { collected: collected.counts, platform: args.platform },
 );
 const markdown = renderScore(score, collected.notes);
 console.log(markdown);

@@ -18,7 +18,7 @@ const USE_EVERY_MS: i64 = 60_000;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Granted {
     pub client_id: String,
-    pub user_id: String,
+    pub owner_id: String,
     /// The `system.connection` item the grant is shown as.
     pub grant_id: String,
 }
@@ -28,7 +28,7 @@ fn caller_of(tx: &Connection, token: AccessToken, now: Stamp) -> Result<Option<(
     if token.expires_at <= now {
         return Ok(None);
     }
-    let consent = store::consent(tx, &token.client_id, &token.user_id)?;
+    let consent = store::consent(tx, &token.client_id, &token.owner_id)?;
     let (Some(consent), Some(client)) = (
         consent.filter(Consent::stands),
         store::client(tx, &token.client_id)?,
@@ -36,8 +36,8 @@ fn caller_of(tx: &Connection, token: AccessToken, now: Stamp) -> Result<Option<(
         return Ok(None);
     };
     let key = Key {
-        label: client.name(),
-        source: grants::source_of(&token.client_id, &token.user_id),
+        label: grants::named(tx, &consent, Some(&client))?,
+        source: grants::source_of(&token.client_id, &token.owner_id),
         default_tier: DEFAULT_TIER.to_string(),
         oauth_client_id: Some(token.client_id.clone()),
         grants: to_grants(&token.scopes),
@@ -50,7 +50,7 @@ fn caller_of(tx: &Connection, token: AccessToken, now: Stamp) -> Result<Option<(
     };
     let grant = Granted {
         client_id: token.client_id,
-        user_id: token.user_id,
+        owner_id: token.owner_id,
         grant_id: consent.grant_id.clone(),
     };
     Ok(Some((
@@ -71,8 +71,8 @@ pub fn grant_caller(tx: &Transaction<'_>, grant_id: &str) -> Result<Option<Calle
         return Ok(None);
     };
     let key = Key {
-        label: client.name(),
-        source: grants::source_of(&consent.client_id, &consent.user_id),
+        label: grants::named(tx, &consent, Some(&client))?,
+        source: grants::source_of(&consent.client_id, &consent.owner_id),
         default_tier: DEFAULT_TIER.to_string(),
         oauth_client_id: Some(consent.client_id.clone()),
         grants: to_grants(&consent.scopes),
@@ -85,7 +85,7 @@ pub fn grant_caller(tx: &Transaction<'_>, grant_id: &str) -> Result<Option<Calle
     };
     let grant = Granted {
         client_id: consent.client_id,
-        user_id: consent.user_id,
+        owner_id: consent.owner_id,
         grant_id: consent.grant_id,
     };
     Ok(Some(Caller::App {
@@ -133,9 +133,9 @@ pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Option<Caller>>
         .is_none_or(|last| last.ms() <= now.ms() - USE_EVERY_MS);
     if due {
         let client_id = consent.client_id;
-        let user_id = consent.user_id;
+        let owner_id = consent.owner_id;
         queue_use(app, &consent.grant_id, move |tx| {
-            store::note_consent_used(tx, &client_id, &user_id, now)
+            store::note_consent_used(tx, &client_id, &owner_id, now)
         });
     }
     Ok(Some(caller))

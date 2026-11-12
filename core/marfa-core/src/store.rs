@@ -18,15 +18,12 @@ use marfa_rules::wire::{WireCatalog, WireType};
 
 pub const SCHEMA: &str = include_str!("schema.sql");
 
-pub const META_SCHEMA_VERSION: &str = "schema_version";
 pub const META_SERVER_ORIGIN: &str = "server_origin";
 pub const META_SLICE_TYPES: &str = "slice_types";
 pub const META_SLICE_TIER: &str = "slice_tier";
 pub const META_SLICE_EDGE_TYPES: &str = "slice_edge_types";
 /// The slice's query past its types and tier, as JSON, and absent where the
-/// slice holds every row of its types and tier. A store written before the
-/// key existed reads as holding no query, so a folder asking for one sees
-/// its slice moved and hydrates again.
+/// slice holds every row of its types and tier.
 pub const META_SLICE_QUERY: &str = "slice_query";
 pub const META_EVENT_CURSOR: &str = "event_cursor";
 /// The instance the copy was hydrated from, as the server's root names it.
@@ -93,10 +90,9 @@ pub const META_READ_ONLY_READ: &str = "read_only_read_at";
 /// copy no longer holds once there are more than twice this many.
 pub const EDGE_CHANGES_KEPT: usize = 10_000;
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-pub const SCHEMA_VERSION: &str = "0";
-
-const META_TABLE: &str =
-    "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
+/// The version of the shape `schema.sql` makes, held in SQLite's
+/// `user_version`. A change to that shape raises it.
+pub const SCHEMA_VERSION: i64 = 1;
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at, read_only";
 const EDGE_COLUMNS: &str =
@@ -221,10 +217,10 @@ pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
 /// `None` where a writer would open it.
 pub(crate) fn refusal(path: &Path) -> Result<Option<CoreError>, CoreError> {
     let conn = open_refused(path)?;
-    match refuse_misshapen(&conn, &held_shape(&conn)?, false) {
-        Ok(_) => Ok(None),
-        Err(error @ CoreError::WrongSchema { .. }) => Ok(Some(at_path(error, path))),
-        Err(other) => Err(other),
+    match version(&conn)? {
+        SCHEMA_VERSION => Ok(None),
+        0 if !holds_tables(&conn)? => Ok(None),
+        found => Ok(Some(at_path(refused(&conn, found), path))),
     }
 }
 
@@ -464,25 +460,6 @@ pub(crate) fn refused_folder_meta(
     meta_of(&conn, keys)
 }
 
-/// Whether the folder store holds this build's `meta` but lacks a table or a
-/// column this build makes, which its writer adds on open
-/// (`device/added-table`, `device/added-column`).
-#[cfg(unix)]
-pub(crate) fn folder_store_behind(
-    vfs: &crate::directory_vfs::DirectoryVfs,
-) -> Result<bool, CoreError> {
-    let conn = vfs.open(
-        FOLDER_STORE,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )?;
-    conn.busy_timeout(std::time::Duration::from_secs(5))?;
-    let held = held_shape(&conn)?;
-    let built = built_shape()?;
-    Ok(held.contains_key("meta")
-        && (built.keys().any(|name| !held.contains_key(name))
-            || !columns_behind(&held, built).is_empty()))
-}
-
 #[cfg(unix)]
 fn meta_of(conn: &Connection, keys: &[&str]) -> Result<HashMap<String, String>, CoreError> {
     let mut held = HashMap::new();
@@ -686,6 +663,38 @@ fn tune(conn: &Connection) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// The pages the log may hold during a hydration. At the default, each
+/// checkpoint writes the same pages again.
+const HYDRATION_LOG_PAGES: i64 = 32_768;
+
+/// Raises the checkpoint interval to `HYDRATION_LOG_PAGES` and answers the
+/// one it replaces, for `restore_log_interval`.
+pub(crate) fn lengthen_log_interval(conn: &Connection) -> Result<i64, CoreError> {
+    let kept: i64 = conn.query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))?;
+    conn.execute_batch(&format!(
+        "PRAGMA wal_autocheckpoint = {HYDRATION_LOG_PAGES}"
+    ))?;
+    Ok(kept)
+}
+
+/// Gives back the interval `kept` and empties the log into the store without
+/// waiting on a reader that holds it. Emptying the log only saves its size, so
+/// a failure there is a warning and never the caller's.
+pub(crate) fn restore_log_interval(conn: &Connection, kept: i64) -> Result<(), CoreError> {
+    conn.execute_batch(&format!("PRAGMA wal_autocheckpoint = {kept}"))?;
+    let emptied = (|| {
+        #[cfg(debug_assertions)]
+        if crate::fault::fails(|| "hydration-checkpoint") {
+            return Err(CoreError::Store("hydration-checkpoint".into()));
+        }
+        crate::reclaim::without_waiting(conn, || crate::reclaim::checkpointed(conn))
+    })();
+    if let Err(error) = &emptied {
+        crate::telemetry::unemptied!(error);
+    }
+    Ok(())
+}
+
 /// `write` in a transaction whose statement journals are held in memory.
 ///
 /// Every write to an indexed table inside a transaction keeps a statement
@@ -723,7 +732,7 @@ fn read_checked(conn: &Connection, path: &Path) -> Result<(), CoreError> {
             path.display()
         ))
     };
-    let held = held_shape(conn).map_err(|error| match &error {
+    let found = version(conn).map_err(|error| match &error {
         rusqlite::Error::SqliteFailure(_, Some(message))
             if message.contains("file is not a database") =>
         {
@@ -731,10 +740,17 @@ fn read_checked(conn: &Connection, path: &Path) -> Result<(), CoreError> {
         }
         _ => CoreError::from(error),
     })?;
-    if !held.contains_key("meta") {
-        return Err(no_schema());
+    if found != SCHEMA_VERSION {
+        let has_meta: bool = conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !has_meta {
+            return Err(no_schema());
+        }
+        return Err(at_path(refused(conn, found), path));
     }
-    refuse_misshapen(conn, &held, true).map_err(|error| at_path(error, path))?;
     tune(conn)
 }
 
@@ -758,18 +774,12 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
     )?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     tune(conn)?;
-    conn.execute_batch(META_TABLE)?;
-    // Before the schema is applied: `CREATE TABLE IF NOT EXISTS` is silent
-    // about a table that exists with other columns. A store of another shape
-    // is refused, never discarded, because it may hold writes the server has
-    // never seen.
-    let behind = refuse_misshapen(conn, &held_shape(conn)?, false)?;
-    add_columns(conn, &behind)?;
-    conn.execute_batch(SCHEMA)?;
-    // Only when absent: writing it on every open would make a reading command
-    // take a write lock.
-    if meta_get(conn, META_SCHEMA_VERSION)?.is_none() {
-        meta_set(conn, META_SCHEMA_VERSION, SCHEMA_VERSION)?;
+    // A store at another version is refused, never discarded, because it may
+    // hold writes the server has never seen.
+    match version(conn)? {
+        SCHEMA_VERSION => {}
+        0 if !holds_tables(conn)? => make(conn)?,
+        found => return Err(refused(conn, found)),
     }
     if meta_get(conn, META_STORE_ID)?.is_none() {
         meta_set(
@@ -779,6 +789,47 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
         )?;
     }
     Ok(())
+}
+
+/// Makes this build's schema in an empty store, in one transaction, so a
+/// crash leaves the store empty or whole.
+fn make(conn: &Connection) -> Result<(), CoreError> {
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    // Another program may have made it between the read and the lock.
+    match version(&tx)? {
+        SCHEMA_VERSION => return Ok(()),
+        0 if !holds_tables(&tx)? => {}
+        found => return Err(refused(&tx, found)),
+    }
+    tx.execute_batch(SCHEMA)?;
+    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    tx.commit()?;
+    Ok(())
+}
+
+fn version(conn: &Connection) -> rusqlite::Result<i64> {
+    conn.query_row("PRAGMA user_version", [], |row| row.get(0))
+}
+
+fn holds_tables(conn: &Connection) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table')",
+        [],
+        |row| row.get(0),
+    )
+}
+
+/// The refusal of a store at version `found`, with what it holds.
+fn refused(conn: &Connection, found: i64) -> CoreError {
+    CoreError::WrongSchema {
+        path: String::new(),
+        reason: format!(
+            "it is at schema version {found}, and this build reads schema version {SCHEMA_VERSION}{}",
+            unsendable(conn)
+        ),
+        unsent: untaken_count(conn),
+        folder: None,
+    }
 }
 
 pub(crate) fn store_id(conn: &Connection) -> Result<String, CoreError> {
@@ -844,206 +895,18 @@ fn held_statements(conn: &Connection, kind: &str) -> rusqlite::Result<Shape> {
     rows.collect()
 }
 
-/// The tables and the triggers this build makes, read from SQLite rather
-/// than from the file so they are compared as SQLite records them.
-struct Built {
-    tables: Shape,
-    triggers: Shape,
-}
-
-fn built() -> Result<&'static Built, CoreError> {
-    static BUILT: std::sync::OnceLock<Built> = std::sync::OnceLock::new();
+/// The tables this build makes, read from SQLite rather than from the file
+/// so they are compared as SQLite records them.
+#[cfg(unix)]
+fn built_shape() -> Result<&'static Shape, CoreError> {
+    static BUILT: std::sync::OnceLock<Shape> = std::sync::OnceLock::new();
     if let Some(built) = BUILT.get() {
         return Ok(built);
     }
     let conn = Connection::open_in_memory()?;
-    conn.execute_batch(META_TABLE)?;
     conn.execute_batch(SCHEMA)?;
-    let built = Built {
-        tables: held_shape(&conn)?,
-        triggers: held_statements(&conn, "trigger")?,
-    };
+    let built = held_shape(&conn)?;
     Ok(BUILT.get_or_init(|| built))
-}
-
-fn built_shape() -> Result<&'static Shape, CoreError> {
-    Ok(&built()?.tables)
-}
-
-/// The triggers the store holds that are not this build's, by name: each
-/// this build makes in another form, and each it does not make. Every
-/// trigger in a store is one `schema.sql` made, of this build or another.
-fn triggers_behind(conn: &Connection) -> Result<Vec<String>, CoreError> {
-    let made = &built()?.triggers;
-    let mut behind: Vec<String> = held_statements(conn, "trigger")?
-        .into_iter()
-        .filter(|(name, held)| made.get(name) != Some(held))
-        .map(|(name, _)| name)
-        .collect();
-    behind.sort();
-    Ok(behind)
-}
-
-/// Gives the store this build's triggers, in one transaction: each it holds
-/// in another form is made again, which `CREATE TRIGGER IF NOT EXISTS`
-/// leaves as it is, and each this build does not make is dropped. Only the
-/// writer may call it. A store already holding this build's triggers is not
-/// written to.
-pub(crate) fn hold_triggers(conn: &Connection) -> Result<(), CoreError> {
-    if triggers_behind(conn)?.is_empty() {
-        return Ok(());
-    }
-    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
-    // Another program may have made them again between the read and the lock.
-    for name in triggers_behind(&tx)? {
-        tx.execute_batch(&format!("DROP TRIGGER \"{}\";", name.replace('"', "\"\"")))?;
-    }
-    tx.execute_batch(SCHEMA)?;
-    if let Some(name) = triggers_behind(&tx)?.first() {
-        return Err(CoreError::Store(format!(
-            "making the trigger {name} again did not give the statement this build makes"
-        )));
-    }
-    tx.commit()?;
-    Ok(())
-}
-
-/// Each column added to the end of a table since a table last changed in a
-/// way no column added to its end can follow (`blob`, in the middle of
-/// `folder_files`), in the order added, as `schema.sql` defines it. A writer
-/// adds those a store lacks (`device/added-column`); a column added to a
-/// table's end goes here, or every store made before it is refused.
-const ADDED_COLUMNS: &[(&str, &str)] = &[
-    ("items", "capture_latitude REAL"),
-    ("items", "capture_longitude REAL"),
-    ("items", "trashed_at TEXT"),
-    ("items", "read_only INTEGER NOT NULL DEFAULT 0"),
-    ("folder_files", "embeds TEXT"),
-];
-
-/// The columns, from `ADDED_COLUMNS`, that the store's `table` lacks, where
-/// its statement `held` is this build's `built` less some of those at the
-/// end of its column list, before any table options such as `WITHOUT ROWID`.
-/// `None` for any other statement.
-fn columns_to_add(table: &str, held: &str, built: &str) -> Option<Vec<&'static str>> {
-    let added: Vec<&'static str> = ADDED_COLUMNS
-        .iter()
-        .filter(|(name, _)| *name == table)
-        .map(|(_, column)| *column)
-        .collect();
-    let (mut shorter, options) = built.split_at(built.rfind(')')?);
-    for at in (0..added.len()).rev() {
-        shorter = shorter.strip_suffix(&format!(",{}", statement(added[at])))?;
-        if format!("{shorter}{options}") == held {
-            return Some(added[at..].to_vec());
-        }
-    }
-    None
-}
-
-/// Each table of `held` that lacks columns a writer adds, with those columns.
-fn columns_behind(held: &Shape, built: &Shape) -> Vec<(String, Vec<&'static str>)> {
-    let mut behind: Vec<_> = held
-        .iter()
-        .filter_map(|(name, statement)| {
-            let made = built.get(name).filter(|made| *made != statement)?;
-            Some((name.clone(), columns_to_add(name, statement, made)?))
-        })
-        .collect();
-    behind.sort();
-    behind
-}
-
-/// Adds the columns `behind` names, in one transaction, and holds each table
-/// it changes to the statement this build makes it with.
-fn add_columns(conn: &Connection, behind: &[(String, Vec<&'static str>)]) -> Result<(), CoreError> {
-    if behind.is_empty() {
-        return Ok(());
-    }
-    let built = built_shape()?;
-    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
-    // Another program may have added them between the read and the lock.
-    let behind = columns_behind(&held_shape(&tx)?, built);
-    if behind.is_empty() {
-        return Ok(());
-    }
-    for (table, columns) in &behind {
-        for column in columns {
-            tx.execute_batch(&format!("ALTER TABLE \"{table}\" ADD COLUMN {column}"))?;
-        }
-    }
-    let held = held_shape(&tx)?;
-    if let Some((table, _)) = behind
-        .iter()
-        .find(|(table, _)| held.get(table) != built.get(table))
-    {
-        return Err(CoreError::Store(format!(
-            "adding this build's columns to its table {table} did not give the shape this build reads"
-        )));
-    }
-    tx.commit()?;
-    Ok(())
-}
-
-/// The version stays put until the first public release, so it alone cannot
-/// tell two builds' stores apart: every table the store holds is held to the
-/// statement this build makes it with. A table it lacks, or a column of
-/// `ADDED_COLUMNS` at a table's end, is one a writer adds on open, which a
-/// reader cannot; the columns a writer adds are returned.
-fn refuse_misshapen(
-    conn: &Connection,
-    held: &Shape,
-    reading: bool,
-) -> Result<Vec<(String, Vec<&'static str>)>, CoreError> {
-    let built = built_shape()?;
-    let behind = columns_behind(held, built);
-    let differs = |name: &str| {
-        held.get(name)
-            .is_some_and(|statement| built.get(name) != Some(statement))
-            && !behind.iter().any(|(table, _)| table == name)
-    };
-    let refuse = |reason: String| {
-        Err(CoreError::WrongSchema {
-            path: String::new(),
-            reason: format!("{reason}{}", unsendable(conn)),
-            unsent: untaken_count(conn),
-            folder: None,
-        })
-    };
-    if differs("meta") {
-        return refuse("its table meta is not the shape this build reads".into());
-    }
-    if held.contains_key("meta") {
-        match meta_get(conn, META_SCHEMA_VERSION)? {
-            Some(found) if found != SCHEMA_VERSION => {
-                return refuse(format!(
-                    "it was written by schema {found}, and this build reads schema {SCHEMA_VERSION}"
-                ));
-            }
-            None if reading => return refuse("it names no schema version".into()),
-            _ => {}
-        }
-    }
-    let mut names: Vec<&String> = built.keys().collect();
-    names.sort();
-    if let Some(name) = names.iter().find(|name| differs(name)) {
-        return refuse(format!(
-            "its table {name} is not the shape this build reads"
-        ));
-    }
-    // Not another build's store: one this build's writer completes on open.
-    if reading && let Some(name) = names.iter().find(|name| !held.contains_key(name.as_str())) {
-        return Err(CoreError::Invalid(format!(
-            "this store has no table {name} yet, which this build's writer adds when it opens the store: open it once with this build's writer, then read it"
-        )));
-    }
-    if reading && let Some((table, columns)) = behind.first() {
-        return Err(CoreError::Invalid(format!(
-            "this store's table {table} has no column {} yet, which this build's writer adds when it opens the store: open it once with this build's writer, then read it",
-            columns.join(", ")
-        )));
-    }
-    Ok(behind)
 }
 
 /// The writes the server has not taken whose kind this build does not send,
@@ -3150,6 +3013,17 @@ fn attachments_touching(conn: &Connection, ids: &[&str]) -> Result<Vec<Attachmen
         return Ok(Vec::new());
     }
     let marks = vec!["?"; ids.len()].join(", ");
+    // No `attached-to` edge at `ids` means no attachment, which the edge
+    // indexes answer without reading a row.
+    let attached: bool = conn
+        .prepare_cached(&format!(
+            "SELECT EXISTS (SELECT 1 FROM edges WHERE edge_type = '{ATTACHED_TO}' AND source_id IN ({marks}))
+                 OR EXISTS (SELECT 1 FROM edges WHERE edge_type = '{ATTACHED_TO}' AND target_id IN ({marks}))"
+        ))?
+        .query_row(params_from_iter([ids, ids].concat()), |row| row.get(0))?;
+    if !attached {
+        return Ok(Vec::new());
+    }
     attachments_where(
         conn,
         &format!(
@@ -4193,11 +4067,20 @@ fn index_row(
     properties: &Map<String, Value>,
     indexing: &Indexing,
 ) -> Result<(), CoreError> {
-    let tags = tags_for_one(conn, id)?;
-    let text = fts_text(properties, indexing);
+    let text = (ItemState::from_str_checked(state)? != ItemState::Trashed)
+        .then(|| fts_text(properties, indexing));
+    if let Some(text) = hold_index(seq, text) {
+        write_index(conn, seq, id, text)?;
+    }
+    Ok(())
+}
+
+/// Replaces the index entry of the row at `seq`.
+fn write_index(conn: &Connection, seq: i64, id: &str, text: IndexEntry) -> Result<(), CoreError> {
     conn.prepare_cached("DELETE FROM items_fts WHERE rowid = ?1")?
         .execute([seq])?;
-    if ItemState::from_str_checked(state)? != ItemState::Trashed {
+    if let Some(text) = text {
+        let tags = tags_for_one(conn, id)?;
         conn.prepare_cached(
             "INSERT INTO items_fts (rowid, title, body, description, name, extra, tags)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -4213,6 +4096,80 @@ fn index_row(
         ])?;
     }
     Ok(())
+}
+
+/// What a row is indexed by, or `None` for a row left out of the index.
+type IndexEntry = Option<marfa_rules::search::FtsText>;
+
+thread_local! {
+    /// The entries a page write holds back, by the row's `seq`.
+    static HELD_INDEX: std::cell::RefCell<Option<std::collections::BTreeMap<i64, IndexEntry>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Holds the entry back while a page write is open on this thread, answering
+/// `None`; hands it back to be written at once otherwise.
+fn hold_index(seq: i64, text: IndexEntry) -> Option<IndexEntry> {
+    HELD_INDEX.with(|held| match held.borrow_mut().as_mut() {
+        Some(held) => {
+            held.insert(seq, text);
+            None
+        }
+        None => Some(text),
+    })
+}
+
+/// Ends the hold at the end of the page write, whether it succeeded or not.
+struct IndexHold;
+
+impl IndexHold {
+    fn begin() -> Self {
+        HELD_INDEX.with(|held| *held.borrow_mut() = Some(std::collections::BTreeMap::new()));
+        IndexHold
+    }
+
+    /// Writes the held entries together, for the rows the copy still holds. The
+    /// index flushes its pending rows as a segment at each statement that can
+    /// fail partway, so one entry per row would make a segment per row.
+    fn write(&self, conn: &Connection) -> Result<(), CoreError> {
+        let held = HELD_INDEX
+            .with(|held| held.borrow_mut().as_mut().map(std::mem::take))
+            .unwrap_or_default();
+        let mut id = conn.prepare_cached("SELECT id FROM items WHERE seq = ?1")?;
+        for (seq, text) in held {
+            match id
+                .query_row([seq], |row| row.get::<_, String>(0))
+                .optional()?
+            {
+                Some(id) => write_index(conn, seq, &id, text)?,
+                None => {
+                    conn.prepare_cached("DELETE FROM items_fts WHERE rowid = ?1")?
+                        .execute([seq])?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+impl Drop for IndexHold {
+    fn drop(&mut self) {
+        HELD_INDEX.with(|held| *held.borrow_mut() = None);
+    }
+}
+
+/// `with_journals_in_memory` for a page of a server's rows, which indexes the
+/// rows once the page is written.
+pub(crate) fn with_page_write<T>(
+    conn: &mut Connection,
+    write: impl FnOnce(&rusqlite::Transaction) -> Result<T, CoreError>,
+) -> Result<T, CoreError> {
+    with_journals_in_memory(conn, |tx| {
+        let hold = IndexHold::begin();
+        let written = write(tx)?;
+        hold.write(tx)?;
+        Ok(written)
+    })
 }
 
 pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
@@ -5797,10 +5754,10 @@ const SELF_CLEARING: [&str; 2] = [
     crate::model::AWAITING_DEPENDENCY,
 ];
 
-/// The released row goes out under a fresh key; the spent one is kept so a
+/// The released row keeps its key unless the server holds an answer under it
+/// that refused the write (`fresh_key_on_release`); a spent key is kept so a
 /// late answer under it is not taken for an answer to the new attempt. A row
-/// write or an undo keeps its key unless blocked `key_spent`, and a row write
-/// releases every write of its batch, to go again as it went.
+/// write releases every write of its batch, to go again as it went.
 pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let Some((verdict, reason, kind, sent)) = conn
         .query_row(
@@ -5855,11 +5812,8 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
             [write],
         )?;
     }
-    // A row batch or an undo whose answer is unknown may be held under its key,
-    // and only that key keeps the server from applying it twice. `key_spent`
-    // says the server holds another request under it, so none of this one.
     let rows = kind.parse::<WriteKind>()?.rows();
-    if !rows || reason.as_deref() == Some(BlockedReason::KeySpent.as_str()) {
+    if fresh_key_on_release(verdict, reason.as_deref()) {
         crate::row_writes::spend_key(conn, &batch[0])?;
     }
     if rows {
@@ -5917,6 +5871,35 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         release(conn, &dependant)?;
     }
     Ok(true)
+}
+
+/// An answer to `attempt` the server did not replay was applied after every dead write's release.
+pub(crate) fn readmit_attempt(conn: &Connection, attempt: &str) -> Result<(), CoreError> {
+    for key in meta_keys(conn, "dead_effect/")? {
+        let Some(json) = meta_get(conn, &key)? else {
+            continue;
+        };
+        let Ok(mut effect) = serde_json::from_str::<DeadEffect>(&json) else {
+            continue;
+        };
+        if effect.excluded_attempts.remove(attempt) {
+            meta_set(conn, &key, &serde_json::to_string(&effect)?)?;
+        }
+    }
+    Ok(())
+}
+
+/// Only where the server holds an answer under the key that applied none of the write.
+fn fresh_key_on_release(verdict: Option<Verdict>, reason: Option<&str>) -> bool {
+    verdict == Some(Verdict::Blocked)
+        && matches!(
+            reason.and_then(|reason| reason.parse::<BlockedReason>().ok()),
+            Some(
+                BlockedReason::KeySpent
+                    | BlockedReason::ConflictUnresolved
+                    | BlockedReason::AncestorUnavailable
+            )
+        )
 }
 
 /// Read from `depends_on`, never the reason, which is prose.
@@ -7336,6 +7319,103 @@ mod tests {
         );
     }
 
+    fn indexed(conn: &rusqlite::Connection, word: &str) -> Vec<String> {
+        conn.prepare(
+            "SELECT items.id FROM items_fts JOIN items ON items.seq = items_fts.rowid
+             WHERE items_fts MATCH ?1 ORDER BY items.id",
+        )
+        .unwrap()
+        .query_map([word], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+    }
+
+    #[test]
+    fn a_page_write_indexes_the_rows_it_wrote_once_it_has_written_all_of_them() {
+        let mut conn = conn();
+        let note = |id: &str, state: &str, title: &str| {
+            wire_item(
+                id,
+                "core.note",
+                state,
+                "2026-01-01T00:00:00Z",
+                json!({ "title": title }),
+            )
+        };
+        let indexing = Indexing::default();
+        upsert_item(&conn, &note("a", "active", "alpha"), None, &indexing).unwrap();
+        assert_eq!(indexed(&conn, "alpha"), ["a"], "a write outside a page");
+        super::with_page_write(&mut conn, |tx| {
+            upsert_item(tx, &note("a", "active", "gamma"), None, &indexing)?;
+            upsert_item(tx, &note("b", "active", "gamma"), None, &indexing)?;
+            upsert_item(tx, &note("c", "trashed", "gamma"), None, &indexing)?;
+            upsert_item(tx, &note("d", "active", "gamma"), None, &indexing)?;
+            forget_item(tx, "d")?;
+            assert_eq!(
+                indexed(tx, "alpha"),
+                ["a"],
+                "held until the page is written"
+            );
+            assert!(indexed(tx, "gamma").is_empty());
+            Ok(())
+        })
+        .unwrap();
+        assert!(indexed(&conn, "alpha").is_empty());
+        assert_eq!(indexed(&conn, "gamma"), ["a", "b"]);
+        upsert_item(&conn, &note("e", "active", "delta"), None, &indexing).unwrap();
+        assert_eq!(indexed(&conn, "delta"), ["e"], "a write after the page");
+    }
+
+    #[test]
+    fn a_page_write_that_fails_leaves_nothing_held_for_the_next_write() {
+        let mut conn = conn();
+        let note = wire_item(
+            "a",
+            "core.note",
+            "active",
+            "2026-01-01T00:00:00Z",
+            json!({ "title": "alpha" }),
+        );
+        let failed = super::with_page_write(&mut conn, |tx| {
+            upsert_item(tx, &note, None, &Indexing::default())?;
+            Err::<(), _>(super::CoreError::Canceled)
+        });
+        assert!(matches!(failed, Err(super::CoreError::Canceled)));
+        assert!(indexed(&conn, "alpha").is_empty());
+        upsert_item(&conn, &note, None, &Indexing::default()).unwrap();
+        assert_eq!(indexed(&conn, "alpha"), ["a"]);
+    }
+
+    #[test]
+    fn the_log_may_grow_through_a_hydration_and_is_emptied_after_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("core.sqlite");
+        let conn = super::open(&path).unwrap();
+        let interval = |conn: &rusqlite::Connection| -> i64 {
+            conn.query_row("PRAGMA wal_autocheckpoint", [], |row| row.get(0))
+                .unwrap()
+        };
+        let kept = interval(&conn);
+        assert_eq!(super::lengthen_log_interval(&conn).unwrap(), kept);
+        assert!(interval(&conn) > kept);
+        for n in 0..3000 {
+            conn.execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)",
+                params![format!("filler/{n}"), "x".repeat(2000)],
+            )
+            .unwrap();
+        }
+        let log = temp.path().join("core.sqlite-wal");
+        assert!(
+            std::fs::metadata(&log).unwrap().len() > 4_000_000,
+            "the log held what was written"
+        );
+        super::restore_log_interval(&conn, kept).unwrap();
+        assert_eq!(interval(&conn), kept);
+        assert_eq!(std::fs::metadata(&log).unwrap().len(), 0);
+    }
+
     #[test]
     fn the_stated_size_is_the_largest_whole_number_an_item_states_for_the_bytes() {
         let temp = tempfile::tempdir().unwrap();
@@ -8287,10 +8367,7 @@ mod tests {
     #[test]
     fn meta_and_the_hydration_guard() {
         let conn = conn();
-        assert_eq!(
-            meta_get(&conn, META_SCHEMA_VERSION).unwrap().as_deref(),
-            Some(SCHEMA_VERSION)
-        );
+        assert_eq!(version(&conn).unwrap(), SCHEMA_VERSION);
         assert_eq!(
             refuse_unless_hydrated(&conn),
             Err(CoreError::HydrationIncomplete)
@@ -9531,79 +9608,6 @@ mod tests {
     }
 
     #[test]
-    fn a_store_made_before_the_copy_revision_gains_its_triggers_when_opened_to_write() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("older.sqlite");
-        let triggers = |conn: &Connection| -> Vec<String> {
-            let mut statement = conn
-                .prepare("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE '%\\_revise\\_%' ESCAPE '\\' ORDER BY name")
-                .unwrap();
-            statement
-                .query_map([], |row| row.get(0))
-                .unwrap()
-                .collect::<rusqlite::Result<_>>()
-                .unwrap()
-        };
-        {
-            let conn = open(&path).unwrap();
-            let made = triggers(&conn);
-            assert_eq!(made.len(), REVISED.len() * 3, "{made:?}");
-            for name in &made {
-                conn.execute_batch(&format!("DROP TRIGGER {name};"))
-                    .unwrap();
-            }
-            upsert_item(
-                &conn,
-                &note("row", "t", "b", "2026-01-01T00:00:00Z"),
-                None,
-                &Indexing::default(),
-            )
-            .unwrap();
-            assert_eq!(copy_revision(&conn).unwrap(), 0);
-        }
-        let reading = read_connection(
-            Connection::open_with_flags(&path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY).unwrap(),
-            &path,
-        )
-        .unwrap();
-        assert!(item_held(&reading, "row").unwrap());
-        assert!(triggers(&reading).is_empty(), "a reader wrote the schema");
-        drop(reading);
-
-        let conn = open(&path).unwrap();
-        assert_eq!(triggers(&conn).len(), REVISED.len() * 3);
-        assert!(item_held(&conn, "row").unwrap());
-        conn.execute("UPDATE items SET version = 2 WHERE id = 'row'", [])
-            .unwrap();
-        assert_eq!(copy_revision(&conn).unwrap(), 1);
-    }
-
-    #[test]
-    fn a_store_made_before_the_send_index_gets_it_when_its_writer_opens_it() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("core.sqlite");
-        let held = |conn: &Connection| -> bool {
-            conn.query_row(
-                "SELECT count(*) FROM sqlite_master WHERE type = 'index' AND name = 'queue_sent_seq'",
-                [],
-                |row| row.get::<_, i64>(0),
-            )
-            .unwrap()
-                == 1
-        };
-        {
-            let conn = open(&path).unwrap();
-            assert!(held(&conn), "a new store lacks the index");
-            conn.execute_batch("DROP INDEX queue_sent_seq;").unwrap();
-        }
-        let reading = open_to_read(&path).unwrap();
-        assert!(!held(&reading), "a reader made the index");
-        drop(reading);
-        let conn = open(&path).unwrap();
-        assert!(held(&conn), "the writer did not make the index");
-    }
-
-    #[test]
     fn only_a_write_laid_over_the_copy_changes_it_as_it_leaves_the_queue() {
         let conn = conn();
         let marks = |conn: &Connection| {
@@ -9644,129 +9648,6 @@ mod tests {
                 assert_eq!(marks(&conn), (revision, change), "{verdict:?}");
             }
         }
-    }
-
-    /// Each trigger the store holds, by name as SQLite records it, with its
-    /// statement exactly as recorded.
-    fn held_triggers(conn: &Connection) -> Vec<(String, String)> {
-        conn.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' ORDER BY name")
-            .unwrap()
-            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
-            .unwrap()
-            .collect::<rusqlite::Result<_>>()
-            .unwrap()
-    }
-
-    #[test]
-    fn a_store_holding_an_earlier_builds_trigger_is_given_this_builds_only_by_its_writer() {
-        let answered_leaves = |conn: &Connection| {
-            conn.execute(
-                "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, queued_at, verdict)
-                 VALUES ('w', 'update_item', 'a', 'k', '{}', '2026-01-01T00:00:00Z', 'accepted')",
-                [],
-            )
-            .unwrap();
-            let before = last_change(conn, Changes::Items).unwrap();
-            conn.execute("DELETE FROM queue WHERE id = 'w'", [])
-                .unwrap();
-            last_change(conn, Changes::Items).unwrap() != before
-        };
-        let earlier_change_delete = |name: &str| {
-            format!(
-                "DROP TRIGGER queue_change_delete;
-                 CREATE TRIGGER {name} AFTER DELETE ON queue BEGIN
-                   INSERT INTO copy_changes (item_id, seq)
-                     SELECT id, (SELECT coalesce(max(seq), 0) + 1 FROM copy_changes)
-                     FROM (SELECT OLD.item_id AS id UNION SELECT OLD.target_id) WHERE id IS NOT NULL
-                     ON CONFLICT (item_id) DO UPDATE SET seq = excluded.seq;
-                 END;"
-            )
-        };
-        let earlier: [(&str, String, &[&str]); 4] = [
-            (
-                "a statement",
-                earlier_change_delete("queue_change_delete"),
-                &["queue_change_delete"],
-            ),
-            (
-                "a name in other case",
-                earlier_change_delete("Queue_Change_Delete"),
-                &["queue_change_delete"],
-            ),
-            (
-                "whitespace inside a string",
-                "DROP TRIGGER queue_revise_delete;
-                 CREATE TRIGGER queue_revise_delete AFTER DELETE ON queue
-                   WHEN OLD.verdict IS NULL OR OLD.verdict IN ('blocked ', 'dead') BEGIN
-                   INSERT INTO meta (key, value) VALUES ('copy_revision', '1')
-                     ON CONFLICT (key) DO UPDATE SET value = CAST(value AS INTEGER) + 1;
-                 END;"
-                    .into(),
-                &["queue_revise_delete"],
-            ),
-            (
-                "a trigger this build does not make",
-                "CREATE TRIGGER left_by_another_build AFTER DELETE ON queue BEGIN
-                   INSERT INTO meta (key, value) VALUES ('left', '1');
-                 END;"
-                    .into(),
-                &["left_by_another_build"],
-            ),
-        ];
-        for (what, sql, behind) in earlier {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("older.sqlite");
-            let writer = crate::Core::open(&path, None).unwrap();
-            let made = held_triggers(&writer.conn().unwrap());
-            {
-                let conn = writer.conn().unwrap();
-                assert_eq!(triggers_behind(&conn).unwrap(), Vec::<String>::new());
-                conn.execute_batch(&sql).unwrap();
-                assert_eq!(triggers_behind(&conn).unwrap(), behind, "{what}");
-                if behind == ["queue_change_delete"] {
-                    assert!(answered_leaves(&conn), "the witness: the earlier trigger");
-                }
-            }
-            let earlier = held_triggers(&writer.conn().unwrap());
-
-            // The ordinary second opener, and a reader by its own door.
-            let second = crate::Core::open(&path, None).unwrap();
-            assert_eq!(second.handle(), crate::Handle::Reader, "{what}");
-            let reader = crate::Core::open_reader(&path).unwrap();
-            assert_eq!(
-                held_triggers(&writer.conn().unwrap()),
-                earlier,
-                "a reading handle wrote the schema: {what}"
-            );
-            drop((second, reader, writer));
-
-            let writer = crate::Core::open(&path, None).unwrap();
-            let conn = writer.conn().unwrap();
-            assert_eq!(held_triggers(&conn), made, "{what}");
-            assert!(!answered_leaves(&conn), "{what}");
-        }
-    }
-
-    #[test]
-    fn a_store_made_before_the_tables_beneath_and_read_backs_opens_and_gains_them() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("older.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            upsert_item(
-                &conn,
-                &note("row", "t", "b", "2026-01-01T00:00:00Z"),
-                None,
-                &Indexing::default(),
-            )
-            .unwrap();
-            conn.execute_batch("DROP TABLE beneath; DROP TABLE read_backs;")
-                .unwrap();
-        }
-        let conn = open(&path).unwrap();
-        assert!(item_held(&conn, "row").unwrap());
-        assert_eq!(beneath_item(&conn, "row").unwrap(), None);
-        assert!(owed_read_backs(&conn).unwrap().is_empty());
     }
 
     #[test]
@@ -10186,6 +10067,27 @@ mod tests {
         .unwrap();
     }
 
+    /// Sets the version SQLite records for the store at `path`, as another
+    /// build of the core would have left it.
+    fn at_version(path: &Path, version: i64) {
+        Connection::open(path)
+            .unwrap()
+            .pragma_update(None, "user_version", version)
+            .unwrap();
+    }
+
+    fn queued(path: &Path) -> Vec<(String, String)> {
+        let conn = Connection::open(path).unwrap();
+        let mut statement = conn
+            .prepare("SELECT id, idempotency_key FROM queue ORDER BY id")
+            .unwrap();
+        statement
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
     #[test]
     fn a_store_counts_every_write_the_server_has_not_taken() {
         let dir = tempfile::tempdir().unwrap();
@@ -10197,17 +10099,10 @@ mod tests {
                 queue_one(&conn);
                 conn.execute("UPDATE queue SET verdict = ?1, sent = 1", [verdict])
                     .unwrap();
-                meta_set(&conn, META_SCHEMA_VERSION, SCHEMA_VERSION).unwrap();
-                conn.execute_batch("DROP TABLE pins; CREATE TABLE pins (other TEXT);")
-                    .unwrap();
             }
+            at_version(&path, SCHEMA_VERSION + 1);
             let refused = refusal_of(&path);
-            Connection::open(&path)
-                .unwrap()
-                .execute_batch(
-                    "DROP TABLE pins; CREATE TABLE pins (item_id TEXT PRIMARY KEY) WITHOUT ROWID;",
-                )
-                .unwrap();
+            at_version(&path, SCHEMA_VERSION);
             refused
         };
         for verdict in [None, Some("blocked"), Some("refused"), Some("dead")] {
@@ -10225,9 +10120,8 @@ mod tests {
                 [],
             )
             .unwrap();
-            conn.execute_batch("DROP TABLE pins; CREATE TABLE pins (other TEXT);")
-                .unwrap();
         }
+        at_version(&path, SCHEMA_VERSION + 1);
         let (_, unsent, said) = refusal_of(&path);
         assert_eq!(
             unsent,
@@ -10235,12 +10129,7 @@ mod tests {
             "a refused delete that clearing drops was counted"
         );
         assert!(said.contains("loses nothing"), "{said}");
-        Connection::open(&path)
-            .unwrap()
-            .execute_batch(
-                "DROP TABLE pins; CREATE TABLE pins (item_id TEXT PRIMARY KEY) WITHOUT ROWID;",
-            )
-            .unwrap();
+        at_version(&path, SCHEMA_VERSION);
         assert!(
             open_to_read(&path).is_ok(),
             "counting left the reader's temporary queue in place"
@@ -10253,57 +10142,126 @@ mod tests {
     }
 
     #[test]
-    fn a_store_written_by_another_schema_is_refused_with_what_it_holds() {
+    fn an_empty_file_is_made_a_store_at_this_version() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            queue_one(&conn);
-            meta_set(&conn, META_SCHEMA_VERSION, "something-else").unwrap();
-        }
-        let (reason, unsent, said) = refusal_of(&path);
-        assert!(reason.contains("something-else"), "{reason}");
-        assert_eq!(unsent, Some(1));
-        assert!(
-            said.contains(&path.display().to_string()),
-            "the refusal does not say which file, which a person may know only by the variable that named it: {said}"
-        );
-        assert!(said.contains("1 write the server has not taken"), "{said}");
-        assert!(!said.to_lowercase().contains("delete"), "{said}");
+        // As a make that never committed leaves it.
+        Connection::open(&path)
+            .unwrap()
+            .execute_batch("PRAGMA journal_mode = WAL;")
+            .unwrap();
+        let conn = open(&path).unwrap();
+        assert_eq!(version(&conn).unwrap(), SCHEMA_VERSION);
+        assert!(held_shape(&conn).unwrap().contains_key("queue"));
     }
 
     #[test]
-    fn a_store_of_another_shape_at_this_version_is_refused_by_name() {
+    fn two_programs_making_one_store_at_once_both_open_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        let late = Connection::open(&path).unwrap();
+        // It read the file empty before the other made the store.
+        assert_eq!(version(&late).unwrap(), 0);
+        assert!(!holds_tables(&late).unwrap());
+        drop(open(&path).unwrap());
+        make(&late).unwrap();
+        assert_eq!(version(&late).unwrap(), SCHEMA_VERSION);
+        assert!(open(&path).is_ok());
+    }
+
+    /// The meta an earlier build of the core wrote, beside a version it
+    /// never set.
+    fn as_an_earlier_build_left_it(path: &Path) {
+        Connection::open(path)
+            .unwrap()
+            .execute_batch(
+                "INSERT INTO meta (key, value) VALUES ('schema_version', '0');
+                 PRAGMA user_version = 0;",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn a_store_at_another_version_is_refused_with_its_writes_kept() {
+        for (found, older) in [(0, true), (0, false), (SCHEMA_VERSION + 1, false)] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("core.sqlite");
+            {
+                let conn = open(&path).unwrap();
+                queue_one(&conn);
+                meta_set(&conn, "kept", "as it was").unwrap();
+            }
+            if older {
+                as_an_earlier_build_left_it(&path);
+            } else {
+                at_version(&path, found);
+            }
+            let before = queued(&path);
+            let (reason, unsent, said) = refusal_of(&path);
+            assert!(
+                reason.contains(&format!(
+                    "schema version {found}, and this build reads schema version {SCHEMA_VERSION}"
+                )),
+                "{reason}"
+            );
+            assert_eq!(unsent, Some(1));
+            assert!(
+                said.contains(&path.display().to_string()),
+                "the refusal does not say which file, which a person may know only by the variable that named it: {said}"
+            );
+            assert!(
+                said.contains(
+                    "1 write the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send or show: open it with that build and drain or discard them before hydrating a new store"
+                ),
+                "{said}"
+            );
+            assert!(!said.to_lowercase().contains("delete"), "{said}");
+            assert!(matches!(
+                open_to_read(&path),
+                Err(CoreError::WrongSchema {
+                    unsent: Some(1),
+                    ..
+                })
+            ));
+            // A replacement would lose the write, so it is refused too.
+            assert!(matches!(
+                refusal(&path).unwrap(),
+                Some(CoreError::WrongSchema {
+                    unsent: Some(1),
+                    ..
+                })
+            ));
+            assert_eq!(
+                queued(&path),
+                before,
+                "refusing the store changed its queue"
+            );
+            let conn = Connection::open(&path).unwrap();
+            assert_eq!(version(&conn).unwrap(), found);
+            assert_eq!(
+                meta_get(&conn, "kept").unwrap().as_deref(),
+                Some("as it was")
+            );
+
+            // The witness: the same store at this version opens, write and all.
+            drop(conn);
+            at_version(&path, SCHEMA_VERSION);
+            let conn = open(&path).unwrap();
+            assert_eq!(untaken_count(&conn), Some(1));
+        }
+    }
+
+    #[test]
+    fn a_store_at_another_version_whose_queue_cannot_be_read_says_so() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite");
         {
             let conn = open(&path).unwrap();
             queue_one(&conn);
-            conn.execute_batch("ALTER TABLE queue RENAME COLUMN follows TO after_write")
-                .unwrap();
-            assert_eq!(
-                meta_get(&conn, META_SCHEMA_VERSION).unwrap().as_deref(),
-                Some(SCHEMA_VERSION)
-            );
-        }
-        let (reason, unsent, _) = refusal_of(&path);
-        assert!(reason.contains("queue"), "{reason}");
-        assert_eq!(unsent, Some(1));
-        assert!(matches!(
-            open_to_read(&path),
-            Err(CoreError::WrongSchema {
-                unsent: Some(1),
-                ..
-            })
-        ));
-
-        // A queue whose shape hides its count is refused all the same, and
-        // says it cannot tell.
-        {
-            let conn = Connection::open(&path).unwrap();
             conn.execute_batch("ALTER TABLE queue RENAME COLUMN verdict TO answer_kind")
                 .unwrap();
         }
+        at_version(&path, 0);
         let (_, unsent, said) = refusal_of(&path);
         assert_eq!(unsent, None);
         assert!(said.contains("cannot be read"), "{said}");
@@ -10347,6 +10305,7 @@ mod tests {
             let conn = open(&path).unwrap();
             queue_admitting(&conn, "merge_metadata");
         }
+        at_version(&path, 0);
         // A refused write that carried content stays until discarded, so it
         // is counted with the waiting one.
         for verdict in [None, Some("refused"), Some("dead")] {
@@ -10372,288 +10331,45 @@ mod tests {
             );
         }
         // The witness: the same earlier queue with the write answered names
-        // no kind, and is refused only for its shape.
+        // no kind, and is refused only for its version.
         hold(Some("accepted"));
         let (reason, unsent, _) = refusal_of(&path);
         assert!(!reason.contains("merge_metadata"), "{reason}");
-        assert!(reason.contains("its table queue"), "{reason}");
+        assert!(reason.contains("schema version 0"), "{reason}");
         assert_eq!(unsent, Some(0));
     }
 
+    /// Any change to what `schema.sql` makes, tables, indexes and triggers
+    /// alike, changes this hash: raise `SCHEMA_VERSION` with it, so a store
+    /// of the earlier shape is refused rather than misread.
     #[test]
-    fn a_store_with_the_older_index_is_refused_with_its_queue_kept() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            queue_one(&conn);
-            conn.execute_batch(
-                "DROP TABLE items_fts;
-                 CREATE VIRTUAL TABLE items_fts USING fts5 (
-                   title, body, tags, tokenize = 'unicode61 remove_diacritics 2'
-                 );",
+    fn the_shape_this_build_makes_is_the_one_its_version_names() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA).unwrap();
+        let mut query = conn
+            .prepare(
+                "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name",
             )
             .unwrap();
-        }
-        let (reason, unsent, _) = refusal_of(&path);
-        assert!(reason.contains("items_fts"), "{reason}");
-        assert_eq!(unsent, Some(1));
-        let conn = Connection::open(&path).unwrap();
+        let named: String = query
+            .query_map([], |row| {
+                Ok(format!(
+                    "{}:{}:{}\n",
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    statement(&row.get::<_, String>(2)?)
+                ))
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
         assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM queue", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            1,
-            "refusing the old index took the write beside it"
-        );
-    }
-
-    #[test]
-    fn a_store_without_folder_presentation_is_refused_without_losing_its_queue() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            queue_one(&conn);
-            conn.execute_batch("ALTER TABLE folder_files DROP COLUMN presentation")
-                .unwrap();
-        }
-        let (reason, unsent, _) = refusal_of(&path);
-        assert!(reason.contains("folder_files"), "{reason}");
-        assert_eq!(unsent, Some(1));
-        let conn = Connection::open(&path).unwrap();
-        assert_eq!(
-            conn.query_row("SELECT COUNT(*) FROM queue", [], |row| row.get::<_, i64>(0))
-                .unwrap(),
-            1
-        );
-        assert!(!held_shape(&conn).unwrap()["folder_files"].contains("presentation"));
-    }
-
-    #[test]
-    fn a_store_made_before_a_table_this_build_adds_opens_and_gains_it() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            conn.execute_batch("DROP TABLE beneath; DROP TABLE read_backs;")
-                .unwrap();
-        }
-        // A reader cannot make the tables, so it waits on this build's
-        // writer, and says so rather than sending the person to another build.
-        assert!(matches!(
-            open_to_read(&path),
-            Err(CoreError::Invalid(said)) if said.contains("this build's writer")
-        ));
-        let conn = open(&path).unwrap();
-        let tables: i64 = conn
-            .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE name IN ('beneath', 'read_backs')",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(tables, 2);
-        assert!(open_to_read(&path).is_ok());
-    }
-
-    fn items_shape(conn: &Connection) -> String {
-        held_shape(conn).unwrap()["items"].clone()
-    }
-
-    #[test]
-    fn a_store_made_before_a_column_this_build_adds_opens_and_gains_it() {
-        for dropped in [
-            "read_only",
-            "read_only, trashed_at",
-            "read_only, trashed_at, capture_longitude",
-            "read_only, trashed_at, capture_longitude, capture_latitude",
-        ] {
-            let dir = tempfile::tempdir().unwrap();
-            let path = dir.path().join("core.sqlite");
-            {
-                let conn = open(&path).unwrap();
-                queue_one(&conn);
-                upsert_item(
-                    &conn,
-                    &note("n1", "a", "b", "2026-01-01T00:00:00Z"),
-                    None,
-                    &Indexing::default(),
-                )
-                .unwrap();
-                conn.execute_batch("DROP INDEX items_read_only").unwrap();
-                for column in dropped.split(", ") {
-                    conn.execute_batch(&format!("ALTER TABLE items DROP COLUMN {column}"))
-                        .unwrap();
-                }
-                assert_ne!(items_shape(&conn), built_shape().unwrap()["items"]);
-            }
-            assert!(
-                matches!(
-                    open_to_read(&path),
-                    Err(CoreError::Invalid(said)) if said.contains("this build's writer") && said.contains("read_only")
-                ),
-                "a reader of a store without {dropped} did not send it to this build's writer"
-            );
-            let conn = open(&path).unwrap();
-            assert_eq!(items_shape(&conn), built_shape().unwrap()["items"]);
-            assert_eq!(
-                conn.query_row("SELECT COUNT(*) FROM queue", [], |row| row.get::<_, i64>(0))
-                    .unwrap(),
-                1
-            );
-            assert!(item_held(&conn, "n1").unwrap());
-            let trashed: Option<String> = conn
-                .query_row("SELECT trashed_at FROM items WHERE id = 'n1'", [], |row| {
-                    row.get(0)
-                })
-                .unwrap();
-            assert_eq!(trashed, None);
-            let read_only: bool = conn
-                .query_row("SELECT read_only FROM items WHERE id = 'n1'", [], |row| {
-                    row.get(0)
-                })
-                .unwrap();
-            assert!(!read_only);
-            drop(conn);
-            assert!(open_to_read(&path).is_ok());
-        }
-    }
-
-    /// A table made `WITHOUT ROWID` gains a column at its end as one made
-    /// without that does.
-    #[test]
-    fn a_folder_record_made_before_its_embeds_opens_and_gains_them() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            conn.execute_batch(
-                "INSERT INTO folder_files (path, item_id, content_hash, links, edge_lines, seen_at)
-                 VALUES ('a.md', 'n1', 'h', '[]', '[]', '2026-01-01T00:00:00Z');
-                 ALTER TABLE folder_files DROP COLUMN embeds",
-            )
-            .unwrap();
-        }
-        let conn = open(&path).unwrap();
-        let held = held_shape(&conn).unwrap();
-        assert_eq!(held["folder_files"], built_shape().unwrap()["folder_files"]);
-        let embeds: Option<String> = conn
-            .query_row(
-                "SELECT embeds FROM folder_files WHERE path = 'a.md'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(embeds, None);
-    }
-
-    #[test]
-    fn two_programs_opening_one_old_store_at_once_both_succeed() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            conn.execute_batch(
-                "DROP INDEX items_read_only; ALTER TABLE items DROP COLUMN read_only",
-            )
-            .unwrap();
-        }
-        let first = Connection::open(&path).unwrap();
-        let second = Connection::open(&path).unwrap();
-        let seen_first = refuse_misshapen(&first, &held_shape(&first).unwrap(), false).unwrap();
-        let seen_second = refuse_misshapen(&second, &held_shape(&second).unwrap(), false).unwrap();
-        assert!(!seen_first.is_empty() && !seen_second.is_empty());
-        add_columns(&first, &seen_first).unwrap();
-        // It read the old shape before the first added the column.
-        add_columns(&second, &seen_second).unwrap();
-        assert_eq!(items_shape(&second), built_shape().unwrap()["items"]);
-    }
-
-    #[test]
-    fn a_store_made_with_the_columns_written_otherwise_gains_them() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            let made: String = conn
-                .query_row(
-                    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'items'",
-                    [],
-                    |row| row.get(0),
-                )
-                .unwrap();
-            let earlier = made
-                .replace(
-                    ",\n  capture_latitude REAL,\n  capture_longitude REAL,\n  trashed_at TEXT,\n  read_only INTEGER NOT NULL DEFAULT 0\n",
-                    "\n  -- as an earlier build wrote it\n",
-                )
-                .replace("(\n", "(");
-            assert!(!earlier.contains("capture_latitude"), "{earlier}");
-            conn.execute_batch(&format!("DROP TABLE items; {earlier};"))
-                .unwrap();
-        }
-        let conn = open(&path).unwrap();
-        assert_eq!(items_shape(&conn), built_shape().unwrap()["items"]);
-    }
-
-    #[test]
-    fn a_store_missing_a_column_short_of_the_end_is_refused() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("core.sqlite");
-        {
-            let conn = open(&path).unwrap();
-            queue_one(&conn);
-            conn.execute_batch("ALTER TABLE items DROP COLUMN capture_latitude")
-                .unwrap();
-        }
-        let (reason, unsent, _) = refusal_of(&path);
-        assert!(reason.contains("items"), "{reason}");
-        assert_eq!(unsent, Some(1));
-        let conn = Connection::open(&path).unwrap();
-        assert!(!items_shape(&conn).contains("capture_latitude"));
-    }
-
-    /// Each column `ADDED_COLUMNS` lists is at its table's end, in order, so
-    /// a store made before all of them gains them.
-    #[test]
-    fn the_columns_a_writer_adds_end_their_tables() {
-        let built = built_shape().unwrap();
-        let mut tables: Vec<&str> = ADDED_COLUMNS.iter().map(|(table, _)| *table).collect();
-        tables.dedup();
-        for table in tables {
-            let added: Vec<&str> = ADDED_COLUMNS
-                .iter()
-                .filter(|(name, _)| *name == table)
-                .map(|(_, column)| *column)
-                .collect();
-            let made = &built[table];
-            let (mut earliest, options) = made.split_at(made.rfind(')').unwrap());
-            for column in added.iter().rev() {
-                earliest = earliest
-                    .strip_suffix(&format!(",{}", statement(column)))
-                    .unwrap_or_else(|| panic!("{column} does not end {table}"));
-            }
-            let earliest = format!("{earliest}{options}");
-            assert_eq!(columns_to_add(table, &earliest, made), Some(added));
-        }
-    }
-
-    /// A change to a table's shape refuses every store made before it, but
-    /// for a column added to a table's end that `ADDED_COLUMNS` lists, so it
-    /// is made on purpose: write the new hash here when it is.
-    #[test]
-    fn the_shape_this_build_makes_is_the_one_meant() {
-        let built = built_shape().unwrap();
-        let mut tables: Vec<_> = built.iter().collect();
-        tables.sort();
-        let named: String = tables
-            .iter()
-            .map(|(name, statement)| format!("{name}:{statement}\n"))
-            .collect();
-        assert_eq!(
-            crate::folder::state::hash(named.as_bytes()),
-            "d8292a811b74a68a",
-            "the shape of a table changed, which refuses every store made before it"
+            (
+                SCHEMA_VERSION,
+                crate::folder::state::hash(named.as_bytes()).as_str()
+            ),
+            (1, "9a505dc1b14cecc6"),
+            "the shape schema.sql makes changed: raise SCHEMA_VERSION and write the new hash here"
         );
     }
 
@@ -10816,7 +10532,7 @@ mod tests {
         assert!(release(&conn, "dead").unwrap());
         let released = queued_write(&conn, "dead").unwrap().unwrap();
         assert_eq!(released.body, original.body);
-        assert_ne!(released.idempotency_key, original.idempotency_key);
+        assert_eq!(released.idempotency_key, original.idempotency_key);
         lay_waiting_writes_over(&conn, "held", &|_| Indexing::default()).unwrap();
         assert_eq!(
             item_by_id(&conn, "held").unwrap().unwrap().properties["title"],
@@ -10970,10 +10686,11 @@ mod tests {
         )
         .unwrap();
         assert!(!current_item_writes(&conn, "held").unwrap().is_empty());
-        // A released witness has a new attempt key and may cover this work.
+        // A released witness the server answers without a replay covers it.
         conn.execute("UPDATE queue SET verdict='dead' WHERE id='inflight'", [])
             .unwrap();
         assert!(release(&conn, "inflight").unwrap());
+        readmit_attempt(&conn, "old-inflight").unwrap();
         record_verdict(
             &conn,
             "inflight",
@@ -10987,6 +10704,120 @@ mod tests {
         .unwrap();
         assert!(current_item_writes(&conn, "held").unwrap().is_empty());
     }
+    #[test]
+    fn a_released_write_keeps_its_key_unless_the_server_holds_a_refusal_under_it() {
+        let conn = conn();
+        // A write that met no answer the server keeps may be held applied
+        // under its key; one refused `409` or met `key_spent` is not.
+        let cases = [
+            ("blocked", Some(BlockedReason::FailingAlone), false),
+            ("blocked", Some(BlockedReason::CredentialRefused), false),
+            ("blocked", Some(BlockedReason::InstanceChanged), false),
+            ("dead", None, false),
+            ("blocked", Some(BlockedReason::KeySpent), true),
+            ("blocked", Some(BlockedReason::ConflictUnresolved), true),
+            ("blocked", Some(BlockedReason::AncestorUnavailable), true),
+        ];
+        for kind in WriteKind::ALL {
+            for (verdict, reason, fresh) in cases {
+                let id = format!("{kind}-{verdict}-{}", reason.map_or("none", |r| r.as_str()));
+                conn.execute(
+                    "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, verdict, reason, sent, queued_at)
+                     VALUES (?1, ?2, 'held', ?1, '{}', ?3, ?4, 1, '2026-01-01T00:00:00Z')",
+                    params![id, kind.as_str(), verdict, reason.map(BlockedReason::as_str)],
+                )
+                .unwrap();
+                assert!(release(&conn, &id).unwrap(), "{id} was not released");
+                let after = queued_write(&conn, &id).unwrap().unwrap();
+                assert_eq!(after.verdict, None, "{id}");
+                assert_eq!(
+                    after.idempotency_key != id,
+                    fresh,
+                    "{id} was released under {}: a write whose answer is unknown \
+                     goes again only under its key, and one the server refused \
+                     under its key only under a fresh one",
+                    after.idempotency_key
+                );
+                let spent: Vec<String> = conn
+                    .query_row("SELECT spent_keys FROM queue WHERE id = ?1", [&id], |row| {
+                        row.get::<_, Option<String>>(0)
+                    })
+                    .unwrap()
+                    .map(|json| serde_json::from_str(&json).unwrap())
+                    .unwrap_or_default();
+                assert_eq!(spent.contains(&id), fresh, "{id} spent {spent:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_release_cut_short_leaves_the_write_as_it_was_and_a_finished_one_under_its_key() {
+        let conn = conn();
+        conn.execute(
+            "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, verdict, reason, sent, queued_at)
+             VALUES ('aside', 'replace_metadata', 'held', 'first', '{\"tags\":[\"mine\"]}', 'blocked', 'failing_alone', 1, '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+        let before = queued_write(&conn, "aside").unwrap().unwrap();
+        {
+            let tx = conn.unchecked_transaction().unwrap();
+            assert!(release(&tx, "aside").unwrap());
+        }
+        let after = queued_write(&conn, "aside").unwrap().unwrap();
+        assert_eq!(
+            (
+                after.verdict,
+                after.reason.as_deref(),
+                after.idempotency_key.as_str()
+            ),
+            (before.verdict, before.reason.as_deref(), "first"),
+            "a release that never committed moved the write"
+        );
+        assert!(meta_get(&conn, &effect_key("aside")).unwrap().is_none());
+
+        assert!(release(&conn, "aside").unwrap());
+        assert!(
+            !release(&conn, "aside").unwrap(),
+            "a write already released was released again"
+        );
+        let released = queued_write(&conn, "aside").unwrap().unwrap();
+        assert_eq!(
+            (released.verdict, released.idempotency_key.as_str()),
+            (None, "first")
+        );
+    }
+
+    #[test]
+    fn a_witness_released_under_its_key_covers_a_dead_write_only_once_answered_without_a_replay() {
+        let conn = effect_fixture();
+        conn.execute("INSERT INTO queue (id,kind,item_id,idempotency_key,payload,sent,verdict,queued_at) VALUES ('witness','update_item','held','witness-key',?1,1,'dead','2026-01-01T00:00:01Z')", [r#"{"properties":{"title":"new","body":"new"},"properties_mode":"replace"}"#]).unwrap();
+        assert!(release(&conn, "dead").unwrap());
+        let excluded = |id: &str| {
+            let effect: DeadEffect =
+                serde_json::from_str(&meta_get(&conn, &effect_key(id)).unwrap().unwrap()).unwrap();
+            effect.excluded_attempts.contains("witness-key")
+        };
+        assert!(excluded("dead"), "the fixture did not exclude the witness");
+        assert!(release(&conn, "witness").unwrap());
+        assert_eq!(
+            queued_write(&conn, "witness")
+                .unwrap()
+                .unwrap()
+                .idempotency_key,
+            "witness-key"
+        );
+        assert!(
+            excluded("dead"),
+            "a release took the witness for one applied after the dead write, though the server may replay its first answer"
+        );
+        readmit_attempt(&conn, "witness-key").unwrap();
+        assert!(
+            !excluded("dead"),
+            "a witness applied after the dead write was still taken for one sent before it"
+        );
+    }
+
     #[test]
     fn partial_dead_edge_projection_keeps_only_unresolved_properties() {
         let conn = conn();
@@ -11329,7 +11160,7 @@ mod tests {
         )
         .unwrap();
         malformed
-            .execute_batch("ALTER TABLE queue RENAME COLUMN follows TO after_write")
+            .pragma_update(None, "user_version", SCHEMA_VERSION + 1)
             .unwrap();
         assert!(matches!(open(&path), Err(CoreError::WrongSchema { .. })));
         assert!(matches!(

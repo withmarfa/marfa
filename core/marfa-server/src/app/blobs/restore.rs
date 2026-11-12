@@ -77,6 +77,8 @@ pub struct Copy {
     blob: Blob,
     store_id: String,
     object: String,
+    /// The store's recorded object, which did not answer whole.
+    replaces: Option<String>,
 }
 
 /// Where a blob the archive names and does not carry was found.
@@ -95,11 +97,12 @@ pub struct Placed {
     pub imported: usize,
     pub missing: Vec<String>,
     pub replicates: bool,
-    held: Vec<Held>,
+    _held: Vec<Held>,
 }
 
-/// Records each copy and, for a blob the instance did not hold, the blob itself, ending the
-/// deletion its placing queued.
+/// Records each copy, and each blob the instance did not hold. A found object is this server's
+/// own only where it queued that object, as it does before every write, and it takes the place
+/// of the store's recorded copy that did not answer whole.
 pub fn record(
     tx: &rusqlite::Transaction<'_>,
     copies: &[Copy],
@@ -114,13 +117,29 @@ pub fn record(
         let held = rows::find(tx, &copy.blob.hash)?.is_some();
         if !held && copy.object.is_empty() {
             rows::record_upload(tx, &copy.blob, &copy.store_id, Some(holder), at)?;
-        } else {
-            if !held {
-                rows::record_found(tx, &copy.blob, at)?;
-            }
-            rows::record_copy(tx, &copy.blob.hash, &copy.store_id, &copy.object, at)?;
+            rows::deleted(tx, &copy.blob.hash, &copy.store_id, &copy.object)?;
+            continue;
         }
-        rows::deleted(tx, &copy.blob.hash, &copy.store_id, &copy.object)?;
+        if !held {
+            rows::record_found(tx, &copy.blob, at)?;
+        }
+        if let Some(silent) = copy
+            .replaces
+            .as_deref()
+            .filter(|silent| *silent != copy.object)
+        {
+            rows::remove_copy(tx, &copy.blob.hash, &copy.store_id, silent, at)?;
+        }
+        let written = copy.object.is_empty()
+            || rows::queued(tx, &copy.blob.hash, &copy.store_id, &copy.object)?;
+        rows::record_copy(
+            tx,
+            &copy.blob.hash,
+            &copy.store_id,
+            &copy.object,
+            written,
+            at,
+        )?;
     }
     Ok(())
 }
@@ -201,6 +220,7 @@ impl App {
                     blob,
                     store_id: disk_id.clone(),
                     object: String::new(),
+                    replaces: None,
                 });
                 continue;
             }
@@ -236,6 +256,7 @@ impl App {
                 blob,
                 store_id: self.blobs.disk.id().to_string(),
                 object: String::new(),
+                replaces: None,
             });
         }
         let mut missing = Vec::new();
@@ -250,7 +271,7 @@ impl App {
             copies,
             imported,
             missing,
-            held,
+            _held: held,
             replicates: self.blobs.s3.is_some(),
         })
     }
@@ -345,10 +366,16 @@ impl App {
             .await
             .unwrap_or_else(|_| Err(silent()));
         let mut found = None;
-        let candidates = listed.map_err(|error| {
+        let mut candidates = listed.map_err(|error| {
             tracing::warn!(%error, "The object store did not answer for a restored blob");
             unavailable()
         })?;
+        let (looked, store_id) = (named.hash.clone(), s3.id().to_string());
+        let own = self
+            .db
+            .read(move |tx| rows::queued_objects(tx, &looked, &store_id))
+            .await?;
+        candidates.sort_by_key(|(object, _)| !own.contains(object));
         for (object, size) in candidates {
             // The read may take as long as its bytes keep arriving; only its start is timed.
             let checked = async {
@@ -377,6 +404,10 @@ impl App {
         let Some((object, size)) = found else {
             return Ok(Absent::Missing);
         };
+        let replaces = holders
+            .into_iter()
+            .find(|copy| copy.store_id == s3.id())
+            .map(|copy| copy.object);
         let blob = match record {
             Some(blob) => blob,
             None => Blob {
@@ -392,16 +423,79 @@ impl App {
             blob,
             store_id: s3.id().to_string(),
             object,
+            replaces,
         }))
     }
 }
 
-impl Placed {
-    /// Starts copying to other stores if the write committed.
-    pub fn release(self, app: &App, committed: bool) {
-        drop(self.held);
-        if committed && self.replicates && !self.copies.is_empty() {
-            super::housekeeping::wake(app);
+#[cfg(test)]
+mod tests {
+    use rusqlite::Connection;
+
+    use super::*;
+    use crate::db::migrate::MIGRATIONS;
+
+    const AT: &str = "2026-01-01T00:00:00.000Z";
+
+    fn blob(letter: &str) -> Blob {
+        Blob {
+            hash: Hash::parse(&format!("sha256:{}", letter.repeat(64))).unwrap(),
+            mime_type: "text/plain".into(),
+            size_bytes: 4,
         }
+    }
+
+    fn found(blob: &Blob, write: &str) -> Copy {
+        Copy {
+            blob: blob.clone(),
+            store_id: "bucket".into(),
+            object: format!("{}/{write}", blob.hash.hex()),
+            replaces: None,
+        }
+    }
+
+    #[test]
+    fn a_found_object_takes_the_place_of_a_recorded_copy_that_did_not_answer() {
+        let mut conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(MIGRATIONS[0].sql).unwrap();
+        let tx = conn.transaction().unwrap();
+        rows::attach(&tx, "bucket", "s3", "s3://bucket/marfa", AT).unwrap();
+
+        let kept = blob("a");
+        let silent = found(&kept, "01");
+        rows::record_found(&tx, &kept, AT).unwrap();
+        rows::record_copy(&tx, &kept.hash, "bucket", &silent.object, true, AT).unwrap();
+        let own = Copy {
+            replaces: Some(silent.object.clone()),
+            ..found(&kept, "02")
+        };
+        rows::queue_deletion(&tx, &kept.hash, "bucket", &own.object, AT).unwrap();
+        record(&tx, std::slice::from_ref(&own), false, "holder", AT).unwrap();
+        assert!(!rows::queued(&tx, &kept.hash, "bucket", &own.object).unwrap());
+        assert!(rows::queued(&tx, &kept.hash, "bucket", &silent.object).unwrap());
+        let held = rows::holders(&tx, &kept.hash).unwrap();
+        assert_eq!(held.len(), 1);
+        assert_eq!(
+            (held[0].object.as_str(), held[0].written),
+            (own.object.as_str(), true)
+        );
+
+        // Another server's object is recorded as held, and the silent copy this server did not
+        // write is only dropped from the record.
+        let shared = blob("b");
+        let theirs = found(&shared, "03");
+        rows::record_found(&tx, &shared, AT).unwrap();
+        rows::record_copy(&tx, &shared.hash, "bucket", &theirs.object, false, AT).unwrap();
+        let other = Copy {
+            replaces: Some(theirs.object.clone()),
+            ..found(&shared, "04")
+        };
+        record(&tx, std::slice::from_ref(&other), false, "holder", AT).unwrap();
+        assert!(!rows::queued(&tx, &shared.hash, "bucket", &theirs.object).unwrap());
+        let held = rows::holders(&tx, &shared.hash).unwrap();
+        assert_eq!(
+            (held[0].object.as_str(), held[0].written),
+            (other.object.as_str(), false)
+        );
     }
 }

@@ -195,7 +195,7 @@ impl RegistrationError {
     }
 }
 
-type Reading<T> = Result<T, RegistrationError>;
+pub(super) type Reading<T> = Result<T, RegistrationError>;
 
 /// A document is published for every server, so it may name grants this one lacks, and it does
 /// not state its kind as a registration must.
@@ -214,7 +214,7 @@ fn field<'a>(object: &'a Map<String, Value>, name: &str) -> Option<&'a Value> {
     object.get(name).filter(|value| !value.is_null())
 }
 
-fn text<'a>(object: &'a Map<String, Value>, name: &str) -> Reading<Option<&'a str>> {
+pub(super) fn text<'a>(object: &'a Map<String, Value>, name: &str) -> Reading<Option<&'a str>> {
     field(object, name)
         .map(|value| {
             value
@@ -224,7 +224,10 @@ fn text<'a>(object: &'a Map<String, Value>, name: &str) -> Reading<Option<&'a st
         .transpose()
 }
 
-fn texts<'a>(object: &'a Map<String, Value>, name: &str) -> Reading<Option<Vec<&'a str>>> {
+pub(super) fn texts<'a>(
+    object: &'a Map<String, Value>,
+    name: &str,
+) -> Reading<Option<Vec<&'a str>>> {
     let not_a_list = || RegistrationError::metadata(format!("{name} must be a list of strings."));
     field(object, name)
         .map(|value| {

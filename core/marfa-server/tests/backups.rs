@@ -41,8 +41,8 @@ impl Instance {
     async fn backing_up_to(store: &FakeS3) -> Instance {
         let mut more = store.settings("marfa", "backups-test");
         more.push((
-            "MARFA_BACKUP_INTERVAL_MS".to_string(),
-            "31536000000".to_string(),
+            "MARFA_BACKUP_INTERVAL_SECONDS".to_string(),
+            "31536000".to_string(),
         ));
         let more: Vec<(&str, &str)> = more
             .iter()
@@ -312,7 +312,7 @@ async fn a_row_or_a_setting_moves_the_change_count_and_the_health_probe_does_not
         .local(
             Method::PATCH,
             "/config",
-            Some(json!({ "backup_interval_ms": 7_200_000 })),
+            Some(json!({ "backup_interval_seconds": 7_200 })),
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -389,6 +389,36 @@ async fn a_scheduled_backup_runs_after_a_failed_one_when_nothing_has_changed() {
     let health = instance.backups_health().await;
     assert_eq!(health["status"], "ok", "{health}");
     assert_eq!(health["failures"], 0, "{health}");
+}
+
+#[tokio::test]
+async fn a_scheduled_backup_runs_when_the_last_one_was_written_at_another_archive_version() {
+    let store = FakeS3::start().await;
+    let instance = Instance::backing_up_to(&store).await;
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["outcome"], "put");
+
+    let outcome = || async {
+        let (status, body) = instance
+            .local(Method::POST, "/housekeeping/backup/run", None)
+            .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["result"]["outcome"].clone()
+    };
+    assert_eq!(outcome().await, "unchanged");
+
+    instance
+        .app
+        .db
+        .write(Write::own(), |tx| {
+            tx.execute("UPDATE backup_state SET backed_up_version = 0", [])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    assert_eq!(outcome().await, "put");
+    assert_eq!(outcome().await, "unchanged");
 }
 
 #[tokio::test]

@@ -41,6 +41,29 @@ pub fn rows(tx: &Transaction<'_>) -> Result<Vec<Row>> {
         .collect::<rusqlite::Result<_>>()?)
 }
 
+/// What the scheduler's decisions read: when each idle job is next due, and which jobs run.
+/// A running job's `next_run_at` is left out, since a write inside the run moves it and its
+/// finish settles it.
+pub fn signature(conn: &rusqlite::Connection) -> rusqlite::Result<String> {
+    conn.prepare_cached(
+        "SELECT coalesce(group_concat(name || ' ' || \
+         CASE WHEN running_since IS NULL THEN next_run_at ELSE 'running' END, char(10)), '') \
+         FROM (SELECT name, running_since, next_run_at FROM housekeeping_jobs ORDER BY name)",
+    )?
+    .query_row([], |row| row.get(0))
+}
+
+/// The milliseconds until the earliest idle job is due, `None` when none will be.
+pub fn next_due(rows: &[Row], wanted: &[Wanted], now_ms: i64) -> Option<i64> {
+    wanted
+        .iter()
+        .filter_map(|job| rows.iter().find(|row| row.name == job.name))
+        .filter(|row| row.running_since.is_none())
+        .filter_map(|row| parsed_ms(&row.next_run_at))
+        .map(|next| next.saturating_sub(now_ms).max(0))
+        .min()
+}
+
 fn parsed_ms(text: &str) -> Option<i64> {
     Stamp::parsed(text).map(Stamp::ms)
 }
@@ -366,6 +389,58 @@ mod tests {
     #[test]
     fn a_row_of_a_job_this_build_lacks_is_left() {
         assert!(plan(&[row("gone", "not a date", false)], &[], NOW).is_empty());
+    }
+
+    #[test]
+    fn the_next_look_is_at_the_earliest_idle_job() {
+        let rows = [
+            row("job", &at(NOW + 9_000), false),
+            row("other", &at(NOW + 4_000), false),
+            row("busy", &at(NOW - 1), true),
+        ];
+        let wanted = |name| Wanted { name, ..JOB };
+        let all = [wanted("job"), wanted("other"), wanted("busy")];
+        assert_eq!(next_due(&rows, &all, NOW), Some(4_000));
+        assert_eq!(next_due(&rows, &all[..1], NOW), Some(9_000));
+        assert_eq!(next_due(&rows, &all[2..], NOW), None);
+        assert_eq!(next_due(&[], &all, NOW), None);
+        assert_eq!(next_due(&rows[..1], &all, NOW + 20_000), Some(0));
+        assert_eq!(
+            next_due(&[row("job", "not a date", false)], &all, NOW),
+            None
+        );
+    }
+
+    #[test]
+    fn the_signature_moves_with_an_idle_schedule_and_not_with_a_running_job_s() {
+        let db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
+            .unwrap();
+        assert_eq!(signature(&db).unwrap(), "");
+        db.execute(
+            "INSERT INTO housekeeping_jobs (name, next_run_at) VALUES ('job', ?1)",
+            [at(NOW)],
+        )
+        .unwrap();
+        let idle = signature(&db).unwrap();
+        db.execute(
+            "UPDATE housekeeping_jobs SET next_run_at = ?1 WHERE name = 'job'",
+            [at(NOW + 1)],
+        )
+        .unwrap();
+        assert_ne!(signature(&db).unwrap(), idle);
+        db.execute(
+            "UPDATE housekeeping_jobs SET running_since = ?1 WHERE name = 'job'",
+            [at(NOW)],
+        )
+        .unwrap();
+        let running = signature(&db).unwrap();
+        db.execute(
+            "UPDATE housekeeping_jobs SET next_run_at = ?1 WHERE name = 'job'",
+            [at(NOW + 5_000)],
+        )
+        .unwrap();
+        assert_eq!(signature(&db).unwrap(), running);
     }
 
     #[test]

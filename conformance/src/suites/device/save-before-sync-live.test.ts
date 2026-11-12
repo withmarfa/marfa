@@ -142,6 +142,89 @@ it("says which declared types the key could not register, and the server refuses
   ).toBe("refused");
 });
 
+/** A key that may register types and write the ones named. */
+async function registeringKey(label: string, types: string[]) {
+  const minted = await client.createKey({
+    label: `${ctx.source}-${label}`,
+    source: `${ctx.source}-${label}`,
+    default_tier: "library",
+    type_permissions: Object.fromEntries([
+      ["core.note", "write"],
+      ...types.map((type) => [type, "write"]),
+    ]),
+    metadata_permissions: { types: "write" },
+  });
+  expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+  ctx.trackedKeys.push(minted.data.id);
+  return minted.data.key;
+}
+
+/** A type whose one table has an item column that takes the types named. */
+function linking(id: string, types: string[]) {
+  return {
+    id,
+    fields: { title: { type: "string" } },
+    tables: {
+      links: { columns: { to: { type: "item", type_constraints: types } } },
+    },
+  };
+}
+
+it("registers a declared type after a type its table column names, though the declaration names it first", async () => {
+  const run = ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const referring = `user.areferring_${run}`;
+  const referenced = `user.zreferenced_${run}`;
+  const key = await registeringKey("referring", [referring, referenced]);
+  const offline = new CliDevice({
+    binary: requireBinary(),
+    store: newStore("save-live-referring"),
+  });
+  value(await offline.status());
+  value(
+    await offline.declareTypes([
+      linking(referring, [referring, referenced]),
+      { id: referenced, fields: { title: { type: "string" } } },
+    ]),
+  );
+  const joined = offline.reopen({ url: apiUrl, key });
+  const report = value(await joined.hydrate(["core.note"], "library"));
+  trackType(ctx, referenced, client);
+  trackType(ctx, referring, client);
+  // The type its column names can go only after it.
+  const tracked = ctx.trackedTypes.find((type) => type.id === referring);
+  if (tracked) tracked.constrainedTo = [referenced];
+  expect(report.unregistered_types).toEqual([]);
+  expect(report.registered_types).toEqual([referenced, referring]);
+  const registered = await client.getType(referring);
+  expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+});
+
+it("refuses a hydration whose declared types each need the other registered first, naming them and registering neither", async () => {
+  const run = ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  const first = `user.ringa_${run}`;
+  const second = `user.ringb_${run}`;
+  const key = await registeringKey("ring", [first, second]);
+  const offline = new CliDevice({
+    binary: requireBinary(),
+    store: newStore("save-live-ring"),
+  });
+  value(await offline.status());
+  value(
+    await offline.declareTypes([
+      linking(first, [second]),
+      linking(second, [first]),
+    ]),
+  );
+  const joined = offline.reopen({ url: apiUrl, key });
+  const refused = await joined.hydrate(["core.note"], "library");
+  expect(refused.ok, JSON.stringify(refused)).toBe(false);
+  if (refused.ok) return;
+  expect(refused.refusal.code).toBe("invalid");
+  expect(refused.refusal.raw).toContain(`${first} -> ${second} -> ${first}`);
+  for (const type of [first, second])
+    expect((await client.getType(type)).ok).toBe(false);
+});
+
 it("refuses a drain before its first hydration, sending nothing and keeping the queue", async () => {
   const store = newStore("drain-before-join");
   const offline = new CliDevice({ binary: requireBinary(), store });

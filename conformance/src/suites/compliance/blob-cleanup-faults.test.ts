@@ -62,7 +62,7 @@ async function jobsIdle(): Promise<void> {
 beforeAll(async () => {
   server = await bootFreshServer("blob-cleanup-faults", {
     ...ownObjectStore(),
-    MARFA_BLOB_INTEGRITY_BATCH: "1",
+    MARFA_TEST_TUNING: "blob_integrity_batch=1",
   });
   ({ operator, working } = clientsFor(server));
   await jobsIdle();

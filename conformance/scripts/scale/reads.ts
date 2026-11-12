@@ -1,7 +1,7 @@
 /**
  * What a person waits for when the server is otherwise quiet: one item, a
  * page of fifty, a search for a word most items hold and one for a word few
- * hold, and a list of tasks by due date. One request at a time, after
+ * hold, and a list of notes by title and one of tasks by due date. One request at a time, after
  * warm-up requests nobody counts.
  */
 import {
@@ -10,17 +10,28 @@ import {
   type Unit,
 } from "../../src/utils/scale/figures.js";
 import { RARE_WORD } from "../../src/utils/scale/generator.js";
-import { api, ok, readSample, Recorder, log } from "./context.js";
+import { api, ok, readSample, Recorder, log, sleep } from "./context.js";
 
 const WARM_UP = 20;
+
+/** The longest a sorted listing may be asked again for its keys to be ready. */
+const KEYS_READY_MS = 120_000;
 
 async function timed(
   name: string,
   unit: Unit,
   samples: number,
   path: (i: number) => string,
+  readyUnder?: number,
 ): Promise<Figure> {
   for (let i = 0; i < WARM_UP; i++) await api("GET", path(i));
+  // A sorted listing of a large type scans until the keys it reads are built.
+  const gaveUp = performance.now() + KEYS_READY_MS;
+  while (readyUnder !== undefined && performance.now() < gaveUp) {
+    const answer = await api("GET", path(0));
+    if (ok(answer) && answer.ms < readyUnder) break;
+    await sleep(500);
+  }
   const times: number[] = [];
   let errors = 0;
   for (let i = 0; i < samples; i++) {
@@ -66,7 +77,16 @@ export async function reads(): Promise<void> {
       () => `/search?q=${RARE_WORD}&limit=20`,
     ),
   );
-  // No ceiling: no issue asks for it yet.
+  recorder.add(
+    await timed(
+      "list_notes_by_title",
+      "ms",
+      100,
+      () =>
+        `/items?limit=50&type=core.note&sort=${encodeURIComponent("properties.title")}`,
+      50,
+    ),
+  );
   recorder.add(
     await timed(
       "list_tasks_by_due",
@@ -74,6 +94,7 @@ export async function reads(): Promise<void> {
       100,
       () =>
         `/items?limit=50&type=core.task&sort=${encodeURIComponent("properties.due_at")}`,
+      50,
     ),
   );
   recorder.finish();

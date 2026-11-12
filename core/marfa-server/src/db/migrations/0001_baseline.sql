@@ -328,6 +328,7 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
     credential TEXT NOT NULL,
     idempotency_key TEXT NOT NULL,
     fingerprint TEXT NOT NULL,
+    contract INTEGER NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('in_flight', 'complete')),
     created_at TEXT NOT NULL,
     completed_at TEXT,
@@ -414,10 +415,14 @@ CREATE VIRTUAL TABLE IF NOT EXISTS items_fts USING fts5(
     tokenize = 'porter unicode61'
 );
 
--- Each `items_fts` entry's length in tokens, summed by type and source in `items_fts_totals`.
+-- Each `items_fts` entry's item and length in tokens, summed by type and source in `items_fts_totals`.
+-- A search filters its hits on these columns, which a page of the table holds for many more items than
+-- the wide rows of `items` do.
 CREATE TABLE IF NOT EXISTS items_fts_sizes (
     seq INTEGER PRIMARY KEY,
+    id TEXT NOT NULL,
     type TEXT NOT NULL,
+    state TEXT NOT NULL,
     source TEXT NOT NULL,
     tokens INTEGER NOT NULL CHECK (tokens >= 0)
 ) STRICT;
@@ -440,7 +445,7 @@ CREATE TRIGGER IF NOT EXISTS items_fts_unsized AFTER DELETE ON items_fts_sizes B
     UPDATE items_fts_totals SET entries = entries - 1, tokens = tokens - OLD.tokens
     WHERE type = OLD.type AND source = OLD.source;
 END;
-CREATE TRIGGER IF NOT EXISTS items_fts_resized AFTER UPDATE ON items_fts_sizes BEGIN
+CREATE TRIGGER IF NOT EXISTS items_fts_resized AFTER UPDATE OF type, source, tokens ON items_fts_sizes BEGIN
     UPDATE items_fts_totals SET entries = entries - 1, tokens = tokens - OLD.tokens
     WHERE type = OLD.type AND source = OLD.source;
     INSERT INTO items_fts_totals (type, source, entries, tokens)
@@ -448,10 +453,11 @@ CREATE TRIGGER IF NOT EXISTS items_fts_resized AFTER UPDATE ON items_fts_sizes B
     ON CONFLICT (type, source) DO UPDATE
     SET entries = entries + 1, tokens = tokens + excluded.tokens;
 END;
-CREATE TRIGGER IF NOT EXISTS items_fts_moved AFTER UPDATE OF type, source ON items
-WHEN NEW.type IS NOT OLD.type OR NEW.source IS NOT OLD.source
+CREATE TRIGGER IF NOT EXISTS items_fts_moved AFTER UPDATE OF type, source, state ON items
+WHEN NEW.type IS NOT OLD.type OR NEW.source IS NOT OLD.source OR NEW.state IS NOT OLD.state
 BEGIN
-    UPDATE items_fts_sizes SET type = NEW.type, source = NEW.source WHERE seq = NEW.seq;
+    UPDATE items_fts_sizes SET type = NEW.type, source = NEW.source, state = NEW.state
+    WHERE seq = NEW.seq;
 END;
 
 -- The rows whose indexed text a write may have changed. The item write function
@@ -495,38 +501,91 @@ CREATE TABLE IF NOT EXISTS items_fts_stale (
     PRIMARY KEY (type, state)
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE IF NOT EXISTS auth_user (
+-- The (type, property) pairs a sorted listing reads from `item_sort_keys`. The triggers below keep a
+-- pair's keys true from its first row; `filled_through` and `ready` track the walk that keys the items
+-- already there.
+CREATE TABLE IF NOT EXISTS sort_indexes (
+    type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    filled_through INTEGER NOT NULL DEFAULT 0,
+    ready INTEGER NOT NULL DEFAULT 0 CHECK (ready IN (0, 1)),
+    PRIMARY KEY (type, name)
+) STRICT, WITHOUT ROWID;
+
+-- Pairs no longer kept, whose keys are removed a page at a time.
+CREATE TABLE IF NOT EXISTS sort_indexes_dropping (
+    type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    PRIMARY KEY (type, name)
+) STRICT, WITHOUT ROWID;
+
+-- A property's sort value: a number or boolean as a REAL, text as itself, else the empty blob, which
+-- sorts last. The descending index keeps ids ascending, as a listing sorted down does.
+CREATE TABLE IF NOT EXISTS item_sort_keys (
+    type TEXT NOT NULL,
+    name TEXT NOT NULL,
+    value ANY NOT NULL,
+    id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    PRIMARY KEY (type, name, value, id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS item_sort_keys_descending
+    ON item_sort_keys (type, name, value DESC, id, seq);
+
+CREATE TRIGGER IF NOT EXISTS item_sort_keys_inserted AFTER INSERT ON items
+WHEN EXISTS (SELECT 1 FROM sort_indexes WHERE type = NEW.type)
+BEGIN
+    INSERT OR IGNORE INTO item_sort_keys (type, name, value, id, seq)
+    SELECT NEW.type, s.name, COALESCE(CASE json_type(NEW.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(NEW.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), NEW.id, NEW.seq
+    FROM sort_indexes s WHERE s.type = NEW.type;
+END;
+CREATE TRIGGER IF NOT EXISTS item_sort_keys_changed AFTER UPDATE OF type, properties ON items
+WHEN (NEW.type IS NOT OLD.type OR NEW.properties IS NOT OLD.properties)
+    AND (EXISTS (SELECT 1 FROM sort_indexes WHERE type = OLD.type)
+        OR EXISTS (SELECT 1 FROM sort_indexes WHERE type = NEW.type))
+BEGIN
+    DELETE FROM item_sort_keys WHERE (type, name, value, id) IN (
+        SELECT OLD.type, s.name, COALESCE(CASE json_type(OLD.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(OLD.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), OLD.id
+        FROM sort_indexes s WHERE s.type = OLD.type);
+    INSERT OR IGNORE INTO item_sort_keys (type, name, value, id, seq)
+    SELECT NEW.type, s.name, COALESCE(CASE json_type(NEW.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(NEW.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), NEW.id, NEW.seq
+    FROM sort_indexes s WHERE s.type = NEW.type;
+END;
+CREATE TRIGGER IF NOT EXISTS item_sort_keys_deleted AFTER DELETE ON items
+WHEN EXISTS (SELECT 1 FROM sort_indexes WHERE type = OLD.type)
+BEGIN
+    DELETE FROM item_sort_keys WHERE (type, name, value, id) IN (
+        SELECT OLD.type, s.name, COALESCE(CASE json_type(OLD.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(OLD.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), OLD.id
+        FROM sort_indexes s WHERE s.type = OLD.type);
+END;
+
+-- The one owner. `password` holds the hash, never the password. `credentials`
+-- moves on whenever the password changes or every sign-in ends, and a device
+-- cookie signed for an earlier value is no cookie.
+CREATE TABLE IF NOT EXISTS owner (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
-    email_verified INTEGER NOT NULL DEFAULT 0,
-    created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL
-) STRICT;
-
-CREATE TABLE IF NOT EXISTS auth_account (
-    id TEXT PRIMARY KEY NOT NULL,
-    user_id TEXT NOT NULL UNIQUE REFERENCES auth_user (id) ON DELETE CASCADE,
     password TEXT NOT NULL,
+    credentials INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 ) STRICT;
 
 -- `token` holds a digest, never the cookie's value. `updated_at` is the last
 -- recorded use.
-CREATE TABLE IF NOT EXISTS auth_session (
+CREATE TABLE IF NOT EXISTS sign_ins (
     id TEXT PRIMARY KEY NOT NULL,
     token TEXT NOT NULL UNIQUE,
-    user_id TEXT NOT NULL REFERENCES auth_user (id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
-    remembered INTEGER NOT NULL DEFAULT 1,
     user_agent TEXT,
     ip_address TEXT
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS auth_session_user ON auth_session (user_id);
+CREATE INDEX IF NOT EXISTS sign_ins_owner ON sign_ins (owner_id);
 
 -- What leads to a claim. Every row holds a digest, and goes with the claim.
 -- A setup code has no `expires_at`.
@@ -551,7 +610,7 @@ CREATE INDEX IF NOT EXISTS mcp_spent_confirmations_expiry
 
 -- What the OAuth server keeps. A secret is held only as a digest.
 
-CREATE TABLE IF NOT EXISTS auth_oauth_client (
+CREATE TABLE IF NOT EXISTS oauth_clients (
     client_id TEXT PRIMARY KEY NOT NULL,
     auth_method TEXT NOT NULL,
     secret_digest TEXT,
@@ -573,10 +632,10 @@ CREATE TABLE IF NOT EXISTS auth_oauth_client (
 ) STRICT;
 
 -- The clients that name themselves by a metadata document, and how long the
--- copy in `auth_oauth_client` may answer without a fetch.
-CREATE TABLE IF NOT EXISTS auth_oauth_client_document (
+-- copy in `oauth_clients` may answer without a fetch.
+CREATE TABLE IF NOT EXISTS oauth_client_documents (
     client_id TEXT PRIMARY KEY NOT NULL
-        REFERENCES auth_oauth_client (client_id) ON DELETE CASCADE,
+        REFERENCES oauth_clients (client_id) ON DELETE CASCADE,
     fetched_at TEXT NOT NULL,
     fresh_until TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
@@ -584,16 +643,16 @@ CREATE TABLE IF NOT EXISTS auth_oauth_client_document (
 -- One row per app and person, for as long as the client is kept. A withdrawn
 -- consent keeps its row, so the same grant item comes back if the person
 -- approves again.
-CREATE TABLE IF NOT EXISTS auth_oauth_consent (
-    client_id TEXT NOT NULL REFERENCES auth_oauth_client (client_id),
-    user_id TEXT NOT NULL REFERENCES auth_user (id) ON DELETE CASCADE,
+CREATE TABLE IF NOT EXISTS oauth_consents (
+    client_id TEXT NOT NULL REFERENCES oauth_clients (client_id),
+    owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     grant_id TEXT NOT NULL UNIQUE,
     scopes TEXT NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
     last_used_at TEXT,
     withdrawn_at TEXT,
-    PRIMARY KEY (client_id, user_id)
+    PRIMARY KEY (client_id, owner_id)
 ) STRICT, WITHOUT ROWID;
 
 -- starts_after excludes events committed before registration.
@@ -605,7 +664,7 @@ CREATE TABLE IF NOT EXISTS webhooks (
     secret TEXT NOT NULL,
     active INTEGER NOT NULL CHECK (active IN (0, 1)),
     key_id TEXT REFERENCES api_keys (id) ON DELETE CASCADE,
-    grant_id TEXT REFERENCES auth_oauth_consent (grant_id) ON DELETE CASCADE,
+    grant_id TEXT REFERENCES oauth_consents (grant_id) ON DELETE CASCADE,
     starts_after INTEGER NOT NULL,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL,
@@ -619,7 +678,7 @@ CREATE INDEX IF NOT EXISTS webhooks_grant ON webhooks (grant_id) WHERE grant_id 
 -- tell the maker's webhooks changed and no one else's can move it.
 CREATE TABLE IF NOT EXISTS webhook_turns (
     key_id TEXT REFERENCES api_keys (id) ON DELETE CASCADE,
-    grant_id TEXT REFERENCES auth_oauth_consent (grant_id) ON DELETE CASCADE,
+    grant_id TEXT REFERENCES oauth_consents (grant_id) ON DELETE CASCADE,
     turns INTEGER NOT NULL,
     CHECK ((key_id IS NULL) <> (grant_id IS NULL))
 ) STRICT;
@@ -665,22 +724,22 @@ INSERT OR IGNORE INTO webhook_position (id, event_id) VALUES (1, 0);
 -- The redirect URIs a person approved. Only an approval adds a row, so a later
 -- change to the client's own list reaches nothing here. `page_origin` is what
 -- the URI allowed as a web page's origin when it was approved.
-CREATE TABLE IF NOT EXISTS auth_oauth_consent_destination (
+CREATE TABLE IF NOT EXISTS oauth_consent_destinations (
     client_id TEXT NOT NULL,
-    user_id TEXT NOT NULL,
+    owner_id TEXT NOT NULL,
     redirect_uri TEXT NOT NULL,
     page_origin TEXT,
-    PRIMARY KEY (client_id, user_id, redirect_uri),
-    FOREIGN KEY (client_id, user_id)
-        REFERENCES auth_oauth_consent (client_id, user_id) ON DELETE CASCADE
+    PRIMARY KEY (client_id, owner_id, redirect_uri),
+    FOREIGN KEY (client_id, owner_id)
+        REFERENCES oauth_consents (client_id, owner_id) ON DELETE CASCADE
 ) STRICT, WITHOUT ROWID;
 
 -- `session_id` names no table: the row outlives the session it asks about. A
 -- spent row stays until `expires_at`, so a replay can end its `chain_id`.
-CREATE TABLE IF NOT EXISTS auth_oauth_code (
+CREATE TABLE IF NOT EXISTS oauth_codes (
     digest TEXT PRIMARY KEY NOT NULL,
-    client_id TEXT NOT NULL REFERENCES auth_oauth_client (client_id) ON DELETE CASCADE,
-    user_id TEXT NOT NULL REFERENCES auth_user (id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL REFERENCES oauth_clients (client_id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     session_id TEXT NOT NULL,
     grant_id TEXT NOT NULL,
     redirect_uri TEXT NOT NULL,
@@ -692,31 +751,31 @@ CREATE TABLE IF NOT EXISTS auth_oauth_code (
     chain_id TEXT
 ) STRICT, WITHOUT ROWID;
 
-CREATE INDEX IF NOT EXISTS auth_oauth_code_grant ON auth_oauth_code (client_id, user_id);
+CREATE INDEX IF NOT EXISTS oauth_codes_grant ON oauth_codes (client_id, owner_id);
 
 -- `client_id` holds no reference: a code outlives its client, so that the
 -- approval page can say the client is gone.
-CREATE TABLE IF NOT EXISTS auth_oauth_device_code (
+CREATE TABLE IF NOT EXISTS oauth_device_codes (
     device_code TEXT PRIMARY KEY NOT NULL,
     user_code TEXT NOT NULL UNIQUE,
     client_id TEXT NOT NULL,
     scopes TEXT NOT NULL,
     destinations TEXT NOT NULL,
     status TEXT NOT NULL CHECK (status IN ('pending', 'approved', 'denied', 'spent')),
-    user_id TEXT REFERENCES auth_user (id) ON DELETE CASCADE,
+    owner_id TEXT REFERENCES owner (id) ON DELETE CASCADE,
     interval_seconds INTEGER NOT NULL,
     last_polled_at TEXT,
     expires_at TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
-CREATE INDEX IF NOT EXISTS auth_oauth_device_code_client ON auth_oauth_device_code (client_id);
+CREATE INDEX IF NOT EXISTS oauth_device_codes_client ON oauth_device_codes (client_id);
 
 -- `chain_id` is what one authorization led to, through every rotation.
-CREATE TABLE IF NOT EXISTS auth_oauth_access_token (
+CREATE TABLE IF NOT EXISTS oauth_access_tokens (
     id TEXT PRIMARY KEY NOT NULL,
     digest TEXT NOT NULL UNIQUE,
-    client_id TEXT NOT NULL REFERENCES auth_oauth_client (client_id),
-    user_id TEXT NOT NULL REFERENCES auth_user (id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL REFERENCES oauth_clients (client_id),
+    owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     chain_id TEXT NOT NULL,
     scopes TEXT NOT NULL,
     audience TEXT,
@@ -724,16 +783,16 @@ CREATE TABLE IF NOT EXISTS auth_oauth_access_token (
     expires_at TEXT NOT NULL
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS auth_oauth_access_token_chain ON auth_oauth_access_token (chain_id);
-CREATE INDEX IF NOT EXISTS auth_oauth_access_token_grant ON auth_oauth_access_token (client_id, user_id);
+CREATE INDEX IF NOT EXISTS oauth_access_tokens_chain ON oauth_access_tokens (chain_id);
+CREATE INDEX IF NOT EXISTS oauth_access_tokens_grant ON oauth_access_tokens (client_id, owner_id);
 
 -- A rotated token stays until it would have expired, so that its replay is
 -- told from a token nobody issued.
-CREATE TABLE IF NOT EXISTS auth_oauth_refresh_token (
+CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
     id TEXT PRIMARY KEY NOT NULL,
     digest TEXT NOT NULL UNIQUE,
-    client_id TEXT NOT NULL REFERENCES auth_oauth_client (client_id),
-    user_id TEXT NOT NULL REFERENCES auth_user (id) ON DELETE CASCADE,
+    client_id TEXT NOT NULL REFERENCES oauth_clients (client_id),
+    owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     chain_id TEXT NOT NULL,
     scopes TEXT NOT NULL,
     audience TEXT,
@@ -743,15 +802,15 @@ CREATE TABLE IF NOT EXISTS auth_oauth_refresh_token (
     ended_at TEXT
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS auth_oauth_refresh_token_chain ON auth_oauth_refresh_token (chain_id);
-CREATE INDEX IF NOT EXISTS auth_oauth_refresh_token_grant ON auth_oauth_refresh_token (client_id, user_id);
+CREATE INDEX IF NOT EXISTS oauth_refresh_tokens_chain ON oauth_refresh_tokens (chain_id);
+CREATE INDEX IF NOT EXISTS oauth_refresh_tokens_grant ON oauth_refresh_tokens (client_id, owner_id);
 
 -- The owner's passkeys. `credential` is the verifier's record of one, as JSON,
 -- and `host` the relying party it was made for, which is the only one it can
 -- answer.
-CREATE TABLE IF NOT EXISTS auth_passkey (
+CREATE TABLE IF NOT EXISTS passkeys (
     id TEXT PRIMARY KEY NOT NULL,
-    user_id TEXT NOT NULL REFERENCES auth_user (id) ON DELETE CASCADE,
+    owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     credential_id TEXT NOT NULL UNIQUE,
     host TEXT NOT NULL,
     name TEXT,
@@ -760,11 +819,11 @@ CREATE TABLE IF NOT EXISTS auth_passkey (
     last_used_at TEXT
 ) STRICT;
 
-CREATE INDEX IF NOT EXISTS auth_passkey_user ON auth_passkey (user_id);
+CREATE INDEX IF NOT EXISTS passkeys_owner ON passkeys (owner_id);
 
 -- A ceremony under way. The browser holds a token and this table its digest,
 -- so a copy of the database starts nothing. A row goes at its first use.
-CREATE TABLE IF NOT EXISTS auth_passkey_challenge (
+CREATE TABLE IF NOT EXISTS passkey_challenges (
     digest TEXT PRIMARY KEY NOT NULL,
     purpose TEXT NOT NULL CHECK (purpose IN ('add', 'prove')),
     origin TEXT NOT NULL,
@@ -773,7 +832,7 @@ CREATE TABLE IF NOT EXISTS auth_passkey_challenge (
     expires_at TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
-CREATE INDEX IF NOT EXISTS auth_passkey_challenge_expiry ON auth_passkey_challenge (expires_at);
+CREATE INDEX IF NOT EXISTS passkey_challenges_expiry ON passkey_challenges (expires_at);
 
 -- A blob is bytes under the digest of their content. `hash` is `sha256:` and
 -- 64 lowercase hex characters; `mime_type` is the first type recorded.
@@ -795,13 +854,16 @@ CREATE TABLE IF NOT EXISTS stores (
 ) STRICT, WITHOUT ROWID;
 
 -- A store holds the bytes of a blob only while a row here says so. `object`
--- names an object store's copy under its prefix, as the hash's hex and a name
--- of its own write, so no other write or deletion ever names it; it is empty
--- for a disk copy, whose file the hash names.
+-- names an object store's copy under its blobs' folder, as the hash's hex and
+-- a name of its own write, so no other write or deletion ever names it; it is
+-- empty for a disk copy, whose file the hash names. `written` is 0 for an
+-- object a restore found that this server did not write, which it never
+-- deletes and which does not count toward the minimum.
 CREATE TABLE IF NOT EXISTS blob_copies (
     hash TEXT NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
     store_id TEXT NOT NULL REFERENCES stores (id),
     object TEXT NOT NULL DEFAULT '',
+    written INTEGER NOT NULL CHECK (written IN (0, 1)),
     recorded_at TEXT NOT NULL,
     verified_at TEXT,
     PRIMARY KEY (hash, store_id)
@@ -857,7 +919,17 @@ BEGIN
     WHERE kind = 'edge' AND seq = NEW.seq;
 END;
 
--- Blobs that nothing references, and when a run first found each.
+-- Digests the properties an open `update_properties` or `type_move` job writes name: each keeps
+-- its blob as a reference does, and lends no read.
+CREATE TABLE IF NOT EXISTS blob_job_holds (
+    hash TEXT NOT NULL,
+    job_id TEXT NOT NULL REFERENCES bulk_jobs (id) ON DELETE CASCADE,
+    PRIMARY KEY (hash, job_id)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS blob_job_holds_job ON blob_job_holds (job_id);
+
+-- Blobs that nothing references or holds, and when a run first found each.
 CREATE TABLE IF NOT EXISTS blob_orphans (
     hash TEXT PRIMARY KEY NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
     reported_at TEXT NOT NULL
@@ -888,7 +960,7 @@ CREATE TABLE IF NOT EXISTS owner_picture (
 CREATE TABLE IF NOT EXISTS folder_status (
     folder_id TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
     key_id TEXT REFERENCES api_keys (id) ON DELETE CASCADE,
-    grant_id TEXT REFERENCES auth_oauth_consent (grant_id) ON DELETE CASCADE,
+    grant_id TEXT REFERENCES oauth_consents (grant_id) ON DELETE CASCADE,
     sign_in_kind TEXT GENERATED ALWAYS AS (CASE WHEN key_id IS NULL THEN 'app' ELSE 'key' END) VIRTUAL,
     sign_in_id TEXT GENERATED ALWAYS AS (coalesce(key_id, grant_id)) VIRTUAL,
     sign_in_name TEXT NOT NULL,
@@ -1115,6 +1187,7 @@ CREATE TABLE IF NOT EXISTS backup_state (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     changes INTEGER NOT NULL DEFAULT 0,
     backed_up INTEGER,
+    backed_up_version INTEGER,
     last_backup TEXT,
     last_backup_at TEXT,
     failures INTEGER NOT NULL DEFAULT 0,
@@ -1141,6 +1214,27 @@ CREATE TABLE IF NOT EXISTS backup_files (
     last_seq INTEGER,
     PRIMARY KEY (store_id, hash)
 ) STRICT, WITHOUT ROWID;
+
+-- Backups in this instance's folder that `backups` does not record, which the
+-- server never deletes. `files_read` is 1 once every file its manifest names
+-- is in `found_backup_files`.
+CREATE TABLE IF NOT EXISTS found_backups (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    store_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    files_read INTEGER NOT NULL DEFAULT 0 CHECK (files_read IN (0, 1)),
+    missing_since TEXT,
+    omissions INTEGER NOT NULL DEFAULT 0 CHECK (omissions >= 0),
+    UNIQUE (store_id, name)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS found_backup_files (
+    seq INTEGER NOT NULL REFERENCES found_backups (seq),
+    hash TEXT NOT NULL,
+    PRIMARY KEY (seq, hash)
+) STRICT, WITHOUT ROWID;
+
+CREATE INDEX IF NOT EXISTS found_backup_files_hash ON found_backup_files (hash);
 
 CREATE TRIGGER IF NOT EXISTS backup_items_inserted AFTER INSERT ON items BEGIN
     INSERT INTO backup_state (id, changes) VALUES (1, 1) ON CONFLICT (id) DO UPDATE SET changes = changes + 1;

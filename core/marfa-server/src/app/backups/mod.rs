@@ -1,5 +1,6 @@
 //! Backups: an archive without files, put as one object under `<prefix>/backups/<instance id>/`.
 
+mod found;
 mod names;
 
 use std::collections::HashSet;
@@ -15,7 +16,7 @@ use tokio::sync::Mutex;
 
 use super::App;
 use super::access::Caller;
-use super::archive::Backup;
+use super::archive::{self, Backup};
 use super::blobs::Hash;
 use super::blobs::s3::S3;
 use super::clock::Stamp;
@@ -23,8 +24,9 @@ use super::faults::{HOLD_BACKUP_PUT, HOLD_BACKUP_READ};
 use super::housekeeping::{self, Report, Run};
 use super::refusal::{Code, Refusal, Result};
 use crate::db::Write;
-use crate::settings::registry::BACKUP_INTERVAL_MS;
+use crate::settings::registry::BACKUP_INTERVAL_SECONDS;
 
+pub use found::survey_folder;
 pub use names::{doomed, instance_of, missing_past_retention, name_of, parse};
 
 /// The folder under the object store's prefix that holds a folder of backups per instance.
@@ -43,6 +45,8 @@ pub struct Backups {
 struct State {
     changes: i64,
     backed_up: Option<i64>,
+    /// The archive version of the last backup put.
+    backed_up_version: Option<i64>,
     last_backup: Option<String>,
     last_backup_at: Option<String>,
     failures: i64,
@@ -62,18 +66,19 @@ pub fn changes(tx: &Transaction<'_>) -> Result<i64> {
 fn state(tx: &Transaction<'_>) -> Result<State> {
     let found = tx
         .prepare_cached(
-            "SELECT changes, backed_up, last_backup, last_backup_at, failures, last_error, \
-             last_failed_at FROM backup_state WHERE id = 1",
+            "SELECT changes, backed_up, backed_up_version, last_backup, last_backup_at, failures, \
+             last_error, last_failed_at FROM backup_state WHERE id = 1",
         )?
         .query_row([], |row| {
             Ok(State {
                 changes: row.get(0)?,
                 backed_up: row.get(1)?,
-                last_backup: row.get(2)?,
-                last_backup_at: row.get(3)?,
-                failures: row.get(4)?,
-                last_error: row.get(5)?,
-                last_failed_at: row.get(6)?,
+                backed_up_version: row.get(2)?,
+                last_backup: row.get(3)?,
+                last_backup_at: row.get(4)?,
+                failures: row.get(5)?,
+                last_error: row.get(6)?,
+                last_failed_at: row.get(7)?,
             })
         })
         .optional()?;
@@ -90,11 +95,12 @@ fn record_put(
     tx.prepare_cached("UPDATE backups SET confirmed = 1 WHERE store_id = ?1 AND name = ?2")?
         .execute(params![store, name])?;
     tx.execute(
-        "INSERT INTO backup_state (id, backed_up, last_backup, last_backup_at) \
-         VALUES (1, ?1, ?2, ?3) ON CONFLICT (id) DO UPDATE SET \
-         backed_up = max(coalesce(backed_up, ?1), ?1), last_backup = ?2, last_backup_at = ?3, \
+        "INSERT INTO backup_state (id, backed_up, backed_up_version, last_backup, last_backup_at) \
+         VALUES (1, ?1, ?4, ?2, ?3) ON CONFLICT (id) DO UPDATE SET \
+         backed_up = max(coalesce(backed_up, ?1), ?1), backed_up_version = ?4, \
+         last_backup = ?2, last_backup_at = ?3, \
          failures = 0, last_error = NULL, last_failed_at = NULL",
-        params![changes, name, at],
+        params![changes, name, at, archive::VERSION as i64],
     )?;
     Ok(())
 }
@@ -122,7 +128,7 @@ fn begin(tx: &Transaction<'_>, store: &str, name: &str) -> Result<i64> {
     let taken = tx
         .prepare_cached("SELECT 1 FROM backups WHERE store_id = ?1 AND name = ?2")?
         .exists(params![store, name])?;
-    if taken {
+    if taken || found::recorded(tx, store, name)? {
         return Err(Refusal::new(
             Code::Conflict,
             format!(
@@ -364,7 +370,7 @@ async fn settle_attempts(app: &Arc<App>, bucket: &Arc<S3>) -> Result<()> {
         .await
 }
 
-/// Of `hashes`, those a backup of `store` that this instance keeps may name.
+/// Of `hashes`, those a backup of `store` that this instance keeps or found may name.
 pub fn held(tx: &Transaction<'_>, store: &str, hashes: &[Hash]) -> Result<HashSet<Hash>> {
     let mut statement = tx.prepare_cached(
         "SELECT 1 FROM backup_files f JOIN backups b ON b.store_id = f.store_id \
@@ -373,7 +379,9 @@ pub fn held(tx: &Transaction<'_>, store: &str, hashes: &[Hash]) -> Result<HashSe
     )?;
     let mut held = HashSet::new();
     for hash in hashes {
-        if statement.exists(params![store, hash.as_str()])? {
+        if statement.exists(params![store, hash.as_str()])?
+            || found::names(tx, store, hash.as_str())?
+        {
             held.insert(hash.clone());
         }
     }
@@ -411,7 +419,7 @@ fn not_found(instance: &str, name: &str) -> Refusal {
 
 /// Whether the schedule runs backups here: an object store is set and the interval is not 0.
 pub fn scheduled(app: &App) -> bool {
-    app.blobs.s3().is_some() && app.settings.live().get(BACKUP_INTERVAL_MS) > 0
+    app.blobs.s3().is_some() && app.settings.live().get(BACKUP_INTERVAL_SECONDS) > 0
 }
 
 fn key_of(instance: &str, name: &str) -> String {
@@ -442,6 +450,26 @@ enum Outcome {
 }
 
 impl Outcome {
+    /// A housekeeping report holds only numbers, flags and text.
+    fn report(&self) -> Value {
+        match self {
+            Outcome::Put {
+                name,
+                size,
+                removed,
+                unremoved,
+                ..
+            } => json!({
+                "outcome": "put",
+                "backup": name,
+                "size_bytes": size,
+                "removed": removed,
+                "unremoved": unremoved,
+            }),
+            other => other.to_json(),
+        }
+    }
+
     fn to_json(&self) -> Value {
         match self {
             Outcome::Put {
@@ -466,7 +494,7 @@ impl Outcome {
 /// The `backup` housekeeping job.
 pub async fn job(app: Arc<App>, _run: Run) -> Result<Report> {
     let outcome = back_up(&app, false).await?;
-    Ok(Report::done(outcome.to_json()))
+    Ok(Report::done(outcome.report()))
 }
 
 /// Past one part, so a multipart upload has begun before `backup:put` holds.
@@ -593,7 +621,7 @@ impl App {
         let status = if self.blobs.s3().is_none() {
             health.insert("reason".into(), "no_bucket".into());
             "off"
-        } else if self.settings.live().get(BACKUP_INTERVAL_MS) == 0 {
+        } else if self.settings.live().get(BACKUP_INTERVAL_SECONDS) == 0 {
             health.insert("reason".into(), "turned_off".into());
             "off"
         } else {
@@ -632,17 +660,19 @@ impl App {
     }
 }
 
-/// Runs one backup: skipped when nothing a backup holds has changed, unless `forced`.
+/// Runs one backup: skipped when nothing has changed since one written at this archive version, unless `forced`.
 async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
     let bucket = app.bucket()?;
     let Ok(_running) = app.backups.running.try_lock() else {
         return Ok(Outcome::Running);
     };
     let held = app.db.read(state).await?;
-    if !forced && held.failures == 0 && held.backed_up == Some(held.changes) {
+    let current = held.backed_up == Some(held.changes)
+        && held.backed_up_version == Some(archive::VERSION as i64);
+    if !forced && held.failures == 0 && current {
         return Ok(Outcome::Unchanged);
     }
-    wake_replication(app).await;
+    bring_replication_forward(app).await;
     match put(app, &bucket).await {
         Ok((taken, name, size, changes)) => {
             let (store, recorded) = (bucket.id().to_string(), name.clone());
@@ -676,17 +706,16 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
 }
 
 /// Brings replication forward, so the copies a backup leaves to the store are made soon.
-async fn wake_replication(app: &Arc<App>) {
+async fn bring_replication_forward(app: &Arc<App>) {
     let at = app.clock.stamp();
-    let woken = app
+    let brought = app
         .db
         .write(Write::own(), move |tx| {
             housekeeping::bring_forward(tx, REPLICATION, &at)
         })
         .await;
-    match woken {
-        Ok(()) => housekeeping::wake(app),
-        Err(error) => tracing::warn!(%error, "A backup did not wake replication"),
+    if let Err(error) = brought {
+        tracing::warn!(%error, "A backup did not bring replication forward");
     }
 }
 
@@ -720,7 +749,8 @@ async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(Stamp, String, u64, i6
     Ok((taken, name, size, changes))
 }
 
-/// Only names it listed in its own folder and could read as a backup are deleted.
+/// Only names it listed in its own folder, could read as a backup and recorded putting are
+/// deleted.
 async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp) -> (usize, usize) {
     let own = format!("{FOLDER}/{}", app.instance_id);
     let listed = match super::blobs::store::within(LIST_DEADLINE, bucket.list_in(&own)).await {
@@ -731,11 +761,34 @@ async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp) -> (usize, usize) 
         }
     };
     let names: Vec<String> = listed.into_iter().map(|(name, _)| name).collect();
+    if let Err(error) = found::survey(app, bucket, &names).await {
+        tracing::warn!(%error, "The backups this instance did not record were not read");
+    }
+    let looked = bucket.id().to_string();
+    let put: HashSet<String> = match app
+        .db
+        .read(move |tx| {
+            Ok(tx
+                .prepare_cached("SELECT name FROM backups WHERE store_id = ?1")?
+                .query_map([&looked], |row| row.get(0))?
+                .collect::<rusqlite::Result<_>>()?)
+        })
+        .await
+    {
+        Ok(put) => put,
+        Err(error) => {
+            tracing::warn!(%error, "The recorded backups were not read for thinning");
+            return (0, 0);
+        }
+    };
     let mut deleted = HashSet::new();
     let (mut removed, mut unremoved) = (0, 0);
-    for name in doomed(&names, taken) {
+    for name in doomed(&names, taken)
+        .into_iter()
+        .filter(|name| put.contains(name))
+    {
         let key = key_of(&app.instance_id, &name);
-        match super::blobs::store::within(LIST_DEADLINE, bucket.delete(&key)).await {
+        match super::blobs::store::within(LIST_DEADLINE, bucket.delete_whole(&key)).await {
             Ok(()) => {
                 deleted.insert(name);
                 removed += 1;
@@ -813,8 +866,8 @@ mod tests {
             )
             .unwrap();
             tx.execute(
-                "INSERT INTO blob_copies (hash, store_id, object, recorded_at) \
-                 VALUES (?1, ?2, ?1, '2026-11-01T00:00:00.000Z')",
+                "INSERT INTO blob_copies (hash, store_id, object, written, recorded_at) \
+                 VALUES (?1, ?2, ?1, 1, '2026-11-01T00:00:00.000Z')",
                 params![hash.as_str(), BUCKET],
             )
             .unwrap();
@@ -1194,6 +1247,37 @@ mod tests {
         reconcile(&tx, "bucket A", &names(&[&a1, &a2]), &names(&[]), at(2)).unwrap();
 
         assert_eq!(held_in(&tx, "bucket A", &[&x]), ['a']);
+    }
+
+    #[test]
+    fn a_found_backup_holds_its_files_and_its_name_until_listings_long_omit_it() {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        let (a, b) = (hash('a'), hash('b'));
+        registered(&tx, &[&a, &b]);
+        let found = named(5);
+        tx.execute(
+            "INSERT INTO found_backups (store_id, name, files_read) VALUES (?1, ?2, 1)",
+            params![BUCKET, found],
+        )
+        .unwrap();
+        tx.execute(
+            "INSERT INTO found_backup_files (seq, hash) SELECT seq, ?1 FROM found_backups",
+            [a.as_str()],
+        )
+        .unwrap();
+        assert_eq!(held_of(&tx, &[&a, &b]), ['a']);
+        assert_eq!(begin(&tx, BUCKET, &found).unwrap_err().code, Code::Conflict);
+
+        let since = at(6);
+        let retained = since.plus_ms(31 * DAY_MS).unwrap();
+        for now in [since, retained, retained] {
+            found::settle(&tx, BUCKET, &names(&[]), now).unwrap();
+        }
+        assert_eq!(held_of(&tx, &[&a, &b]), ['a']);
+        found::settle(&tx, BUCKET, &names(&[]), retained.plus_ms(1).unwrap()).unwrap();
+        assert!(held_of(&tx, &[&a, &b]).is_empty());
+        assert_eq!(count(&tx, "SELECT COUNT(*) FROM found_backup_files"), 0);
     }
 
     #[test]

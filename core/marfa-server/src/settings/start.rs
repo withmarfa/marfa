@@ -1,12 +1,11 @@
 use std::ops::Deref;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
-
 use url::Url;
 
 use super::Environment;
 use super::rule;
 use super::secrets::Given;
+use super::tuning::Tuning;
 #[cfg(feature = "test-hooks")]
 use crate::app::clock::MAX_OFFSET_MS as MAX_CLOCK_OFFSET_MS;
 use crate::control_socket;
@@ -73,7 +72,7 @@ pub struct Fixed {
     pub clock_offset_ms: u64,
     #[cfg(feature = "test-hooks")]
     pub contract_version: Option<u32>,
-    pub write_wait: Duration,
+    pub tuning: Tuning,
     pub max_connections: usize,
     pub max_connections_per_address: usize,
     pub blob_path: PathBuf,
@@ -223,7 +222,7 @@ impl Reader<'_> {
             path_style,
             prefix: self
                 .take("S3_PREFIX", prefix)
-                .unwrap_or_else(|| "blobs".to_string()),
+                .unwrap_or_else(|| "marfa".to_string()),
         })
     }
 
@@ -261,10 +260,11 @@ impl Reader<'_> {
 /// A server built without test hooks cannot run them, so it will not start asking for any.
 #[cfg(not(feature = "test-hooks"))]
 fn refuse_hooks(reader: &mut Reader) {
-    const NAMES: [&str; 3] = [
+    const NAMES: [&str; 4] = [
         "MARFA_TEST_HOOKS",
         "MARFA_TEST_CLOCK_OFFSET_MS",
         "MARFA_TEST_CONTRACT_VERSION",
+        "MARFA_TEST_TUNING",
     ];
     for name in NAMES {
         let Some(text) = reader.environment.get(name) else {
@@ -314,9 +314,14 @@ impl Fixed {
             .map(|version| version as u32);
         #[cfg(not(feature = "test-hooks"))]
         refuse_hooks(&mut reader);
-        let write_wait = reader
-            .whole("MARFA_WRITE_WAIT_MS", 0, rule::DAY_MS)
-            .unwrap_or(5_000);
+        #[cfg(feature = "test-hooks")]
+        let tuning = reader
+            .take("MARFA_TEST_TUNING", |text| {
+                Tuning::read(text, &crate::app::housekeeping::job_names())
+            })
+            .unwrap_or_default();
+        #[cfg(not(feature = "test-hooks"))]
+        let tuning = Tuning::default();
         let max_connections = reader
             .whole("MARFA_MAX_CONNECTIONS", 1, rule::MILLION)
             .unwrap_or(1_024) as usize;
@@ -352,7 +357,7 @@ impl Fixed {
             clock_offset_ms,
             #[cfg(feature = "test-hooks")]
             contract_version,
-            write_wait: Duration::from_millis(write_wait),
+            tuning,
             max_connections,
             max_connections_per_address,
             blob_path: PathBuf::from(environment.get("MARFA_BLOB_PATH").unwrap_or("./data/blobs")),
@@ -376,7 +381,8 @@ impl Fixed {
             let hooked = |name: &'static str| environment.get(name).map(|value| (name, value));
             let offset = hooked("MARFA_TEST_CLOCK_OFFSET_MS").filter(|_| self.clock_offset_ms > 0);
             let contract = hooked("MARFA_TEST_CONTRACT_VERSION");
-            for (name, value) in offset.into_iter().chain(contract) {
+            let tuning = hooked("MARFA_TEST_TUNING");
+            for (name, value) in offset.into_iter().chain(contract).chain(tuning) {
                 problems.push(rule::line(name, "needs MARFA_TEST_HOOKS to be true", value));
             }
         }

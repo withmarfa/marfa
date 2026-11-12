@@ -1,3 +1,4 @@
+import { signInOwnerWithPassword } from "../../client/owner-session.js";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -555,42 +556,38 @@ describe("the instance from the terminal", () => {
         .getSetCookie()
         .map((value) => value.split(";")[0])
         .join("; ");
-    const signedIn = await fetch(`${origin}/auth/sign-in/email`, {
-      method: "POST",
-      headers: { origin, "content-type": "application/json" },
-      body: JSON.stringify(TEST_OWNER),
-    });
-    expect(signedIn.status).toBe(200);
-    const ownerCookie = cookies(signedIn);
+    const ownerCookie = await signInOwnerWithPassword(
+      origin,
+      origin,
+      TEST_OWNER,
+    );
     const options = await fetch(
-      `${origin}/auth/passkey/generate-register-options`,
+      `${origin}/auth/passkeys/registration/options`,
       {
+        method: "POST",
         headers: { origin, cookie: ownerCookie },
       },
     );
     expect(options.status).toBe(200);
     const challenge = (await options.json()) as { challenge: string };
     const name = unique("cli-passkey");
-    const registered = await fetch(
-      `${origin}/auth/passkey/verify-registration`,
-      {
-        method: "POST",
-        headers: {
-          origin,
-          cookie: [ownerCookie, cookies(options)].filter(Boolean).join("; "),
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          name,
-          response: testAuthenticator().registration(
-            challenge.challenge,
-            origin,
-            new URL(origin).hostname,
-          ),
-        }),
+    const registered = await fetch(`${origin}/auth/passkeys/registration`, {
+      method: "POST",
+      headers: {
+        origin,
+        cookie: [ownerCookie, cookies(options)].filter(Boolean).join("; "),
+        "content-type": "application/json",
       },
-    );
-    expect(registered.status).toBe(200);
+      body: JSON.stringify({
+        name,
+        response: testAuthenticator().registration(
+          challenge.challenge,
+          origin,
+          new URL(origin).hostname,
+        ),
+      }),
+    });
+    expect(registered.status).toBe(201);
     const { id } = (await registered.json()) as { id: string };
     interface Passkey {
       id: string;
@@ -729,15 +726,7 @@ describe("the instance from the terminal", () => {
       verification_uri_complete: string;
     };
     const origin = new URL(code.verification_uri_complete).origin;
-    const signIn = await fetch(`${origin}/auth/sign-in/email`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin },
-      body: JSON.stringify(TEST_OWNER),
-    });
-    const cookie = /(?:^|,\s*)([\w.-]*session_token=[^;]+)/.exec(
-      signIn.headers.get("set-cookie") ?? "",
-    )?.[1];
-    expect(cookie, "sign-in set no session cookie").toBeTruthy();
+    const cookie = await signInOwnerWithPassword(origin, origin, TEST_OWNER);
     const form = new URLSearchParams({
       user_code: code.user_code,
       decision: "approve",
@@ -746,7 +735,7 @@ describe("the instance from the terminal", () => {
     const approved = await fetch(`${origin}/auth/device/consent`, {
       method: "POST",
       headers: {
-        cookie: cookie!,
+        cookie,
         origin,
         "content-type": "application/x-www-form-urlencoded",
       },
@@ -941,8 +930,7 @@ describe("the instance from the terminal", () => {
       data: { id: string; kind: string }[];
       min_copies: number;
     }>(["blobs", "stores"]);
-    expect(stores.data.length).toBeGreaterThan(0);
-    expect(stores.data[0]?.kind).toBe("disk");
+    expect(stores.data.map((store) => store.kind)).toContain("disk");
     expect(stores.min_copies).toBeGreaterThan(0);
     // Two blobs of this scenario's own, one referenced and one not, so the
     // report is read for the hashes this scenario uploaded rather than for
