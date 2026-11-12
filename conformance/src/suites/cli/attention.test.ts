@@ -135,7 +135,7 @@ it("shares private-socket attention, keeps known concerns, and refuses every oth
       credential,
     ).refused(["attention"]);
     expect(refused.envelope.error.code).toBe("forbidden");
-    expect(refused.envelope.error.server.details).toEqual({ needs: "local" });
+    expect(refused.envelope.error.server?.details).toEqual({ needs: "local" });
   }
 
   // A folder with a conflict reported by a current sign-in.
