@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::plan::{self, Act, Asked, Gate};
 use super::{
-    Item, Keys, check_keys, extensions_text, in_the_bin, metadata_for, name_of, not_found, rows,
+    Door, Item, Keys, check_keys, extensions_text, metadata_for, name_of, not_found, rows,
     summary_of, with_blocks,
 };
 use crate::app::App;
@@ -134,11 +134,11 @@ impl<'a, 'c> Reader<'a, 'c> {
     }
 
     pub(super) fn row(&self, id: &str) -> Result<Item> {
-        self.row_in(id, None)
+        self.row_in(id, None, &Door::Read)
     }
 
     /// The item when its state is one `states` names, or not in the bin where it names none.
-    fn row_in(&self, id: &str, states: Option<&States>) -> Result<Item> {
+    fn row_in(&self, id: &str, states: Option<&States>, door: &Door) -> Result<Item> {
         self.caller.require_reach()?;
         let row = rows::by_id(self.tx, id)?
             .filter(|row| self.caller.may_read_type(&row.type_id))
@@ -151,7 +151,7 @@ impl<'a, 'c> Reader<'a, 'c> {
         if reached {
             Ok(row)
         } else if row.state == "trashed" {
-            Err(in_the_bin())
+            Err(door.in_the_bin())
         } else {
             Err(not_found())
         }
@@ -275,10 +275,14 @@ pub async fn detail(
     caller: &Caller,
     id: String,
     include: Detail,
-    states: Option<States>,
+    door: Door,
 ) -> Result<String> {
     reading(app, caller, move |read| {
-        let row = read.row_in(&id, states.as_ref())?;
+        let states = match &door {
+            Door::Get(states) => states.as_ref(),
+            _ => None,
+        };
+        let row = read.row_in(&id, states, &door)?;
         read.hydrating();
         let versions = if include.versions {
             format!(",\"versions\":{}", read.history_page(&row, 0, FIRST_PAGE)?)

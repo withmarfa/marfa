@@ -318,13 +318,27 @@ fn not_found() -> Refusal {
     Refusal::new(Code::ItemNotFound, "Item not found")
 }
 
-/// Told only to a key that may read the item's type.
-fn in_the_bin() -> Refusal {
-    Refusal::new(
-        Code::ItemNotFound,
-        "This item is in the trash. Restore it to change it, or read it with state=trashed.",
-    )
-    .with_detail("trashed", true)
+/// How a door that meets an item in the trash tells a key that may read the item's type what it
+/// can do next.
+#[derive(Clone, Debug)]
+pub enum Door {
+    /// `GET /items/{id}`, which takes a `state`.
+    Get(Option<crate::app::query::States>),
+    /// A read of the item's parts, or of the item by a door that takes no `state`.
+    Read,
+    /// A change to the item.
+    Write,
+}
+
+impl Door {
+    fn in_the_bin(&self) -> Refusal {
+        let text = match self {
+            Door::Get(_) => "This item is in the trash. Read it with state=trashed, or restore it.",
+            Door::Read => "This item is in the trash. Restore it to read this.",
+            Door::Write => "This item is in the trash. Restore it to change it.",
+        };
+        Refusal::new(Code::ItemNotFound, text).with_detail("trashed", true)
+    }
 }
 
 /// An item whose tables a door reads or writes.

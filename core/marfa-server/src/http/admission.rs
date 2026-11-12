@@ -8,7 +8,7 @@ use axum::middleware::Next;
 use axum::response::Response;
 
 use super::answer::refusal_answer;
-use super::caller::{bears_token, identify, refused};
+use super::caller::{bears_token, identify};
 use super::observe::RequestContext;
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
@@ -56,11 +56,7 @@ pub async fn admit(
         &parts.headers,
         on_socket(&parts.extensions),
     ) {
-        let refusal = match caller {
-            None => refused(&parts),
-            Some(_) => unauthorized(),
-        };
-        return refusal_answer(&refusal);
+        return refusal_answer(&unauthorized());
     }
     next.run(Request::from_parts(parts, body)).await
 }

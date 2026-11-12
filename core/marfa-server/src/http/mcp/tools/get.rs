@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 use super::{Definition, item_id, parsed, text, texts};
 use crate::app::access::Caller;
 use crate::app::blobs::Hash;
-use crate::app::items::{self, Detail, Many};
+use crate::app::items::{self, Detail, Door, Many};
 use crate::app::{App, tables, types};
 use crate::http::mcp::results::{ANSWER_BUDGET_CHARS, Outcome, Stop, cut_text, json_length};
 
@@ -313,7 +313,8 @@ async fn field_part(
             "Reading part of a field takes one ID and field.",
         ));
     };
-    let read = parsed(&items::detail(app, caller, id.clone(), Detail::default(), None).await?)?;
+    let read =
+        parsed(&items::detail(app, caller, id.clone(), Detail::default(), Door::Read).await?)?;
     let value = read
         .get("item")
         .and_then(|item| item.get("properties"))

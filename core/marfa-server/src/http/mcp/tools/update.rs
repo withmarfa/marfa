@@ -11,7 +11,7 @@ use crate::app::access::Caller;
 use crate::app::edges::write::{Create, Delete, Op};
 use crate::app::edges::{ItemListing, Reach};
 use crate::app::items::write::{self, Change, Settle};
-use crate::app::items::{self, Detail};
+use crate::app::items::{self, Detail, Door};
 use crate::app::refusal::{Code, Refusal};
 use crate::http::items::{tags_of, update_from};
 use crate::http::mcp::results::{Outcome, Stop};
@@ -376,7 +376,7 @@ pub async fn run(
     let remove_tags = texts(&arguments, "remove_tags");
     let wanted_state = text(&arguments, "state");
 
-    let read = items::detail(app, caller, id.clone(), Detail::default(), None).await;
+    let read = items::detail(app, caller, id.clone(), Detail::default(), Door::Write).await;
     let current = match read {
         Ok(text) => parsed(&text)?.get("item").cloned().unwrap_or(Value::Null),
         // A read with no state refuses an item in the trash; the restore checks its version.

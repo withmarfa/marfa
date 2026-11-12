@@ -241,6 +241,9 @@ pub async fn bin(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answe
 /// row's fields, a type or a key could have put in a message.
 fn safe(refusal: Refusal) -> Refusal {
     if refusal.commit_failed {
+        if refusal.code == Code::InsufficientStorage {
+            return refusal;
+        }
         return Refusal::new(
             Code::InternalError,
             "The change may have completed, but its result could not be confirmed. Read the \
@@ -353,4 +356,33 @@ pub async fn empty(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Ans
     }
     let answer = json!({ "purged": purged, "failures": failures, "next_cursor": next_cursor });
     Ok(text_answer(StatusCode::OK, answer.to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unconfirmed(code: Code) -> Refusal {
+        Refusal {
+            commit_failed: true,
+            ..Refusal::new(code, "text from below")
+        }
+        .with_detail("write_outcome", "unknown")
+    }
+
+    #[test]
+    fn a_commit_a_full_volume_turned_away_stays_a_507_with_its_outcome() {
+        let told = safe(unconfirmed(Code::InsufficientStorage));
+        assert_eq!(told.code, Code::InsufficientStorage);
+        assert_eq!(told.code.status(), 507);
+        assert_eq!(told.details.unwrap()["write_outcome"], "unknown");
+    }
+
+    #[test]
+    fn any_other_failed_commit_is_a_500_with_its_outcome_and_no_text_from_below() {
+        let told = safe(unconfirmed(Code::InternalError));
+        assert_eq!(told.code, Code::InternalError);
+        assert!(!told.message.contains("text from below"));
+        assert_eq!(told.details.unwrap()["write_outcome"], "unknown");
+    }
 }

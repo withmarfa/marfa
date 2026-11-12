@@ -555,7 +555,7 @@ mod tests {
 
     use super::*;
     use crate::app::items::write::{Change, Put, Update};
-    use crate::app::items::{self, Detail};
+    use crate::app::items::{self, Detail, Door};
     use crate::settings::{Environment, Settings};
 
     async fn started() -> (TempDir, Arc<App>) {
@@ -613,7 +613,7 @@ mod tests {
             &Caller::local(),
             id.to_string(),
             Detail::default(),
-            None,
+            Door::Read,
         )
         .await
         .unwrap();

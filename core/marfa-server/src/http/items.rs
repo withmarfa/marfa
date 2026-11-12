@@ -23,7 +23,7 @@ use crate::app::access::Caller;
 use crate::app::edges::write::Inline;
 use crate::app::idempotency::{self, Claim, Entry, Kept, MAX_KEY_CHARACTERS};
 use crate::app::items::write::{self, Change, Done, Put, Settle, Update, ruled};
-use crate::app::items::{self, Detail, Many};
+use crate::app::items::{self, Detail, Door, Many};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::types::{check_id, missing_field};
 
@@ -576,7 +576,7 @@ pub async fn read(
     let params = Params::from_pairs(query::pairs(&uri)?, &["include", "state"])?;
     let states = params.one("state")?.map(states_of).transpose()?;
     check_item_id(&id)?;
-    let answer = items::detail(&app, &caller, id, include, states).await?;
+    let answer = items::detail(&app, &caller, id, include, Door::Get(states)).await?;
     Ok(text_answer(StatusCode::OK, answer))
 }
 
