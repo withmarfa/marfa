@@ -216,12 +216,22 @@ describe("folder clock and scan boundaries", () => {
     await folderTold(watch, "watching");
     // Let the first full pass end, then the file go while another folder the
     // file may have moved to cannot be told.
+    // The watch dates what it meets (the file's removal, a look at the other
+    // folders) by the clock at the turn that meets it, so each second is let
+    // reach the watch before the next: its own wait is back on the clock once
+    // it has taken the second and finished any pass. The 200 ms wait that
+    // looks for a command asking for the folder is always there and says
+    // nothing of the watch.
+    const lookWaitMs = 200;
     const run = async (ms: number) => {
       for (let left = ms; left > 0; left -= 1_000) {
         await device.clock.advance(Math.min(1_000, left));
         await vi.waitFor(
           async () => {
-            expect((await device.clock.waits()).length).toBeGreaterThan(0);
+            const waits = await device.clock.waits();
+            expect(
+              waits.filter((wait) => wait.askedMs !== lookWaitMs).length,
+            ).toBeGreaterThan(0);
           },
           { timeout: 10_000, interval: 5 },
         );
