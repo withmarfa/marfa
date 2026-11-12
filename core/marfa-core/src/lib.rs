@@ -108,7 +108,7 @@ pub use body::{
 };
 pub use catalog::ServerCatalog;
 pub use catch_up::{Change, ChangeEvent, FollowReport};
-pub use drain::{DrainReport, DrainVerdict};
+pub use drain::{DrainReport, DrainVerdict, limiting};
 pub use error::{
     CODES as ERROR_CODES, CoreError, CoreErrorKind, FolderStore, environmental_status,
 };

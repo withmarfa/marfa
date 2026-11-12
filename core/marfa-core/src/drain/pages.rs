@@ -203,9 +203,11 @@ pub(super) fn send(
 /// what else waits; and with nothing about them the walk decides on a
 /// write's own answer.
 ///
-/// A page goes before the walk, so it stops at the first unanswered write
-/// that is not a create: everything behind that write goes after it, as the
-/// queue's order says (`queue-and-verdicts/queue-sends-in-order`).
+/// A page goes before the walk, and so before the writes it does not carry
+/// that are queued ahead of its creates: a create's own id is new, an edge to
+/// an item in the bin is refused when it is queued, and a create waits on what
+/// it depends on, which `readiness` reads, so no write ahead of one changes
+/// what the server makes of it.
 fn candidates<'a>(
     core: &Core,
     lane: Lane,
@@ -219,9 +221,6 @@ fn candidates<'a>(
             .answers
             .get(&row.id)
             .is_some_and(|verdict| verdict.is_none());
-        if !matches!(row.kind, WriteKind::CreateItem | WriteKind::CreateEdge) && unanswered {
-            break;
-        }
         if row.kind != lane.kind()
             || !unanswered
             || row.follows.is_some()
@@ -957,5 +956,67 @@ mod tests {
                 assert_eq!((row.verdict, row.refusals), (None, 0));
             }
         }
+    }
+
+    /// `queue-and-verdicts/create-pages`: a write ahead of the creates, here
+    /// an edit to the first, holds none of them out of the page.
+    #[test]
+    fn creates_queued_behind_a_write_that_is_not_a_create_go_in_a_page() {
+        let server = Scripted::start();
+        let (_dir, core) = creating(&server, FLOOR + 1);
+        let first = core.queue().unwrap()[0].item_id.clone().unwrap();
+        let mut edit = crate::model::Edit {
+            base_version: Some(0),
+            ..Default::default()
+        };
+        edit.properties.insert("title".into(), "Renamed".into());
+        core.update_item(&first, &edit).unwrap();
+        for at in 0..FLOOR {
+            core.create_item(&Draft {
+                r#type: "core.note".into(),
+                properties: serde_json::json!({ "title": format!("Later {at}") })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                ..Default::default()
+            })
+            .unwrap();
+        }
+        server.on(
+            "/items/bulk",
+            vec![scripted::refusal(400, "invalid_request")],
+        );
+
+        let _ = core.drain();
+
+        let pages = server.seen("/items/bulk");
+        assert_eq!(pages.len(), 1);
+        let page: serde_json::Value = serde_json::from_slice(&pages[0].body).unwrap();
+        assert_eq!(page["items"].as_array().unwrap().len(), 2 * FLOOR + 1);
+    }
+
+    /// A limited page says what the server did and for how long, and the
+    /// drain keeps the wait.
+    #[test]
+    fn a_limited_page_says_the_server_is_limiting_requests_and_for_how_long() {
+        let server = Scripted::start();
+        let (_dir, core) = creating(&server, FLOOR + 1);
+        server.on(
+            "/items/bulk",
+            vec![scripted::Answer::Json {
+                status: 429,
+                body: r#"{"error":{"code":"rate_limited","message":"scripted"}}"#.into(),
+                headers: vec![("Retry-After".into(), "7".into())],
+            }],
+        );
+
+        let drained = core.drain().unwrap();
+
+        assert_eq!(
+            drained.unavailable.as_deref(),
+            Some("the server is limiting requests; waiting 7s")
+        );
+        assert_eq!(drained.retry_after_seconds, Some(7));
+        assert_eq!(server.seen("/items/bulk").len(), 1);
     }
 }

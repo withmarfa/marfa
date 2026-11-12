@@ -54,6 +54,10 @@ pub enum WatchEvent {
     /// The server cannot be reached, for `Some` reason, or answers again,
     /// for `None`. Told only when it changes.
     Reach(Option<String>),
+    /// The server limited requests, and the watch waits the `wait` it named
+    /// before sending any more, or its own backoff where it named none. The
+    /// server answered, so this is no loss of reach.
+    Limited { wait: Option<Duration> },
     /// The folder's directory is gone, and the watch waits for it to come
     /// back. Told once for as long as it stays gone.
     Waiting {
@@ -199,6 +203,8 @@ enum Wake {
     Retrying(CoreError, Duration),
     /// Why the server cannot be reached, or `None` where it answers again.
     Reach(Option<String>),
+    /// The changes stream was limited, for the wait the server named.
+    Limited(Option<Duration>),
     Ended(CoreError),
     /// A command asks for the folder.
     Asked,
@@ -391,6 +397,14 @@ impl Folder {
                         tell(event).map_err(WatchError::Told)?;
                     }
                 }
+                Ok(Wake::Limited(wait)) => {
+                    changed = true;
+                    if let Some(wait) = wait {
+                        let until = crate::clock::now() + wait;
+                        send_again_at = Some(send_again_at.map_or(until, |held| held.max(until)));
+                    }
+                    tell(WatchEvent::Limited { wait }).map_err(WatchError::Told)?;
+                }
                 Ok(Wake::Ended(error)) => return Err(follow_ended(error)),
                 Ok(Wake::Asked) => continue,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -513,6 +527,7 @@ impl Folder {
         let generation = health.lock().expect("follow health lock").generation;
         let drain = self.drain_in(true)?;
         let reached = match &drain.report.unavailable {
+            Some(_) if limited_by_server(&drain.report) => None,
             Some(why) => telling.reach(Some(why.clone())),
             None if drain.report.answered > 0 => telling.reach(None),
             None => None,
@@ -662,6 +677,9 @@ impl Folder {
         } else {
             None
         };
+        if wait.is_some() {
+            tell(WatchEvent::Limited { wait }).map_err(WatchError::Told)?;
+        }
         if let Some(event) = event {
             tell(event).map_err(WatchError::Told)?;
         }
@@ -858,9 +876,13 @@ fn follow(
                 unreachable,
                 |change| {
                     let _ = wakes.send(match &change.event {
-                        crate::ChangeEvent::ServerUnreachable(reason) => {
+                        crate::ChangeEvent::ServerUnreachable(error) => {
                             unreachable = true;
-                            Wake::Reach(Some(reason.to_string()))
+                            if error.is_rate_limited() {
+                                Wake::Limited(error.retry_after())
+                            } else {
+                                Wake::Reach(Some(error.to_string()))
+                            }
                         }
                         crate::ChangeEvent::ServerReachable => {
                             unreachable = false;
@@ -1071,6 +1093,12 @@ fn rate_limit_wait(drain: &crate::DrainReport) -> Option<Duration> {
         return None;
     }
     drain.retry_after_seconds.map(Duration::from_secs)
+}
+
+/// Whether the drain stopped because the server limited requests, which it
+/// answered, rather than because it could not be reached.
+fn limited_by_server(report: &crate::DrainReport) -> bool {
+    report.unavailable.as_deref() == Some(crate::limiting(report.retry_after_seconds).as_str())
 }
 
 fn retry_schedule(backoff: Duration, error: &CoreError) -> (Duration, Duration) {

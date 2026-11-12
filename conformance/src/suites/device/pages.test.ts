@@ -391,7 +391,7 @@ describe("creates in pages", () => {
     expect(first.answered, JSON.stringify(first)).toBe(0);
     expect(first.undelivered).toBe(50);
     expect(first.retry_after_seconds).toBe(2);
-    expect(first.unavailable).toMatch(/429/);
+    expect(first.unavailable).toMatch(/the server is limiting requests; waiting 2s/);
     const waiting = value(await harness.device.queue());
     for (const row of waiting) {
       expect(row.verdict, JSON.stringify(row)).toBeNull();
@@ -523,10 +523,8 @@ describe("creates in pages", () => {
     expect(door.items.size).toBe(51);
   });
 
-  it("sends no create in a page ahead of a write queued before it that is not a create", async () => {
+  it("sends creates in a page past a write queued before them that is not a create", async () => {
     const target = "01a00000-0000-7000-8000-0000000000bb";
-    // An item of its own, since an edge to an item in the bin is refused before
-    // it is queued (`queue-and-verdicts/edge-end-in-bin-refused`).
     const gone = "01a00000-0000-7000-8000-0000000000cc";
     const sources = Array.from(
       { length: 50 },
@@ -540,16 +538,13 @@ describe("creates in pages", () => {
     harness = made.harness;
     const { door } = made;
     const removed = value(await harness.device.deleteItem(gone));
-    const edges: QueuedWrite[] = [];
     for (const source of sources)
-      edges.push(
-        value(
-          await harness.device.createEdge({
-            source,
-            target,
-            type: "references",
-          }),
-        ),
+      value(
+        await harness.device.createEdge({
+          source,
+          target,
+          type: "references",
+        }),
       );
 
     const drained = await drain(harness);
@@ -560,21 +555,10 @@ describe("creates in pages", () => {
     );
     expect(deletes, JSON.stringify(drained)).toHaveLength(1);
     const deleted = deletes[0]?.seq ?? Infinity;
-    // Every edge write went after the delete queued ahead of it, and none
-    // in a page sent before the walk reached the delete.
-    const edgeWrites = harness.server.requests.filter(
-      (request) =>
-        request.method === "POST" &&
-        (request.pathname === "/edges" || request.pathname === "/edges/bulk"),
-    );
-    expect(edgeWrites.length).toBeGreaterThan(0);
-    expect(edgeWrites.filter((request) => request.seq < deleted)).toEqual([]);
-    expect(door.requests("POST", "/edges/bulk")).toHaveLength(0);
-    expect(
-      door
-        .requests("POST", "/edges")
-        .map((request) => (JSON.parse(request.body) as WireEdgeOptions).id),
-    ).toEqual(edges.map((edge) => edge.edge_id));
+    const pages = door.requests("POST", "/edges/bulk");
+    expect(pages).toHaveLength(1);
+    expect(pages[0]?.seq).toBeLessThan(deleted);
+    expect(door.requests("POST", "/edges")).toHaveLength(0);
     expect(removed.kind).toBe("delete_item");
   });
 
@@ -667,7 +651,7 @@ describe("creates in pages", () => {
     const first = await drain(harness);
 
     expect(limited).toBe(true);
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(/the server is limiting requests/);
     expect(first.retry_after_seconds).toBe(2);
     expect(first.answered).toBe(50);
     expect(first.verdicts.map((entry) => entry.verdict)).toEqual(
@@ -740,7 +724,7 @@ describe("creates in pages", () => {
         : answers.validation("validation_error", "The read was refused");
     };
     const first = await drain(harness);
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(/the server is limiting requests/);
     const late = value(
       await harness.device.create({
         type: "core.note",
@@ -822,7 +806,7 @@ describe("creates in pages", () => {
     const first = await drain(harness);
 
     expect(limited).toBe(true);
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(/the server is limiting requests/);
     expect(door.requests("POST", "/edges/bulk")).toHaveLength(1);
     expect(patches).toEqual([]);
     door.unlisted.add(edgeId);
@@ -875,7 +859,7 @@ describe("creates in pages", () => {
     const first = await drain(harness);
 
     expect(limited).toBe(true);
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(/the server is limiting requests/);
     door.unlisted.add(edgeId);
     refusing = true;
     const late = value(
@@ -976,7 +960,7 @@ describe("creates in pages", () => {
 
     const first = await drain(harness);
 
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(/the server is limiting requests/);
     expect(patches).toEqual([]);
     // Another device edits the item between the page and its owed read.
     const created = door.items.get(id) ?? {};

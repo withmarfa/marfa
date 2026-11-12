@@ -619,6 +619,13 @@ fn tell(
                 )
             },
         ),
+        WatchEvent::Limited { wait } => {
+            let seconds = wait.map(|wait| wait.as_secs());
+            say.line(
+                serde_json::json!({ "server": server, "limited": true, "wait_seconds": seconds }),
+                || marfa_core::limiting(seconds),
+            )
+        }
         WatchEvent::Reach(None) => say.line(
             serde_json::json!({ "server": server, "reachable": true, "reason": null }),
             || format!("the server at {server} answers again"),

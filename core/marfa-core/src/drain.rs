@@ -332,6 +332,15 @@ fn rate_limited(answer: &std::result::Result<Answer, CoreError>) -> bool {
     }
 }
 
+/// How a limit reads wherever it is told: what the server did, and how long
+/// it asked for.
+pub fn limiting(wait: Option<u64>) -> String {
+    match wait {
+        Some(wait) => format!("the server is limiting requests; waiting {wait}s"),
+        None => "the server is limiting requests".into(),
+    }
+}
+
 /// Whether the failure came before the write was answered, from the credential
 /// renewal or the device's own disk, and so says nothing of the write.
 fn not_the_writes(answer: &std::result::Result<Answer, CoreError>) -> bool {
@@ -2280,13 +2289,7 @@ fn unavailable(answer: &std::result::Result<Answer, CoreError>) -> Option<String
             answer.status
         )),
         Ok(answer) => match answer.status {
-            429 => Some(format!(
-                "the server is limiting requests (429){}",
-                answer
-                    .retry_after_seconds
-                    .map(|wait| format!(" and asked for {wait}s before the next"))
-                    .unwrap_or_default()
-            )),
+            429 => Some(limiting(answer.retry_after_seconds)),
             status if crate::error::environmental_status(status) => Some(format!(
                 "the server could not take the write now ({}{})",
                 answer.status,
@@ -2309,11 +2312,12 @@ fn unavailable_by(error: &CoreError) -> Option<String> {
             Some(format!("the server could not be reached: {error}"))
         }
         CoreError::Unnamed { .. } => Some(error.to_string()),
-        CoreError::RateLimited { .. } | CoreError::Server { .. } if error.is_environmental() => {
-            Some(format!(
-                "the server could not take the request now: {error}"
-            ))
+        CoreError::RateLimited { .. } => {
+            Some(limiting(error.retry_after().map(|wait| wait.as_secs())))
         }
+        CoreError::Server { .. } if error.is_environmental() => Some(format!(
+            "the server could not take the request now: {error}"
+        )),
         _ => None,
     }
 }

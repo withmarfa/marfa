@@ -304,6 +304,17 @@ impl CoreError {
         }
     }
 
+    /// Whether the server answered `429`, which the renewal of a credential may
+    /// have met.
+    pub fn is_rate_limited(&self) -> bool {
+        match self {
+            CoreError::RenewalFailed(cause) => cause.is_rate_limited(),
+            CoreError::RateLimited { .. } | CoreError::Unnamed { status: 429, .. } => true,
+            CoreError::Server { status, .. } => *status == 429,
+            _ => false,
+        }
+    }
+
     pub fn retry_after(&self) -> Option<Duration> {
         match self {
             CoreError::RenewalFailed(cause) => cause.retry_after(),

@@ -21,7 +21,8 @@ import { Cli, requireBinary } from "./harness.js";
  * (`queue-and-verdicts/create-pages`). Sent one at a time, each file costs
  * four requests, its item and its placement each written and read back, so
  * a limit of 150 a minute would stop this push long before its 600 writes
- * end.
+ * end, and a write ahead of the creates that is not a create does not send
+ * them one by one.
  */
 
 const NOTES = 300;
@@ -62,6 +63,12 @@ it(
       JSON.stringify({ type: "core.note" }),
     ]);
     mkdirSync(files);
+    // First in the queue, a write that is not a create: a note the person
+    // archived, whose move goes on its own door ahead of the creates.
+    writeFileSync(
+      join(files, "000-archived.md"),
+      "---\ntitle: Archived\nstate: archived\n---\nPut away.\n",
+    );
     for (let at = 0; at < NOTES; at += 1) {
       writeFileSync(
         join(files, `note-${String(at)}.md`),
@@ -81,7 +88,8 @@ it(
       };
     };
     expect(report.drain.undelivered).toBe(0);
-    expect(report.drain.answered).toBe(NOTES * 2);
+    // Each note's create and placement, and the archived one's move.
+    expect(report.drain.answered).toBe((NOTES + 1) * 2 + 1);
     expect(
       report.drain.verdicts.filter((entry) => entry.verdict !== "accepted"),
     ).toEqual([]);
@@ -103,6 +111,7 @@ it(
         titles.add(String(note.properties.title));
       cursor = page.data.next_cursor ?? undefined;
     } while (cursor !== undefined);
+    // The listing leaves out the archived note.
     expect(titles.size).toBe(NOTES);
     expect(titles.has(`Note ${String(NOTES - 1)}`)).toBe(true);
   },

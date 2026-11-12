@@ -3736,7 +3736,7 @@ describe("files and items", () => {
       },
     });
     put(harness, "One.md", "---\ntitle: One\n---\nOne\n");
-    const watching = harness.folder.watch();
+    const watching = harness.folder.watchText();
     try {
       // How long the watch takes to start is not what this measures.
       await vi.waitFor(
@@ -3756,6 +3756,30 @@ describe("files and items", () => {
       attempts[1]! - attempts[0]!,
       "the watch sent again before the wait the rate limit named",
     ).toBeGreaterThanOrEqual(1900);
+    expect(watching.stdout).toContain(
+      "the server is limiting requests; waiting 2s",
+    );
+    expect(watching.stdout).not.toContain("cannot reach the server");
+  });
+
+  it("says the server is limiting requests, not that it cannot be reached, when its changes stream is limited", async () => {
+    harness = await folderHarness("watch-stream-rate-limit", {
+      events: [answers.rateLimited(), copyHeadRead("1")],
+    });
+    scriptFolderWrites(harness);
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(
+        () =>
+          expect(watching.stdout).toContain(
+            "the server is limiting requests; waiting 2s",
+          ),
+        { timeout: 60_000, interval: 100 },
+      );
+    } finally {
+      await watching.stop();
+    }
+    expect(watching.stdout).not.toContain("cannot reach the server");
   });
 
   it("reports a placement the server refuses in the push's second drain, and does not send it again", async () => {
