@@ -207,8 +207,7 @@ pub fn undo_request(item: &str, table: &str, batch: &str) -> Request {
     Request::post(&["items", item, "tables", table, "batches", batch, "undo"])
 }
 
-/// Names the column of a refusal for the one row `put` or `patch` sent,
-/// rather than its place in the batch that carried it.
+/// Paths within the one row `put` or `patch` sent, not its place in the batch.
 pub fn for_one_row(error: CliError) -> CliError {
     let CliError::Refused {
         status,

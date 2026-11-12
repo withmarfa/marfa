@@ -379,7 +379,7 @@ pub async fn run(
     let read = items::detail(app, caller, id.clone(), Detail::default(), None).await;
     let current = match read {
         Ok(text) => parsed(&text)?.get("item").cloned().unwrap_or(Value::Null),
-        // Trashed items cannot be read by ID; restoration checks their retained version.
+        // A read with no state refuses an item in the trash; the restore checks its version.
         Err(refusal) if refusal.code == Code::ItemNotFound && restore_only(&arguments) => {
             let change = Change::Transition {
                 id: id.clone(),
