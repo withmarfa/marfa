@@ -399,8 +399,7 @@ async fn confirmed(
     .await
 }
 
-/// Changes the signed-in owner's password, counted as a sign-in is, and ends every other
-/// browser session. Answers the device mark the browser that made the change keeps.
+/// Ends the owner's other browser sessions too, and answers this browser's new device mark.
 pub async fn change_password(
     app: &App,
     caller: &Caller,

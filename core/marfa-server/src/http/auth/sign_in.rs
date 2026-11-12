@@ -20,7 +20,7 @@ use crate::http::caller::OnPage;
 
 const PASSWORD_FIELDS: [&str; 2] = ["email", "password"];
 const CONFIRM_FIELDS: [&str; 2] = ["password", "passkey"];
-const CONFIRM_PASSWORD_CHARS: usize = 1024;
+const CURRENT_PASSWORD_CHARS: usize = 1024;
 const CHANGE_FIELDS: [&str; 2] = ["current_password", "new_password"];
 
 fn not_from_here() -> Refusal {
@@ -169,7 +169,7 @@ fn passkey_or_password(body: &Map<String, Value>) -> Result<Proof, Refusal> {
     match (body.get("password"), body.get("passkey")) {
         (Some(Value::String(password)), None) => {
             let length = password.chars().count();
-            if (1..=CONFIRM_PASSWORD_CHARS).contains(&length) {
+            if (1..=CURRENT_PASSWORD_CHARS).contains(&length) {
                 Ok(Proof::Password(password.clone()))
             } else {
                 Err(Refusal::validation("Enter your password."))
@@ -212,7 +212,7 @@ pub async fn confirm(
 fn current_password(body: &Map<String, Value>) -> Result<String, Refusal> {
     match body.get("current_password") {
         Some(Value::String(password))
-            if (1..=CONFIRM_PASSWORD_CHARS).contains(&password.chars().count()) =>
+            if (1..=CURRENT_PASSWORD_CHARS).contains(&password.chars().count()) =>
         {
             Ok(password.clone())
         }
