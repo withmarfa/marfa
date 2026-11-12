@@ -182,9 +182,13 @@ pub enum FoldersCommand {
         /// Each folder uses the server its copy came from, and each line names
         /// its folder. A folder added or removed while the watch runs joins or
         /// leaves it. A folder that can't be watched is reported once and
-        /// tried again. Either way the watch keeps a record of its folders in
-        /// `folder-watch.json` beside the registry, for other programs on
-        /// the machine to read.
+        /// tried again. A folder whose sign-in ended is reported once as
+        /// `signed_out` and is not tried again with that sign-in; it is
+        /// watched once `marfa login` or `marfa keys keep` keeps a new
+        /// credential, and the other folders go on. A watch of one folder ends
+        /// with exit status 5 when its sign-in ends. Either way the watch keeps
+        /// a record of its folders in `folder-watch.json` beside the registry,
+        /// for other programs on the machine to read.
         dir: Option<PathBuf>,
         /// Stop after this long. Unset, it runs until interrupted.
         #[arg(long, value_name = "SECONDS")]

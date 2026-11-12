@@ -135,6 +135,17 @@ impl Machine {
             .and_then(|opened| opened.refused.clone())
     }
 
+    /// The credential refusal a folder met, kept while no credential is held,
+    /// so the person sees one reason until a new one is kept.
+    fn ended_while_absent(&self, dir: &Path, error: &CliError) -> Option<Unwatched> {
+        if !matches!(error, CliError::NoCredential { .. }) {
+            return None;
+        }
+        self.folders()
+            .get(dir)
+            .and_then(|opened| opened.refused.clone())
+    }
+
     fn opened_with(&self, dir: &Path, server: String, bearer: String) {
         self.folders().insert(
             dir.to_path_buf(),
@@ -151,6 +162,9 @@ impl Machine {
         output::line_of(value, self.json, human)
     }
 }
+
+/// The codes of a watch that ended with its credential.
+const CREDENTIAL_ENDED: [&str; 2] = ["unauthorized", "signed_out"];
 
 fn unwatched(error: &CliError) -> Unwatched {
     let message = match error {
@@ -170,10 +184,10 @@ impl EveryFolder for Machine {
     type Error = CliError;
 
     fn open(&self, dir: &Path, origin: Option<&str>) -> Result<Folder, Unwatched> {
-        let session = self
-            .named
-            .session_for(origin)
-            .map_err(|error| unwatched(&error))?;
+        let session = self.named.session_for(origin).map_err(|error| {
+            self.ended_while_absent(dir, &error)
+                .unwrap_or_else(|| unwatched(&error))
+        })?;
         let (server, bearer) = (session.server.url.clone(), session.server.key.clone());
         if let Some(refused) = self.still_refused(dir, &bearer) {
             return Err(refused);
@@ -184,7 +198,7 @@ impl EveryFolder for Machine {
     }
 
     fn ended(&self, dir: &Path, reason: &Unwatched) {
-        if reason.code == "unauthorized"
+        if CREDENTIAL_ENDED.contains(&reason.code.as_str())
             && let Some(opened) = self.folders().get_mut(dir)
         {
             opened.refused = Some(reason.clone());
@@ -216,10 +230,14 @@ impl EveryFolder for Machine {
                         "reason": reason.message,
                     }),
                     || {
-                        format!(
-                            "not watched: {}; trying again",
-                            reason.message
-                        )
+                        if CREDENTIAL_ENDED.contains(&reason.code.as_str()) {
+                            format!(
+                                "not watched: {}; it is watched again once `marfa login` or `marfa keys keep` keeps a new credential",
+                                reason.message
+                            )
+                        } else {
+                            format!("not watched: {}; trying again", reason.message)
+                        }
                     },
                 )
             }
@@ -506,6 +524,7 @@ fn held_elsewhere(say: Say<'_>, record: Option<&WatchRecord>, root: &Path) -> Re
 
 fn ended(server: &str, error: WatchError<CliError>) -> CliError {
     match error {
+        WatchError::CredentialRefused(error) if error.is_signed_out() => signed_out(error),
         WatchError::CredentialRefused(error) => refused_credential(server, &error),
         WatchError::FollowEnded(error) => CliError::Watch(format!(
             "the server's changes stopped reaching this folder: {error}"
@@ -513,6 +532,16 @@ fn ended(server: &str, error: WatchError<CliError>) -> CliError {
         WatchError::Unwatchable(reason) => CliError::Watch(reason),
         WatchError::Core(error) => error.into(),
         WatchError::Told(error) => error,
+    }
+}
+
+/// The sign-in that ended, as the commands that send say it: to run
+/// `marfa login`.
+fn signed_out(error: CoreError) -> CliError {
+    match error {
+        CoreError::RenewalFailed(cause) => signed_out(*cause),
+        CoreError::SignedOut { origin } => CliError::SignedOut { origin },
+        other => other.into(),
     }
 }
 
@@ -907,6 +936,108 @@ mod tests {
         machine.opened_with(dir, "https://one.test".into(), "third".into());
         machine.ended(dir, &ended);
         assert_eq!(machine.still_refused(dir, "third"), None);
+    }
+
+    #[test]
+    fn a_folder_signed_out_is_not_opened_again_with_the_credential_that_ended() {
+        let machine = Machine {
+            named: Named::default(),
+            json: false,
+            registry: PathBuf::from("folders.json"),
+            folders: Mutex::default(),
+        };
+        let dir = Path::new("/notes");
+        let out = Unwatched {
+            code: "signed_out".into(),
+            message: "signed out of https://one.test: sign in again".into(),
+        };
+        machine.opened_with(dir, "https://one.test".into(), "first".into());
+        machine.ended(dir, &out);
+        assert_eq!(machine.still_refused(dir, "first"), Some(out));
+        // The witness: a credential kept since is tried.
+        assert_eq!(machine.still_refused(dir, "second"), None);
+    }
+
+    #[test]
+    fn a_folder_signed_out_is_not_opened_with_that_credential_at_any_retry() {
+        let named = |key: &str| Named {
+            url: Some("https://one.test".into()),
+            key: Some(key.into()),
+            profile: None,
+        };
+        let dir = Path::new("/notes");
+        let out = Unwatched {
+            code: "signed_out".into(),
+            message: "signed out of https://one.test: sign in again".into(),
+        };
+        let machine = Machine {
+            named: named("first"),
+            json: false,
+            registry: PathBuf::from("folders.json"),
+            folders: Mutex::default(),
+        };
+        machine.opened_with(dir, "https://one.test".into(), "first".into());
+        machine.ended(dir, &out);
+        for retry in 0..3 {
+            let refused = machine.open(dir, Some("https://one.test")).err();
+            assert_eq!(refused, Some(out.clone()), "retry {retry}");
+        }
+        // The witness: with another credential the folder is opened, which
+        // here fails on its missing directory, not with the stored reason.
+        let other = Machine {
+            named: named("second"),
+            ..machine
+        };
+        let opened = other.open(dir, Some("https://one.test")).err().unwrap();
+        assert_ne!(opened, out);
+    }
+
+    #[test]
+    fn a_folder_signed_out_stays_signed_out_while_its_credential_is_gone() {
+        let machine = Machine {
+            named: Named::default(),
+            json: false,
+            registry: PathBuf::from("folders.json"),
+            folders: Mutex::default(),
+        };
+        let dir = Path::new("/notes");
+        let gone = CliError::NoCredential {
+            origin: "https://one.test".into(),
+            profile: None,
+        };
+        // Nothing met yet: the absence is its own reason.
+        assert_eq!(machine.ended_while_absent(dir, &gone), None);
+        let out = Unwatched {
+            code: "signed_out".into(),
+            message: "signed out of https://one.test: sign in again".into(),
+        };
+        machine.opened_with(dir, "https://one.test".into(), "first".into());
+        machine.ended(dir, &out);
+        // Past the retry the renewal has dropped the credential: same reason.
+        assert_eq!(machine.ended_while_absent(dir, &gone), Some(out));
+        // The witness: another failure to read a credential is told as it is.
+        let locked = CliError::NoKeychain("locked".into());
+        assert_eq!(machine.ended_while_absent(dir, &locked), None);
+    }
+
+    #[test]
+    fn a_watch_whose_sign_in_ended_leaves_with_the_credential_status_and_says_to_sign_in() {
+        use crate::error::Exit;
+        let origin = "http://localhost:8600".to_string();
+        let signed_out = CoreError::SignedOut {
+            origin: origin.clone(),
+        };
+        for error in [
+            signed_out.clone(),
+            CoreError::RenewalFailed(Box::new(signed_out)),
+        ] {
+            let ended = ended(&origin, WatchError::CredentialRefused(error));
+            assert_eq!(ended.exit(), Exit::Credential, "{ended}");
+            assert!(ended.to_string().contains("marfa login"), "{ended}");
+        }
+        // The witness: a follow that ends for another cause is still the environment's.
+        let other = ended(&origin, WatchError::FollowEnded(CoreError::NoServer));
+        assert_ne!(other.exit(), Exit::Credential);
     }
 
     #[test]

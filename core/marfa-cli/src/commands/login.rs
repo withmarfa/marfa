@@ -14,6 +14,10 @@ use crate::remote::{Named, Remote};
 /// Under --json two records come out, one per line: the code and the page
 /// to approve it on, as soon as they exist, then the outcome once the owner
 /// has decided.
+///
+/// Where `folders autostart on` installed folder syncing, a sign-in that is
+/// kept starts it again, so the folders it stopped for a sign-in that ended
+/// are watched at once.
 #[derive(Debug, Args)]
 pub struct LoginArgs {
     /// The scopes to ask for. Defaults to everything an owner can hold that
@@ -40,7 +44,12 @@ pub struct LoginArgs {
     pub name: Option<String>,
 }
 
-pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError> {
+pub fn run(
+    args: LoginArgs,
+    named: &Named,
+    out: &Printer,
+    resume: &dyn Fn(&str),
+) -> Result<(), CliError> {
     // The token set goes to stdout and nothing is kept, so the keychain has
     // no part in a sign-in that prints it: not for the server, the client id
     // or the credential it would replace.
@@ -138,10 +147,14 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
         return print_set(&token, &client_id, out);
     }
     match auth::with_credential_lock(&origin, || credentials::keep(&origin, &kept)) {
-        Ok(()) => out.record(
-            &json!({ "server": origin, "scope": token.scope, "kept": "keychain" }),
-            || signed_in_text(&origin, token.scope.as_deref()),
-        ),
+        Ok(()) => {
+            let recorded = out.record(
+                &json!({ "server": origin, "scope": token.scope, "kept": "keychain" }),
+                || signed_in_text(&origin, token.scope.as_deref()),
+            );
+            resume(&origin);
+            recorded
+        }
         // The person has approved, so the set is printed rather than lost.
         Err(CliError::NoKeychain(reason)) => {
             eprintln!(
@@ -293,7 +306,7 @@ mod tests {
             name: Some("Marfa app on the studio laptop".into()),
             ..args(true)
         };
-        run(given, &named, &Printer { json: true }).unwrap();
+        run(given, &named, &Printer { json: true }, &|_| {}).unwrap();
         let sent = door.received();
         assert_eq!(sent[1].path(), "/auth/oauth2/register");
         let body: serde_json::Value = serde_json::from_str(&sent[1].body).unwrap();
@@ -362,7 +375,7 @@ mod tests {
             key: None,
             profile: None,
         };
-        run(args(true), &named, &Printer { json: true }).unwrap();
+        run(args(true), &named, &Printer { json: true }, &|_| {}).unwrap();
         let sent = door.received();
         assert_eq!(sent.len(), 3);
         assert_eq!(
@@ -399,7 +412,7 @@ mod tests {
             key: None,
             profile: None,
         };
-        let outcome = run(args(true), &named, &Printer { json: true });
+        let outcome = run(args(true), &named, &Printer { json: true }, &|_| {});
         assert!(
             matches!(&outcome, Err(CliError::Invalid(message)) if message.contains("off the issuer")),
             "{outcome:?}"
@@ -427,7 +440,7 @@ mod tests {
             key: None,
             profile: None,
         };
-        let outcome = run(args(false), &named, &Printer { json: true });
+        let outcome = run(args(false), &named, &Printer { json: true }, &|_| {});
         assert!(
             matches!(&outcome, Err(CliError::Invalid(message)) if message.contains("a key is kept")),
             "{outcome:?}"
@@ -473,7 +486,7 @@ mod tests {
             client_id: None,
             ..args(true)
         };
-        run(given, &named, &Printer { json: true }).unwrap();
+        run(given, &named, &Printer { json: true }, &|_| {}).unwrap();
         // Every call to the keychain fails this test while it is off, so the
         // sign-in reaching its end is the proof; this checks what was left,
         // with the registration kept by the test below as its witness.
@@ -504,7 +517,12 @@ mod tests {
             client_id: None,
             ..args(false)
         };
-        run(given, &named, &Printer { json: true }).unwrap();
+        let resumed = std::cell::RefCell::new(Vec::new());
+        run(given, &named, &Printer { json: true }, &|origin| {
+            resumed.borrow_mut().push(origin.to_string());
+        })
+        .unwrap();
+        assert_eq!(resumed.borrow().as_slice(), std::slice::from_ref(&origin));
         door.received();
         assert_eq!(
             credentials::client_id(&origin).unwrap().as_deref(),
@@ -522,7 +540,7 @@ mod tests {
             key: None,
             profile: None,
         };
-        let outcome = run(args(false), &named, &Printer { json: true });
+        let outcome = run(args(false), &named, &Printer { json: true }, &|_| {});
         assert!(
             matches!(&outcome, Err(CliError::Usage(message)) if message.contains("--print-token")),
             "{outcome:?}"

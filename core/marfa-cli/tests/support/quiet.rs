@@ -3,7 +3,8 @@
 //! exception wherever `MARFA_POSTHOG_*` points, so no test may inherit a
 //! developer's telemetry settings. `quiet_binary.rs` fails any test file that
 //! starts the binary another way. A test that wants telemetry sets its own
-//! environment on the command this returns.
+//! environment on the command this returns. It also keeps the binary from
+//! asking the person's service manager to restart the folder watch.
 
 use std::process::Command;
 
@@ -28,6 +29,11 @@ pub fn quiet(mut command: Command) -> Command {
         }
     }
     command.env("OTEL_SDK_DISABLED", "true");
+    // A folder named here is never made, so a kept credential finds no agent.
+    command.env(
+        "MARFA_AUTOSTART_ROOT",
+        std::env::temp_dir().join(format!("marfa-no-autostart-{}", std::process::id())),
+    );
     command
 }
 

@@ -277,6 +277,16 @@ impl CoreError {
         }
     }
 
+    /// Whether the sign-in this call used has ended, so only a new one lets it
+    /// through.
+    pub fn is_signed_out(&self) -> bool {
+        match self {
+            CoreError::RenewalFailed(cause) => cause.is_signed_out(),
+            CoreError::SignedOut { .. } => true,
+            _ => false,
+        }
+    }
+
     /// Whether the server could not be reached or answered with its own
     /// trouble: the network, a timeout, a rate limit or a `5xx`. A full disk
     /// or a local read or write that failed is environmental but is not the

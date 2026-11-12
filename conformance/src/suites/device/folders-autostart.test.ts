@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -114,6 +115,7 @@ const start = (argv, env, output) => {
   state.pid = child.pid;
   state.started = argv;
   state.environment = env;
+  state.output = output ?? null;
 };
 const stop = () => {
   if (alive(state.pid)) {
@@ -138,6 +140,10 @@ if (tool === "launchctl") {
     const agent = JSON.parse(execFileSync("plutil", ["-convert", "json", "-o", "-", path], { encoding: "utf8" }));
     state.loaded = true;
     if (agent.RunAtLoad) start(agent.ProgramArguments, agent.EnvironmentVariables ?? {}, agent.StandardOutPath ? { stdout: agent.StandardOutPath, stderr: agent.StandardErrorPath } : undefined);
+  } else if (verb === "kickstart") {
+    if (!state.loaded) fail(113, 'Could not find service "' + path + '" in domain for user gui');
+    stop();
+    start(state.started, state.environment ?? {}, state.output ?? undefined);
   } else if (verb === "bootout") {
     if (!state.loaded) fail(3, "Boot-out failed: 3: No such process");
     stop();
@@ -223,6 +229,7 @@ interface ManagerState {
   calls: string[];
   started?: string[];
   environment?: Record<string, string>;
+  output?: { stdout: string; stderr: string } | null;
 }
 
 /** A stand-in home with its fake service manager. */
@@ -1439,6 +1446,122 @@ describe("folder syncing from login", () => {
       expect(sent.filter((header) => header !== `Bearer ${kept}`)).toEqual([]);
     });
   });
+
+  it(
+    "starts the watch again when a credential is kept and the agent is installed, and does nothing where it is not",
+    ON_MACOS,
+    async () => {
+      const harness = await folderHarness("autostart-keep");
+      made.push(harness);
+      const other = await folderHarness("autostart-keep-other");
+      made.push(other);
+      // Async: the scripted server answers from this process.
+      const keep = (
+        root: string,
+        url = harness.server.url,
+        registry = harness.registry,
+      ) =>
+        new Promise<{ status: number | null; stderr: string }>((resolve) => {
+          const child = spawn(
+            requireBinary(),
+            [
+              "--json",
+              "--url",
+              url,
+              "--key",
+              "kept-after-sign-in",
+              "keys",
+              "keep",
+            ],
+            {
+              env: {
+                ...process.env,
+                ...keychainEnv(),
+                MARFA_AUTOSTART_ROOT: root,
+                MARFA_FOLDER_REGISTRY: registry,
+              },
+              stdio: ["ignore", "pipe", "pipe"],
+            },
+          );
+          let stderr = "";
+          child.stderr.on("data", (chunk: Buffer) => {
+            stderr += chunk.toString();
+          });
+          child.on("close", (status) => {
+            resolve({ status, stderr });
+          });
+        });
+      // Nothing installed: the service manager is never asked.
+      const bare = standIn("keep-bare");
+      expect((await keep(bare)).status).toBe(0);
+      expect(managerState(bare).calls).toEqual([]);
+      // Installed and running: the watch is started again, as a new process.
+      const root = standIn("keep-installed");
+      parsed<Switched>(autostart(root, "on", { registry: harness.registry }));
+      const before = managerState(root).pid!;
+      const ran = await keep(root);
+      expect(ran.status, ran.stderr).toBe(0);
+      await vi.waitFor(() => {
+        const after = managerState(root);
+        expect(after.pid, JSON.stringify(after)).not.toBe(before);
+        expect(after.pid !== null && alive(after.pid)).toBe(true);
+      }, WAIT);
+      expect(
+        managerState(root).calls.filter((call) =>
+          /kickstart -k|restart/.test(call),
+        ),
+      ).toHaveLength(1);
+      expect(ran.stderr).toContain("restarted");
+      // A credential for a server no listed folder follows cannot help.
+      const foreign = await keep(root, other.server.url);
+      expect(foreign.status, foreign.stderr).toBe(0);
+      expect(
+        managerState(root).calls.filter((call) =>
+          /kickstart -k|restart/.test(call),
+        ),
+      ).toHaveLength(1);
+      // A folder that has followed no server yet follows the one kept.
+      const fresh = await folderHarness("autostart-keep-fresh", {
+        hydrate: false,
+        confirm: false,
+      });
+      made.push(fresh);
+      const store = new DatabaseSync(join(fresh.dir, ".marfa", "core.sqlite"));
+      store.prepare("DELETE FROM meta WHERE key = 'server_origin'").run();
+      store.close();
+      const unbound = standIn("keep-no-origin");
+      parsed<Switched>(autostart(unbound, "on", { registry: fresh.registry }));
+      const unboundKept = await keep(unbound, other.server.url, fresh.registry);
+      expect(unboundKept.status, unboundKept.stderr).toBe(0);
+      expect(
+        managerState(unbound).calls.filter((call) =>
+          /kickstart -k|restart/.test(call),
+        ),
+      ).toHaveLength(1);
+      // An agent with a key file never reads the keychain.
+      const keyed = standIn("keep-key-file");
+      const path = join(keyed, "keys", "watch.env");
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(
+        path,
+        `MARFA_API_URL=${harness.server.url}\nMARFA_API_KEY=fixture\n`,
+      );
+      chmodSync(path, 0o600);
+      parsed<Switched>(
+        autostart(keyed, "on", {
+          registry: harness.registry,
+          args: ["--key-file", path],
+        }),
+      );
+      const kept = await keep(keyed);
+      expect(kept.status, kept.stderr).toBe(0);
+      expect(
+        managerState(keyed).calls.filter((call) =>
+          /kickstart -k|restart/.test(call),
+        ),
+      ).toEqual([]);
+    },
+  );
 });
 
 describe("the watch run by a service manager", () => {
