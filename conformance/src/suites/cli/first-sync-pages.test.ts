@@ -18,11 +18,12 @@ import { Cli, requireBinary } from "./harness.js";
 
 /**
  * A first sync of a folder against a server that limits requests
- * (`queue-and-verdicts/create-pages`). Sent one at a time, each file costs
- * four requests, its item and its placement each written and read back, so
- * a limit of 150 a minute would stop this push long before its 600 writes
- * end, and a write ahead of the creates that is not a create does not send
- * them one by one.
+ * (`queue-and-verdicts/create-pages`, `queue-and-verdicts/page-carries-tags`).
+ * Sent one at a time, each file costs six requests, its item and its
+ * placement each written and read back and its two tags, so a limit of 150
+ * a minute would stop this push long before its 1,200 writes end, and a
+ * write ahead of the creates that is not a create does not send them one by
+ * one.
  */
 
 const NOTES = 300;
@@ -49,7 +50,7 @@ afterAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 
 it(
-  "pushes a first sync of hundreds of files in one push, within the request limit",
+  "pushes a first sync of hundreds of tagged files in one push, within the request limit",
   async () => {
     const files = join(dir, "notes");
     const { item } = await cli.json<{ item: { id: string } }>([
@@ -72,7 +73,7 @@ it(
     for (let at = 0; at < NOTES; at += 1) {
       writeFileSync(
         join(files, `note-${String(at)}.md`),
-        `---\ntitle: Note ${String(at)}\n---\nBody of note ${String(at)}.\n`,
+        `---\ntitle: Note ${String(at)}\ntags:\n  - alpha\n  - beta\n---\nBody of note ${String(at)}.\n`,
       );
     }
     await cli.json(["folders", "add", "--folder", item.id, "--yes", files]);
@@ -88,8 +89,9 @@ it(
       };
     };
     expect(report.drain.undelivered).toBe(0);
-    // Each note's create and placement, and the archived one's move.
-    expect(report.drain.answered).toBe((NOTES + 1) * 2 + 1);
+    // Each note's create, placement and two tags, and the archived one's
+    // create, placement and move.
+    expect(report.drain.answered).toBe(NOTES * 4 + 3);
     expect(
       report.drain.verdicts.filter((entry) => entry.verdict !== "accepted"),
     ).toEqual([]);
@@ -114,6 +116,13 @@ it(
     // The listing leaves out the archived note.
     expect(titles.size).toBe(NOTES);
     expect(titles.has(`Note ${String(NOTES - 1)}`)).toBe(true);
+    const listed = await client.listItems({ type: "core.note", limit: 1 });
+    expect(listed.ok, JSON.stringify(listed.error)).toBe(true);
+    if (!listed.ok) return;
+    const held = await client.getItem(listed.data.data[0]?.id ?? "");
+    expect(held.ok, JSON.stringify(held.error)).toBe(true);
+    if (!held.ok) return;
+    expect([...held.data.metadata.tags].sort()).toEqual(["alpha", "beta"]);
   },
   FRESH_SERVER_TIMEOUT_MS,
 );

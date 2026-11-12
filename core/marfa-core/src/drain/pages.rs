@@ -9,6 +9,9 @@
 //! what the walk would have sent unchanged on its own door, settles only what
 //! the server created under the id the device minted, and leaves everything
 //! else to the walk, which sends it on its own door under its own key.
+//!
+//! An item's create carries in its entry the tags queued with it, whose own
+//! writes the page then answers (`queue-and-verdicts/page-carries-tags`).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
@@ -40,15 +43,7 @@ const BYTES: usize = 4 * 1024 * 1024;
 
 /// The keys a create takes on its own door that a bulk entry takes the same
 /// way. A create carrying any other is sent on its own door.
-const ITEM_KEYS: &[&str] = &[
-    "id",
-    "type",
-    "properties",
-    "tier",
-    "occurred_at",
-    "source",
-    "tags",
-];
+const ITEM_KEYS: &[&str] = &["id", "type", "properties", "tier", "occurred_at", "source"];
 const EDGE_KEYS: &[&str] = &["id", "source_id", "target_id", "edge_type", "properties"];
 
 #[derive(Clone, Copy, PartialEq)]
@@ -174,9 +169,14 @@ pub(super) fn send(
         // The root was read just now. A create over its limit meets the walk,
         // so whether it goes does not depend on what else waits.
         if let Some(limit) = store::request_limit(&*sender.core.conn()?)? {
-            waiting.retain(|(_, size)| *size <= limit);
+            waiting.retain(|candidate| candidate.size <= limit);
             if waiting.len() < FLOOR {
                 continue;
+            }
+            for candidate in &mut waiting {
+                if candidate.entry_size > limit {
+                    candidate.drop_tags();
+                }
             }
         }
         for page in pages(&waiting) {
@@ -209,10 +209,18 @@ fn candidates<'a>(
     core: &Core,
     lane: Lane,
     standing: &Standing<'a, '_>,
-) -> Result<Vec<(&'a QueuedWrite, usize)>> {
+) -> Result<Vec<Candidate<'a>>> {
     let conn = core.conn()?;
     let none = HashSet::new();
     let mut found = Vec::new();
+    let mut by_item: HashMap<&str, Vec<&'a QueuedWrite>> = HashMap::new();
+    if lane == Lane::Items {
+        for row in standing.all {
+            if let Some(item) = row.item_id.as_deref() {
+                by_item.entry(item).or_default().push(row);
+            }
+        }
+    }
     for row in standing.all {
         let unanswered = standing
             .answers
@@ -245,9 +253,106 @@ fn candidates<'a>(
         {
             continue;
         }
-        found.push((row, size));
+        let tags = match row.item_id.as_deref().and_then(|item| by_item.get(item)) {
+            Some(writes) => carried(&conn, standing, row, writes)?,
+            None => Vec::new(),
+        };
+        let mut candidate = Candidate {
+            row,
+            size,
+            entry_size: size,
+            tags,
+        };
+        candidate.entry_size = entry_size(row, size, &candidate.tags);
+        if candidate.entry_size > REQUEST_LIMIT {
+            candidate.drop_tags();
+        }
+        found.push(candidate);
     }
     Ok(found)
+}
+
+/// A create a page may carry, and the tag writes its entry carries with it.
+struct Candidate<'a> {
+    row: &'a QueuedWrite,
+    /// The bytes the create sends on its own door.
+    size: usize,
+    /// The bytes its entry sends, with its tags.
+    entry_size: usize,
+    tags: Vec<&'a QueuedWrite>,
+}
+
+impl Candidate<'_> {
+    fn drop_tags(&mut self) {
+        self.tags.clear();
+        self.entry_size = self.size;
+    }
+}
+
+/// The tag writes queued with the create `row` that its entry carries: each
+/// adds one tag, waits on the create alone, has never been sent and met no
+/// failure, and has no other write to the item queued between it and the
+/// create. `writes` are the item's writes in queue order.
+fn carried<'a>(
+    conn: &rusqlite::Connection,
+    standing: &Standing<'a, '_>,
+    row: &QueuedWrite,
+    writes: &[&'a QueuedWrite],
+) -> Result<Vec<&'a QueuedWrite>> {
+    let mut tags = Vec::new();
+    let mut ahead = row.id.as_str();
+    for write in writes.iter().skip_while(|write| write.id != row.id).skip(1) {
+        let unanswered = standing
+            .answers
+            .get(&write.id)
+            .is_some_and(|verdict| verdict.is_none());
+        if write.kind != WriteKind::AddTag
+            || !unanswered
+            || write.depends_on != [row.id.clone()]
+            || write.follows.as_deref() != Some(ahead)
+            || write.environmental_streak != 0
+            || store_fault(write).is_some()
+            || tag_of(write).is_none()
+            || !store::unsent(conn, &write.id)?
+        {
+            break;
+        }
+        ahead = write.id.as_str();
+        tags.push(*write);
+    }
+    Ok(tags)
+}
+
+/// The one tag an add-tag write adds, where its body is that and no more.
+fn tag_of(write: &QueuedWrite) -> Option<&str> {
+    let object = write.body.as_object()?;
+    match object.get("tags")?.as_array()?.as_slice() {
+        [tag] if object.len() == 1 => tag.as_str(),
+        _ => None,
+    }
+}
+
+/// The tags an entry carries, each once, in the order they were queued.
+fn tags_of<'a>(writes: impl IntoIterator<Item = &'a QueuedWrite>) -> Vec<&'a str> {
+    let mut tags: Vec<&str> = Vec::new();
+    for tag in writes.into_iter().filter_map(tag_of) {
+        if !tags.contains(&tag) {
+            tags.push(tag);
+        }
+    }
+    tags
+}
+
+fn entry_size(row: &QueuedWrite, size: usize, tags: &[&QueuedWrite]) -> usize {
+    let tags = tags_of(tags.iter().copied());
+    if tags.is_empty() {
+        return size;
+    }
+    let mut body = row.body.clone();
+    if let Some(object) = body.as_object_mut() {
+        object.insert("tags".into(), serde_json::json!(tags));
+    }
+    body.to_string().len()
 }
 
 /// `size` is the bytes the write sends as its own request's body.
@@ -262,18 +367,18 @@ fn fits(lane: Lane, row: &QueuedWrite, body: &serde_json::Value, size: usize) ->
 }
 
 /// The creates split into pages by count and by the bytes they send.
-fn pages<'a>(waiting: &[(&'a QueuedWrite, usize)]) -> Vec<Vec<&'a QueuedWrite>> {
+fn pages<'a, 'b>(waiting: &'b [Candidate<'a>]) -> Vec<Vec<&'b Candidate<'a>>> {
     let mut pages = Vec::new();
     let mut page = Vec::new();
     let mut bytes = 0;
-    for &(row, size) in waiting {
-        let size = size + 1;
+    for candidate in waiting {
+        let size = candidate.entry_size + 1;
         if !page.is_empty() && (page.len() == ENTRIES || bytes + size > BYTES) {
             pages.push(std::mem::take(&mut page));
             bytes = 0;
         }
         bytes += size;
-        page.push(row);
+        page.push(candidate);
     }
     if !page.is_empty() {
         pages.push(page);
@@ -304,7 +409,7 @@ fn send_page(
     report: &mut DrainReport,
     standing: &mut Standing<'_, '_>,
     lane: Lane,
-    page: &[&QueuedWrite],
+    page: &[&Candidate<'_>],
 ) -> Result<bool> {
     // Checked and marked sent in one transaction: a write changed since the
     // pass read the queue is left to the walk, which reads it again.
@@ -314,12 +419,14 @@ fn send_page(
         generation,
         stop,
     } = *sender;
-    let (sent, payloads) = {
+    let (sent, payloads, tagged) = {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
         let mut sent = Vec::with_capacity(page.len());
         let mut payloads = Vec::with_capacity(page.len());
-        for row in page {
+        let mut tagged: HashMap<String, Vec<QueuedWrite>> = HashMap::new();
+        for candidate in page {
+            let row = candidate.row;
             let Some(now) = store::queued_write(&tx, &row.id)? else {
                 continue;
             };
@@ -331,17 +438,29 @@ fn send_page(
                 continue;
             }
             let sent_as = store::payload_of(&tx, &now.id)?;
-            let payload: serde_json::Value = serde_json::from_str(&sent_as)?;
+            let mut payload: serde_json::Value = serde_json::from_str(&sent_as)?;
             if !fits(lane, &now, &payload, sent_as.len()) {
                 continue;
             }
             store::mark_sent(&tx, &now.id)?;
+            let tags = still_carried(&tx, &now.id, &candidate.tags)?;
+            for tag in &tags {
+                store::mark_sent(&tx, &tag.id)?;
+            }
+            let names = tags_of(&tags);
+            if let (false, Some(object)) = (names.is_empty(), payload.as_object_mut()) {
+                object.insert("tags".into(), serde_json::json!(names));
+            }
+            if !tags.is_empty() {
+                tagged.insert(now.id.clone(), tags);
+            }
             payloads.push(payload);
             sent.push(now);
         }
         tx.commit()?;
-        (sent, payloads)
+        (sent, payloads, tagged)
     };
+    let carrying = || tagged.values().flatten();
     if sent.is_empty() {
         return Ok(true);
     }
@@ -379,7 +498,7 @@ fn send_page(
     if not_taken(&answer) {
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
-        for row in &sent {
+        for row in sent.iter().chain(carrying()) {
             store::mark_unsent(&tx, &row.id)?;
         }
         tx.commit()?;
@@ -390,7 +509,7 @@ fn send_page(
         Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
-            for row in &sent {
+            for row in sent.iter().chain(carrying()) {
                 store::mark_unsent(&tx, &row.id)?;
             }
             let error = crate::catch_up::expire_for_another_instance(&tx, generation)?;
@@ -415,7 +534,7 @@ fn send_page(
             let conn = core.conn()?;
             if !not_the_writes(&answer) {
                 let failure = failure_of(&answer);
-                for row in &sent {
+                for row in sent.iter().chain(carrying()) {
                     store::note_last_failure(&conn, &row.id, &failure)?;
                 }
             }
@@ -441,7 +560,95 @@ fn send_page(
         return Ok(false);
     };
     settle(core, stop, pass, report, standing, lane, &created)?;
+    for (row, entry) in &created {
+        // A create the page settles goes before its tags, as on the walk; one
+        // it leaves to the walk leaves its tags to it too.
+        let accepted = standing.answers.get(&row.id) == Some(&Some(Verdict::Accepted));
+        if let (true, Some(tags)) = (accepted, tagged.get(&row.id)) {
+            settle_carried(core, report, standing, tags, entry)?;
+        }
+    }
     Ok(true)
+}
+
+/// The tag writes of a create as they stand now, up to the first that has
+/// changed since the pass read the queue: those go on their own doors, after
+/// the create, as queued.
+fn still_carried(
+    tx: &rusqlite::Transaction<'_>,
+    create: &str,
+    tags: &[&QueuedWrite],
+) -> Result<Vec<QueuedWrite>> {
+    let mut kept: Vec<QueuedWrite> = Vec::with_capacity(tags.len());
+    for tag in tags {
+        let ahead = kept.last().map_or(create, |last| last.id.as_str());
+        let Some(now) = store::queued_write(tx, &tag.id)? else {
+            break;
+        };
+        let payload: serde_json::Value = serde_json::from_str(&store::payload_of(tx, &now.id)?)?;
+        if now.verdict.is_some()
+            || now.idempotency_key != tag.idempotency_key
+            || now.body != tag.body
+            || payload != now.body
+            || now.follows.as_deref() != Some(ahead)
+            || !store::unsent(tx, &now.id)?
+        {
+            break;
+        }
+        kept.push(now);
+    }
+    Ok(kept)
+}
+
+/// Answers the tag writes an entry the page created carried: the server
+/// wrote the entry's item and tags in one step
+/// (`items/bulk-errored-wrote-nothing`), so each tag landed with it.
+fn settle_carried(
+    core: &Core,
+    report: &mut DrainReport,
+    standing: &mut Standing<'_, '_>,
+    tags: &[QueuedWrite],
+    entry: &str,
+) -> Result<()> {
+    let mut answered = Vec::with_capacity(tags.len());
+    {
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        for tag in tags {
+            let gone = store::queued_write(&tx, &tag.id)?.is_none_or(|now| now.verdict.is_some());
+            if gone || same_attempt(&tx, tag).is_err() {
+                break;
+            }
+            store::record_verdict(
+                &tx,
+                &tag.id,
+                &store::Answered {
+                    verdict: Verdict::Accepted,
+                    reason: None,
+                    answer: Some(entry),
+                    conflicted_copy_id: None,
+                },
+            )?;
+            answered.push(tag);
+        }
+        tx.commit()?;
+    }
+    for tag in answered {
+        report.answered += 1;
+        standing
+            .answers
+            .insert(tag.id.clone(), Some(Verdict::Accepted));
+        put_verdict(
+            report,
+            None,
+            verdict_of(
+                tag,
+                &Settled::plain(Some(Verdict::Accepted), None, tag.refusals),
+                Some(entry),
+            ),
+        );
+    }
+    Ok(())
 }
 
 /// Whether the server wrote nothing of the page, so its writes go out again
@@ -889,6 +1096,11 @@ mod tests {
 
     /// A copy with `count` notes queued to create, and nothing to pull.
     fn creating(server: &Scripted, count: usize) -> (tempfile::TempDir, Core) {
+        tagged(server, count, &[])
+    }
+
+    /// As `creating`, each note naming `tags`.
+    fn tagged(server: &Scripted, count: usize, tags: &[&str]) -> (tempfile::TempDir, Core) {
         let dir = tempfile::tempdir().unwrap();
         let core = Core::open(
             dir.path().join("core.sqlite"),
@@ -913,6 +1125,7 @@ mod tests {
                     .as_object()
                     .unwrap()
                     .clone(),
+                tags: tags.iter().map(|tag| tag.to_string()).collect(),
                 ..Default::default()
             })
             .unwrap();
@@ -1020,5 +1233,80 @@ mod tests {
         );
         assert_eq!(drained.retry_after_seconds, Some(7));
         assert_eq!(server.seen("/items/bulk").len(), 1);
+    }
+
+    #[test]
+    fn a_limited_page_leaves_the_tags_it_carried_unsent_and_unanswered() {
+        let server = Scripted::start();
+        let (_dir, core) = tagged(&server, FLOOR + 1, &["alpha", "beta"]);
+        server.on(
+            "/items/bulk",
+            vec![scripted::Answer::Json {
+                status: 429,
+                body: r#"{"error":{"code":"rate_limited","message":"scripted"}}"#.into(),
+                headers: vec![("Retry-After".into(), "7".into())],
+            }],
+        );
+
+        let drained = core.drain().unwrap();
+
+        assert!(drained.limited);
+        let seen = server.seen("/items/bulk");
+        let page: serde_json::Value = serde_json::from_slice(&seen[0].body).unwrap();
+        assert_eq!(
+            page["items"][0]["tags"],
+            serde_json::json!(["alpha", "beta"])
+        );
+        let conn = core.conn().unwrap();
+        let queue = store::queued_writes(&conn).unwrap();
+        assert_eq!(queue.len(), (FLOOR + 1) * 3);
+        for row in &queue {
+            // A tag waits on its create, which a later pass clears.
+            let waits = row.kind == WriteKind::AddTag && row.verdict == Some(Verdict::Blocked);
+            assert!(row.verdict.is_none() || waits, "{row:?}");
+            assert!(store::unsent(&conn, &row.id).unwrap(), "{row:?}");
+        }
+        assert!(server.seen("/items/").is_empty());
+    }
+
+    #[test]
+    fn tags_behind_another_write_to_the_item_stay_on_their_own_doors() {
+        let server = Scripted::start();
+        let (_dir, core) = tagged(&server, FLOOR, &["alpha"]);
+        let first = core.queue().unwrap()[0].item_id.clone().unwrap();
+        core.remove_tag(&first, "alpha").unwrap();
+        core.add_tag(&first, "beta").unwrap();
+        let all = store::queued_writes(&core.conn().unwrap()).unwrap();
+        let mut answers = all
+            .iter()
+            .map(|row| (row.id.clone(), row.verdict))
+            .collect();
+        let rows = all.iter().map(|row| (row.id.as_str(), row)).collect();
+        let landing = store::pending_landings(&core.conn().unwrap()).unwrap();
+        let found = candidates(
+            &core,
+            Lane::Items,
+            &Standing {
+                all: &all,
+                rows: &rows,
+                answers: &mut answers,
+                landing: &landing,
+            },
+        )
+        .unwrap();
+        assert_eq!(found.len(), FLOOR);
+        let carried: Vec<Vec<&str>> = found
+            .iter()
+            .map(|candidate| {
+                candidate
+                    .tags
+                    .iter()
+                    .filter_map(|row| tag_of(row))
+                    .collect()
+            })
+            .collect();
+        // The second tag is queued behind the removal of the first.
+        assert_eq!(carried[0], vec!["alpha"]);
+        assert!(carried[1..].iter().all(|tags| tags == &vec!["alpha"]));
     }
 }

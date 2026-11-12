@@ -64,6 +64,7 @@ interface ItemEntry {
   type: string;
   properties?: Record<string, unknown>;
   tier?: string;
+  tags?: string[];
 }
 
 interface PageResult {
@@ -83,6 +84,7 @@ interface PageResult {
 class Door {
   readonly items = new Map<string, Record<string, unknown>>();
   readonly edges = new Map<string, WireEdgeOptions>();
+  readonly tags = new Map<string, string[]>();
   /** An answer standing in for a whole page's, where it gives one. */
   page?: (request: RecordedRequest) => Answer | undefined;
   /** A result standing in for one page entry's, where it gives one. */
@@ -138,6 +140,13 @@ class Door {
         }),
       );
     });
+    server.answer("POST", /^\/items\/[^/]+\/tags$/, (request) => {
+      const id = request.pathname.split("/").at(-2) ?? "";
+      const { tags } = JSON.parse(request.body) as { tags: string[] };
+      const held = this.tags.get(id) ?? [];
+      this.tags.set(id, [...new Set([...held, ...tags])]);
+      return writeAnswers.metadata(id, this.tags.get(id));
+    });
     server.answer("DELETE", /^\/items\/[^/]+$/, (request) => {
       this.items.delete(request.pathname.split("/").at(-1) ?? "");
       return writeAnswers.ok();
@@ -170,7 +179,10 @@ class Door {
       if (standIn !== undefined) return standIn;
       const item = this.items.get(id);
       if (item === undefined) return answers.itemNotFound();
-      return answers.updated({ ...item, edges: this.edgesFrom(id) });
+      return answers.updated(
+        { ...item, edges: this.edgesFrom(id) },
+        this.tags.get(id) ?? [],
+      );
     });
     server.copyAnswer("GET", /^\/edges\/[^/]+$/, (request) => {
       const id = request.pathname.split("/").at(-1) ?? "";
@@ -198,6 +210,7 @@ class Door {
       tier: entry.tier,
     });
     this.items.set(entry.id, item);
+    if (entry.tags !== undefined) this.tags.set(entry.id, [...entry.tags]);
     return item;
   }
 
@@ -240,7 +253,7 @@ function value<T>(outcome: Outcome<T>): T {
 async function queue(
   harness: Harness,
   count: number,
-  options: { edges?: boolean } = {},
+  options: { edges?: boolean; tags?: string[] } = {},
 ): Promise<{ notes: QueuedWrite[]; edges: QueuedWrite[] }> {
   const notes: QueuedWrite[] = [];
   const edges: QueuedWrite[] = [];
@@ -249,6 +262,7 @@ async function queue(
       await harness.device.create({
         type: "core.note",
         properties: { title: `Note ${String(at)}`, body: "text" },
+        ...(options.tags === undefined ? {} : { tags: options.tags }),
       }),
     );
     notes.push(note);
@@ -464,6 +478,75 @@ describe("creates in pages", () => {
         .slice(2)
         .every((note) => verdicts.get(note.id)?.verdict === "accepted"),
     ).toBe(true);
+  });
+
+  it("sends the tags queued with a create in its page entry, not on their own doors", async () => {
+    const made = await start("pages-tags");
+    harness = made.harness;
+    const { door } = made;
+    const { notes } = await queue(harness, 60, { tags: ["alpha", "beta"] });
+
+    const drained = await drain(harness);
+
+    // Each note is its create and its two tags.
+    expect(drained.answered, JSON.stringify(drained)).toBe(180);
+    expect(drained.undelivered).toBe(0);
+    const pages = door.requests("POST", "/items/bulk");
+    expect(pages).toHaveLength(1);
+    const page = JSON.parse(pages[0]?.body ?? "{}") as { items: ItemEntry[] };
+    expect(page.items.map((entry) => entry.tags)).toEqual(
+      notes.map(() => ["alpha", "beta"]),
+    );
+    expect(
+      harness.server.requests.filter((request) =>
+        /^\/items\/[^/]+\/tags$/.test(request.pathname),
+      ),
+    ).toHaveLength(0);
+    expect(door.requests("POST", "/items")).toHaveLength(0);
+    const queued = value(await harness.device.queue());
+    expect(queued.map((row) => [row.kind, row.verdict])).toEqual(
+      notes.flatMap(() => [
+        ["create_item", "accepted"],
+        ["add_tag", "accepted"],
+        ["add_tag", "accepted"],
+      ]),
+    );
+    const held = value(await harness.device.get(notes[0]?.item_id ?? ""));
+    expect([...held.tags].sort()).toEqual(["alpha", "beta"]);
+  });
+
+  it("sends the tags of an entry the page does not create on their own doors, after its create", async () => {
+    const made = await start("pages-tags-entry-alone");
+    harness = made.harness;
+    const { door } = made;
+    const { notes } = await queue(harness, 52, { tags: ["alpha"] });
+    const [alone] = notes as [QueuedWrite];
+    door.entry = (entry, index) =>
+      entry.id === alone.item_id
+        ? {
+            index,
+            outcome: "errored",
+            error: { code: "internal_error", message: "Not written" },
+          }
+        : undefined;
+
+    const drained = await drain(harness);
+
+    expect(drained.answered, JSON.stringify(drained)).toBe(104);
+    const tag = value(await harness.device.queue()).find(
+      (row) => row.kind === "add_tag" && row.item_id === alone.item_id,
+    );
+    const tagged = harness.server.requests.filter((request) =>
+      /^\/items\/[^/]+\/tags$/.test(request.pathname),
+    );
+    expect(tagged.map((request) => request.pathname)).toEqual([
+      `/items/${alone.item_id ?? ""}/tags`,
+    ]);
+    expect(tagged[0]?.headers["idempotency-key"]).toBe(tag?.idempotency_key);
+    const [create] = door.requests("POST", "/items");
+    expect(create?.seq ?? Infinity).toBeLessThan(tagged[0]?.seq ?? 0);
+    expect(tag?.verdict).toBe("accepted");
+    expect(door.tags.get(alone.item_id ?? "")).toEqual(["alpha"]);
   });
 
   it("ends the drain where the read of a page meets a changed reach, with no write answered", async () => {
