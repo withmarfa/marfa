@@ -117,9 +117,10 @@ different process took it first; the server is then reached, and signs people
 in, at `http://localhost:<port>`, its sign-in address, since passkeys refuse an
 IP address. On a port given with `--port` or `MARFA_PORT` it has no sign-in
 address set unless the last boot of the same state had one on that port, as a
-restart on the same port does, and with none it uses `http://localhost:<port>`
-as its sign-in address and is reached there. It reads the port from
-this boot's readiness log record before requesting `/health`. A restart
+restart on the same port does. It reads the port from
+this boot's readiness log record before requesting `/health`, then reaches the
+server at the address the server reports as its own in
+`/auth/.well-known/oauth-authorization-server`, `localhost` or `127.0.0.1`. A restart
 ignores earlier readiness records. An explicitly occupied IPv4 port fails the
 boot instead of accepting another listener's health response.
 

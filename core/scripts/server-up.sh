@@ -75,7 +75,7 @@ fi
 exec 8>>"${env_file}"
 reserve_fd 8 "server env file ${env_file}"
 port="${MARFA_PORT:-0}"
-url="http://127.0.0.1:${port}"
+url="http://localhost:${port}"
 log="${state}/server.log"
 
 export MARFA_DATABASE_PATH="${state}/marfa.db"
@@ -130,7 +130,7 @@ for _ in $(seq 1 120); do
   assigned_port="$(sed -nE 's/.*Marfa server listening on port ([0-9]+).*/\1/p' "${log}")"
   if [[ -n "${assigned_port}" ]]; then
     port="${assigned_port}"
-    url="http://127.0.0.1:${port}"
+    url="http://localhost:${port}"
     break
   fi
   if ! kill -0 "${pid}" 2>/dev/null; then
