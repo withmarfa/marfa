@@ -203,11 +203,8 @@ pub(super) fn send(
 /// what else waits; and with nothing about them the walk decides on a
 /// write's own answer.
 ///
-/// A page goes before the walk, and so before the writes it does not carry
-/// that are queued ahead of its creates: a create's own id is new, an edge to
-/// an item in the bin is refused when it is queued, and a create waits on what
-/// it depends on, which `readiness` reads, so no write ahead of one changes
-/// what the server makes of it.
+/// A page goes before the writes queued ahead of its creates: an entry one of
+/// them would have changed is refused and goes on its own door after it.
 fn candidates<'a>(
     core: &Core,
     lane: Lane,
