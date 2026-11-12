@@ -221,6 +221,7 @@ pub(super) fn read_all(core: &Core, stop: &AtomicBool) -> Result<Option<Unreadab
                 return Ok(unreadable(&error).or_else(|| {
                     Some(Unreadable {
                         reason: error.to_string(),
+                        limited: false,
                         retry_after_seconds: None,
                     })
                 }));

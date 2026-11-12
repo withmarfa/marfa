@@ -623,7 +623,10 @@ fn tell(
             let seconds = wait.map(|wait| wait.as_secs());
             say.line(
                 serde_json::json!({ "server": server, "limited": true, "wait_seconds": seconds }),
-                || marfa_core::limiting(seconds),
+                || match seconds {
+                    Some(seconds) => format!("the server is limiting requests; waiting {seconds}s"),
+                    None => "the server is limiting requests; waiting before sending again".into(),
+                },
             )
         }
         WatchEvent::Reach(None) => say.line(

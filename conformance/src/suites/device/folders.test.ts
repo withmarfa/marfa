@@ -3782,6 +3782,40 @@ describe("files and items", () => {
     expect(watching.stdout).not.toContain("cannot reach the server");
   });
 
+  it("does not say the server is limiting requests when it answers 503 with a Retry-After", async () => {
+    harness = await folderHarness("watch-unavailable-retry-after");
+    let attempts = 0;
+    scriptFolderWrites(harness, {
+      creating: (answer) => {
+        attempts += 1;
+        return attempts === 1
+          ? ({
+              kind: "json",
+              status: 503,
+              headers: { "retry-after": "2" },
+              body: {
+                error: {
+                  code: "service_unavailable",
+                  message: "Try again shortly",
+                },
+              },
+            } as Answer)
+          : answer;
+      },
+    });
+    put(harness, "One.md", "---\ntitle: One\n---\nOne\n");
+    const watching = harness.folder.watchText();
+    try {
+      await vi.waitFor(
+        () => expect(attempts, watching.stderr).toBeGreaterThanOrEqual(2),
+        { timeout: 60_000, interval: 100 },
+      );
+    } finally {
+      await watching.stop();
+    }
+    expect(watching.stdout).not.toContain("the server is limiting requests");
+  });
+
   it("reports a placement the server refuses in the push's second drain, and does not send it again", async () => {
     const edges = new EdgeDoor();
     edges.placing = (edge) =>

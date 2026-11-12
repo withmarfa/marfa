@@ -9,8 +9,8 @@ use rusqlite::{Connection, params};
 use serde_json::{Map, Value, json};
 
 use super::{
-    Classified, Readiness, Settled, readiness, recorded, same_attempt, store_fault, unavailable,
-    verdict_of,
+    Classified, Readiness, Settled, rate_limited, readiness, recorded, same_attempt, store_fault,
+    unavailable, verdict_of,
 };
 use crate::error::CoreError;
 use crate::http::{Answer, REQUEST_LIMIT};
@@ -637,6 +637,7 @@ fn whole(
             let told = told_as(core, writes, |now| Settled {
                 retry_after_seconds,
                 unavailable: unavailable(answer),
+                limited: rate_limited(answer),
                 ..Settled::plain(None, None, now.refusals)
             })?;
             return lead_with_joined(told);

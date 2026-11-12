@@ -387,6 +387,7 @@ mod tests {
             unsent: 0,
             unmade: 0,
             unavailable: None,
+            limited: false,
             verdicts: Vec::new(),
             stopped: None,
             unclaimed_sources: Vec::new(),

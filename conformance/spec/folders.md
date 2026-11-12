@@ -6396,9 +6396,11 @@ When a folder watch takes back a folder it let go to a command, a device MUST NO
 
 ### `folders/watch-rate-limit-says`
 
-When a folder watch's pass leaves a write undelivered and its drain reports `retry_after_seconds`, or the server limits requests to the watch's changes stream and names a `Retry-After`, the CLI MUST say that the server is limiting requests and for how many seconds the watch waits.
+When a folder watch's pass leaves a write undelivered because the server answered `429`, or the server answers the watch's changes stream `429`, the CLI MUST say that the server is limiting requests and, where the server named a `Retry-After`, for how many seconds the watch waits.
 
-**Tests:** `device/folders.test.ts › sends again when the Retry-After a rate limit named is over, without waiting for a change`, `› says the server is limiting requests, not that it cannot be reached, when its changes stream is limited`.
+**Reason:** a `503` or another answer can name a `Retry-After` too, and the server is then not limiting requests, so a person told it is looks at the key's request count where the cause is the server.
+
+**Tests:** `device/folders.test.ts › sends again when the Retry-After a rate limit named is over, without waiting for a change`, `› says the server is limiting requests, not that it cannot be reached, when its changes stream is limited`, `› does not say the server is limiting requests when it answers 503 with a Retry-After`.
 
 ### `folders/watch-rate-limit-not-unreachable`
 

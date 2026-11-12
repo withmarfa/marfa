@@ -426,6 +426,7 @@ fn send_page(
             // write it reaches once the server cannot take writes.
             report.unavailable =
                 unavailable(&answer).or_else(|| answer.as_ref().err().map(CoreError::to_string));
+            report.limited = rate_limited(&answer);
             return Ok(true);
         }
         // A write sent on its own door would meet the same refusal, under a
@@ -597,6 +598,7 @@ fn settle(
             telemetry::degraded!(&error);
             owe(core, report, standing, lane, created)?;
             report.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
+            report.limited = error.is_rate_limited();
             waited(report, error.retry_after().map(|wait| wait.as_secs()));
             return Ok(());
         }
@@ -706,6 +708,7 @@ pub(super) fn settle_owed(
                     telemetry::degraded!(&error);
                     return Ok(Some(Unreadable {
                         reason: unavailable_by(&error).unwrap_or_else(|| error.to_string()),
+                        limited: error.is_rate_limited(),
                         retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
                     }));
                 }
@@ -731,6 +734,7 @@ pub(super) fn settle_owed(
                             telemetry::degraded!(&error);
                             return Ok(Some(Unreadable {
                                 reason: unavailable_by(&error).unwrap_or_else(|| error.to_string()),
+                                limited: error.is_rate_limited(),
                                 retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
                             }));
                         }
@@ -759,6 +763,7 @@ pub(super) fn settle_owed(
                 return Ok(Some(Unreadable {
                     reason: "the copy changed while the writes a page created were read back"
                         .into(),
+                    limited: false,
                     retry_after_seconds: None,
                 }));
             }
@@ -1011,7 +1016,7 @@ mod tests {
 
         assert_eq!(
             drained.unavailable.as_deref(),
-            Some("the server is limiting requests; waiting 7s")
+            Some("the server is limiting requests and asked for a wait of 7s")
         );
         assert_eq!(drained.retry_after_seconds, Some(7));
         assert_eq!(server.seen("/items/bulk").len(), 1);

@@ -44,6 +44,10 @@ pub struct DrainReport {
     /// Why the pass ended before the queue was through: the server could not
     /// be reached, failed, or asked to be left alone for a while.
     pub unavailable: Option<String>,
+    /// Whether the pass ended because the server answered `429`: it limited
+    /// requests, so it was reached.
+    #[serde(skip)]
+    pub limited: bool,
     /// Also holds rows settled without being sent, by another write's answer.
     pub verdicts: Vec<DrainVerdict>,
     /// Set when a refused credential parks the queue. An answer on another
@@ -66,6 +70,7 @@ impl DrainReport {
             unsent: 0,
             unmade: 0,
             unavailable: None,
+            limited: false,
             verdicts: Vec::new(),
             stopped: None,
             unclaimed_sources: Vec::new(),
@@ -92,6 +97,7 @@ impl DrainReport {
         self.held = later.held;
         self.undelivered = later.undelivered;
         self.unavailable = later.unavailable;
+        self.limited = later.limited;
         self.verdicts.extend(later.verdicts);
         self.stopped = later.stopped;
         for source in later.unclaimed_sources {
@@ -215,6 +221,7 @@ struct Suspect {
     /// Where the write stands in the queue the pass read.
     at: usize,
     unavailable: String,
+    limited: bool,
     /// Where the write's entry stands in the report's verdicts.
     verdict_at: usize,
     phase: Phase,
@@ -293,6 +300,7 @@ fn leave_waiting(stuck: &Suspect, report: &mut DrainReport) {
     report.undelivered += 1;
     if report.unavailable.is_none() {
         report.unavailable = Some(stuck.unavailable.clone());
+        report.limited = stuck.limited;
     }
 }
 
@@ -325,19 +333,29 @@ fn put_verdict(report: &mut DrainReport, replacing: Option<usize>, entry: DrainV
 fn rate_limited(answer: &std::result::Result<Answer, CoreError>) -> bool {
     match answer {
         Ok(answer) => answer.status == 429,
-        Err(error) => matches!(
-            error,
-            CoreError::RateLimited { .. } | CoreError::Unnamed { status: 429, .. }
-        ),
+        Err(error) => error.is_rate_limited(),
     }
 }
 
-/// How a limit reads wherever it is told: what the server did, and how long
-/// it asked for.
-pub fn limiting(wait: Option<u64>) -> String {
-    match wait {
-        Some(wait) => format!("the server is limiting requests; waiting {wait}s"),
+/// How a limit reads in a drain's report, which waits for nothing itself.
+fn limiting(wait: Option<u64>) -> String {
+    match held_to_most(wait) {
+        Some(wait) => format!("the server is limiting requests and asked for a wait of {wait}s"),
         None => "the server is limiting requests".into(),
+    }
+}
+
+/// A wait the server asked for, never longer than a device waits.
+fn held_to_most(wait: Option<u64>) -> Option<u64> {
+    wait.map(|wait| wait.min(crate::error::RETRY_AFTER_MOST.as_secs()))
+}
+
+/// Why the server could not say which instance it is.
+fn unconfirmed(error: &CoreError) -> String {
+    if error.is_rate_limited() {
+        limiting(error.retry_after().map(|wait| wait.as_secs()))
+    } else {
+        format!("the server could not say which instance it is, so nothing was sent: {error}")
     }
 }
 
@@ -1164,9 +1182,8 @@ fn send_queue(
             Ok(()) => {}
             Err(error) if error.is_environmental() => {
                 telemetry::degraded!(&error);
-                report.unavailable = Some(format!(
-                    "the server could not say which instance it is, so nothing was sent: {error}"
-                ));
+                report.unavailable = Some(unconfirmed(&error));
+                report.limited = error.is_rate_limited();
                 report.undelivered = waiting.len();
                 waited(report, error.retry_after().map(|wait| wait.as_secs()));
                 return Ok(());
@@ -1199,9 +1216,8 @@ fn send_queue(
             }
             Err(error) if error.is_environmental() => {
                 telemetry::degraded!(&error);
-                report.unavailable = Some(format!(
-                    "the server could not say which instance it is, so nothing was sent: {error}"
-                ));
+                report.unavailable = Some(unconfirmed(&error));
+                report.limited = error.is_rate_limited();
                 waited(report, error.retry_after().map(|wait| wait.as_secs()));
                 Ok(false)
             }
@@ -1213,6 +1229,7 @@ fn send_queue(
     let unconfirmed = owed && !confirm(report)?;
     if !unconfirmed && let Some(why) = read_owed_backs(core, stop, pass)? {
         report.unavailable = Some(why.reason);
+        report.limited = why.limited;
         waited(report, why.retry_after_seconds);
     }
     if !unconfirmed
@@ -1220,6 +1237,7 @@ fn send_queue(
         && let Some(why) = create_edges::read_all(core, stop)?
     {
         report.unavailable = Some(why.reason);
+        report.limited = why.limited;
         waited(report, why.retry_after_seconds);
     }
 
@@ -1230,11 +1248,16 @@ fn send_queue(
         // A server that cannot be asked about names is no failure of the
         // pass: they wait for the next, and a write sent later confirms the
         // instance again.
-        let (unavailable, retry_after) = (report.unavailable.clone(), report.retry_after_seconds);
+        let (unavailable, limited, retry_after) = (
+            report.unavailable.clone(),
+            report.limited,
+            report.retry_after_seconds,
+        );
         if confirm(report)? {
             core.settle_bodies(stop)?;
         } else {
             report.unavailable = unavailable;
+            report.limited = limited;
             report.retry_after_seconds = retry_after;
         }
     }
@@ -1498,6 +1521,7 @@ fn send_queue(
                     row.id,
                     unavailable_by(&error).unwrap_or_else(|| error.to_string())
                 ));
+                report.limited = error.is_rate_limited();
                 waited(report, error.retry_after().map(|wait| wait.as_secs()));
                 waiting.insert(row.id.clone());
                 report.undelivered += 1;
@@ -1853,6 +1877,7 @@ fn send_queue(
                 key: row.idempotency_key.clone(),
                 at: cursor - 1,
                 unavailable: settled.unavailable.clone().unwrap_or_default(),
+                limited: settled.limited,
                 verdict_at: report
                     .verdicts
                     .iter()
@@ -1886,6 +1911,7 @@ fn send_queue(
                 report.undelivered += 1;
             }
             report.unavailable = settled.unavailable;
+            report.limited = settled.limited;
         }
         // A test that failed before the server could answer it, such as a
         // request that cannot be built, says nothing of the server. The pass
@@ -1949,6 +1975,7 @@ fn refuse_unsent(
     );
     if let Some(unread) = reconcile(core, row, pass)? {
         report.unavailable = Some(unread.reason);
+        report.limited = unread.limited;
         waited(report, unread.retry_after_seconds);
     }
     Ok(())
@@ -2270,7 +2297,7 @@ fn store_fault(row: &QueuedWrite) -> Option<CoreError> {
 /// The longest wait of the pass, not the last: a caller waits once for the
 /// whole pass.
 fn waited(report: &mut DrainReport, wait: Option<u64>) {
-    if let Some(wait) = wait.map(|wait| wait.min(crate::error::RETRY_AFTER_MOST.as_secs())) {
+    if let Some(wait) = held_to_most(wait) {
         report.retry_after_seconds = Some(
             report
                 .retry_after_seconds
@@ -2305,6 +2332,9 @@ fn unavailable(answer: &std::result::Result<Answer, CoreError>) -> Option<String
 }
 
 fn unavailable_by(error: &CoreError) -> Option<String> {
+    if error.is_rate_limited() {
+        return Some(limiting(error.retry_after().map(|wait| wait.as_secs())));
+    }
     match error {
         CoreError::RenewalFailed(cause) => unavailable_by(cause),
         CoreError::Io(_) | CoreError::StorageFull(_) => Some(error.to_string()),
@@ -2312,9 +2342,6 @@ fn unavailable_by(error: &CoreError) -> Option<String> {
             Some(format!("the server could not be reached: {error}"))
         }
         CoreError::Unnamed { .. } => Some(error.to_string()),
-        CoreError::RateLimited { .. } => {
-            Some(limiting(error.retry_after().map(|wait| wait.as_secs())))
-        }
         CoreError::Server { .. } if error.is_environmental() => Some(format!(
             "the server could not take the request now: {error}"
         )),
@@ -2644,6 +2671,8 @@ struct Settled {
     /// Set where this write, or a read it needed, could not get through: the
     /// pass ends here.
     unavailable: Option<String>,
+    /// Whether `unavailable` is the server limiting requests.
+    limited: bool,
     conflicts: Vec<RowConflict>,
     /// The other writes of this one's batch.
     joined: Vec<DrainVerdict>,
@@ -2665,6 +2694,7 @@ impl Settled {
             unclaimed: None,
             retry_after_seconds: None,
             unavailable: None,
+            limited: false,
             conflicts: Vec::new(),
             joined: Vec::new(),
             again: false,
@@ -2828,6 +2858,7 @@ fn settle_success(
         Err(error) if error.is_environmental() => {
             telemetry::degraded!(&error);
             settled.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
+            settled.limited = error.is_rate_limited();
             settled.retry_after_seconds = error.retry_after().map(|wait| wait.as_secs());
             return Ok(settled);
         }
@@ -2918,6 +2949,7 @@ fn settle_success(
             Err(error) if error.is_environmental() => {
                 telemetry::degraded!(&error);
                 settled.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
+                settled.limited = error.is_rate_limited();
                 settled.retry_after_seconds = error.retry_after().map(|wait| wait.as_secs());
             }
             Err(error) => telemetry::degraded!(&error),
@@ -3069,6 +3101,7 @@ fn settle(
                 .and_then(CoreError::retry_after)
                 .map(|wait| wait.as_secs()),
             unavailable: unavailable(answer),
+            limited: rate_limited(answer),
             ..Settled::plain(None, None, row.refusals)
         }),
         Classified::Contract => {
@@ -3106,6 +3139,7 @@ fn settle(
                 retry_after_seconds: unread
                     .as_ref()
                     .and_then(|unread| unread.retry_after_seconds),
+                limited: unread.as_ref().is_some_and(|unread| unread.limited),
                 unavailable: unread.map(|unread| unread.reason),
                 ..Settled::plain(Some(Verdict::Refused), Some(code), row.refusals)
             })
@@ -3224,6 +3258,7 @@ fn settle_delivered(
                     return Ok(Settled {
                         retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
                         unavailable: unavailable_by(&error).or_else(|| Some(error.to_string())),
+                        limited: error.is_rate_limited(),
                         ..Settled::plain(None, None, row.refusals)
                     });
                 }
@@ -3298,6 +3333,7 @@ fn land(
         Err(error) if error.is_environmental() => {
             telemetry::degraded!(&error);
             settled.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
+            settled.limited = error.is_rate_limited();
             settled.retry_after_seconds = error.retry_after().map(|wait| wait.as_secs());
             return Ok(settled);
         }
@@ -3408,12 +3444,14 @@ fn reconcile(core: &Core, row: &QueuedWrite, pass: &mut ReachChange) -> Result<O
 
 struct Unreadable {
     reason: String,
+    limited: bool,
     retry_after_seconds: Option<u64>,
 }
 
 fn unreadable(error: &CoreError) -> Option<Unreadable> {
     Some(Unreadable {
         reason: unavailable_by(error)?,
+        limited: error.is_rate_limited(),
         retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
     })
 }
@@ -3493,6 +3531,7 @@ fn read_owed_backs(
         if let Some(reason) = settled.unavailable {
             return Ok(Some(Unreadable {
                 reason,
+                limited: settled.limited,
                 retry_after_seconds: settled.retry_after_seconds,
             }));
         }
@@ -6924,7 +6963,10 @@ mod tests {
     fn a_pass_ends_at_the_first_write_the_server_cannot_take() {
         for (cannot, says) in [
             (crate::scripted::refusal(503, "unavailable"), "503"),
-            (crate::scripted::refusal(429, "rate_limited"), "429"),
+            (
+                crate::scripted::refusal(429, "rate_limited"),
+                "the server is limiting requests",
+            ),
             (
                 crate::scripted::Answer::Stall,
                 "request to http://127.0.0.1:",
@@ -7141,6 +7183,62 @@ mod tests {
         }
     }
 
+    fn answered_with(status: u16, code: &str, wait: &str) -> crate::scripted::Answer {
+        crate::scripted::Answer::Json {
+            status,
+            body: format!(r#"{{"error":{{"code":"{code}","message":"wait"}}}}"#),
+            headers: vec![("Retry-After".into(), wait.into())],
+        }
+    }
+
+    #[test]
+    fn a_wait_named_without_a_429_is_not_the_server_limiting_requests() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &["current", "later"]);
+        server.on(
+            "/items/current",
+            vec![answered_with(503, "service_unavailable", "30")],
+        );
+        let report = core.drain().unwrap();
+        assert_eq!(report.retry_after_seconds, Some(30));
+        assert!(!report.limited, "{report:?}");
+        let unavailable = report.unavailable.unwrap();
+        assert!(!unavailable.contains("limiting"), "{unavailable}");
+    }
+
+    #[test]
+    fn a_429_asking_for_longer_than_the_cap_says_the_capped_wait() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &["current", "later"]);
+        server.on(
+            "/items/current",
+            vec![answered_with(429, "rate_limited", "600")],
+        );
+        let report = core.drain().unwrap();
+        assert_eq!(report.retry_after_seconds, Some(300));
+        assert!(report.limited);
+        assert_eq!(
+            report.unavailable.as_deref(),
+            Some("the server is limiting requests and asked for a wait of 300s")
+        );
+        assert_eq!((report.answered, report.undelivered), (0, 2));
+    }
+
+    #[test]
+    fn a_429_on_the_instance_check_is_the_server_limiting_requests() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &["current", "later"]);
+        server.on("/", vec![answered_with(429, "rate_limited", "45")]);
+        let report = core.drain().unwrap();
+        assert!(report.limited, "{report:?}");
+        assert_eq!(report.retry_after_seconds, Some(45));
+        assert_eq!(
+            report.unavailable.as_deref(),
+            Some("the server is limiting requests and asked for a wait of 45s")
+        );
+        assert!(server.seen("/items/current").is_empty());
+    }
+
     #[test]
     fn a_refused_renewal_parks_the_queue_and_one_the_network_stopped_waits() {
         let refused = |renewal: CoreError| {
@@ -7273,6 +7371,7 @@ mod tests {
             unsent: 0,
             unmade: 0,
             unavailable: None,
+            limited: false,
             verdicts: Vec::new(),
             stopped: None,
             unclaimed_sources: Vec::new(),

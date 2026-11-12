@@ -391,7 +391,9 @@ describe("creates in pages", () => {
     expect(first.answered, JSON.stringify(first)).toBe(0);
     expect(first.undelivered).toBe(50);
     expect(first.retry_after_seconds).toBe(2);
-    expect(first.unavailable).toMatch(/the server is limiting requests; waiting 2s/);
+    expect(first.unavailable).toMatch(
+      /the server is limiting requests and asked for a wait of 2s/,
+    );
     const waiting = value(await harness.device.queue());
     for (const row of waiting) {
       expect(row.verdict, JSON.stringify(row)).toBeNull();

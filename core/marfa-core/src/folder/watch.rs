@@ -527,7 +527,7 @@ impl Folder {
         let generation = health.lock().expect("follow health lock").generation;
         let drain = self.drain_in(true)?;
         let reached = match &drain.report.unavailable {
-            Some(_) if limited_by_server(&drain.report) => None,
+            Some(_) if drain.report.limited => None,
             Some(why) => telling.reach(Some(why.clone())),
             None if drain.report.answered > 0 => telling.reach(None),
             None => None,
@@ -677,7 +677,7 @@ impl Folder {
         } else {
             None
         };
-        if wait.is_some() {
+        if drain.report.limited {
             tell(WatchEvent::Limited { wait }).map_err(WatchError::Told)?;
         }
         if let Some(event) = event {
@@ -1093,12 +1093,6 @@ fn rate_limit_wait(drain: &crate::DrainReport) -> Option<Duration> {
         return None;
     }
     drain.retry_after_seconds.map(Duration::from_secs)
-}
-
-/// Whether the drain stopped because the server limited requests, which it
-/// answered, rather than because it could not be reached.
-fn limited_by_server(report: &crate::DrainReport) -> bool {
-    report.unavailable.as_deref() == Some(crate::limiting(report.retry_after_seconds).as_str())
 }
 
 fn retry_schedule(backoff: Duration, error: &CoreError) -> (Duration, Duration) {
@@ -2190,6 +2184,7 @@ mod tests {
                 unsent: 0,
                 unmade: 0,
                 unavailable: None,
+                limited: false,
                 verdicts: Vec::new(),
                 stopped: None,
                 unclaimed_sources: Vec::new(),
