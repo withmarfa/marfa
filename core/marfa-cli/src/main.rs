@@ -10,6 +10,7 @@ mod door;
 mod environment;
 mod error;
 mod folders;
+mod hint;
 mod interrupt;
 mod keyfile;
 mod local;
@@ -346,6 +347,25 @@ enum Command {
     },
 }
 
+/// Where the command's server and key come from, as `run` reads them.
+fn named_of(cli: &Cli) -> Named {
+    let profile = match &cli.profile {
+        Some(name) => Some(profiles::Chosen::new(
+            name.clone(),
+            profiles::ChosenBy::Flag,
+        )),
+        None if cli.url.is_none() && cli.key.is_none() && cli.socket.is_none() => {
+            profiles::Chosen::from_environment()
+        }
+        None => None,
+    };
+    Named {
+        url: cli.url.clone(),
+        key: cli.key.clone(),
+        profile,
+    }
+}
+
 fn main() -> ExitCode {
     let (cli, command) = match parse() {
         Ok(parsed) => parsed,
@@ -355,6 +375,7 @@ fn main() -> ExitCode {
         },
     };
     let json = cli.json;
+    let aim = hint::Aim::new(&command, std::env::args_os().collect(), named_of(&cli));
     style::set_json(json);
     telemetry::load_carried(&command);
     let telemetry = telemetry::start(&command, json);
@@ -374,7 +395,7 @@ fn main() -> ExitCode {
         Ok(exit) => interrupt::status(*exit as u8),
         Err(CliError::ClosedOutput) => 0,
         Err(error) => {
-            print_refusal(error, json);
+            print_refusal(error, json, Some(&aim));
             error.exit() as u8
         }
     };
@@ -427,15 +448,18 @@ fn command_path(matches: &ArgMatches) -> String {
 }
 
 fn refused(error: &CliError, json: bool) -> ExitCode {
-    print_refusal(error, json);
+    print_refusal(error, json, None);
     ExitCode::from(error.exit() as u8)
 }
 
-fn print_refusal(error: &CliError, json: bool) {
+fn print_refusal(error: &CliError, json: bool, aim: Option<&hint::Aim>) {
     if json {
         eprintln!("{}", error.envelope());
     } else {
         eprintln!("{} {error}", style::bad(style::Stream::Err, "marfa:"));
+        if let Some(hint) = aim.and_then(|aim| hint::for_error(error, aim)) {
+            eprintln!("{hint}");
+        }
     }
 }
 
@@ -592,18 +616,7 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
                 .into(),
         ));
     }
-    let profile = match cli.profile {
-        Some(name) => Some(profiles::Chosen::new(name, profiles::ChosenBy::Flag)),
-        None if cli.url.is_none() && cli.key.is_none() && cli.socket.is_none() => {
-            profiles::Chosen::from_environment()
-        }
-        None => None,
-    };
-    let named = Named {
-        url: cli.url,
-        key: cli.key,
-        profile,
-    };
+    let named = named_of(&cli);
     keychain_profile_refusal(&cli.command, &named)?;
     if matches!(
         cli.command,

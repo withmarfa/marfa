@@ -1014,8 +1014,11 @@ pub fn bulk_action_request(command: &BulkActionCommand) -> Result<Request, CliEr
     Ok(if dry_run { request.reading() } else { request })
 }
 
+/// The server answers a refusal it makes before reading the body without the body being sent.
 pub fn upload_request(path: &std::path::Path, mime_type: &str) -> Request {
-    Request::post(&["blobs"]).file(path.to_path_buf(), mime_type.to_string())
+    Request::post(&["blobs"])
+        .file(path.to_path_buf(), mime_type.to_string())
+        .header("Expect", "100-continue")
 }
 
 pub fn file_item_request(args: &AttachArgs, mime_type: &str, hash: &str) -> Request {

@@ -158,6 +158,12 @@ pub fn read_request(stream: &mut std::net::TcpStream) -> Received {
         .filter_map(|line| line.split_once(':'))
         .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_string()))
         .collect();
+    if headers
+        .iter()
+        .any(|(name, value)| name == "expect" && value.eq_ignore_ascii_case("100-continue"))
+    {
+        stream.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").unwrap();
+    }
     let chunked = headers
         .iter()
         .any(|(name, value)| name == "transfer-encoding" && value.contains("chunked"));

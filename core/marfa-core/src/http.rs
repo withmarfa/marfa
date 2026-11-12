@@ -19,6 +19,30 @@ use crate::wire::{
 };
 use marfa_rules::wire::{WireCatalog, WireEdgeType, WireType};
 
+const REFUSED: &str = "the connection was refused";
+
+fn connection_refused(cause: &(dyn std::error::Error + 'static)) -> bool {
+    std::iter::successors(Some(cause), |error| error.source()).any(|error| {
+        let kind = match error.downcast_ref::<ureq::Error>() {
+            Some(ureq::Error::Io(error)) => Some(error.kind()),
+            _ => error
+                .downcast_ref::<std::io::Error>()
+                .map(std::io::Error::kind),
+        };
+        kind == Some(std::io::ErrorKind::ConnectionRefused)
+    })
+}
+
+/// The origin of a server that refused the connection, when `error` says so:
+/// nothing was listening there, so it is not running or not at that address.
+pub fn refused_origin(error: &CoreError) -> Option<&str> {
+    let CoreError::Network(text) = error else {
+        return None;
+    };
+    text.strip_prefix("request to ")?
+        .strip_suffix(&format!(" failed: {REFUSED}"))
+}
+
 /// The page asked of the item listing, the most it answers
 /// (`search-and-filters/limit-listing`). A hydration reads a page per round
 /// trip, so a larger page fills a copy sooner over a slow link. A server
@@ -766,10 +790,16 @@ impl Http {
 
     /// A transport failure, naming the server by scheme, host and port only:
     /// a gateway's path prefix, a key or a token is never in what a person
-    /// is shown.
-    fn unreached(&self, cause: impl std::fmt::Display) -> CoreError {
+    /// is shown. A refused connection is worded by `REFUSED`, which
+    /// `refused_origin` reads back.
+    fn unreached(&self, cause: impl std::error::Error + 'static) -> CoreError {
+        let said = if connection_refused(&cause) {
+            REFUSED.to_string()
+        } else {
+            cause.to_string()
+        };
         CoreError::Network(format!(
-            "request to {} failed: {cause}",
+            "request to {} failed: {said}",
             self.base.origin().ascii_serialization()
         ))
     }
@@ -2610,6 +2640,52 @@ mod tests {
             matches!(&fetched, Err(CoreError::Network(_))),
             "{fetched:?}"
         );
+    }
+
+    #[test]
+    fn a_file_the_server_refuses_before_reading_it_is_answered_not_broken_off() {
+        let (url, serving) = serve_closing_early();
+        let reader = Read::take(std::io::repeat(b'x'), LONG_BODY as u64);
+        let reply = Http::new(&url, "k")
+            .unwrap()
+            .fetch(
+                Call {
+                    method: Method::Post,
+                    segments: &["blobs"],
+                    params: &[],
+                    headers: &[("Expect", "100-continue")],
+                    body: CallBody::Reader(Box::new(reader)),
+                    credential: true,
+                    stream: false,
+                },
+                true,
+            )
+            .unwrap();
+        serving.join().unwrap();
+        assert_eq!(reply.status, 413);
+    }
+
+    #[test]
+    fn a_refused_connection_names_its_origin_and_another_failure_does_not() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let refused = Http::new(&url, "k")
+            .unwrap()
+            .fetch(post_items("{}"), true)
+            .map(|_| "answered")
+            .unwrap_err();
+        assert_eq!(refused_origin(&refused), Some(url.as_str()), "{refused}");
+
+        let (url, serving) = serve(Vec::new());
+        let hung_up = Http::new(&url, "k")
+            .unwrap()
+            .fetch(post_items("{}"), true)
+            .map(|_| "answered")
+            .unwrap_err();
+        serving.join().unwrap().unwrap();
+        assert!(matches!(&hung_up, CoreError::Network(_)), "{hung_up}");
+        assert_eq!(refused_origin(&hung_up), None, "{hung_up}");
     }
 
     #[test]

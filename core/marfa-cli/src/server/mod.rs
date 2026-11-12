@@ -71,7 +71,15 @@ pub enum ServerCommand {
     Upgrade(UpgradeArgs),
     /// Whether the server runs, its release and address, and whether it is claimed.
     ///
-    /// When the server is not running, it shows the end of its log.
+    /// It says what the server's `/health` answers: healthy, or degraded or down with the
+    /// components at fault, such as a disk with too little room. It says "not answering" only
+    /// when the server gave no answer. When the server is not answering, it shows the end of
+    /// its log.
+    ///
+    /// It exits 0 whenever it can say how the server is, a stopped, degraded or silent server
+    /// included: `--json` has `running`, `answering`, `healthy` and `health` for a script to
+    /// read. It exits non-zero only when the command itself fails, such as for a folder with
+    /// no install.
     Status(DirArgs),
     /// Start the server, if it is not running.
     ///
@@ -291,6 +299,51 @@ struct State {
 
 struct Folder {
     dir: PathBuf,
+}
+
+/// The `marfa --socket` command that acts on the server at `origin` with the
+/// private local command, when this machine's install, in the default folder,
+/// is that server and its socket is there.
+pub fn socket_command_for(origin: &str) -> Option<String> {
+    let asked = url::Url::parse(origin).ok()?;
+    let folder = Folder::new(&DirArgs { dir: None }).ok()?;
+    let (state, _) = folder.state().ok()??;
+    let on_this_port = marfa_telemetry::host::is_loopback(&asked)
+        && asked.port_or_known_default() == Some(state.port);
+    let at_its_address = state
+        .address
+        .as_deref()
+        .and_then(|address| url::Url::parse(address).ok())
+        .is_some_and(|address| address.origin() == asked.origin());
+    if !on_this_port && !at_its_address {
+        return None;
+    }
+    match state.runtime {
+        Runtime::Native => {
+            let socket = native::Layout::new(&folder.dir).socket();
+            socket.exists().then(|| {
+                format!(
+                    "marfa --socket {}",
+                    crate::hint::shell_word(&socket.display().to_string())
+                )
+            })
+        }
+        Runtime::Docker => {
+            let docker = docker::Docker::new(false);
+            docker.check().ok()?;
+            docker
+                .container(&state.name)
+                .ok()??
+                .status
+                .eq("running")
+                .then(|| {
+                    format!(
+                        "docker exec {} marfa --socket /data/control/marfa.sock",
+                        state.name
+                    )
+                })
+        }
+    }
 }
 
 /// The path with the part that exists made real, so that a link in it is

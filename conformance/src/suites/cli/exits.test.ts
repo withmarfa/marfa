@@ -192,6 +192,18 @@ describe("the exit codes", () => {
     expect(message.startsWith("network")).toBe(false);
   });
 
+  it("asks a person whether the server is running when nothing listens on this machine, and says so only to a person", async () => {
+    const people = await c.cli.at("http://127.0.0.1:1").run(["status"]);
+    expect(people.code).toBe(3);
+    expect(people.stderr).toContain("marfa server status");
+    expect(people.stderr).not.toContain("os error");
+    const script = await c.cli
+      .at("http://127.0.0.1:1")
+      .run(["--json", "status"]);
+    expect(script.code).toBe(3);
+    expect(script.stderr).not.toContain("marfa server status");
+  });
+
   it("leaves by 4 when the working copy refuses under the device rules", async () => {
     const store = join(dir, "copy");
     const made = await c.cli.run(["--json", "device", "--db", store, "status"]);

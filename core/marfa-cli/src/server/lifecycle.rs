@@ -376,6 +376,68 @@ fn autostart_word(state: &State, at_boot: Option<bool>, exists: bool) -> &'stati
     }
 }
 
+/// What `GET /health` answered, whatever its status: a server that says it is
+/// degraded or down has still answered.
+struct Health {
+    http: u16,
+    /// `ok`, `degraded` or `down`, when the body names one.
+    status: Option<String>,
+    /// Each component that is not `ok`, in words.
+    problems: Vec<String>,
+}
+
+impl Health {
+    fn ask(agent: &ureq::Agent, port: u16) -> Option<Health> {
+        let mut response = agent
+            .get(&format!("http://127.0.0.1:{port}/health"))
+            .call()
+            .ok()?;
+        let http = response.status().as_u16();
+        let body = response
+            .body_mut()
+            .read_json::<Value>()
+            .unwrap_or(Value::Null);
+        let status = body["status"].as_str().map(str::to_string);
+        let mut problems: Vec<String> = body["components"]
+            .as_object()
+            .into_iter()
+            .flatten()
+            .filter_map(|(name, component)| {
+                let said = component["status"].as_str().filter(|said| *said != "ok")?;
+                Some(format!("{} {said}", name.replace('_', " ")))
+            })
+            .collect();
+        if body["backups"]["status"] == "failing" {
+            problems.push("backups failing".into());
+        }
+        Some(Health {
+            http,
+            status,
+            problems,
+        })
+    }
+
+    fn is_ok(&self) -> bool {
+        self.http == 200 && matches!(self.status.as_deref(), None | Some("ok"))
+    }
+
+    fn said(&self) -> String {
+        let word = match &self.status {
+            Some(status) => status.clone(),
+            None => format!("answered {}", self.http),
+        };
+        if self.problems.is_empty() {
+            word
+        } else {
+            format!("{word}: {}", self.problems.join(", "))
+        }
+    }
+
+    fn json(&self) -> Value {
+        json!({ "http": self.http, "status": self.status, "problems": self.problems })
+    }
+}
+
 pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
     let folder = Folder::new(&args)?;
     let (state, _) = folder.require_state()?;
@@ -399,13 +461,14 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
         _ => false,
     };
     let agent = http_agent();
-    let health = format!("http://127.0.0.1:{}/health", state.port);
-    let healthy = running
-        && agent
-            .get(&health)
-            .call()
-            .is_ok_and(|response| response.status().as_u16() == 200);
-    let release = if healthy {
+    let answered = if running {
+        Health::ask(&agent, state.port)
+    } else {
+        None
+    };
+    let answering = answered.is_some();
+    let healthy = answered.as_ref().is_some_and(Health::is_ok);
+    let release = if answering {
         agent
             .get(&format!("http://127.0.0.1:{}/", state.port))
             .call()
@@ -425,18 +488,18 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
     };
     let claimed = control
         .as_ref()
-        .filter(|_| healthy)
+        .filter(|_| answering)
         .and_then(|control| control.json(&["setup", "status"]).ok())
         .and_then(|status| status["claimed"].as_bool());
     let held_address: Option<String> = control
         .as_ref()
-        .filter(|_| healthy)
+        .filter(|_| answering)
         .and_then(|control| control.json(&["config", "get"]).ok())
         .and_then(|config| super::address::stored(&config).map(str::to_string));
     let address = held_address
         .or_else(|| state.address.clone())
         .unwrap_or_else(|| super::local_address(state.port));
-    let tail = if healthy {
+    let tail = if answering {
         String::new()
     } else {
         match (&service, &docker) {
@@ -460,7 +523,9 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
         "service": service_name,
         "container": container.as_ref().map(|c| c.status.clone()),
         "running": running,
+        "answering": answering,
         "healthy": healthy,
+        "health": answered.as_ref().map(Health::json),
         "claimed": claimed,
         "address": address,
         "port": state.port,
@@ -470,10 +535,13 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
         "log": tail,
     });
     out.report(&report, || {
-        let word = match (running, healthy) {
+        let word = match (running, &answered) {
             (false, _) => style::bad(Stream::Out, "not running"),
-            (true, true) => style::good(Stream::Out, "running and healthy"),
-            (true, false) => style::bad(Stream::Out, "running, not answering"),
+            (true, None) => style::bad(Stream::Out, "running, not answering"),
+            (true, Some(health)) if health.is_ok() => {
+                style::good(Stream::Out, "running and healthy")
+            }
+            (true, Some(health)) => style::bad(Stream::Out, &format!("running, {}", health.said())),
         };
         let mut text = format!(
             "{} {}: {word}\n  Runtime   {}\n  Address   {address}\n  Folder    {}\n  Owner     {}",

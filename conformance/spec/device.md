@@ -3044,6 +3044,46 @@ If the CLI reports `network`, then the CLI MUST NOT begin the message with the w
 
 **Tests:** `cli/exits.test.ts › leaves by 3 when the server cannot be reached`.
 
+### `device/command-unreachable-hint`
+
+If the CLI cannot reach a server on this machine, then the CLI MUST ask a person whether the server is running and name `marfa server status`.
+
+**Reason:** a person who sees only that nothing answered cannot tell a stopped server from a wrong address.
+
+**Tests:** `cli/exits.test.ts › asks a person whether the server is running when nothing listens on this machine, and says so only to a person`.
+
+### `device/command-unreachable-hint-not-in-json`
+
+If the CLI cannot reach a server and `--json` is set, then the CLI MUST NOT add advice to the envelope's message.
+
+**Reason:** a script reads the envelope's code and message, and advice for a person would change what it matches.
+
+**Tests:** `cli/exits.test.ts › asks a person whether the server is running when nothing listens on this machine, and says so only to a person`.
+
+### `device/command-local-only-refusal`
+
+If the server refuses a command with `details.needs` set to `local`, then the CLI MUST tell a person that the private local command can do it.
+
+**Reason:** the server says which refusals only the private local command can mend, so the CLI decides by that detail and not by the words of the message.
+
+**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key the private command is the way`.
+
+### `device/command-local-only-refusal-details`
+
+If the server refuses a command with `details`, then the CLI MUST carry `details` unchanged in the `--json` envelope's `server` member.
+
+**Reason:** a script decides what to do from the server's own detail, not from the CLI's advice.
+
+**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key the private command is the way`.
+
+### `device/command-address-change-flag`
+
+If a person runs `config update` or `config replace` with `--confirm-address-change`, then the CLI MUST send `confirm_sign_in_address_change` set to `true` with the body.
+
+**Reason:** the server holds a sign-in address change until it is confirmed, and a person confirms it by naming the flag after reading what the change does.
+
+**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key the private command is the way`.
+
 ### `device/command-redirect`
 
 If an answer to the CLI is a `3xx`, then the CLI MUST refuse it `redirect` with exit 1, naming the status and the destination, without following it.
