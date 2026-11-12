@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it, expect, afterEach, vi } from "vitest";
@@ -1452,7 +1453,11 @@ describe("folder syncing from login", () => {
     const other = await folderHarness("autostart-keep-other");
     made.push(other);
     // Async: the scripted server answers from this process.
-    const keep = (root: string, url = harness.server.url) =>
+    const keep = (
+      root: string,
+      url = harness.server.url,
+      registry = harness.registry,
+    ) =>
       new Promise<{ status: number | null; stderr: string }>((resolve) => {
         const child = spawn(
           requireBinary(),
@@ -1470,7 +1475,7 @@ describe("folder syncing from login", () => {
               ...process.env,
               ...keychainEnv(),
               MARFA_AUTOSTART_ROOT: root,
-              MARFA_FOLDER_REGISTRY: harness.registry,
+              MARFA_FOLDER_REGISTRY: registry,
             },
             stdio: ["ignore", "pipe", "pipe"],
           },
@@ -1509,6 +1514,24 @@ describe("folder syncing from login", () => {
     expect(foreign.status, foreign.stderr).toBe(0);
     expect(
       managerState(root).calls.filter((call) =>
+        /kickstart -k|restart/.test(call),
+      ),
+    ).toHaveLength(1);
+    // A folder that has followed no server yet follows the one kept.
+    const fresh = await folderHarness("autostart-keep-fresh", {
+      hydrate: false,
+      confirm: false,
+    });
+    made.push(fresh);
+    const store = new DatabaseSync(join(fresh.dir, ".marfa", "core.sqlite"));
+    store.prepare("DELETE FROM meta WHERE key = 'server_origin'").run();
+    store.close();
+    const unbound = standIn("keep-no-origin");
+    parsed<Switched>(autostart(unbound, "on", { registry: fresh.registry }));
+    const unboundKept = await keep(unbound, other.server.url, fresh.registry);
+    expect(unboundKept.status, unboundKept.stderr).toBe(0);
+    expect(
+      managerState(unbound).calls.filter((call) =>
         /kickstart -k|restart/.test(call),
       ),
     ).toHaveLength(1);

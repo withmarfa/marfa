@@ -729,12 +729,12 @@ impl Place {
 }
 
 /// Starts the installed watch again where a credential kept for `origin` can
-/// reach it: the agent reads the keychain, and lists a folder of that server.
+/// reach it: the agent reads the keychain, and lists a folder that follows it.
 /// Whether it did is returned.
 fn resume(
     place: &Place,
     origin: &str,
-    listed_origins: impl FnOnce(&Path) -> Vec<String>,
+    follows: impl FnOnce(&Path, &str) -> bool,
 ) -> Result<bool, CliError> {
     let Some(written) = read_file(&place.file)? else {
         return Ok(false);
@@ -742,7 +742,7 @@ fn resume(
     let Some(agent) = Agent::read(place.manager, &written) else {
         return Ok(false);
     };
-    if agent.key_file.is_some() || !listed_origins(&agent.registry).iter().any(|o| o == origin) {
+    if agent.key_file.is_some() || !follows(&agent.registry, origin) {
         return Ok(false);
     }
     let state = place
@@ -761,8 +761,10 @@ fn resume(
 /// Starts the installed watch again after a credential is kept for `origin`,
 /// and says on stderr that it did, or why it could not.
 pub fn resume_after_credential_kept(origin: &str) {
-    let listed = |registry: &Path| marfa_core::folder::listed_origins(&Registry::at(registry));
-    match Place::here().and_then(|place| resume(&place, origin, listed).map(|ran| (place, ran))) {
+    let follows = |registry: &Path, origin: &str| {
+        marfa_core::folder::follows(&Registry::at(registry), origin)
+    };
+    match Place::here().and_then(|place| resume(&place, origin, follows).map(|ran| (place, ran))) {
         Ok((place, true)) => eprintln!(
             "restarted {}, so the folder watch uses this credential",
             place.manager.name()
@@ -1618,7 +1620,7 @@ mod tests {
 
     #[test]
     fn a_credential_kept_restarts_the_watch_only_where_it_can_help() {
-        let here = |_: &Path| vec!["https://one.test".to_string()];
+        let here = |_: &Path, origin: &str| origin == "https://one.test";
         for manager in [Manager::Launchd, Manager::Systemd] {
             let temp = tempfile::tempdir().unwrap();
             let (place, asked) = asked_manager(temp.path(), manager, true);
@@ -1642,7 +1644,7 @@ mod tests {
 
     #[test]
     fn a_credential_kept_leaves_the_watch_alone_where_it_could_not_help() {
-        let here = |_: &Path| vec!["https://one.test".to_string()];
+        let here = |_: &Path, origin: &str| origin == "https://one.test";
         let temp = tempfile::tempdir().unwrap();
         let (place, asked) = asked_manager(temp.path(), Manager::Launchd, true);
         let keyed = Agent {

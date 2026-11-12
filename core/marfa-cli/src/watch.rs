@@ -959,6 +959,40 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_signed_out_is_not_opened_with_that_credential_at_any_retry() {
+        let named = |key: &str| Named {
+            url: Some("https://one.test".into()),
+            key: Some(key.into()),
+            profile: None,
+        };
+        let dir = Path::new("/notes");
+        let out = Unwatched {
+            code: "signed_out".into(),
+            message: "signed out of https://one.test: sign in again".into(),
+        };
+        let machine = Machine {
+            named: named("first"),
+            json: false,
+            registry: PathBuf::from("folders.json"),
+            folders: Mutex::default(),
+        };
+        machine.opened_with(dir, "https://one.test".into(), "first".into());
+        machine.ended(dir, &out);
+        for retry in 0..3 {
+            let refused = machine.open(dir, Some("https://one.test")).err();
+            assert_eq!(refused, Some(out.clone()), "retry {retry}");
+        }
+        // The witness: with another credential the folder is opened, which
+        // here fails on its missing directory, not with the stored reason.
+        let other = Machine {
+            named: named("second"),
+            ..machine
+        };
+        let opened = other.open(dir, Some("https://one.test")).err().unwrap();
+        assert_ne!(opened, out);
+    }
+
+    #[test]
     fn a_folder_signed_out_stays_signed_out_while_its_credential_is_gone() {
         let machine = Machine {
             named: Named::default(),

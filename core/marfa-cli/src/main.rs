@@ -630,7 +630,12 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
         Command::Operations => operations::run(&out),
         Command::Docs(args) => docs::run(args, &named, &out),
         Command::Server { command } => server::run(command, &out),
-        Command::Login(args) => login::run(args, &named, &out),
+        Command::Login(args) => login::run(
+            args,
+            &named,
+            &out,
+            &crate::autostart::resume_after_credential_kept,
+        ),
         Command::Logout => logout::run(&named, &out),
         Command::Owner { command } => owner::run(command, &remote()?, &out),
         Command::Profile { command } => profile::run(command, &remote()?, &out),
@@ -665,9 +670,19 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
             command: keys::KeysCommand::Forget,
         } => {
             let url = Remote::url_named(&named)?;
-            keys::run(keys::KeysCommand::Forget, &Remote::public_at(&url)?, &out)
+            keys::run(
+                keys::KeysCommand::Forget,
+                &Remote::public_at(&url)?,
+                &out,
+                &crate::autostart::resume_after_credential_kept,
+            )
         }
-        Command::Keys { command } => keys::run(command, &remote()?, &out),
+        Command::Keys { command } => keys::run(
+            command,
+            &remote()?,
+            &out,
+            &crate::autostart::resume_after_credential_kept,
+        ),
         Command::Sources { command } => sources::run(command, &remote()?, &out),
         Command::Config { command } => config::run(command, &remote()?, &out),
         Command::Export(args) => export::run(args, &remote()?, &out),

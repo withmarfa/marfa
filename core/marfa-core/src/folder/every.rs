@@ -210,16 +210,15 @@ pub fn watch_every<W: EveryFolder>(
     )
 }
 
-/// The servers the folders `registry` lists follow, for those whose store
-/// can be read.
-pub fn listed_origins(registry: &Registry) -> Vec<String> {
+/// Whether a folder `registry` lists follows `origin`: its copy came from that
+/// server, or from none yet, so it takes the one a kept credential names.
+pub fn follows(registry: &Registry, origin: &str) -> bool {
     let Ok(Some(listed)) = registry.read() else {
-        return Vec::new();
+        return false;
     };
-    listed
-        .iter()
-        .filter_map(|entry| recorded(&entry.dir).ok()?.origin)
-        .collect()
+    listed.iter().any(|entry| {
+        stored_origin(&entry.dir).is_ok_and(|stored| stored.is_none_or(|stored| stored == origin))
+    })
 }
 
 fn read(registry: &Registry) -> Listing {
@@ -248,7 +247,8 @@ struct Recorded {
     asked: bool,
 }
 
-fn recorded(dir: &Path) -> crate::Result<Recorded> {
+/// A folder's root and its state folder, checked as a watch opens them.
+fn state_of(dir: &Path) -> crate::Result<(PathBuf, Directory)> {
     let root = super::reached(dir)?;
     let root_dir = Directory::open(&root).map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -267,6 +267,28 @@ fn recorded(dir: &Path) -> crate::Result<Recorded> {
     state_dir
         .entry_identity(Path::new("core.sqlite"))
         .map_err(|_| super::not_a_folder(&root))?;
+    Ok((root, state_dir))
+}
+
+/// Only the server a folder's copy came from.
+fn stored_origin(dir: &Path) -> crate::Result<Option<String>> {
+    let (root, state_dir) = state_of(dir)?;
+    match Core::read_directory(&state_dir, &root.join(STATE_DIR).join("core.sqlite")) {
+        Ok(core) => {
+            let conn = core.conn()?;
+            store::meta_get(&conn, store::META_SERVER_ORIGIN)
+        }
+        Err(CoreError::WrongSchema {
+            unsent: Some(0),
+            folder: Some(crate::FolderStore::Replaceable),
+            ..
+        }) => Ok(super::refused::recorded(&state_dir)?.0),
+        Err(error) => Err(error),
+    }
+}
+
+fn recorded(dir: &Path) -> crate::Result<Recorded> {
+    let (root, state_dir) = state_of(dir)?;
     let (origin, first_sync_waiting) =
         match Core::read_directory(&state_dir, &root.join(STATE_DIR).join("core.sqlite")) {
             Ok(core) => {
@@ -316,7 +338,7 @@ struct Timing {
 
 impl Default for Timing {
     fn default() -> Timing {
-        Timing {
+        let timing = Timing {
             poll: POLL,
             reread: REREAD,
             unopened: RETRY_UNOPENED,
@@ -325,7 +347,18 @@ impl Default for Timing {
             held: handover::HANDOVER_WAIT,
             recovered: RECOVERED,
             missing_most: RETRY_MISSING_MOST,
+        };
+        // A debug build retries a folder at the milliseconds the fixture names.
+        #[cfg(debug_assertions)]
+        if let Some(retry) = crate::fault::named("watch-retry").and_then(|ms| ms.parse().ok()) {
+            let retry = Duration::from_millis(retry);
+            return Timing {
+                unopened: retry,
+                ended: retry,
+                ..timing
+            };
         }
+        timing
     }
 }
 
@@ -2000,6 +2033,34 @@ mod tests {
             machine.told(),
             vec!["unwatched /asked handed_over", "watching /asked"]
         );
+    }
+
+    /// A listed folder whose store records `origin`, or none.
+    fn stored(registry: &Registry, root: &Path, name: &str, origin: Option<&str>) {
+        let dir = root.join(name);
+        std::fs::create_dir_all(dir.join(STATE_DIR)).unwrap();
+        let core = Core::open(dir.join(STATE_DIR).join(store::FOLDER_STORE), None).unwrap();
+        if let Some(origin) = origin {
+            store::meta_set(&core.conn().unwrap(), store::META_SERVER_ORIGIN, origin).unwrap();
+        }
+        drop(core);
+        let held = Directory::open(&dir).unwrap();
+        registry.add(&dir, &held, name, None).unwrap();
+    }
+
+    #[test]
+    fn a_kept_credential_reaches_a_listed_folder_of_its_server_or_of_none_yet() {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let registry = Registry::at(temp.path().join("folders.json"));
+        // Nothing listed: no folder follows any server.
+        assert!(!follows(&registry, "https://one.test"));
+        stored(&registry, temp.path(), "one", Some("https://one.test"));
+        assert!(follows(&registry, "https://one.test"));
+        // The witness: a credential for another server reaches none of them.
+        assert!(!follows(&registry, "https://two.test"));
+        // A folder with no recorded origin takes whichever server is kept.
+        stored(&registry, temp.path(), "fresh", None);
+        assert!(follows(&registry, "https://two.test"));
     }
 
     #[test]

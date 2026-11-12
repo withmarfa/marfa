@@ -750,16 +750,60 @@ describe("a watch of every folder", () => {
           watch.stdout,
         ).toHaveLength(1);
       }, WAIT);
-      const sent = b.server.requests.length;
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
       expect(watch.running(), watch.stderr).toBe(true);
-      expect(
-        b.server.requests.length,
-        "a request was sent with the credential that ended",
-      ).toBe(sent);
       process.kill(watch.pid(), "SIGTERM");
       await watch.exited();
       expect(watch.exitCode(), watch.stderr).toBe(0);
+    });
+
+    /** Runs the watch through about fifteen retries of a folder whose sign-in
+     *  ended, and gives back what the server was sent and the reasons told. */
+    async function throughRetries(label: string, keptAgain: boolean) {
+      const { b, keychain } = await signedOut(label);
+      put(b, "Signed out.md", "---\ntitle: Signed out\n---\nmeets the end\n");
+      const watch = hold(
+        new CliFolder(b.dir, {
+          binary: requireBinary(),
+          url: b.server.url,
+          registry: b.registry,
+        }).watchEvery({
+          MARFA_KEYCHAIN: keychain.path,
+          // A debug binary retries a folder every 200 ms, not every minute.
+          MARFA_TEST_FAULT: "watch-retry=200",
+        }),
+      );
+      await vi.waitFor(() => {
+        expect(
+          linesFor(watch, b.dir).filter((line) => line.code === "signed_out"),
+          watch.stdout,
+        ).toHaveLength(1);
+      }, WAIT);
+      const sent = b.server.requests.length;
+      // Ending the sign-in dropped it from the keychain; keeping it again
+      // leaves each retry to find the one that ended, held.
+      if (keptAgain) keepSignIn(keychain.path, b.server.url);
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      expect(watch.running(), watch.stderr).toBe(true);
+      const told = linesFor(watch, b.dir)
+        .filter((line) => line.watching === false)
+        .map((line) => line.code);
+      process.kill(watch.pid(), "SIGTERM");
+      await watch.exited();
+      return { told, sent: b.server.requests.length - sent };
+    }
+
+    it("sends nothing with the credential that ended, however often it retries the folder", async () => {
+      const { told, sent } = await throughRetries("every-retry-held", true);
+      expect(sent, "a request was sent with the credential that ended").toBe(0);
+      expect(told).toEqual(["signed_out"]);
+    });
+
+    it("keeps telling the sign-in ended while no credential is kept, through every retry", async () => {
+      const { told, sent } = await throughRetries("every-retry-gone", false);
+      expect(sent).toBe(0);
+      expect(told, "the reason changed with no credential kept").toEqual([
+        "signed_out",
+      ]);
     });
   });
 

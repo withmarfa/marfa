@@ -438,14 +438,19 @@ pub fn revoke_request(id: &str) -> Request {
     Request::delete(&["keys", id])
 }
 
-pub fn run(command: KeysCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+pub fn run(
+    command: KeysCommand,
+    remote: &Remote,
+    out: &Printer,
+    resume: &dyn Fn(&str),
+) -> Result<(), CliError> {
     let request = match &command {
         KeysCommand::Create(args) => create_request(args)?,
         KeysCommand::List => list_request(),
         KeysCommand::Current => current_request(),
         KeysCommand::Update(args) => update_request(args)?,
         KeysCommand::Revoke { id } => revoke_request(id),
-        KeysCommand::Keep => return keep(remote, out),
+        KeysCommand::Keep => return keep(remote, out, resume),
         KeysCommand::Forget => {
             let had = crate::auth::with_credential_lock(remote.origin(), || {
                 credentials::forget(remote.origin())
@@ -537,7 +542,7 @@ fn listing(answer: &Value) -> String {
 /// The check is the key reading itself, which every key may do whatever it
 /// holds (`keys-and-oauth/current-key`): a key that reaches no type is kept
 /// as readily as one that reaches them all.
-fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
+fn keep(remote: &Remote, out: &Printer, resume: &dyn Fn(&str)) -> Result<(), CliError> {
     credentials::refuse_if_off()?;
     let key = match remote.credential() {
         Some(source) if source != crate::remote::CredentialSource::Keychain => remote.bearer(),
@@ -567,7 +572,7 @@ fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
         }
         credentials::keep(remote.origin(), &Kept::Key { key })
     })?;
-    crate::autostart::resume_after_credential_kept(remote.origin());
+    resume(remote.origin());
     out.report(&json!({ "origin": remote.origin(), "kept": "key" }), || {
         format!(
             "kept a key for {} in the keychain; it is now the server a bare command talks to",
@@ -708,7 +713,7 @@ mod keychain_off_tests {
         credentials::turn_off();
         let remote = Remote::keyed("https://marfa.example", "marfa_k1_key").unwrap();
         for command in [KeysCommand::Keep, KeysCommand::Forget] {
-            let outcome = run(command, &remote, &Printer { json: true });
+            let outcome = run(command, &remote, &Printer { json: true }, &|_| {});
             assert!(
                 matches!(&outcome, Err(CliError::Usage(message)) if message.contains("MARFA_API_KEY")),
                 "{outcome:?}"
