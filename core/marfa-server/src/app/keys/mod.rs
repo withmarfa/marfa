@@ -602,7 +602,7 @@ pub async fn current(app: &App, caller: &Caller) -> Result<Option<Map<String, Va
 
 /// What a presented key secret is.
 pub enum Presented {
-    Live(Key),
+    Live(Box<Key>),
     /// A stored key past its `expires_at`, which it carries.
     Expired(String),
     Unknown,
@@ -624,7 +624,7 @@ pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Presented> {
             Some(end) if !key.lives_at(&at) => Presented::Expired(end),
             _ => {
                 usage::note(app, &key);
-                Presented::Live(key)
+                Presented::Live(Box::new(key))
             }
         },
     })

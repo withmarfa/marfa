@@ -3652,14 +3652,13 @@ impl Instance {
     /// A key that holds the permission each of these writes asks, which only the private local command may use.
     async fn key_caller(&self) -> (Caller, String) {
         let key = self.key_holding(&["grants.manage", "keys.manage"]).await;
-        let found = keys::authenticate(&self.app, text_at(&key, "key"))
+        let keys::Presented::Live(found) = keys::authenticate(&self.app, text_at(&key, "key"))
             .await
             .unwrap()
-            .unwrap();
-        (
-            Caller::Key(Box::new(found)),
-            text_at(&key, "id").to_string(),
-        )
+        else {
+            panic!("the key it minted is live");
+        };
+        (Caller::Key(found), text_at(&key, "id").to_string())
     }
 }
 

@@ -125,7 +125,7 @@ async fn read_credential(parts: &mut Parts, app: &Arc<App>) -> Result<Option<Cal
             oauth::authenticate(app, token).await?
         }
         Presented::Token(token) => match keys::authenticate(app, token).await? {
-            keys::Presented::Live(key) => Some(Caller::Key(Box::new(key))),
+            keys::Presented::Live(key) => Some(Caller::Key(key)),
             keys::Presented::Expired(at) => {
                 expired = Some(Expired(at));
                 None
