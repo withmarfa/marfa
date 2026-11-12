@@ -207,7 +207,55 @@ pub fn undo_request(item: &str, table: &str, batch: &str) -> Request {
     Request::post(&["items", item, "tables", table, "batches", batch, "undo"])
 }
 
+/// Names the column of a refusal for the one row `put` or `patch` sent,
+/// rather than its place in the batch that carried it.
+pub fn for_one_row(error: CliError) -> CliError {
+    let CliError::Refused {
+        status,
+        code,
+        message,
+        retry_after_seconds,
+        mut details,
+    } = error
+    else {
+        return error;
+    };
+    let message = strip_batch_place(&message).unwrap_or(message);
+    if let Some(Value::Object(map)) = details.as_deref_mut() {
+        map.remove("operation");
+        if let Some(Value::Array(errors)) = map.get_mut("errors") {
+            for entry in errors.iter_mut().filter_map(Value::as_object_mut) {
+                let path = entry.get("path").and_then(Value::as_str);
+                match path.map(|path| path.strip_prefix("operations.0")) {
+                    Some(Some("")) => {
+                        entry.remove("path");
+                    }
+                    Some(Some(rest)) if rest.starts_with('.') => {
+                        entry.insert("path".into(), json!(&rest[1..]));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+    CliError::Refused {
+        status,
+        code,
+        message,
+        retry_after_seconds,
+        details,
+    }
+}
+
+fn strip_batch_place(message: &str) -> Option<String> {
+    let rest = message.strip_prefix("operations.0")?;
+    rest.strip_prefix(": ")
+        .or_else(|| rest.strip_prefix('.'))
+        .map(str::to_string)
+}
+
 pub fn run(command: RowsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    let one_row = matches!(command, RowsCommand::Put { .. } | RowsCommand::Patch { .. });
     let request = match &command {
         RowsCommand::List(args) => list_request(args),
         RowsCommand::Get { item, table, row } => get_request(item, table, row),
@@ -233,5 +281,8 @@ pub fn run(command: RowsCommand, remote: &Remote, out: &Printer) -> Result<(), C
         RowsCommand::Batches { item, table, page } => batches_request(item, table, page),
         RowsCommand::Undo { item, table, batch } => undo_request(item, table, batch),
     };
-    out.value(&remote.json(&request)?)
+    let answer = remote
+        .json(&request)
+        .map_err(|error| if one_row { for_one_row(error) } else { error })?;
+    out.value(&answer)
 }
