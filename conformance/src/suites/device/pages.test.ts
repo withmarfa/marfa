@@ -64,6 +64,7 @@ interface ItemEntry {
   type: string;
   properties?: Record<string, unknown>;
   tier?: string;
+  tags?: string[];
 }
 
 interface PageResult {
@@ -83,6 +84,7 @@ interface PageResult {
 class Door {
   readonly items = new Map<string, Record<string, unknown>>();
   readonly edges = new Map<string, WireEdgeOptions>();
+  readonly tags = new Map<string, string[]>();
   /** An answer standing in for a whole page's, where it gives one. */
   page?: (request: RecordedRequest) => Answer | undefined;
   /** A result standing in for one page entry's, where it gives one. */
@@ -138,6 +140,13 @@ class Door {
         }),
       );
     });
+    server.answer("POST", /^\/items\/[^/]+\/tags$/, (request) => {
+      const id = request.pathname.split("/").at(-2) ?? "";
+      const { tags } = JSON.parse(request.body) as { tags: string[] };
+      const held = this.tags.get(id) ?? [];
+      this.tags.set(id, [...new Set([...held, ...tags])]);
+      return writeAnswers.metadata(id, this.tags.get(id));
+    });
     server.answer("DELETE", /^\/items\/[^/]+$/, (request) => {
       this.items.delete(request.pathname.split("/").at(-1) ?? "");
       return writeAnswers.ok();
@@ -170,7 +179,10 @@ class Door {
       if (standIn !== undefined) return standIn;
       const item = this.items.get(id);
       if (item === undefined) return answers.itemNotFound();
-      return answers.updated({ ...item, edges: this.edgesFrom(id) });
+      return answers.updated(
+        { ...item, edges: this.edgesFrom(id) },
+        this.tags.get(id) ?? [],
+      );
     });
     server.copyAnswer("GET", /^\/edges\/[^/]+$/, (request) => {
       const id = request.pathname.split("/").at(-1) ?? "";
@@ -198,6 +210,7 @@ class Door {
       tier: entry.tier,
     });
     this.items.set(entry.id, item);
+    if (entry.tags !== undefined) this.tags.set(entry.id, [...entry.tags]);
     return item;
   }
 
@@ -240,7 +253,7 @@ function value<T>(outcome: Outcome<T>): T {
 async function queue(
   harness: Harness,
   count: number,
-  options: { edges?: boolean } = {},
+  options: { edges?: boolean; tags?: string[] } = {},
 ): Promise<{ notes: QueuedWrite[]; edges: QueuedWrite[] }> {
   const notes: QueuedWrite[] = [];
   const edges: QueuedWrite[] = [];
@@ -249,6 +262,7 @@ async function queue(
       await harness.device.create({
         type: "core.note",
         properties: { title: `Note ${String(at)}`, body: "text" },
+        ...(options.tags === undefined ? {} : { tags: options.tags }),
       }),
     );
     notes.push(note);
@@ -391,7 +405,9 @@ describe("creates in pages", () => {
     expect(first.answered, JSON.stringify(first)).toBe(0);
     expect(first.undelivered).toBe(50);
     expect(first.retry_after_seconds).toBe(2);
-    expect(first.unavailable).toMatch(/429/);
+    expect(first.unavailable).toMatch(
+      /the server is limiting requests \(429\) and asked for a wait of 2s/,
+    );
     const waiting = value(await harness.device.queue());
     for (const row of waiting) {
       expect(row.verdict, JSON.stringify(row)).toBeNull();
@@ -464,6 +480,75 @@ describe("creates in pages", () => {
     ).toBe(true);
   });
 
+  it("sends the tags queued with a create in its page entry, not on their own doors", async () => {
+    const made = await start("pages-tags");
+    harness = made.harness;
+    const { door } = made;
+    const { notes } = await queue(harness, 60, { tags: ["alpha", "beta"] });
+
+    const drained = await drain(harness);
+
+    // Each note is its create and its two tags.
+    expect(drained.answered, JSON.stringify(drained)).toBe(180);
+    expect(drained.undelivered).toBe(0);
+    const pages = door.requests("POST", "/items/bulk");
+    expect(pages).toHaveLength(1);
+    const page = JSON.parse(pages[0]?.body ?? "{}") as { items: ItemEntry[] };
+    expect(page.items.map((entry) => entry.tags)).toEqual(
+      notes.map(() => ["alpha", "beta"]),
+    );
+    expect(
+      harness.server.requests.filter((request) =>
+        /^\/items\/[^/]+\/tags$/.test(request.pathname),
+      ),
+    ).toHaveLength(0);
+    expect(door.requests("POST", "/items")).toHaveLength(0);
+    const queued = value(await harness.device.queue());
+    expect(queued.map((row) => [row.kind, row.verdict])).toEqual(
+      notes.flatMap(() => [
+        ["create_item", "accepted"],
+        ["add_tag", "accepted"],
+        ["add_tag", "accepted"],
+      ]),
+    );
+    const held = value(await harness.device.get(notes[0]?.item_id ?? ""));
+    expect([...held.tags].sort()).toEqual(["alpha", "beta"]);
+  });
+
+  it("sends the tags of an entry the page does not create on their own doors, after its create", async () => {
+    const made = await start("pages-tags-entry-alone");
+    harness = made.harness;
+    const { door } = made;
+    const { notes } = await queue(harness, 52, { tags: ["alpha"] });
+    const [alone] = notes as [QueuedWrite];
+    door.entry = (entry, index) =>
+      entry.id === alone.item_id
+        ? {
+            index,
+            outcome: "errored",
+            error: { code: "internal_error", message: "Not written" },
+          }
+        : undefined;
+
+    const drained = await drain(harness);
+
+    expect(drained.answered, JSON.stringify(drained)).toBe(104);
+    const tag = value(await harness.device.queue()).find(
+      (row) => row.kind === "add_tag" && row.item_id === alone.item_id,
+    );
+    const tagged = harness.server.requests.filter((request) =>
+      /^\/items\/[^/]+\/tags$/.test(request.pathname),
+    );
+    expect(tagged.map((request) => request.pathname)).toEqual([
+      `/items/${alone.item_id ?? ""}/tags`,
+    ]);
+    expect(tagged[0]?.headers["idempotency-key"]).toBe(tag?.idempotency_key);
+    const [create] = door.requests("POST", "/items");
+    expect(create?.seq ?? Infinity).toBeLessThan(tagged[0]?.seq ?? 0);
+    expect(tag?.verdict).toBe("accepted");
+    expect(door.tags.get(alone.item_id ?? "")).toEqual(["alpha"]);
+  });
+
   it("ends the drain where the read of a page meets a changed reach, with no write answered", async () => {
     const made = await start("pages-reach-changed");
     harness = made.harness;
@@ -523,10 +608,8 @@ describe("creates in pages", () => {
     expect(door.items.size).toBe(51);
   });
 
-  it("sends no create in a page ahead of a write queued before it that is not a create", async () => {
+  it("sends creates in a page past a write queued before them that is not a create", async () => {
     const target = "01a00000-0000-7000-8000-0000000000bb";
-    // An item of its own, since an edge to an item in the bin is refused before
-    // it is queued (`queue-and-verdicts/edge-end-in-bin-refused`).
     const gone = "01a00000-0000-7000-8000-0000000000cc";
     const sources = Array.from(
       { length: 50 },
@@ -540,16 +623,13 @@ describe("creates in pages", () => {
     harness = made.harness;
     const { door } = made;
     const removed = value(await harness.device.deleteItem(gone));
-    const edges: QueuedWrite[] = [];
     for (const source of sources)
-      edges.push(
-        value(
-          await harness.device.createEdge({
-            source,
-            target,
-            type: "references",
-          }),
-        ),
+      value(
+        await harness.device.createEdge({
+          source,
+          target,
+          type: "references",
+        }),
       );
 
     const drained = await drain(harness);
@@ -560,21 +640,10 @@ describe("creates in pages", () => {
     );
     expect(deletes, JSON.stringify(drained)).toHaveLength(1);
     const deleted = deletes[0]?.seq ?? Infinity;
-    // Every edge write went after the delete queued ahead of it, and none
-    // in a page sent before the walk reached the delete.
-    const edgeWrites = harness.server.requests.filter(
-      (request) =>
-        request.method === "POST" &&
-        (request.pathname === "/edges" || request.pathname === "/edges/bulk"),
-    );
-    expect(edgeWrites.length).toBeGreaterThan(0);
-    expect(edgeWrites.filter((request) => request.seq < deleted)).toEqual([]);
-    expect(door.requests("POST", "/edges/bulk")).toHaveLength(0);
-    expect(
-      door
-        .requests("POST", "/edges")
-        .map((request) => (JSON.parse(request.body) as WireEdgeOptions).id),
-    ).toEqual(edges.map((edge) => edge.edge_id));
+    const pages = door.requests("POST", "/edges/bulk");
+    expect(pages).toHaveLength(1);
+    expect(pages[0]?.seq).toBeLessThan(deleted);
+    expect(door.requests("POST", "/edges")).toHaveLength(0);
     expect(removed.kind).toBe("delete_item");
   });
 
@@ -667,7 +736,9 @@ describe("creates in pages", () => {
     const first = await drain(harness);
 
     expect(limited).toBe(true);
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(
+      /the server is limiting requests/,
+    );
     expect(first.retry_after_seconds).toBe(2);
     expect(first.answered).toBe(50);
     expect(first.verdicts.map((entry) => entry.verdict)).toEqual(
@@ -740,7 +811,9 @@ describe("creates in pages", () => {
         : answers.validation("validation_error", "The read was refused");
     };
     const first = await drain(harness);
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(
+      /the server is limiting requests/,
+    );
     const late = value(
       await harness.device.create({
         type: "core.note",
@@ -822,7 +895,9 @@ describe("creates in pages", () => {
     const first = await drain(harness);
 
     expect(limited).toBe(true);
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(
+      /the server is limiting requests/,
+    );
     expect(door.requests("POST", "/edges/bulk")).toHaveLength(1);
     expect(patches).toEqual([]);
     door.unlisted.add(edgeId);
@@ -875,7 +950,9 @@ describe("creates in pages", () => {
     const first = await drain(harness);
 
     expect(limited).toBe(true);
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(
+      /the server is limiting requests/,
+    );
     door.unlisted.add(edgeId);
     refusing = true;
     const late = value(
@@ -976,7 +1053,9 @@ describe("creates in pages", () => {
 
     const first = await drain(harness);
 
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/rate limited/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(
+      /the server is limiting requests/,
+    );
     expect(patches).toEqual([]);
     // Another device edits the item between the page and its owed read.
     const created = door.items.get(id) ?? {};

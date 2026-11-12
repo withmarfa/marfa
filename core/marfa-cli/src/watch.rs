@@ -619,6 +619,16 @@ fn tell(
                 )
             },
         ),
+        WatchEvent::Limited { wait } => {
+            let seconds = wait.map(|wait| wait.as_secs());
+            say.line(
+                serde_json::json!({ "server": server, "limited": true, "wait_seconds": seconds }),
+                || match seconds {
+                    Some(seconds) => format!("the server is limiting requests; waiting {seconds}s"),
+                    None => "the server is limiting requests; waiting before sending again".into(),
+                },
+            )
+        }
         WatchEvent::Reach(None) => say.line(
             serde_json::json!({ "server": server, "reachable": true, "reason": null }),
             || format!("the server at {server} answers again"),

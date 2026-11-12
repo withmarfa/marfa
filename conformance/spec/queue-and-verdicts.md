@@ -34,7 +34,7 @@ When the process that queued a write ends before the write is answered, a device
 
 When a drain sends more than one queued write, a device MUST send them in the order they were queued.
 
-**Reason:** a write held for a write ahead of it is not sent in that drain, so a later write that waits on nothing goes before it. Creates sent in a page are the other exception: a page goes before the writes it does not carry, so it carries only creates with no other unanswered write queued ahead of them (`queue-and-verdicts/create-pages`).
+**Reason:** a write held for a write ahead of it is not sent in that drain, so a later write that waits on nothing goes before it. Creates sent in a page are the other exception: a page goes before the writes it does not carry, so a write queued ahead of a create that a page takes is sent after it (`queue-and-verdicts/create-pages`).
 
 **Tests:** `device/queue.test.ts › sends queued writes in the order they were queued`, `› drains in order on reconnect`.
 
@@ -84,9 +84,9 @@ When a caller creates an item naming tags, a device MUST queue one `add_tag` wri
 
 ### `queue-and-verdicts/create-body-no-tags`
 
-When a drain sends a create whose caller named tags, a device MUST send the create's body without `tags`.
+When a drain sends a create on its own door whose caller named tags, a device MUST send the create's body without `tags`.
 
-**Reason:** a create carrying its tags would be answered with one verdict for the item and its tags, and a device could not say which of them landed.
+**Reason:** a create carrying its tags would be answered with one verdict for the item and its tags, and a device could not say which of them landed. A page entry is answered on its own, and an entry the server did not write wrote none of its tags (`items/bulk-errored-wrote-nothing`), so a page carries them (`queue-and-verdicts/page-carries-tags`).
 
 **Tests:** `device/queue.test.ts › queues an edge, a tag and an extension as writes of their own`.
 
@@ -154,11 +154,35 @@ A first sync of a folder, or an import, queues thousands of creates. Sent one at
 
 ### `queue-and-verdicts/create-pages`
 
-When a drain finds 50 or more item creates, or 50 or more edge creates, each with no unanswered write but a create queued ahead of it, never sent, ready to send, held behind no earlier write to the same item or edge, with no environmental failure since it was queued or last answered, with a body that names the id it was queued with and holds only keys a page entry takes, and no larger than the lower of 1048576 bytes and the server's limit, a device MUST send them through `POST /items/bulk` or `POST /edges/bulk` with `mode: "create_only"`, `atomic: false` and `enable_fanout: true`, each entry naming the id it was queued with.
+When a drain finds 50 or more item creates, or 50 or more edge creates, each never sent, ready to send, held behind no earlier write to the same item or edge, with no environmental failure since it was queued or last answered, with a body that names the id it was queued with and holds only keys a page entry takes, and no larger than the lower of 1048576 bytes and the server's limit, a device MUST send them through `POST /items/bulk` or `POST /edges/bulk` with `mode: "create_only"`, `atomic: false` and `enable_fanout: true`, each entry naming the id it was queued with.
 
-**Reason:** a page entry naming an id the server holds is skipped rather than written again (`items/bulk-create-only-id`, `edges/bulk-repeat-id`), as a single create naming it is answered as a repeat (`items/create-repeat`, `edges/id-repeat`), so a page needs no idempotency key; `enable_fanout` gives each entry the effects a single create has (`items/single-write-fanout`). Fewer than 50 go on their own doors, where a page saves too little to be worth its own path. Every other create goes on its own door too: one behind a write that is not a create would jump that write; one sent before is answered only under its key (`queue-and-verdicts/page-never-sent`); one waiting on an answer, or held behind a write to the same item, cannot go yet; one that met an environmental failure goes where its own door's retry says; a page settles an entry only by the id it names, and its entry takes fewer keys than a single create; and a page has a cap of its own, 16 MiB by default (`items/bulk-body-cap`), so a create the server would refuse on its own door `413 request_too_large` must meet that answer there and not succeed in a page. A device holds every create in a page to 1048576 bytes, the default, and to the limit the root names where that is lower (`queue-and-verdicts/request-over-limit-page`).
+**Reason:** a page entry naming an id the server holds is skipped rather than written again (`items/bulk-create-only-id`, `edges/bulk-repeat-id`), as a single create naming it is answered as a repeat (`items/create-repeat`, `edges/id-repeat`), so a page needs no idempotency key; `enable_fanout` gives each entry the effects a single create has (`items/single-write-fanout`). Fewer than 50 go on their own doors, where a page saves too little to be worth its own path. Every other create goes on its own door too: one sent before is answered only under its key (`queue-and-verdicts/page-never-sent`); one waiting on an answer, or held behind a write to the same item, cannot go yet; one that met an environmental failure goes where its own door's retry says; a page settles an entry only by the id it names, and its entry takes fewer keys than a single create; and a page has a cap of its own, 16 MiB by default (`items/bulk-body-cap`), so a create the server would refuse on its own door `413 request_too_large` must meet that answer there and not succeed in a page. A page does not wait for the writes ahead of its creates: a create's id is new, an edge to an item in the bin is refused when it is queued (`queue-and-verdicts/edge-end-in-bin-refused`), a create waiting on a write is held for it, and an entry the server refuses only because a write ahead of it is not yet sent, such as a delete that would clear a duplicate edge or a restore of its end, goes on its own door after that write in the same drain (`queue-and-verdicts/page-entry-alone`). A device holds every create in a page to 1048576 bytes, the default, and to the limit the root names where that is lower (`queue-and-verdicts/request-over-limit-page`).
 
-**Tests:** `device/pages.test.ts › sends the creates that wait in pages, edges after both their ends, and reads them back a hundred at a time`, `› sends fewer than fifty creates of a kind on their own doors`, `› sends no create in a page ahead of a write queued before it that is not a create`, `› pages no edge whose end the page it went in did not create`, `› sends its files and their placements in pages, in one push`, `› sends a file larger than a single request may carry on its own door, and the rest in pages`, `cli/first-sync-pages.test.ts › pushes a first sync of hundreds of files in one push, within the request limit`.
+**Tests:** `device/pages.test.ts › sends the creates that wait in pages, edges after both their ends, and reads them back a hundred at a time`, `› sends fewer than fifty creates of a kind on their own doors`, `› sends creates in a page past a write queued before them that is not a create`, `› pages no edge whose end the page it went in did not create`, `› sends its files and their placements in pages, in one push`, `› sends a file larger than a single request may carry on its own door, and the rest in pages`, `cli/first-sync-pages.test.ts › pushes a first sync of hundreds of tagged files in one push, within the request limit`.
+
+### `queue-and-verdicts/page-carries-tags`
+
+When a drain puts an item create in a page, a device MUST send in its entry, as `tags`, the tag of each `add_tag` write queued behind the create that adds one tag, depends on the create alone, has never been sent and has no environmental failure since it was queued, up to the first other write to the item, where the entry with all of those tags stays within the page's limits.
+
+**Reason:** each tag on its own door is a write and a read back against the server's request limit, so a first sync of notes that each carry two tags would spend four requests on every note beside its page and meet the limit long before it ends. The tags stop at the first other write to the item, so a write queued between a tag and its create still lands before that tag.
+
+**Tests:** `device/pages.test.ts › sends the tags queued with a create in its page entry, not on their own doors`, `cli/first-sync-pages.test.ts › pushes a first sync of hundreds of tagged files in one push, within the request limit`.
+
+### `queue-and-verdicts/page-tags-answered`
+
+When a page answers an entry `created` under the id it was queued with and the device settles its create, a device MUST give each `add_tag` write the entry carried the verdict `accepted`, with the entry's answer as its answer.
+
+**Reason:** the server writes an entry's item and its tags in one step, so an entry it created holds every tag it carried (`items/bulk-errored-wrote-nothing`).
+
+**Tests:** `device/pages.test.ts › sends the tags queued with a create in its page entry, not on their own doors`.
+
+### `queue-and-verdicts/page-tags-alone`
+
+When a page answers an entry with anything but `created` under the id it was queued with, or the device leaves the entry's create to its own door, a device MUST send each `add_tag` write the entry carried on its own door, under its idempotency key, after the create.
+
+**Reason:** an entry the server did not create holds none of its tags (`items/bulk-errored-wrote-nothing`), and where the device cannot say what the page did, a tag sent again on its own door adds what is already there, so it costs a request and changes nothing.
+
+**Tests:** `device/pages.test.ts › sends the tags of an entry the page does not create on their own doors, after its create`.
 
 ### `queue-and-verdicts/page-never-sent`
 

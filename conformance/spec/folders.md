@@ -6394,6 +6394,22 @@ When a folder watch takes back a folder it let go to a command, a device MUST NO
 
 **Tests:** `device/folders-handover.test.ts › keeps the server's wait across handing a folder over from $name`.
 
+### `folders/watch-rate-limit-says`
+
+When a folder watch's pass leaves a write undelivered because the server answered `429`, or the server answers the watch's changes stream `429`, the CLI MUST say that the server is limiting requests and, where the server named a `Retry-After`, for how many seconds the watch waits.
+
+**Reason:** a `503` or another answer can name a `Retry-After` too, and the server is then not limiting requests, so a person told it is looks at the key's request count where the cause is the server.
+
+**Tests:** `device/folders.test.ts › sends again when the Retry-After a rate limit named is over, without waiting for a change`, `› says the server is limiting requests, not that it cannot be reached, when its changes stream is limited`, `› does not say the server is limiting requests when it answers 503 with a Retry-After`.
+
+### `folders/watch-rate-limit-not-unreachable`
+
+When the server limits requests to a folder watch, the CLI MUST NOT say that it cannot reach the server.
+
+**Reason:** the server answered, so reach is not lost, and a person told otherwise looks for a network fault where the cause is the key's own request count.
+
+**Tests:** `device/folders.test.ts › sends again when the Retry-After a rate limit named is over, without waiting for a change`, `› says the server is limiting requests, not that it cannot be reached, when its changes stream is limited`.
+
 ### `folders/push-exit-undelivered`
 
 When a folder push ends with its drain reporting `unavailable` or a write `undelivered`, and no refused credential stopped it, the CLI MUST exit 3.

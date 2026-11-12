@@ -677,6 +677,7 @@ fn keep_in_step(
             if matches!(
                 event,
                 marfa_core::WatchEvent::Busy { .. }
+                    | marfa_core::WatchEvent::Limited { .. }
                     | marfa_core::WatchEvent::Missed { .. }
                     | marfa_core::WatchEvent::Reclaimed { .. }
                     | marfa_core::WatchEvent::ReclaimFailed(_)
@@ -770,7 +771,11 @@ fn event_of(event: marfa_core::WatchEvent) -> Result<FolderEvent, MarfaError> {
         W::Waiting { scan, .. } => FolderEvent::Waiting {
             reason: scan.root_gone.unwrap_or_default(),
         },
-        W::Busy { .. } | W::Missed { .. } | W::Reclaimed { .. } | W::ReclaimFailed(_) => {
+        W::Busy { .. }
+        | W::Limited { .. }
+        | W::Missed { .. }
+        | W::Reclaimed { .. }
+        | W::ReclaimFailed(_) => {
             unreachable!("the watch callback drops it")
         }
         W::Passed(pass) => {
