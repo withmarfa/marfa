@@ -202,6 +202,42 @@ If the attempt windows `authentication/confirm-lanes` names are spent, then the 
 
 **Tests:** `compliance/confirm-sign-in.test.ts › counts a confirmation in the lane a password sign-in counts in, and answers the lockout with the wait`.
 
+### `authentication/confirm-wrong-password-audit`
+
+When the server refuses `POST /auth/confirm` because the password is wrong, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `resource_type` `owner`, `details.method` `password` and `details.reason` `invalid_credentials`, readable at `GET /audit`.
+
+**Reason:** A wrong password at the confirmation is a password attempt, and the audit log records it as it records a refused password sign-in.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › records a refused confirmation in the audit log as a refused password sign-in, with its reason`.
+
+### `authentication/confirm-locked-audit`
+
+When the server refuses `POST /auth/confirm` because the attempt windows `authentication/confirm-lanes` names are spent, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `resource_type` `owner`, `details.method` `password` and `details.reason` `too_many_attempts`, readable at `GET /audit`.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › records a refused confirmation in the audit log as a refused password sign-in, with its reason`.
+
+### `authentication/confirm-passkey-audit`
+
+When the server refuses a passkey assertion sent to `POST /auth/confirm` for a passkey registered to the owner, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `resource_type` `passkey`, the passkey's ID as `resource_id` and `details.method` `passkey`, readable at `GET /audit`.
+
+**Reason:** The audit log records a refused passkey at the confirmation as it records a refused passkey sign-in.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › records a refused passkey confirmation in the audit log as a refused passkey sign-in`.
+
+### `authentication/confirm-audit-actor`
+
+When the server records a refused confirmation in the audit log, the server MUST record the browser session that sent it as the entry's `actor`.
+
+**Reason:** Unlike a sign-in, a confirmation comes from a signed-in session, and `events/audit-actor-snapshot` names the sign-in that acted.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › records a refused confirmation in the audit log as a refused password sign-in, with its reason`, `› records a refused passkey confirmation in the audit log as a refused passkey sign-in`.
+
+### `authentication/confirm-audit-no-password`
+
+When the server records a refused confirmation in the audit log, the server MUST NOT write the password the request sent into the entry.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › records a refused confirmation in the audit log as a refused password sign-in, with its reason`.
+
 ### `authentication/confirm-refused-keeps`
 
 If the server refuses a confirmation, then the server MUST leave the session that sent it live with its sign-in time unchanged.
