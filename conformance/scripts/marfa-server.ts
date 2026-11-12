@@ -15,8 +15,9 @@ import { createServer } from "node:net";
  * refuse an IP address. A named port keeps the address the last boot of the
  * same state had on that port, and otherwise leaves it unset, and so
  * do `--env MARFA_SIGN_IN_ADDRESS=` and a server without its test hooks, which
- * reads no seed; a server with no sign-in address, or one elsewhere, is
- * reached at `127.0.0.1`.
+ * reads no seed; a server with no sign-in address is reached at
+ * `http://localhost:<port>` too, which is the address it then uses, and one
+ * with its sign-in address elsewhere is reached at `127.0.0.1`.
  * Readiness comes from this boot's log before any health request is sent. Each `--env K=V` is a setting for the boot
  * (`conformance/README.md` lists the ones a fixture may pass), and wins over
  * the script's own defaults and the caller's environment.
@@ -866,10 +867,22 @@ async function startServer(args: BootOptions): Promise<Started> {
     controlSocket,
     authSecret,
     picked: named === undefined,
-    host: env.MARFA_SIGN_IN_ADDRESS?.startsWith("http://localhost:")
-      ? "localhost"
-      : "127.0.0.1",
+    host: reachedAt(env.MARFA_SIGN_IN_ADDRESS),
   };
+}
+
+/**
+ * The host this machine reaches the server at: its sign-in address's where
+ * that is `localhost`, and `localhost` where none is set, since that is the
+ * address the server then uses. A sign-in address elsewhere cannot be reached
+ * from here, so the server is called by IP.
+ */
+function reachedAt(signInAddress: string | undefined): string {
+  return signInAddress === undefined ||
+    signInAddress === "" ||
+    signInAddress.startsWith("http://localhost:")
+    ? "localhost"
+    : "127.0.0.1";
 }
 
 /** Attempts at a boot whose chosen port another process took first. */

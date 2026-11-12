@@ -35,16 +35,16 @@ describe("fixture listener ownership", () => {
     let port = 0;
     const squatter = createServer((request, response) => {
       // Another process on a shared machine can probe a local port as
-      // `localhost:<port>`; only a request addressed as the harness
+      // `127.0.0.1:<port>`; only a request addressed as the harness
       // addresses it counts.
-      if (request.headers.host === `127.0.0.1:${String(port)}`) requests++;
+      if (request.headers.host === `localhost:${String(port)}`) requests++;
       response.end("healthy impostor");
     });
     await new Promise<void>((done) => squatter.listen(0, "127.0.0.1", done));
     port = (squatter.address() as { port: number }).port;
     const state = mkdtempSync(join(tmpdir(), "marfa-occupied-port-"));
     // The impostor really does answer health before the harness is asked.
-    await (await fetch(`http://127.0.0.1:${port}/health`)).text();
+    await (await fetch(`http://localhost:${port}/health`)).text();
     expect(requests).toBe(1);
     requests = 0;
     writeFileSync(
