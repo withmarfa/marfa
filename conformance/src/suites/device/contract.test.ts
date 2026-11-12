@@ -361,11 +361,8 @@ describe("the contract the binary was built for", () => {
         status: 200,
         body: {},
       });
-      server.copyAnswer(
-        "GET",
-        "/keys/current",
-        answers.currentKey("fixture-key", { "*": "write" }),
-      );
+      const current = answers.currentKey("fixture-key", { "*": "write" });
+      server.copyAnswer("GET", "/keys/current", current);
       const outcome = await marfa([
         "--json",
         "--url",
@@ -378,6 +375,7 @@ describe("the contract the binary was built for", () => {
       expect(outcome.code, label).toBe(0);
       const report = JSON.parse(outcome.stdout) as {
         contract: { served: number; built_for: number };
+        credential?: { key?: unknown };
       };
       expect(report.contract, label).toEqual({
         served: header,
@@ -388,6 +386,13 @@ describe("the contract the binary was built for", () => {
         expect(sent(server).includes("GET /keys/current"), label).toBe(
           header === builtFor,
         );
+        if (header === builtFor) {
+          expect(report.credential?.key, label).toEqual(
+            current.kind === "json" ? current.body : undefined,
+          );
+        } else {
+          expect(report.credential, label).not.toHaveProperty("key");
+        }
       }
       await server.stop();
       server = undefined;
