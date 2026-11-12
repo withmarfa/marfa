@@ -31,7 +31,7 @@ The contract has two halves.
 - `occurrences.md`: how `GET /occurrences` unfolds a series across zones and clock changes, what a window includes, and what a write may store as a schedule.
 - `keys-and-oauth.md`: keys, what they reach and their levers, and sign-in: discovery, registration, authorization with consent, tokens, grants, the device grant and the sign-in pages.
 - `mcp.md`: the MCP endpoint, who may call it, the tools a credential is offered, and how the tools guard the items they change and the files they fetch.
-- `authentication.md`: owner passkeys, their browser sessions, password-lock independence and removal.
+- `authentication.md`: owner passkeys, their browser sessions, password-lock independence and removal, and changing the password.
 - `instance-claim.md`: setup proof, the one owner, browser handoff and password recovery.
 - `instance.md`: what an instance says about itself, and the identity it answers to.
 - `errors.md`: the error envelope and every code the server sends.

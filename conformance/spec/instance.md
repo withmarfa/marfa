@@ -1188,6 +1188,28 @@ The server MUST send a `Vary` header that names `Accept` on every answer to `GET
 
 **Tests:** `compliance/instance.test.ts › answers a browser at the root with a page and a program with the JSON`, `› sends Vary: Accept on a refusal at the root as on the answers it varies`.
 
+### `instance/root-page-signed-in`
+
+When the server answers `GET /` with an HTML page to a request that carries the owner's live browser session, the server MUST name the owner's email on the page.
+
+**Reason:** a person who signs in is sent to the root, and a page that still asks them to sign in tells them nothing about what happened.
+
+**Tests:** `compliance/owner-pages.test.ts › names the signed-in owner at the root, with the passkeys page and sign-out, and asks anyone else to sign in`.
+
+### `instance/root-page-signed-in-ways`
+
+When the server answers `GET /` with an HTML page to a request that carries the owner's live browser session, the server MUST put on the page a link to `/auth/owner/passkeys` and a form that posts to `/auth/sign-out`.
+
+**Reason:** Marfa has no owner console, so the passkeys page and signing out are all a signed-in browser can do here.
+
+**Tests:** `compliance/owner-pages.test.ts › names the signed-in owner at the root, with the passkeys page and sign-out, and asks anyone else to sign in`.
+
+### `instance/root-page-signed-out`
+
+When the server answers `GET /` with an HTML page to a request that carries no live owner browser session, the server MUST put on the page a link to `/auth/sign-in`.
+
+**Tests:** `compliance/owner-pages.test.ts › names the signed-in owner at the root, with the passkeys page and sign-out, and asks anyone else to sign in`.
+
 ## Pages
 
 The root is not the only page. The sign-in, consent and device approval pages are pages too, and so is what a refusal or an unserved path renders for a request that accepts `text/html`.
