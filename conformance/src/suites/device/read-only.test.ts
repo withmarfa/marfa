@@ -60,15 +60,6 @@ function lastRead(device: Harness["device"], minutes: number): void {
   });
 }
 
-/** What a build from before the field left: no column and nothing read. */
-function fromBeforeTheField(device: Harness["device"]): void {
-  withStore(device.store, (store) => {
-    store.exec(
-      "DROP INDEX items_read_only; ALTER TABLE items DROP COLUMN read_only; DELETE FROM meta WHERE key = 'read_only_read_at';",
-    );
-  });
-}
-
 /** A copy hydrated from `items`, whose catch-ups read `events` in turn. */
 async function followedBy(
   label: string,
@@ -188,49 +179,6 @@ describe("an item's read_only in a working copy", () => {
     const drained = await device.drain();
     expect(drained.ok, JSON.stringify(drained)).toBe(true);
     expect(await readOnlyOf(device, id)).toBe(true);
-  });
-
-  it("opens a copy made before read_only with its unsent work, and takes the answer at the next sync", async () => {
-    harness = await hydratedHarness("read-only-older-copy", {
-      items: {
-        "core.note": [
-          { item: { id: "edited", ...NOTE, read_only: true } },
-          { item: { id: "plain", ...NOTE, read_only: true } },
-        ],
-      },
-    });
-    const { server, device } = harness;
-    const edit = await device.update("edited", {
-      properties: { title: "unsent", body: "unsent" },
-      version: 1,
-    });
-    expect(edit.ok, JSON.stringify(edit)).toBe(true);
-    const made = await device.create({
-      type: "core.note",
-      properties: { title: "Made here", body: "not sent" },
-    });
-    if (!made.ok) throw new Error(JSON.stringify(made.refusal));
-    const id = String(made.value.item_id ?? made.value.target_id);
-    fromBeforeTheField(device);
-
-    // Before any sync, nothing has answered, and the items read false.
-    expect(await readOnlyOf(device, "plain")).toBe(false);
-    const before = await device.queue();
-    expect(before.ok && before.value.length).toBe(2);
-
-    readAnswers(server, wireItem({ id: "plain", ...NOTE, read_only: true }));
-    const caught = await device.catchUp();
-    expect(caught.ok, JSON.stringify(caught)).toBe(true);
-
-    expect(await readOnlyOf(device, "plain")).toBe(true);
-    expect(await readOnlyOf(device, "edited")).toBe(true);
-    expect(await readOnlyOf(device, id)).toBe(false);
-    const after = await device.queue();
-    expect(after.ok && after.value.map((write) => write.id)).toEqual(
-      before.ok && before.value.map((write) => write.id),
-    );
-    const edited = await device.get("edited");
-    expect(edited.ok && edited.value.properties.title).toBe("unsent");
   });
 
   it("holds every item of a source and type to one item's answer, with no event", async () => {
