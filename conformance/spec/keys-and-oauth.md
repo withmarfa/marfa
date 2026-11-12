@@ -1101,7 +1101,7 @@ If a signed-in app mints a key naming any extension namespace, then the server M
 
 ## The rate limiter
 
-One limiter, held in the server's memory, counts every limit in this chapter. Every count starts afresh when the server starts. The limiter holds a bounded number of windows for each kind of limit. When one kind is full, it drops that kind's window that ends soonest, and the key that window counted starts afresh. It never drops the windows that count password sign-in attempts at an account from every address once the instance has an owner, the owner's device code lookup window or the instance-wide windows. The limits on a credential's requests are off for a run, so their rules are asserted against a server booted with the limiter on.
+One limiter, held in the server's memory, counts every limit in this chapter. Every count starts afresh when the server starts. The limiter holds a bounded number of windows for each kind of limit. When one kind is full, it drops that kind's window that ends soonest, and the key that window counted starts afresh. It never drops the windows that count password sign-in attempts without a known device cookie at an account from every address once the instance has an owner, the owner's device code lookup window or the instance-wide windows. The limits on a credential's requests are off for a run, so their rules are asserted against a server booted with the limiter on.
 
 ### `keys-and-oauth/keys-rate-cap`
 
