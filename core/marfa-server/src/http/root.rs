@@ -7,10 +7,9 @@ use axum::response::{IntoResponse, Response};
 use serde_json::json;
 
 use super::answer::{Answer, asks_for_html, json_answer};
-use super::caller::browser_owner;
+use super::caller::browser_session;
 use super::pages::{self, Notice, Running};
 use super::query;
-use crate::app::access::Caller;
 use crate::app::auth::owner;
 use crate::app::{App, instance};
 use crate::settings::registry::MAX_REQUEST_BYTES;
@@ -58,9 +57,8 @@ pub async fn document() -> Answer {
 }
 
 async fn page(app: &Arc<App>, parts: &Parts, name: String) -> Answer {
-    let caller = browser_owner(parts, app).await?;
-    if caller.as_ref().and_then(Caller::session).is_some()
-        && let Some(found) = owner::find(app).await?
+    if browser_session(parts, app).await.is_some()
+        && let Ok(Some(found)) = owner::find(app).await
     {
         let view = Running {
             instance_name: name,

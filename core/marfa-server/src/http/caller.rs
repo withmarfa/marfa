@@ -138,6 +138,19 @@ pub async fn browser_owner(parts: &Parts, app: &Arc<App>) -> Result<Option<Calle
     owner_by_cookie(parts, app, context, Origin::LeftToTheDoor).await
 }
 
+/// The live session a browser's cookie names, read without counting a use. A fault reads as none.
+pub async fn browser_session(parts: &Parts, app: &Arc<App>) -> Option<session::Session> {
+    if !matches!(presented(&parts.headers), Presented::Nothing) {
+        return None;
+    }
+    let address = app.addresses().sign_in();
+    let token = cookies::session_token(&parts.headers, &address)?;
+    if !auth::carries_sessions(&address) {
+        return None;
+    }
+    session::find(app, token).await.ok().flatten()
+}
+
 /// Only sign-in page routes may accept the owner's session cookie.
 pub struct OnPage(pub Option<Caller>);
 
