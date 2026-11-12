@@ -340,6 +340,8 @@ describe("counting only wrong passwords", () => {
   }, 240_000);
 
   it("forgets every known device when the password is recovered", async () => {
+    // A recovery also starts the account's counts afresh.
+    await recover(known);
     const before = await deviceCookie(known, "172.17.0.1");
     await recover(known);
     const after = await deviceCookie(known, "172.17.0.2");
