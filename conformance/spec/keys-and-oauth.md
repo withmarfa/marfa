@@ -1101,7 +1101,7 @@ If a signed-in app mints a key naming any extension namespace, then the server M
 
 ## The rate limiter
 
-One limiter, held in the server's memory, counts every limit in this chapter. Every count starts afresh when the server starts. The limiter holds a bounded number of windows for each kind of limit. When one kind is full, it drops that kind's window that ends soonest, and the key that window counted starts afresh. It never drops the account windows of password sign-in once the instance has an owner, the owner's device code lookup window or the instance-wide windows. The limits on a credential's requests are off for a run, so their rules are asserted against a server booted with the limiter on.
+One limiter, held in the server's memory, counts every limit in this chapter. Every count starts afresh when the server starts. The limiter holds a bounded number of windows for each kind of limit. When one kind is full, it drops that kind's window that ends soonest, and the key that window counted starts afresh. It never drops the windows that count password sign-in attempts at an account from every address once the instance has an owner, the owner's device code lookup window or the instance-wide windows. The limits on a credential's requests are off for a run, so their rules are asserted against a server booted with the limiter on.
 
 ### `keys-and-oauth/keys-rate-cap`
 
@@ -2471,9 +2471,9 @@ When the sign-in form receives a `return_to` that resolves to a path on the inst
 
 ### `keys-and-oauth/sign-in-address-limit`
 
-If one address has made ten password sign-in attempts at an account in fifteen minutes, then the server MUST answer its next attempt `429` with `Retry-After`, before it judges the password.
+If one address has made ten counted password sign-in attempts at an account in fifteen minutes, then the server MUST answer its next attempt `429` with `Retry-After`, before it judges the password.
 
-**Reason:** Every attempt counts, the right password included, so the answer cannot tell a guesser it found the password.
+**Reason:** The refusal comes before the password is judged, so it cannot tell anyone whether the password was right.
 
 **Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at an account, and leaves the owner signing in from another`.
 
@@ -2505,13 +2505,57 @@ When `GET /auth/sign-in` carries `error=too_many_attempts` and a `retry_after` o
 
 **Tests:** `compliance/sign-in-surface.test.ts › tells a locked-out person how long to wait, in whole minutes rounded up, and that a passkey still signs in`.
 
+### `keys-and-oauth/sign-in-only-wrong-counted`
+
+When a password sign-in attempt, or a password sent to `POST /auth/confirm`, proves to be the right password, the server MUST leave it counted in none of the password sign-in limits.
+
+**Reason:** Only wrong passwords are counted, so the owner's own sign-ins and confirmations spend nothing. Each attempt is counted when it arrives and taken back once its password proves right, so attempts sent together are all held to the limits.
+
+**Tests:** `compliance/sign-in-limits.test.ts › counts only wrong passwords, so the owner's own sign-ins and confirmations spend nothing`.
+
 ### `keys-and-oauth/sign-in-account-limit`
 
-If every address together has made a hundred counted password sign-in attempts at an account in an hour, then the server MUST answer the next attempt from any address `429` with `Retry-After`.
+If every address together has made a hundred counted password sign-in attempts at an account in an hour without a known device cookie, then the server MUST answer the next such attempt from any address `429` with `Retry-After`.
 
 **Reason:** An attempt one address makes past its own limit is not counted here, so one guessing address cannot hold the owner out.
 
 **Tests:** `compliance/sign-in-limits.test.ts › holds every address together to a hundred attempts at an account in an hour, counting none an address made past its own limit`.
+
+### `keys-and-oauth/sign-in-device-cookie`
+
+When a password sign-in or a password sent to `POST /auth/confirm` signs the owner in, the server MUST set a device cookie, named `__Host-marfa_device` over HTTPS and `marfa_device` on this machine, with `HttpOnly`, `SameSite=Lax` and a `Max-Age` of 400 days, that holds only a random id, the time it was set and a signature from the instance's secret.
+
+**Reason:** The cookie marks a browser the right password has signed in from, and names no person.
+
+**Tests:** `compliance/sign-in-limits.test.ts › keeps a known device signing in while strangers are limited`.
+
+### `keys-and-oauth/sign-in-known-device`
+
+While the account limit (`keys-and-oauth/sign-in-account-limit`) is spent, when a password sign-in carries a device cookie the server set within the last 400 days, the server MUST judge the attempt on its password.
+
+**Reason:** A known device keeps signing in while strangers are limited, so the account limit cannot hold the owner out.
+
+**Tests:** `compliance/sign-in-limits.test.ts › keeps a known device signing in while strangers are limited`.
+
+### `keys-and-oauth/sign-in-known-device-limit`
+
+If one device cookie has made ten counted password sign-in attempts at an account in fifteen minutes, then the server MUST answer its next attempt `429` with `Retry-After`, before it judges the password.
+
+**Tests:** `compliance/sign-in-limits.test.ts › holds a known device to ten wrong passwords across addresses`.
+
+### `keys-and-oauth/sign-in-unknown-device`
+
+If a password sign-in carries a device cookie the server did not sign, or set more than 400 days ago, then the server MUST count the attempt as one with no device cookie.
+
+**Tests:** `compliance/sign-in-limits.test.ts › keeps a known device signing in while strangers are limited`.
+
+### `keys-and-oauth/device-cookie-not-a-session`
+
+If a request carries a device cookie and no session, then the server MUST answer it as a request with no credential.
+
+**Reason:** The device cookie only changes how sign-in attempts are counted, and proves nothing about who sent the request.
+
+**Tests:** `compliance/sign-in-limits.test.ts › keeps a known device signing in while strangers are limited`.
 
 ### `keys-and-oauth/sign-in-other-address`
 

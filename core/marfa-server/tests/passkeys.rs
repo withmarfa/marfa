@@ -938,8 +938,7 @@ async fn a_passkey_signs_in_through_a_password_lockout_and_leaves_it_in_place() 
     let device = Device::new();
     instance.add(&device).await;
     let wrong = json!({ "email": EMAIL, "password": "not the password" });
-    // The owner's first sign-in spent one of the ten.
-    for _ in 0..9 {
+    for _ in 0..10 {
         let refused = instance.post("/auth/sign-in", "", &wrong).await;
         assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
     }

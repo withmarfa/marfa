@@ -8,6 +8,7 @@ use super::origin::{self, Source};
 use super::{cookies, redirect, require_safe_caller, text_field, with_cookie};
 use crate::app::App;
 use crate::app::access::unauthorized;
+use crate::app::auth::device::{self, Known};
 use crate::app::auth::passkeys::{self, Assertion};
 use crate::app::auth::return_to::kept;
 use crate::app::auth::session::{self, Opened};
@@ -50,6 +51,24 @@ pub(super) fn done(cookie: HeaderValue) -> Answer {
     ))
 }
 
+fn known_device(app: &App, headers: &HeaderMap) -> Option<Known> {
+    let mark = cookies::device_mark(headers, &app.addresses().sign_in())?;
+    device::read(&app.settings.start.auth_secret, mark, app.clock.now_ms())
+}
+
+/// The cookies the right password leaves: the session, and the device's renewed mark.
+fn signed_in(
+    app: &App,
+    response: axum::response::Response,
+    token: &str,
+    known: Option<&Known>,
+) -> Answer {
+    let address = app.addresses().sign_in();
+    let mark = device::mark(&app.settings.start.auth_secret, known, app.clock.now_ms())?;
+    let response = with_cookie(response, cookies::session(&address, token)?);
+    Ok(with_cookie(response, cookies::device(&address, &mark)?))
+}
+
 /// The sign-in page's form gets a redirect; a JSON body gets `{"ok": true}`.
 pub async fn sign_in(
     State(app): State<Arc<App>>,
@@ -65,8 +84,10 @@ pub async fn sign_in(
     let body = body.object(&PASSWORD_FIELDS).await?;
     let email = text_field(&body, "email")?.to_string();
     let password = text_field(&body, "password")?.to_string();
-    let opened = sign_in::with_password(&app, email, password, visit).await?;
-    done(cookies::session(&app.addresses().sign_in(), &opened.token)?)
+    let known = known_device(&app, &headers);
+    let opened = sign_in::with_password(&app, email, password, known.as_ref(), visit).await?;
+    let ok = json_answer(StatusCode::OK, &json!({ "ok": true }));
+    signed_in(&app, ok, &opened.token, known.as_ref())
 }
 
 fn back_to_sign_in(pairs: &[(&str, &str)]) -> String {
@@ -106,7 +127,15 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
     if email.is_empty() || password.is_empty() {
         return failed("missing_field", "");
     }
-    let outcome = sign_in::with_password(app, email.to_string(), password.to_string(), visit).await;
+    let known = known_device(app, headers);
+    let outcome = sign_in::with_password(
+        app,
+        email.to_string(),
+        password.to_string(),
+        known.as_ref(),
+        visit,
+    )
+    .await;
     let Opened { token, .. } = match outcome {
         Ok(opened) => opened,
         Err(refusal) if refusal.code == Code::Unauthorized => {
@@ -123,11 +152,12 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
         }
         Err(refusal) => return Err(refusal.into()),
     };
-    let cookie = cookies::session(&address, &token)?;
-    Ok(with_cookie(
+    signed_in(
+        app,
         redirect(StatusCode::FOUND, &return_to)?,
-        cookie,
-    ))
+        &token,
+        known.as_ref(),
+    )
 }
 
 fn ended_cookie(app: &App) -> Result<HeaderValue, Refusal> {
@@ -173,13 +203,18 @@ pub async fn confirm(
     };
     let body = body.object(&CONFIRM_FIELDS).await?;
     let address = app.addresses().sign_in();
-    let opened = match passkey_or_password(&body)? {
-        Proof::Password(password) => sign_in::confirm(&app, &caller, password, visit).await?,
+    match passkey_or_password(&body)? {
+        Proof::Password(password) => {
+            let known = known_device(&app, &headers);
+            let opened = sign_in::confirm(&app, &caller, password, known.as_ref(), visit).await?;
+            let ok = json_answer(StatusCode::OK, &json!({ "ok": true }));
+            signed_in(&app, ok, &opened.token, known.as_ref())
+        }
         Proof::Passkey(response) => {
             let token = cookies::passkey_challenge_token(&headers, &address).map(str::to_string);
             let assertion = Assertion { token, response };
-            passkeys::confirm(app.clone(), &caller, assertion, visit).await?
+            let opened = passkeys::confirm(app.clone(), &caller, assertion, visit).await?;
+            done(cookies::session(&address, &opened.token)?)
         }
-    };
-    done(cookies::session(&address, &opened.token)?)
+    }
 }

@@ -203,6 +203,22 @@ impl Limiter {
         }
     }
 
+    /// Takes one attempt back from each lane whose window was already open at `admitted_ms`,
+    /// leaving every window's end where it was.
+    pub fn give_back(&self, admitted_ms: i64, now_ms: i64, lanes: &[Lane]) {
+        let mut windows = self.windows.lock().unwrap_or_else(PoisonError::into_inner);
+        for lane in lanes {
+            let Some(window) = windows.live(lane, now_ms) else {
+                continue;
+            };
+            if window.ends_ms.saturating_sub(lane.window_ms) > admitted_ms {
+                continue;
+            }
+            let count = window.count.saturating_sub(1);
+            windows.record(lane, Window { count, ..window });
+        }
+    }
+
     /// Drops every window of `family` whose key `matches`.
     pub fn forget(&self, family: &'static str, matches: impl Fn(&str) -> bool) {
         let mut windows = self.windows.lock().unwrap_or_else(PoisonError::into_inner);

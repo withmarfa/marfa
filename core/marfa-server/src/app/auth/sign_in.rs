@@ -1,9 +1,11 @@
 //! Everything that checks the owner's password. Each counts the attempt, checks the hash off the
-//! writer, then acts in one transaction that finds the password as it was checked.
+//! writer, then acts in one transaction that finds the password as it was checked. Only a wrong
+//! password stays counted.
 
 use rusqlite::Transaction;
 use serde_json::json;
 
+use super::device::Known;
 use super::limits::{self, too_many_passwords};
 use super::owner::{self, Owner};
 use super::password::Checked;
@@ -24,8 +26,25 @@ fn wrong_credentials() -> Refusal {
     Refusal::new(Code::Unauthorized, "Invalid email or password.")
 }
 
-fn count(app: &App, email: &str, owner: Option<&str>, visit: &Visit) -> Option<i64> {
-    limits::admit(app, &limits::password_lanes(email, owner, visit.address))
+/// Counts the attempt before `attempt` runs, and takes it back unless the password was wrong.
+async fn counted<T>(
+    app: &App,
+    email: &str,
+    owner: Option<&str>,
+    device: Option<&Known>,
+    visit: &Visit,
+    attempt: impl Future<Output = Result<T>>,
+) -> Result<std::result::Result<T, i64>> {
+    let lanes = limits::password_lanes(email, owner, visit.address, device);
+    let admitted_ms = app.clock.now_ms();
+    if let Some(wait) = app.limiter.admit(admitted_ms, &lanes) {
+        return Ok(Err(wait));
+    }
+    let outcome = attempt.await;
+    if !matches!(&outcome, Err(refusal) if refusal.code == Code::Unauthorized) {
+        limits::give_back(app, admitted_ms, &lanes);
+    }
+    outcome.map(Ok)
 }
 
 struct Proven {
@@ -113,22 +132,35 @@ pub async fn with_password(
     app: &App,
     email: String,
     password: String,
+    device: Option<&Known>,
     visit: Visit,
 ) -> Result<Opened> {
     let email = limits::account_key(&email);
     let owner = owner::find(app).await?.map(|owner| owner.email);
-    if let Some(wait) = count(app, &email, owner.as_deref(), &visit) {
-        refused_sign_in(app, &email, TOO_MANY, &visit).await?;
-        return Err(too_many_passwords(wait));
+    let attempt = open_with_password(app, &email, password, &visit);
+    match counted(app, &email, owner.as_deref(), device, &visit, attempt).await? {
+        Ok(opened) => Ok(opened),
+        Err(wait) => {
+            refused_sign_in(app, &email, TOO_MANY, &visit).await?;
+            Err(too_many_passwords(wait))
+        }
     }
-    let proven = match prove(app, &email, password).await {
+}
+
+async fn open_with_password(
+    app: &App,
+    email: &str,
+    password: String,
+    visit: &Visit,
+) -> Result<Opened> {
+    let proven = match prove(app, email, password).await {
         Ok(Some(proven)) => proven,
         Ok(None) => {
-            refused_sign_in(app, &email, INVALID, &visit).await?;
+            refused_sign_in(app, email, INVALID, visit).await?;
             return Err(wrong_credentials());
         }
         Err(refusal) if refusal.code == Code::RateLimited => {
-            refused_sign_in(app, &email, TOO_MANY, &visit).await?;
+            refused_sign_in(app, email, TOO_MANY, visit).await?;
             return Err(refusal);
         }
         Err(refusal) => return Err(refusal),
@@ -136,7 +168,7 @@ pub async fn with_password(
     let clock = app.clock.clone();
     let salt = app.settings.start.key_salt.clone();
     let audited = visit.clone();
-    let named = email.clone();
+    let named = email.to_string();
     let opened = app
         .db
         .write(Write::caller(SIGNED_IN), move |tx| {
@@ -171,19 +203,38 @@ pub async fn with_password(
     match opened {
         Some(opened) => Ok(opened),
         None => {
-            refused_sign_in(app, &email, INVALID, &visit).await?;
+            refused_sign_in(app, email, INVALID, visit).await?;
             Err(wrong_credentials())
         }
     }
 }
 
-pub async fn confirm(app: &App, caller: &Caller, password: String, visit: Visit) -> Result<Opened> {
+pub async fn confirm(
+    app: &App,
+    caller: &Caller,
+    password: String,
+    device: Option<&Known>,
+    visit: Visit,
+) -> Result<Opened> {
     let session = caller.session().ok_or_else(unauthorized)?.clone();
     let owner = owner::find(app).await?.ok_or_else(unauthorized)?;
-    if let Some(wait) = count(app, &owner.email, Some(&owner.email), &visit) {
-        return Err(too_many_passwords(wait));
+    let email = owner.email.clone();
+    let attempt = reopen(app, caller, session, &email, password, visit.clone());
+    match counted(app, &email, Some(&email), device, &visit, attempt).await? {
+        Ok(opened) => Ok(opened),
+        Err(wait) => Err(too_many_passwords(wait)),
     }
-    let proven = prove(app, &owner.email, password)
+}
+
+async fn reopen(
+    app: &App,
+    caller: &Caller,
+    session: session::Session,
+    email: &str,
+    password: String,
+    visit: Visit,
+) -> Result<Opened> {
+    let proven = prove(app, email, password)
         .await?
         .ok_or_else(|| Refusal::new(Code::Unauthorized, "That password is not right."))?;
     let salt = app.settings.start.key_salt.clone();

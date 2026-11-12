@@ -88,7 +88,7 @@ pub(super) async fn make_claim(
     if origin::said(headers, &own_origins(app)) != Source::Own {
         return Ok((owner, None));
     }
-    let opening = sign_in::with_password(app, owner.email.clone(), password, visit).await;
+    let opening = sign_in::with_password(app, owner.email.clone(), password, None, visit).await;
     let cookie = match opening {
         Ok(opened) => Some(cookies::session(&app.addresses().sign_in(), &opened.token)?),
         Err(refusal) => {
