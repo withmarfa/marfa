@@ -44,22 +44,25 @@ To run Marfa on a computer you own or in a container of your own, follow [Deploy
 
 ## Try it locally
 
-You need macOS or Linux, with Git, [Node.js](https://nodejs.org) 22.14 or later and [pnpm](https://pnpm.io/installation). On Linux, also install the `acl` package, which the server uses to check who may reach its private socket. Clone Marfa into a short path, such as your home directory: the server keeps its private socket inside the clone and refuses to start when that path is too long. Then build Marfa and start the server:
+You need a Mac with Apple silicon, or Linux on x86_64 or arm64. Install the `marfa` command line and the `marfa-server` program from the latest release:
 
 ```bash
-cd ~
-git clone https://github.com/withmarfa/marfa.git
-cd marfa
-pnpm install
-pnpm build
-cd packages/server
-export MARFA_AUTH_SECRET="$(openssl rand -hex 32)"
-pnpm dev    # http://localhost:8600
+curl -fsSL https://raw.githubusercontent.com/withmarfa/marfa/main/scripts/install.sh | sh
 ```
 
-A new instance has no owner. Open <http://localhost:8600/setup>, enter the setup code printed in the server's terminal, and choose the owner's email and password. Claiming the owner signs you in and closes setup permanently.
+The script checks the download against the release's checksums and puts both programs in `~/.local/bin`. To install them somewhere else, set `MARFA_INSTALL_DIR`. If the folder isn't on your `PATH`, the script says how to add it.
 
-The [Quickstart](https://docs.marfa.so/quickstart) continues from here: it installs the CLI, makes a key, and writes and reads your first note. To work on Marfa itself, read [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+Then set up a server that only this computer can reach:
+
+```bash
+marfa server install --access local
+```
+
+The server runs as a service of your computer, a launchd agent on a Mac and a systemd service on Linux, at the address the command prints: <http://localhost:8600> unless that port is taken. Its data and settings are in `~/marfa-server`. The server's two secrets are in `~/marfa-server/marfa.env`: keep a copy of that file somewhere safe, because the data needs them and they aren't stored anywhere else.
+
+A new instance has no owner. The command prints a link that works once, for five minutes: open it and choose the owner's email and password. Claiming the owner signs you in and closes setup permanently. To get a new link, run `marfa server install` again. `marfa server status` shows how the server is, `marfa server uninstall` removes the service and keeps the data, and `marfa server install --help` lists the other ways to reach the server.
+
+The [Quickstart](https://docs.marfa.so/quickstart) continues from here: it makes a key, and writes and reads your first note. To work on Marfa itself, read [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
 ## What is here
 
