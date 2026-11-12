@@ -19,8 +19,8 @@ import { Cli, requireBinary } from "./harness.js";
 /**
  * A first sync of a folder against a server that limits requests
  * (`queue-and-verdicts/create-pages`, `queue-and-verdicts/page-carries-tags`).
- * Sent one at a time, each file costs six requests, its item and its
- * placement each written and read back and its two tags, so a limit of 150
+ * Sent one at a time, each file costs eight requests, its item, its
+ * placement and its two tags each written and read back, so a limit of 150
  * a minute would stop this push long before its 1,200 writes end, and a
  * write ahead of the creates that is not a create does not send them one by
  * one.
