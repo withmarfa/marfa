@@ -43,8 +43,7 @@ pub enum CoreError {
     /// which a surface that prints a code beside a message would show twice.
     #[error("{0}")]
     Network(String),
-    /// Nothing was listening at the origin: the server is not running there,
-    /// or the address is wrong. Answers the code `network`, as `Network` does.
+    /// Nothing was listening at the origin.
     #[error("request to {origin} failed: the connection was refused")]
     ConnectionRefused { origin: String },
     /// The server names its contract on every answer, so one naming none is

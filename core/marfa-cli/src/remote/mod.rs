@@ -1603,7 +1603,7 @@ mod tests {
                 head.extend_from_slice(&chunk[..read]);
             }
             // Longer than the wait for `100 Continue`, so the body is on its way when the refusal comes.
-            std::thread::sleep(std::time::Duration::from_millis(2_500));
+            std::thread::sleep(std::time::Duration::from_millis(4_000));
             let body = r#"{"error":{"code":"forbidden","message":"not the owner"}}"#;
             write!(
                 socket,

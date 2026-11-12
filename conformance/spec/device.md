@@ -3088,7 +3088,7 @@ If a person runs `config update` or `config replace` with `--confirm-address-cha
 
 If the server refuses an upload before it reads the file, then the CLI MUST report the refusal's status, code and message.
 
-**Reason:** a server that refuses early closes the connection while the CLI is still sending, and a CLI that waits for the server's go-ahead reads the answer the server gave, which is the only thing that tells a person why the upload failed.
+**Reason:** a server that refuses early closes the connection while the CLI is still sending, and a CLI that holds the file back until the server's go-ahead, for up to two seconds, reads the answer the server gave, which is the only thing that tells a person why the upload failed.
 
 **Tests:** `cli/attach.test.ts › reports the server's refusal of an upload it made before reading the file, not a broken connection`, `cli/archive-blobs.test.ts › reports the refusal of a large archive the server refuses before or while it arrives`.
 

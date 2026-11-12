@@ -334,9 +334,7 @@ impl PrivateCommand {
         }
     }
 
-    /// The `marfa --socket` prefix, where a command can be repeated after
-    /// it. A container's cannot: the command's own file paths and standard
-    /// input are the container's.
+    /// The `marfa --socket` prefix, which a container has none of.
     pub fn prefix(&self) -> Option<String> {
         match self {
             Self::Socket(socket) => Some(format!(
@@ -360,9 +358,7 @@ impl PrivateCommand {
 /// The socket inside a Docker install's container.
 const CONTAINER_SOCKET: &str = "/data/control/marfa.sock";
 
-/// How to reach the private local command of the server at `origin`, when
-/// this machine's install, in the default folder, is that server. It reads
-/// the install record only.
+/// The private local command of the server at `origin`, if this machine's install is that server.
 pub fn private_command_for(origin: &str) -> Option<PrivateCommand> {
     let asked = url::Url::parse(origin).ok()?;
     let folder = Folder::new(&DirArgs { dir: None }).ok()?;

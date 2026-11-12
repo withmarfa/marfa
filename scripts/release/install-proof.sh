@@ -343,7 +343,7 @@ prove() {
   # The setup link carries a one-time code: the log shows everything but it.
   sed -E 's#(handoff=)[0-9A-Za-z_-]+#\1<code>#' "$work/install.log"
 
-  status | holds '.running == true and .answering == true and .health.status != "down" and .claimed == false' \
+  status | holds '.running == true and .answering == true and .health.http == 200 and .claimed == false' \
     "The new install is not running and answering, unclaimed."
 
   step "$current: claim the instance on the private socket"
@@ -354,7 +354,7 @@ prove() {
   fi
 
   step "$current: status, and the stored sign-in address"
-  status | holds '.running == true and .answering == true and .health.status != "down" and .claimed == true
+  status | holds '.running == true and .answering == true and .health.http == 200 and .claimed == true
     and .running_release == $version and .release == $version and .address == $address' \
     "status does not report a running, answering, claimed server of release $version at $address."
   socket config get | holds '.sign_in_address == $address' \
@@ -377,7 +377,7 @@ prove() {
   status | holds '.running == false' "The server still runs after stop."
   ! listening "$port" || fail "Port $port still answers after stop."
   server start ${dir_args[@]+"${dir_args[@]}"} > /dev/null
-  status | holds '.running == true and .answering == true and .health.status != "down" and .claimed == true and .running_release == $version and .address == $address' \
+  status | holds '.running == true and .answering == true and .health.http == 200 and .claimed == true and .running_release == $version and .address == $address' \
     "The server is not running, answering, claimed and at $address after start."
   code=$(through_caddy -o /dev/null -w '%{http_code}' "$address/health") || fail "$address/health could not be reached after start."
   [ "$code" = 200 ] || fail "$address/health answered $code, not 200, after start."
