@@ -10,8 +10,8 @@ use serde_json::{Value, json};
 
 use super::plan::{self, Act, Asked, Gate};
 use super::{
-    Item, Keys, check_keys, extensions_text, metadata_for, name_of, not_found, rows, summary_of,
-    with_blocks,
+    Item, Keys, check_keys, extensions_text, in_the_bin, metadata_for, name_of, not_found, rows,
+    summary_of, with_blocks,
 };
 use crate::app::App;
 use crate::app::access::reach::Demand;
@@ -151,7 +151,7 @@ impl<'a, 'c> Reader<'a, 'c> {
         if reached {
             Ok(row)
         } else if row.state == "trashed" {
-            Err(not_found().with_detail("trashed", true))
+            Err(in_the_bin())
         } else {
             Err(not_found())
         }

@@ -318,6 +318,15 @@ fn not_found() -> Refusal {
     Refusal::new(Code::ItemNotFound, "Item not found")
 }
 
+/// Told only to a key that may read the item's type.
+fn in_the_bin() -> Refusal {
+    Refusal::new(
+        Code::ItemNotFound,
+        "This item is in the trash. Restore it to change it, or read it with state=trashed.",
+    )
+    .with_detail("trashed", true)
+}
+
 /// An item whose tables a door reads or writes.
 #[derive(Clone, Debug)]
 pub(crate) struct Host {
