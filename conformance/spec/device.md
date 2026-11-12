@@ -4818,9 +4818,9 @@ When an app reads an item from a working copy, a device MUST answer the `read_on
 
 Where a device holds no answer from the server for an item's `read_only`, a device MUST answer it `false`.
 
-**Reason:** an item saved here and not yet sent, an item from a server that leaves the field out and an item of a copy made before the field have no answer, and `false` offers the edit the server takes anyway.
+**Reason:** an item saved here and not yet sent and an item from a server that leaves the field out have no answer, and `false` offers the edit the server takes anyway.
 
-**Tests:** `device/read-only.test.ts › answers false for an item whose answer leaves read_only out`, `› answers false for an item saved here until the server answers`, `› opens a copy made before read_only with its unsent work, and takes the answer at the next sync`.
+**Tests:** `device/read-only.test.ts › answers false for an item whose answer leaves read_only out`, `› answers false for an item saved here until the server answers`.
 
 ### `device/read-only-refresh`
 
