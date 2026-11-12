@@ -736,7 +736,9 @@ describe("creates in pages", () => {
     const first = await drain(harness);
 
     expect(limited).toBe(true);
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/the server is limiting requests/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(
+      /the server is limiting requests/,
+    );
     expect(first.retry_after_seconds).toBe(2);
     expect(first.answered).toBe(50);
     expect(first.verdicts.map((entry) => entry.verdict)).toEqual(
@@ -809,7 +811,9 @@ describe("creates in pages", () => {
         : answers.validation("validation_error", "The read was refused");
     };
     const first = await drain(harness);
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/the server is limiting requests/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(
+      /the server is limiting requests/,
+    );
     const late = value(
       await harness.device.create({
         type: "core.note",
@@ -891,7 +895,9 @@ describe("creates in pages", () => {
     const first = await drain(harness);
 
     expect(limited).toBe(true);
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/the server is limiting requests/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(
+      /the server is limiting requests/,
+    );
     expect(door.requests("POST", "/edges/bulk")).toHaveLength(1);
     expect(patches).toEqual([]);
     door.unlisted.add(edgeId);
@@ -944,7 +950,9 @@ describe("creates in pages", () => {
     const first = await drain(harness);
 
     expect(limited).toBe(true);
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/the server is limiting requests/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(
+      /the server is limiting requests/,
+    );
     door.unlisted.add(edgeId);
     refusing = true;
     const late = value(
@@ -1045,7 +1053,9 @@ describe("creates in pages", () => {
 
     const first = await drain(harness);
 
-    expect(first.unavailable, JSON.stringify(first)).toMatch(/the server is limiting requests/);
+    expect(first.unavailable, JSON.stringify(first)).toMatch(
+      /the server is limiting requests/,
+    );
     expect(patches).toEqual([]);
     // Another device edits the item between the page and its owed read.
     const created = door.items.get(id) ?? {};
