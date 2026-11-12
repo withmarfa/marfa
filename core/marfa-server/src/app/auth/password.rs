@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
-use serde_json::json;
 use tokio::sync::{OnceCell, Semaphore};
 
 use super::limits::too_many_passwords;
@@ -28,8 +27,7 @@ pub fn check_new(password: &str, field: &str) -> Result<()> {
     } else {
         return Ok(());
     };
-    Err(Refusal::validation(message.clone())
-        .with_detail("errors", json!([{ "path": field, "message": message }])))
+    Err(Refusal::invalid_at(field, &message))
 }
 
 fn shape(hash: &str) -> &str {
