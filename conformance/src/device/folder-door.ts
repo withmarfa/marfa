@@ -484,12 +484,16 @@ export class FolderDoor {
   }
 
   /** A read by id, which a device makes to hold an item a refusal named. An item
-   *  in the bin, or one the key cannot read, reads as absent, as on the server. */
+   *  one the key cannot read reads as absent, and one in the bin says so, as on
+   *  the server. */
   read(id: string): Answer {
     const row = this.rows.get(id);
-    return this.shows(row)
-      ? answers.updated(this.wire(id), row.tags ?? [])
-      : answers.itemNotFound();
+    if (row === undefined || !this.reads(row.type ?? "core.note")) {
+      return answers.itemNotFound();
+    }
+    return row.trashed === true
+      ? answers.itemInTheBin()
+      : answers.updated(this.wire(id), row.tags ?? []);
   }
 
   /** A move to another lifecycle state, which takes no version step. */
