@@ -608,7 +608,7 @@ mod tests {
     }
 
     async fn properties(app: &App, id: &str) -> Value {
-        let found = items::detail(app, &Caller::local(), id.to_string(), Detail::default())
+        let found = items::detail(app, &Caller::local(), id.to_string(), Detail::default(), None)
             .await
             .unwrap();
         serde_json::from_str::<Value>(&found).unwrap()["item"]["properties"].clone()

@@ -282,7 +282,7 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
         .filter(|value| is_version(value))
         .and_then(Value::as_i64)
     else {
-        return Err(at.invalid("version", "a positive safe integer"));
+        return Err(at.invalid("version", "a whole number from 1 to 9007199254740991"));
     };
     let binned = matches!(
         item.get("state").and_then(Value::as_str),
@@ -447,7 +447,7 @@ fn history(
         if !held.is_some_and(|held| (1..version).contains(&held)) || !seen.insert(held) {
             return Err(at.invalid(
                 &field("version"),
-                "a positive safe integer below the item's version, once in its history",
+                "a whole number from 1 to one below the item's version, once in its history",
             ));
         }
     }
@@ -592,7 +592,7 @@ pub fn edge<'a>(
         return Err(at.invalid("edge_type", "an edge-type identifier"));
     }
     if edge.get("version").is_some_and(|value| !is_version(value)) {
-        return Err(at.invalid("version", "a positive safe integer"));
+        return Err(at.invalid("version", "a whole number from 1 to 9007199254740991"));
     }
     if let Some(refused) = edge
         .get("properties")

@@ -600,20 +600,34 @@ pub async fn current(app: &App, caller: &Caller) -> Result<Option<Map<String, Va
     .await
 }
 
-pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Option<Key>> {
+/// What a presented key secret is.
+pub enum Presented {
+    Live(Key),
+    /// A stored key past its `expires_at`, which it carries.
+    Expired(String),
+    Unknown,
+}
+
+pub async fn authenticate(app: &Arc<App>, token: &str) -> Result<Presented> {
     if !secret::looks_like_a_key(token) {
-        return Ok(None);
+        return Ok(Presented::Unknown);
     }
     let hash = secret::hash(&app.settings.start.key_salt, token)?;
     let at = app.clock.stamp();
-    let key = app
+    let found = app
         .db
-        .read(move |tx| Ok(unrevoked_where(tx, "hash", &hash)?.filter(|key| key.lives_at(&at))))
+        .read(move |tx| unrevoked_where(tx, "hash", &hash))
         .await?;
-    if let Some(key) = &key {
-        usage::note(app, key);
-    }
-    Ok(key)
+    Ok(match found {
+        None => Presented::Unknown,
+        Some(key) => match key.expires_at {
+            Some(end) if !key.lives_at(&at) => Presented::Expired(end),
+            _ => {
+                usage::note(app, &key);
+                Presented::Live(key)
+            }
+        },
+    })
 }
 
 pub fn check_id(id: &str) -> Result<()> {

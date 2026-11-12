@@ -376,7 +376,7 @@ pub async fn run(
     let remove_tags = texts(&arguments, "remove_tags");
     let wanted_state = text(&arguments, "state");
 
-    let read = items::detail(app, caller, id.clone(), Detail::default()).await;
+    let read = items::detail(app, caller, id.clone(), Detail::default(), None).await;
     let current = match read {
         Ok(text) => parsed(&text)?.get("item").cloned().unwrap_or(Value::Null),
         // Trashed items cannot be read by ID; restoration checks their retained version.

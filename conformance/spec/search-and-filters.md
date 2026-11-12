@@ -2634,7 +2634,7 @@ When restoring a `system.connection` item whose `kind` property is `app`, the se
 
 ### `search-and-filters/restore-scalars`
 
-If an archive records a `version` of an item or an edge that is not a positive safe integer, or a `tier` of an item that is not `library` or `feed`, then the server MUST answer `400 validation_error` naming the line and the field.
+If an archive records a `version` of an item or an edge that is not a whole number from 1 to 9007199254740991, or a `tier` of an item that is not `library` or `feed`, then the server MUST answer `400 validation_error` naming the line and the field.
 
 **Tests:** `compliance/archive-scalars.test.ts › refuses invalid $field=$value before writing the archive`.
 
@@ -2682,7 +2682,7 @@ If an archive records history that is not an array of snapshots, each an object 
 
 ### `search-and-filters/restore-history-version`
 
-If an archive records a snapshot whose `version` is not a positive safe integer below the item's version, or repeats one of the same item's history, then the server MUST answer `400 validation_error` naming the line and the field.
+If an archive records a snapshot whose `version` is not a whole number from 1 to one below the item's version, or repeats one of the same item's history, then the server MUST answer `400 validation_error` naming the line and the field.
 
 **Tests:** `compliance/archive-history.test.ts › refuses an item whose %s is malformed, and writes the item ahead of it nowhere`.
 

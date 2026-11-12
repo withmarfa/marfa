@@ -313,7 +313,7 @@ async fn field_part(
             "Reading part of a field takes one ID and field.",
         ));
     };
-    let read = parsed(&items::detail(app, caller, id.clone(), Detail::default()).await?)?;
+    let read = parsed(&items::detail(app, caller, id.clone(), Detail::default(), None).await?)?;
     let value = read
         .get("item")
         .and_then(|item| item.get("properties"))

@@ -7981,7 +7981,7 @@
             "properties": {
               "saturated": {
                 "type": "boolean",
-                "description": "`true` if any total exceeded the safe integer bound; capped totals then mean at least that bound."
+                "description": "`true` if any total exceeded 9007199254740991; capped totals then mean at least that number."
               },
               "pending_uploads": {
                 "type": "integer",

@@ -10,7 +10,7 @@ use axum::http::{HeaderMap, HeaderValue, Method};
 use super::answer::Stopped;
 use super::auth::cookies;
 use super::observe::RequestContext;
-use crate::app::access::{Caller, unauthorized};
+use crate::app::access::{self, Caller, unauthorized};
 use crate::app::addresses::Address;
 use crate::app::auth::{self, session};
 use crate::app::oauth::{self, tokens};
@@ -20,6 +20,10 @@ use crate::listener::Transport;
 
 #[derive(Clone)]
 struct Identified(Result<Option<Caller>>);
+
+/// The request bore a stored key past its `expires_at`, which this holds.
+#[derive(Clone)]
+struct Expired(String);
 
 enum Presented<'a> {
     Nothing,
@@ -109,9 +113,10 @@ async fn owner_by_cookie(
     Ok(Some(Caller::Owner(Box::new(seen.session))))
 }
 
-async fn read_credential(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>> {
+async fn read_credential(parts: &mut Parts, app: &Arc<App>) -> Result<Option<Caller>> {
     let context = parts.extensions.get::<RequestContext>();
     let local = context.is_some_and(|context| context.transport == Transport::LocalSocket);
+    let mut expired = None;
     let caller = match presented(&parts.headers) {
         Presented::Nothing if local => return Ok(Some(Caller::local())),
         Presented::Nothing => return Ok(None),
@@ -119,12 +124,20 @@ async fn read_credential(parts: &Parts, app: &Arc<App>) -> Result<Option<Caller>
         Presented::Token(token) if tokens::looks_like_access_token(token) => {
             oauth::authenticate(app, token).await?
         }
-        Presented::Token(token) => keys::authenticate(app, token)
-            .await?
-            .map(|key| Caller::Key(Box::new(key))),
+        Presented::Token(token) => match keys::authenticate(app, token).await? {
+            keys::Presented::Live(key) => Some(Caller::Key(Box::new(key))),
+            keys::Presented::Expired(at) => {
+                expired = Some(Expired(at));
+                None
+            }
+            keys::Presented::Unknown => None,
+        },
     };
     if let (Some(id), Some(context)) = (caller.as_ref().and_then(Caller::audit_id), context) {
         let _ = context.notes.key_id.set(id);
+    }
+    if let Some(expired) = expired {
+        parts.extensions.insert(expired);
     }
     Ok(caller)
 }
@@ -159,6 +172,14 @@ impl FromRequestParts<Arc<App>> for OnPage {
     }
 }
 
+/// What a door that needs a credential answers a request it found none on.
+pub fn refused(parts: &Parts) -> Refusal {
+    match parts.extensions.get::<Expired>() {
+        Some(Expired(at)) => access::expired(at),
+        None => unauthorized(),
+    }
+}
+
 /// Read once however many layers ask. A credential that does not verify is nobody, on the
 /// control socket too.
 pub async fn identify(parts: &mut Parts, app: &Arc<App>) -> Result<Option<Caller>> {
@@ -177,9 +198,10 @@ impl FromRequestParts<Arc<App>> for Caller {
         parts: &mut Parts,
         app: &Arc<App>,
     ) -> std::result::Result<Caller, Stopped> {
-        identify(parts, app)
-            .await?
-            .ok_or_else(|| unauthorized().into())
+        match identify(parts, app).await? {
+            Some(caller) => Ok(caller),
+            None => Err(refused(parts).into()),
+        }
     }
 }
 

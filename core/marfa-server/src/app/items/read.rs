@@ -22,7 +22,7 @@ use crate::app::connectors::{ReadOnly, read_only};
 use crate::app::edges::{self, Reach};
 use crate::app::faults::{Faults, HOLD_READ_HYDRATION, HOLD_READ_SNAPSHOT};
 use crate::app::housekeeping::DAY_MS;
-use crate::app::query::{Secret, bad_cursor};
+use crate::app::query::{Secret, States, bad_cursor};
 use crate::app::refusal::Result;
 use crate::settings::registry::TRASH_RETENTION_DAYS;
 
@@ -134,10 +134,27 @@ impl<'a, 'c> Reader<'a, 'c> {
     }
 
     pub(super) fn row(&self, id: &str) -> Result<Item> {
+        self.row_in(id, None)
+    }
+
+    /// The item when its state is one `states` names, or not in the bin where it names none.
+    fn row_in(&self, id: &str, states: Option<&States>) -> Result<Item> {
         self.caller.require_reach()?;
-        rows::by_id(self.tx, id)?
-            .filter(|row| row.state != "trashed" && self.caller.may_read_type(&row.type_id))
-            .ok_or_else(not_found)
+        let row = rows::by_id(self.tx, id)?
+            .filter(|row| self.caller.may_read_type(&row.type_id))
+            .ok_or_else(not_found)?;
+        let reached = match states {
+            None => row.state != "trashed",
+            Some(States::Every) => true,
+            Some(States::Named(named)) => named.contains(&row.state),
+        };
+        if reached {
+            Ok(row)
+        } else if row.state == "trashed" {
+            Err(not_found().with_detail("trashed", true))
+        } else {
+            Err(not_found())
+        }
     }
 
     pub(crate) fn hydrating(&self) {
@@ -253,9 +270,15 @@ fn neighbors_of(read: &Reader<'_, '_>, far_ends: &[String]) -> Result<String> {
     ))
 }
 
-pub async fn detail(app: &App, caller: &Caller, id: String, include: Detail) -> Result<String> {
+pub async fn detail(
+    app: &App,
+    caller: &Caller,
+    id: String,
+    include: Detail,
+    states: Option<States>,
+) -> Result<String> {
     reading(app, caller, move |read| {
-        let row = read.row(&id)?;
+        let row = read.row_in(&id, states.as_ref())?;
         read.hydrating();
         let versions = if include.versions {
             format!(",\"versions\":{}", read.history_page(&row, 0, FIRST_PAGE)?)

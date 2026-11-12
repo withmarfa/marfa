@@ -18,7 +18,7 @@ fn served_as(source: &str) -> Option<String> {
         .map(number::text)
 }
 
-/// Every safe integer is kept except `-0`, which is served as `0`.
+/// Every whole number of up to 2^53 in size is kept except `-0`, which is served as `0`.
 pub fn kept(source: &str) -> bool {
     if source == "-0" {
         return false;

@@ -468,6 +468,15 @@ pub fn unauthorized() -> Refusal {
     Refusal::new(Code::Unauthorized, "A valid credential is required.")
 }
 
+/// Told only to a request bearing the key's own secret.
+pub fn expired(at: &str) -> Refusal {
+    Refusal::new(
+        Code::Unauthorized,
+        format!("This key expired at {at}. Use a key that has not expired."),
+    )
+    .with_detail("expired_at", at)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;

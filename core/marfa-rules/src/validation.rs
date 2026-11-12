@@ -385,7 +385,7 @@ fn field(kind: &str, definition: &Value, value: &Value) -> Result<Option<Problem
             }
         },
         "number" => match value.as_f64().filter(|number| number.is_finite()) { Some(number) => in_range(definition, number), None => expected("number") },
-        "integer" => match value.as_f64().filter(|number| number.is_finite() && number.fract() == 0.0 && number.abs() <= 9_007_199_254_740_991.0) { Some(number) => in_range(definition, number), None => expected("safe integer") },
+        "integer" => match value.as_f64().filter(|number| number.is_finite() && number.fract() == 0.0 && number.abs() <= 9_007_199_254_740_991.0) { Some(number) => in_range(definition, number), None => expected("a whole number from -9007199254740991 to 9007199254740991") },
         "boolean" => if value.is_boolean() { None } else { expected("boolean") },
         "array" => match value.as_array() {
             None => expected("array"),
