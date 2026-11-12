@@ -406,7 +406,7 @@ describe("creates in pages", () => {
     expect(first.undelivered).toBe(50);
     expect(first.retry_after_seconds).toBe(2);
     expect(first.unavailable).toMatch(
-      /the server is limiting requests and asked for a wait of 2s/,
+      /the server is limiting requests \(429\) and asked for a wait of 2s/,
     );
     const waiting = value(await harness.device.queue());
     for (const row of waiting) {

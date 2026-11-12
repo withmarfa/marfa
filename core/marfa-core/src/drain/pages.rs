@@ -1230,7 +1230,7 @@ mod tests {
 
         assert_eq!(
             drained.unavailable.as_deref(),
-            Some("the server is limiting requests and asked for a wait of 7s")
+            Some("the server is limiting requests (429) and asked for a wait of 7s")
         );
         assert_eq!(drained.retry_after_seconds, Some(7));
         assert_eq!(server.seen("/items/bulk").len(), 1);

@@ -349,8 +349,10 @@ fn limited_by_server(answer: &std::result::Result<Answer, CoreError>) -> bool {
 /// How a limit reads in a drain's report, which waits for nothing itself.
 fn limiting(wait: Option<u64>) -> String {
     match held_to_most(wait) {
-        Some(wait) => format!("the server is limiting requests and asked for a wait of {wait}s"),
-        None => "the server is limiting requests".into(),
+        Some(wait) => {
+            format!("the server is limiting requests (429) and asked for a wait of {wait}s")
+        }
+        None => "the server is limiting requests (429)".into(),
     }
 }
 
@@ -6974,7 +6976,7 @@ mod tests {
             (crate::scripted::refusal(503, "unavailable"), "503"),
             (
                 crate::scripted::refusal(429, "rate_limited"),
-                "the server is limiting requests",
+                "the server is limiting requests (429)",
             ),
             (
                 crate::scripted::Answer::Stall,
@@ -7228,7 +7230,7 @@ mod tests {
         assert!(report.limited);
         assert_eq!(
             report.unavailable.as_deref(),
-            Some("the server is limiting requests and asked for a wait of 300s")
+            Some("the server is limiting requests (429) and asked for a wait of 300s")
         );
         assert_eq!((report.answered, report.undelivered), (0, 2));
     }
@@ -7258,7 +7260,7 @@ mod tests {
         assert_eq!(report.retry_after_seconds, Some(45));
         assert_eq!(
             report.unavailable.as_deref(),
-            Some("the server is limiting requests and asked for a wait of 45s")
+            Some("the server is limiting requests (429) and asked for a wait of 45s")
         );
         assert!(server.seen("/items/current").is_empty());
     }
