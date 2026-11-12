@@ -555,6 +555,22 @@ When a key is past its `expires_at`, the server MUST answer a request bearing it
 
 **Tests:** `compliance/key-expiry.test.ts › is refused 401, left out of the listing, and answered 404 api_key_not_found to an update or a revoke`, `› is refused 401 once the expiry it was minted with comes`.
 
+### `keys-and-oauth/expired-named`
+
+When a request bears the secret of a key that is past its `expires_at` and not revoked, the server MUST carry that `expires_at` in `details.expired_at` of the `401 unauthorized`.
+
+**Reason:** a person whose key stopped working can tell an expired key from a mistyped one and knows to use another key. Only the key's own secret reaches this answer, so it tells nothing to anyone who does not already hold the key.
+
+**Tests:** `compliance/key-expiry.test.ts › names when it expired to a request bearing its own secret, and nothing to a secret no key holds`.
+
+### `keys-and-oauth/unknown-secret-unnamed`
+
+If a request bears a secret that no unrevoked key holds, then the server MUST answer `401 unauthorized` with no `details`.
+
+**Reason:** a guessed or revoked secret learns nothing of any key.
+
+**Tests:** `compliance/key-expiry.test.ts › names when it expired to a request bearing its own secret, and nothing to a secret no key holds`, `› names no expiry once the key is revoked`.
+
 ### `keys-and-oauth/expired-unlisted`
 
 When a key is past its `expires_at`, the server MUST leave it out of `GET /keys`.

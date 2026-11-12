@@ -197,6 +197,30 @@ describe("the state a door answers when none is named", () => {
     ).toBe(false);
   });
 
+  it("a read by id that names states answers an item in one of them, the bin included, and refuses the rest", async () => {
+    for (const state of ["trashed", "any", "active,trashed"]) {
+      const binned = await client.getItem(trashed.id, state);
+      expect(binned.status, state).toBe(200);
+      expect(binned.data.item.id, state).toBe(trashed.id);
+      expect(binned.data.item.state, state).toBe("trashed");
+    }
+    const filed = await client.getItem(archived.id, "archived");
+    expect(filed.status).toBe(200);
+    expect(filed.data.item.state).toBe("archived");
+
+    // As in a listing, a named state reaches only what it names.
+    for (const [id, state] of [
+      [archived.id, "active"],
+      [active.id, "archived"],
+      [trashed.id, "active,archived"],
+      [active.id, "trashed"],
+    ] as const) {
+      const refused = await client.getItem(id, state);
+      expect(refused.status, `${id} ${state}`).toBe(404);
+      expect(refused.error?.error.code).toBe("item_not_found");
+    }
+  });
+
   it("a search reads across states under the sentinel, except the bin", async () => {
     const ids = await searched({ state: "any" });
     expect(
@@ -271,6 +295,12 @@ describe("the state a door answers when none is named", () => {
       ["listing", await client.listItems({ state: "nonsense" })],
       ["search", await client.search("zqstatedefault", { state: "nonsense" })],
       ["export", await client.exportItems({ state: "nonsense" })],
+      ["read by id", await client.getItem(active.id, "nonsense")],
+      [
+        "read by id, any beside a state",
+        await client.getItem(active.id, "any,active"),
+      ],
+      ["read by id, empty", await client.getItem(active.id, "")],
     ] as const) {
       expect(
         res.ok,

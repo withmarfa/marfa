@@ -37,7 +37,7 @@ export interface paths {
         };
         /**
          * Get an item
-         * @description Returns an item with its metadata and outbound edges. Use `include` to add its inbound edges, the items at the other end of its edges, or its version history in the same call.
+         * @description Returns an item with its metadata and outbound edges. Use `include` to add its inbound edges, the items at the other end of its edges, or its version history in the same call. Use `state` to read an item in the trash.
          */
         get: operations["getItem"];
         put?: never;
@@ -5622,7 +5622,7 @@ export interface components {
             sign_ins: components["schemas"]["FolderStatusGroup"][];
             /** @description Totals from current sign-ins alone; copies may contain overlapping files. */
             totals: {
-                /** @description `true` if any total exceeded the safe integer bound; capped totals then mean at least that bound. */
+                /** @description `true` if any total exceeded 9007199254740991; capped totals then mean at least that number. */
                 saturated: boolean;
                 /** @description The sum of pending upload files across current sign-ins' copies. */
                 pending_uploads: number;
@@ -7336,7 +7336,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7529,7 +7529,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7683,6 +7683,8 @@ export interface operations {
             query?: {
                 /** @description Comma-separated extras: `backrefs` adds inbound edges, `neighbors` adds the items at the other end of the edges returned, and `versions` adds the first page of version snapshots you can read, oldest first. */
                 include?: string;
+                /** @description Read the item only if it is in one of these lifecycle states: one state or a comma-separated list, such as `active,trashed`. Send `any` on its own for every state, the trash included. Without it, you get an item in any state but `trashed`. */
+                state?: string;
             };
             header?: {
                 /** @description The reach from a copy stream, for a working copy. Marfa reads the current data and checks the reach in one snapshot, and returns `409 reach_changed` if it has changed. Leave it out for an ordinary read. */
@@ -7710,7 +7712,7 @@ export interface operations {
             };
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
-             *     - `validation_error`: the query has a parameter this endpoint doesn't take.
+             *     - `validation_error`: the query has a parameter this endpoint doesn't take, or `state` is empty, names a state that doesn't exist, or puts `any` beside another state.
              */
             400: {
                 headers: {
@@ -7723,7 +7725,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7748,7 +7750,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
+            /** @description - `item_not_found`: no item has this ID, the item is in a state `state` leaves out (`details.trashed` is `true` for an item in the trash whose type you can read), or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -7873,7 +7875,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8110,7 +8112,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8312,7 +8314,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8484,7 +8486,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8664,7 +8666,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -8847,7 +8849,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9048,7 +9050,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9228,7 +9230,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9252,7 +9254,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash (`details.trashed` is `true` if you can read its type), or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9377,7 +9379,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9531,7 +9533,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9688,7 +9690,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -9875,7 +9877,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAtomicRollbackOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10054,7 +10056,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10188,7 +10190,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10306,7 +10308,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10438,7 +10440,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10581,7 +10583,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10702,7 +10704,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10859,7 +10861,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11016,7 +11018,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrInvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11187,7 +11189,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11409,7 +11411,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkCapExceededOrBulkConfirmationRequiredOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11569,7 +11571,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11694,7 +11696,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11843,7 +11845,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11867,7 +11869,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash (`details.trashed` is `true` if you can read its type), or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11985,7 +11987,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12175,7 +12177,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12359,7 +12361,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12525,7 +12527,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12645,7 +12647,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12672,7 +12674,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash (`details.trashed` is `true` if you can read its type), or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12789,7 +12791,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -12973,7 +12975,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13148,7 +13150,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13172,7 +13174,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash (`details.trashed` is `true` if you can read its type), or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13305,7 +13307,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13331,7 +13333,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.
+             * @description - `item_not_found`: no item has this ID, the item is in the trash (`details.trashed` is `true` if you can read its type), or its type is one you can't read.
              *     - `table_not_found`: the item's type declares no table of this name.
              */
             404: {
@@ -13505,7 +13507,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13698,7 +13700,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13723,7 +13725,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.
+             * @description - `item_not_found`: no item has this ID, the item is in the trash (`details.trashed` is `true` if you can read its type), or its type is one you can't read.
              *     - `table_not_found`: the item's type declares no table of this name.
              *     - `row_not_found`: the table holds no row with this ID.
              */
@@ -13846,7 +13848,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -13871,7 +13873,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read. */
+            /** @description - `item_not_found`: no item has this ID, the item is in the trash (`details.trashed` is `true` if you can read its type), or its type is one you can't read. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14003,7 +14005,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14028,7 +14030,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.
+             * @description - `item_not_found`: no item has this ID, the item is in the trash (`details.trashed` is `true` if you can read its type), or its type is one you can't read.
              *     - `table_not_found`: the item's type declares no table of this name.
              */
             404: {
@@ -14157,7 +14159,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14182,7 +14184,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `item_not_found`: no item has this ID, the item is in the trash, or its type is one you can't read.
+             * @description - `item_not_found`: no item has this ID, the item is in the trash (`details.trashed` is `true` if you can read its type), or its type is one you can't read.
              *     - `table_not_found`: the item's type declares no table of this name.
              */
             404: {
@@ -14311,7 +14313,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14490,7 +14492,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14658,7 +14660,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14840,7 +14842,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -14986,7 +14988,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15185,7 +15187,7 @@ export interface operations {
                     "application/json": components["schemas"]["EdgeConstraintViolationOrEdgeCycleOrInvalidIdOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15397,7 +15399,7 @@ export interface operations {
                     "application/json": components["schemas"]["BulkAtomicRollbackOrInvalidPropertiesOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15560,7 +15562,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15706,7 +15708,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15862,7 +15864,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -15976,7 +15978,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16096,7 +16098,7 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16248,7 +16250,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16386,7 +16388,7 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16557,7 +16559,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16753,7 +16755,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -16915,7 +16917,7 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidSchemaOrMissingRequiredFieldOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17059,7 +17061,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidSchemaOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17211,7 +17213,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17361,7 +17363,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17490,7 +17492,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17645,7 +17647,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17806,7 +17808,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -17972,7 +17974,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18119,7 +18121,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18241,7 +18243,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18368,7 +18370,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18508,7 +18510,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18615,7 +18617,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18756,7 +18758,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -18878,7 +18880,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19004,7 +19006,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19141,7 +19143,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19266,7 +19268,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19428,7 +19430,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19579,7 +19581,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19706,7 +19708,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19854,7 +19856,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19999,7 +20001,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidPropertiesOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -20197,7 +20199,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidPropertiesOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -20380,7 +20382,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -20589,7 +20591,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -20729,7 +20731,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -20897,7 +20899,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21062,7 +21064,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21197,7 +21199,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21393,7 +21395,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidIdOrInvalidTransitionOrMissingRequiredFieldOrUnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21562,7 +21564,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21685,7 +21687,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21819,7 +21821,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -21932,7 +21934,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -22084,7 +22086,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -22235,7 +22237,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -22369,7 +22371,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -22535,7 +22537,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -22690,7 +22692,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -22836,7 +22838,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -22984,7 +22986,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23133,7 +23135,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23286,7 +23288,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23441,7 +23443,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23603,7 +23605,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23749,7 +23751,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -23883,7 +23885,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -24034,7 +24036,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -24192,7 +24194,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -24316,7 +24318,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -24462,7 +24464,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -24608,7 +24610,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -24709,7 +24711,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -24841,7 +24843,7 @@ export interface operations {
                     "application/json": components["schemas"]["InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -24972,7 +24974,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -25119,7 +25121,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -25254,7 +25256,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -25380,7 +25382,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -25569,7 +25571,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -25889,7 +25891,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26000,7 +26002,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26146,7 +26148,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26289,7 +26291,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26551,7 +26553,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26707,7 +26709,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26826,7 +26828,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26984,7 +26986,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27111,7 +27113,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27262,7 +27264,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27405,7 +27407,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27521,7 +27523,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27683,7 +27685,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27826,7 +27828,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27939,7 +27941,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -28095,7 +28097,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -28284,7 +28286,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -28379,7 +28381,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -28543,7 +28545,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -28734,7 +28736,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -28868,7 +28870,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -28979,7 +28981,7 @@ export interface operations {
                     "application/json": components["schemas"]["MissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29156,7 +29158,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29322,7 +29324,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29448,7 +29450,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29555,7 +29557,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29668,7 +29670,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29830,7 +29832,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnknownTypeOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30025,7 +30027,7 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidPropertiesOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30191,7 +30193,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30321,7 +30323,7 @@ export interface operations {
                     "application/json": components["schemas"]["ValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30524,7 +30526,7 @@ export interface operations {
                     "application/json": components["schemas"]["InheritanceViolationOrInvalidPropertiesOrInvalidSchemaOrPropertyShadowsFieldOrValidationErrorRefusal"];
                 };
             };
-            /** @description `unauthorized`: the request has no credential, or its credential is not valid. */
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
             401: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

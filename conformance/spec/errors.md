@@ -422,6 +422,14 @@ If a volume turns away the commit of a write, then the server MUST carry `write_
 
 **Tests:** `compliance/write-faults.test.ts › answers 507 insufficient_storage with write_outcome unknown, and the write that follows lands`.
 
+### `errors/storage-full-kept-nothing`
+
+If the server answers `507 insufficient_storage` with no `details.write_outcome`, then the server MUST NOT have kept any part of the write.
+
+**Reason:** a client drops nothing on this answer and sends the write again once there is room, so a write half kept would land twice. A refusal before the commit begins writes nothing; only a commit the volume turns away can leave its outcome unknown (`errors/storage-full-unknown`).
+
+**Tests:** `compliance/disk-space-faults.test.ts › is answered 507 insufficient_storage when the disk store has no room for the bytes of an upload, which are not kept, and the next upload lands`, `› is answered 507 insufficient_storage when the disk store has no room for the bytes of a restore, which writes no item`, `compliance/disk-reserve.test.ts › refuses an upload 507 insufficient_storage, naming the reserve and the room, and stores nothing`.
+
 ### `errors/storage-full-declared`
 
 The server MUST declare `507 insufficient_storage` in its OpenAPI document on every operation that takes a credential.
@@ -502,7 +510,7 @@ When `PATCH /items/{id}`, `DELETE /items/{id}`, `PUT /items/{id}/metadata`, `POS
 
 ### `errors/bin-unreadable`
 
-If a key may not read the type of an item in the bin, then the server MUST answer a write that names the item by its id `404 item_not_found` with no `details`.
+If a key may not read the type of an item in the bin, then the server MUST answer a read or a write that names the item by its id `404 item_not_found` with no `details`.
 
 **Reason:** the answer says nothing of whether the item exists or what type it is.
 
@@ -510,9 +518,9 @@ If a key may not read the type of an item in the bin, then the server MUST answe
 
 ### `errors/bin-read`
 
-When `GET /items/{id}`, `GET /items/{id}/metadata`, `GET /items/{id}/versions`, `GET /items/{id}/extensions` or `GET /items/{id}/extensions/{namespace}` names an item in the bin, the server MUST answer `404 item_not_found` with no `details`.
+When `GET /items/{id}` with no `state` or a `state` that leaves out `trashed`, `GET /items/{id}/metadata`, `GET /items/{id}/versions`, `GET /items/{id}/extensions` or `GET /items/{id}/extensions/{namespace}` names an item in the bin and the key may read the item's type, the server MUST carry `details` of exactly `{ "trashed": true }` in the `404 item_not_found`.
 
-**Reason:** these reads answer an item in the bin as they answer one that does not exist.
+**Reason:** a client holding the id of an item someone deleted can tell it from one that never existed, and read it with `items/get-state`, as a write to it already can under `errors/bin-trashed`.
 
 **Tests:** `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`.
 

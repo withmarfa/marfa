@@ -207,9 +207,12 @@ export class MarfaClient {
 
   async getItem(
     id: string,
+    state?: string,
   ): Promise<ApiResponse<{ item: MarfaItem; metadata: MarfaMetadata }>> {
+    const query =
+      state === undefined ? "" : `?state=${encodeURIComponent(state)}`;
     return this.request<{ item: MarfaItem; metadata: MarfaMetadata }>(
-      `/items/${id}`,
+      `/items/${id}${query}`,
     );
   }
 

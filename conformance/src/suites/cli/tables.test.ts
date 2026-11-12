@@ -311,4 +311,51 @@ describe("tables and rows from the terminal", () => {
     ]);
     expect(after.row_count).toBe(2);
   });
+
+  it("names the column of a refused put or patch, where a batch names the operation too", async () => {
+    const bad = JSON.stringify({ amount: "lots" });
+    const batch = await c.cli.refused(
+      ["rows", "write", item, "lines", "--file", "-"],
+      {
+        stdin: JSON.stringify({
+          operations: [{ op: "put", values: JSON.parse(bad) as unknown }],
+        }),
+      },
+    );
+    expect(batch.envelope.error.message).toContain(
+      "operations.0.values.amount",
+    );
+    expect(batch.envelope.error.server?.details).toMatchObject({
+      operation: 0,
+      errors: [{ path: "operations.0.values.amount" }],
+    });
+
+    const listed = await c.cli.json<{ data: Row[] }>([
+      "rows",
+      "list",
+      item,
+      "lines",
+    ]);
+    const row = listed.data[0]!.id;
+    for (const args of [
+      ["rows", "put", item, "lines", "--values", bad],
+      ["rows", "patch", item, "lines", row, "--values", bad],
+    ]) {
+      const refused = await c.cli.refused(args);
+      expect(refused.envelope.error.server?.code, args[1]).toBe(
+        "validation_error",
+      );
+      expect(refused.envelope.error.message, args[1]).toContain(
+        "values.amount: ",
+      );
+      expect(refused.envelope.error.message, args[1]).not.toContain(
+        "operations.",
+      );
+      expect(refused.envelope.error.server?.details, args[1]).toEqual({
+        errors: [
+          { path: "values.amount", message: expect.any(String) as unknown },
+        ],
+      });
+    }
+  });
 });

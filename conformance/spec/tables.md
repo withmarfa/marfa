@@ -708,7 +708,7 @@ If a key that may read an item's type and not write it sends `POST /items/{id}/t
 
 ### `tables/rows-bin-read`
 
-When a read under `/items/{id}/tables` names an item in the bin, the server MUST answer `404 item_not_found` with no `details`.
+When a read under `/items/{id}/tables` names an item in the bin whose type the key may read, the server MUST answer `404 item_not_found` with `details` of exactly `{ "trashed": true }`.
 
 **Reason:** an item in the bin reads as `errors/bin-read` says, and its rows with it.
 

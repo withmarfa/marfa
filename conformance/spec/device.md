@@ -3396,6 +3396,34 @@ Where `MARFA_ALLOW_HTTP` is set to `1`, `true`, `yes` or `on`, the CLI MUST NOT 
 
 **Tests:** `cli/cleartext.test.ts › prints no warning where MARFA_ALLOW_HTTP states it is intended, and warns where it does not`.
 
+### `device/command-get-any-state`
+
+When `marfa items get` runs, the CLI MUST send `state=any`.
+
+**Reason:** a person reading an item by its id is asking for that item, the bin included.
+
+**Tests:** `cli/items.test.ts › takes a note through archive, the bin, restore, and the purge`.
+
+### `device/command-get-shows-state`
+
+When `marfa items get` prints an item whose state is not `active` without `--json`, the CLI MUST print its state in brackets, such as `[trashed]`.
+
+**Tests:** `cli/items.test.ts › takes a note through archive, the bin, restore, and the purge`.
+
+### `device/command-row-path`
+
+If the server refuses the one operation that `marfa rows put` or `marfa rows patch` sends, then the CLI MUST name the refused field by its path within the row, such as `values.amount`, in the message and in each `details.errors` path.
+
+**Reason:** the person wrote one row, not a batch, so `operations.0` names nothing they sent. `marfa rows write` sends a batch and keeps the server's paths.
+
+**Tests:** `cli/tables.test.ts › names the column of a refused put or patch, where a batch names the operation too`.
+
+### `device/command-row-no-operation`
+
+If the server refuses the one operation that `marfa rows put` or `marfa rows patch` sends, then the CLI MUST leave `details.operation` out of the refusal it prints.
+
+**Tests:** `cli/tables.test.ts › names the column of a refused put or patch, where a batch names the operation too`.
+
 ## Profiles
 
 A profile is a section of `profiles.toml`, a file a person writes by hand, that names a server and where its key comes from. It is not the owner's profile (`GLOSSARY.md`).

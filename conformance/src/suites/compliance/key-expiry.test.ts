@@ -153,6 +153,46 @@ describe("a key past its expires_at", () => {
     expect((await bearer.getCurrentKey()).status).toBe(401);
   });
 
+  it("names when it expired to a request bearing its own secret, and nothing to a secret no key holds", async () => {
+    const minted = await mint("named", inAnHour(), mover);
+    const bearer = new MarfaClient({
+      baseUrl: moving.apiUrl,
+      apiKey: minted.key,
+    });
+    await clock.advance(2 * HOUR_MS);
+
+    const refused = await bearer.getCurrentKey();
+    expect(refused.status).toBe(401);
+    expect(refused.error?.error.code).toBe("unauthorized");
+    expect(refused.error?.error.details).toEqual({
+      expired_at: minted.expires_at,
+    });
+    expect(refused.error?.error.message).toContain(String(minted.expires_at));
+
+    // One character off the same secret is a key no one holds.
+    const last = minted.key.slice(-1) === "0" ? "1" : "0";
+    const guessed = await new MarfaClient({
+      baseUrl: moving.apiUrl,
+      apiKey: `${minted.key.slice(0, -1)}${last}`,
+    }).getCurrentKey();
+    expect(guessed.status).toBe(401);
+    expect(guessed.error?.error.code).toBe("unauthorized");
+    expect(guessed.error?.error.details).toBeUndefined();
+  });
+
+  it("names no expiry once the key is revoked", async () => {
+    const minted = await mint("revoked-after", inAnHour(), mover);
+    const bearer = new MarfaClient({
+      baseUrl: moving.apiUrl,
+      apiKey: minted.key,
+    });
+    expect((await mover.revokeKey(minted.id)).status).toBe(200);
+    await clock.advance(2 * HOUR_MS);
+    const refused = await bearer.getCurrentKey();
+    expect(refused.status).toBe(401);
+    expect(refused.error?.error.details).toBeUndefined();
+  });
+
   it("gives up its own source to the next mint, and holds it until then", async () => {
     const source = unique("lapsing-source");
     const lapsing = await mover.createKey({

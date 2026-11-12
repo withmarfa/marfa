@@ -202,11 +202,12 @@ describe("items from the terminal", () => {
     expect(archived.item.state).toBe("archived");
 
     await c.cli.json(["items", "delete", id]);
-    // A trashed item reads as absent on the direct door, with the server's
-    // code carried through.
-    const gone = await c.cli.refused(["items", "get", id]);
-    expect(gone.envelope.error.code).toBe("not_found");
-    expect(gone.envelope.error.server?.code).toBe("item_not_found");
+    const binned = await c.cli.json<ItemEnvelope>(["items", "get", id]);
+    expect(binned.item.id).toBe(id);
+    expect(binned.item.state).toBe("trashed");
+    const shown = await c.cli.run(["items", "get", id]);
+    expect(shown.code).toBe(0);
+    expect(shown.stdout).toContain("[trashed]");
 
     const restored = await c.cli.json<ItemEnvelope>(["items", "restore", id]);
     expect(restored.item.state).toBe("active");
@@ -219,6 +220,9 @@ describe("items from the terminal", () => {
     await c.cli.json(["items", "purge", id]);
     const purged = await c.cli.refused(["items", "restore", id]);
     expect(purged.envelope.error.code).toBe("not_found");
+    const gone = await c.cli.refused(["items", "get", id]);
+    expect(gone.envelope.error.code).toBe("not_found");
+    expect(gone.envelope.error.server?.code).toBe("item_not_found");
   });
 
   it("refuses a property given both ways before sending anything", async () => {
