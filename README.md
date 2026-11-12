@@ -58,9 +58,9 @@ Then set up a server that only this computer can reach:
 marfa server install --access local
 ```
 
-The server runs as a service of your computer, a launchd agent on a Mac and a systemd service on Linux, at the address the command prints: <http://localhost:8600> unless that port is taken. Its data and settings are in `~/marfa-server`. The server's two secrets are in `~/marfa-server/marfa.env`: keep a copy of that file somewhere safe, because the data needs them and they aren't stored anywhere else.
+The server runs as a service: a launchd agent on a Mac, or a systemd service on Linux. It answers at the address the command prints, which is <http://localhost:8600> unless that port is taken. Its data and settings are in `~/marfa-server`. The server's two secrets are in `~/marfa-server/marfa.env`: keep a copy of that file somewhere safe, because the data needs them and they aren't stored anywhere else.
 
-A new instance has no owner. The command prints a link that works once, for five minutes: open it and choose the owner's email and password. Claiming the owner signs you in and closes setup permanently. To get a new link, run `marfa server install` again. `marfa server status` shows how the server is, `marfa server uninstall` removes the service and keeps the data, and `marfa server install --help` lists the other ways to reach the server.
+A new instance has no owner. The command prints a link that works once, for five minutes: open it and choose the owner's email and password. Claiming the owner signs you in and closes setup permanently. To get a new link, run `marfa server install` again. `marfa server status` shows whether the server is running and healthy, `marfa server uninstall` removes the service and keeps the data, and `marfa server install --help` lists the other ways to reach the server.
 
 The [Quickstart](https://docs.marfa.so/quickstart) continues from here: it makes a key, and writes and reads your first note. To work on Marfa itself, read [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
