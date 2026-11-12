@@ -63,12 +63,11 @@ pub const LOOKUP_BODY_BYTES: usize = 256 * 1024;
 
 /// How long a server may take to begin an answer, and to send the body of
 /// one read whole.
-/// How long an upload that asked `Expect: 100-continue` waits for `100`
-/// before sending its body anyway, as RFC 9110 expects of a client: a server
-/// or proxy that never sends it must not hold the upload for an answer budget.
-const AWAIT_100: Duration = Duration::from_secs(2);
 const RESPONSE_BUDGET: Duration = Duration::from_secs(30);
 const BODY_BUDGET: Duration = Duration::from_secs(60);
+
+/// How long an upload that asked `Expect: 100-continue` waits for `100`, as RFC 9110 allows, before sending its body.
+const AWAIT_100: Duration = Duration::from_secs(2);
 
 /// The rows of an item page a body budget is set for. The budget bounds the
 /// whole read of a body, so a page of more rows is given more of it in
