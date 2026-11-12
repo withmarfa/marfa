@@ -557,6 +557,23 @@ function describeExit(exitFile: string): string {
 }
 
 /**
+ * Whether a `/health` answer is the report of a server that is up with a
+ * component down. A boot onto a damaged database file is that: the report
+ * says `down` as soon as any statement, a scheduled backup's among them,
+ * meets a damaged page, so a boot that waited for 200 would depend on
+ * whether its first poll beat that statement.
+ */
+function reportsHealth(status: number, text: string): boolean {
+  if (status !== 503) return false;
+  try {
+    const report = JSON.parse(text) as { components?: unknown };
+    return typeof report.components === "object" && report.components !== null;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Waits for `/health` to answer, and gives up the moment the server ends,
  * so a boot that was refused is reported as that and not after the budget.
  */
@@ -603,8 +620,13 @@ async function waitForHealth(
           signal: AbortSignal.timeout(5_000),
           headers: { Connection: "close" },
         });
-        await response.text();
-        if (response.ok && !started.ended()) return await reachedAt(url);
+        const text = await response.text();
+        if (
+          (response.ok || reportsHealth(response.status, text)) &&
+          !started.ended()
+        ) {
+          return await reachedAt(url);
+        }
         lastFailure = `HTTP ${response.status}`;
       } catch (error) {
         lastFailure =
