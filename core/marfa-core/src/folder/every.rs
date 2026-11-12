@@ -210,6 +210,18 @@ pub fn watch_every<W: EveryFolder>(
     )
 }
 
+/// The servers the folders `registry` lists follow, for those whose store
+/// can be read.
+pub fn listed_origins(registry: &Registry) -> Vec<String> {
+    let Ok(Some(listed)) = registry.read() else {
+        return Vec::new();
+    };
+    listed
+        .iter()
+        .filter_map(|entry| recorded(&entry.dir).ok()?.origin)
+        .collect()
+}
+
 fn read(registry: &Registry) -> Listing {
     match registry.read() {
         Ok(Some(listed)) => Listing::Listed(
@@ -1785,6 +1797,31 @@ mod tests {
                 && count(machine, "watching /a") == 2
         })
         .unwrap();
+    }
+
+    #[test]
+    fn a_folder_signed_out_is_told_once_however_many_retries_find_the_same_reason() {
+        let machine = Machine::default();
+        machine.opens(
+            "/a",
+            vec![
+                Ok(Goes::Ends(reason("signed_out"))),
+                Err(reason("signed_out")),
+            ],
+        );
+        let listing = listed(&["/a"]);
+        let temp = tempfile::tempdir().unwrap();
+        let record = WatchRecord::at(temp.path().join("record.json"), 1, Duration::from_secs(5));
+        supervised_timed(&machine, &listing, &record, never_recovered(), |machine| {
+            machine.opened("/a") >= 4
+        })
+        .unwrap();
+        assert_eq!(
+            count(&machine, "unwatched /a signed_out"),
+            1,
+            "{:?}",
+            machine.told()
+        );
     }
 
     #[test]

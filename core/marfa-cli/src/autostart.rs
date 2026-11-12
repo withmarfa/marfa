@@ -728,9 +728,21 @@ impl Place {
     }
 }
 
-/// Starts the installed watch again; whether it did is returned.
-fn resume(place: &Place) -> Result<bool, CliError> {
-    if !place.file.exists() {
+/// Starts the installed watch again where a credential kept for `origin` can
+/// reach it: the agent reads the keychain, and lists a folder of that server.
+/// Whether it did is returned.
+fn resume(
+    place: &Place,
+    origin: &str,
+    listed_origins: impl FnOnce(&Path) -> Vec<String>,
+) -> Result<bool, CliError> {
+    let Some(written) = read_file(&place.file)? else {
+        return Ok(false);
+    };
+    let Some(agent) = Agent::read(place.manager, &written) else {
+        return Ok(false);
+    };
+    if agent.key_file.is_some() || !listed_origins(&agent.registry).iter().any(|o| o == origin) {
         return Ok(false);
     }
     let state = place
@@ -746,14 +758,11 @@ fn resume(place: &Place) -> Result<bool, CliError> {
     Ok(true)
 }
 
-/// Starts the installed watch again after a credential is kept, and says on
-/// stderr that it did, or why it could not.
-pub fn resume_after_credential_kept() {
-    // A unit test's HOME is the person's own, whose service it must never ask.
-    if cfg!(test) {
-        return;
-    }
-    match Place::here().and_then(|place| resume(&place).map(|ran| (place, ran))) {
+/// Starts the installed watch again after a credential is kept for `origin`,
+/// and says on stderr that it did, or why it could not.
+pub fn resume_after_credential_kept(origin: &str) {
+    let listed = |registry: &Path| marfa_core::folder::listed_origins(&Registry::at(registry));
+    match Place::here().and_then(|place| resume(&place, origin, listed).map(|ran| (place, ran))) {
         Ok((place, true)) => eprintln!(
             "restarted {}, so the folder watch uses this credential",
             place.manager.name()
@@ -1608,19 +1617,20 @@ mod tests {
     }
 
     #[test]
-    fn a_credential_kept_restarts_the_watch_only_where_the_agent_is_installed_and_held() {
+    fn a_credential_kept_restarts_the_watch_only_where_it_can_help() {
+        let here = |_: &Path| vec!["https://one.test".to_string()];
         for manager in [Manager::Launchd, Manager::Systemd] {
             let temp = tempfile::tempdir().unwrap();
             let (place, asked) = asked_manager(temp.path(), manager, true);
             // Not installed: the manager is not even asked.
-            assert!(!resume(&place).unwrap());
+            assert!(!resume(&place, "https://one.test", here).unwrap());
             assert!(
                 !asked.exists(),
                 "{manager:?} was asked with nothing installed"
             );
-            // Installed and held: restarted.
-            std::fs::write(&place.file, "agent").unwrap();
-            assert!(resume(&place).unwrap());
+            // Installed and held, listing a folder of that server: restarted.
+            std::fs::write(&place.file, agent("/bin/marfa").render(manager).unwrap()).unwrap();
+            assert!(resume(&place, "https://one.test", here).unwrap());
             let asked_of = std::fs::read_to_string(&asked).unwrap();
             let restart = match manager {
                 Manager::Launchd => "kickstart -k",
@@ -1628,11 +1638,37 @@ mod tests {
             };
             assert!(asked_of.contains(restart), "{manager:?}: {asked_of}");
         }
-        // The witness: a file the manager does not hold is left alone.
+    }
+
+    #[test]
+    fn a_credential_kept_leaves_the_watch_alone_where_it_could_not_help() {
+        let here = |_: &Path| vec!["https://one.test".to_string()];
+        let temp = tempfile::tempdir().unwrap();
+        let (place, asked) = asked_manager(temp.path(), Manager::Launchd, true);
+        let keyed = Agent {
+            key_file: Some("/home/me/watch.env".into()),
+            ..agent("/bin/marfa")
+        };
+        std::fs::write(&place.file, keyed.render(Manager::Launchd).unwrap()).unwrap();
+        // An agent with a key file never reads the keychain.
+        assert!(!resume(&place, "https://one.test", here).unwrap());
+        std::fs::write(
+            &place.file,
+            agent("/bin/marfa").render(Manager::Launchd).unwrap(),
+        )
+        .unwrap();
+        // No listed folder follows the server the credential is for.
+        assert!(!resume(&place, "https://two.test", here).unwrap());
+        assert!(!asked.exists(), "{:?}", std::fs::read_to_string(&asked));
+        // A file the manager does not hold is left alone.
         let temp = tempfile::tempdir().unwrap();
         let (place, asked) = asked_manager(temp.path(), Manager::Launchd, false);
-        std::fs::write(&place.file, "agent").unwrap();
-        assert!(!resume(&place).unwrap());
+        std::fs::write(
+            &place.file,
+            agent("/bin/marfa").render(Manager::Launchd).unwrap(),
+        )
+        .unwrap();
+        assert!(!resume(&place, "https://one.test", here).unwrap());
         let asked_of = std::fs::read_to_string(&asked).unwrap();
         assert!(!asked_of.contains("kickstart"), "{asked_of}");
     }

@@ -135,6 +135,17 @@ impl Machine {
             .and_then(|opened| opened.refused.clone())
     }
 
+    /// The credential refusal a folder met, kept while no credential is held,
+    /// so the person sees one reason until a new one is kept.
+    fn ended_while_absent(&self, dir: &Path, error: &CliError) -> Option<Unwatched> {
+        if !matches!(error, CliError::NoCredential { .. }) {
+            return None;
+        }
+        self.folders()
+            .get(dir)
+            .and_then(|opened| opened.refused.clone())
+    }
+
     fn opened_with(&self, dir: &Path, server: String, bearer: String) {
         self.folders().insert(
             dir.to_path_buf(),
@@ -173,10 +184,10 @@ impl EveryFolder for Machine {
     type Error = CliError;
 
     fn open(&self, dir: &Path, origin: Option<&str>) -> Result<Folder, Unwatched> {
-        let session = self
-            .named
-            .session_for(origin)
-            .map_err(|error| unwatched(&error))?;
+        let session = self.named.session_for(origin).map_err(|error| {
+            self.ended_while_absent(dir, &error)
+                .unwrap_or_else(|| unwatched(&error))
+        })?;
         let (server, bearer) = (session.server.url.clone(), session.server.key.clone());
         if let Some(refused) = self.still_refused(dir, &bearer) {
             return Err(refused);
@@ -945,6 +956,34 @@ mod tests {
         assert_eq!(machine.still_refused(dir, "first"), Some(out));
         // The witness: a credential kept since is tried.
         assert_eq!(machine.still_refused(dir, "second"), None);
+    }
+
+    #[test]
+    fn a_folder_signed_out_stays_signed_out_while_its_credential_is_gone() {
+        let machine = Machine {
+            named: Named::default(),
+            json: false,
+            registry: PathBuf::from("folders.json"),
+            folders: Mutex::default(),
+        };
+        let dir = Path::new("/notes");
+        let gone = CliError::NoCredential {
+            origin: "https://one.test".into(),
+            profile: None,
+        };
+        // Nothing met yet: the absence is its own reason.
+        assert_eq!(machine.ended_while_absent(dir, &gone), None);
+        let out = Unwatched {
+            code: "signed_out".into(),
+            message: "signed out of https://one.test: sign in again".into(),
+        };
+        machine.opened_with(dir, "https://one.test".into(), "first".into());
+        machine.ended(dir, &out);
+        // Past the retry the renewal has dropped the credential: same reason.
+        assert_eq!(machine.ended_while_absent(dir, &gone), Some(out));
+        // The witness: another failure to read a credential is told as it is.
+        let locked = CliError::NoKeychain("locked".into());
+        assert_eq!(machine.ended_while_absent(dir, &locked), None);
     }
 
     #[test]

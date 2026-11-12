@@ -1449,15 +1449,17 @@ describe("folder syncing from login", () => {
   it("starts the watch again when a credential is kept and the agent is installed, and does nothing where it is not", async () => {
     const harness = await folderHarness("autostart-keep");
     made.push(harness);
+    const other = await folderHarness("autostart-keep-other");
+    made.push(other);
     // Async: the scripted server answers from this process.
-    const keep = (root: string) =>
+    const keep = (root: string, url = harness.server.url) =>
       new Promise<{ status: number | null; stderr: string }>((resolve) => {
         const child = spawn(
           requireBinary(),
           [
             "--json",
             "--url",
-            harness.server.url,
+            url,
             "--key",
             "kept-after-sign-in",
             "keys",
@@ -1502,6 +1504,36 @@ describe("folder syncing from login", () => {
       ),
     ).toHaveLength(1);
     expect(ran.stderr).toContain("restarted");
+    // A credential for a server no listed folder follows cannot help.
+    const foreign = await keep(root, other.server.url);
+    expect(foreign.status, foreign.stderr).toBe(0);
+    expect(
+      managerState(root).calls.filter((call) =>
+        /kickstart -k|restart/.test(call),
+      ),
+    ).toHaveLength(1);
+    // An agent with a key file never reads the keychain.
+    const keyed = standIn("keep-key-file");
+    const path = join(keyed, "keys", "watch.env");
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      `MARFA_API_URL=${harness.server.url}\nMARFA_API_KEY=fixture\n`,
+    );
+    chmodSync(path, 0o600);
+    parsed<Switched>(
+      autostart(keyed, "on", {
+        registry: harness.registry,
+        args: ["--key-file", path],
+      }),
+    );
+    const kept = await keep(keyed);
+    expect(kept.status, kept.stderr).toBe(0);
+    expect(
+      managerState(keyed).calls.filter((call) =>
+        /kickstart -k|restart/.test(call),
+      ),
+    ).toEqual([]);
   });
 });
 

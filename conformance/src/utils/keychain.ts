@@ -14,6 +14,9 @@ import { join } from "node:path";
  *
  * Named anything but `login`, because macOS adds a keychain file of that
  * name to the person's search list when it is made.
+ *
+ * `MARFA_AUTOSTART_ROOT` names a folder that is never made, so a `login` or
+ * `keys keep` in a run finds no folder-watch agent and asks no service manager.
  */
 export default function makeKeychain(): () => void {
   // A switch set in the person's shell would turn the run's own keychain off
@@ -23,6 +26,7 @@ export default function makeKeychain(): () => void {
   const remove = () => {
     rmSync(folder, { recursive: true, force: true });
   };
+  process.env[AUTOSTART] = join(folder, "no-autostart");
   if (process.platform !== "darwin") {
     process.env[PATH] = join(folder, "none");
     return remove;
@@ -37,6 +41,7 @@ export default function makeKeychain(): () => void {
 
 const PATH = "MARFA_CONFORMANCE_KEYCHAIN";
 const PASSWORD = "MARFA_CONFORMANCE_KEYCHAIN_PASSWORD";
+const AUTOSTART = "MARFA_CONFORMANCE_AUTOSTART_ROOT";
 
 let unlockedAt = 0;
 
@@ -55,7 +60,15 @@ export function keychainEnv(): Record<string, string> {
   }
   // Where there are no keychain files, a name the binary answers as no
   // keychain at all keeps it off the person's secret service.
-  if (process.platform !== "darwin") return { MARFA_KEYCHAIN: path };
+  const MARFA_AUTOSTART_ROOT = process.env[AUTOSTART];
+  if (MARFA_AUTOSTART_ROOT === undefined) {
+    throw new Error(
+      `${AUTOSTART} is unset: the project running this has no global setup making the run's keychain`,
+    );
+  }
+  if (process.platform !== "darwin") {
+    return { MARFA_KEYCHAIN: path, MARFA_AUTOSTART_ROOT };
+  }
   const password = process.env[PASSWORD];
   if (password === undefined) {
     throw new Error(
@@ -66,5 +79,5 @@ export function keychainEnv(): Record<string, string> {
     execFileSync("security", ["unlock-keychain", "-p", password, path]);
     unlockedAt = Date.now();
   }
-  return { MARFA_KEYCHAIN: path };
+  return { MARFA_KEYCHAIN: path, MARFA_AUTOSTART_ROOT };
 }

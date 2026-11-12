@@ -750,8 +750,13 @@ describe("a watch of every folder", () => {
           watch.stdout,
         ).toHaveLength(1);
       }, WAIT);
+      const sent = b.server.requests.length;
       await new Promise((resolve) => setTimeout(resolve, 3_000));
       expect(watch.running(), watch.stderr).toBe(true);
+      expect(
+        b.server.requests.length,
+        "a request was sent with the credential that ended",
+      ).toBe(sent);
       process.kill(watch.pid(), "SIGTERM");
       await watch.exited();
       expect(watch.exitCode(), watch.stderr).toBe(0);

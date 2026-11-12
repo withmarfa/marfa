@@ -5866,25 +5866,41 @@ When `folders watch` of one folder ends because the sign-in it uses has ended, t
 
 ### `folders/watch-every-signed-out-record`
 
-When the sign-in a folder uses has ended during a watch of every folder, the CLI MUST set `reason` to `signed_out` for that folder in the record.
+When the sign-in a folder uses has ended during a watch of every folder, the CLI MUST set `reason` to `signed_out` for that folder in the record, and keep it there for as long as no credential is kept for the folder's server.
 
-**Reason:** A program reading the record, such as `folders autostart status`, tells a folder that needs `marfa login` from one that fails for another reason, and the watch of the other folders goes on.
+**Reason:** A program reading the record, such as `folders autostart status`, tells a folder that needs `marfa login` from one that fails for another reason, and the watch of the other folders goes on. Renewing the dead sign-in drops it from the keychain, and a reason that then changed to `no_credential` would print a second line for the one cause that a single `marfa login` solves.
 
 **Tests:** `device/folders-watch-every.test.ts › records only that folder as signed out and goes on with the others, with the watch staying up`.
 
 ### `folders/watch-every-signed-out-stays`
 
-While the sign-in of a folder has ended, the CLI MUST keep the watch of every folder and the watch of each other folder running.
+While the sign-in of a folder has ended, the CLI MUST keep the watch of every folder running.
 
-**Reason:** A service manager starts a watch that ends with a failure again, and a watch that ended for a sign-in would be started again into the same refusal. With no folder left to watch it waits to be stopped, and ends with exit status 0 when it is.
+**Reason:** A service manager starts a watch that ends with a failure again, and a watch that ended for a sign-in would be started again into the same refusal. With no folder left to watch it waits to be stopped, and ends then as `folders/watch-terminate` says.
 
-**Tests:** `device/folders-watch-every.test.ts › records only that folder as signed out and goes on with the others, with the watch staying up`, `device/folders-watch-every.test.ts › stays up with no folder left to watch, and ends with exit status 0 once stopped`.
+**Tests:** `device/folders-watch-every.test.ts › stays up with no folder left to watch, and ends with exit status 0 once stopped`.
+
+### `folders/watch-every-signed-out-others-go-on`
+
+While the sign-in of a folder has ended, the CLI MUST keep the watch of each other folder running.
+
+**Reason:** One folder's sign-in says nothing of the others, which may follow other servers.
+
+**Tests:** `device/folders-watch-every.test.ts › records only that folder as signed out and goes on with the others, with the watch staying up`.
+
+### `folders/watch-every-signed-out-no-request`
+
+While a folder's sign-in has ended, the CLI MUST NOT send the server a request with the credential that ended.
+
+**Reason:** The server has refused it, and another request would only be refused again.
+
+**Tests:** `device/folders-watch-every.test.ts › stays up with no folder left to watch, and ends with exit status 0 once stopped`.
 
 ### `folders/autostart-restart-on-credential`
 
-When `login` or `keys keep` keeps a credential and the agent `folders autostart on` wrote is installed, the CLI MUST ask the service manager to start the agent again.
+When `login` or `keys keep` keeps a credential, and the agent `folders autostart on` wrote is installed and held by the service manager, was written without `--key-file`, and lists a folder that follows the credential's server, the CLI MUST ask the service manager to start the agent again.
 
-**Reason:** The watch stops opening a folder with a credential that ended, and starts the folder again at once with the one kept since.
+**Reason:** The watch stops opening a folder with a credential that ended, and starts the folder again at once with the one kept since. An agent with a key file never reads the keychain, and a credential for another server reaches none of its folders.
 
 **Tests:** `device/folders-autostart.test.ts › starts the watch again when a credential is kept and the agent is installed, and does nothing where it is not`.
 
@@ -5893,6 +5909,14 @@ When `login` or `keys keep` keeps a credential and the agent `folders autostart 
 When `login` or `keys keep` keeps a credential and no agent `folders autostart on` wrote is installed, the CLI MUST NOT call the service manager.
 
 **Reason:** A person who never turned folder syncing on has no service for the command to touch.
+
+**Tests:** `device/folders-autostart.test.ts › starts the watch again when a credential is kept and the agent is installed, and does nothing where it is not`.
+
+### `folders/autostart-restart-cannot-help`
+
+When `login` or `keys keep` keeps a credential and the installed agent was written with `--key-file`, or lists no folder that follows the credential's server, the CLI MUST NOT ask the service manager to start the agent again.
+
+**Reason:** Starting the watch again would end its folders' pending work for a credential it never reads or never uses.
 
 **Tests:** `device/folders-autostart.test.ts › starts the watch again when a credential is kept and the agent is installed, and does nothing where it is not`.
 

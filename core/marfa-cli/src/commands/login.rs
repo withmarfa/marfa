@@ -147,7 +147,7 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
                 &json!({ "server": origin, "scope": token.scope, "kept": "keychain" }),
                 || signed_in_text(&origin, token.scope.as_deref()),
             );
-            crate::autostart::resume_after_credential_kept();
+            crate::autostart::resume_after_credential_kept(&origin);
             recorded
         }
         // The person has approved, so the set is printed rather than lost.

@@ -567,7 +567,7 @@ fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
         }
         credentials::keep(remote.origin(), &Kept::Key { key })
     })?;
-    crate::autostart::resume_after_credential_kept();
+    crate::autostart::resume_after_credential_kept(remote.origin());
     out.report(&json!({ "origin": remote.origin(), "kept": "key" }), || {
         format!(
             "kept a key for {} in the keychain; it is now the server a bare command talks to",
