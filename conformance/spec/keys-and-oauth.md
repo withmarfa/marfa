@@ -1101,7 +1101,7 @@ If a signed-in app mints a key naming any extension namespace, then the server M
 
 ## The rate limiter
 
-One limiter, held in the server's memory, counts every limit in this chapter. Every count starts afresh when the server starts. The limiter holds a bounded number of windows for each kind of limit. When one kind is full, it drops that kind's window that ends soonest, and the key that window counted starts afresh. It never drops the windows that count password sign-in attempts without a known device cookie at an account from every address once the instance has an owner, the owner's device code lookup window or the instance-wide windows. The limits on a credential's requests are off for a run, so their rules are asserted against a server booted with the limiter on.
+One limiter, held in the server's memory, counts every limit in this chapter. Every count starts afresh when the server starts. The limiter holds a bounded number of windows for each kind of limit. When one kind is full, it drops that kind's window that ends soonest, and the key that window counted starts afresh. It never drops the windows that count password sign-in attempts at an account from every address once the instance has an owner, with a known device cookie or without one, the owner's device code lookup window or the instance-wide windows. The limits on a credential's requests are off for a run, so their rules are asserted against a server booted with the limiter on.
 
 ### `keys-and-oauth/keys-rate-cap`
 
@@ -2531,7 +2531,7 @@ When a password sign-in or a password sent to `POST /auth/confirm` signs the own
 
 ### `keys-and-oauth/sign-in-known-device`
 
-While the account limit (`keys-and-oauth/sign-in-account-limit`) is spent, when a password sign-in carries a device cookie the server set within the last 400 days, the server MUST judge the attempt on its password.
+While the account limit (`keys-and-oauth/sign-in-account-limit`) is spent, when a password sign-in carries a device cookie the server set for the current credentials within the last 400 days, the server MUST NOT refuse the attempt for the account limit.
 
 **Reason:** A known device keeps signing in while strangers are limited, so the account limit cannot hold the owner out.
 
@@ -2542,6 +2542,22 @@ While the account limit (`keys-and-oauth/sign-in-account-limit`) is spent, when 
 If one device cookie has made ten counted password sign-in attempts at an account in fifteen minutes, then the server MUST answer its next attempt `429` with `Retry-After`, before it judges the password.
 
 **Tests:** `compliance/sign-in-limits.test.ts › holds a known device to ten wrong passwords across addresses`.
+
+### `keys-and-oauth/sign-in-known-devices-limit`
+
+If every device cookie together has made a hundred counted password sign-in attempts at an account in an hour, then the server MUST answer the next attempt that carries a device cookie `429` with `Retry-After`, before it judges the password.
+
+**Reason:** A device cookie only lifts the account limit for a browser the password signed in from, so many cookies together are held to the same hundred as every address without one.
+
+**Tests:** `compliance/sign-in-limits.test.ts › holds every known device together to a hundred wrong passwords an hour`.
+
+### `keys-and-oauth/sign-in-device-reset`
+
+When the owner's password is recovered, the server MUST count each later password sign-in that carries a device cookie set before the recovery as one with no device cookie.
+
+**Reason:** A device cookie stands only for the current password, so a recovery leaves no browser known.
+
+**Tests:** `compliance/sign-in-limits.test.ts › forgets every known device when the password is recovered`.
 
 ### `keys-and-oauth/sign-in-unknown-device`
 

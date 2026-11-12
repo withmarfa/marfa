@@ -1,3 +1,4 @@
+import { controlRequest } from "../../utils/control-request.js";
 import { TEST_OWNER as OWNER } from "../../utils/target.js";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import {
@@ -107,6 +108,16 @@ async function fillAccount(server: FreshServer, block: number): Promise<void> {
     (await signIn(server, OWNER.password, `10.${String(block)}.99.1`)).status,
     "the account's window is not spent",
   ).toBe(429);
+}
+
+/** Recovers the owner's password, as it was, through the private control socket. */
+async function recover(server: FreshServer): Promise<void> {
+  const recovered = await controlRequest(
+    server.controlSocket,
+    "/_control/owner/recover",
+    { method: "POST", body: { password: OWNER.password } },
+  );
+  expect(recovered.status).toBe(200);
 }
 
 /** Where the device code entry form sends a browser entering `code`. */
@@ -326,6 +337,51 @@ describe("counting only wrong passwords", () => {
     expect(
       (await signIn(known, OWNER.password, "198.51.100.6", fresh)).status,
     ).toBe(200);
+  }, 240_000);
+
+  it("forgets every known device when the password is recovered", async () => {
+    const before = await deviceCookie(known, "172.17.0.1");
+    await recover(known);
+    const after = await deviceCookie(known, "172.17.0.2");
+    await fillAccount(known, 3);
+    expect(
+      (await signIn(known, OWNER.password, "172.17.0.3", before)).status,
+    ).toBe(429);
+    // The witness: a cookie set after the recovery is still known.
+    expect(
+      (await signIn(known, OWNER.password, "172.17.0.4", after)).status,
+    ).toBe(200);
+  }, 240_000);
+
+  it("holds every known device together to a hundred wrong passwords an hour", async () => {
+    await recover(known);
+    const devices: string[] = [];
+    for (let d = 0; d <= 10; d++) {
+      devices.push(await deviceCookie(known, `172.16.${String(d)}.1`));
+    }
+    for (let d = 0; d < 10; d++) {
+      for (let i = 0; i < 10; i++) {
+        const response = await signIn(
+          known,
+          "not the password",
+          `172.16.${String(d)}.1`,
+          devices[d],
+        );
+        expect(response.status).toBe(401);
+      }
+    }
+    const held = await signIn(
+      known,
+      OWNER.password,
+      "172.16.10.1",
+      devices[10],
+    );
+    expect(held.status).toBe(429);
+    expect(Number(held.headers.get("retry-after"))).toBeGreaterThan(0);
+    // The witness: the account limit without a device cookie is untouched.
+    expect((await signIn(known, OWNER.password, "172.16.11.1")).status).toBe(
+      200,
+    );
   }, 240_000);
 });
 

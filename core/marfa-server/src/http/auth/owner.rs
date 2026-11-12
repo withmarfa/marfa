@@ -36,7 +36,7 @@ pub async fn claim(
     admit_claim(&app, &headers, &visit).await?;
     named_instance::judge(&app, &headers)?;
     let fields = body.open_object().await?;
-    let (found, session) = make_claim(&app, &headers, visit, fields).await?;
+    let (found, signed_in) = make_claim(&app, &headers, visit, fields).await?;
     let mut answer = json_answer(
         StatusCode::CREATED,
         &found.to_json(app.addresses().sign_in().origin()),
@@ -44,8 +44,8 @@ pub async fn claim(
     if cookies::holds_setup(&headers) {
         answer = with_cookie(answer, cookies::setup_ended(&app.addresses().sign_in())?);
     }
-    if let Some(session) = session {
-        answer = with_cookie(answer, session);
+    for cookie in signed_in {
+        answer = with_cookie(answer, cookie);
     }
     Ok(answer)
 }

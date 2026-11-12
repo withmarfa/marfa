@@ -8,10 +8,10 @@ use super::origin::{self, Source};
 use super::{cookies, redirect, require_safe_caller, text_field, with_cookie};
 use crate::app::App;
 use crate::app::access::unauthorized;
-use crate::app::auth::device::{self, Known};
 use crate::app::auth::passkeys::{self, Assertion};
 use crate::app::auth::return_to::kept;
-use crate::app::auth::session::{self, Opened};
+use crate::app::auth::session;
+use crate::app::auth::sign_in::SignedIn;
 use crate::app::auth::{Visit, form_origins, sign_in};
 use crate::app::refusal::{Code, Refusal};
 use crate::http::answer::{Answer, json_answer};
@@ -51,22 +51,22 @@ pub(super) fn done(cookie: HeaderValue) -> Answer {
     ))
 }
 
-fn known_device(app: &App, headers: &HeaderMap) -> Option<Known> {
-    let mark = cookies::device_mark(headers, &app.addresses().sign_in())?;
-    device::read(&app.settings.start.auth_secret, mark, app.clock.now_ms())
+fn device_mark<'h>(app: &App, headers: &'h HeaderMap) -> Option<&'h str> {
+    cookies::device_mark(headers, &app.addresses().sign_in())
 }
 
-/// The cookies the right password leaves: the session, and the device's renewed mark.
-fn signed_in(
-    app: &App,
-    response: axum::response::Response,
-    token: &str,
-    known: Option<&Known>,
-) -> Answer {
+/// The cookies the right password leaves: the session, and the device's mark.
+pub(super) fn signed_in_cookies(app: &App, signed: &SignedIn) -> Result<[HeaderValue; 2], Refusal> {
     let address = app.addresses().sign_in();
-    let mark = device::mark(&app.settings.start.auth_secret, known, app.clock.now_ms())?;
-    let response = with_cookie(response, cookies::session(&address, token)?);
-    Ok(with_cookie(response, cookies::device(&address, &mark)?))
+    Ok([
+        cookies::session(&address, &signed.opened.token)?,
+        cookies::device(&address, &signed.device)?,
+    ])
+}
+
+fn signed_in(app: &App, response: axum::response::Response, signed: &SignedIn) -> Answer {
+    let [session, device] = signed_in_cookies(app, signed)?;
+    Ok(with_cookie(with_cookie(response, session), device))
 }
 
 /// The sign-in page's form gets a redirect; a JSON body gets `{"ok": true}`.
@@ -84,10 +84,10 @@ pub async fn sign_in(
     let body = body.object(&PASSWORD_FIELDS).await?;
     let email = text_field(&body, "email")?.to_string();
     let password = text_field(&body, "password")?.to_string();
-    let known = known_device(&app, &headers);
-    let opened = sign_in::with_password(&app, email, password, known.as_ref(), visit).await?;
+    let mark = device_mark(&app, &headers);
+    let signed = sign_in::with_password(&app, email, password, mark, visit).await?;
     let ok = json_answer(StatusCode::OK, &json!({ "ok": true }));
-    signed_in(&app, ok, &opened.token, known.as_ref())
+    signed_in(&app, ok, &signed)
 }
 
 fn back_to_sign_in(pairs: &[(&str, &str)]) -> String {
@@ -127,16 +127,10 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
     if email.is_empty() || password.is_empty() {
         return failed("missing_field", "");
     }
-    let known = known_device(app, headers);
-    let outcome = sign_in::with_password(
-        app,
-        email.to_string(),
-        password.to_string(),
-        known.as_ref(),
-        visit,
-    )
-    .await;
-    let Opened { token, .. } = match outcome {
+    let mark = device_mark(app, headers);
+    let outcome =
+        sign_in::with_password(app, email.to_string(), password.to_string(), mark, visit).await;
+    let signed = match outcome {
         Ok(opened) => opened,
         Err(refusal) if refusal.code == Code::Unauthorized => {
             return failed("invalid_credentials", "");
@@ -152,12 +146,7 @@ async fn form(app: &Arc<App>, headers: &HeaderMap, visit: Visit, body: JsonBody)
         }
         Err(refusal) => return Err(refusal.into()),
     };
-    signed_in(
-        app,
-        redirect(StatusCode::FOUND, &return_to)?,
-        &token,
-        known.as_ref(),
-    )
+    signed_in(app, redirect(StatusCode::FOUND, &return_to)?, &signed)
 }
 
 fn ended_cookie(app: &App) -> Result<HeaderValue, Refusal> {
@@ -205,10 +194,10 @@ pub async fn confirm(
     let address = app.addresses().sign_in();
     match passkey_or_password(&body)? {
         Proof::Password(password) => {
-            let known = known_device(&app, &headers);
-            let opened = sign_in::confirm(&app, &caller, password, known.as_ref(), visit).await?;
+            let mark = device_mark(&app, &headers);
+            let signed = sign_in::confirm(&app, &caller, password, mark, visit).await?;
             let ok = json_answer(StatusCode::OK, &json!({ "ok": true }));
-            signed_in(&app, ok, &opened.token, known.as_ref())
+            signed_in(&app, ok, &signed)
         }
         Proof::Passkey(response) => {
             let token = cookies::passkey_challenge_token(&headers, &address).map(str::to_string);

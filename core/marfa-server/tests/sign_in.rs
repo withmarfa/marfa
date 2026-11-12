@@ -36,6 +36,22 @@ impl Reply {
         let line = self.headers.get(header::SET_COOKIE)?.to_str().ok()?;
         Some(line.split(';').next()?.to_string())
     }
+
+    /// The `name=value` of the cookie this reply sets under `name`.
+    fn named(&self, name: &str) -> Option<String> {
+        self.headers
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|line| line.to_str().ok()?.split(';').next())
+            .find(|pair| pair.split_once('=').is_some_and(|(key, _)| key == name))
+            .map(str::to_string)
+    }
+
+    /// The id the device cookie this reply sets carries.
+    fn device_id(&self) -> Option<String> {
+        let pair = self.named("marfa_device")?;
+        Some(pair.split_once('=')?.1.split('.').next()?.to_string())
+    }
 }
 
 async fn send(router: Router, request: Request<Body>) -> Reply {
@@ -187,6 +203,24 @@ async fn a_restart_starts_every_count_afresh() {
 
     let instance = instance.restarted().await;
     assert!(instance.sign_in(PASSWORD).await.cookie().is_some());
+}
+
+#[tokio::test]
+async fn a_wrong_password_whose_refusal_is_not_recorded_stays_counted() {
+    let instance = Instance::claimed().await;
+    for failure in ["fail:commit", "fail:commit-full"] {
+        for _ in 0..5 {
+            instance
+                .app
+                .faults
+                .set(failure, Some("auth.sign_in.failed"))
+                .unwrap();
+            let wrong = instance.sign_in("not the password").await;
+            assert!(wrong.status.is_server_error(), "{failure}");
+        }
+    }
+    let held = instance.sign_in(PASSWORD).await;
+    assert_eq!(held.status, StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]
@@ -556,6 +590,34 @@ async fn a_claim_through_the_owner_door_ends_the_setup_cookie_it_used() {
         .filter_map(|line| line.to_str().ok())
         .any(|line| line.starts_with(&format!("{name}=;")) && line.contains("Max-Age=0"));
     assert!(cleared, "{:?}", claimed.headers);
+    assert!(claimed.named("marfa_session").is_some());
+    assert!(claimed.device_id().is_some(), "{:?}", claimed.headers);
+}
+
+#[tokio::test]
+async fn a_device_cookie_set_before_a_recovery_is_no_cookie_after_it() {
+    let instance = Instance::claimed().await;
+    let first = instance.sign_in(PASSWORD).await;
+    let device = first.named("marfa_device").unwrap();
+    let id = first.device_id().unwrap();
+    let sign_in_from_device = || {
+        send(
+            instance.public.clone(),
+            post_signed_in("/auth/sign-in", &sign_in_body(PASSWORD), &device),
+        )
+    };
+    // The witness: before the recovery the cookie names its device again.
+    assert_eq!(sign_in_from_device().await.device_id(), Some(id.clone()));
+    let recovered = send(
+        instance.control.clone(),
+        post("/_control/owner/recover", &json!({ "password": PASSWORD })),
+    )
+    .await;
+    assert_eq!(recovered.status, StatusCode::OK);
+    let after = sign_in_from_device().await;
+    assert_eq!(after.status, StatusCode::OK);
+    let renewed = after.device_id().unwrap();
+    assert_ne!(renewed, id);
 }
 
 #[tokio::test]

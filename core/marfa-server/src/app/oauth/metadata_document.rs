@@ -8,7 +8,7 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tokio::runtime::Handle;
 use ureq::Agent;
 use ureq::http::header;
@@ -243,23 +243,6 @@ fn is_json_media_type(value: &str) -> bool {
             .is_some_and(|name| !name.is_empty())
 }
 
-fn named_methods<'a>(
-    object: &'a Map<String, Value>,
-    name: &str,
-) -> Result<Option<Vec<&'a str>>, RegistrationError> {
-    let not_a_list = || RegistrationError::metadata(format!("{name} must be a list of strings."));
-    match object.get(name) {
-        None | Some(Value::Null) => Ok(None),
-        Some(value) => value
-            .as_array()
-            .ok_or_else(not_a_list)?
-            .iter()
-            .map(|entry| entry.as_str().ok_or_else(not_a_list))
-            .collect::<Result<_, _>>()
-            .map(Some),
-    }
-}
-
 /// Every error here is `invalid_client` to whoever asked; the description is only for the log.
 pub fn parse_document(
     client_id: &str,
@@ -288,7 +271,7 @@ pub fn parse_document(
             "A metadata document must not hold both jwks and jwks_uri.",
         ));
     }
-    let supported = named_methods(object, "token_endpoint_auth_methods_supported")?;
+    let supported = client::texts(object, "token_endpoint_auth_methods_supported")?;
     if let Some(method) = supported
         .iter()
         .flatten()
@@ -298,9 +281,7 @@ pub fn parse_document(
             "A metadata document must not offer {method}."
         )));
     }
-    let stated = object
-        .get("token_endpoint_auth_method")
-        .and_then(Value::as_str);
+    let stated = client::text(object, "token_endpoint_auth_method")?;
     let registration = match supported {
         None => client::read(object, Source::Document, allowed)?,
         Some(methods) => {
@@ -964,6 +945,18 @@ mod tests {
             json!(["private_key_jwt"]),
         );
         assert!(parse(&without_none).is_err());
+    }
+
+    #[test]
+    fn a_stated_method_that_is_not_text_is_refused() {
+        let listed = with(
+            document(),
+            "token_endpoint_auth_methods_supported",
+            json!(["none"]),
+        );
+        assert!(parse(&listed).is_ok());
+        let stated = with(listed, "token_endpoint_auth_method", json!(5));
+        assert!(parse(&stated).is_err());
     }
 
     #[test]

@@ -559,12 +559,15 @@ BEGIN
         FROM sort_indexes s WHERE s.type = OLD.type);
 END;
 
--- The one owner. `password` holds the hash, never the password.
+-- The one owner. `password` holds the hash, never the password. `credentials`
+-- moves on whenever the password changes or every sign-in ends, and a device
+-- cookie signed for an earlier value is no cookie.
 CREATE TABLE IF NOT EXISTS owner (
     id TEXT PRIMARY KEY NOT NULL,
     name TEXT NOT NULL,
     email TEXT NOT NULL UNIQUE,
     password TEXT NOT NULL,
+    credentials INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 ) STRICT;

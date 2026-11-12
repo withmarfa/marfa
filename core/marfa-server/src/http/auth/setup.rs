@@ -6,6 +6,7 @@ use serde_json::{Map, Value, json};
 
 use super::origin::{self, Source, not_our_page};
 use super::pages::{self, Typed};
+use super::sign_in::signed_in_cookies;
 use super::{cookies, redirect, require_safe_caller, with_cookie};
 use crate::app::App;
 use crate::app::auth::claim::{self, Proof};
@@ -66,13 +67,13 @@ fn is_script(headers: &HeaderMap) -> bool {
 }
 
 /// The claim both `POST /owner` and `POST /setup/claim` make. A browser on
-/// this instance's own page is signed in by it; a script gets no session.
+/// this instance's own page is signed in by it, and gets its cookies; a script gets none.
 pub(super) async fn make_claim(
     app: &Arc<App>,
     headers: &HeaderMap,
     visit: Visit,
     fields: Map<String, Value>,
-) -> Result<(Owner, Option<axum::http::HeaderValue>), Stopped> {
+) -> Result<(Owner, Vec<axum::http::HeaderValue>), Stopped> {
     let fields = only_declared(fields, &CLAIM_FIELDS)?;
     if fields.get("name").is_some_and(|name| !name.is_string()) {
         return Err(incomplete_claim().into());
@@ -86,17 +87,17 @@ pub(super) async fn make_claim(
     };
     let owner = claim::claim(app, details, proof, visit.clone()).await?;
     if origin::said(headers, &own_origins(app)) != Source::Own {
-        return Ok((owner, None));
+        return Ok((owner, Vec::new()));
     }
     let opening = sign_in::with_password(app, owner.email.clone(), password, None, visit).await;
-    let cookie = match opening {
-        Ok(opened) => Some(cookies::session(&app.addresses().sign_in(), &opened.token)?),
+    let cookies = match opening {
+        Ok(signed) => signed_in_cookies(app, &signed)?.to_vec(),
         Err(refusal) => {
             tracing::warn!(code = refusal.code.wire(), "a claim left no session open");
-            None
+            Vec::new()
         }
     };
-    Ok((owner, cookie))
+    Ok((owner, cookies))
 }
 
 /// Refuses a claim from anywhere but this instance's page or a script, once
@@ -132,7 +133,7 @@ pub async fn claim(
     };
     let browser = form && origin::said(&headers, &own_origins(&app)) == Source::Own;
     let typed = Typed::of(&fields);
-    let (owner, session) = match make_claim(&app, &headers, visit, fields).await {
+    let (owner, signed_in) = match make_claim(&app, &headers, visit, fields).await {
         Err(Stopped::Refused(refusal)) if browser && pages::wants_page(&headers) => {
             return Ok(pages::claim_refused(&app, &refusal, typed).await?);
         }
@@ -147,8 +148,8 @@ pub async fn claim(
         )
     };
     answer = with_cookie(answer, cookies::setup_ended(&app.addresses().sign_in())?);
-    if let Some(session) = session {
-        answer = with_cookie(answer, session);
+    for cookie in signed_in {
+        answer = with_cookie(answer, cookie);
     }
     Ok(answer)
 }

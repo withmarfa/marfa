@@ -16,6 +16,7 @@ const ADDRESS: &str = "sign-in-address";
 const ACCOUNT_ADDRESS: &str = "sign-in-account-address";
 const ACCOUNT: &str = "sign-in-account";
 const ACCOUNT_DEVICE: &str = "sign-in-account-device";
+const ACCOUNT_KNOWN: &str = "sign-in-account-known-devices";
 const SETUP_ADDRESS: &str = "instance-claim-address";
 const DEVICE_ADDRESS: &str = "device-user-code-address";
 const DEVICE_INSTANCE: &str = "device-user-code-instance";
@@ -51,29 +52,20 @@ pub(super) fn account_key(email: &str) -> String {
 }
 
 /// With an owner, only the owner's email has account lanes of its own; every other email shares one.
-/// A known device is counted on its own in place of the account's lane across every address.
+/// A known device is counted on its own and with every known device, in place of the account's
+/// lane across every address.
 pub fn password_lanes(
     email: &str,
     owner: Option<&str>,
     address: Option<IpAddr>,
     device: Option<&Known>,
-) -> [Lane; 3] {
+) -> Vec<Lane> {
     let account = account_key(email);
     let account = match owner.map(account_key) {
         Some(owner) if owner != account => OTHER_EMAILS.to_string(),
         _ => account,
     };
-    let account_lane = match (device, owner) {
-        (Some(device), _) => Lane::new(
-            ACCOUNT_DEVICE,
-            format!("{account}|{}", device.id()),
-            10,
-            15 * MINUTE_MS,
-        ),
-        (None, Some(_)) => Lane::pinned(ACCOUNT, account.clone(), 100, 60 * MINUTE_MS),
-        (None, None) => Lane::new(ACCOUNT, account.clone(), 100, 60 * MINUTE_MS),
-    };
-    [
+    let mut lanes = vec![
         Lane::new(ADDRESS, bucket(address), 30, 15 * MINUTE_MS),
         Lane::new(
             ACCOUNT_ADDRESS,
@@ -81,8 +73,21 @@ pub fn password_lanes(
             10,
             15 * MINUTE_MS,
         ),
-        account_lane,
-    ]
+    ];
+    match (device, owner) {
+        (Some(device), _) => {
+            lanes.push(Lane::new(
+                ACCOUNT_DEVICE,
+                format!("{account}|{}", device.id()),
+                10,
+                15 * MINUTE_MS,
+            ));
+            lanes.push(Lane::pinned(ACCOUNT_KNOWN, account, 100, 60 * MINUTE_MS));
+        }
+        (None, Some(_)) => lanes.push(Lane::pinned(ACCOUNT, account, 100, 60 * MINUTE_MS)),
+        (None, None) => lanes.push(Lane::new(ACCOUNT, account, 100, 60 * MINUTE_MS)),
+    }
+    lanes
 }
 
 pub fn setup_code_lanes(address: Option<IpAddr>) -> [Lane; 1] {
@@ -163,6 +168,7 @@ pub fn clear_account(limiter: &Limiter, email: &str) {
     let account = account_key(email);
     let prefix = format!("{account}|");
     limiter.forget(ACCOUNT, |key| key == account);
+    limiter.forget(ACCOUNT_KNOWN, |key| key == account);
     limiter.forget(ACCOUNT_ADDRESS, |key| key.starts_with(&prefix));
     limiter.forget(ACCOUNT_DEVICE, |key| key.starts_with(&prefix));
 }
@@ -184,14 +190,19 @@ mod tests {
         limiter.admit(now, lanes)
     }
 
-    fn no_device(email: &str, owner: Option<&str>, address: Option<IpAddr>) -> [Lane; 3] {
+    fn no_device(email: &str, owner: Option<&str>, address: Option<IpAddr>) -> Vec<Lane> {
         password_lanes(email, owner, address, None)
     }
 
     fn device() -> Known {
-        let secret = "a secret for these tests";
-        let mark = super::super::device::mark(secret, None, 0).unwrap();
-        super::super::device::read(secret, &mark, 0).unwrap()
+        use super::super::device::{Holder, Signer};
+        let signer = Signer::derive("a secret for these tests").unwrap();
+        let holder = Holder {
+            owner_id: "owner",
+            credentials: 0,
+        };
+        let mark = signer.mark(holder, None, 0).unwrap();
+        signer.read(holder, &mark, 0).unwrap()
     }
 
     #[test]
@@ -239,6 +250,25 @@ mod tests {
             Some(&other),
         );
         assert_eq!(attempt(&limiter, 1, &fresh), None);
+    }
+
+    #[test]
+    fn every_known_device_together_is_held_to_a_hundred_an_hour() {
+        let limiter = Limiter::default();
+        for n in 0..10 {
+            let known = device();
+            for m in 0..10 {
+                let address = format!("203.0.{n}.{m}").parse().ok();
+                let lanes = password_lanes("a@example.test", OWNER, address, Some(&known));
+                assert_eq!(attempt(&limiter, 0, &lanes), None);
+            }
+        }
+        let address = "198.51.100.1".parse().ok();
+        let fresh = password_lanes("a@example.test", OWNER, address, Some(&device()));
+        assert_eq!(attempt(&limiter, 1, &fresh), Some(60 * MINUTE_MS - 1));
+        let stranger = no_device("a@example.test", OWNER, address);
+        assert_eq!(attempt(&limiter, 1, &stranger), None);
+        assert_eq!(attempt(&limiter, 60 * MINUTE_MS, &fresh), None);
     }
 
     #[test]
@@ -430,7 +460,7 @@ mod tests {
                 address,
                 Some(&device())
             )),
-            [false, false, false]
+            [false, false, false, true]
         );
         assert_eq!(pinned(&device_lookup_lanes(address)), [false, true]);
         assert_eq!(pinned(&device_owner_lanes("user", None)), [true, true]);
