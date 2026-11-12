@@ -420,6 +420,7 @@ describe("a refused confirmation in the audit log", () => {
     expect(JSON.stringify(recorded)).not.toContain(sent);
     expect(JSON.stringify(recorded)).not.toContain(TEST_OWNER.password);
     const session = await confirmedSessionId(stale);
+    expect(await audited(failed)).toHaveLength(before + 12);
     for (const entry of recorded) {
       expect(entry.actor).toMatchObject({ kind: "browser", id: session });
     }
@@ -450,6 +451,7 @@ describe("a refused confirmation in the audit log", () => {
     expect(held[0]?.resource_id).toBe(passkeyId);
     expect(held[0]?.details).toMatchObject({ method: "passkey" });
     const session = await confirmedSessionId(stale);
+    expect(await audited(failed)).toHaveLength(before + 1);
     expect(held[0]?.actor).toMatchObject({ kind: "browser", id: session });
   });
 });
