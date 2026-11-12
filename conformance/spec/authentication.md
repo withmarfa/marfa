@@ -242,9 +242,107 @@ If a browser session created more than five minutes ago asks for passkey registr
 
 **Tests:** `compliance/confirm-sign-in.test.ts › refuses a passkey registration from a stale session`.
 
+## Changing the password
+
+The passkeys page changes the owner's password through `POST /auth/owner/password`, which takes the current password and the new one. The account is the signed-in session's owner. A wrong current password is a password attempt like any other.
+
+### `authentication/password-change`
+
+When a signed-in owner's browser session sends `POST /auth/owner/password` with the owner's current password as `current_password` and a new password as `new_password`, the server MUST answer `200` and from then on accept the new password and refuse the replaced one at password sign-in.
+
+**Tests:** `compliance/owner-pages.test.ts › changes the password, so the new one signs in and the old one does not`.
+
+### `authentication/password-change-form`
+
+When the passkeys page's form sends `POST /auth/owner/password` as `application/x-www-form-urlencoded` with the fields `current_password` and `new_password`, the server MUST change the password as it does for the same fields sent as JSON.
+
+**Tests:** `compliance/owner-pages.test.ts › changes the password, so the new one signs in and the old one does not`.
+
+### `authentication/password-change-keeps-session`
+
+When the server changes the owner's password through `POST /auth/owner/password`, the server MUST keep the browser session that sent the change live.
+
+**Reason:** The person who changed the password is the one in front of this browser, and the page they are on stays usable.
+
+**Tests:** `compliance/owner-pages.test.ts › changes the password, so the new one signs in and the old one does not`.
+
+### `authentication/password-change-ends-others`
+
+When the server changes the owner's password through `POST /auth/owner/password`, the server MUST end every other browser session of the owner in the same step.
+
+**Reason:** A password is changed when it may be known to someone else, and a browser they signed in with it would otherwise stay signed in.
+
+**Tests:** `compliance/owner-pages.test.ts › changes the password, so the new one signs in and the old one does not`.
+
+### `authentication/password-change-keeps-apps`
+
+When the server changes the owner's password through `POST /auth/owner/password`, the server MUST preserve every key and every connected app's access tokens, refresh grants and consent.
+
+**Tests:** `compliance/browser-sessions.test.ts › a password change ends the other browsers and keeps apps connected`.
+
+### `authentication/password-change-rules`
+
+If the new password sent to `POST /auth/owner/password` is shorter than 8 or longer than 128 characters, then the server MUST answer `400 validation_error` and keep the current password.
+
+**Reason:** A changed password is held to the rule the claim and the recovery hold a new password to.
+
+**Tests:** `compliance/owner-pages.test.ts › refuses a new password the claim would refuse, and one with no current password, and keeps the password`.
+
+### `authentication/password-change-wrong`
+
+If the current password sent to `POST /auth/owner/password` is wrong, then the server MUST answer `401 unauthorized` and keep the current password.
+
+**Tests:** `compliance/owner-pages.test.ts › answers a wrong current password 401 and changes nothing`.
+
+### `authentication/password-change-wrong-audit`
+
+When the server refuses `POST /auth/owner/password` because the current password is wrong, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `resource_type` `owner`, `details.method` `password` and `details.reason` `invalid_credentials`, readable at `GET /audit`.
+
+**Reason:** A wrong current password is a password attempt, and the audit log records it as it records a refused password sign-in.
+
+**Tests:** `compliance/owner-pages.test.ts › records a refused change in the audit log as a refused password sign-in, with its reason`.
+
+### `authentication/password-change-lanes`
+
+When a request to `POST /auth/owner/password` carries a current password, the server MUST count it against the attempt windows of a password sign-in to the owner's account from the same address.
+
+**Reason:** The form would otherwise be a way round the lockout, with a stolen browser session to guess from.
+
+**Tests:** `compliance/owner-pages.test.ts › counts a wrong current password where a password sign-in counts, and refuses a locked owner with the wait`.
+
+### `authentication/password-change-locked`
+
+If the attempt windows `authentication/password-change-lanes` names are spent, then the server MUST answer `429 rate_limited` with the `Retry-After` a password sign-in would be given, without judging the current password or changing the password.
+
+**Tests:** `compliance/owner-pages.test.ts › counts a wrong current password where a password sign-in counts, and refuses a locked owner with the wait`.
+
+### `authentication/password-change-locked-audit`
+
+When the server refuses `POST /auth/owner/password` because the attempt windows `authentication/password-change-lanes` names are spent, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `resource_type` `owner`, `details.method` `password` and `details.reason` `too_many_attempts`, readable at `GET /audit`.
+
+**Tests:** `compliance/owner-pages.test.ts › records a refused change in the audit log as a refused password sign-in, with its reason`.
+
+### `authentication/password-change-audit`
+
+When `POST /auth/owner/password` answers `200`, the server MUST already hold an `owner.password.changed` audit record with `resource_type` `owner`, readable at `GET /audit`.
+
+**Tests:** `compliance/owner-pages.test.ts › records a change in the audit log`.
+
+### `authentication/password-change-needs-session`
+
+If a request to `POST /auth/owner/password` carries no live owner browser session, whatever its body, or carries a bearer key, then the server MUST answer `401 unauthorized` and keep the current password.
+
+**Tests:** `compliance/owner-pages.test.ts › refuses a change with no session, an ended session and a key, 401`.
+
+### `authentication/password-change-origin`
+
+If a request to `POST /auth/owner/password` that carries the owner's browser session comes from an origin other than the instance's, or names no origin, then the server MUST answer `403 forbidden` and keep the current password.
+
+**Tests:** `compliance/owner-pages.test.ts › refuses a change from another origin and from none, 403`.
+
 ## Where a browser session counts
 
-The owner's browser session is the caller of the sign-in pages and of what they post: setup and its claim (`/setup`, `/setup/exchange` and `/setup/claim`), sign-in (`/auth/sign-in`), `POST /auth/sign-out`, the confirmation dialog's `POST /auth/confirm`, the consent screen (`/auth/oauth2/authorize`, `/auth/authorize` and `/auth/authorize/decision`), device approval (`/auth/device` and `/auth/device/consent`), and the passkey page (`/auth/owner/passkeys`, the doors under `/auth/passkeys/` and `/owner/passkeys`). Every other operation is reached with a key, an app's access token or the private local command.
+The owner's browser session is the caller of the sign-in pages and of what they post: setup and its claim (`/setup`, `/setup/exchange` and `/setup/claim`), the root asked for as a page (`GET /`), sign-in (`/auth/sign-in`), `POST /auth/sign-out`, the confirmation dialog's `POST /auth/confirm`, the consent screen (`/auth/oauth2/authorize`, `/auth/authorize` and `/auth/authorize/decision`), device approval (`/auth/device` and `/auth/device/consent`), and the passkey page (`/auth/owner/passkeys`, its password change `POST /auth/owner/password`, the doors under `/auth/passkeys/` and `/owner/passkeys`). Every other operation is reached with a key, an app's access token or the private local command.
 
 ### `authentication/session-pages-only`
 

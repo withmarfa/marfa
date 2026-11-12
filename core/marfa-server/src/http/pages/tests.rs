@@ -481,8 +481,8 @@ mod consent_pages {
         let (browser_head, browser_rest) = body(Answering::Authorization("q".into()));
         let (device_head, device_rest) = body(Answering::Device("q".into()));
         assert_eq!(browser_rest, device_rest);
-        assert!(device_head.contains("An app on another device is asking"));
-        assert!(!browser_head.contains("another device"));
+        assert!(device_head.contains("An app showing the code below is asking"));
+        assert!(!browser_head.contains("code below"));
     }
 
     #[test]
@@ -493,7 +493,7 @@ mod consent_pages {
         assert!(check < approve);
         let block = &device[check..approve];
         assert!(block.contains("ABCD-2345"), "{block}");
-        assert!(block.contains("same code is showing on a device you are holding"));
+        assert!(block.contains("the app you're using shows this same code"));
         assert!(block.contains("Don't approve a link or code that someone sent you."));
         let browser = without_code(&page_of(Answering::Authorization("q".into()), offer()));
         assert!(!browser.contains("device-check"));

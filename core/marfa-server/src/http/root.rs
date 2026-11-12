@@ -1,13 +1,16 @@
 use std::sync::Arc;
 
-use axum::extract::State;
-use axum::http::{HeaderMap, HeaderValue, StatusCode, Uri, header};
+use axum::extract::{Request, State};
+use axum::http::request::Parts;
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 
 use super::answer::{Answer, asks_for_html, json_answer};
-use super::pages::{self, Notice};
+use super::caller::browser_session;
+use super::pages::{self, Notice, Running};
 use super::query;
+use crate::app::auth::owner;
 use crate::app::{App, instance};
 use crate::settings::registry::MAX_REQUEST_BYTES;
 
@@ -53,14 +56,28 @@ pub async fn document() -> Answer {
     Ok(([(header::CONTENT_TYPE, "application/json")], DOCUMENT).into_response())
 }
 
-async fn answer(app: &App, uri: &Uri, headers: &HeaderMap) -> Answer {
-    query::only(uri, &[])?;
+async fn page(app: &Arc<App>, parts: &Parts, name: String) -> Answer {
+    if browser_session(parts, app).await.is_some()
+        && let Ok(Some(found)) = owner::find(app).await
+    {
+        let view = Running {
+            instance_name: name,
+            email: found.email,
+        };
+        return Ok(pages::running(&view)?.into_response());
+    }
+    Ok(pages::notice(&Notice::running(&name))?.into_response())
+}
+
+async fn answer(app: &Arc<App>, parts: &Parts) -> Answer {
+    query::only(&parts.uri, &[])?;
     let name = instance::name(app).await?;
-    let accept = headers
+    let accept = parts
+        .headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok());
     if asks_for_html(accept) {
-        return Ok(pages::notice(&Notice::running(&name))?.into_response());
+        return page(app, parts, name).await;
     }
     Ok(json_answer(
         StatusCode::OK,
@@ -75,8 +92,9 @@ async fn answer(app: &App, uri: &Uri, headers: &HeaderMap) -> Answer {
     ))
 }
 
-pub async fn describe(State(app): State<Arc<App>>, uri: Uri, headers: HeaderMap) -> Response {
-    let mut response = answer(&app, &uri, &headers).await.into_response();
+pub async fn describe(State(app): State<Arc<App>>, request: Request) -> Response {
+    let (parts, _) = request.into_parts();
+    let mut response = answer(&app, &parts).await.into_response();
     response
         .headers_mut()
         .insert(header::VARY, HeaderValue::from_static("Accept"));

@@ -15,19 +15,25 @@ pub struct OwnerPasskey {
 #[derive(Debug, Clone)]
 pub struct OwnerPasskeys {
     pub instance_name: String,
+    /// For a password manager to file the new password under.
+    pub email: String,
     pub rows: Vec<OwnerPasskey>,
 }
 
 #[derive(Template)]
 #[template(path = "passkeys.html")]
 struct PasskeysBody<'a> {
+    email: &'a str,
     rows: &'a [OwnerPasskey],
 }
 
 pub fn owner_passkeys(view: &OwnerPasskeys) -> Result<Page> {
-    let body = render_body(&PasskeysBody { rows: &view.rows })?;
+    let body = render_body(&PasskeysBody {
+        email: &view.email,
+        rows: &view.rows,
+    })?;
     document(
-        "Password and passkeys",
+        "Passkeys and password",
         &view.instance_name,
         &body,
         Needs {

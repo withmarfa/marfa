@@ -119,6 +119,7 @@ pub fn doors() -> Routes {
         )
         .route("/auth/passkeys/sign-in", post(passkeys::sign_in))
         .route("/auth/owner/passkeys", get(passkeys::page))
+        .route("/auth/owner/password", post(sign_in::change_password))
         .route("/setup/exchange", post(setup::exchange))
         .route("/setup/claim", post(setup::claim))
         .route_layer(from_fn(no_store))

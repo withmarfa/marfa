@@ -1,7 +1,7 @@
 {% import "partials/rows.html" as rows %}<div class="wide-page">
 <h1>Allow {{ view.offer.app.name }} access to {{ view.instance_name }}?</h1>
-{% if device_code.is_some() %}<p class="lede">An app on another device is asking to connect to Marfa.</p>
-{% endif %}<p class="notice caution">Marfa can't confirm who made this app. Only approve apps you trust.</p>
+{% if device_code.is_some() %}<p class="lede">An app showing the code below is asking to connect to Marfa. Check that the code matches the one the app shows.</p>
+{% endif %}<p class="notice caution">“<bdi>{{ view.offer.app.name }}</bdi>” is the name this app gave itself. Marfa can't confirm who made this app, so approve it only if you trust it.</p>
 <ul class="facts">
 {% for host in view.offer.app.destinations %}<li>Sends you back to {{ host }}</li>
 {% endfor %}{% if let Some(host) = view.offer.app.document_host %}<li>App details from {{ host }}</li>
@@ -46,9 +46,9 @@
 <p class="notice error" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
 {% if view.offer.confirm %}<p class="hint">Changes like this need a sign-in from the last 5 minutes.</p>
 {% endif %}{% if let Some(code) = device_code %}<section class="device-check" aria-labelledby="device-check-title">
-<h2 id="device-check-title">Is this your device?</h2>
+<h2 id="device-check-title">Check the code</h2>
 <p class="user-code code">{{ code }}</p>
-<p>Approve only if the same code is showing on a device you are holding.</p>
+<p>Approve only if the app you're using shows this same code.</p>
 <p>Don't approve a link or code that someone sent you.</p>
 </section>
 {% endif %}<div class="actions">

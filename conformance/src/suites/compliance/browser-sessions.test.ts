@@ -304,6 +304,30 @@ describe("a browser session ending", () => {
     await expectAppsConnected(live);
   });
 
+  it("a password change ends the other browsers and keeps apps connected", async () => {
+    const ended = live;
+    await connectApps(ended);
+    const changing = await signIn("browser-sessions-changing");
+    const changePassword = (current: string, next: string) =>
+      post("/auth/owner/password", changing, {
+        current_password: current,
+        new_password: next,
+      });
+    const other = "browser-sessions other password";
+    expect((await changePassword(OWNER.password, other)).status).toBe(200);
+    expect(await browserLive(ended)).toBe(false);
+    expect(await browserLive(changing)).toBe(true);
+    await expectAppsConnected(changing);
+    const keyed = await fetch(`${server!.apiUrl}/items?type=core.note`, {
+      headers: { authorization: `Bearer ${server!.workingKey}` },
+    });
+    expect(keyed.status).toBe(200);
+    await keyed.body?.cancel();
+
+    expect((await changePassword(other, OWNER.password)).status).toBe(200);
+    live = changing;
+  });
+
   it("leaves every app connected across a restart of the server", async () => {
     await connectApps(live);
     await server!.restart({

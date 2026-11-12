@@ -340,7 +340,7 @@ pub async fn claim(app: &App, details: Details, proof: Proof, visit: Visit) -> R
     app.db
         .read(move |tx| proof_stands(tx, judged.as_ref(), clock.instant()))
         .await?;
-    password::check_new(&details.password)?;
+    password::check_new(&details.password, "password")?;
     let hash = app.passwords.hash(details.password.clone()).await?;
     let clock = app.clock.clone();
     app.db

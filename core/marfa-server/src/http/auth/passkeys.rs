@@ -11,6 +11,7 @@ use super::{
     cookies, redirect, require_safe_caller, require_safe_transport, text_field, with_cookie,
 };
 use crate::app::access::{Caller, unauthorized};
+use crate::app::auth::owner;
 use crate::app::auth::passkeys::{self, Adding, Assertion, Begun, Listed};
 use crate::app::auth::{Visit, form_origins};
 use crate::app::clock::Stamp;
@@ -183,8 +184,10 @@ pub async fn page(State(app): State<Arc<App>>, OnPage(caller): OnPage) -> Answer
         .into_iter()
         .map(|passkey| shown(passkey, address.host()))
         .collect::<Result<_, Refusal>>()?;
+    let owner = owner::find(&app).await?.ok_or_else(owner::not_found)?;
     let view = OwnerPasskeys {
         instance_name: instance::name(&app).await?,
+        email: owner.email,
         rows,
     };
     let page: Response = pages::owner_passkeys(&view)?.into_response();

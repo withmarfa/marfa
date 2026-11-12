@@ -97,6 +97,10 @@ const UNPUBLISHED: &[(&str, &str)] = &[
     ("POST /auth/passkeys/sign-in", "passkey sign-in"),
     ("GET /auth/owner/passkeys", "the owner's passkeys page"),
     (
+        "POST /auth/owner/password",
+        "the passkeys page's password change",
+    ),
+    (
         "GET /auth/error",
         "the OAuth failure page a redirect lands on",
     ),

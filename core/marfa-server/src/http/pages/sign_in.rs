@@ -116,3 +116,29 @@ pub fn signed_in(view: &SignedIn) -> Result<Page> {
         },
     )
 }
+
+#[derive(Debug, Clone)]
+pub struct Running {
+    pub instance_name: String,
+    pub email: String,
+}
+
+#[derive(Template)]
+#[template(path = "running.html")]
+struct RunningBody<'a> {
+    view: &'a Running,
+}
+
+/// The root as the signed-in owner sees it.
+pub fn running(view: &Running) -> Result<Page> {
+    let body = render_body(&RunningBody { view })?;
+    document(
+        "This Marfa is running",
+        &view.instance_name,
+        &body,
+        Needs {
+            connect: true,
+            confirm_dialog: false,
+        },
+    )
+}

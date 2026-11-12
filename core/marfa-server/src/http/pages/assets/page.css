@@ -224,6 +224,12 @@ a {
   color: var(--caution);
 }
 
+.part + .part {
+  margin-top: 1.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--line);
+}
+
 .app-name {
   font-weight: 600;
 }

@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use argon2::Argon2;
 use argon2::password_hash::{PasswordHasher, PasswordVerifier};
-use serde_json::json;
 use tokio::sync::{OnceCell, Semaphore};
 
 use super::limits::too_many_passwords;
@@ -18,7 +17,8 @@ const DECOY_WAIT_MS: i64 = 1_000;
 const MIN_LENGTH: usize = 8;
 const MAX_LENGTH: usize = 128;
 
-pub fn check_new(password: &str) -> Result<()> {
+/// `field` names where the password came in, in the refusal.
+pub fn check_new(password: &str, field: &str) -> Result<()> {
     let length = password.chars().count();
     let message = if length < MIN_LENGTH {
         format!("Password must be at least {MIN_LENGTH} characters.")
@@ -27,10 +27,7 @@ pub fn check_new(password: &str) -> Result<()> {
     } else {
         return Ok(());
     };
-    Err(Refusal::validation(message.clone()).with_detail(
-        "errors",
-        json!([{ "path": "password", "message": message }]),
-    ))
+    Err(Refusal::invalid_at(field, &message))
 }
 
 fn shape(hash: &str) -> &str {
@@ -235,13 +232,22 @@ mod tests {
 
     #[test]
     fn a_new_password_is_measured_in_characters() {
-        assert!(check_new("1234567").is_err());
-        assert!(check_new("12345678").is_ok());
-        assert!(check_new(&"x".repeat(128)).is_ok());
-        assert!(check_new(&"x".repeat(129)).is_err());
-        assert!(check_new(&"😀".repeat(7)).is_err());
-        assert!(check_new(&"😀".repeat(8)).is_ok());
-        assert!(check_new(&"😀".repeat(128)).is_ok());
-        assert!(check_new(&"😀".repeat(129)).is_err());
+        assert!(check_new("1234567", "password").is_err());
+        assert!(check_new("12345678", "password").is_ok());
+        assert!(check_new(&"x".repeat(128), "password").is_ok());
+        assert!(check_new(&"x".repeat(129), "password").is_err());
+        assert!(check_new(&"😀".repeat(7), "password").is_err());
+        assert!(check_new(&"😀".repeat(8), "password").is_ok());
+        assert!(check_new(&"😀".repeat(128), "password").is_ok());
+        assert!(check_new(&"😀".repeat(129), "password").is_err());
+    }
+
+    #[test]
+    fn a_refused_new_password_names_its_field() {
+        let refused = check_new("short", "new_password").unwrap_err();
+        assert_eq!(
+            refused.details.unwrap()["errors"][0]["path"],
+            "new_password"
+        );
     }
 }

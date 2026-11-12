@@ -273,6 +273,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/optional-body.test.ts",
   "src/suites/compliance/overview.test.ts",
   "src/suites/compliance/owner-item-read.test.ts",
+  "src/suites/compliance/owner-pages.test.ts",
   "src/suites/compliance/owner-picture.test.ts",
   "src/suites/compliance/owner-sign-ins.test.ts",
   "src/suites/compliance/owner-trash.test.ts",
