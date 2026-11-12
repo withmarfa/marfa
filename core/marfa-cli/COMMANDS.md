@@ -2005,7 +2005,7 @@ marfa keys revoke [OPTIONS] <ID>
 
 ### marfa keys keep
 
-Keep a key for this server in the operating system's keychain, and make this server the one a bare command talks to. The key is read from MARFA_API_KEY or from stdin, or from `--key`, which other users of the machine can read in the process list; never from a file.
+Keep a key for this server in the operating system's keychain, and make this server the one a bare command talks to. The key is read from MARFA_API_KEY or from stdin, or from `--key`, which other users of the machine can read in the process list; never from a file. Where `folders autostart on` installed folder syncing, it starts again.
 
 ```text
 marfa keys keep [OPTIONS]
@@ -4542,7 +4542,7 @@ marfa folders watch [OPTIONS] [DIR]
 
 | Argument | Description |
 | --- | --- |
-| `[DIR]` | The directory to watch, recursively. Without one, the command watches every folder the folder registry lists, in one process. Each folder uses the server its copy came from, and each line names its folder. A folder added or removed while the watch runs joins or leaves it. A folder that can't be watched is reported once and tried again. Either way the watch keeps a record of its folders in `folder-watch.json` beside the registry, for other programs on the machine to read. |
+| `[DIR]` | The directory to watch, recursively. Without one, the command watches every folder the folder registry lists, in one process. Each folder uses the server its copy came from, and each line names its folder. A folder added or removed while the watch runs joins or leaves it. A folder that can't be watched is reported once and tried again. A folder whose sign-in ended is reported once as `signed_out` and is not tried again with that sign-in; it is watched once `marfa login` or `marfa keys keep` keeps a new credential, and the other folders go on. A watch of one folder ends with exit status 5 when its sign-in ends. Either way the watch keeps a record of its folders in `folder-watch.json` beside the registry, for other programs on the machine to read. |
 
 | Option | Description |
 | --- | --- |

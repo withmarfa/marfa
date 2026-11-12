@@ -14,6 +14,10 @@ use crate::remote::{Named, Remote};
 /// Under --json two records come out, one per line: the code and the page
 /// to approve it on, as soon as they exist, then the outcome once the owner
 /// has decided.
+///
+/// Where `folders autostart on` installed folder syncing, a sign-in that is
+/// kept starts it again, so the folders it stopped for a sign-in that ended
+/// are watched at once.
 #[derive(Debug, Args)]
 pub struct LoginArgs {
     /// The scopes to ask for. Defaults to everything an owner can hold that
@@ -138,10 +142,14 @@ pub fn run(args: LoginArgs, named: &Named, out: &Printer) -> Result<(), CliError
         return print_set(&token, &client_id, out);
     }
     match auth::with_credential_lock(&origin, || credentials::keep(&origin, &kept)) {
-        Ok(()) => out.record(
-            &json!({ "server": origin, "scope": token.scope, "kept": "keychain" }),
-            || signed_in_text(&origin, token.scope.as_deref()),
-        ),
+        Ok(()) => {
+            let recorded = out.record(
+                &json!({ "server": origin, "scope": token.scope, "kept": "keychain" }),
+                || signed_in_text(&origin, token.scope.as_deref()),
+            );
+            crate::autostart::resume_after_credential_kept();
+            recorded
+        }
         // The person has approved, so the set is printed rather than lost.
         Err(CliError::NoKeychain(reason)) => {
             eprintln!(

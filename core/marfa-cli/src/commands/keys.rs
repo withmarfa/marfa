@@ -38,7 +38,8 @@ pub enum KeysCommand {
     /// Keep a key for this server in the operating system's keychain, and
     /// make this server the one a bare command talks to. The key is read
     /// from MARFA_API_KEY or from stdin, or from `--key`, which other users
-    /// of the machine can read in the process list; never from a file.
+    /// of the machine can read in the process list; never from a file. Where
+    /// `folders autostart on` installed folder syncing, it starts again.
     Keep,
     /// Forget the key kept for this server.
     Forget,
@@ -566,6 +567,7 @@ fn keep(remote: &Remote, out: &Printer) -> Result<(), CliError> {
         }
         credentials::keep(remote.origin(), &Kept::Key { key })
     })?;
+    crate::autostart::resume_after_credential_kept();
     out.report(&json!({ "origin": remote.origin(), "kept": "key" }), || {
         format!(
             "kept a key for {} in the keychain; it is now the server a bare command talks to",

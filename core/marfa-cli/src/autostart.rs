@@ -728,6 +728,47 @@ impl Place {
     }
 }
 
+/// Starts the installed watch again, so it uses a credential kept since.
+/// Where no agent is installed, or the manager does not hold it, nothing
+/// runs. Whether it did is returned.
+fn resume(place: &Place) -> Result<bool, CliError> {
+    if !place.file.exists() {
+        return Ok(false);
+    }
+    let state = place
+        .state()
+        .map_err(|reason| CliError::Io(std::io::Error::other(reason)))?;
+    if !state.loaded {
+        return Ok(false);
+    }
+    match place.manager {
+        Manager::Launchd => place.must(&["kickstart", "-k", &Place::target()])?,
+        Manager::Systemd => place.must(&["restart", UNIT])?,
+    }
+    Ok(true)
+}
+
+/// For a command that has just kept a credential: the installed watch starts
+/// again, so the folders it stopped for a credential that ended are watched
+/// at once. It says so on stderr, and says too where it could not, since the
+/// credential is kept all the same.
+pub fn resume_after_credential_kept() {
+    // A unit test's HOME is the person's own, whose service it must never ask.
+    if cfg!(test) {
+        return;
+    }
+    match Place::here().and_then(|place| resume(&place).map(|ran| (place, ran))) {
+        Ok((place, true)) => eprintln!(
+            "restarted {}, so the folder watch uses this credential",
+            place.manager.name()
+        ),
+        Ok((_, false)) => {}
+        Err(error) => eprintln!(
+            "the credential is kept, but the folder watch could not be restarted ({error}); `marfa folders autostart on` starts it"
+        ),
+    }
+}
+
 fn said(ran: &std::process::Output) -> String {
     let text = String::from_utf8_lossy(&ran.stderr).trim().to_string();
     if text.is_empty() {
@@ -1532,6 +1573,72 @@ mod tests {
         std::os::unix::fs::symlink(&path, &link).expect("link");
         assert!(!telemetry_file_is(&link, Some("a=b\n")).expect("checked"));
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    /// A service manager that keeps what it was asked in `asked`, and holds
+    /// the agent unless `held` is false.
+    fn asked_manager(dir: &Path, manager: Manager, held: bool) -> (Place, PathBuf) {
+        use std::os::unix::fs::PermissionsExt as _;
+        let asked = dir.join("asked");
+        let tool = dir.join("tool");
+        let print = if held {
+            "echo '\tstate = running'; exit 0"
+        } else {
+            "exit 113"
+        };
+        let loaded = if held {
+            "LoadState=loaded"
+        } else {
+            "LoadState=not-found"
+        };
+        std::fs::write(
+            &tool,
+            format!(
+                "#!/bin/sh\necho \"$@\" >> '{}'\ncase \"$*\" in\n*print*) {print};;\n*show*) echo '{loaded}'; echo 'ActiveState=active'; echo 'SubState=running';;\nesac\n",
+                asked.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&tool, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let file = dir.join("agent");
+        (
+            Place {
+                manager,
+                file,
+                tool,
+            },
+            asked,
+        )
+    }
+
+    #[test]
+    fn a_credential_kept_restarts_the_watch_only_where_the_agent_is_installed_and_held() {
+        for manager in [Manager::Launchd, Manager::Systemd] {
+            let temp = tempfile::tempdir().unwrap();
+            let (place, asked) = asked_manager(temp.path(), manager, true);
+            // Not installed: the manager is not even asked.
+            assert!(!resume(&place).unwrap());
+            assert!(
+                !asked.exists(),
+                "{manager:?} was asked with nothing installed"
+            );
+            // Installed and held: restarted.
+            std::fs::write(&place.file, "agent").unwrap();
+            assert!(resume(&place).unwrap());
+            let asked_of = std::fs::read_to_string(&asked).unwrap();
+            let restart = match manager {
+                Manager::Launchd => "kickstart -k",
+                Manager::Systemd => "restart marfa-folder-watch.service",
+            };
+            assert!(asked_of.contains(restart), "{manager:?}: {asked_of}");
+        }
+        // The witness: a file the manager does not hold is left alone.
+        let temp = tempfile::tempdir().unwrap();
+        let (place, asked) = asked_manager(temp.path(), Manager::Launchd, false);
+        std::fs::write(&place.file, "agent").unwrap();
+        assert!(!resume(&place).unwrap());
+        let asked_of = std::fs::read_to_string(&asked).unwrap();
+        assert!(!asked_of.contains("kickstart"), "{asked_of}");
     }
 
     fn agent(binary: &str) -> Agent {

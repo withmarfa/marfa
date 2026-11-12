@@ -11,7 +11,7 @@ import {
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import {
@@ -654,6 +654,110 @@ describe("a watch of every folder", () => {
     ).not.toBe("waiting");
   });
 
+  describe("a folder whose sign-in ended", ON_MACOS, () => {
+    /** A folder on a second server, which the keychain holds a sign-in for and
+     *  the server has since ended: the write it meets is refused, and the
+     *  token that would renew the sign-in is refused too. */
+    async function signedOut(label: string, registry?: string) {
+      const b = await folderHarness(label, {
+        settings: tagged("b"),
+        ...(registry === undefined ? {} : { registry }),
+      });
+      made.push(b);
+      b.server.answer("POST", "/items", answers.unauthorized());
+      b.server.answer(
+        "POST",
+        "/token",
+        answers.validation("invalid_grant", "the sign-in ended"),
+      );
+      scriptFolderWrites(b);
+      const keychain = ownKeychain();
+      cleanups.push(keychain.remove);
+      keepSignIn(keychain.path, b.server.url);
+      return { b, keychain };
+    }
+
+    it("ends with exit status 5, telling the person to sign in again, and sends nothing more", async () => {
+      const { b, keychain } = await signedOut("watch-signed-out");
+      put(b, "Signed out.md", "---\ntitle: Signed out\n---\nmeets the end\n");
+      const watch = hold(
+        new CliFolder(b.dir, {
+          binary: requireBinary(),
+          url: b.server.url,
+          registry: b.registry,
+        }).hold(["folders", "watch", b.dir], { MARFA_KEYCHAIN: keychain.path }),
+      );
+      await watch.exited();
+      expect(watch.exitCode(), `${watch.stdout}${watch.stderr}`).toBe(5);
+      expect(watch.stderr).toContain("marfa login");
+      // The witness: it was the write that met the end of the sign-in.
+      expect(
+        b.server.requests.filter(
+          (request) =>
+            request.method === "POST" && request.pathname === "/items",
+        ),
+      ).toHaveLength(1);
+    });
+
+    it("records only that folder as signed out and goes on with the others, with the watch staying up", async () => {
+      const a = await folderHarness("every-signed-out-a", {
+        settings: tagged("a"),
+      });
+      made.push(a);
+      scriptFolderWrites(a);
+      const { b, keychain } = await signedOut("every-signed-out-b", a.registry);
+      put(b, "Signed out.md", "---\ntitle: Signed out\n---\nmeets the end\n");
+      const watch = hold(
+        a.folder.watchEvery({ MARFA_KEYCHAIN: keychain.path }),
+      );
+      await vi.waitFor(() => {
+        const ended = linesFor(watch, b.dir).filter(
+          (line) => line.watching === false,
+        );
+        expect(ended, watch.stdout).toHaveLength(1);
+        expect(ended[0].code).toBe("signed_out");
+      }, WAIT);
+      put(a, "Goes on.md", "---\ntitle: Goes on\n---\nthe other folder\n");
+      await vi.waitFor(() => expect(sentTitles(a)).toEqual(["Goes on"]), WAIT);
+      const record = join(dirname(a.registry), "folder-watch.json");
+      await vi.waitFor(() => {
+        const kept = JSON.parse(readFileSync(record, "utf8")) as {
+          processes: Array<{
+            folders: Array<{ dir: string; reason: string | null }>;
+          }>;
+        };
+        expect(
+          kept.processes[0].folders.find((folder) => folder.dir === b.dir)
+            ?.reason,
+        ).toBe("signed_out");
+      }, WAIT);
+      expect(watch.running(), watch.stderr).toBe(true);
+    });
+
+    it("stays up with no folder left to watch, and ends with exit status 0 once stopped", async () => {
+      const { b, keychain } = await signedOut("every-all-signed-out");
+      put(b, "Signed out.md", "---\ntitle: Signed out\n---\nmeets the end\n");
+      const watch = hold(
+        new CliFolder(b.dir, {
+          binary: requireBinary(),
+          url: b.server.url,
+          registry: b.registry,
+        }).watchEvery({ MARFA_KEYCHAIN: keychain.path }),
+      );
+      await vi.waitFor(() => {
+        expect(
+          linesFor(watch, b.dir).filter((line) => line.code === "signed_out"),
+          watch.stdout,
+        ).toHaveLength(1);
+      }, WAIT);
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
+      expect(watch.running(), watch.stderr).toBe(true);
+      process.kill(watch.pid(), "SIGTERM");
+      await watch.exited();
+      expect(watch.exitCode(), watch.stderr).toBe(0);
+    });
+  });
+
   describe("folders on two servers", ON_MACOS, () => {
     it("keeps each folder with its own server and credential, and one server down stops only its folder", async () => {
       const a = await folderHarness("every-servers-a", {
@@ -745,10 +849,35 @@ function ownKeychain(): { path: string; remove: () => void } {
   };
 }
 
+/** Keeps a sign-in for `origin` as `login` would, whose renewal the server refuses. */
+function keepSignIn(keychain: string, origin: string): void {
+  execFileSync("security", [
+    "add-generic-password",
+    "-A",
+    "-s",
+    "marfa",
+    "-a",
+    origin,
+    "-w",
+    JSON.stringify({
+      kind: "token",
+      access_token: "marfa_at_fixture",
+      refresh_token: "marfa_rt_fixture",
+      expires_at: null,
+      client_id: "fixture",
+      scope: "*:read",
+      token_endpoint: `${origin}/token`,
+      revocation_endpoint: null,
+    }),
+    keychain,
+  ]);
+}
+
 /** Keeps `key` for `origin`, as `keys keep` would. */
 function keepKey(keychain: string, origin: string, key: string): void {
   execFileSync("security", [
     "add-generic-password",
+    "-U",
     "-A",
     "-s",
     "marfa",

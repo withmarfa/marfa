@@ -5856,6 +5856,46 @@ When the path `folders watch` was run by leads to no file, or to a file that pri
 
 **Tests:** `device/folders-new-build.test.ts › says once that the path leads to no build, or to a file that is not one, and goes on syncing, and ends for a copy of its build but not for the build itself put back`.
 
+### `folders/watch-signed-out-exit`
+
+When `folders watch` of one folder ends because the sign-in it uses has ended, the CLI MUST end with exit status 5 and name `marfa login` in its message.
+
+**Reason:** Status 3 says the environment failed and a service manager starts the command again, which fails the same way until a person signs in. Status 5 is the status of a credential that no longer works, as `folders push` gives for the same cause.
+
+**Tests:** `device/folders-watch-every.test.ts › ends with exit status 5, telling the person to sign in again, and sends nothing more`.
+
+### `folders/watch-every-signed-out-record`
+
+When the sign-in a folder uses has ended during a watch of every folder, the CLI MUST set `reason` to `signed_out` for that folder in the record.
+
+**Reason:** A program reading the record, such as `folders autostart status`, tells a folder that needs `marfa login` from one that fails for another reason, and the watch of the other folders goes on.
+
+**Tests:** `device/folders-watch-every.test.ts › records only that folder as signed out and goes on with the others, with the watch staying up`.
+
+### `folders/watch-every-signed-out-stays`
+
+While the sign-in of a folder has ended, the CLI MUST keep the watch of every folder and the watch of each other folder running.
+
+**Reason:** A service manager starts a watch that ends with a failure again, and a watch that ended for a sign-in would be started again into the same refusal. With no folder left to watch it waits to be stopped, and ends with exit status 0 when it is.
+
+**Tests:** `device/folders-watch-every.test.ts › records only that folder as signed out and goes on with the others, with the watch staying up`, `device/folders-watch-every.test.ts › stays up with no folder left to watch, and ends with exit status 0 once stopped`.
+
+### `folders/autostart-restart-on-credential`
+
+When `login` or `keys keep` keeps a credential and the agent `folders autostart on` wrote is installed, the CLI MUST ask the service manager to start the agent again.
+
+**Reason:** The watch stops opening a folder with a credential that ended, and starts the folder again at once with the one kept since.
+
+**Tests:** `device/folders-autostart.test.ts › starts the watch again when a credential is kept and the agent is installed, and does nothing where it is not`.
+
+### `folders/autostart-restart-not-installed`
+
+When `login` or `keys keep` keeps a credential and no agent `folders autostart on` wrote is installed, the CLI MUST NOT call the service manager.
+
+**Reason:** A person who never turned folder syncing on has no service for the command to touch.
+
+**Tests:** `device/folders-autostart.test.ts › starts the watch again when a credential is kept and the agent is installed, and does nothing where it is not`.
+
 ### `folders/watch-terminate`
 
 When `folders watch` receives `SIGTERM`, the CLI MUST end within three seconds with exit status 0.

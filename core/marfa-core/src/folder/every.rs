@@ -52,7 +52,7 @@ pub const MISSING: &str = "missing";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unwatched {
     /// The error code, such as `first_sync_waiting`, `reading_handle` or
-    /// `unauthorized`, `watch` where the watch itself failed, or [`MISSING`]
+    /// `unauthorized`, `signed_out`, `watch` where the watch itself failed, or [`MISSING`]
     /// where its directory cannot be found.
     pub code: String,
     pub message: String,
@@ -68,6 +68,16 @@ impl Unwatched {
 
     fn ended<E>(error: WatchError<E>) -> Result<Unwatched, E> {
         Ok(match error {
+            WatchError::CredentialRefused(error) | WatchError::Core(error)
+                if error.is_signed_out() =>
+            {
+                Unwatched {
+                    code: error.code().to_string(),
+                    message: format!(
+                        "{error}; its watch stopped, and its edits wait here until a new sign-in is kept"
+                    ),
+                }
+            }
             WatchError::CredentialRefused(error) => Unwatched {
                 code: error.code().to_string(),
                 message: format!(

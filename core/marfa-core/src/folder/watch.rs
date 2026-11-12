@@ -391,15 +391,7 @@ impl Folder {
                         tell(event).map_err(WatchError::Told)?;
                     }
                 }
-                Ok(Wake::Ended(error @ CoreError::Unauthorized { .. })) => {
-                    return Err(WatchError::CredentialRefused(error));
-                }
-                // The follow caught a panic of the core's: the server is not
-                // what ended it.
-                Ok(Wake::Ended(error @ CoreError::Fault(_))) => {
-                    return Err(WatchError::Core(error));
-                }
-                Ok(Wake::Ended(error)) => return Err(WatchError::FollowEnded(error)),
+                Ok(Wake::Ended(error)) => return Err(follow_ended(error)),
                 Ok(Wake::Asked) => continue,
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
                 Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -789,6 +781,18 @@ impl Passes {
     #[cfg(debug_assertions)]
     pub(super) fn render_all_next(&mut self) {
         self.telling.selection.render_all_next();
+    }
+}
+
+/// How the follow's end is told: a credential that no longer works, refused or
+/// signed out, is the credential's, and a panic of the core's is not the
+/// server's doing.
+fn follow_ended<E>(error: CoreError) -> WatchError<E> {
+    match error {
+        CoreError::Unauthorized { .. } => WatchError::CredentialRefused(error),
+        error if error.is_signed_out() => WatchError::CredentialRefused(error),
+        CoreError::Fault(_) => WatchError::Core(error),
+        error => WatchError::FollowEnded(error),
     }
 }
 
@@ -1605,6 +1609,37 @@ fn hydrated_by_the_follow(error: &CoreError) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_follow_that_ends_signed_out_is_the_credentials_and_one_that_ends_otherwise_is_not() {
+        use super::{WatchError, follow_ended};
+        use crate::CoreError;
+        let out = || CoreError::SignedOut {
+            origin: "http://localhost:8600".into(),
+        };
+        for error in [
+            out(),
+            CoreError::RenewalFailed(Box::new(out())),
+            CoreError::Unauthorized {
+                code: "unauthorized".into(),
+                message: "refused".into(),
+            },
+        ] {
+            assert!(
+                matches!(follow_ended::<()>(error), WatchError::CredentialRefused(_)),
+                "a credential that ended is the credential's"
+            );
+        }
+        // The witness: the follow's other endings stay as they were.
+        assert!(matches!(
+            follow_ended::<()>(CoreError::NoServer),
+            WatchError::FollowEnded(_)
+        ));
+        assert!(matches!(
+            follow_ended::<()>(CoreError::Fault("panic".into())),
+            WatchError::Core(_)
+        ));
+    }
+
     #[test]
     fn a_hydration_that_fails_is_a_problem_and_one_that_is_slow_is_not() {
         let mut health = super::FollowHealth::default();
