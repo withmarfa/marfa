@@ -156,6 +156,17 @@ describe("attaching a file", () => {
     expect(still.data.map((copy) => copy.store_id)).toContain(kept!.store);
   });
 
+  it("reports the server's refusal of an upload it made before reading the file, not a broken connection", async () => {
+    const path = join(dir, "large.bin");
+    writeFileSync(path, Buffer.alloc(64 * 1024 * 1024, 7));
+    // A key that may write no type is refused before the body is read.
+    const refused = await c.operator.refused(["items", "add", path]);
+    expect(refused.envelope.error.server?.status).toBe(403);
+    expect(refused.envelope.error.server?.code).toBe("type_not_permitted");
+    expect(refused.envelope.error.message).not.toContain("failed");
+    expect(refused.code).not.toBe(3);
+  });
+
   it("adds a file as an item of its own, typed by its extension, under the title, tags and tier given, and links it to nothing", async () => {
     const path = join(dir, "talk.pptx");
     writeFileSync(path, Buffer.from("PK\u0003\u0004 slides\n"));

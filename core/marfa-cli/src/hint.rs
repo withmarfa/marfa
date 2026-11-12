@@ -6,8 +6,11 @@ use std::ffi::OsString;
 
 use serde_json::Value;
 
+use marfa_core::CoreError;
+
 use crate::error::CliError;
 use crate::remote::{Named, Remote};
+use crate::server::PrivateCommand;
 
 /// What the command that failed was aimed at.
 pub struct Aim {
@@ -28,10 +31,7 @@ impl Aim {
 
 pub fn for_error(error: &CliError, aim: &Aim) -> Option<String> {
     match error {
-        CliError::Core(core) => {
-            let origin = marfa_core::http::refused_origin(core)?;
-            Some(not_listening(origin))
-        }
+        CliError::Core(CoreError::ConnectionRefused { origin }) => Some(not_listening(origin)),
         CliError::Refused {
             status: 403,
             details,
@@ -67,26 +67,35 @@ fn not_listening(origin: &str) -> String {
 }
 
 fn needs_local(aim: &Aim) -> String {
-    let prefix = Remote::url_named(&aim.named)
+    let private = Remote::url_named(&aim.named)
         .ok()
-        .and_then(|origin| crate::server::socket_command_for(&origin));
-    match prefix {
-        Some(prefix) => {
-            let mut text = format!(
-                "A key or an app's sign-in cannot do this: it needs the server's private local command, which this machine can run:\n  {prefix} {}",
-                same_command(&aim.args)
+        .and_then(|origin| crate::server::private_command_for(&origin));
+    let cannot =
+        "A key or an app's sign-in cannot do this: it needs the server's private local command";
+    if let Some(prefix) = private.as_ref().and_then(PrivateCommand::prefix) {
+        let mut text = format!(
+            "{cannot}, which this machine can run:\n  {prefix} {}",
+            same_command(&aim.args)
+        );
+        if [
+            "MARFA_API_URL",
+            "MARFA_API_KEY",
+            crate::profiles::ENVIRONMENT,
+        ]
+        .iter()
+        .any(|name| std::env::var(name).is_ok_and(|value| !value.is_empty()))
+        {
+            text.push_str(
+                "\n(--socket cannot be combined with MARFA_API_URL, MARFA_API_KEY or MARFA_PROFILE: unset them for that command.)",
             );
-            if ["MARFA_API_URL", "MARFA_API_KEY", crate::profiles::ENVIRONMENT]
-                .iter()
-                .any(|name| std::env::var(name).is_ok_and(|value| !value.is_empty()))
-            {
-                text.push_str(
-                    "\n(--socket cannot be combined with MARFA_API_URL, MARFA_API_KEY or MARFA_PROFILE: unset them for that command.)",
-                );
-            }
-            text
         }
-        None => "A key or an app's sign-in cannot do this: it needs the server's private local command, which runs on the server's own machine, as `marfa --socket <path>` followed by this command. A server installed with `marfa server install` keeps its socket under its install folder, in data/control/marfa.sock.".into(),
+        text
+    } else if let Some(words) = private.as_ref().and_then(PrivateCommand::container_words) {
+        format!("{cannot}. On this machine, {words}.")
+    } else {
+        format!(
+            "{cannot}, which runs on the server's own machine, as `marfa --socket <path>` followed by this command. A server installed with `marfa server install` keeps its socket under its install folder, in data/control/marfa.sock."
+        )
     }
 }
 

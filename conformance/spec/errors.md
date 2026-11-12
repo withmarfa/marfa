@@ -24,7 +24,7 @@ If a caller other than the private local command sends a request that only the p
 
 **Reason:** a key that holds every permission is still refused these operations, and a client that reads `details.needs` can tell the person to use the private local command instead of showing a refusal that no permission mends.
 
-**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key at all three doors`, `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
+**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key at all three doors`, `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`, `compliance/folder-status.test.ts › lists active folder summaries for the local command with bounded pages, and refuses every other caller`, `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`, `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`, `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
 
 ### `errors/status-absent`
 

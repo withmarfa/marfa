@@ -1586,7 +1586,7 @@ mod tests {
     }
 
     #[test]
-    fn a_restore_refused_after_a_pause_reports_the_refusal_and_sends_no_body() {
+    fn a_restore_refused_after_the_wait_for_100_has_ended_still_reports_the_refusal() {
         use std::io::{Read, Write};
         let dir = std::env::temp_dir().join(format!("marfa-slow-refusal-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -1602,7 +1602,7 @@ mod tests {
                 let read = socket.read(&mut chunk).unwrap();
                 head.extend_from_slice(&chunk[..read]);
             }
-            // Longer than any wait for `100 Continue` that ureq has by default.
+            // Longer than the wait for `100 Continue`, so the body is on its way when the refusal comes.
             std::thread::sleep(std::time::Duration::from_millis(2_500));
             let body = r#"{"error":{"code":"forbidden","message":"not the owner"}}"#;
             write!(
@@ -1633,7 +1633,10 @@ mod tests {
             }
             other => panic!("{other:?}"),
         }
-        assert_eq!(serving.join().unwrap(), 0, "the body was sent anyway");
+        assert!(
+            serving.join().unwrap() > 0,
+            "the body goes after the wait, as RFC 9110 expects"
+        );
     }
 
     #[test]
@@ -2024,8 +2027,8 @@ mod tests {
         };
         let remote = Remote::keyed(&format!("http://127.0.0.1:{port}"), "marfa_k1_x").unwrap();
         match remote.json(&Request::get(&["items"])) {
-            Err(CliError::Core(marfa_core::CoreError::Network(text))) => {
-                assert!(text.to_lowercase().contains("refused"), "{text}");
+            Err(CliError::Core(error @ marfa_core::CoreError::ConnectionRefused { .. })) => {
+                assert!(error.to_string().contains("refused"), "{error}");
             }
             other => panic!("{other:?}"),
         }

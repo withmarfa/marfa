@@ -1566,7 +1566,8 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::NoKeychain(message)
         | E::Invalid(message)
         | E::Fault(message) => message.clone(),
-        E::Unnamed { .. }
+        E::ConnectionRefused { .. }
+        | E::Unnamed { .. }
         | E::Redirected { .. }
         | E::SignedOut { .. }
         | E::NoServer
@@ -1679,6 +1680,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         E::RenewalFailed(_)
         | E::Io(_)
         | E::Network(_)
+        | E::ConnectionRefused { .. }
         | E::Decoding(_)
         | E::Store(_)
         | E::StoreBusy(_)

@@ -1645,7 +1645,7 @@ impl From<marfa_core::CoreError> for MarfaError {
                 message,
             },
             E::Io(_) => MarfaError::Io { message },
-            E::Network(_) => MarfaError::Network { message },
+            E::Network(_) | E::ConnectionRefused { .. } => MarfaError::Network { message },
             E::Unnamed { status, .. } => MarfaError::Unnamed { status, message },
             E::Decoding(_) => MarfaError::Decoding { message },
             E::Store(_) => MarfaError::Store { message },

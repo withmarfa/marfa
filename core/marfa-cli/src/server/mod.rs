@@ -301,10 +301,69 @@ struct Folder {
     dir: PathBuf,
 }
 
-/// The `marfa --socket` command that acts on the server at `origin` with the
-/// private local command, when this machine's install, in the default folder,
-/// is that server and its socket is there.
-pub fn socket_command_for(origin: &str) -> Option<String> {
+/// How this machine reaches a server's private local command.
+pub enum PrivateCommand {
+    /// A native install: its socket is a path on this machine.
+    Socket(PathBuf),
+    /// A Docker install: its socket is inside the container.
+    Container(String),
+}
+
+impl PrivateCommand {
+    fn of(state: &State, folder: &Folder) -> Option<Self> {
+        match state.runtime {
+            Runtime::Native => {
+                let socket = native::Layout::new(&folder.dir).socket();
+                socket.exists().then_some(Self::Socket(socket))
+            }
+            Runtime::Docker => Some(Self::Container(state.name.clone())),
+        }
+    }
+
+    /// The words that put `command` through the private local command, with
+    /// no call to Docker: the install record says which container it is.
+    pub fn run_text(&self, command: &str) -> String {
+        match self {
+            Self::Socket(socket) => format!(
+                "`marfa --socket {} {command}`",
+                crate::hint::shell_word(&socket.display().to_string())
+            ),
+            Self::Container(name) => format!(
+                "`{command}` with the `marfa` command inside the Docker container `{name}`, putting `--socket {CONTAINER_SOCKET}` before it"
+            ),
+        }
+    }
+
+    /// The `marfa --socket` prefix, where a command can be repeated after
+    /// it. A container's cannot: the command's own file paths and standard
+    /// input are the container's.
+    pub fn prefix(&self) -> Option<String> {
+        match self {
+            Self::Socket(socket) => Some(format!(
+                "marfa --socket {}",
+                crate::hint::shell_word(&socket.display().to_string())
+            )),
+            Self::Container(_) => None,
+        }
+    }
+
+    pub fn container_words(&self) -> Option<String> {
+        match self {
+            Self::Socket(_) => None,
+            Self::Container(name) => Some(format!(
+                "the server runs in the Docker container `{name}`: run this command with the `marfa` command inside it, putting `--socket {CONTAINER_SOCKET}` before it, and a file the command reads must be inside the container too"
+            )),
+        }
+    }
+}
+
+/// The socket inside a Docker install's container.
+const CONTAINER_SOCKET: &str = "/data/control/marfa.sock";
+
+/// How to reach the private local command of the server at `origin`, when
+/// this machine's install, in the default folder, is that server. It reads
+/// the install record only.
+pub fn private_command_for(origin: &str) -> Option<PrivateCommand> {
     let asked = url::Url::parse(origin).ok()?;
     let folder = Folder::new(&DirArgs { dir: None }).ok()?;
     let (state, _) = folder.state().ok()??;
@@ -318,32 +377,7 @@ pub fn socket_command_for(origin: &str) -> Option<String> {
     if !on_this_port && !at_its_address {
         return None;
     }
-    match state.runtime {
-        Runtime::Native => {
-            let socket = native::Layout::new(&folder.dir).socket();
-            socket.exists().then(|| {
-                format!(
-                    "marfa --socket {}",
-                    crate::hint::shell_word(&socket.display().to_string())
-                )
-            })
-        }
-        Runtime::Docker => {
-            let docker = docker::Docker::new(false);
-            docker.check().ok()?;
-            docker
-                .container(&state.name)
-                .ok()??
-                .status
-                .eq("running")
-                .then(|| {
-                    format!(
-                        "docker exec {} marfa --socket /data/control/marfa.sock",
-                        state.name
-                    )
-                })
-        }
-    }
+    PrivateCommand::of(&state, &folder)
 }
 
 /// The path with the part that exists made real, so that a link in it is
@@ -686,6 +720,28 @@ impl Steps {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_container_is_named_in_words_and_a_socket_is_a_prefix_to_repeat_a_command_after() {
+        let container = PrivateCommand::Container("marfa-home".into());
+        assert_eq!(container.prefix(), None);
+        let words = container.container_words().unwrap();
+        assert!(words.contains("`marfa-home`"), "{words}");
+        assert!(
+            words.contains("--socket /data/control/marfa.sock"),
+            "{words}"
+        );
+        assert!(!words.contains("docker exec"), "{words}");
+        let moved = container.run_text("config update");
+        assert!(moved.contains("`config update`") && moved.contains("`marfa-home`"));
+
+        let socket = PrivateCommand::Socket(PathBuf::from("/srv/it's/marfa.sock"));
+        assert_eq!(
+            socket.prefix().as_deref(),
+            Some("marfa --socket '/srv/it'\\''s/marfa.sock'")
+        );
+        assert_eq!(socket.container_words(), None);
+    }
 
     #[test]
     fn a_release_is_three_plain_numbers() {

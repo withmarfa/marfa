@@ -1184,7 +1184,9 @@ pub(crate) fn fetch<G>(
             stream: false,
         })
         .map_err(|error| match error {
-            CoreError::Network(reason) => absent(format!("{SERVER_UNREACHABLE}: {reason}")),
+            reached @ (CoreError::Network(_) | CoreError::ConnectionRefused { .. }) => {
+                absent(format!("{SERVER_UNREACHABLE}: {reached}"))
+            }
             other => other,
         })?;
     let text = reply.body;

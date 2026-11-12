@@ -3046,15 +3046,15 @@ If the CLI reports `network`, then the CLI MUST NOT begin the message with the w
 
 ### `device/command-unreachable-hint`
 
-If the CLI cannot reach a server on this machine, then the CLI MUST ask a person whether the server is running and name `marfa server status`.
+If a connection to a server on this machine is refused, then the CLI MUST ask a person whether the server is running and name `marfa server status`.
 
-**Reason:** a person who sees only that nothing answered cannot tell a stopped server from a wrong address.
+**Reason:** a refused connection means nothing listens at the address, and a person who sees only that nothing answered cannot tell a stopped server from a wrong address. Another failure, such as a timeout, does not say that the server is stopped.
 
 **Tests:** `cli/exits.test.ts › asks a person whether the server is running when nothing listens on this machine, and says so only to a person`.
 
 ### `device/command-unreachable-hint-not-in-json`
 
-If the CLI cannot reach a server and `--json` is set, then the CLI MUST NOT add advice to the envelope's message.
+If a connection to a server is refused and `--json` is set, then the CLI MUST NOT add advice to the envelope's message.
 
 **Reason:** a script reads the envelope's code and message, and advice for a person would change what it matches.
 
@@ -3083,6 +3083,38 @@ If a person runs `config update` or `config replace` with `--confirm-address-cha
 **Reason:** the server holds a sign-in address change until it is confirmed, and a person confirms it by naming the flag after reading what the change does.
 
 **Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key the private command is the way`.
+
+### `device/command-upload-refusal-reported`
+
+If the server refuses an upload before it reads the file, then the CLI MUST report the refusal's status, code and message.
+
+**Reason:** a server that refuses early closes the connection while the CLI is still sending, and a CLI that waits for the server's go-ahead reads the answer the server gave, which is the only thing that tells a person why the upload failed.
+
+**Tests:** `cli/attach.test.ts › reports the server's refusal of an upload it made before reading the file, not a broken connection`, `cli/archive-blobs.test.ts › reports the refusal of a large archive the server refuses before or while it arrives`.
+
+### `device/command-upload-refusal-not-network`
+
+If the server refuses an upload before it reads the file, then the CLI MUST NOT report a network failure.
+
+**Reason:** the server answered, and a network failure would send a person to the connection instead of the refusal.
+
+**Tests:** `cli/attach.test.ts › reports the server's refusal of an upload it made before reading the file, not a broken connection`.
+
+### `device/command-server-status-says-health`
+
+If the server of an install answers `/health` as degraded or down, then the CLI MUST say so in `marfa server status`, with the components at fault.
+
+**Reason:** a server that answers has not gone silent, and "not answering" is for a server that gave no answer.
+
+**Tests:** `cli/server-status.test.ts › says a server that answers degraded is degraded, and leaves by 0`, `› says a server that answers down is down, not silent, and leaves by 0`.
+
+### `device/command-server-status-exits-zero`
+
+If the server of an install answers `/health` as degraded or down, then the CLI MUST leave `marfa server status` by 0.
+
+**Reason:** a script reads `running`, `answering` and `health` in the `--json` report, and a non-zero exit would fail the scripts that pipe `status` to learn how the server is.
+
+**Tests:** `cli/server-status.test.ts › says a server that answers degraded is degraded, and leaves by 0`, `› says a server that answers down is down, not silent, and leaves by 0`.
 
 ### `device/command-redirect`
 
