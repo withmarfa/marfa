@@ -79,17 +79,44 @@ pub(super) fn stored_password(tx: &Transaction<'_>, owner_id: &str) -> Result<Op
         .optional()?)
 }
 
+/// A new password, which leaves every device cookie set before it no cookie.
 pub(super) fn set_password(
     tx: &Transaction<'_>,
     owner_id: &str,
     hash: &str,
     now: Stamp,
 ) -> Result<()> {
+    rehash(tx, owner_id, hash, now)?;
+    renew_credentials(tx, owner_id)
+}
+
+/// The same password under a newer hash.
+pub(super) fn rehash(tx: &Transaction<'_>, owner_id: &str, hash: &str, now: Stamp) -> Result<()> {
     tx.execute(
         "UPDATE owner SET password = ?2, updated_at = ?3 WHERE id = ?1",
         params![owner_id, hash, now],
     )?;
     Ok(())
+}
+
+/// Leaves every device cookie set before now no cookie.
+pub(super) fn renew_credentials(tx: &Transaction<'_>, owner_id: &str) -> Result<()> {
+    tx.execute(
+        "UPDATE owner SET credentials = credentials + 1 WHERE id = ?1",
+        [owner_id],
+    )?;
+    Ok(())
+}
+
+/// What a device cookie is signed for: the owner's credentials as they stand.
+pub(super) fn credentials(tx: &Transaction<'_>, owner_id: &str) -> Result<Option<i64>> {
+    Ok(tx
+        .query_row(
+            "SELECT credentials FROM owner WHERE id = ?1",
+            [owner_id],
+            |row| row.get(0),
+        )
+        .optional()?)
 }
 
 #[derive(Clone, Debug)]

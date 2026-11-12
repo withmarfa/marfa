@@ -299,8 +299,8 @@ pub(super) fn end_replaced(
     ended(tx, at, actor, visit, &session.id, &session.owner_id, true)
 }
 
-/// Ends every session of `owner_id` but `keeping`. One already past its end was
-/// over before this, so it goes unrecorded.
+/// Ends every session of `owner_id` but `keeping`, and every device cookie. One session
+/// already past its end was over before this, so it goes unrecorded.
 pub(super) fn end_all(
     tx: &Transaction<'_>,
     at: &str,
@@ -324,7 +324,7 @@ pub(super) fn end_all(
     for id in ids.iter().filter(|id| Some(id.as_str()) != keeping) {
         ended(tx, at, actor, visit, id, owner_id, false)?;
     }
-    Ok(())
+    super::owner::renew_credentials(tx, owner_id)
 }
 
 pub const UNREAD: Unread<'static> = Unread {

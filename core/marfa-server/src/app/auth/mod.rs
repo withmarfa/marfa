@@ -1,4 +1,5 @@
 pub mod claim;
+pub mod device;
 pub mod limits;
 pub mod names;
 pub mod owner;

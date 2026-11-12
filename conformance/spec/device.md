@@ -3108,6 +3108,20 @@ If the server answers `whoami`'s `GET /profile` with `401`, then the CLI MUST ex
 
 **Tests:** `cli/login.test.ts › signs in with a device code approved in a browser session, and the token reaches the data plane`.
 
+### `device/whoami-key`
+
+When `whoami` runs with a credential that is not an access token on a server on its own contract, the CLI MUST report the server's answer to `GET /keys/current` as the credential's `key`.
+
+**Tests:** `cli/exits.test.ts › leaves whoami by 5 when the server refuses the key, and names a key it accepts`, `device/contract.test.ts › takes the served contract from the answer's header, whatever the root's body says`.
+
+### `device/whoami-ended-key`
+
+If the server answers `whoami`'s `GET /keys/current` with `401`, then the CLI MUST exit 5 and print nothing on standard output.
+
+**Reason:** A key that was revoked, or never minted, reaches nothing, and a script that checks its credential must not read a success.
+
+**Tests:** `cli/exits.test.ts › leaves whoami by 5 when the server refuses the key, and names a key it accepts`.
+
 ### `device/status-counts-not-permitted`
 
 If the server refuses `status` the item counts `403 type_not_permitted`, then the CLI MUST still describe the server, say the counts need a working key and exit 0.
