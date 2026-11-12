@@ -556,7 +556,16 @@ fn serve_health(port: u16, state: &Path, stop: &AtomicBool) {
                             Ok(size) => head.extend_from_slice(&buffer[..size]),
                         }
                     }
-                    let answer: &[u8] = if state.join("unhealthy").exists() {
+                    let degraded = fs::read_to_string(state.join("health-body")).ok();
+                    let answer: &[u8] = if let Some(body) = &degraded {
+                        let (line, body) = body.split_once('\n').unwrap();
+                        let reply = format!(
+                            "HTTP/1.1 {line}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                            body.len()
+                        );
+                        let _ = stream.write_all(reply.as_bytes());
+                        continue;
+                    } else if state.join("unhealthy").exists() {
                         b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 2\r\nConnection: close\r\n\r\nno"
                     } else {
                         b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok"
@@ -1311,6 +1320,65 @@ fn status_reports_in_json() {
     assert_eq!(report["healthy"], true);
     assert_eq!(report["claimed"], false);
     assert!(!String::from_utf8_lossy(&output.stdout).contains(&secrets(&rig)[0]));
+}
+
+fn status_json(rig: &Rig) -> serde_json::Value {
+    let output = output_of(
+        quiet::marfa()
+            .args(["--json", "server", "status", "--dir"])
+            .arg(&rig.dir)
+            .env("MARFA_DOCKER", rig.root.join("docker"))
+            .env("FAKE_DOCKER_STATE", &rig.state)
+            .env("MARFA_AUTOSTART_ROOT", rig.home()),
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[test]
+fn status_says_what_the_health_answer_says() {
+    let rig = Rig::new("status-health");
+    rig.installed(&["--access", "local"]);
+
+    fs::write(
+        rig.state.join("health-body"),
+        "200 OK\n{\"status\":\"degraded\",\"components\":{\"database\":{\"status\":\"ok\"},\"disk\":{\"status\":\"degraded\"}},\"backups\":{\"status\":\"ok\"}}",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = rig.marfa(&["status"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("running, degraded: disk degraded"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("running and healthy"), "{stdout}");
+    let report = status_json(&rig);
+    assert_eq!(report["running"], true);
+    assert_eq!(report["answering"], true);
+    assert_eq!(report["healthy"], false);
+    assert_eq!(report["health"]["status"], "degraded");
+    assert_eq!(report["health"]["problems"][0], "disk degraded");
+
+    fs::write(
+        rig.state.join("health-body"),
+        "503 Service Unavailable\n{\"status\":\"down\",\"components\":{\"database_write\":{\"status\":\"down\"}},\"backups\":{\"status\":\"failing\"}}",
+    )
+    .unwrap();
+    let (code, stdout, stderr) = rig.marfa(&["status"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("database write down") && stdout.contains("backups failing"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("not answering"), "{stdout}");
+    assert_eq!(status_json(&rig)["health"]["status"], "down");
+
+    // An answer that is not the health report is still an answer, not silence.
+    fs::remove_file(rig.state.join("health-body")).unwrap();
+    fs::write(rig.state.join("unhealthy"), "").unwrap();
+    let (code, stdout, _) = rig.marfa(&["status"]);
+    assert_eq!(code, 0);
+    assert!(!stdout.contains("running and healthy"), "{stdout}");
+    assert!(!stdout.contains("not answering"), "{stdout}");
 }
 
 #[test]

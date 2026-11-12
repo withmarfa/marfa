@@ -633,11 +633,9 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     if let address::Settled::Left { held } = &settled
         && !out.json
     {
-        let reach = match runtime {
-            Runtime::Native => format!("marfa --socket {}", layout.socket().display()),
-            Runtime::Docker => {
-                format!("docker exec {name} marfa --socket /data/control/marfa.sock")
-            }
+        let private = match runtime {
+            Runtime::Native => super::PrivateCommand::Socket(layout.socket()),
+            Runtime::Docker => super::PrivateCommand::Container(name.to_string()),
         };
         if sign_in.is_none() {
             eprintln!(
@@ -645,7 +643,8 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             );
         } else {
             eprintln!(
-                "The server signs in at {held}, and this run left it there. To move it, run this again with --address (or --access), or run `{reach} config update --body '{{\"sign_in_address\": \"<url>\", \"confirm_sign_in_address_change\": true}}'`."
+                "The server signs in at {held}, and this run left it there. To move it, run this again with --address (or --access), or run {}.",
+                private.run_text("config update --body '{\"sign_in_address\": \"<url>\", \"confirm_sign_in_address_change\": true}'")
             );
         }
     }

@@ -3641,7 +3641,8 @@ fn kept_miss(error: &CoreError) -> Option<(file_cache::NotHeldReason, bool)> {
         }
         CoreError::Server { status: 500.., .. }
         | CoreError::Unnamed { .. }
-        | CoreError::Network(_) => (Why::Unreachable, true),
+        | CoreError::Network(_)
+        | CoreError::ConnectionRefused { .. } => (Why::Unreachable, true),
         CoreError::Decoding(_)
         | CoreError::Server { .. }
         | CoreError::NotFound { .. }

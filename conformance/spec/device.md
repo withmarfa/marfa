@@ -3044,6 +3044,78 @@ If the CLI reports `network`, then the CLI MUST NOT begin the message with the w
 
 **Tests:** `cli/exits.test.ts › leaves by 3 when the server cannot be reached`.
 
+### `device/command-unreachable-hint`
+
+If a connection to a server on this machine is refused, then the CLI MUST ask a person whether the server is running and name `marfa server status`.
+
+**Reason:** a refused connection means nothing listens at the address, and a person who sees only that nothing answered cannot tell a stopped server from a wrong address. Another failure, such as a timeout, does not say that the server is stopped.
+
+**Tests:** `cli/exits.test.ts › asks a person whether the server is running when nothing listens on this machine, and says so only to a person`.
+
+### `device/command-unreachable-hint-not-in-json`
+
+If a connection to a server is refused and `--json` is set, then the CLI MUST NOT add advice to the envelope's message.
+
+**Reason:** a script reads the envelope's code and message, and advice for a person would change what it matches.
+
+**Tests:** `cli/exits.test.ts › asks a person whether the server is running when nothing listens on this machine, and says so only to a person`.
+
+### `device/command-local-only-refusal`
+
+If the server refuses a command with `details.needs` set to `local`, then the CLI MUST tell a person that the private local command can do it.
+
+**Reason:** the server says which refusals only the private local command can mend, so the CLI decides by that detail and not by the words of the message.
+
+**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key the private command is the way`.
+
+### `device/command-local-only-refusal-details`
+
+If the server refuses a command with `details`, then the CLI MUST carry `details` unchanged in the `--json` envelope's `server` member.
+
+**Reason:** a script decides what to do from the server's own detail, not from the CLI's advice.
+
+**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key the private command is the way`.
+
+### `device/command-address-change-flag`
+
+If a person runs `config update` or `config replace` with `--confirm-address-change`, then the CLI MUST send `confirm_sign_in_address_change` set to `true` with the body.
+
+**Reason:** the server holds a sign-in address change until it is confirmed, and a person confirms it by naming the flag after reading what the change does.
+
+**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key the private command is the way`.
+
+### `device/command-upload-refusal-reported`
+
+If the server refuses an upload before it reads the file, then the CLI MUST report the refusal's status, code and message.
+
+**Reason:** a server that refuses early closes the connection while the CLI is still sending, and a CLI that holds the file back until the server's go-ahead, for up to two seconds, reads the answer the server gave, which is the only thing that tells a person why the upload failed.
+
+**Tests:** `cli/attach.test.ts › reports the server's refusal of an upload it made before reading the file, not a broken connection`, `cli/archive-blobs.test.ts › reports the refusal of a large archive the server refuses before or while it arrives`.
+
+### `device/command-upload-refusal-not-network`
+
+If the server refuses an upload before it reads the file, then the CLI MUST NOT report a network failure.
+
+**Reason:** the server answered, and a network failure would send a person to the connection instead of the refusal.
+
+**Tests:** `cli/attach.test.ts › reports the server's refusal of an upload it made before reading the file, not a broken connection`.
+
+### `device/command-server-status-says-health`
+
+If the server of an install answers `/health` as degraded or down, then the CLI MUST say so in `marfa server status`, with the components at fault.
+
+**Reason:** a server that answers has not gone silent, and "not answering" is for a server that gave no answer.
+
+**Tests:** `cli/server-status.test.ts › says a server that answers degraded is degraded, and leaves by 0`, `› says a server that answers down is down, not silent, and leaves by 0`.
+
+### `device/command-server-status-exits-zero`
+
+If the server of an install answers `/health` as degraded or down, then the CLI MUST leave `marfa server status` by 0.
+
+**Reason:** a script reads `running`, `answering` and `health` in the `--json` report, and a non-zero exit would fail the scripts that pipe `status` to learn how the server is.
+
+**Tests:** `cli/server-status.test.ts › says a server that answers degraded is degraded, and leaves by 0`, `› says a server that answers down is down, not silent, and leaves by 0`.
+
 ### `device/command-redirect`
 
 If an answer to the CLI is a `3xx`, then the CLI MUST refuse it `redirect` with exit 1, naming the status and the destination, without following it.

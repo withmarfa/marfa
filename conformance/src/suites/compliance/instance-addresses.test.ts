@@ -158,6 +158,7 @@ describe("the sign-in address", () => {
     });
     expect(answer.status).toBe(403);
     expect(answer.body.error.code).toBe("forbidden");
+    expect(answer.body.error.details).toEqual({ needs: "local" });
     expect((await config()).sign_in_address).toBe(SIGN_IN);
     const origins = await call("key", "PATCH", "/config", {
       cors_origins: ["https://app.example"],

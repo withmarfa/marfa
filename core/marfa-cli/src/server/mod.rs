@@ -71,7 +71,15 @@ pub enum ServerCommand {
     Upgrade(UpgradeArgs),
     /// Whether the server runs, its release and address, and whether it is claimed.
     ///
-    /// When the server is not running, it shows the end of its log.
+    /// It says what the server's `/health` answers: healthy, or degraded or down with the
+    /// components at fault, such as a disk with too little room. It says "not answering" only
+    /// when the server gave no answer. When the server is not answering, it shows the end of
+    /// its log.
+    ///
+    /// It exits 0 whenever it can say how the server is, a stopped, degraded or silent server
+    /// included: `--json` has `running`, `answering`, `healthy` and `health` for a script to
+    /// read. It exits non-zero only when the command itself fails, such as for a folder with
+    /// no install.
     Status(DirArgs),
     /// Start the server, if it is not running.
     ///
@@ -291,6 +299,81 @@ struct State {
 
 struct Folder {
     dir: PathBuf,
+}
+
+/// How this machine reaches a server's private local command.
+pub enum PrivateCommand {
+    /// A native install: its socket is a path on this machine.
+    Socket(PathBuf),
+    /// A Docker install: its socket is inside the container.
+    Container(String),
+}
+
+impl PrivateCommand {
+    fn of(state: &State, folder: &Folder) -> Option<Self> {
+        match state.runtime {
+            Runtime::Native => {
+                let socket = native::Layout::new(&folder.dir).socket();
+                socket.exists().then_some(Self::Socket(socket))
+            }
+            Runtime::Docker => Some(Self::Container(state.name.clone())),
+        }
+    }
+
+    /// The words that put `command` through the private local command, with
+    /// no call to Docker: the install record says which container it is.
+    pub fn run_text(&self, command: &str) -> String {
+        match self {
+            Self::Socket(socket) => format!(
+                "`marfa --socket {} {command}`",
+                crate::hint::shell_word(&socket.display().to_string())
+            ),
+            Self::Container(name) => format!(
+                "`{command}` with the `marfa` command inside the Docker container `{name}`, putting `--socket {CONTAINER_SOCKET}` before it"
+            ),
+        }
+    }
+
+    /// The `marfa --socket` prefix, which a container has none of.
+    pub fn prefix(&self) -> Option<String> {
+        match self {
+            Self::Socket(socket) => Some(format!(
+                "marfa --socket {}",
+                crate::hint::shell_word(&socket.display().to_string())
+            )),
+            Self::Container(_) => None,
+        }
+    }
+
+    pub fn container_words(&self) -> Option<String> {
+        match self {
+            Self::Socket(_) => None,
+            Self::Container(name) => Some(format!(
+                "the server runs in the Docker container `{name}`: run this command with the `marfa` command inside it, putting `--socket {CONTAINER_SOCKET}` before it, and a file the command reads must be inside the container too"
+            )),
+        }
+    }
+}
+
+/// The socket inside a Docker install's container.
+const CONTAINER_SOCKET: &str = "/data/control/marfa.sock";
+
+/// The private local command of the server at `origin`, if this machine's install is that server.
+pub fn private_command_for(origin: &str) -> Option<PrivateCommand> {
+    let asked = url::Url::parse(origin).ok()?;
+    let folder = Folder::new(&DirArgs { dir: None }).ok()?;
+    let (state, _) = folder.state().ok()??;
+    let on_this_port = marfa_telemetry::host::is_loopback(&asked)
+        && asked.port_or_known_default() == Some(state.port);
+    let at_its_address = state
+        .address
+        .as_deref()
+        .and_then(|address| url::Url::parse(address).ok())
+        .is_some_and(|address| address.origin() == asked.origin());
+    if !on_this_port && !at_its_address {
+        return None;
+    }
+    PrivateCommand::of(&state, &folder)
 }
 
 /// The path with the part that exists made real, so that a link in it is
@@ -633,6 +716,28 @@ impl Steps {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_container_is_named_in_words_and_a_socket_is_a_prefix_to_repeat_a_command_after() {
+        let container = PrivateCommand::Container("marfa-home".into());
+        assert_eq!(container.prefix(), None);
+        let words = container.container_words().unwrap();
+        assert!(words.contains("`marfa-home`"), "{words}");
+        assert!(
+            words.contains("--socket /data/control/marfa.sock"),
+            "{words}"
+        );
+        assert!(!words.contains("docker exec"), "{words}");
+        let moved = container.run_text("config update");
+        assert!(moved.contains("`config update`") && moved.contains("`marfa-home`"));
+
+        let socket = PrivateCommand::Socket(PathBuf::from("/srv/it's/marfa.sock"));
+        assert_eq!(
+            socket.prefix().as_deref(),
+            Some("marfa --socket '/srv/it'\\''s/marfa.sock'")
+        );
+        assert_eq!(socket.container_words(), None);
+    }
 
     #[test]
     fn a_release_is_three_plain_numbers() {

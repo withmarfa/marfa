@@ -2305,7 +2305,9 @@ fn unavailable_by(error: &CoreError) -> Option<String> {
     match error {
         CoreError::RenewalFailed(cause) => unavailable_by(cause),
         CoreError::Io(_) | CoreError::StorageFull(_) => Some(error.to_string()),
-        CoreError::Network(reason) => Some(format!("the server could not be reached: {reason}")),
+        CoreError::Network(_) | CoreError::ConnectionRefused { .. } => {
+            Some(format!("the server could not be reached: {error}"))
+        }
         CoreError::Unnamed { .. } => Some(error.to_string()),
         CoreError::RateLimited { .. } | CoreError::Server { .. } if error.is_environmental() => {
             Some(format!(

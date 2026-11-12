@@ -10202,7 +10202,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: the request does not come from the private local command. */
+            /** @description `forbidden`: the request does not come from the private local command. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10595,7 +10595,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: requires the private local command. */
+            /** @description `forbidden`: requires the private local command. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10716,7 +10716,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: requires the private local command for changes. */
+            /** @description `forbidden`: requires the private local command for changes. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -10873,7 +10873,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: requires the private local command for changes. */
+            /** @description `forbidden`: requires the private local command for changes. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11030,7 +11030,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: requires the private local command for changes. */
+            /** @description `forbidden`: requires the private local command for changes. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -11201,7 +11201,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description `forbidden`: requires the private local command for changes. */
+            /** @description `forbidden`: requires the private local command for changes. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -19868,7 +19868,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: only the private local command can list folders. */
+            /** @description - `forbidden`: only the private local command can list folders. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26160,7 +26160,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the private local command is required, or the requested scopes widen access. */
+            /** @description - `forbidden`: the private local command is required, or the requested scopes widen access. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26303,7 +26303,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description This operation requires the private local command. */
+            /** @description This operation requires the private local command. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -26565,7 +26565,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The request needs the private local command. */
+            /** @description The request needs the private local command. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27125,7 +27125,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description The request needs the private local command. */
+            /** @description The request needs the private local command. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27419,7 +27419,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the request carries a key or an app's token rather than the private local command. */
+            /** @description - `forbidden`: the request carries a key or an app's token rather than the private local command. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27535,7 +27535,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the request carries a key or an app's token rather than the private local command. */
+            /** @description - `forbidden`: the request carries a key or an app's token rather than the private local command. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27697,7 +27697,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: the request carries a key or an app's token rather than the private local command. */
+            /** @description - `forbidden`: the request carries a key or an app's token rather than the private local command. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -28557,7 +28557,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `config.manage`. `details.required_scope` names it. */
+            /**
+             * @description - `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.
+             *     - `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or the origins, which only the private local command can do.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -28748,7 +28751,10 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: you don't hold `config.manage`. `details.required_scope` names it. */
+            /**
+             * @description - `forbidden`: you don't hold `config.manage`. `details.required_scope` names it.
+             *     - `forbidden` with `details.needs` set to `local`: the change moves the sign-in address or the origins, which only the private local command can do.
+             */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -29170,7 +29176,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description - `forbidden`: only the private local command can read what needs attention. */
+            /** @description - `forbidden`: only the private local command can read what needs attention. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30039,7 +30045,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Requires the private local command. */
+            /** @description Requires the private local command. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30205,7 +30211,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Requires the private local command. */
+            /** @description Requires the private local command. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30335,7 +30341,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Requires the private local command. */
+            /** @description Requires the private local command. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30538,7 +30544,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Requires the private local command. */
+            /** @description Requires the private local command. `details.needs` is `local`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

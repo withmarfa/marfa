@@ -43,6 +43,9 @@ pub enum CoreError {
     /// which a surface that prints a code beside a message would show twice.
     #[error("{0}")]
     Network(String),
+    /// Nothing was listening at the origin.
+    #[error("request to {origin} failed: the connection was refused")]
+    ConnectionRefused { origin: String },
     /// The server names its contract on every answer, so one naming none is
     /// taken as from something in front of it. Environmental, whatever its
     /// status: a gateway's `401` is not the server's word on the key, nor a
@@ -214,7 +217,7 @@ codes! {
     RateLimited: CoreError::RateLimited { .. } => "rate_limited",
     Server: CoreError::Server { .. } => "server",
     Io: CoreError::Io(_) => "io",
-    Network: CoreError::Network(_) => "network",
+    Network: CoreError::Network(_) | CoreError::ConnectionRefused { .. } => "network",
     Unnamed: CoreError::Unnamed { .. } => "unnamed_answer",
     Decoding: CoreError::Decoding(_) => "decoding",
     Store: CoreError::Store(_) => "store",
@@ -266,6 +269,7 @@ impl CoreError {
             CoreError::Io(_)
             | CoreError::StorageFull(_)
             | CoreError::Network(_)
+            | CoreError::ConnectionRefused { .. }
             | CoreError::RateLimited { .. }
             | CoreError::Unnamed { .. } => true,
             CoreError::Server { status, .. } => environmental_status(*status),
@@ -280,7 +284,9 @@ impl CoreError {
     pub fn is_unreachable(&self) -> bool {
         match self {
             CoreError::RenewalFailed(cause) => cause.is_unreachable(),
-            CoreError::Network(_) | CoreError::RateLimited { .. } => true,
+            CoreError::Network(_)
+            | CoreError::ConnectionRefused { .. }
+            | CoreError::RateLimited { .. } => true,
             CoreError::Server { status, .. } | CoreError::Unnamed { status, .. } => {
                 matches!(status, 408 | 429 | 500..=599)
             }

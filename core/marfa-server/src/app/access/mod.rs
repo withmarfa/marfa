@@ -288,8 +288,7 @@ impl Caller {
         if self.is_local() {
             Ok(())
         } else {
-            Err(Refusal::new(
-                Code::Forbidden,
+            Err(Refusal::needs_local(
                 "Only the private local command can do this.",
             ))
         }

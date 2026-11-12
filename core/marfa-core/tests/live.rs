@@ -207,7 +207,7 @@ fn hydrate_list_search_and_catch_up_against_a_live_server() {
     assert_eq!(moved.status().unwrap(), status);
     assert!(matches!(
         moved.server_catalog_until(&std::sync::atomic::AtomicBool::new(false)),
-        Err(CoreError::Network(_))
+        Err(CoreError::ConnectionRefused { .. })
     ));
     assert_eq!(moved.status().unwrap(), status);
     assert_eq!(moved.queue().unwrap(), before_queue);

@@ -172,7 +172,7 @@ describe("folder sync reports", () => {
     const fromKey = await call("GET", "/folders");
     expect(fromKey.status).toBe(403);
     expect(await fromKey.json()).toMatchObject({
-      error: { code: "forbidden" },
+      error: { code: "forbidden", details: { needs: "local" } },
     });
     const noCredential = await fetch(`${server.apiUrl}/folders`);
     expect(noCredential.status).toBe(401);

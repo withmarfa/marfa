@@ -8,6 +8,7 @@ import { expectMatchesSchema } from "../../utils/openapi.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 import { localFetch } from "../../utils/control-request.js";
+type RefusalBody = { error: { details?: unknown } };
 let server: FreshServer;
 beforeAll(async () => {
   server = await bootFreshServer("owner-trash");
@@ -119,7 +120,19 @@ it("lists and changes trash as summaries, with exact versions and cascade restor
       )
     ).status,
   ).toBe(200);
-  expect((await key("/trash")).status).toBe(403);
+  for (const [path, body] of [
+    ["/trash", undefined],
+    [`/items/summaries/${root.id}/trash?version=1`, {}],
+    ["/trash/empty", {}],
+  ] as const) {
+    const refused = await key(path, body);
+    expect(refused.status, path).toBe(403);
+    expect(((await refused.json()) as RefusalBody).error.details, path).toEqual(
+      {
+        needs: "local",
+      },
+    );
+  }
   expect((await owner("/trash?cursor=invalid")).status).toBe(400);
   for (const action of ["trash", "restore", "purge"]) {
     expect((await act("invalid", action)).status).toBe(400);

@@ -284,7 +284,7 @@ pub enum Poll {
 /// concerned: no connection, or a server error.
 fn is_blip(error: &CliError) -> bool {
     match error {
-        CliError::Core(CoreError::Network(_)) => true,
+        CliError::Core(CoreError::Network(_) | CoreError::ConnectionRefused { .. }) => true,
         CliError::Refused { status, .. } | CliError::Core(CoreError::Unnamed { status, .. }) => {
             *status >= 500
         }

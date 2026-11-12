@@ -80,7 +80,9 @@ fn core_error(error: &CoreError) -> &'static str {
         CoreError::RateLimited { .. } => "the server rate limited the request",
         CoreError::Server { .. } => "the server answered with a status this build does not expect",
         CoreError::Io(_) => "reading or writing a file or a stream failed",
-        CoreError::Network(_) => "the server could not be reached, or did not answer in time",
+        CoreError::Network(_) | CoreError::ConnectionRefused { .. } => {
+            "the server could not be reached, or did not answer in time"
+        }
         CoreError::Unnamed { .. } => "the answer did not come from a Marfa server",
         CoreError::Decoding(_) => "an answer could not be decoded",
         CoreError::RenewalFailed(cause) => core_error(cause),

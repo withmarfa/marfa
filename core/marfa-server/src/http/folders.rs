@@ -16,7 +16,7 @@ use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
 use crate::app::folders::{self, Page, Report, SETTINGS, refuse_null, undeclared};
 use crate::app::items::write::{self, Change, FolderChange, ruled};
-use crate::app::refusal::{Code, Refusal, Result};
+use crate::app::refusal::{Refusal, Result};
 use crate::app::types::missing_field;
 
 const FOLDER_PAGE: i64 = 50;
@@ -169,11 +169,9 @@ pub async fn inventory(State(app): State<Arc<App>>, caller: Caller, uri: Uri) ->
     match &caller {
         Caller::Local(_) => {}
         _ => {
-            return Err(Refusal::new(
-                Code::Forbidden,
-                "Only the private local command can list folders.",
-            )
-            .into());
+            return Err(
+                Refusal::needs_local("Only the private local command can list folders.").into(),
+            );
         }
     }
     let params = Params::read(&uri, &["limit", "cursor"], false)?;

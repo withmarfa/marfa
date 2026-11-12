@@ -114,3 +114,32 @@ it("clears the owner's picture", async () => {
     await rm(dir, { recursive: true, force: true });
   }
 });
+
+it("holds a sign-in address change until its flag confirms it, and tells a key the private command is the way", async () => {
+  const address = "https://moved.example";
+  const body = JSON.stringify({ sign_in_address: address });
+  const keyedTry = await keyed.run(["config", "update", "--body", body]);
+  expect(keyedTry.code).toBe(1);
+  expect(keyedTry.stderr).toContain("private local command");
+  const keyedJson = await keyed.refused(["config", "update", "--body", body]);
+  expect(keyedJson.envelope.error.server?.details).toEqual({ needs: "local" });
+
+  const held = await local.run(["config", "update", "--body", body]);
+  expect(held.code).toBe(1);
+  expect(held.stderr).toContain("sign_in_address_change_unconfirmed");
+  expect(held.stderr).toContain("--confirm-address-change");
+  const stored = await local.json<{ sign_in_address?: string }>([
+    "config",
+    "get",
+  ]);
+  expect(stored.sign_in_address).toBeUndefined();
+
+  const moved = await local.json<{ sign_in_address?: string }>([
+    "config",
+    "update",
+    "--body",
+    body,
+    "--confirm-address-change",
+  ]);
+  expect(moved.sign_in_address).toBe(address);
+});

@@ -19,6 +19,18 @@ use crate::wire::{
 };
 use marfa_rules::wire::{WireCatalog, WireEdgeType, WireType};
 
+fn connection_refused(cause: &(dyn std::error::Error + 'static)) -> bool {
+    std::iter::successors(Some(cause), |error| error.source()).any(|error| {
+        let kind = match error.downcast_ref::<ureq::Error>() {
+            Some(ureq::Error::Io(error)) => Some(error.kind()),
+            _ => error
+                .downcast_ref::<std::io::Error>()
+                .map(std::io::Error::kind),
+        };
+        kind == Some(std::io::ErrorKind::ConnectionRefused)
+    })
+}
+
 /// The page asked of the item listing, the most it answers
 /// (`search-and-filters/limit-listing`). A hydration reads a page per round
 /// trip, so a larger page fills a copy sooner over a slow link. A server
@@ -53,6 +65,9 @@ pub const LOOKUP_BODY_BYTES: usize = 256 * 1024;
 /// one read whole.
 const RESPONSE_BUDGET: Duration = Duration::from_secs(30);
 const BODY_BUDGET: Duration = Duration::from_secs(60);
+
+/// How long an upload that asked `Expect: 100-continue` waits for `100`, as RFC 9110 allows, before sending its body.
+const AWAIT_100: Duration = Duration::from_secs(2);
 
 /// The rows of an item page a body budget is set for. The budget bounds the
 /// whole read of a body, so a page of more rows is given more of it in
@@ -442,8 +457,6 @@ impl Http {
             .max_redirects(0)
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(recv_response))
-            // Without it ureq sends the body of an `Expect: 100-continue` request after one second.
-            .timeout_await_100(Some(recv_response))
             .timeout_recv_body(Some(recv_body))
             .build();
         Self::with_connector(url, key, config, DefaultConnector::default)
@@ -766,12 +779,14 @@ impl Http {
 
     /// A transport failure, naming the server by scheme, host and port only:
     /// a gateway's path prefix, a key or a token is never in what a person
-    /// is shown.
-    fn unreached(&self, cause: impl std::fmt::Display) -> CoreError {
-        CoreError::Network(format!(
-            "request to {} failed: {cause}",
-            self.base.origin().ascii_serialization()
-        ))
+    /// is shown. A refused connection is its own error, carrying the origin.
+    fn unreached(&self, cause: impl std::error::Error + 'static) -> CoreError {
+        let origin = self.base.origin().ascii_serialization();
+        if connection_refused(&cause) {
+            CoreError::ConnectionRefused { origin }
+        } else {
+            CoreError::Network(format!("request to {origin} failed: {cause}"))
+        }
     }
 
     /// `GET /items/{id}/tables`, as the server answers it.
@@ -1738,6 +1753,7 @@ impl Http {
                     .configure_request(request)
                     .timeout_recv_response(None)
                     .timeout_recv_body(None)
+                    .timeout_await_100(Some(AWAIT_100))
                     .build(),
             ),
         }
@@ -2610,6 +2626,190 @@ mod tests {
             matches!(&fetched, Err(CoreError::Network(_))),
             "{fetched:?}"
         );
+    }
+
+    #[test]
+    fn a_file_the_server_refuses_before_reading_it_is_answered_not_broken_off() {
+        let (url, serving) = serve_closing_early();
+        let reader = Read::take(std::io::repeat(b'x'), LONG_BODY as u64);
+        let reply = Http::new(&url, "k")
+            .unwrap()
+            .fetch(
+                Call {
+                    method: Method::Post,
+                    segments: &["blobs"],
+                    params: &[],
+                    headers: &[("Expect", "100-continue")],
+                    body: CallBody::Reader(Box::new(reader)),
+                    credential: true,
+                    stream: false,
+                },
+                true,
+            )
+            .unwrap();
+        serving.join().unwrap();
+        assert_eq!(reply.status, 413);
+    }
+
+    /// The chunked body that follows a request's head, read to its end.
+    fn read_chunked_body(socket: &mut std::net::TcpStream) -> String {
+        let mut body = Vec::new();
+        let mut chunk = [0u8; 4096];
+        while !body.ends_with(b"0\r\n\r\n") {
+            let read = Read::read(socket, &mut chunk).unwrap();
+            assert!(read > 0, "the connection closed before the body ended");
+            body.extend_from_slice(&chunk[..read]);
+        }
+        String::from_utf8_lossy(&body).into_owned()
+    }
+
+    /// Reads one request's head, then, never sending `100 Continue`, waits for
+    /// its body and answers `201`. Hands back when the body arrived.
+    fn serve_without_continue() -> (String, std::thread::JoinHandle<std::time::Duration>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let serving = std::thread::spawn(move || {
+            use std::io::Write;
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut head = Vec::new();
+            let mut chunk = [0u8; 4096];
+            while !head.windows(4).any(|window| window == b"\r\n\r\n") {
+                let read = Read::read(&mut socket, &mut chunk).unwrap();
+                head.extend_from_slice(&chunk[..read]);
+            }
+            let started = std::time::Instant::now();
+            read_chunked_body(&mut socket);
+            let waited = started.elapsed();
+            let _ = write!(
+                socket,
+                "HTTP/1.1 201 Created\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nContent-Length: 0\r\n\r\n"
+            );
+            waited
+        });
+        (url, serving)
+    }
+
+    #[test]
+    fn a_server_that_never_sends_100_gets_the_body_after_a_short_wait() {
+        let (url, serving) = serve_without_continue();
+        let reply =
+            Http::with_timeouts(&url, "k", Duration::from_secs(90), Duration::from_secs(90))
+                .unwrap()
+                .fetch(
+                    Call {
+                        method: Method::Post,
+                        segments: &["blobs"],
+                        params: &[],
+                        headers: &[("Expect", "100-continue")],
+                        body: CallBody::Reader(Box::new(std::io::Cursor::new(b"file".to_vec()))),
+                        credential: true,
+                        stream: false,
+                    },
+                    true,
+                )
+                .unwrap();
+        let waited = serving.join().unwrap();
+        assert_eq!(reply.status, 201);
+        assert!(waited < Duration::from_secs(6), "{waited:?}");
+    }
+
+    #[test]
+    fn an_upload_refused_401_before_its_body_renews_once_and_is_sent_again() {
+        use std::io::Write;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let serving = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for answer in ["401 Unauthorized", "201 Created"] {
+                let (mut socket, _) = listener.accept().unwrap();
+                let mut bytes = Vec::new();
+                let mut chunk = [0u8; 4096];
+                while !bytes.windows(4).any(|window| window == b"\r\n\r\n") {
+                    let read = Read::read(&mut socket, &mut chunk).unwrap();
+                    bytes.extend_from_slice(&chunk[..read]);
+                }
+                let head = String::from_utf8_lossy(&bytes).into_owned();
+                let body = if answer.starts_with("201") {
+                    socket.write_all(b"HTTP/1.1 100 Continue\r\n\r\n").unwrap();
+                    read_chunked_body(&mut socket)
+                } else {
+                    String::new()
+                };
+                let reply = r#"{"error":{"code":"unauthorized","message":"expired"}}"#;
+                let reply = if answer.starts_with("401") {
+                    reply
+                } else {
+                    "{}"
+                };
+                let _ = write!(
+                    socket,
+                    "HTTP/1.1 {answer}\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                    reply.len()
+                );
+                let authorization = head
+                    .lines()
+                    .find(|line| line.to_ascii_lowercase().starts_with("authorization:"))
+                    .unwrap_or_default()
+                    .to_string();
+                seen.push((authorization, body));
+            }
+            seen
+        });
+        let http = Http::new(&url, "old").unwrap();
+        let renewals = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = Arc::clone(&renewals);
+        http.renew_with(Box::new(move |_| {
+            counted.fetch_add(1, Ordering::SeqCst);
+            Ok("new".into())
+        }));
+        let upload = || Call {
+            method: Method::Post,
+            segments: &["blobs"],
+            params: &[],
+            headers: &[("Expect", "100-continue")],
+            body: CallBody::Reader(Box::new(std::io::Cursor::new(b"file".to_vec()))),
+            credential: true,
+            stream: false,
+        };
+        let first = http.fetch(upload(), true).unwrap();
+        assert_eq!(first.status, 401);
+        let second = http.fetch(upload(), true).unwrap();
+        assert_eq!(second.status, 201);
+        assert_eq!(renewals.load(Ordering::SeqCst), 1);
+        let seen = serving.join().unwrap();
+        assert_eq!(seen[0].1, "", "the refused send carried no body");
+        assert!(seen[0].0.ends_with("Bearer old"), "{seen:?}");
+        assert!(seen[1].0.ends_with("Bearer new"), "{seen:?}");
+        assert!(seen[1].1.contains("file"), "{seen:?}");
+    }
+
+    #[test]
+    fn a_refused_connection_names_its_origin_and_another_failure_does_not() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let refused = Http::new(&url, "k")
+            .unwrap()
+            .fetch(post_items("{}"), true)
+            .map(|_| "answered")
+            .unwrap_err();
+        assert!(
+            matches!(&refused, CoreError::ConnectionRefused { origin } if origin == &url),
+            "{refused}"
+        );
+        assert_eq!(
+            refused.to_string(),
+            format!("request to {url} failed: the connection was refused")
+        );
+
+        let (url, serving) = serve(Vec::new());
+        let hung_up = Http::new(&url, "k")
+            .unwrap()
+            .fetch(post_items("{}"), true)
+            .map(|_| "answered")
+            .unwrap_err();
+        serving.join().unwrap().unwrap();
+        assert!(matches!(&hung_up, CoreError::Network(_)), "{hung_up}");
     }
 
     #[test]

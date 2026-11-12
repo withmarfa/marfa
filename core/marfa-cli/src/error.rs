@@ -403,6 +403,7 @@ impl CliError {
                 | CoreError::RateLimited { .. }
                 | CoreError::Server { .. }
                 | CoreError::Network(_)
+                | CoreError::ConnectionRefused { .. }
                 | CoreError::Unnamed { .. }
                 | CoreError::Decoding(_)
                 | CoreError::StreamIncomplete { .. }

@@ -458,7 +458,7 @@ fn relocation_unreachable_origin_keeps_unsent_work_and_can_be_opened_again() {
     let queue = core.queue().unwrap();
     assert!(matches!(
         core.http().unwrap().types(),
-        Err(CoreError::Network(_))
+        Err(CoreError::ConnectionRefused { .. })
     ));
     assert_eq!(core.queue().unwrap(), queue);
     assert_eq!(origin(&core), OLD_ORIGIN);

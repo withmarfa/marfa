@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { cleanup, trackItem } from "../../utils/setup.js";
+import { cleanup, trackItem, trackKey } from "../../utils/setup.js";
 import { cliContext, unique } from "./harness.js";
 import type { CliContext, ItemEnvelope, Refusal } from "./harness.js";
 
@@ -154,6 +154,31 @@ describe("attaching a file", () => {
       attached.blob.hash,
     ]);
     expect(still.data.map((copy) => copy.store_id)).toContain(kept!.store);
+  });
+
+  it("reports the server's refusal of an upload it made before reading the file, not a broken connection", async () => {
+    const path = join(dir, "large.bin");
+    writeFileSync(path, Buffer.alloc(64 * 1024 * 1024, 7));
+    // A key that manages no blobs and may write no type is refused by the
+    // blob door itself, before the server answers 100 and the body is sent.
+    const inert = await c.cli.json<{ id: string; key: string }>([
+      "keys",
+      "create",
+      "--label",
+      "scenario-no-upload",
+      "--source",
+      unique("cli-no-upload"),
+      "--no-permissions",
+    ]);
+    trackKey(c.ctx, inert.id);
+    const refused = await c.cli.as(inert.key).refused(["items", "add", path]);
+    expect(refused.envelope.error.server?.status).toBe(403);
+    expect(refused.envelope.error.server?.code).toBe("type_not_permitted");
+    expect(refused.envelope.error.message).toContain(
+      "holds write on no type a file can be kept under, so it may not upload",
+    );
+    expect(refused.envelope.error.message).not.toContain("failed");
+    expect(refused.code).not.toBe(3);
   });
 
   it("adds a file as an item of its own, typed by its extension, under the title, tags and tier given, and links it to nothing", async () => {
