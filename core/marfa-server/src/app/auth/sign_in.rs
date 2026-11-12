@@ -336,7 +336,10 @@ pub async fn confirm(
     let attempt = reopen(app, caller, session, &email, password, visit.clone());
     match counted(app, &email, Some(&email), known.as_ref(), &visit, attempt).await? {
         Ok(opening) => opening.signed_in(app, known.as_ref()),
-        Err(wait) => Err(too_many_passwords(wait)),
+        Err(wait) => {
+            refused_sign_in(app, Some(caller), &email, TOO_MANY, &visit).await?;
+            Err(too_many_passwords(wait))
+        }
     }
 }
 
@@ -352,12 +355,23 @@ async fn reopen(
     password: String,
     visit: Visit,
 ) -> Tried<Opening> {
+    let actor = Some(caller);
     match prove(app, email, password, true).await {
-        Ok(Some(proven)) => Tried {
-            proven: true,
-            outcome: confirmed(app, caller, session, proven, visit).await,
-        },
-        Ok(None) => Tried::unproven(Err(not_right())),
+        Ok(Some(proven)) => {
+            let outcome = match confirmed(app, caller, session, proven, visit.clone()).await {
+                Ok(Some(opening)) => Ok(opening),
+                Ok(None) => refused(app, actor, email, INVALID, &visit, not_right()).await,
+                Err(refusal) => Err(refusal),
+            };
+            Tried {
+                proven: true,
+                outcome,
+            }
+        }
+        Ok(None) => Tried::unproven(refused(app, actor, email, INVALID, &visit, not_right()).await),
+        Err(refusal) if refusal.code == Code::RateLimited => {
+            Tried::unproven(refused(app, actor, email, TOO_MANY, &visit, refusal).await)
+        }
         Err(refusal) => Tried::unproven(Err(refusal)),
     }
 }
@@ -368,12 +382,12 @@ async fn confirmed(
     session: session::Session,
     proven: Proven,
     visit: Visit,
-) -> Result<Opening> {
+) -> Result<Option<Opening>> {
     let salt = app.settings.start.key_salt.clone();
     app.write(caller, SIGNED_IN, move |unit| {
         let tx = unit.tx();
         if !proven.stands(tx, &unit.at)? {
-            return Err(not_right());
+            return Ok(None);
         }
         let opened = session::open(
             tx,
@@ -401,11 +415,11 @@ async fn confirmed(
                 })),
             },
         )?;
-        Ok(Opening {
+        Ok(Some(Opening {
             opened,
             owner_id: proven.owner.id.clone(),
             credentials: proven.credentials(tx)?,
-        })
+        }))
     })
     .await
 }

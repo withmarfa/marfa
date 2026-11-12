@@ -350,6 +350,112 @@ describe("confirming with a passkey", () => {
   });
 });
 
+interface AuditEntry {
+  actor: { kind: string; id: string; name: string } | null;
+  resource_type: string;
+  resource_id: string | null;
+  details: Record<string, unknown> | null;
+}
+
+/** The audit log's entries of one action, newest first. */
+async function audited(action: string): Promise<AuditEntry[]> {
+  const response = await fetch(
+    `${server.apiUrl}/audit?${new URLSearchParams({ action, limit: "200" })}`,
+    { headers: { authorization: `Bearer ${server.managementKey}` } },
+  );
+  expect(response.status).toBe(200);
+  return ((await response.json()) as { data: AuditEntry[] }).data;
+}
+
+/**
+ * Confirms `cookie` with the right password, and answers the ID of the
+ * session it replaced, which the confirmation's own entry names.
+ */
+async function confirmedSessionId(cookie: string): Promise<string> {
+  const confirmed = await confirm({ password: TEST_OWNER.password }, cookie);
+  expect(confirmed.status).toBe(200);
+  const [entry] = await audited("auth.sign_in.success");
+  const id = entry?.details?.confirmed_session;
+  expect(id).toBeTypeOf("string");
+  return id as string;
+}
+
+describe("a refused confirmation in the audit log", () => {
+  it("records a refused confirmation in the audit log as a refused password sign-in, with its reason", async () => {
+    const stale = await signIn();
+    await server.advanceClock(6 * MINUTE);
+    const failed = "auth.sign_in.failed";
+    const before = (await audited(failed)).length;
+    const sent = "a wrong confirmation password";
+    const wrong = await confirm({ password: sent }, stale);
+    expect(wrong.status).toBe(401);
+    const refused = await audited(failed);
+    expect(refused).toHaveLength(before + 1);
+    expect(refused[0]?.resource_type).toBe("owner");
+    expect(refused[0]?.details).toMatchObject({
+      method: "password",
+      reason: "invalid_credentials",
+    });
+
+    const address = nextAddress();
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const spent = await confirm({ password: sent }, stale, address);
+      expect(spent.status).toBe(401);
+    }
+    const locked = await confirm(
+      { password: TEST_OWNER.password },
+      stale,
+      address,
+    );
+    expect(locked.status).toBe(429);
+    const held = await audited(failed);
+    expect(held).toHaveLength(before + 12);
+    expect(held[0]?.resource_type).toBe("owner");
+    expect(held[0]?.details).toMatchObject({
+      method: "password",
+      reason: "too_many_attempts",
+    });
+
+    const recorded = held.slice(0, 12);
+    expect(JSON.stringify(recorded)).not.toContain(sent);
+    expect(JSON.stringify(recorded)).not.toContain(TEST_OWNER.password);
+    const session = await confirmedSessionId(stale);
+    expect(await audited(failed)).toHaveLength(before + 12);
+    for (const entry of recorded) {
+      expect(entry.actor).toMatchObject({ kind: "browser", id: session });
+    }
+  });
+
+  it("records a refused passkey confirmation in the audit log as a refused passkey sign-in", async () => {
+    const stale = await signIn();
+    const rpID = new URL(origin).hostname;
+    const device = testAuthenticator();
+    const added = await registerPasskey(stale, device, "Audited key");
+    expect(added.status).toBe(201);
+    const passkeyId = ((await added.json()) as { id: string }).id;
+
+    await server.advanceClock(6 * MINUTE);
+    const failed = "auth.sign_in.failed";
+    const before = (await audited(failed)).length;
+    const asked = await passkeyOptions("sign-in", stale);
+    const signed = device.authentication(asked.challenge, origin, 1, rpID);
+    // A signature over another challenge does not verify this assertion.
+    const other = device.authentication("b3RoZXI", origin, 1, rpID);
+    signed.response.signature = other.response.signature;
+    const refused = await confirm({ passkey: signed }, asked.cookie);
+    expect(refused.status).toBe(401);
+
+    const held = await audited(failed);
+    expect(held).toHaveLength(before + 1);
+    expect(held[0]?.resource_type).toBe("passkey");
+    expect(held[0]?.resource_id).toBe(passkeyId);
+    expect(held[0]?.details).toMatchObject({ method: "passkey" });
+    const session = await confirmedSessionId(stale);
+    expect(await audited(failed)).toHaveLength(before + 1);
+    expect(held[0]?.actor).toMatchObject({ kind: "browser", id: session });
+  });
+});
+
 describe("a stale session changing a passkey", () => {
   it("refuses a rename and a removal from a session created more than five minutes ago, and a recent session makes both", async () => {
     const holder = await signIn();
