@@ -277,6 +277,7 @@ describe("a backup in the object store", () => {
     ]) {
       expect(answer.status, JSON.stringify(answer.data)).toBe(403);
       expect(answer.error?.error.code).toBe("forbidden");
+      expect(answer.error?.error.details).toEqual({ needs: "local" });
     }
     expect((await bucket.backupKeys()).length).toBe(2);
   });

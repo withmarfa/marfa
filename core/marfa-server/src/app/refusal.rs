@@ -209,6 +209,11 @@ impl Refusal {
         self
     }
 
+    /// `403` for an operation only the private local command may make.
+    pub fn needs_local(message: &'static str) -> Refusal {
+        Refusal::new(Code::Forbidden, message).with_detail("needs", "local")
+    }
+
     pub fn with_detail(mut self, name: &str, value: impl Into<Value>) -> Refusal {
         self.details
             .get_or_insert_default()

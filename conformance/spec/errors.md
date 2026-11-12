@@ -18,6 +18,14 @@ When the server carries `details` in the `error` object of a refusal, the server
 
 **Tests:** `compliance/write-refusal-details.test.ts › answers 404 with details.trashed to a key that may read the type, and nothing to one that may not`, `compliance/stream-capacity.test.ts › answers 503 stream_capacity_exhausted to the viewer past the cap, on either stream, and admits one again once a viewer leaves`.
 
+### `errors/needs-local`
+
+If a caller other than the private local command sends a request that only the private local command may make, then the server MUST answer `403 forbidden` with `needs` set to `local` in the `error` object's `details`.
+
+**Reason:** a key that holds every permission is still refused these operations, and a client that reads `details.needs` can tell the person to use the private local command instead of showing a refusal that no permission mends.
+
+**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key at all three doors`, `compliance/instance-addresses.test.ts › is refused to a key, which holds config.manage but not direct authority`.
+
 ### `errors/status-absent`
 
 The server MUST NOT carry a `status` member in the `error` object of a refusal.
