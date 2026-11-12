@@ -109,6 +109,37 @@ async function nextPass(harness: BindingFolderHarness) {
   await untilHeld(device, "folder-pass-ended");
 }
 
+/**
+ * Moves the clock, then waits until the watch has taken the step: its own wait
+ * is back on the clock, or it stands at `heldAt`, a point it stops at once a
+ * pass has ended. The watch dates what it meets (a file's removal, a look at
+ * the other folders) by the clock at the turn that meets it, so a clock moved
+ * again before the watch took the last step gives it a later date than the
+ * steps it was meant to see. The 200 ms wait that looks for a command asking
+ * for the folder is always on the clock and says nothing of the watch.
+ */
+async function advanceWithWatch(
+  device: BindingFolderHarness["device"],
+  ms: number,
+  heldAt?: string,
+) {
+  const lookWaitMs = 200;
+  await device.clock.advance(ms);
+  await vi.waitFor(
+    async () => {
+      if (heldAt !== undefined && (await device.hooks.waiting(heldAt)) > 0) {
+        return;
+      }
+      const waits = await device.clock.waits();
+      expect(
+        waits.filter((wait) => wait.askedMs !== lookWaitMs).length,
+        "the watch did not take the step",
+      ).toBeGreaterThan(0);
+    },
+    { timeout: 10_000, interval: 5 },
+  );
+}
+
 function notesIn(dir: string): string[] {
   return readdirSync(dir)
     .filter((name) => name !== ".marfa")
@@ -218,13 +249,7 @@ describe("folder clock and scan boundaries", () => {
     // file may have moved to cannot be told.
     const run = async (ms: number) => {
       for (let left = ms; left > 0; left -= 1_000) {
-        await device.clock.advance(Math.min(1_000, left));
-        await vi.waitFor(
-          async () => {
-            expect((await device.clock.waits()).length).toBeGreaterThan(0);
-          },
-          { timeout: 10_000, interval: 5 },
-        );
+        await advanceWithWatch(device, Math.min(1_000, left));
       }
     };
     await run(2_000);
@@ -447,16 +472,17 @@ describe("folder clock and scan boundaries", () => {
 
     await nextTurn(harness);
     await device.hooks.release("folder-watch-turn");
-    await vi.waitFor(
-      async () => {
-        await device.clock.advance(1_000);
-        expect(
-          await device.hooks.waiting("folder-pass-ended"),
-          "the watch came to rest with a file past its grace and undecided",
-        ).toBe(1);
-      },
-      { timeout: 10_000, interval: 100 },
-    );
+    for (
+      let seconds = 0;
+      seconds < 60 && (await device.hooks.waiting("folder-pass-ended")) === 0;
+      seconds += 1
+    ) {
+      await advanceWithWatch(device, 1_000, "folder-pass-ended");
+    }
+    expect(
+      await device.hooks.waiting("folder-pass-ended"),
+      "the watch came to rest with a file past its grace and undecided",
+    ).toBe(1);
     expect(deletes()).toBe(1);
     await device.hooks.release("folder-pass-ended");
   });
