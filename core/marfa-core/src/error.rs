@@ -315,6 +315,17 @@ impl CoreError {
         }
     }
 
+    /// Whether the server itself limited the request: a `429` naming the
+    /// contract, not one from something in front of it.
+    pub fn is_limit_named(&self) -> bool {
+        match self {
+            CoreError::RenewalFailed(cause) => cause.is_limit_named(),
+            CoreError::RateLimited { .. } => true,
+            CoreError::Server { status, .. } => *status == 429,
+            _ => false,
+        }
+    }
+
     pub fn retry_after(&self) -> Option<Duration> {
         match self {
             CoreError::RenewalFailed(cause) => cause.retry_after(),

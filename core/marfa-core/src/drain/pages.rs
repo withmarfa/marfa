@@ -20,9 +20,10 @@ use serde::Deserialize;
 
 use super::{
     Bin, Classified, DrainReport, ReachChange, ReadBack, Readiness, Settled, Shape, Unreadable,
-    apply_read_back, classify, committed, ends_the_drain, failure_of, not_the_writes,
-    park_for_credential, put_verdict, rate_limited, read_owed, readiness, receipt_key,
-    same_attempt, settle_success, store_fault, unavailable, unavailable_by, verdict_of, waited,
+    apply_read_back, classify, committed, ends_the_drain, failure_of, limited_by_server,
+    not_the_writes, park_for_credential, put_verdict, rate_limited, read_owed, readiness,
+    receipt_key, same_attempt, settle_success, store_fault, unavailable, unavailable_by,
+    verdict_of, waited,
 };
 use crate::error::CoreError;
 use crate::http::{Answer, BULK_GET_LIMIT, Http, INSTANCE_CHANGED, REQUEST_LIMIT};
@@ -545,7 +546,7 @@ fn send_page(
             // write it reaches once the server cannot take writes.
             report.unavailable =
                 unavailable(&answer).or_else(|| answer.as_ref().err().map(CoreError::to_string));
-            report.limited = rate_limited(&answer);
+            report.limited = limited_by_server(&answer);
             return Ok(true);
         }
         // A write sent on its own door would meet the same refusal, under a
@@ -805,7 +806,7 @@ fn settle(
             telemetry::degraded!(&error);
             owe(core, report, standing, lane, created)?;
             report.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
-            report.limited = error.is_rate_limited();
+            report.limited = error.is_limit_named();
             waited(report, error.retry_after().map(|wait| wait.as_secs()));
             return Ok(());
         }
@@ -915,7 +916,7 @@ pub(super) fn settle_owed(
                     telemetry::degraded!(&error);
                     return Ok(Some(Unreadable {
                         reason: unavailable_by(&error).unwrap_or_else(|| error.to_string()),
-                        limited: error.is_rate_limited(),
+                        limited: error.is_limit_named(),
                         retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
                     }));
                 }
@@ -941,7 +942,7 @@ pub(super) fn settle_owed(
                             telemetry::degraded!(&error);
                             return Ok(Some(Unreadable {
                                 reason: unavailable_by(&error).unwrap_or_else(|| error.to_string()),
-                                limited: error.is_rate_limited(),
+                                limited: error.is_limit_named(),
                                 retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
                             }));
                         }

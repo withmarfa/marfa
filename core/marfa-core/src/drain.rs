@@ -337,6 +337,15 @@ fn rate_limited(answer: &std::result::Result<Answer, CoreError>) -> bool {
     }
 }
 
+/// Whether the server itself limited the request, which is what a report's
+/// `limited` says: a `429` naming no contract is something in front of it.
+fn limited_by_server(answer: &std::result::Result<Answer, CoreError>) -> bool {
+    match answer {
+        Ok(answer) => answer.status == 429 && answer.contract_named,
+        Err(error) => error.is_limit_named(),
+    }
+}
+
 /// How a limit reads in a drain's report, which waits for nothing itself.
 fn limiting(wait: Option<u64>) -> String {
     match held_to_most(wait) {
@@ -352,7 +361,7 @@ fn held_to_most(wait: Option<u64>) -> Option<u64> {
 
 /// Why the server could not say which instance it is.
 fn unconfirmed(error: &CoreError) -> String {
-    if error.is_rate_limited() {
+    if error.is_limit_named() {
         limiting(error.retry_after().map(|wait| wait.as_secs()))
     } else {
         format!("the server could not say which instance it is, so nothing was sent: {error}")
@@ -1183,7 +1192,7 @@ fn send_queue(
             Err(error) if error.is_environmental() => {
                 telemetry::degraded!(&error);
                 report.unavailable = Some(unconfirmed(&error));
-                report.limited = error.is_rate_limited();
+                report.limited = error.is_limit_named();
                 report.undelivered = waiting.len();
                 waited(report, error.retry_after().map(|wait| wait.as_secs()));
                 return Ok(());
@@ -1217,7 +1226,7 @@ fn send_queue(
             Err(error) if error.is_environmental() => {
                 telemetry::degraded!(&error);
                 report.unavailable = Some(unconfirmed(&error));
-                report.limited = error.is_rate_limited();
+                report.limited = error.is_limit_named();
                 waited(report, error.retry_after().map(|wait| wait.as_secs()));
                 Ok(false)
             }
@@ -1521,7 +1530,7 @@ fn send_queue(
                     row.id,
                     unavailable_by(&error).unwrap_or_else(|| error.to_string())
                 ));
-                report.limited = error.is_rate_limited();
+                report.limited = error.is_limit_named();
                 waited(report, error.retry_after().map(|wait| wait.as_secs()));
                 waiting.insert(row.id.clone());
                 report.undelivered += 1;
@@ -2332,7 +2341,7 @@ fn unavailable(answer: &std::result::Result<Answer, CoreError>) -> Option<String
 }
 
 fn unavailable_by(error: &CoreError) -> Option<String> {
-    if error.is_rate_limited() {
+    if error.is_limit_named() {
         return Some(limiting(error.retry_after().map(|wait| wait.as_secs())));
     }
     match error {
@@ -2858,7 +2867,7 @@ fn settle_success(
         Err(error) if error.is_environmental() => {
             telemetry::degraded!(&error);
             settled.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
-            settled.limited = error.is_rate_limited();
+            settled.limited = error.is_limit_named();
             settled.retry_after_seconds = error.retry_after().map(|wait| wait.as_secs());
             return Ok(settled);
         }
@@ -2949,7 +2958,7 @@ fn settle_success(
             Err(error) if error.is_environmental() => {
                 telemetry::degraded!(&error);
                 settled.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
-                settled.limited = error.is_rate_limited();
+                settled.limited = error.is_limit_named();
                 settled.retry_after_seconds = error.retry_after().map(|wait| wait.as_secs());
             }
             Err(error) => telemetry::degraded!(&error),
@@ -3101,7 +3110,7 @@ fn settle(
                 .and_then(CoreError::retry_after)
                 .map(|wait| wait.as_secs()),
             unavailable: unavailable(answer),
-            limited: rate_limited(answer),
+            limited: limited_by_server(answer),
             ..Settled::plain(None, None, row.refusals)
         }),
         Classified::Contract => {
@@ -3258,7 +3267,7 @@ fn settle_delivered(
                     return Ok(Settled {
                         retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
                         unavailable: unavailable_by(&error).or_else(|| Some(error.to_string())),
-                        limited: error.is_rate_limited(),
+                        limited: error.is_limit_named(),
                         ..Settled::plain(None, None, row.refusals)
                     });
                 }
@@ -3333,7 +3342,7 @@ fn land(
         Err(error) if error.is_environmental() => {
             telemetry::degraded!(&error);
             settled.unavailable = unavailable_by(&error).or_else(|| Some(error.to_string()));
-            settled.limited = error.is_rate_limited();
+            settled.limited = error.is_limit_named();
             settled.retry_after_seconds = error.retry_after().map(|wait| wait.as_secs());
             return Ok(settled);
         }
@@ -3451,7 +3460,7 @@ struct Unreadable {
 fn unreadable(error: &CoreError) -> Option<Unreadable> {
     Some(Unreadable {
         reason: unavailable_by(error)?,
-        limited: error.is_rate_limited(),
+        limited: error.is_limit_named(),
         retry_after_seconds: error.retry_after().map(|wait| wait.as_secs()),
     })
 }
@@ -7222,6 +7231,21 @@ mod tests {
             Some("the server is limiting requests and asked for a wait of 300s")
         );
         assert_eq!((report.answered, report.undelivered), (0, 2));
+    }
+
+    #[test]
+    fn a_429_naming_no_contract_blames_what_is_in_front_and_is_not_a_limit() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &["current", "later"]);
+        server.on(
+            "/items/current",
+            vec![crate::scripted::unnamed(429, "rate_limited")],
+        );
+        let report = core.drain().unwrap();
+        assert!(!report.limited, "{report:?}");
+        let unavailable = report.unavailable.unwrap();
+        assert!(unavailable.contains("naming no contract"), "{unavailable}");
+        assert!(!unavailable.contains("limiting"), "{unavailable}");
     }
 
     #[test]

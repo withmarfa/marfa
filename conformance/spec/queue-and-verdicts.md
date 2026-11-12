@@ -162,7 +162,7 @@ When a drain finds 50 or more item creates, or 50 or more edge creates, each nev
 
 ### `queue-and-verdicts/page-carries-tags`
 
-When a drain puts an item create in a page, a device MUST send in its entry, as `tags`, the tag of each `add_tag` write queued behind the create that adds one tag, depends on the create alone, has never been sent and has no environmental failure since it was queued, up to the first other write to the item and while the entry stays within the page's limits.
+When a drain puts an item create in a page, a device MUST send in its entry, as `tags`, the tag of each `add_tag` write queued behind the create that adds one tag, depends on the create alone, has never been sent and has no environmental failure since it was queued, up to the first other write to the item, where the entry with all of those tags stays within the page's limits.
 
 **Reason:** each tag on its own door is a write and a read back against the server's request limit, so a first sync of notes that each carry two tags would spend four requests on every note beside its page and meet the limit long before it ends. The tags stop at the first other write to the item, so a write queued between a tag and its create still lands before that tag.
 
