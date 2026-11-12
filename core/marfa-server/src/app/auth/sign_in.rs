@@ -8,7 +8,7 @@ use serde_json::json;
 use super::device::{Holder, Known};
 use super::limits::{self, too_many_passwords};
 use super::owner::{self, Owner};
-use super::password::Checked;
+use super::password::{self, Checked};
 use super::session::{self, New, Opened};
 use super::{Note, Visit, note};
 use crate::app::App;
@@ -19,6 +19,7 @@ use crate::db::Write;
 
 pub(super) const SIGNED_IN: &str = "auth.sign_in.success";
 pub(super) const SIGN_IN_FAILED: &str = "auth.sign_in.failed";
+const PASSWORD_CHANGED: &str = "owner.password.changed";
 const INVALID: &str = "invalid_credentials";
 const TOO_MANY: &str = "too_many_attempts";
 
@@ -394,6 +395,107 @@ async fn confirmed(
             owner_id: proven.owner.id.clone(),
             credentials: proven.credentials(tx)?,
         })
+    })
+    .await
+}
+
+/// Changes the signed-in owner's password, counted as a sign-in is, and ends every other
+/// browser session. Answers the device mark the browser that made the change keeps.
+pub async fn change_password(
+    app: &App,
+    caller: &Caller,
+    current_password: String,
+    new_password: String,
+    mark: Option<&str>,
+    visit: Visit,
+) -> Result<String> {
+    let session = caller.session().ok_or_else(unauthorized)?.clone();
+    password::check_new(&new_password)?;
+    let current = current(app).await?.ok_or_else(unauthorized)?;
+    let known = known(app, Some(&current), mark);
+    let email = current.owner.email.clone();
+    let attempt = replace(
+        app,
+        caller,
+        session,
+        &email,
+        current_password,
+        new_password,
+        visit.clone(),
+    );
+    match counted(app, &email, Some(&email), known.as_ref(), &visit, attempt).await? {
+        Ok((owner_id, credentials)) => {
+            limits::clear_account(&app.limiter, &email);
+            let holder = Holder {
+                owner_id: &owner_id,
+                credentials,
+            };
+            app.devices.mark(holder, known.as_ref(), app.clock.now_ms())
+        }
+        Err(wait) => Err(too_many_passwords(wait)),
+    }
+}
+
+fn current_not_right() -> Refusal {
+    Refusal::new(Code::Unauthorized, "Your current password isn't right.")
+}
+
+async fn replace(
+    app: &App,
+    caller: &Caller,
+    session: session::Session,
+    email: &str,
+    current_password: String,
+    new_password: String,
+    visit: Visit,
+) -> Tried<(String, i64)> {
+    match prove(app, email, current_password).await {
+        Ok(Some(proven)) => Tried {
+            proven: true,
+            outcome: replaced(app, caller, session, proven, new_password, visit).await,
+        },
+        Ok(None) => Tried::unproven(Err(current_not_right())),
+        Err(refusal) => Tried::unproven(Err(refusal)),
+    }
+}
+
+async fn replaced(
+    app: &App,
+    caller: &Caller,
+    session: session::Session,
+    proven: Proven,
+    new_password: String,
+    visit: Visit,
+) -> Result<(String, i64)> {
+    let hash = app.passwords.hash(new_password).await?;
+    app.write(caller, PASSWORD_CHANGED, move |unit| {
+        let tx = unit.tx();
+        if !proven.stands(tx, &unit.at)? {
+            return Err(current_not_right());
+        }
+        let owner_id = &proven.owner.id;
+        owner::set_password(tx, owner_id, &hash, unit.instant)?;
+        session::end_all(
+            tx,
+            &unit.at,
+            &unit.caller,
+            &visit,
+            owner_id,
+            Some(&session.id),
+        )?;
+        note(
+            tx,
+            &unit.at,
+            Some(&unit.caller),
+            &visit,
+            Note {
+                action: PASSWORD_CHANGED,
+                resource_type: "owner",
+                resource_id: owner_id,
+                details: None,
+            },
+        )?;
+        Ok((owner_id.clone(), proven.credentials(tx)?))
     })
     .await
 }

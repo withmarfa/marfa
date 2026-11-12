@@ -1,4 +1,6 @@
-<h1>Password and passkeys</h1>
+<h1>Passkeys and password</h1>
+<section class="part" aria-labelledby="passkeys-title">
+<h2 id="passkeys-title">Passkeys</h2>
 <p class="lede">A passkey signs you in with your device's lock instead of your password.</p>
 <p>Passkeys work only at a secure address: HTTPS with a domain name, or localhost on the computer running Marfa. They don't work at an IP address.</p>
 {% if rows.is_empty() %}
@@ -25,3 +27,23 @@
 </div>
 <button type="button" class="button primary wide" data-passkey="add" hidden>Add a passkey</button>
 </div>
+</section>
+<section class="part" aria-labelledby="password-title">
+<h2 id="password-title">Password</h2>
+<p class="lede">Changing your password signs you out of every other browser. Apps you've connected stay connected.</p>
+<form method="post" action="/auth/owner/password" class="stack" data-change>
+<input type="email" value="{{ email }}" autocomplete="username" readonly hidden>
+<div class="field">
+<label for="current-password">Current password</label>
+<input id="current-password" type="password" name="current_password" autocomplete="current-password" required>
+</div>
+<div class="field">
+<label for="new-password">New password</label>
+<input id="new-password" type="password" name="new_password" autocomplete="new-password" minlength="8" maxlength="128" required aria-describedby="new-password-hint">
+<p class="hint" id="new-password-hint">Use at least 8 characters. Choose a password you don't use anywhere else.</p>
+</div>
+<p class="notice error" role="alert" data-form-error data-fallback="Something went wrong. Try again." hidden></p>
+<p class="notice" role="status" data-form-done hidden>Your password is changed.</p>
+<button type="submit" class="button primary wide">Change password</button>
+</form>
+</section>

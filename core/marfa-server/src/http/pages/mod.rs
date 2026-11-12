@@ -25,7 +25,7 @@ pub use passkeys::{OwnerPasskey, OwnerPasskeys, owner_passkeys};
 pub use setup::{
     SetupCode, SetupCodeProblem, SetupDetails, SetupFieldErrors, setup_code, setup_details,
 };
-pub use sign_in::{SignIn, SignInProblem, SignedIn, sign_in, signed_in};
+pub use sign_in::{Running, SignIn, SignInProblem, SignedIn, running, sign_in, signed_in};
 pub use wait::Wait;
 
 const STYLE: &str = include_str!("assets/page.css");

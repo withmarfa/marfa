@@ -127,14 +127,20 @@
         return null;
       }
     })();
+    const failure = form.querySelector("[data-form-error]");
+    const done = form.querySelector("[data-form-done]");
+    if (done) done.hidden = true;
     if (response && response.ok) {
       if (isPage) showPage(text);
-      else if (typeof answer?.url === "string") location.assign(answer.url);
+      else if (done) {
+        form.reset();
+        if (failure) failure.hidden = true;
+        done.hidden = false;
+      } else if (typeof answer?.url === "string") location.assign(answer.url);
       else if (form.dataset.then) location.assign(form.dataset.then);
       else location.reload();
       return;
     }
-    const failure = form.querySelector("[data-form-error]");
     if (failure) {
       const message = answer?.error?.message;
       failure.textContent =

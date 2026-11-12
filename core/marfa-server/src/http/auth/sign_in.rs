@@ -15,12 +15,13 @@ use crate::app::auth::sign_in::SignedIn;
 use crate::app::auth::{Visit, form_origins, sign_in};
 use crate::app::refusal::{Code, Refusal};
 use crate::http::answer::{Answer, json_answer};
-use crate::http::body::JsonBody;
+use crate::http::body::{JsonBody, only_declared};
 use crate::http::caller::OnPage;
 
 const PASSWORD_FIELDS: [&str; 2] = ["email", "password"];
 const CONFIRM_FIELDS: [&str; 2] = ["password", "passkey"];
 const CONFIRM_PASSWORD_CHARS: usize = 1024;
+const CHANGE_FIELDS: [&str; 2] = ["current_password", "new_password"];
 
 fn not_from_here() -> Refusal {
     Refusal::new(
@@ -206,4 +207,43 @@ pub async fn confirm(
             done(cookies::session(&address, &opened.token)?)
         }
     }
+}
+
+fn current_password(body: &Map<String, Value>) -> Result<String, Refusal> {
+    match body.get("current_password") {
+        Some(Value::String(password))
+            if (1..=CONFIRM_PASSWORD_CHARS).contains(&password.chars().count()) =>
+        {
+            Ok(password.clone())
+        }
+        _ => Err(Refusal::validation("Enter your current password.")),
+    }
+}
+
+/// The passkeys page's form, sent as a form or as JSON.
+pub async fn change_password(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    OnPage(caller): OnPage,
+    visit: Visit,
+    body: JsonBody,
+) -> Answer {
+    require_safe_caller(&app, &visit)?;
+    let Some(caller) = caller.filter(|caller| caller.session().is_some()) else {
+        return Err(unauthorized().into());
+    };
+    let body = if body.declares_form() {
+        only_declared(body.form().await?, &CHANGE_FIELDS)?
+    } else {
+        body.object(&CHANGE_FIELDS).await?
+    };
+    let current = current_password(&body)?;
+    let new = text_field(&body, "new_password")?.to_string();
+    let mark = device_mark(&app, &headers);
+    let device = sign_in::change_password(&app, &caller, current, new, mark, visit).await?;
+    let ok = json_answer(StatusCode::OK, &json!({ "ok": true }));
+    Ok(with_cookie(
+        ok,
+        cookies::device(&app.addresses().sign_in(), &device)?,
+    ))
 }
