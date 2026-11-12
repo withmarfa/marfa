@@ -296,8 +296,6 @@ function autostart(
     MARFA_AUTOSTART_ROOT: root,
     MARFA_FOLDER_REGISTRY: options.registry,
   };
-  delete env.MARFA_API_URL;
-  delete env.MARFA_API_KEY;
   // The shell that runs the tests is silenced, and `on` carries what it
   // finds: a run carries only the settings its own `env` names.
   for (const name of Object.keys(env)) {

@@ -46,12 +46,30 @@ const AUTOSTART = "MARFA_CONFORMANCE_AUTOSTART_ROOT";
 let unlockedAt = 0;
 
 /**
- * The environment that points the binary at the run's keychain. The file is
- * unlocked with its own password again after a minute, so it never locks
- * itself under a run: a locked keychain the binary may not ask about would
- * fail the run instead.
+ * The environment that points the binary at the run's keychain, and takes the
+ * shell's own server, key and profile away (set to `undefined`, which a spawn
+ * leaves out): spread it over `process.env`. A key in the environment is the
+ * credential a binary uses before any kept sign-in and cannot be renewed, so a
+ * run under one never meets a sign-in that ended; a fixture that wants a key,
+ * a server or a profile names it after `keychainEnv()`. The file is unlocked
+ * with its own password again after a minute, so it never locks itself under a
+ * run: a locked keychain the binary may not ask about would fail the run
+ * instead.
  */
-export function keychainEnv(): Record<string, string> {
+export function keychainEnv(): NodeJS.ProcessEnv {
+  const kept = keychainFiles();
+  return {
+    MARFA_API_KEY: undefined,
+    MARFA_API_URL: undefined,
+    MARFA_PROFILE: undefined,
+    ...kept,
+  };
+}
+
+function keychainFiles(): {
+  MARFA_KEYCHAIN: string;
+  MARFA_AUTOSTART_ROOT: string;
+} {
   const path = process.env[PATH];
   if (path === undefined) {
     throw new Error(

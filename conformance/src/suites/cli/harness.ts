@@ -109,9 +109,10 @@ export class Cli {
       if (value !== undefined) env[name] = value;
     }
     if (this.socketPath !== undefined) return env;
+    Object.assign(env, keychainEnv());
     env.MARFA_API_URL = this.url;
     if (this.key !== undefined) env.MARFA_API_KEY = this.key;
-    return { ...env, ...keychainEnv(), ...this.extraEnv };
+    return { ...env, ...this.extraEnv };
   }
 
   /** Runs the binary and answers whatever it did, refusal or not. */
