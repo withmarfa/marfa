@@ -152,8 +152,7 @@ impl Machine {
     }
 }
 
-/// The codes of a watch that ended because the credential it used did: it is
-/// opened again only with another.
+/// The codes of a watch that ended with its credential.
 const CREDENTIAL_ENDED: [&str; 2] = ["unauthorized", "signed_out"];
 
 fn unwatched(error: &CliError) -> Unwatched {

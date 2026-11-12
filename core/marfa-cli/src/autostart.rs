@@ -728,9 +728,7 @@ impl Place {
     }
 }
 
-/// Starts the installed watch again, so it uses a credential kept since.
-/// Where no agent is installed, or the manager does not hold it, nothing
-/// runs. Whether it did is returned.
+/// Starts the installed watch again; whether it did is returned.
 fn resume(place: &Place) -> Result<bool, CliError> {
     if !place.file.exists() {
         return Ok(false);
@@ -748,10 +746,8 @@ fn resume(place: &Place) -> Result<bool, CliError> {
     Ok(true)
 }
 
-/// For a command that has just kept a credential: the installed watch starts
-/// again, so the folders it stopped for a credential that ended are watched
-/// at once. It says so on stderr, and says too where it could not, since the
-/// credential is kept all the same.
+/// Starts the installed watch again after a credential is kept, and says on
+/// stderr that it did, or why it could not.
 pub fn resume_after_credential_kept() {
     // A unit test's HOME is the person's own, whose service it must never ask.
     if cfg!(test) {

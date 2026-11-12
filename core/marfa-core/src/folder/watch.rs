@@ -784,9 +784,8 @@ impl Passes {
     }
 }
 
-/// How the follow's end is told: a credential that no longer works, refused or
-/// signed out, is the credential's, and a panic of the core's is not the
-/// server's doing.
+/// A follow that ended for its credential, refused or signed out, is the
+/// credential's; a panic of the core's is not the server's.
 fn follow_ended<E>(error: CoreError) -> WatchError<E> {
     match error {
         CoreError::Unauthorized { .. } => WatchError::CredentialRefused(error),

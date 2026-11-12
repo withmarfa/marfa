@@ -51,9 +51,9 @@ pub const MISSING: &str = "missing";
 /// Why a listed folder is not watched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Unwatched {
-    /// The error code, such as `first_sync_waiting`, `reading_handle` or
-    /// `unauthorized`, `signed_out`, `watch` where the watch itself failed, or [`MISSING`]
-    /// where its directory cannot be found.
+    /// The error code, such as `first_sync_waiting`, `reading_handle`,
+    /// `unauthorized` or `signed_out`, `watch` where the watch itself failed,
+    /// or [`MISSING`] where its directory cannot be found.
     pub code: String,
     pub message: String,
 }
