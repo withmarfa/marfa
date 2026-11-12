@@ -1062,7 +1062,7 @@ async fn the_page_escapes_a_name_and_sends_a_stranger_to_sign_in() {
     assert_eq!(added.status, StatusCode::CREATED);
     let page = instance.get("/auth/owner/passkeys", &instance.owner).await;
     assert_eq!(page.status, StatusCode::OK);
-    assert!(page.text.contains("Password and passkeys"));
+    assert!(page.text.contains("Passkeys and password"));
     assert!(!page.text.contains("<script>alert(1)"));
 
     let stranger = instance.get("/auth/owner/passkeys", "").await;
