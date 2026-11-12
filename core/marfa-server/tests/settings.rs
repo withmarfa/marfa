@@ -272,10 +272,10 @@ async fn the_sign_in_address_follows_the_port_bound_until_one_is_stored() {
     ];
     let accepted = Settings::read(Environment::from_pairs(&pairs)).unwrap();
     let app = App::start(accepted).await.unwrap();
-    assert_eq!(app.addresses().sign_in().origin(), "http://127.0.0.1:0");
+    assert_eq!(app.addresses().sign_in().origin(), "http://localhost:0");
     app.record_bound_port(51234);
     let sign_in = app.addresses().sign_in();
-    assert_eq!(sign_in.origin(), "http://127.0.0.1:51234");
+    assert_eq!(sign_in.origin(), "http://localhost:51234");
     assert_eq!(sign_in.port(), 51234);
     app.db.close().await;
 }

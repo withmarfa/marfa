@@ -9,8 +9,6 @@ use crate::settings::registry::{ADDRESSES, SIGN_IN_ADDRESS};
 use crate::settings::start::Fixed;
 use crate::settings::{Settings, Snapshot};
 
-const LOOPBACK_IP: &str = "127.0.0.1";
-
 /// One origin, normalized: lowercase host, IDN in its ASCII form, no default
 /// port and no trailing slash.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -64,15 +62,15 @@ impl Address {
         })
     }
 
-    fn loopback(host: &str, port: u16) -> Address {
+    fn localhost(port: u16) -> Address {
         let origin = if port == 80 {
-            format!("http://{host}")
+            "http://localhost".to_string()
         } else {
-            format!("http://{host}:{port}")
+            format!("http://localhost:{port}")
         };
         Address {
             scheme: "http",
-            host: host.to_string(),
+            host: "localhost".to_string(),
             port,
             origin,
         }
@@ -121,7 +119,6 @@ pub fn parse_list(text: &str) -> Result<Vec<Address>, String> {
 
 pub struct Addresses {
     live: Arc<Snapshot>,
-    loopback_host: &'static str,
     port: u16,
 }
 
@@ -141,10 +138,6 @@ impl Addresses {
     pub fn of(start: &Fixed, snapshot: Arc<Snapshot>, bound_port: Option<u16>) -> Addresses {
         Addresses {
             live: snapshot,
-            loopback_host: match start.listen_host.as_deref() {
-                Some(LOOPBACK_IP) => LOOPBACK_IP,
-                _ => "localhost",
-            },
             port: bound_port.unwrap_or(start.port),
         }
     }
@@ -152,7 +145,7 @@ impl Addresses {
     pub fn sign_in(&self) -> Address {
         self.live
             .get(SIGN_IN_ADDRESS)
-            .unwrap_or_else(|| Address::loopback(self.loopback_host, self.port))
+            .unwrap_or_else(|| Address::localhost(self.port))
     }
 
     pub fn all(&self) -> Vec<Address> {
@@ -263,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn with_nothing_stored_it_is_the_loopback_at_the_port_bound() {
+    fn with_nothing_stored_it_is_localhost_at_the_port_bound() {
         let sign_in = |pairs: &[(&str, &str)], bound| {
             Addresses::read(&settings(pairs), bound).sign_in().origin
         };
@@ -277,7 +270,7 @@ mod tests {
                 &[("MARFA_LISTEN_HOST", "127.0.0.1"), ("MARFA_PORT", "0")],
                 Some(51234)
             ),
-            "http://127.0.0.1:51234"
+            "http://localhost:51234"
         );
         assert_eq!(
             sign_in(&[("MARFA_LISTEN_HOST", "0.0.0.0")], None),
@@ -287,7 +280,7 @@ mod tests {
     }
 
     #[test]
-    fn a_stored_sign_in_address_replaces_the_loopback_and_joins_the_list() {
+    fn a_stored_sign_in_address_replaces_localhost_and_joins_the_list() {
         let settings = settings(&[]);
         let rows = [
             (

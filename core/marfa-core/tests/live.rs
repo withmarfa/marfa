@@ -238,6 +238,20 @@ fn field(text: &str, name: &str) -> String {
         .to_string()
 }
 
+// Sign-in may use a different origin from the API address.
+fn sign_in_origin(url: &str) -> String {
+    let found = ureq::get(format!("{url}/auth/.well-known/oauth-authorization-server"))
+        .call()
+        .unwrap()
+        .into_body()
+        .read_to_string()
+        .unwrap();
+    let issuer = field(&found, "issuer");
+    let (scheme, rest) = issuer.split_once("://").expect("the issuer is an address");
+    let host = rest.split('/').next().unwrap_or(rest);
+    format!("{scheme}://{host}")
+}
+
 /// The access token of a signed-in app: the way a device holds one, a
 /// device code the owner approves for reading notes. Unlike a key, it is a
 /// bound credential, so a read under a reach is judged against its grant.
@@ -262,9 +276,10 @@ fn app_token(url: &str) -> String {
     .unwrap();
     let email = std::env::var("MARFA_TEST_OWNER_EMAIL").expect("the boot names its owner");
     let password = std::env::var("MARFA_TEST_OWNER_PASSWORD").expect("the boot names its owner");
+    let origin = sign_in_origin(url);
     let sign_in = ureq::post(format!("{url}/auth/sign-in"))
         .header("Content-Type", "application/json")
-        .header("Origin", url)
+        .header("Origin", &origin)
         .send(serde_json::json!({"email": email, "password": password}).to_string())
         .unwrap();
     let cookie = sign_in
@@ -278,7 +293,7 @@ fn app_token(url: &str) -> String {
         .to_string();
     post(
         &format!("{url}/auth/device/consent"),
-        &[("Cookie", &cookie), ("Origin", url)],
+        &[("Cookie", &cookie), ("Origin", &origin)],
         form,
         &format!(
             "user_code={}&decision=approve&access=full&scopes=core.note:read",
