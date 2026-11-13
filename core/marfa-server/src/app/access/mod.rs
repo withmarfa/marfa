@@ -32,8 +32,6 @@ pub use overview::Described;
 pub use schema::{Door, SchemaKind};
 pub use webhooks::{Maker, standing_maker};
 
-pub const SIGN_IN_AGAIN: &str = "Sign in again to perform this operation";
-
 macro_rules! permissions {
     ($($variant:ident = $wire:literal;)*) => {
         #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -254,7 +252,7 @@ impl Caller {
     pub fn require_recent(&self, at: &str) -> Result<()> {
         match self.session() {
             Some(session) if !session.is_recent(Stamp::read(at)?) => {
-                Err(Refusal::new(Code::Forbidden, SIGN_IN_AGAIN))
+                Err(Refusal::needs_recent_sign_in())
             }
             _ => Ok(()),
         }

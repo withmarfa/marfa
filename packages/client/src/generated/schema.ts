@@ -27899,7 +27899,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes. */
+            /** @description Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes; without one, `details.needs` is `recent_sign_in`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -28012,7 +28012,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes. */
+            /** @description Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes; without one, `details.needs` is `recent_sign_in`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -28168,7 +28168,7 @@ export interface operations {
                     "application/json": components["schemas"]["UnauthorizedRefusal"];
                 };
             };
-            /** @description Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes. */
+            /** @description Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes; without one, `details.needs` is `recent_sign_in`. */
             403: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

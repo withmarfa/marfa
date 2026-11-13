@@ -884,10 +884,7 @@ async fn a_registration_rechecks_the_recent_sign_in_when_it_finishes() {
     let response = device.registration(&asked.challenge, &instance.saying());
     let refused = instance.verify_registration(&asked.cookie, response).await;
     assert_eq!(refused.status, StatusCode::FORBIDDEN);
-    assert_eq!(
-        refused.body["error"]["message"],
-        "Sign in again to perform this operation"
-    );
+    assert_eq!(refused.body["error"]["details"]["needs"], "recent_sign_in");
     assert_eq!(instance.count("passkeys").await, 0);
 }
 
