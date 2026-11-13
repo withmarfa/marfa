@@ -12,8 +12,8 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@iconify-json/lucide": "1.2.149",
-    "@iconify-json/simple-icons": "1.2.101",
+    "@iconify-json/lucide": "1.2.153",
+    "@iconify-json/simple-icons": "1.2.102",
     "@types/node": "^26.6.6",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3"
