@@ -515,8 +515,7 @@ pub fn bound_with_hash(conn: &Connection, content_hash: &str) -> Result<Vec<Boun
     bound_where(conn, "WHERE content_hash = ?1", [content_hash])
 }
 
-/// A bound file as a pull compares it from one pull to the next: whose item it is and a digest of
-/// everything its row records, so a pull holds neither the file's text nor its edges.
+/// A bound file's item and a digest of its row, so a pull keeps no file's text between pulls.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Binding {
     pub item_id: String,

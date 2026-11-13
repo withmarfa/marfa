@@ -2,8 +2,7 @@ use std::ffi::{c_int, c_void};
 
 pub use tikv_jemallocator::Jemalloc as Allocator;
 
-/// jemalloc's settings. A freed block goes back to the system at once, two arenas keep the
-/// memory in few places, and a thread keeps no cache of freed blocks that it then holds.
+/// Decay is 0 because jemalloc has no background thread on macOS to purge later.
 #[unsafe(export_name = "_rjem_malloc_conf")]
 static MALLOC_CONF: &[u8; 57] = b"narenas:2,dirty_decay_ms:0,muzzy_decay_ms:0,tcache:false\0";
 
@@ -33,9 +32,6 @@ unsafe extern "C" fn start(_: *mut c_void) -> c_int {
 
 unsafe extern "C" fn stop(_: *mut c_void) {}
 
-/// Makes SQLite take its memory from the allocator, since SQLite's page cache is most of what a
-/// server holds after a first sync and the system allocator would keep it.
-///
 /// Call it first in `main`: SQLite takes the setting only before it first runs.
 pub fn route_sqlite() {
     let mut methods = rusqlite::ffi::sqlite3_mem_methods {

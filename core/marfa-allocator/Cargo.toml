@@ -1,6 +1,6 @@
 [package]
 name = "marfa-allocator"
-description = "The global allocator of the marfa and marfa-server programs: on macOS, where the system's keeps what it frees, one that gives freed memory back, with SQLite's memory in it."
+description = "The global allocator of marfa and marfa-server: jemalloc on macOS, with SQLite's memory in it."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
