@@ -198,12 +198,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ["workspace", "conformance-offline", "core-checks-linux", "rust-contract"],
   ],
   [/^conformance\/spec\//, ["workspace", "conformance-offline"]],
-  // The item names and previews the implementations are held to: the core's
-  // unit tests, the shared package's, and the compliance and device fixtures
-  // read it.
+  // The item names and previews the core is held to: its unit tests and the
+  // compliance and device fixtures read it.
   [
     /^conformance\/fixtures\/item-display\.json$/,
-    ["workspace", "core-checks-linux", "conformance-offline", "rust-contract"],
+    ["core-checks-linux", "conformance-offline", "rust-contract"],
   ],
   // The filter expressions the core is held to: its unit tests and the Node
   // binding's tests read it.
@@ -257,8 +256,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       ...RUST,
     ],
   ],
-  // The core's catalog is written from the shipped types and the registry
-  // that lists them.
+  // The core's catalog is written from the shipped types.
   [
     /^packages\/types\//,
     [
@@ -267,10 +265,6 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "types-freshness",
       "clients-freshness",
     ],
-  ],
-  [
-    /^packages\/shared\//,
-    ["workspace", "conformance-offline", "clients-freshness"],
   ],
   [/^packages\/client\//, ["workspace", "clients-freshness"]],
 

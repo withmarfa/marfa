@@ -76,10 +76,10 @@ describe("every package runs its tests on a chosen budget", () => {
     // Without this the whole file passes by matching nothing, which is the
     // failure mode it exists to prevent in the packages themselves.
     const packages = testedPackages();
-    expect(packages.length).toBeGreaterThanOrEqual(3);
+    expect(packages.length).toBeGreaterThanOrEqual(2);
     // A rename that hides a known package from this list should redden here
     // rather than quietly shrink the check.
-    expect(packages).toContain("shared");
+    expect(packages).toContain("client");
     expect(packages).toContain("types");
   });
 

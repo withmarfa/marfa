@@ -34,7 +34,7 @@ describe("a test run sends no telemetry", () => {
         (name) => `packages/${name}/vitest.config.ts`,
       ),
     ];
-    expect(configs.length).toBeGreaterThan(4);
+    expect(configs.length).toBeGreaterThan(3);
     for (const config of configs) {
       expect(
         readFileSync(join(ROOT, config), "utf8"),
