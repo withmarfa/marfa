@@ -356,6 +356,28 @@ async fn with_no_backup_destination_health_says_backups_are_off_and_the_doors_re
         assert_eq!(body["error"]["code"], "no_backup_destination", "{path}");
     }
 
+    let (status, body) = instance.local(Method::GET, "/attention", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let said: Vec<&Value> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|concern| concern["kind"] == "backup")
+        .collect();
+    assert_eq!(said.len(), 1, "{body}");
+    assert_eq!(said[0]["reference"], "no_backup_destination");
+    assert_eq!(said[0]["title"], "No backups are kept");
+    let how = said[0]["description"].as_str().unwrap();
+    for part in [
+        "MARFA_BACKUP_PATH",
+        "S3_BUCKET",
+        "marfa.env",
+        "marfa server stop",
+        "marfa server start",
+    ] {
+        assert!(how.contains(part), "{part}: {how}");
+    }
+
     let (status, body) = instance.local(Method::GET, "/housekeeping", None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let names: Vec<&str> = body["data"]

@@ -11,6 +11,7 @@ import {
 } from "../../utils/archive.js";
 import {
   afterFirstScheduledBackup,
+  backupConcerns,
   bucketAt,
   instanceIdOf,
   ownerOf,
@@ -491,6 +492,43 @@ describe("the backup schedule", () => {
       }
     } finally {
       await server.stop();
+    }
+  });
+  it("says in attention that no backups are kept and how to set one, and says an interval of 0 differently", async () => {
+    const none = await bootFreshServer("backups-said-none", DISK_ONLY);
+    try {
+      const concerns = await backupConcerns(none);
+      expect(concerns).toEqual([
+        expect.objectContaining({
+          reference: "no_backup_destination",
+          title: "No backups are kept",
+        }),
+      ]);
+      for (const part of [
+        "MARFA_BACKUP_PATH",
+        "S3_BUCKET",
+        "marfa server stop",
+        "marfa server start",
+      ]) {
+        expect(concerns[0]!.description).toContain(part);
+      }
+    } finally {
+      await none.stop();
+    }
+
+    const off = await bootFreshServer("backups-said-off", {
+      ...ownObjectStore(),
+      MARFA_BACKUP_INTERVAL_SECONDS: "0",
+    });
+    try {
+      const concerns = await backupConcerns(off);
+      expect(concerns.map((concern) => concern.reference)).toEqual([
+        "turned_off",
+      ]);
+      expect(concerns[0]!.title).toBe("Scheduled backups are turned off");
+      expect(concerns[0]!.description).not.toContain("MARFA_BACKUP_PATH");
+    } finally {
+      await off.stop();
     }
   });
 });

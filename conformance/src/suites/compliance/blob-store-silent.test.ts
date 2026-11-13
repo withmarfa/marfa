@@ -1,6 +1,11 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
+  attentionOf,
+  backupConcerns,
+  healthDetail,
+} from "../../utils/backups.js";
+import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
@@ -116,6 +121,7 @@ async function replicatedAgain(what: string): Promise<void> {
     const run = await runJob<{ copied: number; remaining: number }>(
       operator,
       "blob-replicate",
+      "either",
     );
     return run.result.remaining === 0 ? true : undefined;
   });
@@ -190,7 +196,7 @@ describe("a replication run while no store answers", () => {
     ]);
 
     await storesHang();
-    const run = await runJob(operator, "blob-replicate");
+    const run = await runJob(operator, "blob-replicate", "error");
     expect(run.result).toMatchObject({ copied: 0, remaining: 1 });
     expect(await waiting()).toBe(0);
     expect(
@@ -203,6 +209,47 @@ describe("a replication run while no store answers", () => {
       remaining: 0,
     });
     expect((await operator.listBlobCopies(hash!)).data.data).toHaveLength(2);
+  });
+});
+
+describe("health and attention while the object store does not answer", () => {
+  it("answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up", async () => {
+    const [hash] = await leaveBacklog(operator, working, [
+      bytesOf("waiting while the store hangs", 120),
+    ]);
+    const quiet = await healthDetail(server);
+    expect(quiet.backups).toMatchObject({ status: "ok", store_error: null });
+
+    await storesHang();
+    await runJob(operator, "blob-replicate", "error");
+    const before = Date.now();
+    const detail = await healthDetail(server);
+    expect(Date.now() - before).toBeLessThan(2500);
+    expect(detail.status).toBe("degraded");
+    expect(detail.backups).toMatchObject({
+      status: "failing",
+      copies_waiting: 1,
+    });
+    expect(typeof detail.backups.store_error).toBe("string");
+    const told = await backupConcerns(server);
+    expect(told.map((concern) => concern.reference)).toEqual(["store"]);
+    expect(told[0]!.title).toBe("The object store is not taking copies");
+    expect(told[0]!.description).toContain("1 file waits for its second copy");
+    expect(
+      (await attentionOf(server)).some((concern) => concern.kind === "job"),
+    ).toBe(false);
+
+    await server.clearFault();
+    await replicatedAgain("the object store's copy once it answers");
+    await runJob(operator, "blob-replicate");
+    expect((await operator.listBlobCopies(hash!)).data.data).toHaveLength(2);
+    const healed = await healthDetail(server);
+    expect(healed.backups).toMatchObject({
+      status: "ok",
+      store_error: null,
+      copies_waiting: 0,
+    });
+    expect(await backupConcerns(server)).toEqual([]);
   });
 });
 
@@ -228,7 +275,7 @@ describe("a store's delete that does not answer", () => {
     // The delete the run gave up on is still out.
     expect(await waitingAt("hold:blob-delete")).toBe(1);
 
-    const copied = await runJob(operator, "blob-replicate");
+    const copied = await runJob(operator, "blob-replicate", "error");
     expect(copied.result).toMatchObject({ copied: 0, remaining: 1 });
     // Skipped rather than asked again: no second delete waits.
     expect(await waitingAt("hold:blob-delete")).toBe(1);
@@ -249,6 +296,7 @@ describe("a store's delete that does not answer", () => {
       const run = await runJob<{ copied: number; remaining: number }>(
         operator,
         "blob-replicate",
+        "either",
       );
       return run.result.remaining === 0 ? true : undefined;
     });
@@ -346,12 +394,12 @@ describe("a store's write that does not answer", () => {
 
     await server.setFault("store-check-deadline=200");
     await server.setFault("hold:blob-write");
-    const run = await runJob(operator, "blob-replicate");
+    const run = await runJob(operator, "blob-replicate", "error");
     expect(run.result).toMatchObject({ copied: 0, remaining: 1 });
     // The write the run gave up on is still out.
     expect(await waitingAt("hold:blob-write")).toBe(1);
 
-    const later = await runJob(operator, "blob-replicate");
+    const later = await runJob(operator, "blob-replicate", "error");
     expect(later.result).toMatchObject({ copied: 0, remaining: 1 });
     expect(await waitingAt("hold:blob-write")).toBe(1);
     expect(
@@ -367,6 +415,7 @@ describe("a store's write that does not answer", () => {
       const copied = await runJob<{ copied: number; remaining: number }>(
         operator,
         "blob-replicate",
+        "either",
       );
       return copied.result.remaining === 0 ? true : undefined;
     });
@@ -384,7 +433,7 @@ describe("a drop while a store does not finish a write of the blob's bytes", () 
 
     await server.setFault("store-check-deadline=200");
     await server.setFault("hold:blob-write");
-    const run = await runJob(operator, "blob-replicate");
+    const run = await runJob(operator, "blob-replicate", "error");
     expect(run.result).toMatchObject({ copied: 0, remaining: 1 });
     expect(await waitingAt("hold:blob-write")).toBe(1);
 

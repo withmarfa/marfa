@@ -96,8 +96,10 @@ pub struct Report {
 }
 
 /// Fields of the `backups` object given only to a caller who may read the reasons.
-const BACKUP_DETAIL: [&str; 6] = [
+const BACKUP_DETAIL: [&str; 8] = [
     "destination",
+    "copies_waiting",
+    "store_error",
     "last_backup",
     "last_backup_at",
     "failures",
@@ -135,6 +137,11 @@ impl Report {
             (name, component.status.word(), reason)
         })
         .collect()
+    }
+
+    /// The `backups` object as the owner reads it, reasons included.
+    pub fn backups(&self) -> &Value {
+        &self.backups
     }
 
     pub fn to_json(&self, with_errors: bool) -> Value {
@@ -250,7 +257,9 @@ async fn database_write(app: &Arc<App>) -> Component {
 
 /// Runs filesystem work off the async runtime, so a mount that hangs holds a
 /// blocking thread and not a worker, and gives up on it after the probe's wait.
-async fn bounded<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+pub(super) async fn bounded<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
     tokio::time::timeout(PROBE_WAIT, tokio::task::spawn_blocking(work))
         .await
         .ok()?

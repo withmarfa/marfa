@@ -57,9 +57,64 @@ fn plural(count: i64, one: &str, many: &str) -> String {
     format!("{count} {}", if count == 1 { one } else { many })
 }
 
+/// What the backups part of the health report asks of the owner.
+fn backing(backups: &Value) -> Vec<Concern> {
+    let text = |field: &str| backups[field].as_str().filter(|text| !text.is_empty());
+    let concern = |reference: &str, title: &str, description: String| Concern {
+        kind: "backup",
+        reference: reference.to_string(),
+        title: title.to_string(),
+        description,
+    };
+    let mut found = Vec::new();
+    match text("reason") {
+        Some("no_backup_destination") => found.push(concern(
+            "no_backup_destination",
+            "No backups are kept",
+            "This instance has nowhere to put them. Set MARFA_BACKUP_PATH to a folder on another \
+             disk, or S3_BUCKET to an object store, in the server's settings (`marfa.env` for an \
+             install made by `marfa server install`), then run `marfa server stop` and `marfa \
+             server start`."
+                .to_string(),
+        )),
+        Some("turned_off") => found.push(concern(
+            "turned_off",
+            "Scheduled backups are turned off",
+            "backup_interval_seconds is 0, so the server takes no backup unless asked. `marfa \
+             backups run` takes one now. Set backup_interval_seconds above 0 to take them on a \
+             schedule."
+                .to_string(),
+        )),
+        _ => {}
+    }
+    if let Some(error) = text("store_error") {
+        let title = match text("destination") {
+            Some("folder") => "The backup folder is not taking copies",
+            _ => "The object store is not taking copies",
+        };
+        let waiting = backups["copies_waiting"].as_u64().unwrap_or(0);
+        let description = match waiting {
+            0 => error.to_string(),
+            1 => format!("{error} 1 file waits for its second copy."),
+            count => format!("{error} {count} files wait for their second copy."),
+        };
+        found.push(concern("store", title, description));
+    }
+    if backups["failures"].as_i64().unwrap_or(0) > 0 && !backups["destination"].is_null() {
+        found.push(concern(
+            "run",
+            "The last backup run failed or lost files",
+            text("last_error")
+                .unwrap_or("The run did not complete.")
+                .to_string(),
+        ));
+    }
+    found
+}
+
 async fn healthy(app: &Arc<App>) -> Result<Vec<Concern>> {
     let report = health::check(app).await;
-    Ok(report
+    let mut found: Vec<Concern> = report
         .failing()
         .into_iter()
         .map(|(name, status, reason)| Concern {
@@ -72,7 +127,9 @@ async fn healthy(app: &Arc<App>) -> Result<Vec<Concern>> {
                 reason
             },
         })
-        .collect())
+        .collect();
+    found.extend(backing(report.backups()));
+    Ok(found)
 }
 
 fn capitalized(text: &str) -> String {
@@ -227,6 +284,21 @@ where
     }
 }
 
+/// A job whose failure a backup concern already tells is left out, so one fault is one entry.
+fn without_covered_jobs(health: &[Concern], jobs: Vec<Concern>) -> Vec<Concern> {
+    let told = |reference: &str| {
+        health
+            .iter()
+            .any(|concern| concern.kind == "backup" && concern.reference == reference)
+    };
+    jobs.into_iter()
+        .filter(|job| {
+            !((job.reference == "backup" && told("run"))
+                || (job.reference == "blob-replicate" && told("store")))
+        })
+        .collect()
+}
+
 pub async fn read(app: &Arc<App>) -> Value {
     let at = app.clock.stamp();
     let (health, jobs, connectors, folders, keys) = tokio::join!(
@@ -236,6 +308,7 @@ pub async fn read(app: &Arc<App>) -> Value {
         checked(app, FOLDERS, synced(app, &at)),
         checked(app, KEYS, ending(app, &at)),
     );
+    let jobs = without_covered_jobs(&health, jobs);
     let data: Vec<Value> = [health, jobs, connectors, folders, keys]
         .iter()
         .flatten()

@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import {
   bootFreshServer,
@@ -7,11 +10,19 @@ import {
 import { controlRequest } from "../../utils/control-request.js";
 import { Cli, requireBinary } from "./harness.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { DISK_ONLY } from "../../utils/own-blob-server.js";
 
 let server: FreshServer;
 let local: Cli;
+// A backup folder, so that an instance with nothing to report has a place to
+// put its backups, and the empty list below is the whole of what it checks.
+const backups = mkdtempSync(join(tmpdir(), "marfa-cli-attention-"));
 beforeAll(async () => {
-  server = await bootFreshServer("cli-attention");
+  server = await bootFreshServer("cli-attention", {
+    ...DISK_ONLY,
+    MARFA_BACKUP_PATH: backups,
+    MARFA_BACKUP_INTERVAL_SECONDS: "31536000",
+  });
   vi.stubEnv("MARFA_API_URL", server.apiUrl);
   local = new Cli(
     requireBinary(),
@@ -22,6 +33,7 @@ beforeAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 afterAll(async () => {
   await server?.stop();
+  rmSync(backups, { recursive: true, force: true });
   vi.unstubAllEnvs();
 }, FRESH_SERVER_TIMEOUT_MS);
 
@@ -276,3 +288,39 @@ it("shares private-socket attention, keeps known concerns, and refuses every oth
   expect(references).not.toContain(soon.id);
   expect(references).not.toContain(later.id);
 });
+
+it(
+  "tells the owner in plain words that no backups are kept, and how to set one",
+  async () => {
+    const bare = await bootFreshServer("cli-attention-none", DISK_ONLY);
+    try {
+      const cli = new Cli(
+        requireBinary(),
+        bare.apiUrl,
+        undefined,
+        bare.controlSocket,
+      );
+      const said = await cli.run(["attention"]);
+      expect(said.code, said.stderr).toBe(0);
+      expect(said.stdout).toContain("backup  No backups are kept");
+      for (const part of [
+        "MARFA_BACKUP_PATH",
+        "S3_BUCKET",
+        "marfa server stop",
+        "marfa server start",
+      ]) {
+        expect(said.stdout, part).toContain(part);
+      }
+      const listed = await cli.json<Inventory>(["attention"]);
+      expect(listed.data).toEqual([
+        expect.objectContaining({
+          kind: "backup",
+          reference: "no_backup_destination",
+        }),
+      ]);
+    } finally {
+      await bare.stop();
+    }
+  },
+  FRESH_SERVER_TIMEOUT_MS,
+);

@@ -6,6 +6,7 @@ mod names;
 
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -43,6 +44,8 @@ const REPLICATION: &str = "blob-replicate";
 #[derive(Debug, Default)]
 pub struct Backups {
     running: Mutex<()>,
+    /// Set while a look at the backup folder is in flight, which a mount that hangs holds.
+    looking: Arc<AtomicBool>,
 }
 
 /// What the database records of backups.
@@ -370,6 +373,15 @@ fn drop_uncovered(tx: &Transaction<'_>, store: &str) -> Result<()> {
     Ok(())
 }
 
+fn folder_not_there(folder: &Folder) -> String {
+    format!(
+        "The backup folder {} is not there, or does not hold this instance's files. Mount the \
+         disk it is on, then try again. If that disk was replaced, run `marfa backups folder \
+         adopt` to start afresh on the one there now.",
+        folder.root().display()
+    )
+}
+
 /// Where backups go: the object store or the backup folder.
 #[derive(Clone)]
 pub(crate) enum Destination {
@@ -418,13 +430,7 @@ impl Destination {
                         folder.root().display()
                     )
                 } else {
-                    format!(
-                        "The backup folder {} is not there, or does not hold this instance's \
-                         files. Mount the disk it is on, then try again. If that disk was \
-                         replaced, run `marfa backups folder adopt` to start afresh on the one \
-                         there now.",
-                        folder.root().display()
-                    )
+                    folder_not_there(folder)
                 };
                 Refusal::new(Code::BlobStoreUnavailable, message)
             }
@@ -951,50 +957,108 @@ impl App {
         }))
     }
 
-    /// What `/health` says of backups: whether they run, and how the last one went.
+    /// Whether the folder's disk is there, or `None` when a look at it has not answered.
+    async fn folder_there(&self, folder: &Arc<Folder>) -> Option<bool> {
+        let looking = self.backups.looking.clone();
+        if looking.swap(true, Ordering::AcqRel) {
+            return None;
+        }
+        let folder = folder.clone();
+        let answered = super::health::bounded(move || {
+            let there = folder.reachable();
+            looking.store(false, Ordering::Release);
+            there
+        })
+        .await;
+        if answered.is_none() {
+            tracing::warn!("The backup folder did not answer for health in time");
+        }
+        answered
+    }
+
+    /// Why the destination takes no copies: the folder's disk, or what replication last found.
+    async fn store_error(
+        &self,
+        destination: &Destination,
+        replication: Option<&str>,
+    ) -> Option<String> {
+        if let Destination::Folder(folder) = destination {
+            match self.folder_there(folder).await {
+                Some(true) => {}
+                Some(false) => return Some(folder_not_there(folder)),
+                None => {
+                    return Some(format!(
+                        "The backup folder {} did not answer in time.",
+                        folder.root().display()
+                    ));
+                }
+            }
+        }
+        replication.map(str::to_string)
+    }
+
+    /// What `/health` says of backups: whether they run, how the last went, and the store's state.
     pub async fn backup_health(&self) -> Value {
         let mut health = serde_json::Map::new();
         let destination = Destination::of(self);
         if let Some(destination) = &destination {
             health.insert("destination".into(), destination.kind().into());
         }
-        let status = if destination.is_none() {
-            health.insert("reason".into(), "no_backup_destination".into());
-            "off"
-        } else if self.settings.live().get(BACKUP_INTERVAL_SECONDS) == 0 {
-            health.insert("reason".into(), "turned_off".into());
-            "off"
-        } else {
-            "on"
-        };
-        let read = tokio::time::timeout(Duration::from_secs(2), self.db.read(state)).await;
-        let state = match read {
-            Ok(Ok(state)) => Some(state),
+        let read = tokio::time::timeout(
+            Duration::from_secs(2),
+            self.db
+                .read(|tx| Ok((state(tx)?, housekeeping::last_run(tx, REPLICATION)?))),
+        )
+        .await;
+        let (state, replication) = match read {
+            Ok(Ok((state, replication))) => (Some(state), replication),
             Ok(Err(error)) => {
                 tracing::warn!(%error, "The backup state did not read for health");
-                None
+                (None, None)
             }
             Err(_) => {
                 tracing::warn!("The backup state did not read for health in time");
-                None
+                (None, None)
             }
         };
-        let failing = state.as_ref().is_none_or(|state| state.failures > 0);
-        health.insert(
-            "status".into(),
-            match (status, failing) {
-                ("on", true) => "failing",
-                ("on", false) => "ok",
-                _ => "off",
+        let waiting = replication
+            .as_ref()
+            .and_then(|run| run.result.as_ref())
+            .and_then(|result| result["remaining"].as_u64())
+            .unwrap_or(0);
+        let store_error = match &destination {
+            Some(destination) => {
+                let failed = replication.as_ref().and_then(|run| run.failure.as_deref());
+                self.store_error(destination, failed).await
             }
-            .into(),
-        );
+            None => None,
+        };
+        let turned_off = self.settings.live().get(BACKUP_INTERVAL_SECONDS) == 0;
+        let failing = state.as_ref().is_none_or(|state| state.failures > 0);
+        let status = match (&destination, turned_off, failing, &store_error) {
+            (None, ..) => {
+                health.insert("reason".into(), "no_backup_destination".into());
+                "off"
+            }
+            (Some(_), _, _, Some(_)) => "failing",
+            (Some(_), true, ..) => {
+                health.insert("reason".into(), "turned_off".into());
+                "off"
+            }
+            (Some(_), false, true, None) => "failing",
+            (Some(_), false, false, None) => "ok",
+        };
+        health.insert("status".into(), status.into());
         if let Some(state) = state {
             health.insert("last_backup".into(), state.last_backup.into());
             health.insert("last_backup_at".into(), state.last_backup_at.into());
             health.insert("failures".into(), state.failures.into());
             health.insert("last_error".into(), state.last_error.into());
             health.insert("last_failed_at".into(), state.last_failed_at.into());
+        }
+        if destination.is_some() {
+            health.insert("copies_waiting".into(), waiting.into());
+            health.insert("store_error".into(), store_error.into());
         }
         Value::Object(health)
     }
