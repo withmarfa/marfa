@@ -84,5 +84,14 @@ pub fn run(command: ExtensionsCommand, remote: &Remote, out: &Printer) -> Result
             idempotency,
         } => idempotency.apply(delete_request(id, namespace)),
     };
-    out.value(&remote.json(&request)?)
+    let answer = remote.json(&request)?;
+    match &command {
+        ExtensionsCommand::Write { id, namespace, .. } => out.report(&answer, || {
+            format!("wrote the namespace {namespace} of {id}")
+        }),
+        ExtensionsCommand::Delete { id, namespace, .. } => out.report(&answer, || {
+            format!("removed the namespace {namespace} of {id}")
+        }),
+        _ => out.value(&answer),
+    }
 }

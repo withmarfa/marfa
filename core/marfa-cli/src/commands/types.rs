@@ -234,8 +234,33 @@ pub fn run(
     let answer = remote()?.json(&request)?;
     match &command {
         TypesCommand::Delete { id, .. } => out.report(&answer, || format!("removed type {id}")),
+        TypesCommand::Register(_) => out.report(&answer, || type_line("registered", &answer)),
+        TypesCommand::Replace { .. } => out.report(&answer, || type_line("replaced", &answer)),
+        TypesCommand::SetIcon { id, .. } => {
+            out.report(&answer, || format!("set the icon of type {id}"))
+        }
+        TypesCommand::ClearIcon { id } => {
+            out.report(&answer, || format!("cleared the icon of type {id}"))
+        }
         _ => out.value(&answer),
     }
+}
+
+fn type_line(verb: &str, answer: &Value) -> String {
+    let definition = answer.get("type").unwrap_or(answer);
+    let text = |name: &str| definition.get(name).and_then(Value::as_str).unwrap_or("");
+    let label = match text("label") {
+        "" => String::new(),
+        label => format!(" \"{}\"", crate::output::printable(label)),
+    };
+    format!(
+        "{verb} type {}{label} (version {})",
+        crate::output::printable(text("id")),
+        definition
+            .get("version")
+            .and_then(Value::as_u64)
+            .unwrap_or(0)
+    )
 }
 
 /// How often a move's job is asked how it stands.

@@ -883,9 +883,7 @@ export class CliDevice implements DeviceUnderTest {
     to: { source_id: string } | { target_id: string },
   ): Promise<Outcome<{ refused: false }>> {
     const [flag, end] =
-      "source_id" in to
-        ? ["--source", to.source_id]
-        : ["--target", to.target_id];
+      "source_id" in to ? ["--from", to.source_id] : ["--to", to.target_id];
     return this.json<{ refused: false }>([
       "edges",
       "check-move",
@@ -914,8 +912,8 @@ export class CliDevice implements DeviceUnderTest {
     ];
     if (edit.version !== undefined)
       args.push("--version", String(edit.version));
-    if (edit.source_id !== undefined) args.push("--source", edit.source_id);
-    if (edit.target_id !== undefined) args.push("--target", edit.target_id);
+    if (edit.source_id !== undefined) args.push("--from", edit.source_id);
+    if (edit.target_id !== undefined) args.push("--to", edit.target_id);
     return this.json<QueuedWrite | null>(args);
   }
 
@@ -1852,9 +1850,9 @@ function edgeDraftArgs(command: "create" | "check", edge: EdgeDraft): string[] {
   const args = [
     "edges",
     command,
-    "--source",
+    "--from",
     edge.source,
-    "--target",
+    "--to",
     edge.target,
     "--type",
     edge.type,

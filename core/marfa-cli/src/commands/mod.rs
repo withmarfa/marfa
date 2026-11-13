@@ -26,6 +26,7 @@ pub mod owner_passkeys;
 pub mod profile;
 pub mod restore;
 pub mod rows;
+pub mod said;
 pub mod search;
 pub mod sign_ins;
 pub mod sources;
@@ -108,6 +109,10 @@ pub struct PageArgs {
     /// The cursor the previous page answered with.
     #[arg(long)]
     pub cursor: Option<String>,
+    /// Read every page, one after another, and print them as one answer.
+    /// `--limit` is then the size of each page.
+    #[arg(long, conflicts_with = "cursor")]
+    pub all: bool,
 }
 
 #[derive(Debug, Default, Args)]
@@ -158,7 +163,10 @@ pub struct PropertyArgs {
     /// The properties, as a JSON object.
     #[arg(long, value_name = "JSON")]
     pub properties: Option<String>,
-    /// One property as key=value, repeatable. The value is a string.
+    /// One property as key=value, repeatable. The value is read as the field's
+    /// kind, which the CLI looks up on the server: a whole number, a number,
+    /// true or false, or JSON for an object or a list. A field the type does
+    /// not name is sent as text.
     #[arg(long = "prop", value_name = "KEY=VALUE")]
     pub props: Vec<String>,
 }
@@ -168,7 +176,12 @@ impl PropertyArgs {
         self.properties.is_none() && self.props.is_empty()
     }
 
-    pub fn read(&self) -> Result<Map<String, Value>, CliError> {
+    /// The properties, each `--prop` value read as the kind its field has in
+    /// `fields`, a type's field definitions. Without them every value is text.
+    pub fn read(
+        &self,
+        fields: Option<&Map<String, Value>>,
+    ) -> Result<Map<String, Value>, CliError> {
         let mut map = match &self.properties {
             Some(text) => object(text, "--properties")?,
             None => Map::new(),
@@ -184,9 +197,63 @@ impl PropertyArgs {
                     "the property {key:?} was given both in --properties and as --prop"
                 )));
             }
-            map.insert(key.to_string(), Value::String(value.to_string()));
+            let kind = fields
+                .and_then(|fields| fields.get(key))
+                .and_then(|field| field.get("type"))
+                .and_then(Value::as_str);
+            map.insert(key.to_string(), prop_value(key, value, kind)?);
         }
         Ok(map)
+    }
+}
+
+/// `text` as the kind of field `key` is. A kind that holds text, and one the
+/// type does not say, keep it as text, and the server decides.
+pub fn prop_value(key: &str, text: &str, kind: Option<&str>) -> Result<Value, CliError> {
+    let refuse = |kind: &str, wanted: &str| {
+        CliError::Invalid(format!(
+            "--prop {key}={text}: the field {key} is {kind}, and {text:?} is not {wanted}"
+        ))
+    };
+    match kind {
+        Some("integer") => text
+            .parse::<i64>()
+            .map(Value::from)
+            .map_err(|_| refuse("an integer", "a whole number")),
+        Some("number") => match text.parse::<i64>() {
+            Ok(whole) => Ok(Value::from(whole)),
+            Err(_) => text
+                .parse::<f64>()
+                .ok()
+                .and_then(serde_json::Number::from_f64)
+                .map(Value::Number)
+                .ok_or_else(|| refuse("a number", "a number")),
+        },
+        Some("boolean") => match text {
+            "true" => Ok(Value::Bool(true)),
+            "false" => Ok(Value::Bool(false)),
+            _ => Err(refuse("a boolean", "true or false")),
+        },
+        Some(kind @ ("object" | "array")) => {
+            marfa_core::refuse_inexact_integers(text)?;
+            match (kind, serde_json::from_str::<Value>(text)) {
+                ("object", Ok(value @ Value::Object(_))) => Ok(value),
+                ("array", Ok(value @ Value::Array(_))) => Ok(value),
+                _ => Err(refuse(
+                    if kind == "object" {
+                        "an object"
+                    } else {
+                        "a list"
+                    },
+                    if kind == "object" {
+                        "a JSON object"
+                    } else {
+                        "a JSON list"
+                    },
+                )),
+            }
+        }
+        _ => Ok(Value::String(text.to_string())),
     }
 }
 

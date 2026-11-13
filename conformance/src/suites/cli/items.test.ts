@@ -207,7 +207,7 @@ describe("items from the terminal", () => {
     expect(binned.item.state).toBe("trashed");
     const shown = await c.cli.run(["items", "get", id]);
     expect(shown.code).toBe(0);
-    expect(shown.stdout).toContain("[trashed]");
+    expect(shown.stdout).toMatch(/^state +trashed$/m);
 
     const restored = await c.cli.json<ItemEnvelope>(["items", "restore", id]);
     expect(restored.item.state).toBe("active");

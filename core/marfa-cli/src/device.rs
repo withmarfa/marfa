@@ -659,10 +659,10 @@ pub enum EdgesCommand {
     /// Link two items, and queue the edge.
     Create {
         /// The item the edge starts from.
-        #[arg(long, value_name = "ID")]
+        #[arg(long = "from", value_name = "ID")]
         source: String,
         /// The item the edge points at.
-        #[arg(long, value_name = "ID")]
+        #[arg(long = "to", value_name = "ID")]
         target: String,
         /// The edge type.
         #[arg(long = "type", value_name = "TYPE")]
@@ -677,10 +677,10 @@ pub enum EdgesCommand {
     /// Say whether `edges create` would refuse an edge now, from what the copy holds, and queue nothing. The server still judges an edge the copy finds nothing against.
     Check {
         /// The item the edge starts from.
-        #[arg(long, value_name = "ID")]
+        #[arg(long = "from", value_name = "ID")]
         source: String,
         /// The item the edge points at.
-        #[arg(long, value_name = "ID")]
+        #[arg(long = "to", value_name = "ID")]
         target: String,
         /// The edge type.
         #[arg(long = "type", value_name = "TYPE")]
@@ -699,10 +699,10 @@ pub enum EdgesCommand {
         /// The edge id.
         id: String,
         /// Move the edge to this source.
-        #[arg(long, value_name = "ID")]
+        #[arg(long = "from", value_name = "ID")]
         source: Option<String>,
         /// Move the edge to this target.
-        #[arg(long, value_name = "ID")]
+        #[arg(long = "to", value_name = "ID")]
         target: Option<String>,
     },
     /// Change an edge's properties, or move one of its ends. An edit that names no property and no new end queues no write.
@@ -716,10 +716,10 @@ pub enum EdgesCommand {
         #[arg(long)]
         version: Option<i64>,
         /// Move the edge to this source, where each target holds one of its type.
-        #[arg(long, value_name = "ID")]
+        #[arg(long = "from", value_name = "ID")]
         source: Option<String>,
         /// Move the edge to this target, where each source holds one of its type.
-        #[arg(long, value_name = "ID")]
+        #[arg(long = "to", value_name = "ID")]
         target: Option<String>,
     },
     /// Drop an edge locally and queue the delete.

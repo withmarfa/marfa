@@ -29,6 +29,7 @@ fn a_listing_sends_only_the_filters_it_was_given() {
         tags: vec!["a".into(), "b".into()],
         occurred_after: Some("2026-01-01T00:00:00Z".into()),
         page: PageArgs {
+            all: false,
             limit: Some(5),
             cursor: Some("c1".into()),
         },
@@ -60,20 +61,23 @@ fn a_listing_sends_only_the_filters_it_was_given() {
 
 #[test]
 fn a_create_carries_the_properties_the_tags_and_only_the_fields_named() {
-    let request = items::create_request(&items::CreateArgs {
-        type_: "core.note".into(),
-        properties: PropertyArgs {
-            properties: Some(r#"{"title":"Hello"}"#.into()),
-            props: vec!["status=draft".into()],
+    let request = items::create_request(
+        &items::CreateArgs {
+            type_: "core.note".into(),
+            properties: PropertyArgs {
+                properties: Some(r#"{"title":"Hello"}"#.into()),
+                props: vec!["status=draft".into()],
+            },
+            tags: vec!["inbox".into()],
+            tier: Some(Tier::Feed),
+            version: Some(3),
+            idempotency: items::IdempotencyArgs {
+                idempotency_key: Some("k1".into()),
+            },
+            ..Default::default()
         },
-        tags: vec!["inbox".into()],
-        tier: Some(Tier::Feed),
-        version: Some(3),
-        idempotency: items::IdempotencyArgs {
-            idempotency_key: Some("k1".into()),
-        },
-        ..Default::default()
-    })
+        None,
+    )
     .unwrap();
     assert_eq!(request.method, Method::Post);
     assert_eq!(request.path(), "/items");
@@ -97,12 +101,15 @@ fn a_create_carries_the_properties_the_tags_and_only_the_fields_named() {
 #[test]
 fn a_create_only_create_sends_the_bulk_door_mode_and_a_plain_one_sends_none() {
     let create = |create_only| {
-        items::create_request(&items::CreateArgs {
-            type_: "core.note".into(),
-            source_id: Some("row-1".into()),
-            create_only,
-            ..Default::default()
-        })
+        items::create_request(
+            &items::CreateArgs {
+                type_: "core.note".into(),
+                source_id: Some("row-1".into()),
+                create_only,
+                ..Default::default()
+            },
+            None,
+        )
         .unwrap()
     };
     assert_eq!(
@@ -121,7 +128,7 @@ fn a_property_given_both_ways_is_refused_rather_than_resolved() {
         properties: Some(r#"{"title":"one"}"#.into()),
         props: vec!["title=two".into()],
     }
-    .read()
+    .read(None)
     .unwrap_err();
     assert!(refused.to_string().contains("title"), "{refused}");
     assert!(
@@ -129,7 +136,7 @@ fn a_property_given_both_ways_is_refused_rather_than_resolved() {
             properties: Some("[1]".into()),
             props: vec![],
         }
-        .read()
+        .read(None)
         .is_err(),
         "an array was accepted where the wire takes an object"
     );
@@ -137,15 +144,18 @@ fn a_property_given_both_ways_is_refused_rather_than_resolved() {
 
 #[test]
 fn an_update_carries_the_version_and_asks_for_resolution_only_when_told() {
-    let plain = items::update_request(&items::UpdateArgs {
-        id: "i1".into(),
-        version: 7,
-        properties: PropertyArgs {
-            properties: Some(r#"{"title":"new"}"#.into()),
-            props: vec![],
+    let plain = items::update_request(
+        &items::UpdateArgs {
+            id: "i1".into(),
+            version: 7,
+            properties: PropertyArgs {
+                properties: Some(r#"{"title":"new"}"#.into()),
+                props: vec![],
+            },
+            ..Default::default()
         },
-        ..Default::default()
-    })
+        None,
+    )
     .unwrap();
     assert_eq!(plain.method, Method::Patch);
     assert_eq!(plain.path(), "/items/i1");
@@ -155,14 +165,17 @@ fn an_update_carries_the_version_and_asks_for_resolution_only_when_told() {
         &json!({ "version": 7, "properties": { "title": "new" } })
     );
 
-    let resolved = items::update_request(&items::UpdateArgs {
-        id: "i1".into(),
-        version: 7,
-        replace: true,
-        source_id: Some("notes/new.md".into()),
-        conflict: Some(items::Conflict::Auto),
-        ..Default::default()
-    })
+    let resolved = items::update_request(
+        &items::UpdateArgs {
+            id: "i1".into(),
+            version: 7,
+            replace: true,
+            source_id: Some("notes/new.md".into()),
+            conflict: Some(items::Conflict::Auto),
+            ..Default::default()
+        },
+        None,
+    )
     .unwrap();
     assert_eq!(query(&resolved, "conflict").as_deref(), Some("auto"));
     assert_eq!(body(&resolved)["properties_mode"], "replace");
@@ -170,12 +183,15 @@ fn an_update_carries_the_version_and_asks_for_resolution_only_when_told() {
     // An empty object would clear everything under `--replace`.
     assert!(body(&resolved).get("properties").is_none());
 
-    let cleared = items::update_request(&items::UpdateArgs {
-        id: "i1".into(),
-        version: 7,
-        clear_properties: vec!["notes".into(), "due".into()],
-        ..Default::default()
-    })
+    let cleared = items::update_request(
+        &items::UpdateArgs {
+            id: "i1".into(),
+            version: 7,
+            clear_properties: vec!["notes".into(), "due".into()],
+            ..Default::default()
+        },
+        None,
+    )
     .unwrap();
     assert_eq!(
         body(&cleared),
@@ -220,6 +236,7 @@ fn an_item_history_pages_by_limit_and_cursor() {
     assert_eq!(bare.path(), "/items/i/versions");
     assert_eq!(query(&bare, "limit"), None);
     let page = PageArgs {
+        all: false,
         limit: Some(2),
         cursor: Some("next".into()),
     };
@@ -394,18 +411,21 @@ fn a_whole_number_a_float_would_change_is_refused_at_every_door_that_sends_prope
         properties: Some(text.into()),
         props: vec![],
     }
-    .read()
+    .read(None)
     .unwrap_err();
     assert!(error.to_string().contains(expected), "{error}");
     refused(
-        items::create_request(&items::CreateArgs {
-            type_: "core.note".into(),
-            properties: PropertyArgs {
-                properties: Some(text.into()),
-                props: vec![],
+        items::create_request(
+            &items::CreateArgs {
+                type_: "core.note".into(),
+                properties: PropertyArgs {
+                    properties: Some(text.into()),
+                    props: vec![],
+                },
+                ..Default::default()
             },
-            ..Default::default()
-        })
+            None,
+        )
         .unwrap_err(),
         "items create",
     );
@@ -507,6 +527,7 @@ fn a_search_sends_its_query_and_its_narrowing() {
         sort: Some("updated_at".into()),
         direction: Some(SortDirection::Asc),
         page: PageArgs {
+            all: false,
             limit: Some(3),
             cursor: Some("c6".into()),
         },
@@ -586,6 +607,7 @@ fn tables_and_rows_are_reached_at_their_doors() {
         sort: Some("values.amount".into()),
         direction: Some(crate::values::SortDirection::Desc),
         page: PageArgs {
+            all: false,
             limit: Some(5),
             cursor: Some("c".into()),
         },
@@ -622,6 +644,7 @@ fn tables_and_rows_are_reached_at_their_doors() {
         None
     );
     let page = PageArgs {
+        all: false,
         limit: Some(2),
         cursor: Some("c".into()),
     };
@@ -1516,6 +1539,7 @@ fn a_view_takes_its_settings_from_json_and_flags_and_refuses_one_given_twice() {
     let paged = views::items_request(
         "v1",
         &PageArgs {
+            all: false,
             limit: Some(5),
             cursor: Some("next".into()),
         },
@@ -1573,7 +1597,6 @@ fn a_connector_registers_under_its_name_and_reports_a_run_whole() {
     );
 
     let report = connectors::report_request(&connectors::ReportArgs {
-        id: "c1".into(),
         outcome: connectors::Outcome::Failed,
         started_at: "2026-09-21T10:00:00Z".into(),
         finished_at: "2026-09-21T10:01:00Z".into(),
@@ -1581,7 +1604,7 @@ fn a_connector_registers_under_its_name_and_reports_a_run_whole() {
         error: Some("the mailbox refused".into()),
     });
     assert_eq!(report.method, Method::Post);
-    assert_eq!(report.path(), "/connectors/c1/runs");
+    assert_eq!(report.path(), "/connectors/runs");
     assert_eq!(
         report.body,
         Body::Json(json!({
@@ -1592,10 +1615,23 @@ fn a_connector_registers_under_its_name_and_reports_a_run_whole() {
         }))
     );
 
-    let runs = connectors::runs_request("c1", Some(5));
+    let runs = connectors::runs_request(
+        "c1",
+        &PageArgs {
+            all: false,
+            limit: Some(5),
+            ..Default::default()
+        },
+    );
     assert_eq!(runs.path(), "/connectors/c1/runs");
     assert_eq!(query(&runs, "limit").as_deref(), Some("5"));
-    assert_eq!(query(&connectors::runs_request("c1", None), "limit"), None);
+    assert_eq!(
+        query(
+            &connectors::runs_request("c1", &PageArgs::default()),
+            "limit"
+        ),
+        None
+    );
 }
 
 #[test]
@@ -1618,6 +1654,7 @@ fn a_connector_makes_endpoints_and_reads_and_marks_its_deliveries() {
         Some(connectors::DeliveryState::Any),
         Some("e1"),
         &PageArgs {
+            all: false,
             limit: Some(10),
             cursor: Some("next".into()),
         },
@@ -1712,6 +1749,7 @@ fn a_connector_holds_its_registration_and_keeps_its_state_and_agreements() {
         "c1",
         Some(true),
         &PageArgs {
+            all: false,
             limit: Some(10),
             cursor: Some("next".into()),
         },
@@ -2246,6 +2284,7 @@ fn summaries_send_only_name_type_and_page_filters() {
         Some("core.note"),
         Some("first line"),
         &PageArgs {
+            all: false,
             limit: Some(2),
             cursor: Some("next".into()),
         },

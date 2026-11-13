@@ -907,7 +907,7 @@ describe("the contract the binary was built for", () => {
 const NEEDS_A_KEY =
   "this operation needs a key or a token, which --socket does not carry; run it without --socket";
 const WHAT_NEEDS_ONE =
-  "Item properties, edges, tags, search, counts, events and exports need a key. `items summaries`, `items trash`, the `blobs` commands, and `items bulk-action job` and `items bulk-action cancel` work through --socket without one";
+  "Item properties, edges, tags, search, counts, events and exports need a key. `items summaries`, `items bin`, the `blobs` commands, and `items bulk-action job` and `items bulk-action cancel` work through --socket without one";
 
 /**
  * A server on a Unix socket of its own. It serves a supplied JSON answer,
@@ -1044,7 +1044,7 @@ const invocations: Record<string, () => string[]> = {
   "items edges": () => [ID],
   "items backrefs": () => [ID],
   "edges list": () => [],
-  "edges create": () => ["--source", ID, "--target", ID, "--type", "about"],
+  "edges create": () => ["--from", ID, "--to", ID, "--type", "about"],
   "edges get": () => [ID],
   "edges update": () => ["--properties", "{}", "--version", "1", ID],
   "edges delete": () => [ID],
@@ -1123,7 +1123,7 @@ const invocations: Record<string, () => string[]> = {
   "connectors list": () => [],
   "connectors get": () => [ID],
   "connectors delete": () => [ID],
-  "connectors heartbeat": () => [ID],
+  "connectors heartbeat": () => [],
   "connectors report": () => [
     "--outcome",
     "succeeded",
@@ -1131,7 +1131,6 @@ const invocations: Record<string, () => string[]> = {
     WHEN,
     "--finished-at",
     LATER,
-    ID,
   ],
   "connectors runs": () => [ID],
   "connectors endpoints create": () => [ID],
@@ -1195,11 +1194,11 @@ const beyondTheTable: Record<string, () => string[]> = {
 const PRIVATE_SOCKET_TABLE: Record<string, () => string[]> = {
   "apps narrow": () => [ID, "--scope", "core.note:read"],
   "items summaries": () => [],
-  "items trash list": () => [],
-  "items trash move": () => [ID, "--version", "1"],
-  "items trash restore": () => [ID, "--version", "1"],
-  "items trash purge": () => [ID, "--version", "1"],
-  "items trash empty": () => ["--confirm", "PURGE"],
+  "items bin list": () => [],
+  "items bin move": () => [ID, "--version", "1"],
+  "items bin restore": () => [ID, "--version", "1"],
+  "items bin purge": () => [ID, "--version", "1"],
+  "items bin empty": () => ["--confirm", "PURGE"],
   attention: () => [],
   "folders inventory": () => ["--limit", "1"],
   "owner update": () => ["--email", "a@cyzr.me", "--name", "Owner"],
@@ -1270,6 +1269,8 @@ const NOT_DRIVEN: Record<string, string> = {
   "server start":
     "manages the server on this machine, with launchd, systemd or Docker; held by core/marfa-cli/tests/server.rs",
   "server stop":
+    "manages the server on this machine, with launchd, systemd or Docker; held by core/marfa-cli/tests/server.rs",
+  "server restart":
     "manages the server on this machine, with launchd, systemd or Docker; held by core/marfa-cli/tests/server.rs",
   "server run":
     "starts marfa-server with an install's settings and supervises it; held by core/marfa-cli/tests/server.rs",
@@ -1497,14 +1498,14 @@ describe("every command holds the server to the contract", () => {
     }
   });
 
-  it("holds every trash command to the contract through its private socket", async () => {
+  it("holds every bin command to the contract through its private socket", async () => {
     const socket = await PrivateSocket.start();
     const paths: Record<string, string> = {
-      "items trash list": "GET /trash",
-      "items trash move": `POST /items/summaries/${ID}/trash?version=1`,
-      "items trash restore": `POST /items/summaries/${ID}/restore?version=1`,
-      "items trash purge": `POST /items/summaries/${ID}/purge?version=1`,
-      "items trash empty": "POST /trash/empty",
+      "items bin list": "GET /trash",
+      "items bin move": `POST /items/summaries/${ID}/trash?version=1`,
+      "items bin restore": `POST /items/summaries/${ID}/restore?version=1`,
+      "items bin purge": `POST /items/summaries/${ID}/purge?version=1`,
+      "items bin empty": "POST /trash/empty",
     };
     try {
       for (const [command, path] of Object.entries(paths)) {

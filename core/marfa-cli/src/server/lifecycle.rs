@@ -1,4 +1,4 @@
-//! `marfa server upgrade`, `start`, `stop`, `status` and `uninstall`.
+//! `marfa server upgrade`, `start`, `stop`, `restart`, `status` and `uninstall`.
 
 use std::path::Path;
 
@@ -363,6 +363,16 @@ pub fn stop(args: DirArgs, out: &Printer) -> Result<(), CliError> {
             }
         },
     )
+}
+
+pub fn restart(args: StartArgs, out: &Printer) -> Result<(), CliError> {
+    stop(
+        DirArgs {
+            dir: args.dir.dir.clone(),
+        },
+        out,
+    )?;
+    start(args, out)
 }
 
 // ---- status -------------------------------------------------------------

@@ -28,10 +28,10 @@ pub enum ItemsCommand {
         #[command(flatten)]
         page: PageArgs,
     },
-    /// Manage item trash through direct local authority. Use `--socket`.
-    Trash {
+    /// Manage the bin through direct local authority. Use `--socket`.
+    Bin {
         #[command(subcommand)]
-        command: TrashCommand,
+        command: BinCommand,
     },
     /// One item by id, in any state, the bin included.
     Get {
@@ -78,7 +78,7 @@ pub enum ItemsCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
-    /// Destroy a trashed item irrecoverably. Needs `items.purge`.
+    /// Destroy an item in the bin irrecoverably. Needs `items.purge`.
     Purge {
         /// The item id.
         id: String,
@@ -215,8 +215,8 @@ pub enum ItemsCommand {
 }
 
 #[derive(Debug, Subcommand)]
-pub enum TrashCommand {
-    /// List trash summaries, automatic deletion eligibility, and retention, one page at a time.
+pub enum BinCommand {
+    /// List what the bin holds, when each item is eligible for automatic deletion, and the retention, one page at a time.
     List {
         /// Only this exact item type.
         #[arg(long = "type")]
@@ -227,7 +227,7 @@ pub enum TrashCommand {
         #[command(flatten)]
         page: PageArgs,
     },
-    /// Move the item and its cascading children into the trash.
+    /// Move the item and its cascading children into the bin.
     Move {
         /// The item ID from the summary listing.
         id: String,
@@ -235,7 +235,7 @@ pub enum TrashCommand {
         #[arg(long)]
         version: u64,
     },
-    /// Restore the item and the children its trash took.
+    /// Take the item and the children its move to the bin took out of it.
     Restore {
         /// The item ID from the summary listing.
         id: String,
@@ -243,7 +243,7 @@ pub enum TrashCommand {
         #[arg(long)]
         version: u64,
     },
-    /// Permanently delete one item that is still in the trash.
+    /// Permanently delete one item that is still in the bin.
     Purge {
         /// The item ID from the summary listing.
         id: String,
@@ -251,39 +251,43 @@ pub enum TrashCommand {
         #[arg(long)]
         version: u64,
     },
-    /// Permanently delete up to 200 trash items. Continue with the returned cursor unless an outcome is unknown; read the trash again before retrying.
+    /// Permanently delete everything in the bin, 200 at a time, and say how
+    /// many have gone as it does. It stops where a deletion could not be
+    /// confirmed; run it again to carry on, as an interrupted run is safe to
+    /// repeat.
     Empty {
-        /// A cursor from the previous batch. Absent starts with the first batch.
-        #[arg(long)]
-        cursor: Option<String>,
         /// Confirm permanent deletion with `PURGE`.
         #[arg(long, value_parser = ["PURGE"])]
         confirm: String,
     },
 }
 
-pub fn trash_request(command: &TrashCommand) -> Result<Request, CliError> {
+pub fn bin_request(command: &BinCommand) -> Result<Request, CliError> {
     let action = |id: &str, version: u64, action: &str| {
         Request::post(&["items", "summaries", id, action]).query("version", version.to_string())
     };
     Ok(match command {
-        TrashCommand::List { type_, q, page } => Request::get(&["trash"])
+        BinCommand::List { type_, q, page } => Request::get(&["trash"])
             .query_opt("type", type_.as_deref())
             .query_opt("q", q.as_deref())
             .query_opt("limit", page.limit.map(|n| n.to_string()))
             .query_opt("cursor", page.cursor.as_deref()),
-        TrashCommand::Move { id, version } => action(id, *version, "trash"),
-        TrashCommand::Restore { id, version } => action(id, *version, "restore"),
-        TrashCommand::Purge { id, version } => action(id, *version, "purge"),
-        TrashCommand::Empty { cursor, confirm } => {
+        BinCommand::Move { id, version } => action(id, *version, "trash"),
+        BinCommand::Restore { id, version } => action(id, *version, "restore"),
+        BinCommand::Purge { id, version } => action(id, *version, "purge"),
+        BinCommand::Empty { confirm } => {
             if confirm != "PURGE" {
                 return Err(CliError::Usage(
-                    "emptying the trash needs --confirm PURGE".into(),
+                    "emptying the bin needs --confirm PURGE".into(),
                 ));
             }
-            Request::post(&["trash", "empty"]).query_opt("cursor", cursor.as_deref())
+            empty_request(None)
         }
     })
+}
+
+fn empty_request(cursor: Option<&str>) -> Request {
+    Request::post(&["trash", "empty"]).query_opt("cursor", cursor)
 }
 
 /// No `revoked`: only the server revokes.
@@ -592,7 +596,7 @@ pub enum BulkActionCommand {
         #[command(flatten)]
         filter: BulkFilterArgs,
     },
-    /// Destroy every matching item that is in the trash when the job reaches it; any other
+    /// Destroy every matching item that is in the bin when the job reaches it; any other
     /// match is left as it is and reported. Match the bin with `--state trashed`. Needs
     /// `items.purge` and `--confirm PURGE`.
     Purge {
@@ -683,10 +687,13 @@ pub fn get_request(id: &str, include: Option<&str>) -> Request {
         .query("state", "any")
 }
 
-pub fn create_request(args: &CreateArgs) -> Result<Request, CliError> {
+pub fn create_request(
+    args: &CreateArgs,
+    fields: Option<&Map<String, Value>>,
+) -> Result<Request, CliError> {
     let mut body = Map::new();
     body.insert("type".into(), Value::String(args.type_.clone()));
-    let properties = args.properties.read()?;
+    let properties = args.properties.read(fields)?;
     if !properties.is_empty() {
         body.insert("properties".into(), Value::Object(properties));
     }
@@ -711,10 +718,13 @@ pub fn create_request(args: &CreateArgs) -> Result<Request, CliError> {
         .apply(Request::post(&["items"]).json(Value::Object(body))))
 }
 
-pub fn update_request(args: &UpdateArgs) -> Result<Request, CliError> {
+pub fn update_request(
+    args: &UpdateArgs,
+    fields: Option<&Map<String, Value>>,
+) -> Result<Request, CliError> {
     let mut body = Map::new();
     body.insert("version".into(), Value::from(args.version));
-    let properties = args.properties.read()?;
+    let properties = args.properties.read(fields)?;
     if !args.properties.is_empty() {
         body.insert("properties".into(), Value::Object(properties));
     }
@@ -750,7 +760,7 @@ pub fn update_request(args: &UpdateArgs) -> Result<Request, CliError> {
 }
 
 /// One id with no digest is a plain delete; several, or a digest, go through
-/// the trash door, which moves them all in one step or none.
+/// the door that moves them all to the bin in one step or none.
 pub fn delete_request(ids: &[String], digest: Option<&str>) -> Request {
     match (ids, digest) {
         ([id], None) => Request::delete(&["items", id]),
@@ -764,7 +774,7 @@ pub fn delete_request(ids: &[String], digest: Option<&str>) -> Request {
     }
 }
 
-pub fn trash_preview_request(ids: &[String]) -> Request {
+pub fn bin_preview_request(ids: &[String]) -> Request {
     Request::post(&["items", "trash-preview"])
         .json(json!({ "ids": ids }))
         .reading()
@@ -1079,27 +1089,62 @@ pub fn attached_to_request(file_item_id: &str, target_id: &str) -> Request {
 }
 
 pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    if let ItemsCommand::Bin {
+        command: BinCommand::Empty { confirm },
+    } = &command
+    {
+        return empty_bin(confirm, remote, out);
+    }
     let done = match &command {
         ItemsCommand::Delete {
             ids,
             dry_run: false,
             ..
-        } => Some(format!("trashed {}", ids.join(", "))),
+        } => Some(format!("moved {} to the bin", ids.join(", "))),
         ItemsCommand::Purge { id, .. } => Some(format!("purged {id}")),
         _ => None,
     };
+    let (tagging, untagging) = (
+        matches!(command, ItemsCommand::Tag { .. }),
+        matches!(command, ItemsCommand::Untag { .. }),
+    );
+    let id_of = match &command {
+        ItemsCommand::Tag { id, .. } | ItemsCommand::Untag { id, .. } => id.clone(),
+        _ => String::new(),
+    };
+    let wrote = match &command {
+        ItemsCommand::Create(_) => Some("created"),
+        ItemsCommand::Update(_) => Some("updated"),
+        ItemsCommand::Restore { .. } => Some("restored"),
+        ItemsCommand::Transition { state, .. } => Some(match state {
+            TransitionState::Active => "reactivated",
+            TransitionState::Archived => "archived",
+            TransitionState::Trashed => "moved to the bin",
+        }),
+        _ => None,
+    };
     let request = match &command {
-        ItemsCommand::Trash { command } => trash_request(command)?,
+        ItemsCommand::Bin { command } => bin_request(command)?,
         ItemsCommand::List(args) => list_request(args)?,
         ItemsCommand::Summaries { type_, q, page } => {
             summaries_request(type_.as_deref(), q.as_deref(), page)
         }
         ItemsCommand::Get { id, include } => get_request(id, include.as_deref()),
-        ItemsCommand::Create(args) => create_request(args)?,
-        ItemsCommand::Update(args) => update_request(args)?,
+        ItemsCommand::Create(args) => {
+            let fields = field_definitions(remote, &args.properties, || Some(args.type_.clone()));
+            create_request(args, fields.as_ref())?
+        }
+        ItemsCommand::Update(args) => {
+            let fields = field_definitions(remote, &args.properties, || {
+                args.type_
+                    .clone()
+                    .or_else(|| type_of_item(remote, &args.id))
+            });
+            update_request(args, fields.as_ref())?
+        }
         ItemsCommand::Delete {
             ids, dry_run: true, ..
-        } => trash_preview_request(ids),
+        } => bin_preview_request(ids),
         ItemsCommand::Delete {
             ids,
             digest,
@@ -1154,11 +1199,112 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         } => tombstones_request(type_, links, source.as_deref(), source_ids, settled_at),
         ItemsCommand::BulkAction { command } => bulk_action_request(command)?,
     };
-    let answer = remote.json(&request)?;
-    match done {
-        Some(sentence) => out.report(&answer, || sentence),
-        None => out.value(&answer),
+    let all = match &command {
+        ItemsCommand::List(args) => args.page.all,
+        ItemsCommand::Summaries { page, .. } => page.all,
+        ItemsCommand::Versions { page, .. } => page.all,
+        ItemsCommand::Bin {
+            command: BinCommand::List { page, .. },
+        } => page.all,
+        _ => false,
+    };
+    let answer = remote.pages(&request, all)?;
+    match (done, wrote) {
+        (Some(sentence), _) => out.report(&answer, || sentence),
+        (None, Some(verb)) => out.report(&answer, || super::said::item(verb, &answer)),
+        (None, None) if tagging => {
+            out.report(&answer, || super::said::tags("tagged", &id_of, &answer))
+        }
+        (None, None) if untagging => {
+            out.report(&answer, || super::said::tags("untagged", &id_of, &answer))
+        }
+        (None, None) => out.value(&answer),
     }
+}
+
+/// The field definitions of the type the `--prop` values are for, read in one
+/// request and only when a `--prop` was given. A type that cannot be read leaves
+/// the values as text, and a refusal then says to use `--properties`.
+fn field_definitions(
+    remote: &Remote,
+    properties: &PropertyArgs,
+    type_id: impl FnOnce() -> Option<String>,
+) -> Option<Map<String, Value>> {
+    if properties.props.is_empty() {
+        return None;
+    }
+    let fields = type_id()
+        .and_then(|id| remote.json(&super::types::get_request(&id)).ok())
+        .and_then(|definition| match definition.get("fields") {
+            Some(Value::Object(fields)) => Some(fields.clone()),
+            _ => None,
+        });
+    if fields.is_none() {
+        crate::hint::props_sent_as_text();
+    }
+    fields
+}
+
+fn type_of_item(remote: &Remote, id: &str) -> Option<String> {
+    let answer = remote.json(&get_request(id, None)).ok()?;
+    answer
+        .pointer("/item/type")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
+
+/// Empties the bin a batch at a time until the server names no more, saying
+/// how many have gone after each batch. A batch whose outcome is unknown stops
+/// the run, because the bin has to be read again before anything is repeated.
+fn empty_bin(confirm: &str, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    bin_request(&BinCommand::Empty {
+        confirm: confirm.to_string(),
+    })?;
+    let mut purged = 0;
+    let mut failures: Vec<Value> = Vec::new();
+    let mut cursor: Option<String> = None;
+    let unsure = loop {
+        let batch = remote.json(&empty_request(cursor.as_deref()))?;
+        let gone = batch.get("purged").and_then(Value::as_u64).unwrap_or(0);
+        purged += gone;
+        let held: Vec<Value> = batch
+            .get("failures")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        let unsure = held.iter().any(|failure| {
+            failure
+                .pointer("/details/write_outcome")
+                .and_then(Value::as_str)
+                == Some("unknown")
+        });
+        failures.extend(held);
+        let next = batch
+            .get("next_cursor")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        if !out.json && next.is_some() && !unsure {
+            out.line(&format!("{purged} items deleted so far"))?;
+        }
+        if unsure || next.is_none() || next == cursor {
+            break unsure;
+        }
+        cursor = next;
+    };
+    out.report(&json!({ "purged": purged, "failures": failures }), || {
+        let mut lines = vec![format!("{purged} items deleted from the bin")];
+        for failure in &failures {
+            let text = |name: &str| failure.get(name).and_then(Value::as_str).unwrap_or("");
+            lines.push(format!("{}: {}", text("id"), text("message")));
+        }
+        lines.join("\n")
+    })?;
+    if unsure {
+        return Err(CliError::Invalid(
+            "stopped: a deletion could not be confirmed, so read the bin again before running this again".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// The edge page carries only the other end's id, so the plain listing
@@ -1169,7 +1315,7 @@ fn edges(
     remote: &Remote,
     out: &Printer,
 ) -> Result<(), CliError> {
-    let page = remote.json(&edges_request(args, inbound))?;
+    let page = remote.pages(&edges_request(args, inbound), args.page.all)?;
     if out.json {
         return out.value(&page);
     }

@@ -104,5 +104,5 @@ pub fn request(args: &SearchArgs) -> Result<Request, CliError> {
 }
 
 pub fn run(args: SearchArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    out.value(&remote.json(&request(&args)?)?)
+    out.value(&remote.pages(&request(&args)?, args.page.all)?)
 }

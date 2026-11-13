@@ -30,10 +30,10 @@ pub enum EdgesCommand {
         #[arg(long, value_name = "JSON")]
         properties: Option<String>,
         /// Move the edge to this source, where each target holds one of its type.
-        #[arg(long, value_name = "ID")]
+        #[arg(long = "from", value_name = "ID")]
         source: Option<String>,
         /// Move the edge to this target, where each source holds one of its type.
-        #[arg(long, value_name = "ID")]
+        #[arg(long = "to", value_name = "ID")]
         target: Option<String>,
         /// The version the edit was based on.
         #[arg(long)]
@@ -70,10 +70,10 @@ pub struct EdgeListArgs {
 #[derive(Debug, Default, Args)]
 pub struct EdgeCreateArgs {
     /// The item the edge leaves.
-    #[arg(long, value_name = "ID")]
+    #[arg(long = "from", value_name = "ID")]
     pub source: String,
     /// The item the edge arrives at.
-    #[arg(long, value_name = "ID")]
+    #[arg(long = "to", value_name = "ID")]
     pub target: String,
     /// The edge type.
     #[arg(long = "type", value_name = "TYPE")]
@@ -207,7 +207,8 @@ pub fn run(command: EdgesCommand, remote: &Remote, out: &Printer) -> Result<(), 
         EdgesCommand::Delete { id, idempotency } => idempotency.apply(delete_request(id)),
         EdgesCommand::Bulk(args) => bulk_request(args)?,
     };
-    let answer = remote.json(&request)?;
+    let all = matches!(&command, EdgesCommand::List(args) if args.page.all);
+    let answer = remote.pages(&request, all)?;
     match &command {
         EdgesCommand::Create(args) => out.report(&answer, || {
             let id = answer
@@ -225,6 +226,17 @@ pub fn run(command: EdgesCommand, remote: &Remote, out: &Printer) -> Result<(), 
             sentence
         }),
         EdgesCommand::Delete { id, .. } => out.report(&answer, || format!("removed edge {id}")),
+        EdgesCommand::Update { id, .. } => out.report(&answer, || {
+            let edge = answer.get("edge").unwrap_or(&answer);
+            let text = |name: &str| edge.get(name).and_then(Value::as_str).unwrap_or("");
+            format!(
+                "updated {} edge {id}: {} -> {} (version {})",
+                text("edge_type"),
+                text("source_id"),
+                text("target_id"),
+                edge.get("version").and_then(Value::as_u64).unwrap_or(0)
+            )
+        }),
         _ => out.value(&answer),
     }
 }

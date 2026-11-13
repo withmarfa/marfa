@@ -2543,6 +2543,43 @@ fn a_service_manager_that_refuses_says_what_it_said_and_what_to_run() {
 }
 
 #[test]
+fn restart_stops_and_starts_the_service_and_says_when_the_server_did_not_come_back() {
+    let rig = Rig::new("n-restart");
+    rig.native_installed(&["--access", "local"]);
+    let pid = rig.service_pid("marfa");
+
+    let (code, stdout, stderr) = rig.marfa(&["restart", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    let stopped = stdout.find("Stopped").expect(&stdout);
+    let running = stdout.find("is running").expect(&stdout);
+    assert!(
+        stopped < running,
+        "stop's words come before start's: {stdout}"
+    );
+    assert!(answers(rig.port));
+    assert_ne!(rig.service_pid("marfa"), pid, "{}", rig.manager_log());
+
+    let (code, stdout, _) = rig.marfa(&["--json", "restart", "--wait", "5"]);
+    assert_eq!(code, 0);
+    assert!(
+        stdout.contains("\"stopped\": true") && stdout.contains("\"running\": true"),
+        "{stdout}"
+    );
+
+    fs::write(rig.state.join("refuse"), "").unwrap();
+    let (code, _, stderr) = rig.marfa(&["restart", "--wait", "5"]);
+    assert_eq!(code, 3, "{stderr}");
+    assert!(
+        stderr.contains("will not start on its database"),
+        "{stderr}"
+    );
+    // Witness: the same install, started with `stop` then `start`, ends alike.
+    let (_, _, _) = rig.marfa(&["stop"]);
+    let (alone, _, said) = rig.marfa(&["start", "--wait", "5"]);
+    assert_eq!(alone, 3, "{said}");
+}
+
+#[test]
 fn a_server_that_refuses_its_database_is_reported_and_not_waited_for() {
     let rig = Rig::new("n-refused");
     fs::write(rig.state.join("refuse"), "").unwrap();

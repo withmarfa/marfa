@@ -57,9 +57,9 @@ describe("edges from the terminal", () => {
     const created = await c.cli.json<{ edge: Edge }>([
       "edges",
       "create",
-      "--source",
+      "--from",
       a,
-      "--target",
+      "--to",
       b,
       "--type",
       "references",
@@ -143,9 +143,9 @@ describe("edges from the terminal", () => {
     const linked = await c.cli.run([
       "edges",
       "create",
-      "--source",
+      "--from",
       a,
-      "--target",
+      "--to",
       b,
       "--type",
       "references",
@@ -181,7 +181,7 @@ describe("edges from the terminal", () => {
 
     const trashed = await c.cli.run(["items", "delete", b]);
     expect(trashed.code, trashed.stderr).toBe(0);
-    expect(trashed.stdout).toBe(`trashed ${b}\n`);
+    expect(trashed.stdout).toBe(`moved ${b} to the bin\n`);
   });
 
   it("refuses a self-loop with the server's own code", async () => {
@@ -189,9 +189,9 @@ describe("edges from the terminal", () => {
     const refused = await c.cli.refused([
       "edges",
       "create",
-      "--source",
+      "--from",
       a,
-      "--target",
+      "--to",
       a,
       "--type",
       "references",

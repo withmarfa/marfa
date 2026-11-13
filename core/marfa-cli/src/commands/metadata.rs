@@ -50,5 +50,11 @@ pub fn run(command: MetadataCommand, remote: &Remote, out: &Printer) -> Result<(
         } => idempotency.apply(replace_request(id, tags)),
         MetadataCommand::Tags => tags_request(),
     };
-    out.value(&remote.json(&request)?)
+    let answer = remote.json(&request)?;
+    match &command {
+        MetadataCommand::Replace { id, .. } => out.report(&answer, || {
+            super::said::tags("set the tags of", id, &answer)
+        }),
+        _ => out.value(&answer),
+    }
 }

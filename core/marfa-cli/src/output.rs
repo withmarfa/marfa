@@ -563,7 +563,7 @@ fn describe(value: &Value) -> Result<String, CliError> {
                         .and_then(Value::as_str)
                         == Some("unknown")
                 }) {
-                    text.push("Stopped: a deletion could not be confirmed. Read the trash again before retrying.".into());
+                    text.push("Stopped: a deletion could not be confirmed. Read the bin again before retrying.".into());
                 } else if let Some(cursor) = map.get("next_cursor").and_then(Value::as_str) {
                     text.push(format!("more: --cursor {cursor}"));
                 }
@@ -571,7 +571,11 @@ fn describe(value: &Value) -> Result<String, CliError> {
             }
             for key in ["item", "edge"] {
                 if let Some(record) = map.get(key) {
-                    let mut text = describe(record)?;
+                    let mut text = if key == "edge" {
+                        record_line(record)
+                    } else {
+                        key_values(record)
+                    };
                     if let Some(resolution) = map.get("conflict_resolution") {
                         text.push_str(&format!(
                             "\nconflict resolution: {}",
@@ -603,41 +607,57 @@ fn describe(value: &Value) -> Result<String, CliError> {
             if map.len() == 1 && map.get("ok") == Some(&Value::Bool(true)) {
                 return Ok("done".into());
             }
-            if map.contains_key("id") && (map.contains_key("type") || is_edge(value)) {
-                let mut text = record_line(value);
-                if let Some(properties) = map.get("properties")
-                    && properties
-                        .as_object()
-                        .is_none_or(|object| !object.is_empty())
-                {
-                    text.push('\n');
-                    text.push_str(&serde_json::to_string_pretty(properties)?);
-                }
-                if let Some(Value::Array(tags)) = map.get("tags")
-                    && !tags.is_empty()
-                {
-                    let tags: Vec<&str> = tags.iter().filter_map(Value::as_str).collect();
-                    text.push_str(&format!("\ntags: {}", tags.join(", ")));
-                }
-                return Ok(text);
-            }
-            Ok(serde_json::to_string_pretty(value)?)
+            Ok(key_values(value))
         }
         Value::Null => Ok("done".into()),
-        other => Ok(other.to_string()),
+        Value::Array(rows) if rows.iter().all(Value::is_object) => {
+            lines(rows, &serde_json::Map::new())
+        }
+        Value::Array(words) => Ok(words.iter().map(scalar_text).collect::<Vec<_>>().join("\n")),
+        other => Ok(scalar_text(other)),
+    }
+}
+
+/// One listed row: what each of its cells is called, and the cells.
+struct Cols {
+    head: Vec<String>,
+    cells: Vec<String>,
+}
+
+impl Cols {
+    fn new(head: &[&str], cells: Vec<String>) -> Cols {
+        Cols {
+            head: head.iter().map(|word| (*word).to_string()).collect(),
+            cells,
+        }
+    }
+
+    fn ahead(mut self, head: &str, cell: String) -> Cols {
+        self.head.insert(0, head.to_string());
+        self.cells.insert(0, cell);
+        self
     }
 }
 
 enum Row {
-    Cells(Vec<String>),
+    Cells(Cols),
     Text(String),
 }
 
 fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String, CliError> {
     let mut out: Vec<Row> = Vec::new();
     for row in rows {
-        if row.get("id").is_some() {
-            out.push(Row::Cells(record_cells(row)));
+        if row.get("id").is_some()
+            || row
+                .get("name")
+                .is_some_and(|_| row.get("interval_ms").is_some())
+            || row.get("key").is_some_and(|_| row.get("rule").is_some())
+            || row.get("tag").is_some_and(|_| row.get("count").is_some())
+            || row
+                .get("source")
+                .is_some_and(|_| row.get("name_from").is_some())
+        {
+            out.push(Row::Cells(record_columns(row)));
         } else if let (Some(key), Some(purged)) = (
             row.get("key").and_then(Value::as_str),
             row.get("purged_at").and_then(Value::as_str),
@@ -652,41 +672,52 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
                 .and_then(Value::as_str)
                 .map(|ends| format!(" to {ends}"))
                 .unwrap_or_default();
-            let mut cells = vec![format!("{}{ends}", starts.as_str().unwrap_or(""))];
-            cells.extend(record_cells(item));
-            out.push(Row::Cells(cells));
+            out.push(Row::Cells(record_columns(item).ahead(
+                "when",
+                format!("{}{ends}", starts.as_str().unwrap_or("")),
+            )));
         } else if let Some(item) = row.get("item") {
-            let mut cells: Vec<String> = row
-                .get("relevance_score")
-                .and_then(Value::as_f64)
-                .map(|score| format!("{score:>7.3}"))
-                .into_iter()
-                .collect();
-            cells.extend(record_cells(item));
+            let mut columns = record_columns(item);
+            if let Some(score) = row.get("relevance_score").and_then(Value::as_f64) {
+                columns = columns.ahead("score", format!("{score:>7.3}"));
+            }
             if let Some(named) = row.get("row") {
                 let field = |name: &str| named.get(name).and_then(Value::as_str).unwrap_or("");
-                cells.push(format!("row {} in {}", field("id"), field("table")));
+                columns.head.push("row".into());
+                columns
+                    .cells
+                    .push(format!("row {} in {}", field("id"), field("table")));
             }
-            out.push(Row::Cells(cells));
+            out.push(Row::Cells(columns));
+        } else if let Value::Object(_) = row {
+            out.push(Row::Cells(flat_columns(row)));
         } else {
-            out.push(Row::Text(serde_json::to_string(row)?));
+            out.push(Row::Text(scalar_text(row)));
         }
     }
+    let head: Vec<String> = out
+        .iter()
+        .find_map(|row| match row {
+            Row::Cells(columns) => Some(columns.head.clone()),
+            Row::Text(_) => None,
+        })
+        .unwrap_or_default();
     let cells: Vec<Vec<String>> = out
         .iter()
         .filter_map(|row| match row {
-            Row::Cells(cells) => Some(cells.clone()),
+            Row::Cells(columns) => Some(columns.cells.clone()),
             Row::Text(_) => None,
         })
         .collect();
-    let mut aligned = table(&cells).into_iter();
-    let mut text: Vec<String> = out
-        .into_iter()
-        .map(|row| match row {
-            Row::Cells(_) => aligned.next().unwrap_or_default(),
-            Row::Text(line) => line,
-        })
-        .collect();
+    let mut aligned = table_with_head(&head, &cells).into_iter();
+    let mut text: Vec<String> = Vec::new();
+    if !cells.is_empty() {
+        text.extend(aligned.next());
+    }
+    text.extend(out.into_iter().map(|row| match row {
+        Row::Cells(_) => aligned.next().unwrap_or_default(),
+        Row::Text(line) => line,
+    }));
     finish(&mut text, page);
     Ok(text.join("\n"))
 }
@@ -705,6 +736,32 @@ fn finish(text: &mut Vec<String>, page: &serde_json::Map<String, Value>) {
     if let Some(cursor) = page.get("next_cursor").and_then(Value::as_str) {
         text.push(format!("more: --cursor {cursor}"));
     }
+}
+
+/// The rows with `head` above them, each cell padded to its column. A column
+/// no row fills is left out, head and all.
+fn table_with_head(head: &[String], rows: &[Vec<String>]) -> Vec<String> {
+    if rows.is_empty() {
+        return Vec::new();
+    }
+    let mut all: Vec<Vec<String>> = vec![head.to_vec()];
+    all.extend(rows.iter().cloned());
+    let filled: Vec<usize> = (0..all.iter().map(Vec::len).max().unwrap_or(0))
+        .filter(|column| {
+            rows.iter()
+                .any(|row| row.get(*column).is_some_and(|cell| !cell.is_empty()))
+        })
+        .collect();
+    let narrowed: Vec<Vec<String>> = all
+        .iter()
+        .map(|row| {
+            filled
+                .iter()
+                .map(|column| row.get(*column).cloned().unwrap_or_default())
+                .collect()
+        })
+        .collect();
+    table(&narrowed)
 }
 
 fn table(rows: &[Vec<String>]) -> Vec<String> {
@@ -768,89 +825,205 @@ fn record_title(record: &Value) -> &str {
 }
 
 fn record_line(record: &Value) -> String {
-    table(&[record_cells(record)]).remove(0)
+    table(&[record_columns(record).cells]).remove(0)
 }
 
-fn record_cells(record: &Value) -> Vec<String> {
+/// How long a job waits between runs, in the biggest whole unit that holds it.
+fn every(milliseconds: u64) -> String {
+    let seconds = milliseconds / 1000;
+    match seconds {
+        0 => format!("{milliseconds} ms"),
+        s if s % 86_400 == 0 => format!("{} d", s / 86_400),
+        s if s % 3_600 == 0 => format!("{} h", s / 3_600),
+        s if s % 60 == 0 => format!("{} min", s / 60),
+        s => format!("{s} s"),
+    }
+}
+
+fn record_columns(record: &Value) -> Cols {
     let owned = |name: &str| field(record, name).to_string();
     if is_edge(record) {
-        return vec![
-            owned("id"),
-            owned("edge_type"),
-            owned("created_at"),
-            format!("{} -> {}", owned("source_id"), owned("target_id")),
-        ];
+        return Cols::new(
+            &["id", "type", "created", "link"],
+            vec![
+                owned("id"),
+                owned("edge_type"),
+                owned("created_at"),
+                format!("{} -> {}", owned("source_id"), owned("target_id")),
+            ],
+        );
     }
     if record.get("key_id").is_some() && record.get("last_run").is_some() {
         let run = record.get("last_run").filter(|run| !run.is_null());
         let outcome = run.map_or("never run", |run| field(run, "outcome"));
         let when = run.map_or("", |run| field(run, "finished_at"));
         let said = run.map_or("", run_note);
-        return vec![
-            owned("id"),
-            owned("source"),
-            owned("name"),
-            outcome.to_string(),
-            when.to_string(),
-            said.to_string(),
-        ];
+        return Cols::new(
+            &["id", "source", "name", "last run", "finished", "note"],
+            vec![
+                owned("id"),
+                owned("source"),
+                owned("name"),
+                outcome.to_string(),
+                when.to_string(),
+                said.to_string(),
+            ],
+        );
     }
     if record.get("connector_id").is_some() && record.get("outcome").is_some() {
-        return vec![
-            owned("id"),
-            owned("outcome"),
-            owned("finished_at"),
-            run_note(record).to_string(),
-        ];
+        return Cols::new(
+            &["id", "outcome", "finished", "note"],
+            vec![
+                owned("id"),
+                owned("outcome"),
+                owned("finished_at"),
+                run_note(record).to_string(),
+            ],
+        );
     }
     if record.get("webhook_id").is_some() && record.get("event_type").is_some() {
         let attempts = record.get("attempt").and_then(Value::as_u64).unwrap_or(0);
-        return vec![
-            owned("id"),
-            owned("status"),
-            owned("event_type"),
-            format!("{attempts} attempt{}", if attempts == 1 { "" } else { "s" }),
-            delivery_answer(record),
-        ];
+        return Cols::new(
+            &["id", "status", "event", "attempts", "answer"],
+            vec![
+                owned("id"),
+                owned("status"),
+                owned("event_type"),
+                format!("{attempts} attempt{}", if attempts == 1 { "" } else { "s" }),
+                delivery_answer(record),
+            ],
+        );
     }
     if record.get("eligible_for_deletion_at").is_some() {
-        return vec![
-            owned("id"),
-            owned("type"),
-            format!("v{}", record["version"]),
-            owned("trashed_at"),
-            record
-                .get("eligible_for_deletion_at")
-                .and_then(Value::as_str)
-                .map(|at| format!("eligible from {at}"))
-                .unwrap_or_else(|| "automatic deletion date unavailable; see retention".into()),
-            owned("name"),
-            record
-                .get("trashed_by")
-                .map(|by| field(by, "name"))
-                .filter(|name| !name.is_empty())
-                .unwrap_or("Not recorded")
-                .to_string(),
-        ];
+        return Cols::new(
+            &[
+                "id",
+                "type",
+                "version",
+                "binned",
+                "deletion",
+                "name",
+                "binned by",
+            ],
+            vec![
+                owned("id"),
+                owned("type"),
+                format!("v{}", record["version"]),
+                owned("trashed_at"),
+                record
+                    .get("eligible_for_deletion_at")
+                    .and_then(Value::as_str)
+                    .map(|at| format!("eligible from {at}"))
+                    .unwrap_or_else(|| "automatic deletion date unavailable; see retention".into()),
+                owned("name"),
+                record
+                    .get("trashed_by")
+                    .map(|by| field(by, "name"))
+                    .filter(|name| !name.is_empty())
+                    .unwrap_or("Not recorded")
+                    .to_string(),
+            ],
+        );
     }
     if record.get("name").is_some()
         && record.get("version").is_some()
         && record.get("properties").is_none()
     {
-        return vec![
-            owned("id"),
-            owned("type"),
-            format!("v{}", record["version"]),
-            owned("created_at"),
-            owned("name"),
-            owned("source"),
-        ];
+        return Cols::new(
+            &["id", "type", "version", "created", "name", "source"],
+            vec![
+                owned("id"),
+                owned("type"),
+                format!("v{}", record["version"]),
+                owned("created_at"),
+                owned("name"),
+                owned("source"),
+            ],
+        );
     }
     if let Some(values) = record.get("values")
         && record.get("type").is_none()
         && record.get("updated_at").is_some()
     {
-        return vec![owned("id"), owned("updated_at"), values.to_string()];
+        return Cols::new(
+            &["id", "updated", "values"],
+            vec![owned("id"), owned("updated_at"), values.to_string()],
+        );
+    }
+    if record.get("rows").is_some() && record.get("at").is_some() && record.get("undoes").is_some()
+    {
+        return Cols::new(
+            &["id", "at", "rows", "undoes"],
+            vec![
+                owned("id"),
+                owned("at"),
+                scalar_text(&record["rows"]),
+                owned("undoes"),
+            ],
+        );
+    }
+    if record.get("interval_ms").is_some() && record.get("next_run_at").is_some() {
+        let ran = match field(record, "last_outcome") {
+            "" => String::new(),
+            outcome => format!("{outcome} {}", field(record, "last_finished_at")),
+        };
+        let said = match record.get("last_error").and_then(Value::as_str) {
+            Some(error) => error.to_string(),
+            None => record
+                .get("last_result")
+                .filter(|result| !result.is_null())
+                .map(scalar_text)
+                .unwrap_or_default(),
+        };
+        return Cols::new(
+            &["name", "every", "next run", "last run", "result"],
+            vec![
+                owned("name"),
+                record
+                    .get("interval_ms")
+                    .and_then(Value::as_u64)
+                    .map(every)
+                    .unwrap_or_default(),
+                owned("next_run_at"),
+                ran.trim_end().to_string(),
+                said,
+            ],
+        );
+    }
+    if record.get("rule").is_some() && record.get("default").is_some() {
+        let stored = record.get("stored").is_some_and(|stored| !stored.is_null());
+        return Cols::new(
+            &["key", "value", "from"],
+            vec![
+                owned("key"),
+                scalar_text(&record["value"]),
+                if stored { "stored" } else { "default" }.to_string(),
+            ],
+        );
+    }
+    if record.get("tag").is_some() && record.get("count").is_some() {
+        return Cols::new(
+            &["tag", "items"],
+            vec![owned("tag"), scalar_text(&record["count"])],
+        );
+    }
+    if record.get("name_from").is_some() && record.get("source").is_some() {
+        return Cols::new(
+            &["source", "name", "named by"],
+            vec![owned("source"), owned("name"), owned("name_from")],
+        );
+    }
+    if record.get("locator").is_some() && record.get("attached_at").is_some() {
+        return Cols::new(
+            &["id", "kind", "where", "attached", "detached"],
+            vec![
+                owned("id"),
+                owned("kind"),
+                owned("locator"),
+                owned("attached_at"),
+                owned("detached_at"),
+            ],
+        );
     }
     let kind = ["type", "action"]
         .iter()
@@ -863,17 +1036,104 @@ fn record_cells(record: &Value) -> Vec<String> {
         .find(|value| !value.is_empty())
         .unwrap_or_default();
     let state = owned("state");
-    vec![
-        owned("id"),
-        kind,
-        when,
-        record_title(record).to_string(),
-        if state.is_empty() || state == "active" {
-            String::new()
-        } else {
-            format!("[{state}]")
-        },
-    ]
+    Cols::new(
+        &["id", "type", "when", "title", "state"],
+        vec![
+            owned("id"),
+            kind,
+            when,
+            record_title(record).to_string(),
+            if state.is_empty() || state == "active" {
+                String::new()
+            } else {
+                format!("[{state}]")
+            },
+        ],
+    )
+}
+
+/// A flat record with no known shape: one column for each of its fields.
+fn flat_columns(record: &Value) -> Cols {
+    let Some(fields) = record.as_object() else {
+        return Cols::new(&[], Vec::new());
+    };
+    Cols {
+        head: fields.keys().map(|name| printable(name)).collect(),
+        cells: fields.values().map(scalar_text).collect(),
+    }
+}
+
+/// A value as one line: text as it is, except that a control or bidirectional
+/// character is escaped, and anything else as the JSON that names it.
+fn scalar_text(value: &Value) -> String {
+    match value {
+        Value::Null => "-".into(),
+        Value::String(text) => {
+            if printable(text) == *text {
+                text.clone()
+            } else {
+                printable(&Value::String(text.clone()).to_string())
+            }
+        }
+        Value::Array(words)
+            if words
+                .iter()
+                .all(|word| !word.is_array() && !word.is_object()) =>
+        {
+            if words.is_empty() {
+                "(none)".into()
+            } else {
+                words.iter().map(scalar_text).collect::<Vec<_>>().join(", ")
+            }
+        }
+        other => other.to_string(),
+    }
+}
+
+/// A document as `name  value` lines, a nested name written with dots and a
+/// listed one with its place in brackets.
+fn key_values(document: &Value) -> String {
+    let mut pairs = Vec::new();
+    flatten("", document, &mut pairs);
+    let widest = pairs
+        .iter()
+        .map(|(name, _)| name.chars().count())
+        .max()
+        .unwrap_or(0);
+    pairs
+        .iter()
+        .map(|(name, value)| {
+            let padding = " ".repeat(widest - name.chars().count());
+            format!("{name}{padding}  {value}").trim_end().to_string()
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn flatten(prefix: &str, value: &Value, pairs: &mut Vec<(String, String)>) {
+    match value {
+        Value::Object(map) if !map.is_empty() => {
+            for (name, inner) in map {
+                let name = if prefix.is_empty() {
+                    printable(name)
+                } else {
+                    format!("{prefix}.{}", printable(name))
+                };
+                flatten(&name, inner, pairs);
+            }
+        }
+        Value::Object(_) => pairs.push((prefix.to_string(), "(none)".into())),
+        Value::Array(entries)
+            if entries
+                .iter()
+                .any(|entry| entry.is_array() || entry.is_object()) =>
+        {
+            for (place, entry) in entries.iter().enumerate() {
+                flatten(&format!("{prefix}[{place}]"), entry, pairs);
+            }
+        }
+        scalar => pairs.push((prefix.to_string(), scalar_text(scalar))),
+    }
 }
 
 /// What the receiver last said, for a delivery: its HTTP status, why the
@@ -925,7 +1185,10 @@ pub fn edges_from(
             ]
         })
         .collect();
-    let mut text = table(&rows);
+    let mut text = table_with_head(
+        &["id", "type", "created", "link", "title"].map(String::from),
+        &rows,
+    );
     finish(&mut text, map);
     text.join("\n")
 }
@@ -1116,7 +1379,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn uncertain_trash_batch_reports_unknown_without_continuation() {
+    fn uncertain_bin_batch_reports_unknown_without_continuation() {
         let text = describe(&json!({"purged":1,"failures":[{"id":"one","message":"Refresh before retrying", "details":{"write_outcome":"unknown"}}], "next_cursor":"unsafe"})).unwrap();
         assert!(text.contains("1 items deleted"));
         assert!(text.contains("deletion could not be confirmed"));
@@ -1124,7 +1387,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn an_item_in_the_bin_is_drawn_as_an_item_not_a_trash_summary() {
+    fn an_item_in_the_bin_is_drawn_as_an_item_not_a_bin_summary() {
         let text = describe(&json!({"data":[{"id":"item-one", "type":"core.note", "version":3, "state":"trashed", "properties":{"title":"Shopping list"}, "created_at":"2026-01-01T00:00:00Z", "updated_at":"2026-01-02T00:00:00Z", "trashed_at":"2026-01-02T00:00:00Z", "tags":[]}], "next_cursor":null})).unwrap();
         assert!(text.contains("Shopping list"), "{text}");
         assert!(!text.contains("Not recorded"), "{text}");
@@ -1132,7 +1395,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn trash_lists_show_deletion_identity_version_and_retention() {
+    fn bin_lists_show_deletion_identity_version_and_retention() {
         let text = describe(&json!({"data":[{"id":"item-one", "type":"core.note", "version":3, "name":"Shopping list", "trashed_at":"2026-01-02T00:00:00Z", "eligible_for_deletion_at":"2026-02-01T00:00:00Z", "trashed_by":{"name":"Notes app"}}], "next_cursor":null, "retention_days":30})).unwrap();
         for word in [
             "Shopping list",
@@ -1193,7 +1456,7 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(
             text,
-            "i1  core.note  2026-01-01T00:00:00Z\nmore: --cursor c2"
+            "id  type       when\ni1  core.note  2026-01-01T00:00:00Z\nmore: --cursor c2"
         );
     }
 
@@ -1218,7 +1481,8 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(
             text,
-            "2026-01-02T09:00:00Z to 2026-01-02T10:00:00Z  e1  core.event  Standup"
+            "when                                          id  type        title\n\
+             2026-01-02T09:00:00Z to 2026-01-02T10:00:00Z  e1  core.event  Standup"
         );
     }
 
@@ -1236,7 +1500,8 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(
             text,
-            "i1  user.issue  2026-01-01T00:00:00Z\n\
+            "id  type        when\n\
+             i1  user.issue  2026-01-01T00:00:00Z\n\
              tombstone  v2  purged 2026-01-01T00:00:00.000Z  settled 2026-01-02T00:00:00.000Z"
         );
         let purged_only = describe(&json!({"data": [], "tombstones": [tombstone]})).unwrap();
@@ -1258,7 +1523,10 @@ pub(crate) mod tests {
             "next_cursor": null,
         }))
         .unwrap();
-        assert_eq!(text, "  1.500  n1  core.note  Wombat");
+        assert_eq!(
+            text,
+            "score    id  type       title\n  1.500  n1  core.note  Wombat"
+        );
         let text = describe(&json!({
             "data": [{
                 "item": {"id": "c1", "type": "core.conversation", "properties": {"title": "Chat"}},
@@ -1270,7 +1538,7 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(
             text,
-            "  1.000  c1  core.conversation  Chat  row r1 in messages"
+            "score    id  type               title  row\n  1.000  c1  core.conversation  Chat   row r1 in messages"
         );
     }
 
@@ -1296,12 +1564,14 @@ pub(crate) mod tests {
         let titles = HashMap::from([("b".to_string(), "Wombat".to_string())]);
         assert_eq!(
             edges_from(&page, false, &titles),
-            "e1  references  2026-01-01T00:00:00Z  -> b  Wombat\n\
+            "id  type        created               link  title\n\
+             e1  references  2026-01-01T00:00:00Z  -> b  Wombat\n\
              e2  references  2026-01-01T00:00:00Z  -> c"
         );
         assert_eq!(
             edges_from(&page, true, &HashMap::new()),
-            "e1  references  2026-01-01T00:00:00Z  <- a\n\
+            "id  type        created               link\n\
+             e1  references  2026-01-01T00:00:00Z  <- a\n\
              e2  references  2026-01-01T00:00:00Z  <- a"
         );
     }
@@ -1329,7 +1599,8 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(
             text,
-            "core.bookmark       Bookmark\n\
+            "id                  title\n\
+             core.bookmark       Bookmark\n\
              core.entity.person  Person"
         );
     }
@@ -1346,7 +1617,11 @@ pub(crate) mod tests {
             "next_cursor": null,
         }))
         .unwrap();
-        assert_eq!(text, "p1  core.entity.person  2026-01-01T00:00:00Z  Ada");
+        assert_eq!(
+            text,
+            "id  type                when                  title\n\
+             p1  core.entity.person  2026-01-01T00:00:00Z  Ada"
+        );
     }
 
     #[test]
@@ -1369,7 +1644,8 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(
             text,
-            "c1  github  Issues   failed     2026-01-01T00:01:00Z  rate limited\n\
+            "id  source  name     last run   finished              note\n\
+             c1  github  Issues   failed     2026-01-01T00:01:00Z  rate limited\n\
              c2  linear  Tickets  never run"
         );
     }
@@ -1398,12 +1674,110 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(
             text,
-            "d1  dead_letter  item.created  9 attempts  HTTP 503: Max attempts reached\n\
+            "id  status       event         attempts    answer\n\
+             d1  dead_letter  item.created  9 attempts  HTTP 503: Max attempts reached\n\
              d2  dead_letter  item.created  1 attempt   HTTP 404\n\
              d3  dead_letter  item.created  2 attempts  The receiver could not be reached.\n\
              d4  success      item.created  1 attempt   HTTP 204\n\
              d5  pending      item.created  0 attempts  no answer yet"
         );
+    }
+
+    #[test]
+    fn housekeeping_jobs_read_as_columns_with_the_cadence_in_words() {
+        let job = |name: &str, every: u64, outcome: serde_json::Value| {
+            json!({
+                "name": name, "interval_ms": every, "next_run_at": "2026-01-01T01:00:00.000Z",
+                "running_since": null, "last_started_at": null,
+                "last_finished_at": "2026-01-01T00:00:00.000Z", "last_outcome": outcome,
+                "last_error": null, "last_result": {"deleted": 2},
+            })
+        };
+        let text = describe(&json!({"data": [
+            job("trash-purge", 86_400_000, json!("ok")),
+            job("blob-replicate", 60_000, json!("ok")),
+            job("enrichment-sweep", 30_000, json!(null)),
+        ]}))
+        .unwrap();
+        assert_eq!(
+            text,
+            "name              every  next run                  last run                     result\n\
+             trash-purge       1 d    2026-01-01T01:00:00.000Z  ok 2026-01-01T00:00:00.000Z  {\"deleted\":2}\n\
+             blob-replicate    1 min  2026-01-01T01:00:00.000Z  ok 2026-01-01T00:00:00.000Z  {\"deleted\":2}\n\
+             enrichment-sweep  30 s   2026-01-01T01:00:00.000Z                               {\"deleted\":2}"
+        );
+    }
+
+    #[test]
+    fn settings_tags_stores_and_batches_read_as_columns_too() {
+        let settings = describe(&json!({"data": [
+            {"key": "audit_retention_days", "value": 90, "default": 90, "stored": null, "rule": "r", "together": []},
+            {"key": "cors_origins", "value": ["https://a.example"], "default": [], "stored": ["https://a.example"], "rule": "r", "together": []},
+        ], "rules": [], "start_only": []}))
+        .unwrap();
+        assert_eq!(
+            settings,
+            "key                   value              from\n\
+             audit_retention_days  90                 default\n\
+             cors_origins          https://a.example  stored"
+        );
+        assert_eq!(
+            describe(&json!({"data": [{"tag": "work", "count": 3}, {"tag": "home", "count": 12}], "next_cursor": null})).unwrap(),
+            "tag   items\nwork  3\nhome  12"
+        );
+        let stores = describe(&json!({"data": [{
+            "id": "s1", "kind": "disk", "locator": "/data/blobs",
+            "attached_at": "2026-01-01T00:00:00.000Z", "detached_at": null,
+        }], "next_cursor": null, "min_copies": 1}))
+        .unwrap();
+        assert_eq!(
+            stores,
+            "id  kind  where        attached\ns1  disk  /data/blobs  2026-01-01T00:00:00.000Z"
+        );
+        let batches = describe(&json!({"data": [
+            {"id": "b2", "at": "2026-01-02T00:00:00.000Z", "rows": 2, "undoes": "b1"},
+            {"id": "b1", "at": "2026-01-01T00:00:00.000Z", "rows": 1, "undoes": null},
+        ], "next_cursor": null}))
+        .unwrap();
+        assert_eq!(
+            batches,
+            "id  at                        rows  undoes\n\
+             b2  2026-01-02T00:00:00.000Z  2     b1\n\
+             b1  2026-01-01T00:00:00.000Z  1"
+        );
+    }
+
+    #[test]
+    fn a_document_reads_as_name_and_value_lines() {
+        let text = describe(&json!({
+            "id": "i1", "type": "core.note", "version": 2, "trashed_at": null,
+            "tags": ["a", "b"], "properties": {"title": "Soup", "steps": [], "meta": {"n": 1}},
+            "edges": [{"id": "e1"}],
+        }))
+        .unwrap();
+        assert_eq!(
+            text,
+            "id                 i1\n\
+             type               core.note\n\
+             version            2\n\
+             trashed_at         -\n\
+             tags               a, b\n\
+             properties.title   Soup\n\
+             properties.steps   (none)\n\
+             properties.meta.n  1\n\
+             edges[0].id        e1"
+        );
+    }
+
+    #[test]
+    fn a_text_that_could_move_the_cursor_is_shown_escaped_in_a_document() {
+        let text = describe(&json!({"name": "a\u{1b}[2Kb", "note": "two\nlines"})).unwrap();
+        assert!(!text.contains('\u{1b}'), "{text}");
+        assert!(
+            text.contains("\\u001b") || text.contains("\\u{1b}"),
+            "{text}"
+        );
+        assert_eq!(text.lines().count(), 2, "{text}");
     }
 
     #[test]
@@ -1420,7 +1794,8 @@ pub(crate) mod tests {
         .unwrap();
         assert_eq!(
             text,
-            "r1  succeeded  2026-01-01T00:01:00Z  12 created, 3 updated"
+            "id  outcome    finished              note\n\
+             r1  succeeded  2026-01-01T00:01:00Z  12 created, 3 updated"
         );
     }
 }
