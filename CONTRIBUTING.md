@@ -2,7 +2,15 @@
 
 Thanks for your interest in contributing to Marfa.
 
-## Setup
+Most changes to this repository are made by coding agents, and the rules they follow are the rules for everyone. They are in [`AGENTS.md`](./AGENTS.md), with more for each area in the `AGENTS.md` file of that folder.
+
+## Propose a change
+
+1. Open an issue that says what is wrong or missing, and for whom.
+2. Make the change on a branch and open a pull request as a draft. Its body carries the sections Summary, Changes, Testing, Notes for reviewers and Checklist.
+3. A change to what Marfa does and the change to the contract that states it go in the same pull request. The contract is in [`conformance/spec/`](./conformance/spec/README.md).
+
+## Set up
 
 ```bash
 git clone https://github.com/withmarfa/marfa.git
@@ -12,130 +20,8 @@ pnpm build
 pnpm test
 ```
 
-## Running the server locally
+The Rust code is under [`core/`](./core/README.md), and `core/AGENTS.md` has its commands.
 
-The server is the Rust `core/marfa-server`, on SQLite, which is the only database it has. Build it, then boot a throwaway instance:
+## Report a security problem
 
-```bash
-cargo build --release -p marfa-server --manifest-path core/Cargo.toml
-env_text="$(core/scripts/server-up.sh)" && eval "${env_text}"
-```
-
-The script starts the server on `127.0.0.1` with a fresh database, claims it through the private socket, and exports `MARFA_TEST_URL`, `MARFA_TEST_KEY`, `MARFA_TEST_SOCKET` and the throwaway owner's `MARFA_TEST_OWNER_EMAIL` and `MARFA_TEST_OWNER_PASSWORD`. `core/scripts/server-down.sh` stops it and removes its data.
-
-### Claiming the instance and making a key
-
-`server-up.sh` has already claimed the instance, made an ordinary working key and printed the server's URL. To sign in as the owner, open `$MARFA_TEST_URL/auth/sign-in` with the throwaway owner's email and password. To claim an instance you started another way, run the `marfa` command line through the instance's private socket, at `control/marfa.sock` beside its database:
-
-```bash
-cargo install --locked --path core/marfa-cli
-unset MARFA_API_URL MARFA_API_KEY MARFA_PROFILE
-marfa_socket=/path/to/control/marfa.sock
-marfa --socket "$marfa_socket" setup claim --email owner@example.com
-```
-
-The command prompts for the password without echoing it. `setup claim --stdin` instead accepts a JSON object containing `email`, `password` and optional `name`. A remote claim uses `--url https://marfa.example.com setup claim --email owner@example.com` and prompts for both password and setup code; its JSON input also requires `code`. Supply secrets through the prompt or standard input, never command-line arguments.
-
-The socket command must run under the server's operating-system account. `--socket` cannot be combined with `--url`, `--key`, `--profile`, `MARFA_API_URL`, `MARFA_API_KEY` or `MARFA_PROFILE`, and an unavailable socket never falls back to HTTP or the keychain.
-
-To create another content key from the machine:
-
-```bash
-marfa --socket "$marfa_socket" keys create --label laptop --source laptop \
-  --type-permission '*=write' --edge-permission '*=write' \
-  --metadata-permission '*=write' --extension-permission '*=write' \
-  --profile-permission '*=write'
-export MARFA_API_URL="$MARFA_TEST_URL"
-marfa keys keep    # paste the returned key on standard input
-marfa status
-```
-
-The key has the five maps named above and no additional permissions. Use narrower maps for an app that needs only part of the dataset. Add named permissions only when needed; [the glossary](./GLOSSARY.md#permissions) lists all twelve. `keys.mint` permits delegation within the caller's own access; `keys.manage` permits key administration but does not grant content access or unrestricted minting.
-
-On a system without a keychain, supply the ordinary key through `MARFA_API_KEY`, or through the `key_command` of a profile in `profiles.toml` (see [the core README](./core/README.md#the-binary)), and skip `keys keep`. Owner password recovery requires the private socket; see [Recover the owner](./deploy/README.md#recover-the-owner). Creating, changing, or revoking keys through an owner browser session requires a sign-in within the last five minutes.
-
-## Code style
-
-- TypeScript strict mode, ESM-only
-- Prettier on its defaults, no config file (run `pnpm format`)
-- ESLint (run `pnpm lint`)
-- Explicit `import type` for type-only imports
-- File extensions required in imports (`.js` for TS files)
-- Named exports only
-
-## Commits
-
-We use [Conventional Commits](https://www.conventionalcommits.org/) with package scope:
-
-```
-feat(server): serve a blob by a signed link
-fix(client): handle timeout on large exports
-chore(client): bump openapi-fetch dependency
-```
-
-Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`
-
-## Pull requests
-
-- One logical change per PR
-- Run `pnpm test`, `pnpm lint`, and `pnpm typecheck` before submitting
-- Squash merge by default
-
-## Testing
-
-```bash
-pnpm test           # every package, plus the checks over `ci/`
-pnpm test:watch     # watch mode
-pnpm test:changed   # the quick check before a push
-pnpm typecheck      # type-check all packages
-pnpm lint           # lint
-pnpm format:check   # check formatting
-```
-
-`pnpm test:changed` runs the tests that your diff against `origin/main` selects,
-then the whole-tree tests. Vitest selects a test only when the test or a file
-it imports changed, so a test that reads files by path instead (a census that
-walks the server's source, or a check of `openapi.json` or the workflows) is
-never selected by an edit to what it reads. `scripts/whole-tree-tests.ts` lists
-those tests and the quick check always runs them, in the root project and in
-the conformance suite's offline lane. `pnpm test:whole-tree` runs only those.
-When you add a test whose verdict depends on a file it does not import, add it
-to that list.
-
-`pnpm test` does **not** run the conformance suite's offline lane, which
-checks the specification's citations, the coverage table and the generators
-against the tree. Run it from `conformance/`:
-
-```bash
-cd conformance
-pnpm test:generators
-```
-
-It needs no server, and CI runs it as a job of its own, `Conformance offline
-lane`, so a change to a spec chapter, a fixture title or a statement can be
-green locally and red in CI without it.
-
-## Releases
-
-A release is a git tag, each the previous plus 0.0.1. `.github/workflows/release.yml` stamps it into every manifest, which otherwise carries `0.0.0`, then builds the `marfa` command line for macOS on Apple silicon and Intel and for Linux on x86_64 and aarch64, `@withmarfa/core` and `@withmarfa/client`. It publishes the packages and attaches seven files to a GitHub release: the four command line archives, one checksum file for them and the two package tarballs. A release is not published unless all four archives built. Before the macOS binaries are packed, `scripts/release/sign-binary.sh` signs each with the maintainer's Developer ID and has Apple notarize it, so a copy downloaded in a browser runs. The Linux binaries are static and need no signing. Signing reads six secrets that a maintainer who holds the signing identity sets in the repository's GitHub Actions secrets: `APPLE_DEVELOPER_ID_P12`, `APPLE_DEVELOPER_ID_P12_PASSWORD`, `APPLE_NOTARY_KEY`, `APPLE_NOTARY_KEY_ID`, `APPLE_NOTARY_ISSUER_ID` and `APPLE_TEAM_ID`. `scripts/release/sign-binary.sh` reads them from the environment. The Swift SDK lives in [`withmarfa/marfa-swift`](https://github.com/withmarfa/marfa-swift).
-
-## Conformance suite
-
-`conformance/` holds the black-box suite and the written specification the server is held to. It boots the Rust server binary that `MARFA_SERVER_BIN` names, and the contract's fixtures need a build with the test hooks:
-
-```bash
-(cd core && cargo build --release -p marfa-server --features test-hooks)
-cd conformance
-export MARFA_SERVER_BIN="$PWD/../core/target/release/marfa-server"
-pnpm marfa:up
-set -a; . .marfa-state/env; set +a
-pnpm test:conformance
-pnpm marfa:down
-```
-
-See [`conformance/README.md`](./conformance/README.md) for the individual lanes and the load profiles.
-
-A change to what the server does and the change to the contract that admits
-it belong in the same pull request. The committed `openapi.json` and the
-contract are what the server is held to; where the server and either of them
-disagree, whichever is wrong is fixed.
+Do not open a public issue for a weakness someone could use. Report it privately through the repository's Security tab.
