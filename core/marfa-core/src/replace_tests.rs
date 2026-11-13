@@ -5,7 +5,7 @@
 //! `a_store_that_cannot_be_made_leaves_the_refused_one_where_it_was` flips a
 //! process-global fault, so it must not share a process with another
 //! replacement: run these tests with `cargo nextest`, one process per test
-//! (`core/README.md`).
+//! (`core/AGENTS.md`).
 
 use std::path::{Path, PathBuf};
 

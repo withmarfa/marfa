@@ -10,6 +10,4 @@ Folder admission must check filesystem support before creating state. Apple plat
 
 The extension symbol and all SQLite exports are compiled in one translation unit. The Rust registration call forces that object into the link; another SQLite runtime would cause duplicate-symbol errors.
 
-The storage boundary is required by a constructor failure: replacing the root after directory admission but before the original store opened created `core.sqlite`, its writer lock, and settings in the replacement tree. The original cache also deleted a replacement blob when `let_go` ran after the root changed. Tests of an already-open original store's ordinary writes and close passed; those passing cases do not justify this extension.
-
 Database identity probes use directory-relative `statat`, never an extra database open. Closing any additional descriptor for the same inode can release process-wide POSIX locks that SQLite still considers held. `identity_checks_do_not_release_native_database_locks` observes this with a separate native connection: it must remain blocked through identity probes and succeed only after rollback. Injecting an extra open and close into the probe makes that regression test fail.
