@@ -380,7 +380,8 @@ describe("the size of a registration", () => {
       grant_types: ["authorization_code"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
-      software_version: "x".repeat(padding),
+      // A member the server ignores, so no bound on a stored value applies.
+      padding: "x".repeat(padding),
     });
   const register = (text: string) =>
     fetch(`${server.apiUrl}/auth/oauth2/register`, {
@@ -418,5 +419,62 @@ describe("the size of a registration", () => {
     };
     expect(answer.error).toBe("invalid_redirect_uri");
     expect(answer.error_description).toContain("10");
+  });
+
+  it("refuses each registered value past its bound with a description that names it, and takes one at the bound", async () => {
+    const base = {
+      client_name: "Bounded Page",
+      redirect_uris: ["https://bounded.web-page-register.test/callback"],
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    };
+    const uri = (length: number) => {
+      const head = "https://bounded.web-page-register.test/";
+      return head + "a".repeat(length - head.length);
+    };
+    // Characters, not bytes: each "é" is two bytes.
+    const text = (length: number) => "é".repeat(length);
+    const sent = async (metadata: Record<string, unknown>) => {
+      const response = await register(JSON.stringify({ ...base, ...metadata }));
+      const answer = (await response.json()) as {
+        error?: string;
+        error_description?: string;
+      };
+      return { status: response.status, ...answer };
+    };
+    const bounds: [string, number, (length: number) => string][] = [
+      ["client_name", 200, text],
+      ["software_id", 200, text],
+      ["software_version", 200, text],
+      ["client_uri", 2048, uri],
+      ["logo_uri", 2048, uri],
+      ["tos_uri", 2048, uri],
+      ["policy_uri", 2048, uri],
+      ["scope", 4096, (length) => "s".repeat(length)],
+    ];
+    for (const [member, most, value] of bounds) {
+      expect((await sent({ [member]: value(most) })).status, member).toBe(201);
+      const over = await sent({ [member]: value(most + 1) });
+      expect(over.status, member).toBe(400);
+      expect(over.error, member).toBe("invalid_client_metadata");
+      expect(over.error_description, member).toContain(member);
+    }
+
+    const contact = "c".repeat(254);
+    const tenContacts = Array<string>(10).fill(contact);
+    expect((await sent({ contacts: tenContacts })).status).toBe(201);
+    for (const contacts of [[...tenContacts, contact], ["c".repeat(255)]]) {
+      const over = await sent({ contacts });
+      expect(over.status).toBe(400);
+      expect(over.error).toBe("invalid_client_metadata");
+      expect(over.error_description).toContain("contact");
+    }
+
+    expect((await sent({ redirect_uris: [uri(2048)] })).status).toBe(201);
+    const long = await sent({ redirect_uris: [uri(2049)] });
+    expect(long.status).toBe(400);
+    expect(long.error).toBe("invalid_redirect_uri");
+    expect(long.error_description).toContain("redirect URI");
   });
 });
