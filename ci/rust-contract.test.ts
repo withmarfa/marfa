@@ -257,7 +257,7 @@ describe("the Rust contract score", () => {
 
 describe("MCP conformance and the restore drill", () => {
   it.each(["mcp-conformance", "restore-drill"])(
-    "%s boots the Rust server's release build, and nothing built for the TypeScript server",
+    "%s boots the Rust server's release build",
     (name) => {
       const job = jobs[name];
       expect(needsOf(job)).toEqual(["changes", "rust-contract"]);

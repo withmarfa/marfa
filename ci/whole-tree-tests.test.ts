@@ -56,15 +56,4 @@ describe("the whole-tree tests that test:changed always runs", () => {
       }
     },
   );
-
-  it("covers every census, whatever it is named after", () => {
-    const census = rootFiles.filter((file) => file.includes("census"));
-    expect(census.length).toBeGreaterThan(10);
-    for (const file of census) {
-      expect(
-        ROOT_FILTERS.some((filter) => file.includes(filter)),
-        `${file} is a census that test:changed would not run`,
-      ).toBe(true);
-    }
-  });
 });

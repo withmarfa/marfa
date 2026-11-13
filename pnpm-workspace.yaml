@@ -17,15 +17,6 @@ packages:
 verifyDepsBeforeRun: error
 
 overrides:
-  # `drizzle-kit`'s `@esbuild-kit` loader (drizzle-kit newest 0.31.11) takes
-  # `esbuild` `0.18.20`, which carries an advisory, and no published release
-  # admits the fix. It runs at migration-generation time, never on a served
-  # request.
-  #
-  # Remove this when `drizzle-kit` publishes a release whose `esbuild` range
-  # sits at or above 0.25.0.
-  "esbuild@<=0.24.2": "0.25.12"
-
   # `minimatch` 10 takes `brace-expansion` `^5.0.5`, which lets a lockfile
   # keep a version with an advisory. A forced floor stops a stale lockfile
   # from holding it, and costs nothing: the range already admits it.
