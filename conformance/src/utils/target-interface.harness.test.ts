@@ -7,6 +7,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "./fresh-server.js";
+import { QUIET_SCHEDULE, runJob } from "./moved-clock.js";
 import { readRequestLog } from "./status-declarations.js";
 
 /**
@@ -19,14 +20,10 @@ import { readRequestLog } from "./status-declarations.js";
 
 const HOUR_MS = 3_600_000;
 
-/**
- * Moving the clock makes the hourly rate-limit cleanup due. With the
- * scheduler polling, it can claim the job before the run these cases ask
- * for, which then gets `409 housekeeping_job_running`. A poll interval at
- * the setting's ceiling means the scheduler never claims anything; a run
- * asked for over HTTP does not wait on a poll.
- */
-const SCHEDULER_NEVER_POLLS_MS = "3600000";
+// Moving the clock makes a job's first run due, and the scheduler claims it at
+// once, so a run these cases ask for can meet `409 housekeeping_job_running`.
+// `runJob` asks again until the earlier run has ended, and the quiet schedule
+// keeps every later run a year away.
 
 let scratch: string;
 let server: FreshServer;
@@ -47,7 +44,7 @@ beforeAll(async () => {
   );
   server = await bootFreshServer("target-interface", {
     NODE_OPTIONS: `--require ${preload}`,
-    MARFA_TEST_TUNING: `housekeeping_poll_ms=${SCHEDULER_NEVER_POLLS_MS}`,
+    ...QUIET_SCHEDULE,
   });
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -57,13 +54,9 @@ afterAll(async () => {
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 /** When the server says a run of a housekeeping job started: its clock. */
-async function serverNow(): Promise<number> {
-  const run = await fetch(`${server.apiUrl}/housekeeping/audit-cleanup/run`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${server.managementKey}` },
-  });
-  expect(run.status).toBe(200);
-  return Date.parse(((await run.json()) as { started_at: string }).started_at);
+async function serverNow(target: FreshServer = server): Promise<number> {
+  const run = await runJob(target, "audit-cleanup");
+  return Date.parse(run.started_at);
 }
 
 describe("the clock", () => {
@@ -73,23 +66,13 @@ describe("the clock", () => {
       const day = 24 * HOUR_MS;
       const own = await bootFreshServer("clock-boot-restart", {
         MARFA_TEST_CLOCK_OFFSET_MS: String(day),
-        MARFA_TEST_TUNING: `housekeeping_poll_ms=${SCHEDULER_NEVER_POLLS_MS}`,
+        ...QUIET_SCHEDULE,
       });
       try {
         await own.advanceClock(HOUR_MS);
         for (const signal of ["SIGTERM", "SIGKILL"] as const) {
           await own.restart({ signal });
-          const run = await fetch(
-            `${own.apiUrl}/housekeeping/audit-cleanup/run`,
-            {
-              method: "POST",
-              headers: { Authorization: `Bearer ${own.managementKey}` },
-            },
-          );
-          expect(run.status).toBe(200);
-          const started = Date.parse(
-            ((await run.json()) as { started_at: string }).started_at,
-          );
+          const started = await serverNow(own);
           expect(started - Date.now()).toBeGreaterThan(day + HOUR_MS - 10_000);
           expect(started - Date.now()).toBeLessThan(day + HOUR_MS + 10_000);
         }
@@ -107,8 +90,8 @@ describe("the clock", () => {
     await server.advanceClock(HOUR_MS);
     expect((await serverNow()) - Date.now()).toBeGreaterThan(HOUR_MS - 10_000);
 
-    await expect(server.advanceClock(-1)).rejects.toThrow(/forward/);
-    await expect(server.advanceClock(1.5)).rejects.toThrow(/whole number/);
+    await expect(server.advanceClock(-1)).rejects.toThrow(/a whole number/);
+    await expect(server.advanceClock(1.5)).rejects.toThrow(/a whole number/);
     expect((await serverNow()) - Date.now()).toBeLessThan(HOUR_MS + 10_000);
 
     // A move past the largest offset a restart accepts is refused, and the
@@ -168,7 +151,7 @@ describe("a fault", () => {
     );
     await expect(
       server.setFault("fail:housekeeping:no-such-job"),
-    ).rejects.toThrow(/no housekeeping job/);
+    ).rejects.toThrow(/no job is named/);
     await server.setFault("fail:commit=items.bulk@2");
     expect(await server.faults()).toContainEqual({
       name: "fail:commit",
@@ -178,13 +161,13 @@ describe("a fault", () => {
     });
     await server.clearFault("fail:commit");
     await expect(server.setFault("deadline:trash-purge")).rejects.toThrow(
-      /milliseconds/,
+      /whole number of ms/,
     );
     await expect(
       server.setFault("hold:housekeeping:no-such-job"),
-    ).rejects.toThrow(/no housekeeping job/);
+    ).rejects.toThrow(/no job is named/);
     await expect(server.setFault("deadline:no-such-job=250")).rejects.toThrow(
-      /no housekeeping job/,
+      /no job is named/,
     );
     await server.clearFault("deadline:trash-purge");
     expect((await server.faults()).map((fault) => fault.name)).toEqual([

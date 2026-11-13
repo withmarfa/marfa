@@ -353,6 +353,11 @@ describe("what a change runs", () => {
       ["quick-checks", "workspace", ...OFFLINE],
     ],
     [
+      "a harness test, which boots servers from the release build",
+      ["conformance/src/utils/target-interface.harness.test.ts"],
+      ["quick-checks", "workspace", "mcp-conformance"],
+    ],
+    [
       "the nightly scale benchmark, which only the offline lane tests",
       [
         "conformance/src/utils/scale/report.ts",
@@ -382,7 +387,7 @@ describe("what a change runs", () => {
       ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
-      "the item names and previews the server and the core share",
+      "the item names and previews the shared package and the core share",
       ["conformance/fixtures/item-display.json"],
       [
         "quick-checks",
@@ -393,14 +398,14 @@ describe("what a change runs", () => {
       ],
     ],
     [
-      "the filter expressions the server and the core share",
+      "the filter expressions the core's crates and the Node binding share",
       ["conformance/fixtures/filter-expressions.json"],
-      ["quick-checks", "workspace", "core-checks-linux", "core"],
+      ["quick-checks", "core-checks-linux", "core"],
     ],
     [
-      "the name fold the server and the core share",
+      "the name fold the core and the contract's title fixture share",
       ["conformance/fixtures/name-fold.json"],
-      ["quick-checks", "workspace", "core-checks-linux", "rust-contract"],
+      ["quick-checks", "core-checks-linux", "rust-contract"],
     ],
     [
       "a compliance fixture",
@@ -1308,6 +1313,17 @@ describe("what a job reads reaches it", () => {
     ]);
     expect(files).toContain("conformance/src/utils/drill.ts");
     expect(files.filter((f) => !affected(f).has("restore-drill"))).toEqual([]);
+  });
+
+  it("the MCP conformance job runs the harness project, and the offline lane leaves it out", () => {
+    const steps = workflow("ci.yml").jobs["mcp-conformance"]?.steps ?? [];
+    expect(steps.map((step) => step.run)).toContain("pnpm test:harness");
+    const config = readFileSync(
+      join(ROOT, "conformance", "vitest.config.ts"),
+      "utf8",
+    );
+    expect(config).toContain('include: ["src/utils/**/*.harness.test.ts"]');
+    expect(config).toContain('exclude("src/utils/**/*.harness.test.ts")');
   });
 
   it("every file the MCP conformance job loads runs it", () => {

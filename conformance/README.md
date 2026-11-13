@@ -833,9 +833,12 @@ writes it to the job summary of `Rust contract score` and of
 
 `package.json` carries the full list, and `pnpm test:conformance` is what the
 gate runs. `pnpm test:generators` is the offline lane and needs no running target: the
-generators, everything under `src/utils/`, and the `*.decision.test.ts`
-verdicts the suites gate on. `src/utils/target-interface.test.ts` boots a
-server of its own to hold the adapter to the interface above. Among `src/utils/`, `schema-coverage.test.ts`
+generators, everything under `src/utils/` but the harness tests, and the
+`*.decision.test.ts` verdicts the suites gate on. `pnpm test:harness` runs the `*.harness.test.ts`
+files under `src/utils/`, which need the binary `MARFA_SERVER_BIN` names:
+`target-interface.harness.test.ts` boots servers of its own to hold the adapter
+to the interface above, and `fresh-server.harness.test.ts` holds the fixture
+server's listeners. Among `src/utils/`, `schema-coverage.test.ts`
 reads the specification against itself, and `spec-citations.test.ts` holds
 every reference to it in the repository to a rule that exists, by ID.
 `pnpm test:changed` at the repository root always runs `src/utils/` and the
@@ -968,7 +971,8 @@ a dispatch with `macos` runs them there too.
   `--platform darwin`, so every test that runs only on macOS is judged there,
   and fails when one of their files in `RUST_JUDGED` did not pass whole.
 - **MCP conformance and the restore drill** boot the release build. The drill
-  is `pnpm drill:restore`, described above.
+  is `pnpm drill:restore`, described above. MCP conformance also runs
+  `pnpm test:harness` against that build.
 - **Offline lane.** `pnpm test:generators` runs as a job of its own, with no
   server.
 

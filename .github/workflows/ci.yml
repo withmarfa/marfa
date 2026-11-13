@@ -576,6 +576,12 @@ jobs:
         working-directory: conformance
         run: pnpm mcp:conformance --state "$RUNNER_TEMP/marfa-mcp"
 
+      # Each test boots servers of its own from the same binary, so it runs
+      # beside the one booted above.
+      - name: Hold the harness to the target interface
+        working-directory: conformance
+        run: pnpm test:harness
+
       # Before the stop, because `marfa:down` clears the state directory and
       # the log is in it.
       - name: Keep the server log

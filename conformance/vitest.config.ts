@@ -34,6 +34,20 @@ export default defineConfig({
           // tens of seconds on the blob fixtures. 60s covers that without
           // masking a real hang.
           testTimeout: 60_000,
+          // A harness test needs a server binary, so it runs in `harness`.
+          exclude: exclude("src/utils/**/*.harness.test.ts"),
+        },
+      },
+      {
+        // The harness held to the target interface: each test boots servers
+        // of its own from the binary `MARFA_SERVER_BIN` names, and nothing
+        // else, so it runs where that binary is (the `MCP conformance` job).
+        test: {
+          name: "harness",
+          ...ciRetry,
+          include: ["src/utils/**/*.harness.test.ts"],
+          testTimeout: 60_000,
+          hookTimeout: 60_000,
         },
       },
       {

@@ -297,8 +297,15 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/(src\/utils|scripts)\/scale\//,
     ["workspace", "conformance-offline"],
   ],
-  // A test beside the helpers runs in the offline lane alone: the `generators`
-  // project's `src/utils/**/*.test.ts`. No server fixture imports a test.
+  // A harness test boots servers from the release build: the `harness`
+  // project, which `MCP conformance` runs.
+  [
+    /^conformance\/src\/utils\/(.*\/)?[^/]*\.harness\.test\.ts$/,
+    ["workspace", "mcp-conformance"],
+  ],
+  // Any other test beside the helpers runs in the offline lane alone: the
+  // `generators` project's `src/utils/**/*.test.ts`. No server fixture imports
+  // a test.
   [
     /^conformance\/src\/utils\/(.*\/)?[^/]*\.test\.ts$/,
     ["workspace", "conformance-offline"],
