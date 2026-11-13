@@ -138,6 +138,8 @@ impl Job {
 pub struct Report {
     pub result: Value,
     pub again: bool,
+    /// Set when the run could not do its work: it is recorded as failed and keeps its result.
+    pub failure: Option<String>,
 }
 
 impl Report {
@@ -145,6 +147,7 @@ impl Report {
         Report {
             result,
             again: false,
+            failure: None,
         }
     }
 }
@@ -392,6 +395,27 @@ fn failed_in(app: &App, rows: Vec<schedule::Row>) -> Vec<schedule::Row> {
                 .any(|job| job.name == row.name && job.runs_here(app))
         })
         .collect()
+}
+
+/// How the last run of a job ended.
+pub struct LastRun {
+    /// Why it failed; `None` when it did not fail.
+    pub failure: Option<String>,
+    pub result: Option<Value>,
+}
+
+/// The last run of `name`, if it has run.
+pub fn last_run(tx: &rusqlite::Transaction<'_>, name: &str) -> Result<Option<LastRun>> {
+    Ok(schedule::rows(tx)?
+        .into_iter()
+        .find(|row| row.name == name && row.last_outcome.is_some())
+        .map(|row| LastRun {
+            failure: (row.last_outcome.as_deref() == Some("error"))
+                .then(|| row.last_error.unwrap_or_default()),
+            result: row
+                .last_result
+                .and_then(|text| serde_json::from_str::<Value>(&text).ok()),
+        }))
 }
 
 /// Every job whose last run failed, read in one snapshot.

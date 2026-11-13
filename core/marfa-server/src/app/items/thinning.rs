@@ -254,6 +254,7 @@ pub async fn version_thinning(app: Arc<App>, run: Run) -> Result<Report> {
     let report = |pruned: usize, items: usize, again| Report {
         result: json!({ "pruned": pruned, "items": items }),
         again,
+        failure: None,
     };
     loop {
         let live = app.clone();

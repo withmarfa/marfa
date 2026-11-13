@@ -303,7 +303,14 @@ pub async fn supervise(
         _ = cut.wait_for(|cut| *cut) => Ending::Cut,
     };
     let (result, failure, again) = match ending {
-        Ending::Finished(Ok(report)) => (Some(report.result), None, report.again),
+        Ending::Finished(Ok(report)) => (
+            Some(report.result),
+            report.failure.map(|message| Failed {
+                message,
+                fault: None,
+            }),
+            report.again,
+        ),
         Ending::Finished(Err(failed)) => (None, Some(failed), false),
         Ending::Late(deadline) => {
             given_up.store(true, Ordering::Release);

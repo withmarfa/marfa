@@ -414,5 +414,6 @@ pub async fn gc(app: Arc<App>, run: Run) -> Result<Report> {
     Ok(Report {
         result: json!({ "removed": removed }),
         again: !done,
+        failure: None,
     })
 }

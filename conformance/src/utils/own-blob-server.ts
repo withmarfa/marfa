@@ -79,11 +79,14 @@ export function diskPath(server: FreshServer, hash: string): string {
 /**
  * Runs a housekeeping job through its door and answers the whole run. A run
  * the scheduler holds answers 409 and is asked for again once it has
- * finished.
+ * finished. A run is expected to end as `ending` says, `ok` unless a case
+ * runs a job against a store that will not answer, where the run ends as
+ * `error`, or `either` for a wait on what a run copied.
  */
 export async function runJob<T = Record<string, number>>(
   operator: MarfaClient,
   name: string,
+  ending: "ok" | "error" | "either" = "ok",
 ): Promise<{ result: T; started_at: string; finished_at: string }> {
   for (let i = 0; i < 50; i++) {
     const res = await operator.runHousekeeping(name);
@@ -92,7 +95,9 @@ export async function runJob<T = Record<string, number>>(
       continue;
     }
     expect(res.status, `${name}: ${JSON.stringify(res.error)}`).toBe(200);
-    expect(res.data.outcome, res.data.error ?? "").toBe("ok");
+    if (ending !== "either") {
+      expect(res.data.outcome, res.data.error ?? "").toBe(ending);
+    }
     return {
       result: res.data.result as T,
       started_at: res.data.started_at,

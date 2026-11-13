@@ -264,6 +264,7 @@ async fn purge_due(app: &Arc<App>, run: &Run, stopped: &mut Stopped) -> Result<R
                 return Ok(Report {
                     result: result(batch.deleted, passed_over),
                     again: batch.deleted > 0 && (next.is_some() || passed_over > 0),
+                    failure: None,
                 });
             }
         }
