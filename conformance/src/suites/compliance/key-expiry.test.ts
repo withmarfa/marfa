@@ -449,6 +449,90 @@ describe("a key that expires", () => {
     }
     expect(await expiryOf(itself)).toBe(LATER);
   });
+
+  it("gives a key that outlives it nothing more, unless the update names an expires_at no later than its own, and still narrows or relabels it", async () => {
+    const minter = await mintingKey(LATER);
+    const standing = await mint("outlives");
+    const bearer = new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: standing.key,
+    });
+    const wider = { permissions: ["keys.mint", "audit.read"] };
+    const refusedForLife = (refused: {
+      status: number;
+      error?: { error: { code: string; details?: Record<string, unknown> } };
+    }) => {
+      expect(refused.status).toBe(403);
+      expect(refused.error?.error.code).toBe("forbidden");
+      expect(refused.error?.error.details?.expires_at).toBe(LATER);
+    };
+
+    // The witnesses: each way of naming a life longer than its own is refused.
+    const name = unique("never");
+    refusedForLife(
+      await minter.createKey({
+        label: name,
+        source: name,
+        permissions: ["audit.read"],
+        expires_at: null,
+      }),
+    );
+    refusedForLife(
+      await minter.updateKey(standing.id, { ...wider, expires_at: null }),
+    );
+    const itself = (await minter.getCurrentKey()).data.id;
+    refusedForLife(await minter.updateKey(itself, { expires_at: null }));
+
+    refusedForLife(await minter.updateKey(standing.id, wider));
+    const unchanged = await bearer.getCurrentKey();
+    expect(unchanged.data.permissions).toEqual(["audit.read"]);
+    expect(unchanged.data.expires_at).toBeNull();
+
+    const relabeled = await minter.updateKey(standing.id, {
+      label: "renamed",
+      default_tier: "feed",
+    });
+    expect(relabeled.status, JSON.stringify(relabeled.error)).toBe(200);
+    const narrowed = await minter.updateKey(standing.id, { permissions: [] });
+    expect(narrowed.status, JSON.stringify(narrowed.error)).toBe(200);
+    expect(narrowed.data.permissions).toEqual([]);
+    expect(narrowed.data.expires_at).toBeNull();
+
+    const bounded = await minter.updateKey(standing.id, {
+      ...wider,
+      expires_at: SOON,
+    });
+    expect(bounded.status, JSON.stringify(bounded.error)).toBe(200);
+    expect(bounded.data.expires_at).toBe(SOON);
+    expect(new Set(bounded.data.permissions)).toEqual(
+      new Set(wider.permissions),
+    );
+  });
+
+  it("widens a key that expires no later than it, and a key that never expires widens any key it reaches", async () => {
+    const minter = await mintingKey(LATER);
+    const shorter = await mint("shorter-lived", SOON);
+    const widened = await minter.updateKey(shorter.id, {
+      permissions: ["keys.mint", "audit.read"],
+    });
+    expect(widened.status, JSON.stringify(widened.error)).toBe(200);
+    expect(widened.data.expires_at).toBe(SOON);
+
+    const name = unique("lasting-minter");
+    const lasting = await management.createKey({
+      label: name,
+      source: name,
+      permissions: ["keys.mint", "audit.read"],
+    });
+    expect(lasting.status).toBe(201);
+    const open = await mint("open");
+    const opened = await new MarfaClient({
+      baseUrl: server.apiUrl,
+      apiKey: lasting.data.key,
+    }).updateKey(open.id, { permissions: ["keys.mint", "audit.read"] });
+    expect(opened.status, JSON.stringify(opened.error)).toBe(200);
+    expect(opened.data.expires_at).toBeNull();
+  });
 });
 
 describe("a key changed through keys.manage", () => {
