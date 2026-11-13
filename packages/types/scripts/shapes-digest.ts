@@ -1,8 +1,8 @@
 /**
  * One digest of every shipped definition's shape: the enum values, fields,
  * requiredness, parents, roles, cardinalities and constraints that
- * `SHIPPED_TYPE_SHAPES` and `SHIPPED_EDGE_TYPE_SHAPES` carry as literal
- * types, with the prose left out.
+ * `SHIPPED_TYPE_SHAPES` and `SHIPPED_EDGE_TYPE_SHAPES` carry, with the prose
+ * left out.
  *
  * The digest is committed in `shipped-shapes.sha256`, and
  * `src/shipped-shapes-digest.test.ts` refuses a tree whose shapes differ from

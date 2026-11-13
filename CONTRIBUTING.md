@@ -70,7 +70,7 @@ We use [Conventional Commits](https://www.conventionalcommits.org/) with package
 ```
 feat(server): serve a blob by a signed link
 fix(client): handle timeout on large exports
-chore(shared): bump zod dependency
+chore(client): bump openapi-fetch dependency
 ```
 
 Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`

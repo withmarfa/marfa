@@ -206,11 +206,6 @@ describe("what a change runs", () => {
       [...PACKAGES, "types-freshness", "clients-freshness"],
     ],
     [
-      "the registry that lists the types",
-      ["packages/shared/src/type-registry.ts"],
-      [...PACKAGES, "clients-freshness"],
-    ],
-    [
       "the catalog the core carries",
       ["core/marfa-rules/src/builtin_catalog.json"],
       [...RUST_LINUX, "core", "clients-freshness", "workspace", "quick-checks"],
@@ -420,15 +415,9 @@ describe("what a change runs", () => {
       ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
-      "the item names and previews the shared package and the core share",
+      "the item names and previews the core is held to",
       ["conformance/fixtures/item-display.json"],
-      [
-        "quick-checks",
-        "workspace",
-        "core-checks-linux",
-        ...OFFLINE,
-        "rust-contract",
-      ],
+      ["quick-checks", "core-checks-linux", ...OFFLINE, "rust-contract"],
     ],
     [
       "the filter expressions the core's crates and the Node binding share",
@@ -613,14 +602,14 @@ describe("what a change runs", () => {
     ],
     [
       "Markdown a test reads as a fixture",
-      ["packages/shared/src/fixtures/note.md"],
-      [...PACKAGES, "clients-freshness"],
+      ["packages/types/src/fixtures/note.md"],
+      [...PACKAGES, "types-freshness", "clients-freshness"],
     ],
     ["a path no rule names", ["tools/new.ts"], [...JOBS]],
     [
       "documentation beside a package change",
-      ["README.md", "conformance/spec/blobs.md", "packages/shared/src/x.ts"],
-      [...PACKAGES, "clients-freshness"],
+      ["README.md", "conformance/spec/blobs.md", "packages/types/src/x.ts"],
+      [...PACKAGES, "types-freshness", "clients-freshness"],
     ],
     [
       "Rust beside a client change",
@@ -735,7 +724,7 @@ describe("what a change runs", () => {
       [...affected(path)].filter((job) => job !== "quick-checks");
     // The rule fixtures and generated trees fall through on purpose.
     const docs = RULES.find(([pattern]) => pattern.test("README.md"))?.[0];
-    expect(docs?.test("packages/shared/src/fixtures/note.md")).toBe(false);
+    expect(docs?.test("packages/types/src/fixtures/note.md")).toBe(false);
     // The witnesses: the contract and a package's README reach a job.
     expect(beyond("conformance/spec/items.md")).toEqual([
       "workspace",
@@ -790,7 +779,7 @@ describe("what a change runs", () => {
     }
     for (const paths of [
       [],
-      ["AGENTS.md", "packages/shared/src/runtime.ts"],
+      ["AGENTS.md", "packages/types/src/runtime.ts"],
       ["packages/client/README.md"],
       ["core/marfa-cli/COMMANDS.md"],
       ["conformance/spec/items.md"],
@@ -1000,10 +989,16 @@ describe("what a draft runs", () => {
         (job) => forDraft(classify(["core/marfa-core/tests/sync.rs"]))[job],
       ),
     ).toEqual(["quick-checks"]);
-    const shared = forDraft(classify(["packages/shared/src/runtime.ts"]));
-    expect(JOBS.filter((job) => shared[job])).toEqual([
+    const client = forDraft(classify(["packages/client/src/runtime.ts"]));
+    expect(JOBS.filter((job) => client[job])).toEqual([
       "quick-checks",
       "workspace",
+    ]);
+    const types = forDraft(classify(["packages/types/src/runtime.ts"]));
+    expect(JOBS.filter((job) => types[job])).toEqual([
+      "quick-checks",
+      "workspace",
+      "types-freshness",
     ]);
     const swift = forDraft(classify(["core/bindings/swift/build.sh"]));
     expect(JOBS.filter((job) => swift[job])).toEqual(["quick-checks"]);
@@ -1144,9 +1139,11 @@ describe("each job reads its own answer", () => {
 
   it("Typecheck and Lint are jobs of their own, for the workspace, so that a failure of either is known in minutes", () => {
     const { jobs } = workflow("ci.yml");
-    for (const [name, command] of [
-      ["typecheck", "pnpm typecheck"],
-      ["lint", "pnpm lint"],
+    // Only Typecheck builds: it is the one job before the release that shows
+    // the published client still builds, and nothing reads the build.
+    for (const [name, commands] of [
+      ["typecheck", ["pnpm build", "pnpm typecheck"]],
+      ["lint", ["pnpm lint"]],
     ] as const) {
       const job = jobs[name];
       expect(job?.needs, name).toBe("changes");
@@ -1159,8 +1156,7 @@ describe("each job reads its own answer", () => {
         "pnpm/action-setup@v6",
         "actions/setup-node@v7",
         "pnpm install --frozen-lockfile",
-        "pnpm build",
-        command,
+        ...commands,
       ]);
     }
   });
@@ -1308,7 +1304,7 @@ describe("CodeQL", () => {
       ".github/workflows/ci.yml",
       ".agents/skills/release/helper.ts",
       ".githooks/check.mjs",
-      "packages/shared/src/runtime.ts",
+      "packages/types/src/runtime.ts",
       "core/marfa-core/src/lib.rs",
       "core/Cargo.toml",
       "openapi.json",
@@ -1544,13 +1540,13 @@ describe("the classifier as CI runs it", () => {
     git("config", "user.name", "CI Fixture");
     git("config", "commit.gpgsign", "false");
     commit("base", {
-      "packages/shared/src/runtime.ts": "export const v = 1;\n",
+      "packages/types/src/runtime.ts": "export const v = 1;\n",
     });
     commit("docs", { "deploy/README.md": "Words\n" });
     commit("server", {
-      "packages/shared/src/runtime.ts": "export const v = 2;\n",
+      "packages/types/src/runtime.ts": "export const v = 2;\n",
     });
-    git("mv", "packages/shared/src/runtime.ts", "packages/shared/README.md");
+    git("mv", "packages/types/src/runtime.ts", "packages/types/README.md");
     git("commit", "-qm", "rename");
     commits.rename = git("rev-parse", "HEAD");
     commit("instructions", {
@@ -1648,7 +1644,9 @@ describe("the classifier as CI runs it", () => {
       commits.server ?? "",
     );
     expect(JOBS.filter((job) => server[job] === "true")).toEqual(
-      JOBS.filter((job) => [...PACKAGES, "clients-freshness"].includes(job)),
+      JOBS.filter((job) =>
+        [...PACKAGES, "types-freshness", "clients-freshness"].includes(job),
+      ),
     );
     const fixture = outputs(
       "pull_request",
@@ -1671,7 +1669,11 @@ describe("the classifier as CI runs it", () => {
       commits.server ?? "",
       true,
     );
-    expect(quick(server)).toEqual(["quick-checks", "workspace"]);
+    expect(quick(server)).toEqual([
+      "quick-checks",
+      "workspace",
+      "types-freshness",
+    ]);
     expect(server.full).toBe("false");
     // Documentation names no quick job but the format check, which `Quick checks`
     // runs for every change.
@@ -1690,7 +1692,9 @@ describe("the classifier as CI runs it", () => {
       false,
     );
     expect(quick(ready)).toEqual(
-      JOBS.filter((job) => [...PACKAGES, "clients-freshness"].includes(job)),
+      JOBS.filter((job) =>
+        [...PACKAGES, "types-freshness", "clients-freshness"].includes(job),
+      ),
     );
     expect(ready.full).toBe("true");
     expect(

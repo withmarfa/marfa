@@ -69,7 +69,6 @@ The [Quickstart](https://docs.marfa.so/quickstart) continues from here: it makes
 | Path                                     | What it is                                                                                                               |
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | [`@withmarfa/types`](./packages/types)   | Core type and edge JSON schemas; emits the runtime registries                                                            |
-| [`@withmarfa/shared`](./packages/shared) | Wire types, Zod validation schemas, error codes                                                                          |
 | [`@withmarfa/client`](./packages/client) | The TypeScript SDK, generated from `openapi.json`                                                                        |
 | [`core/`](./core)                        | The Rust engine every native client embeds: a working copy, a queue, the `marfa` binary, and the Swift and Node bindings |
 | [`conformance/`](./conformance)          | The contract: black-box fixtures and the written specification under `conformance/spec/`                                 |

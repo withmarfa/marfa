@@ -790,9 +790,7 @@ export const ALL_TYPE_IDS = [
   "system.connection",
   "system.folder",
   "system.view",
-] as const;
-
-export type PlatformTypeId = (typeof ALL_TYPE_IDS)[number];
+];
 
 export const SHIPPED_TYPE_SHAPES = {
   "core.bookmark": {

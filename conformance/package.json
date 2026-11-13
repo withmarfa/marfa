@@ -47,7 +47,6 @@
     "@modelcontextprotocol/conformance": "0.1.16",
     "@tesseract.js-data/eng": "1.0.0",
     "@types/node": "^26.6.6",
-    "@withmarfa/shared": "workspace:*",
     "ajv": "^8.20.0",
     "dotenv": "^18.0.9",
     "tsx": "^4.23.15",

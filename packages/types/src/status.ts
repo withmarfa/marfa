@@ -65,37 +65,4 @@ function withLabelsAbove(
   return merged;
 }
 
-/**
- * Merges each type's own fields root to leaf into the fields the leaf
- * resolves to: a nearer declaration replaces a farther one, except that a
- * status field joins its words down the chain.
- */
-export function mergeFieldChain(
-  chain: readonly Readonly<Record<string, FieldDefinition>>[],
-  into: Record<string, FieldDefinition> = {},
-): Record<string, FieldDefinition> {
-  for (const fields of chain) {
-    for (const [name, own] of Object.entries(fields)) {
-      into[name] = mergeFieldDefinition(into[name], own);
-    }
-  }
-  return into;
-}
-
-/** The name of the one `status` field among `fields`, if there is one. */
-export function statusFieldName(
-  fields: Readonly<Record<string, FieldDefinition>>,
-): string | undefined {
-  return Object.entries(fields).find(([, def]) => def.type === "status")?.[0];
-}
-
-/** The group a resolved status field puts `word` in, if it declares it. */
-export function statusGroupOf(
-  field: FieldDefinition,
-  word: unknown,
-): StatusGroup | undefined {
-  if (typeof word !== "string") return undefined;
-  return field.status_values?.find((entry) => entry.value === word)?.group;
-}
-
 export type { StatusValue };

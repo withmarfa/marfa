@@ -4,27 +4,17 @@
   "private": true,
   "license": "Apache-2.0",
   "type": "module",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
-  },
-  "files": [
-    "dist"
-  ],
   "scripts": {
-    "build": "tsup",
     "typecheck": "tsc --noEmit",
     "validate": "tsx scripts/validate.ts",
     "generate": "tsx scripts/generate-icons.ts && tsx scripts/generate.ts",
-    "shapes:digest": "tsx scripts/shapes-digest.ts --write"
+    "shapes:digest": "tsx scripts/shapes-digest.ts --write",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@iconify-json/lucide": "1.2.149",
     "@iconify-json/simple-icons": "1.2.101",
     "@types/node": "^26.6.6",
-    "tsup": "^9.0.0",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3"
   }

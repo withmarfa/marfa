@@ -127,6 +127,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # No check reads the build; it shows the published client still builds.
       - run: pnpm build
       - run: pnpm typecheck
 
@@ -146,7 +147,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
       - run: pnpm lint
 
   # A format, typecheck or lint failure is certain and known within minutes,
@@ -196,8 +196,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || echo "::warning::The run could not be cancelled; the slow jobs run on."
 
-  # The workspace's tests: the client, the shared and types packages, the
-  # repository's own checks under `ci/` and the root's scripts. A draft skips
+  # The workspace's tests: the client, the types package, the repository's
+  # own checks under `ci/` and the root's scripts. A draft skips
   # them, like every job `full` guards.
   workspace-tests:
     needs: changes
@@ -215,8 +215,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # The tests import `types` and `shared` through their builds.
-      - run: pnpm build
       # The version check asks cargo how it reads the manifests, so it runs
       # in its own job and this one needs no Rust.
       - run: pnpm test --exclude ci/version-fields.test.ts --exclude ci/ci-required.test.ts
@@ -531,9 +529,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      # The lane reads the type registry through the dist of the packages
-      # the conformance project depends on.
-      - run: pnpm --filter "@withmarfa/conformance^..." build
       - name: Offline lane
         working-directory: conformance
         run: pnpm test:generators
@@ -1516,9 +1511,6 @@ jobs:
             echo "@withmarfa/client's generated sources are out of date with openapi.json, or hold a file the generator did not write. Run 'pnpm generate' and commit."
             exit 1
           fi
-      # The core's catalog is written from the registry the server lists,
-      # which is read from the built packages.
-      - run: pnpm build
       - name: Regenerate what the core is built from and check for drift
         run: |
           rm -f core/marfa-core/src/contract.rs core/marfa-rules/src/builtin_catalog.json

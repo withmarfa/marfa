@@ -1,12 +1,8 @@
-// The single validator for type schemas, shared by both authoring paths: the
-// build-time codegen that reads `core/*.json` and `core/system/*.json`, and
-// the runtime `POST /types` endpoint. Both call `validateTypeSchema` and both get
-// the same normalization, the same rules, and the same errors — a schema that
-// is legal in-tree is legal over the wire, byte for byte.
-//
-// Dependency-free on purpose. `@withmarfa/shared` depends on this package, so
-// nothing here may reach back into shared; registry access is injected through
-// `SchemaValidationContext` instead.
+// The validator for type schemas. The codegen that reads `core/*.json` and
+// `core/system/*.json` and the in-tree schema check both call
+// `validateTypeSchema`, so a schema that is legal in-tree has one
+// normalization, one set of rules and one set of errors. Registry access is
+// injected through `SchemaValidationContext`.
 
 import { ICON_SETS, isIconId, lucideIconId } from "./icon-sets.js";
 import { MAX_LABEL_LENGTH, STATUS_GROUPS, TYPE_ROLES } from "./schema-types.js";
@@ -153,10 +149,7 @@ export const MERGE_STRATEGIES: readonly string[] = [
  * shadowing property), with nothing telling a downstream consumer which is
  * authoritative.
  *
- * Lives here rather than in the consuming package so the build-time and
- * runtime checks read one list instead of two copies that drift. The list is
- * derived from the `Item` interface in `@withmarfa/shared`; a freshness test
- * there rebuilds it from a typed `Item` literal and fails if the two diverge.
+ * The core's catalog lists these names as the ones a field cannot take.
  */
 export const RESERVED_ITEM_FIELDS: ReadonlySet<string> = new Set([
   "id",
@@ -205,36 +198,16 @@ export interface SchemaValidationIssue {
   hint: string;
 }
 
-export type TypeSchemaValidationResult =
+type TypeSchemaValidationResult =
   | { success: true; data: TypeSchema }
   | { success: false; errors: SchemaValidationIssue[] };
 
 export interface SchemaValidationContext {
   /**
-   * Resolves an already-registered schema by identifier, for the inheritance
-   * and `compatible_with` checks. The runtime binds this to the registry
-   * lookup; the codegen binds it to the in-tree schema map.
+   * Resolves a schema by identifier, for the inheritance and `compatible_with`
+   * checks. The scripts bind it to the in-tree schema map.
    */
   resolveSchema: (typeId: string) => TypeSchema | undefined;
-  /**
-   * Validates a type identifier against the namespace grammar. Injected
-   * because the grammar lives in `@withmarfa/shared`, which depends on this
-   * package. Omit to skip the identifier check (the codegen path, where the
-   * filename already pins the identifier).
-   */
-  isValidTypeIdentifier?: (value: string) => boolean;
-  /**
-   * Every registered type whose parent chain reaches `typeId`, for the rules
-   * a change to a parent can break in a child it already has. Omit where no
-   * type is registered yet (the codegen path).
-   */
-  descendantsOf?: (typeId: string) => TypeSchema[];
-  /**
-   * Defer checks that depend on registered schemas. A batch restore must
-   * normalize inherited required fields and validate again with the complete
-   * registry before committing the transaction.
-   */
-  deferRegistryChecks?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -1003,7 +976,7 @@ function describeShapeConflict(
 }
 
 /** A field a type declares in a shape the chain above it declares differently. */
-export interface InheritedShapeConflict {
+interface InheritedShapeConflict {
   field: string;
   /** The part of the shape that differs, such as `items_type`. */
   attribute: string;
@@ -1037,22 +1010,6 @@ function inheritedShapeConflicts(
     });
   }
   return found;
-}
-
-/**
- * The fields of an already-registered type that the chain above it declares
- * in another shape: the check a registration runs, applied to a type as it is
- * stored, which a later change to a type above it can leave in conflict.
- */
-export function storedShapeConflicts(
-  schema: TypeSchema,
-  resolveSchema: (typeId: string) => TypeSchema | undefined,
-): InheritedShapeConflict[] {
-  if (!schema.parent) return [];
-  return inheritedShapeConflicts(
-    Object.entries(schema.fields),
-    collectAncestorFields(schema.parent, { resolveSchema }),
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1104,16 +1061,6 @@ export function validateTypeSchema(
         expected: "a dot-separated type identifier, e.g. acme.deal",
         actual: describe(obj.id),
         hint: "Every type needs an id under a namespace you own.",
-      }),
-    );
-  } else if (ctx.isValidTypeIdentifier && !ctx.isValidTypeIdentifier(obj.id)) {
-    errors.push(
-      issue({
-        field: "id",
-        expected:
-          "an identifier matching the namespace grammar: core.<type>, system.<type>, app.<app-name>.<type>, user.<type>, or <publisher>.<type>",
-        actual: describe(obj.id),
-        hint: "Segments are lowercase, separated by dots. Forward slashes and reserved-root collisions are rejected.",
       }),
     );
   }
@@ -1251,14 +1198,12 @@ export function validateTypeSchema(
   if (fields) {
     for (const [name, def] of Object.entries(fields)) {
       validateFieldShape(name, def, errors, {
-        inheritsStatus:
-          ctx.deferRegistryChecks === true ||
-          ancestorFields.get(name)?.definition.type === "status",
+        inheritsStatus: ancestorFields.get(name)?.definition.type === "status",
       });
     }
   }
 
-  if (fields && !ctx.deferRegistryChecks) {
+  if (fields) {
     const own: [string, FieldDefinition][] = [];
     for (const [name, def] of Object.entries(fields)) {
       const raw = asRecord(def);
@@ -1281,29 +1226,8 @@ export function validateTypeSchema(
     }
   }
 
-  const descendants =
-    !ctx.deferRegistryChecks && typeof obj.id === "string" && ctx.descendantsOf
-      ? ctx.descendantsOf(obj.id)
-      : [];
   if (fields) {
-    validateStatusFields(
-      obj.id,
-      fields,
-      ctx.deferRegistryChecks ? new Map() : ancestorFields,
-      descendants,
-      ctx,
-      errors,
-    );
-    validateDescendantShapes(fields, requiredNames, descendants, errors);
-    validateDescendantLinks(
-      obj.id,
-      fields,
-      requiredNames,
-      ancestorFields,
-      descendants,
-      ctx,
-      errors,
-    );
+    validateStatusFields(fields, ancestorFields, errors);
   }
 
   const visibleFields = new Set<string>([
@@ -1312,17 +1236,11 @@ export function validateTypeSchema(
   ]);
 
   if (fields) {
-    validateThumbnails(
-      fields,
-      ctx.deferRegistryChecks ? new Map() : ancestorFields,
-      descendants,
-      errors,
-    );
+    validateThumbnails(fields, ancestorFields, errors);
   }
-  validateDescendantMembers(obj.id, visibleFields, descendants, ctx, errors);
 
   for (const name of requiredNames) {
-    if (!ctx.deferRegistryChecks && !visibleFields.has(name)) {
+    if (!visibleFields.has(name)) {
       errors.push(
         issue({
           field: "required",
@@ -1341,18 +1259,10 @@ export function validateTypeSchema(
     visibleFields,
     thumbnailNames(fields, ancestorFields),
     errors,
-    ctx.deferRegistryChecks,
   );
-  validateLinkField(
-    obj,
-    fields,
-    requiredNames,
-    ancestorFields,
-    errors,
-    ctx.deferRegistryChecks,
-  );
+  validateLinkField(obj, fields, requiredNames, ancestorFields, errors);
   validateVersionPolicy(obj, errors);
-  validateMergePolicy(obj, visibleFields, errors, ctx.deferRegistryChecks);
+  validateMergePolicy(obj, visibleFields, errors);
   validateRetentionPolicy(obj, errors);
   validateCompatibleWith(
     obj,
@@ -1505,61 +1415,16 @@ function thumbnailNames(
 }
 
 /**
- * The inheritance rule seen from the parent: a type may not declare a field
- * under a name a type inheriting from it already declares with another shape.
- * The child's registration checked it against the parent as the parent then
- * stood; this checks a change to the parent against the child as it stands,
- * so neither order leaves the child's items read by one shape and validated
- * by the other.
- */
-function validateDescendantShapes(
-  fields: Record<string, unknown>,
-  requiredNames: ReadonlySet<string>,
-  descendants: readonly TypeSchema[],
-  errors: SchemaValidationIssue[],
-): void {
-  for (const [name, def] of Object.entries(fields)) {
-    const raw = asRecord(def);
-    if (!raw) continue;
-    const own = normalizeFieldDefinition(raw, {
-      required: requiredNames.has(name),
-    });
-    for (const child of descendants) {
-      if (!Object.hasOwn(child.fields, name)) continue;
-      const declared = child.fields[name];
-      if (!declared) continue;
-      const conflict = describeShapeConflict(declared, own);
-      if (conflict) {
-        errors.push(
-          issue({
-            field: `fields.${name}.${conflict.attribute}`,
-            code: "inheritance_violation",
-            expected: `the shape "${child.id}" already declares "${name}" with`,
-            actual: `${conflict.expected} here, ${conflict.actual} in "${child.id}"`,
-            hint: `Give "${name}" the shape "${child.id}" declares, rename it here, or change "${child.id}" first.`,
-          }),
-        );
-      }
-    }
-  }
-}
-
-/**
  * A type resolves to at most one status field, whose words its chain joins
  * root to leaf: a type adds words to the field it inherits and never names
- * an inherited word again, in any group. This holds for the type submitted
- * and, with the submission in place of the stored type, for every type that
- * inherits from it.
+ * an inherited word again, in any group.
  */
 function validateStatusFields(
-  id: unknown,
   fields: Record<string, unknown>,
   ancestorFields: ReadonlyMap<
     string,
     { owner: string; definition: FieldDefinition }
   >,
-  descendants: readonly TypeSchema[],
-  ctx: SchemaValidationContext,
   errors: SchemaValidationIssue[],
 ): void {
   const own: Record<string, FieldDefinition> = {};
@@ -1620,81 +1485,11 @@ function validateStatusFields(
     }
     resolved.set(name, mergeFieldDefinition(above?.definition, definition));
   }
-
-  if (typeof id !== "string" || descendants.length === 0) return;
-  const top = [...resolved].find(([, def]) => def.type === "status");
-  for (const child of descendants) {
-    // The child's own chain below this type, root first.
-    const below: TypeSchema[] = [];
-    const seen = new Set<string>();
-    let cursor: TypeSchema | undefined = child;
-    while (cursor && cursor.id !== id && !seen.has(cursor.id)) {
-      seen.add(cursor.id);
-      below.unshift(cursor);
-      cursor = cursor.parent ? ctx.resolveSchema(cursor.parent) : undefined;
-    }
-    let name = top?.[0];
-    const words = new Set(
-      (top?.[1].status_values ?? []).map((entry) => entry.value),
-    );
-    for (const type of below) {
-      for (const [field, def] of Object.entries(type.fields)) {
-        if (def.type !== "status") continue;
-        if (name !== undefined && field !== name) {
-          if (type.id === child.id && top !== undefined) {
-            errors.push(
-              issue({
-                field: `fields.${name}`,
-                code: "inheritance_violation",
-                expected: `no status field beside "${field}", which "${child.id}" declares`,
-                actual: `a status field "${name}"`,
-                hint: `Name the status field "${field}", or change "${child.id}" first.`,
-              }),
-            );
-          }
-          continue;
-        }
-        name = field;
-        for (const entry of def.status_values ?? []) {
-          if (words.has(entry.value) && type.id === child.id && own[field]) {
-            errors.push(
-              issue({
-                field: `fields.${field}.status_values`,
-                code: "inheritance_violation",
-                expected: `no word "${child.id}" already declares`,
-                actual: `"${entry.value}" here and in "${child.id}"`,
-                hint: `Leave "${entry.value}" out here, or remove it from "${child.id}" first.`,
-              }),
-            );
-          }
-          words.add(entry.value);
-        }
-      }
-    }
-    // A subtype may redeclare the field without words only while a type
-    // above it gives the words.
-    if (
-      name !== undefined &&
-      words.size === 0 &&
-      child.fields[name]?.type === "status"
-    ) {
-      errors.push(
-        issue({
-          field: `fields.${name}`,
-          code: "inheritance_violation",
-          expected: `a status field with words for "${child.id}", which declares "${name}" without its own`,
-          actual: `no word for "${name}" in "${child.id}" or above it`,
-          hint: `Keep "${name}" as a status field with words here, or give "${child.id}" its own words first.`,
-        }),
-      );
-    }
-  }
 }
 
 /**
- * A type carries at most one thumbnail, counting what it inherits and what
- * the types that inherit from it already declare, so a device reading "the
- * item's thumbnail" is never choosing between two.
+ * A type carries at most one thumbnail, counting what it inherits, so a device
+ * reading "the item's thumbnail" is never choosing between two.
  */
 function validateThumbnails(
   fields: Record<string, unknown>,
@@ -1702,7 +1497,6 @@ function validateThumbnails(
     string,
     { owner: string; definition: FieldDefinition }
   >,
-  descendants: readonly TypeSchema[],
   errors: SchemaValidationIssue[],
 ): void {
   const own = Object.keys(fields).filter((name) => isThumbnail(fields[name]));
@@ -1738,25 +1532,6 @@ function validateThumbnails(
     );
     return;
   }
-  // A type gaining a thumbnail its registered children already declare one
-  // beside would leave each of them with two. A child declaring this one
-  // under the same name redeclares it, which is not a second.
-  const crowded = descendants.flatMap((child) =>
-    Object.entries(child.fields)
-      .filter(([name, def]) => def.type === "thumbnail" && name !== last)
-      .map(([name]) => `"${name}" in "${child.id}"`),
-  );
-  if (crowded.length > 0) {
-    errors.push(
-      issue({
-        field: `fields.${last}`,
-        expected:
-          "at most one thumbnail field in every type that inherits this one",
-        actual: `a thumbnail beside ${crowded.join(", ")}`,
-        hint: "Keep the thumbnail on one level of the hierarchy.",
-      }),
-    );
-  }
 }
 
 /**
@@ -1765,7 +1540,7 @@ function validateThumbnails(
  * `display_hints.icon` in a type's definition, `icon` where the owner sets
  * one directly.
  */
-export function iconNameIssue(
+function iconNameIssue(
   value: unknown,
   field: string,
 ): SchemaValidationIssue | undefined {
@@ -1787,7 +1562,6 @@ function validateDisplayHints(
   visibleFields: ReadonlySet<string>,
   thumbnails: ReadonlySet<string>,
   errors: SchemaValidationIssue[],
-  deferRegistryChecks = false,
 ): void {
   if (obj.display_hints === undefined) return;
   const hints = asRecord(obj.display_hints);
@@ -1833,7 +1607,6 @@ function validateDisplayHints(
       );
       continue;
     }
-    if (deferRegistryChecks) continue;
     if (!visibleFields.has(value)) {
       errors.push(
         issue({
@@ -1864,7 +1637,6 @@ function validateLinkField(
   requiredNames: ReadonlySet<string>,
   ancestorFields: ReadonlyMap<string, { definition: FieldDefinition }>,
   errors: SchemaValidationIssue[],
-  deferRegistryChecks = false,
 ): void {
   if (obj.link_field === undefined) return;
   const name = obj.link_field;
@@ -1892,7 +1664,6 @@ function validateLinkField(
     );
     return;
   }
-  if (deferRegistryChecks) return;
   const definition = visibleDefinition(
     name,
     fields,
@@ -1936,93 +1707,6 @@ function visibleDefinition(
   return own
     ? normalizeFieldDefinition(own, { required: requiredNames.has(name) })
     : ancestorFields.get(name)?.definition;
-}
-
-/** A change above a type is the other way its link could come to name no
- *  string field, which its own registration refuses. */
-function validateDescendantLinks(
-  top: unknown,
-  fields: Record<string, unknown>,
-  requiredNames: ReadonlySet<string>,
-  ancestorFields: ReadonlyMap<string, { definition: FieldDefinition }>,
-  descendants: readonly TypeSchema[],
-  ctx: SchemaValidationContext,
-  errors: SchemaValidationIssue[],
-): void {
-  for (const child of descendants) {
-    const name = child.link_field;
-    if (name === undefined || declaredBetween(child, top, name, ctx)) continue;
-    const definition = visibleDefinition(
-      name,
-      fields,
-      requiredNames,
-      ancestorFields,
-    );
-    if (definition?.type === "string") continue;
-    errors.push(
-      issue({
-        field: `fields.${name}`,
-        expected: `a string field "${name}", which "${child.id}" names as its link_field`,
-        actual: definition
-          ? `"${name}" of type ${definition.type}`
-          : `no field "${name}"`,
-        hint: `Keep "${name}" a string field, or point the link_field of "${child.id}" elsewhere first.`,
-      }),
-    );
-  }
-}
-
-/**
- * A change above a type is also the way its `display_hints` and
- * `merge_policy` could come to name a field that is gone, which its own
- * registration refuses and which leaves it refusing every later write.
- */
-function validateDescendantMembers(
-  top: unknown,
-  visibleFields: ReadonlySet<string>,
-  descendants: readonly TypeSchema[],
-  ctx: SchemaValidationContext,
-  errors: SchemaValidationIssue[],
-): void {
-  for (const child of descendants) {
-    const named: [string, string][] = [];
-    for (const key of ["title_field", "body_field"] as const) {
-      const value = child.display_hints?.[key];
-      if (value !== undefined) named.push([value, `display_hints.${key}`]);
-    }
-    for (const field of Object.keys(child.merge_policy?.fields ?? {})) {
-      named.push([field, "merge_policy.fields"]);
-    }
-    for (const [name, member] of named) {
-      if (visibleFields.has(name) || declaredBetween(child, top, name, ctx)) {
-        continue;
-      }
-      errors.push(
-        issue({
-          field: `fields.${name}`,
-          expected: `a field "${name}", which "${child.id}" names in its ${member}`,
-          actual: `no field "${name}"`,
-          hint: `Keep "${name}", or change the ${member} of "${child.id}" first.`,
-        }),
-      );
-    }
-  }
-}
-
-function declaredBetween(
-  child: TypeSchema,
-  top: unknown,
-  name: string,
-  ctx: SchemaValidationContext,
-): boolean {
-  const seen = new Set<string>();
-  let cursor: TypeSchema | undefined = child;
-  while (cursor && cursor.id !== top && !seen.has(cursor.id)) {
-    if (Object.hasOwn(cursor.fields, name)) return true;
-    seen.add(cursor.id);
-    cursor = cursor.parent ? ctx.resolveSchema(cursor.parent) : undefined;
-  }
-  return false;
 }
 
 function validateVersionPolicy(
@@ -2096,7 +1780,6 @@ function validateMergePolicy(
   obj: Record<string, unknown>,
   visibleFields: ReadonlySet<string>,
   errors: SchemaValidationIssue[],
-  deferRegistryChecks = false,
 ): void {
   if (obj.merge_policy === undefined) return;
   const mp = asRecord(obj.merge_policy);
@@ -2138,7 +1821,7 @@ function validateMergePolicy(
           );
           continue;
         }
-        if (!deferRegistryChecks && !visibleFields.has(fieldName)) {
+        if (!visibleFields.has(fieldName)) {
           errors.push(
             issue({
               field: `merge_policy.fields.${fieldName}`,
@@ -2265,8 +1948,6 @@ function validateCompatibleWith(
     );
     return;
   }
-
-  if (ctx.deferRegistryChecks) return;
 
   const candidateFields = new Map<string, FieldDefinition>();
   for (const [name, inherited] of ancestorFields) {
@@ -2554,9 +2235,9 @@ export type EdgeTypeSchemaValidationResult =
  * Validates and normalizes an edge type schema. On success the returned
  * `data` is the canonical `EdgeTypeSchema` — constraints defaulted to `["*"]`,
  * cascade defaulted to `"orphan"`, property fields normalized through the
- * same field model item properties use. The build-time codegen and the
- * in-tree schema check both call this, so a malformed edge JSON fails the
- * build instead of reaching the registry as a blind cast.
+ * same field model item properties use. The codegen and the in-tree schema
+ * check both call this, so a malformed edge JSON fails the build instead of
+ * reaching the registry as a blind cast.
  */
 export function validateEdgeTypeSchema(
   input: unknown,
@@ -2882,7 +2563,7 @@ export const FIELD_DEFINITION_KEYS: ReadonlySet<string> = new Set(
 );
 
 /** Every key of a member of `items_fields`, held the same way. */
-export const ENTRY_MEMBER_KEYS: ReadonlySet<string> = new Set(
+const ENTRY_MEMBER_KEYS: ReadonlySet<string> = new Set(
   Object.keys({
     type: true,
     label: true,
@@ -2930,41 +2611,6 @@ export const RETENTION_POLICY_KEYS: ReadonlySet<string> = new Set(
     feed_days: true,
   } satisfies Record<keyof RetentionPolicy, true>),
 );
-
-/**
- * An edge type's properties as a registration stores them: each definition
- * folded into the canonical `FieldDefinition` as an item type's fields are, so
- * a string property declaring `format: email` is stored as an `email`
- * property and judged as one. Only a format that does not suit its property
- * is refused here; the rest of a definition's shape is checked by the caller.
- */
-export function normalizeEdgeProperties(
-  properties: Record<string, unknown>,
-):
-  | { success: true; data: Record<string, FieldDefinition> }
-  | { success: false; errors: SchemaValidationIssue[] } {
-  const errors: SchemaValidationIssue[] = [];
-  const data: Record<string, FieldDefinition> = {};
-  for (const [name, def] of Object.entries(properties)) {
-    const found: SchemaValidationIssue[] = [];
-    validateFieldShape(name, def, found);
-    const prefix = `fields.${name}`;
-    const refused = found.filter((e) => e.field === `${prefix}.format`);
-    errors.push(
-      ...refused.map((e) => ({
-        ...e,
-        field: `property_schema.${name}.format`,
-      })),
-    );
-    const record = asRecord(def);
-    if (refused.length === 0 && record) {
-      data[name] = normalizeFieldDefinition(record);
-    }
-  }
-  return errors.length > 0
-    ? { success: false, errors }
-    : { success: true, data };
-}
 
 /** Every top-level key `validateEdgeTypeSchema` reads, held the same way. */
 export const EDGE_TYPE_SCHEMA_KEYS: ReadonlySet<string> = new Set(
