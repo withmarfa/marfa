@@ -1290,6 +1290,7 @@ describe("what a restore answers", () => {
         "edges_skipped_reasons",
         "entries_skipped",
         "imported",
+        "line_kinds_skipped",
         "type_icons_added",
         "type_icons_skipped",
         "type_icons_skipped_reasons",
@@ -1341,6 +1342,7 @@ describe("what a restore answers", () => {
       rows_imported: 0,
       rows_skipped: 0,
       entries_skipped: [],
+      line_kinds_skipped: [],
       set_up_again: expect.any(String),
     });
     await expectMatchesSchema("POST", "/restore", 200, first.data);
@@ -1391,6 +1393,7 @@ describe("what a restore answers", () => {
       rows_imported: 0,
       rows_skipped: 0,
       entries_skipped: [],
+      line_kinds_skipped: [],
       set_up_again: expect.any(String),
     });
     await expectMatchesSchema("POST", "/restore", 200, again.data);
