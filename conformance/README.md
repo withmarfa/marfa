@@ -105,8 +105,7 @@ Any other failing check fails the run, and so does a pinned check that passes,
 until its pin is removed.
 
 `pnpm marfa:up` starts the program `MARFA_SERVER_BIN` names under a small
-supervisor (with it unset, the TypeScript server's sources through the tsx
-loader, never watch mode), waits for `/health`, claims the owner through the private socket using the
+supervisor (unset, the command stops and says how to build one), waits for `/health`, claims the owner through the private socket using the
 production claim service, signs in, mints explicit ordinary fixture keys,
 and writes `.marfa-state/env`. The state directory holds the
 SQLite file, the disk store, the server log, what the server printed to stderr, the pid, the clock offset and the env file; pass
@@ -135,7 +134,7 @@ Enrichment rewrites file items in the background, which would make
 exact-property assertions on blobs depend on timing. Rate limiting is off so
 that a run's own key minting and revocation, one of each per file, cannot
 spend the allowance on the key operations (the tightest cap the server has, set
-in `packages/server/src/app.ts`). `marfa:up` says so outright rather than
+as `rate_limit_keys_requests` in `core/marfa-server/src/settings/registry.rs`). `marfa:up` says so outright rather than
 leaving it to the boot script's default, so an ambient variable cannot flip
 the instance every file shares. What that allowance is, and what a caller
 past it is told, is asserted in `compliance/key-rate-limit.test.ts` against a
@@ -708,7 +707,7 @@ adapter keeps in `<state>/server.stderr` and the gate does not read.
 
 A line with a string `level` and a string `message` is a log record, and the
 gate skips it. Any other line is a request record, with the fields of `LogEntry`
-in `packages/server/src/middleware/logger.ts`:
+in `core/marfa-server/src/log.rs` (`Request`):
 
 | Field         | Type    | Notes                                                                         |
 | ------------- | ------- | ----------------------------------------------------------------------------- |
@@ -728,14 +727,13 @@ record missing `method`, `path`, `status` or `transport`. It names the file and
 line and shows the start of the line. A request that no log line reaches is a
 request nothing checked, so an unreadable line is a failure and not noise.
 
-## Run the server's half against another program
+## Run the server's half
 
-`MARFA_SERVER_BIN` points the meter at a server that is not the TypeScript one.
-`pnpm marfa:up` then starts that program instead of the sources, with the same
-settings, supervisor, state directory and log, and the state directory as its
-working directory. Nothing in the workspace is built for it. The claim and the
-keys go through the private socket as they do for the TypeScript server. The
-Rust server (`core/marfa-server/`) is the program this exists for.
+`MARFA_SERVER_BIN` names the server the meter boots, and nothing guesses it.
+`pnpm marfa:up` starts that program under the supervisor, with the state
+directory as its working directory. Nothing in the workspace is built for it.
+The claim and the keys go through the private socket. The Rust server
+(`core/marfa-server/`) is the program this exists for.
 
 ```sh
 cargo build --release -p marfa-server --features test-hooks --manifest-path ../core/Cargo.toml
@@ -751,10 +749,8 @@ pnpm marfa:down --state /tmp/marfa
 The build needs the `test-hooks` feature: the fixtures turn the test hooks on,
 and a server built without it refuses to start with them on. A run that
 measures a release build sets `CONFORMANCE_SERVER_HOOK_FREE=true` and gives
-`marfa:up` a build without the feature (the nightly benchmarks do). Setting
-`MARFA_SERVER_BIN` also stops `vitest.config.ts` leaving out the files
-listed in `src/utils/rust-judged.ts` (see below). Do not set it together with
-`MARFA_SERVER_BUILT`. The object-store half of the blob chapters needs an
+`marfa:up` a build without the feature (the nightly benchmarks do). `pnpm marfa:up` without
+`MARFA_SERVER_BIN` fails at once and says so. The object-store half of the blob chapters needs an
 object store beside the server: run `pnpm garage:up --state /tmp/garage` and
 source `/tmp/garage/garage.env` before `pnpm marfa:up`, as the Rust contract
 shards in CI do.
@@ -766,9 +762,8 @@ program itself, as a person starts it, to judge the rules that hold only
 where no hook is built (the refusal of `MARFA_TEST_HOOKS`, no clock or fault
 route, and the generated secrets). Build it with
 `cargo build --release -p marfa-server --manifest-path ../core/Cargo.toml`.
-The Rust contract job builds both and gives each shard the path. The file is
-left out of a run without `MARFA_SERVER_BIN`, and fails at once, saying so,
-when `MARFA_SERVER_RELEASE_BIN` is unset.
+The Rust contract job builds both and gives each shard the path. The file fails
+at once, saying so, when `MARFA_SERVER_RELEASE_BIN` is unset.
 
 ### Read a run
 
@@ -792,9 +787,7 @@ JSON report, so run with `--reporter=json --outputFile=<vitest.json>`.
 
 `RUST_JUDGED` in `src/utils/rust-judged.ts` lists, by path from `conformance/`,
 the contract test files that the Rust server must pass whole: every file of
-the five server projects. A run with `MARFA_SERVER_BIN` unset, against the
-TypeScript server, leaves the listed files out (`vitest.config.ts`); no CI job
-runs one. A test checks that every listed path exists and that every contract
+the five server projects. A test checks that every listed path exists and that every contract
 file of the five projects is listed, so a new file is judged from the start.
 
 ### How the score is counted
@@ -840,9 +833,12 @@ writes it to the job summary of `Rust contract score` and of
 
 `package.json` carries the full list, and `pnpm test:conformance` is what the
 gate runs. `pnpm test:generators` is the offline lane and needs no running target: the
-generators, everything under `src/utils/`, and the `*.decision.test.ts`
-verdicts the suites gate on. `src/utils/target-interface.test.ts` boots a
-server of its own to hold the adapter to the interface above. Among `src/utils/`, `schema-coverage.test.ts`
+generators, everything under `src/utils/` but the harness tests, and the
+`*.decision.test.ts` verdicts the suites gate on. `pnpm test:harness` runs the `*.harness.test.ts`
+files under `src/utils/`, which need the binary `MARFA_SERVER_BIN` names:
+`target-interface.harness.test.ts` boots servers of its own to hold the adapter
+to the interface above, and `fresh-server.harness.test.ts` holds the fixture
+server's listeners. Among `src/utils/`, `schema-coverage.test.ts`
 reads the specification against itself, and `spec-citations.test.ts` holds
 every reference to it in the repository to a rule that exists, by ID.
 `pnpm test:changed` at the repository root always runs `src/utils/` and the
@@ -975,7 +971,8 @@ a dispatch with `macos` runs them there too.
   `--platform darwin`, so every test that runs only on macOS is judged there,
   and fails when one of their files in `RUST_JUDGED` did not pass whole.
 - **MCP conformance and the restore drill** boot the release build. The drill
-  is `pnpm drill:restore`, described above.
+  is `pnpm drill:restore`, described above. MCP conformance also runs
+  `pnpm test:harness` against that build.
 - **Offline lane.** `pnpm test:generators` runs as a job of its own, with no
   server.
 

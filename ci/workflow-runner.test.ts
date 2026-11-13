@@ -22,7 +22,6 @@ const MAC_JOBS = new Set([
   "core-live.yml:live",
   "release.yml:programs-macos",
   "release.yml:sign",
-  "ci.yml:control-socket",
 ]);
 
 // The server image is built, each Linux archive is run, and the install is

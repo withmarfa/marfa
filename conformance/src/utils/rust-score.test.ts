@@ -115,9 +115,7 @@ describe("the score of a run", () => {
       0,
       [],
     ]);
-    expect(renderScore(score)).toContain(
-      `| ${A} | not reported | TypeScript |`,
-    );
+    expect(renderScore(score)).toContain(`| ${A} | not reported | no |`);
   });
 
   it("counts every collected test of a file that did not load as not passing", () => {

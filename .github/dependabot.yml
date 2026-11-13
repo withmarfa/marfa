@@ -58,37 +58,6 @@ updates:
     labels:
       - "dependencies"
     ignore:
-      # The 0.18 client pools local connections and rolls back raw BEGIN
-      # after execute, breaking the storage layer's explicit transactions.
-      # Reconsider later versions against the transaction outcome tests.
-      - dependency-name: "@libsql/client"
-        versions:
-          - "0.18.x"
-      # From 1.64, a form post answered with a 204 leaves Playwright waiting
-      # for a navigation that never ends, which stalls the next action in the
-      # approval page's browser test that stubs a decision that way.
-      - dependency-name: "playwright-core"
-        versions:
-          - ">=1.64.0"
-      # An esbuild advisory that no published version can satisfy, reached
-      # only through a parent that pins the vulnerable line.
-      #
-      # GHSA-67mh-4wv8-2f99, the development server answering requests from
-      # any website, patched in 0.25.0. It arrives through `drizzle-kit` ->
-      # `@esbuild-kit/esm-loader` -> `@esbuild-kit/core-utils`, which pins
-      # `esbuild: ~0.18.20`. Both `@esbuild-kit` packages are deprecated
-      # ("Merged into tsx") and drizzle-kit's current release still depends
-      # on them, so there is nothing to upgrade to. Revisit when drizzle-kit
-      # drops them.
-      #
-      # Not an exposure here. It requires running esbuild's development
-      # server, and the esbuild-kit chain is a module loader for a migration
-      # CLI. Nothing ships it to a browser or serves from it.
-      #
-      # Scoped to the one package deliberately. A broader ignore would hide
-      # esbuild advisories that do matter, including any that reach a
-      # version we can actually move.
-      - dependency-name: "esbuild"
       # TypeScript majors, because `typescript-eslint` declares
       # `typescript: >=4.8.4 <6.1.0`. Taking TypeScript 7 trades the compiler
       # upgrade for losing lint entirely, which is the wrong way round.

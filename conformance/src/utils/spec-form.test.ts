@@ -129,7 +129,7 @@ function violations(name: string, text: string): Record<Rule, string[]> {
     }
 
     const whole = statement.paragraphs.map((p) => p.text).join(" ");
-    if (whole.includes("packages/server/src"))
+    if (/\bcore\/[a-z-]+\/(?:src|tests)\//.test(whole))
       found.noServerTests.push(where(id));
   }
   for (const line of chapter.stray) found.blockShape.push(at(line));
@@ -346,7 +346,7 @@ describe("the form check sees what it is for", () => {
     "",
     "The server MUST answer.",
     "",
-    "**Reason:** proven in packages/server/src/housekeeping/a.test.ts.",
+    "**Reason:** proven in core/marfa-server/src/housekeeping/a.rs.",
     "",
     "**Tests:** waiting on #1.",
     "",

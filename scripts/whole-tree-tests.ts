@@ -19,34 +19,11 @@
 
 /** Matched from the repository root, across `packages/` and `ci/`. */
 export const ROOT_FILTERS: readonly string[] = [
-  // Every census reads the server's source to count something in it.
-  "census.test.ts",
-  // The committed `openapi.json` and the files beside the routes. The
+  // The committed `openapi.json`, which the client is held to. The
   // document's own tests are under `ci/`, matched last.
   "packages/client/src/client.test.ts",
-  "webhooks/retry.test.ts",
-  // Walks of the server's source for a pattern.
-  "auth/stale-client-ceiling.test.ts",
-  "routes/edge-events-every-door.test.ts",
-  "routes/idempotent-write-doors.test.ts",
-  "routes/oidc-labels.test.ts",
-  "pages/assets.test.ts",
-  "pages/color-literals.test.ts",
-  "pages/jsx-pragma.test.ts",
-  "routes/one-auth-layout.test.ts",
-  "routes/rollback-event-doors.test.ts",
-  "routes/ui-viewer-coverage.test.ts",
-  "routes/wire-shape-declarations.test.ts",
-  "storage/scanned-columns.test.ts",
-  // Named source and config files read as text.
-  "housekeeping/scheduler.test.ts",
-  "storage/idempotency-store.test.ts",
-  "test-utils-sse.test.ts",
-  "shutdown-stream.test.ts",
   // The item names the core is held to, in `conformance/fixtures/`.
   "packages/shared/src/item-name.test.ts",
-  // The filter expressions the core's model is held to, beside them.
-  "storage/filter-fixtures.test.ts",
   // The schema and registry files under `packages/types/`, read from disk.
   "packages/types/src/",
   // Everything under `ci/` checks the workflows and manifests, not a package.

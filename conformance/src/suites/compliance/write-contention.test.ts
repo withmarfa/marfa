@@ -159,13 +159,8 @@ describe("contention on the write lock", () => {
   }, 120_000);
 
   it("refuses a housekeeping run, which writes outside a request's transaction", async () => {
-    // The path the error handler's `cause` walk exists for. A request's
-    // writes go through the transaction the driver opens directly, and
-    // the refusal reaches the handler unwrapped; a housekeeping run
-    // writes outside that context, so Drizzle wraps every statement and
-    // the server's own code arrives as the `cause` of something else.
-    // Without the walk this door answers `500` while every other one
-    // answers `503`.
+    // A housekeeping run writes outside a request's transaction, and this
+    // door must still answer `503` as every other one does, not `500`.
     const operator = new MarfaClient({
       baseUrl: impatient!.apiUrl,
       apiKey: impatient!.managementKey,

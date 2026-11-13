@@ -10,7 +10,7 @@ This file is the standard every chapter is written to. `src/utils/spec-form.test
 
 The contract has two halves.
 
-**The server's half** says what the server answers over HTTP. The committed `openapi.json` is the document both servers are held to. `pnpm check:statuses` holds what a server answers to it, so where the two disagree, one of them is fixed.
+**The server's half** says what the server answers over HTTP. The committed `openapi.json` is the document the server is held to. `pnpm check:statuses` holds what the server answers to it, so where the two disagree, one of them is fixed.
 
 - `folder-status.md`: folder-copy sync reports, their canonical sign-ins, receipt ages, current and historical totals, and the folder inventory.
 - `items.md`: items, their lifecycle, bulk writes, metadata, tags and extensions, the folder operation that writes `system.folder`, and links and the tombstones a purge leaves.
@@ -97,7 +97,7 @@ A reason says why the rule exists, in one or two sentences, so that an agent cha
 - **A cited fixture asserts what the rule says:** the same status, the same code, the same field, the same bound. `src/utils/spec-citations.test.ts` fails when a cited file or title does not exist.
 - **A rule no fixture can assert yet** says `**Tests:** waiting on #<issue>.`, naming the open issue that makes it testable.
 - **A rule judged not worth a fixture** says `**Tests:** none, closed in #<issue>: <reason>.`, naming the closed issue that asked for the fixture and judged it not worth building, and why no fixture asserts the rule. Use it only when a fixture would need conditions CI cannot provide, such as a signed-in iCloud account.
-- **Never the server's own tests.** A rule never cites tests under `packages/server/src`. The contract judges any server, so only fixtures that reach a server from outside prove it.
+- **Never the server's own tests.** A rule never cites tests under `core/`. The contract judges any server, so only fixtures that reach a server from outside prove it.
 
 ## IDs
 

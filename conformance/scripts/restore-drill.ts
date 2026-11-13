@@ -351,9 +351,7 @@ async function deletePrefix(prefix: string): Promise<number> {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  if (serverProgram() === undefined) {
-    throw new Error("MARFA_SERVER_BIN does not name the server to drill");
-  }
+  serverProgram(); // fails before the bucket is touched
   if (!args.folder) requireBucketEnv();
 
   const id = randomBytes(4).toString("hex");

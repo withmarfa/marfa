@@ -1,6 +1,6 @@
 # API style guide
 
-How Marfa's API description is written: every summary, description and example in `openapi.json`. The committed `openapi.json` is the document: it is edited directly, both servers are held to it, and this guide governs its text.
+How Marfa's API description is written: every summary, description and example in `openapi.json`. The committed `openapi.json` is the document: it is edited directly, the server is held to it, and this guide governs its text.
 
 The wording follows the [Google developer documentation style guide](https://developers.google.com/style), including its guidance on [API reference text](https://developers.google.com/style/api-reference-comments). Names and shapes follow `GLOSSARY.md`, which follows Stripe's API conventions. Where this guide is silent, follow Google.
 

@@ -94,7 +94,7 @@ describe("Full CI", () => {
 
   describe("when a quick job fails on a pull request", () => {
     const quick = [
-      ["stop-after-format", "ci-sqlite"],
+      ["stop-after-format", "quick-checks"],
       ["stop-after-typecheck", "typecheck"],
       ["stop-after-lint", "lint"],
     ] as const;

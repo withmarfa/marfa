@@ -3,8 +3,8 @@ import { mkdtempSync, realpathSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { createServer } from "node:net";
 /**
- * Boot the server in this repository on SQLite for the suite, mint its first
- * key, and write the env file the run sources. The restore drill imports
+ * Boot the server `MARFA_SERVER_BIN` names for the suite, mint its first key,
+ * and write the env file the run sources. The restore drill imports
  * `bootServer` and `stopServer` to boot the same way, twice.
  *
  *   tsx scripts/marfa-server.ts up [--state <dir>] [--port <n>] [--env K=V ...]
@@ -59,36 +59,19 @@ import { createServer } from "node:net";
  * `stopServer` stops and nothing more, because the restore drill reads the
  * database of a server it has just stopped.
  *
- * The server starts as a direct Node child with the tsx loader and the
- * instrumentation preload, under `run-server.mjs`, which writes how the
- * server ended to `server.exit`. The package's `dev` script is watch mode
- * and belongs to a person at a keyboard.
- *
- * With `MARFA_SERVER_BUILT=true` it starts the built server instead
- * (`packages/server/dist/index.js` with `dist/instrumentation.js`), which is
- * what a person runs, for a run that measures memory or start-up time. The
- * environment variable, not an option, so that a `restart` follows the boot
- * it replaces. A built server is started with `MARFA_TEST_HOOKS` off: the
- * clock shim and the fault routes exist only in the source run, and the built
- * run is without them, as a person's is. Nothing that reads the clock or the
- * fault table can run against it. The build must be there already
- * (`pnpm --filter "@withmarfa/server..." build`); it is not made here.
- *
- * With `MARFA_SERVER_BIN=<program>` it starts that program instead, a server
- * of another implementation, with the same settings, supervisor, state
- * directory and log, and with the state directory as its working directory.
- * Nothing in the workspace is built for it. It must carry its test hooks (a
- * Rust server built with `--features test-hooks`), which the settings below
- * switch on, unless the run's environment sets
- * `CONFORMANCE_SERVER_HOOK_FREE=true`: then it is a release build started as a
- * person starts it, and the boot turns the limiter and file reading off
- * through `PATCH /config`. The claim and the keys go through the private
- * socket as for this server. A target whose sign-in door answers
+ * `MARFA_SERVER_BIN=<program>` names the server to start, under
+ * `run-server.mjs`, which writes how it ended to `server.exit`. The state
+ * directory is its working directory. It must carry its test hooks (a build
+ * with `--features test-hooks`), which the settings below switch on, unless
+ * the run's environment sets `CONFORMANCE_SERVER_HOOK_FREE=true`: then it is
+ * a release build started as a person starts it, and the boot turns the
+ * limiter and file reading off through `PATCH /config`. The claim and the
+ * keys go through the private socket. A target whose sign-in door answers
  * `404 not_found` has no owner sign-in, and the env file then carries no
  * owner cookie or session file. `clock` and `fault` fail plainly against a
  * target without the hooks.
  */
-import { spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
   cpSync,
@@ -132,153 +115,6 @@ const RUN_SERVER = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "run-server.mjs",
 );
-
-/**
- * The server this boots is the one in the checkout this file is in, found
- * from the file rather than from the working directory so that a run started
- * from anywhere boots the tree it was started from.
- */
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
-
-/**
- * The settings the TypeScript server reads under other names, by the name the
- * contract gives them. This is the only place the old names appear.
- */
-const TYPESCRIPT_SETTING_NAMES: ReadonlyMap<string, string> = new Map([
-  ["MARFA_PORT", "PORT"],
-  ["MARFA_DATABASE_PATH", "SQLITE_PATH"],
-  ["MARFA_BLOB_PATH", "BLOB_PATH"],
-  ["MARFA_KEY_SALT", "API_KEY_SALT"],
-  ["MARFA_TRUSTED_PROXY_CIDRS", "TRUSTED_PROXY_CIDRS"],
-  ["MARFA_TRUSTED_PROXY_HEADER", "TRUSTED_PROXY_HEADER"],
-  ["MARFA_ERROR_WEBHOOK_URL", "ERROR_WEBHOOK_URL"],
-  ["MARFA_WRITE_WAIT_MS", "SQLITE_BUSY_BUDGET_MS"],
-  ["MARFA_SIGN_IN_ADDRESS", "MARFA_AUTH_BASE_URL"],
-  ...[
-    "RATE_LIMIT_ENABLED",
-    "RATE_LIMIT_KEYS_REQUESTS",
-    "RATE_LIMIT_WINDOW_MS",
-    "RATE_LIMIT_REQUESTS",
-    "RATE_LIMIT_AGGREGATE_MULTIPLIER",
-    "RATE_LIMIT_INBOUND_REQUESTS",
-    "AUDIT_RETENTION_DAYS",
-    "TRASH_RETENTION_DAYS",
-    "VERSION_RECENT_DAYS",
-    "VERSION_DAILY_SNAPSHOT_DAYS",
-    "VERSION_WEEKLY_SNAPSHOT_DAYS",
-    "VERSION_MAX_VERSIONS",
-    "AUDIT_CLEANUP_INTERVAL_MS",
-    "AUTH_SESSION_CLEANUP_INTERVAL_MS",
-    "FEED_EXPIRY_INTERVAL_MS",
-    "TRASH_PURGE_INTERVAL_MS",
-    "VERSION_THINNING_INTERVAL_MS",
-    "CORS_ORIGINS",
-    "ENABLE_HSTS",
-  ].map((name): [string, string] => [`MARFA_${name}`, name]),
-]);
-
-/** The timings `MARFA_TEST_TUNING` names, by the setting the TypeScript server reads each as. */
-const TUNING_NAMES: ReadonlyMap<string, string> = new Map([
-  ["housekeeping_poll_ms", "MARFA_HOUSEKEEPING_POLL_INTERVAL_MS"],
-  ["write_wait_ms", "MARFA_WRITE_WAIT_MS"],
-  ["upload_idle_ms", "MARFA_UPLOAD_IDLE_TIMEOUT_MS"],
-  ["blob_read_idle_ms", "MARFA_BLOB_READ_IDLE_TIMEOUT_MS"],
-  ["inbound_idle_ms", "MARFA_INBOUND_READ_TIMEOUT_MS"],
-  ["connector_hold_ms", "MARFA_CONNECTOR_HOLD_MS"],
-  ["enrichment_batch", "MARFA_ENRICHMENT_BATCH_SIZE"],
-  ["blob_replicate_batch", "MARFA_BLOB_REPLICATE_BATCH"],
-  ["blob_replicate_batch_bytes", "MARFA_BLOB_REPLICATE_BATCH_BYTES"],
-  ["blob_integrity_batch", "MARFA_BLOB_INTEGRITY_BATCH"],
-  ["blob_integrity_batch_bytes", "MARFA_BLOB_INTEGRITY_BATCH_BYTES"],
-]);
-
-/** The jobs whose interval the TypeScript server takes as a setting, by that setting. */
-const JOB_INTERVAL_NAMES: ReadonlyMap<string, string> = new Map([
-  ["heartbeat", "MARFA_HEARTBEAT_INTERVAL_MS"],
-  ["enrichment-sweep", "MARFA_ENRICHMENT_INTERVAL_MS"],
-  ["audit-cleanup", "MARFA_AUDIT_CLEANUP_INTERVAL_MS"],
-  ["trash-purge", "MARFA_TRASH_PURGE_INTERVAL_MS"],
-  ["version-thinning", "MARFA_VERSION_THINNING_INTERVAL_MS"],
-  ["feed-expiry", "MARFA_FEED_EXPIRY_INTERVAL_MS"],
-  ["event-log-cleanup", "MARFA_EVENT_LOG_CLEANUP_INTERVAL_MS"],
-  ["inbound-delivery-cleanup", "MARFA_INBOUND_CLEANUP_INTERVAL_MS"],
-  ["credential-cleanup", "MARFA_CREDENTIAL_CLEANUP_INTERVAL_MS"],
-  ["blob-replicate", "MARFA_BLOB_REPLICATE_INTERVAL_MS"],
-  ["blob-orphans", "MARFA_BLOB_CLEANUP_INTERVAL_MS"],
-  ["blob-integrity", "MARFA_BLOB_INTEGRITY_INTERVAL_MS"],
-]);
-
-/** Settings the contract gives in seconds that the TypeScript server reads in milliseconds. */
-const SECONDS_AS_MILLISECONDS: ReadonlyMap<string, string> = new Map([
-  ["MARFA_BACKUP_INTERVAL_SECONDS", "MARFA_BACKUP_INTERVAL_MS"],
-  ["MARFA_BLOB_CLEANUP_GRACE_SECONDS", "MARFA_BLOB_CLEANUP_GRACE_MS"],
-  ["MARFA_RATE_LIMIT_WINDOW_SECONDS", "MARFA_RATE_LIMIT_WINDOW_MS"],
-  ["MARFA_MCP_FETCH_TIMEOUT_SECONDS", "MARFA_MCP_FETCH_TIMEOUT_MS"],
-]);
-
-/** The settings the TypeScript server has under another shape than the contract's. */
-function reshapedForTypeScript(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const out: NodeJS.ProcessEnv = {};
-  const tuned = new Map<string, string>();
-  const everyJob = new Map<string, string>();
-  for (const [name, value] of Object.entries(env)) {
-    const seconds = SECONDS_AS_MILLISECONDS.get(name);
-    if (name === "MARFA_TEST_TUNING" && value !== undefined) {
-      for (const pair of value.split(",").filter((text) => text.trim())) {
-        const [key = "", given = ""] = pair.trim().split("=");
-        if (key.startsWith("interval.")) {
-          const job = key.slice("interval.".length);
-          if (job === "*") {
-            for (const setting of JOB_INTERVAL_NAMES.values()) {
-              everyJob.set(setting, given);
-            }
-          } else {
-            const setting = JOB_INTERVAL_NAMES.get(job);
-            if (setting !== undefined) tuned.set(setting, given);
-          }
-        } else {
-          const setting = TUNING_NAMES.get(key);
-          if (setting !== undefined) tuned.set(setting, given);
-        }
-      }
-    } else if (seconds !== undefined) {
-      out[seconds] = value === undefined ? value : String(Number(value) * 1000);
-    } else if (name === "MARFA_BLOB_CLEANUP_ENABLED") {
-      if (value !== undefined && /^(false|0|no|off)$/i.test(value)) {
-        out.MARFA_BLOB_CLEANUP_INTERVAL_MS = "0";
-      }
-    } else {
-      out[name] = value;
-    }
-  }
-  for (const [name, value] of everyJob) out[name] ??= value;
-  for (const [name, value] of tuned) out[name] = value;
-  return out;
-}
-
-/** The environment with each setting under the name the TypeScript server reads. */
-export function typeScriptSettingNames(
-  environment: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv {
-  const env = reshapedForTypeScript(environment);
-  const out: NodeJS.ProcessEnv = {};
-  const renamed: [string, string | undefined][] = [];
-  for (const [name, value] of Object.entries(env)) {
-    const own = TYPESCRIPT_SETTING_NAMES.get(name);
-    if (own === undefined) out[name] = value;
-    else renamed.push([own, value]);
-  }
-  for (const [name, value] of renamed) out[name] = value;
-  return out;
-}
-
-/** The contract's name for a setting the TypeScript server names otherwise. */
-export function contractSettingName(typeScriptName: string): string {
-  for (const [name, own] of TYPESCRIPT_SETTING_NAMES) {
-    if (own === typeScriptName) return name;
-  }
-  return typeScriptName;
-}
 
 interface Args {
   command:
@@ -400,45 +236,6 @@ function namedPort(raw: string | undefined): number | undefined {
   return port;
 }
 
-function ensureBuilt(): void {
-  if (existsSync(resolve(REPO_ROOT, "packages/shared/dist/index.js"))) return;
-  console.log(
-    "[marfa-server] workspace packages are not built; running pnpm build",
-  );
-  const build = spawnSync("pnpm", ["build"], {
-    cwd: REPO_ROOT,
-    stdio: "inherit",
-  });
-  if (build.status !== 0) {
-    throw new Error("pnpm build failed");
-  }
-}
-
-let pageAssetsWritten = false;
-
-/**
- * The server imports its page assets from a generated file Git does not
- * track. Written here from the sources, once for the process, so a boot from
- * source never serves a stylesheet or script older than them.
- */
-function ensurePageAssets(): void {
-  if (pageAssetsWritten) return;
-  const build = spawnSync(
-    process.execPath,
-    ["--import", "tsx", "scripts/build-page-assets.ts"],
-    { cwd: resolve(REPO_ROOT, "packages/server"), stdio: "inherit" },
-  );
-  if (build.status !== 0) {
-    throw new Error("building the page assets failed");
-  }
-  pageAssetsWritten = true;
-}
-
-/** Whether this run starts the built server, not the sources. */
-export function builtServer(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.MARFA_SERVER_BUILT === "true";
-}
-
 /**
  * Whether the run's own environment says the program is a release build
  * without test hooks, which a measuring run starts as a person does.
@@ -458,15 +255,15 @@ const MEASURING_SETTINGS = {
   enrichment_ocr_enabled: false,
 };
 
-/** The program `MARFA_SERVER_BIN` names, when it names one. */
-export function serverProgram(
-  env: NodeJS.ProcessEnv = process.env,
-): string | undefined {
+/**
+ * The program `MARFA_SERVER_BIN` names. It is never guessed: a release build
+ * without the test hooks would boot and fail every fixture that needs them.
+ */
+export function serverProgram(env: NodeJS.ProcessEnv = process.env): string {
   const program = env.MARFA_SERVER_BIN;
-  if (program === undefined || program === "") return undefined;
-  if (builtServer(env)) {
+  if (program === undefined || program === "") {
     throw new Error(
-      "MARFA_SERVER_BIN and MARFA_SERVER_BUILT are both set; set one",
+      "MARFA_SERVER_BIN names no server; build one with `cargo build --release -p marfa-server --features test-hooks` under core/ and set it to core/target/release/marfa-server",
     );
   }
   const path = resolve(program);
@@ -474,40 +271,6 @@ export function serverProgram(
     throw new Error(`MARFA_SERVER_BIN names ${path}, which is not a file`);
   }
   return path;
-}
-
-/** The built server's two entry files, which a build writes. */
-const BUILT_ENTRY = resolve(REPO_ROOT, "packages/server/dist/index.js");
-const BUILT_PRELOAD = resolve(
-  REPO_ROOT,
-  "packages/server/dist/instrumentation.js",
-);
-
-/** What the supervisor starts: the sources through tsx, or the build. */
-export function serverCommand(built: boolean): [string, ...string[]] {
-  if (!built) {
-    return serverRuntime([
-      "--import",
-      "./src/instrumentation.ts",
-      "src/index.ts",
-    ]);
-  }
-  for (const file of [BUILT_ENTRY, BUILT_PRELOAD]) {
-    if (!existsSync(file)) {
-      throw new Error(
-        `MARFA_SERVER_BUILT is true and ${file} is missing; build the server first`,
-      );
-    }
-  }
-  return [process.execPath, "--import", BUILT_PRELOAD, BUILT_ENTRY];
-}
-
-/** Runtime command supervised for a server entrypoint and its preloads. */
-export function serverRuntime(args: string[]): [string, ...string[]] {
-  // The tsx CLI force-kills a child that cannot acknowledge a signal within
-  // its short relay window. A direct Node child lets shutdown finish and
-  // makes the supervisor record the server's own exit.
-  return [process.execPath, "--import", "tsx", ...args];
 }
 
 function readPid(pidFile: string): number | undefined {
@@ -735,11 +498,6 @@ async function startServer(args: BootOptions): Promise<Started> {
   // it ignores itself rather than relying on the root `.gitignore` knowing
   // the name.
   writeFileSync(resolve(args.state, ".gitignore"), "*\n");
-  const built = program === undefined && builtServer();
-  if (program === undefined) {
-    ensureBuilt();
-    if (!built) ensurePageAssets();
-  }
 
   const named =
     args.port ??
@@ -822,10 +580,9 @@ async function startServer(args: BootOptions): Promise<Started> {
     MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES:
       process.env.MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES || "true",
   };
-  // The built TypeScript server is started as a person starts it, without the
-  // hooks. Any other target is built with them, unless the run says it is a
-  // release build with `CONFORMANCE_SERVER_HOOK_FREE=true`.
-  const hooks = !built && !(program !== undefined && hookFreeRun());
+  // The program carries its test hooks, unless the run says it is a release
+  // build with `CONFORMANCE_SERVER_HOOK_FREE=true`.
+  const hooks = !hookFreeRun();
   env.MARFA_TEST_HOOKS = String(hooks);
   delete env.MARFA_TEST_CLOCK_OFFSET_MS;
   // A throwaway server reports nothing, whatever the shell sets; a setting the
@@ -869,16 +626,12 @@ async function startServer(args: BootOptions): Promise<Started> {
   // The supervisor leads the group and the server joins it, so the group's
   // id is still the pid file's and a signal to the group still reaches the
   // server; what the supervisor adds is the server's exit status.
-  const child = spawn(
-    process.execPath,
-    [RUN_SERVER, p.exit, ...(program ? [program] : serverCommand(built))],
-    {
-      cwd: program ? args.state : resolve(REPO_ROOT, "packages/server"),
-      env: program ? env : typeScriptSettingNames(env),
-      detached: true,
-      stdio: ["ignore", logFd, errFd],
-    },
-  );
+  const child = spawn(process.execPath, [RUN_SERVER, p.exit, program], {
+    cwd: args.state,
+    env,
+    detached: true,
+    stdio: ["ignore", logFd, errFd],
+  });
   closeSync(logFd);
   closeSync(errFd);
   if (child.pid === undefined) {
@@ -1074,11 +827,7 @@ export async function bootServer(args: BootOptions): Promise<void> {
     apiKey = working.body.key;
     managementKey = management.body.key;
   }
-  if (
-    status.body.claimed !== true &&
-    serverProgram() !== undefined &&
-    hookFreeRun()
-  ) {
+  if (status.body.claimed !== true && hookFreeRun()) {
     const set = await fetch(`${url}/config`, {
       method: "PATCH",
       headers: {

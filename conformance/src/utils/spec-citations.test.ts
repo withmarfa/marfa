@@ -139,7 +139,7 @@ describe("specification citations", () => {
     const paths = repository.map((file) => file.path);
     for (const expected of [
       "conformance/spec/items.md",
-      "packages/server/src/app.ts",
+      "core/marfa-server/src/app/mod.rs",
       "core/marfa-core/src/lib.rs",
       "AGENTS.md",
     ]) {

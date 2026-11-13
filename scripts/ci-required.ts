@@ -33,11 +33,11 @@ import { fileURLToPath } from "node:url";
 
 /** Each output, named for the job that reads it. */
 export const JOBS = [
-  // `CI (SQLite)`. It runs the format check, this classifier's test and the
-  // contract's reference check for any change, and its build, typecheck and
-  // lint only for `workspace`. The tests are `CI (SQLite) tests`, three
-  // shards that run for `workspace` unless the pull request is a draft.
-  "ci-sqlite",
+  // `Quick checks`. It runs the format check, this classifier's test and the
+  // contract's reference check for any change. `workspace` is the build,
+  // typecheck, lint and `Workspace tests`, which run unless the pull request
+  // is a draft.
+  "quick-checks",
   "workspace",
   // `Core checks`, on macOS: the core's format, lint and tests, the login
   // keychain check and the Swift crate.
@@ -65,7 +65,7 @@ export const JOBS = [
   // The contract run against the Rust server (`core/marfa-server/`): the
   // release build, the fixtures of every server project in shards, and the
   // score. It reads what the Rust program is built from, the fixtures and the
-  // meter, and never the TypeScript server's code in `packages/`.
+  // meter.
   "rust-contract",
   // The device and CLI fixtures against the Rust server on macOS, for file
   // watching, name case, Finder packages and a real keychain: one build, the
@@ -86,28 +86,11 @@ export const JOBS = [
   // boots the Rust server, but a pull request that changes only the server
   // leaves it to the push to `main`, where `core.yml` runs it.
   "core",
-  // `Control socket (macOS)`: the private control socket's tests on macOS,
-  // the only run of them there. Linux runs them in `CI (SQLite)`'s tests.
-  "control-socket",
 ] as const;
 
 export type Job = (typeof JOBS)[number];
 
 const ALL: readonly Job[] = JOBS;
-
-/**
- * Every job the TypeScript server's code can change the result of, but
- * `core`: its own build and tests, and the offline lane, which builds the
- * packages it is built from. No contract job boots it.
- */
-const SERVER: readonly Job[] = ["workspace", "conformance-offline"];
-
-/**
- * What the page system's styles, browser script and tests can change: the
- * workspace's build, typecheck, lint and tests, and nothing a server boots
- * from.
- */
-const PAGE_ASSETS_AND_TESTS: readonly Job[] = ["workspace"];
 
 /**
  * Every job that boots the Rust server: the contract run, MCP conformance and
@@ -159,7 +142,6 @@ const RUST: readonly Job[] = [...RUST_LINUX, ...MACOS];
 /** Every job that installs or builds the pnpm workspace, but `core`. */
 const WORKSPACE: readonly Job[] = [
   "workspace",
-  "control-socket",
   ...CONTRACT,
   "mcp-conformance",
   "restore-drill",
@@ -216,33 +198,34 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ["workspace", "conformance-offline", "core-checks-linux", "rust-contract"],
   ],
   [/^conformance\/spec\//, ["workspace", "conformance-offline"]],
-  // The item names and previews both implementations are held to: the
-  // core's unit tests, the shared package's, and the compliance and device
-  // fixtures read it.
+  // The item names and previews the implementations are held to: the core's
+  // unit tests, the shared package's, and the compliance and device fixtures
+  // read it.
   [
     /^conformance\/fixtures\/item-display\.json$/,
     ["workspace", "core-checks-linux", "conformance-offline", "rust-contract"],
   ],
-  // The filter expressions both implementations are held to: the core's
-  // unit tests, the Node binding's tests and the server's workspace test
-  // read it.
+  // The filter expressions the core is held to: its unit tests and the Node
+  // binding's tests read it.
   [
     /^conformance\/fixtures\/filter-expressions\.json$/,
-    ["workspace", "core-checks-linux", "core"],
+    ["core-checks-linux", "core"],
   ],
-  // The name fold both implementations are held to: the core's unit tests,
-  // the server's workspace test and the compliance fixture for title lookups
-  // read it.
+  // The name fold the core is held to: its unit tests and the compliance
+  // fixture for title lookups read it.
   [
     /^conformance\/fixtures\/name-fold\.json$/,
-    ["workspace", "core-checks-linux", "rust-contract"],
+    ["core-checks-linux", "rust-contract"],
   ],
   // The binary's command reference is generated from its command tree, and
   // a unit test in `marfa-cli` holds the committed file to it. Only the core
   // checks run the Rust tests.
   [/^core\/marfa-cli\/COMMANDS\.md$/, ["core-checks-linux"]],
+  // `ci/access-words.test.ts` holds the glossary's access words to the CLI's
+  // and the server's.
+  [/^GLOSSARY\.md$/, ["workspace"]],
   // Markdown anywhere else is read only by Prettier and the contract's
-  // reference check, which `CI (SQLite)` runs for every change, and a
+  // reference check, which `Quick checks` runs for every change, and a
   // package's README by the version check. A fixture is test input and a
   // generated tree is checked file by file, so those fall through to their
   // folder's rule.
@@ -250,7 +233,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^(?!(.*\/)?(fixtures|__fixtures__|testdata)\/)(?!packages\/types\/generated\/|packages\/client\/src\/generated\/).*\.md$/i,
     [],
   ],
-  // The settings census test holds it to the settings schema.
+  // `ci/env-example.test.ts` holds it to the contract's settings table.
   [/^\.env\.example$/, ["workspace"]],
   [/^LICENSE$/, []],
   // The README's images, which only GitHub reads.
@@ -262,52 +245,33 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^deploy\/Dockerfile$/, ["workspace", "image"]],
   [/^deploy\//, []],
 
-  // The control socket's tests and the global setup and test settings they
-  // run under.
-  [/^packages\/server\/src\/control\//, [...SERVER, "control-socket"]],
-  [
-    /^packages\/server\/(src\/test-global-setup\.ts|vitest\.config\.ts)$/,
-    [...SERVER, "control-socket"],
-  ],
   // The rules crate embeds the icon sets, so every build of the core, the
   // command line, the server and the image reads them.
   [
     /^packages\/types\/generated\/icon-set-[\w-]+\.json$/,
-    [...SERVER, "types-freshness", "clients-freshness", ...RUST],
+    [
+      "workspace",
+      "conformance-offline",
+      "types-freshness",
+      "clients-freshness",
+      ...RUST,
+    ],
   ],
-  // The core's catalog is written from the shipped types, the registry that
-  // lists them and the server's role resolution.
-  [/^packages\/types\//, [...SERVER, "types-freshness", "clients-freshness"]],
-  [/^packages\/shared\//, [...SERVER, "clients-freshness"]],
+  // The core's catalog is written from the shipped types and the registry
+  // that lists them.
   [
-    /^packages\/server\/src\/storage\/policy\.ts$/,
-    [...SERVER, "clients-freshness"],
-  ],
-  // The page system. Its stylesheet, browser script and browser tests are
-  // bundled into the page assets at build time. Only the workspace's build,
-  // typecheck, lint and tests read them: no fixture of the contract reads the
-  // stylesheet, the script or their hashes (`ci/ci-required.test.ts` fails
-  // when one starts to). A test beside them is read by nothing but Vitest.
-  [
-    /^packages\/server\/src\/pages\/(styles|client|browser)\//,
-    PAGE_ASSETS_AND_TESTS,
+    /^packages\/types\//,
+    [
+      "workspace",
+      "conformance-offline",
+      "types-freshness",
+      "clients-freshness",
+    ],
   ],
   [
-    /^packages\/server\/src\/pages\/([^/]+\/)?[^/]*\.test\.tsx?$/,
-    PAGE_ASSETS_AND_TESTS,
+    /^packages\/shared\//,
+    ["workspace", "conformance-offline", "clients-freshness"],
   ],
-  // Test-only helpers of the page system, imported by no server code.
-  [
-    /^packages\/server\/src\/pages\/(test-fixture\.tsx|reading\.ts)$/,
-    PAGE_ASSETS_AND_TESTS,
-  ],
-  // The UI viewer, a development script no server code imports, and the test
-  // that every page has an example in it.
-  [
-    /^packages\/server\/(scripts\/ui-viewer(-fixtures)?\.tsx?|src\/routes\/ui-viewer-coverage\.test\.ts)$/,
-    PAGE_ASSETS_AND_TESTS,
-  ],
-  [/^packages\/server\//, SERVER],
   [/^packages\/client\//, ["workspace", "clients-freshness"]],
 
   [/^conformance\/scripts\/restore-drill\.ts$/, ["workspace", "restore-drill"]],
@@ -336,8 +300,15 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/(src\/utils|scripts)\/scale\//,
     ["workspace", "conformance-offline"],
   ],
-  // A test beside the helpers runs in the offline lane alone: the `generators`
-  // project's `src/utils/**/*.test.ts`. No server fixture imports a test.
+  // A harness test boots servers from the release build: the `harness`
+  // project, which `MCP conformance` runs.
+  [
+    /^conformance\/src\/utils\/(.*\/)?[^/]*\.harness\.test\.ts$/,
+    ["workspace", "mcp-conformance"],
+  ],
+  // Any other test beside the helpers runs in the offline lane alone: the
+  // `generators` project's `src/utils/**/*.test.ts`. No server fixture imports
+  // a test.
   [
     /^conformance\/src\/utils\/(.*\/)?[^/]*\.test\.ts$/,
     ["workspace", "conformance-offline"],
@@ -463,6 +434,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^core\/marfa-server\/src\/settings\//,
     ["core-checks-linux", ...RUST_SERVER, "image"],
   ],
+  // The approval pages' access words, which `ci/access-words.test.ts` holds
+  // to the glossary.
+  [
+    /^core\/marfa-server\/src\/http\/pages\/words\.rs$/,
+    ["workspace", "core-checks-linux", ...RUST_SERVER],
+  ],
   // The rest of the server is built and tested on Linux, and its contract is
   // run by the Rust contract jobs, with the real `marfa` binary, and by MCP
   // conformance and the restore drill; the live
@@ -475,6 +452,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // Every crate's manifest: a dependency bump or a macOS-only dependency
   // (`core-foundation`, `xattr`) can break an Apple build.
   [/^core\/[^/]+\/Cargo\.toml$/, RUST],
+  // The CLI's access words, which `ci/access-words.test.ts` holds to the
+  // glossary.
+  [/^core\/marfa-cli\/src\/access\.rs$/, [...RUST, "workspace"]],
   // The parts of the core with a macOS-only side, which only a Mac runs: the
   // command line, with its login keychain, key files by path and launchd
   // autostart, and the core's folder watching and what it reads and writes,
@@ -520,14 +500,13 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     WORKSPACE,
   ],
   [/^eslint\.config\.js$/, ["workspace"]],
-  [/^vitest\.config\.ts$/, ["workspace", "version-fields", "control-socket"]],
+  [/^vitest\.config\.ts$/, ["workspace", "version-fields"]],
   // The conformance config and its server script import it too.
   [
     /^vitest\.(shared|flaky-reporter)\.ts$/,
     [
       "workspace",
       "version-fields",
-      "control-socket",
       ...CONTRACT,
       "restore-drill",
       "mcp-conformance",
@@ -553,7 +532,7 @@ function versioned(path: string): boolean {
   return (
     ["package.json", "Cargo.toml", "Cargo.lock"].includes(basename(path)) ||
     /^(packages|core)\/.+\/README[^/]*$/i.test(path) ||
-    path === "packages/server/src/contract.ts" ||
+    path === "core/marfa-core/src/contract.rs" ||
     path === "ci/version-fields.test.ts"
   );
 }
@@ -565,7 +544,7 @@ function versioned(path: string): boolean {
  * until it is ready for review.
  */
 export const DRAFT_JOBS: readonly Job[] = [
-  "ci-sqlite",
+  "quick-checks",
   "workspace",
   "types-freshness",
   "version-fields",
@@ -579,7 +558,7 @@ export function affected(path: string): Set<Job> {
   if (linted(path)) jobs.add("workspace");
   // Its format check, this classifier's test and the contract's reference
   // check read every path.
-  jobs.add("ci-sqlite");
+  jobs.add("quick-checks");
   return jobs;
 }
 
@@ -611,14 +590,12 @@ export function forDraft(answer: Record<Job, boolean>): Record<Job, boolean> {
  * `main` already runs the rest on Linux. The device and CLI fixtures drive
  * the `marfa` binary against the Rust server on macOS's file watching, name
  * case, Finder packages and keychain, the core's checks run
- * its macOS-only code, the control socket has macOS-only behavior and the
- * Swift package builds only on a Mac.
+ * its macOS-only code and the Swift package builds only on a Mac.
  * `core.yml` runs the core's live checks on the same night.
  */
 export const NIGHTLY_JOBS: readonly Job[] = [
   "rust-contract-macos",
   "core-checks",
-  "control-socket",
   "swift-package",
 ];
 
@@ -630,12 +607,12 @@ export function forNightly(): Record<Job, boolean> {
 }
 
 /**
- * Whether an answer runs nothing but `CI (SQLite)`'s format check, this
+ * Whether an answer runs nothing but `Quick checks`' format check, this
  * classifier's test and the contract's reference check, as a change to
  * documentation or agent instructions does.
  */
 export function documentationOnly(answer: Record<Job, boolean>): boolean {
-  return JOBS.every((job) => job === "ci-sqlite" || !answer[job]);
+  return JOBS.every((job) => job === "quick-checks" || !answer[job]);
 }
 
 interface PullRequestEvent {

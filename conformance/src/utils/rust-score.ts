@@ -319,11 +319,11 @@ export function renderScore(
         `| ${p.project} | ${String(p.filesPassing)} of ${String(p.files)} | ${String(p.passed)} of ${String(p.total)} |`,
     ),
     "",
-    "| File | Passing | Judged by |",
+    "| File | Passing | Judged |",
     "|---|---|---|",
     ...score.files.map(
       (f) =>
-        `| ${f.file} | ${f.reported ? `${String(f.passed)} of ${String(f.total)}${f.broken ? " (file failed)" : ""}` : `not reported${f.total > 0 ? `, ${String(f.total)} tests` : ""}`} | ${f.judged ? "Rust" : "TypeScript"} |`,
+        `| ${f.file} | ${f.reported ? `${String(f.passed)} of ${String(f.total)}${f.broken ? " (file failed)" : ""}` : `not reported${f.total > 0 ? `, ${String(f.total)} tests` : ""}`} | ${f.judged ? "yes" : "no"} |`,
     ),
     "",
   );

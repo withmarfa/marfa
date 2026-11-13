@@ -27,8 +27,7 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
-      "esbuild",
-      "libsql"
+      "esbuild"
     ]
   },
   "devDependencies": {

@@ -6,10 +6,9 @@
  * it. A workflow of its own on `pull_request` would run beside the gate
  * instead of under it, and a merge waits only on required checks.
  * `core.yml` runs the same workflow for a push to `main`, the nightly and a
- * dispatch. The private control socket's macOS tests are a job of `ci.yml`
- * for the same reason. `ci/full-ci-gate.test.ts` pins the gate itself.
+ * dispatch. `ci/full-ci-gate.test.ts` pins the gate itself.
  */
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
@@ -172,54 +171,5 @@ describe("the core's live checks under Full CI", () => {
     expect(jobs.live?.permissions).toBeUndefined();
     // Nothing is passed to it, so nothing needs to be.
     expect(text).not.toMatch(/\$\{\{\s*secrets\./);
-  });
-});
-
-describe("the control socket's tests under Full CI", () => {
-  const TESTS =
-    "packages/server/src/control/socket.test.ts packages/server/src/control/socket-race.test.ts";
-
-  it("run on macOS as a job of ci.yml, only when the classifier says so, and not as a workflow of their own", () => {
-    expect(existsSync(resolve(WORKFLOWS, "control-socket.yml"))).toBe(false);
-    const { jobs } = workflow("ci.yml");
-    const job = jobs["control-socket"];
-    expect(job?.name).toBe("Control socket (macOS)");
-    expect(job?.needs).toBe("changes");
-    expect(job?.if).toBe(
-      "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.control-socket != 'false') }}",
-    );
-    expect(job?.["runs-on"]).toBe("macos-26");
-    expect(job?.steps?.at(-1)?.run).toBe(`pnpm exec vitest run ${TESTS}`);
-    expect(jobs.changes?.outputs?.["control-socket"]).toBe(
-      "${{ steps.classify.outputs.control-socket }}",
-    );
-  });
-
-  it("are waited for by Full CI and by the report of a failed night", () => {
-    const { jobs } = workflow("ci.yml");
-    expect(needsOf(jobs.gate)).toContain("control-socket");
-    expect(needsOf(jobs["report-failure"])).toContain("control-socket");
-  });
-
-  it("run on Linux in CI (SQLite) tests, where the tool they read is installed first and nothing leaves them out", () => {
-    const steps = workflow("ci.yml").jobs["ci-sqlite-tests"]?.steps ?? [];
-    const install = steps.findIndex((step) =>
-      step.run?.includes("apt-get install -y acl"),
-    );
-    const test = steps.findIndex((step) => step.run?.includes("pnpm test"));
-    expect(install).toBeGreaterThan(-1);
-    expect(steps[install]?.if).toBe("runner.os == 'Linux'");
-    expect(test).toBeGreaterThan(install);
-    expect(steps[test]?.run).not.toMatch(/control|socket/);
-    for (const file of TESTS.split(" ")) {
-      expect(existsSync(resolve(import.meta.dirname, "..", file)), file).toBe(
-        true,
-      );
-    }
-    const serverConfig = readFileSync(
-      resolve(import.meta.dirname, "..", "packages/server/vitest.config.ts"),
-      "utf8",
-    );
-    expect(serverConfig).not.toMatch(/\b(include|exclude)\s*:/);
   });
 });
