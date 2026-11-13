@@ -25,30 +25,14 @@ pub fn run(args: RestoreArgs, remote: &Remote, out: &Printer) -> Result<(), CliE
     answered(&remote.json(&request(&args))?, out)
 }
 
-/// What a restore says is set up again, as one safe line of text.
-fn set_up_again_note(answer: &serde_json::Value) -> Option<String> {
-    answer
-        .get("set_up_again")
-        .and_then(serde_json::Value::as_str)
-        .map(crate::output::printable)
-}
-
-/// Prints a restore's answer, says what is set up again, and fails on blobs it lacks.
+/// Prints a restore's answer, says what is set up again and which entries were skipped, and fails
+/// on blobs it lacks.
 pub fn answered(answer: &serde_json::Value, out: &Printer) -> Result<(), CliError> {
     out.value(answer)?;
-    if let Some(note) = set_up_again_note(answer) {
-        crate::errln!("{note}");
+    for note in notes(answer) {
+        crate::errln!("{}", crate::output::printable(&note));
     }
-    let missing: Vec<String> = answer
-        .get("blobs_missing")
-        .and_then(serde_json::Value::as_array)
-        .map(|hashes| {
-            hashes
-                .iter()
-                .filter_map(|hash| hash.as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default();
+    let missing = texts(answer, "blobs_missing");
     if missing.is_empty() {
         Ok(())
     } else {
@@ -56,21 +40,73 @@ pub fn answered(answer: &serde_json::Value, out: &Printer) -> Result<(), CliErro
     }
 }
 
+fn texts(answer: &serde_json::Value, key: &str) -> Vec<String> {
+    answer
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .map(|held| {
+            held.iter()
+                .filter_map(|text| text.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The lines a restore's answer gives a person beside the answer itself.
+fn notes(answer: &serde_json::Value) -> Vec<String> {
+    let mut notes = Vec::new();
+    let skipped = texts(answer, "entries_skipped");
+    if !skipped.is_empty() {
+        notes.push(format!(
+            "Skipped {} archive {} this build does not know: {}.",
+            skipped.len(),
+            if skipped.len() == 1 { "entry" } else { "entries" },
+            skipped.join(", ")
+        ));
+    }
+    if let Some(note) = answer
+        .get("set_up_again")
+        .and_then(serde_json::Value::as_str)
+    {
+        notes.push(note.to_string());
+    }
+    notes
+}
+
 #[cfg(test)]
 mod tests {
-    use super::set_up_again_note;
     use serde_json::json;
 
+    use super::notes;
+
     #[test]
-    fn the_note_cannot_start_a_line_or_move_the_cursor() {
-        let answer = json!({"set_up_again": "keys\nrestored 0 items\u{1b}[2K"});
-        let note = set_up_again_note(&answer).expect("a note");
-        assert!(!note.contains('\n') && !note.contains('\u{1b}'), "{note:?}");
-        assert_eq!(note, "keys\\u{a}restored 0 items\\u{1b}[2K");
+    fn names_each_skipped_entry_before_what_to_set_up_again() {
+        let answer = json!({
+            "entries_skipped": ["._manifest.json", "PaxHeaders.4242/items.ndjson.gz"],
+            "set_up_again": "Set up sign-in again.",
+        });
+        assert_eq!(
+            notes(&answer),
+            [
+                "Skipped 2 archive entries this build does not know: ._manifest.json, PaxHeaders.4242/items.ndjson.gz.",
+                "Set up sign-in again.",
+            ]
+        );
+        let one = json!({ "entries_skipped": [".DS_Store"] });
+        assert_eq!(
+            notes(&one),
+            ["Skipped 1 archive entry this build does not know: .DS_Store."]
+        );
+        assert!(notes(&json!({ "entries_skipped": [] })).is_empty());
     }
 
     #[test]
-    fn no_note_is_none() {
-        assert_eq!(set_up_again_note(&json!({})), None);
+    fn a_printed_note_cannot_start_a_line_or_move_the_cursor() {
+        let answer = json!({"set_up_again": "keys\nrestored 0 items\u{1b}[2K"});
+        let printed: Vec<String> = notes(&answer)
+            .iter()
+            .map(|note| crate::output::printable(note))
+            .collect();
+        assert_eq!(printed, ["keys\\u{a}restored 0 items\\u{1b}[2K"]);
     }
 }
