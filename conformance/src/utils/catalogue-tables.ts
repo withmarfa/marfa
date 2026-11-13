@@ -73,7 +73,7 @@ const PERMISSION_TEXT: Readonly<Record<string, string>> = {
   "connectors.manage":
     "Reading and administering connector registrations, their runs and their endpoints, deleting registrations and clearing a registration's retained state.",
   "grants.manage": "Listing and revoking other apps' access.",
-  "instance.maintain": "Running housekeeping and cancelling bulk jobs.",
+  "instance.maintain": "Running housekeeping and canceling bulk jobs.",
   "instance.read":
     "Reading detailed health, metrics, housekeeping status, blob storage diagnostics and bulk job status.",
   "items.purge":
