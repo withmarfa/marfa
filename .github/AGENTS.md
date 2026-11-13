@@ -14,6 +14,7 @@ For changes to a workflow, to `scripts/ci-required.ts` or to the tests in `ci/`.
 
 - **The gate needs every job.** `Full CI` waits for every other job of `ci.yml` but the nightly report and passes only when each ended as `success` or `skipped`. A job you add is a need of the gate (`ci/full-ci-gate.test.ts`).
 - **A skipped job counts as passed.** So a classifier rule that leaves out a job that reads a path is a silent pass. `scripts/ci-required.ts` matches each changed path to the first rule that names it, and a path no rule names, or a change to the classifier, runs everything. When a job starts reading a file, including through `include_str!` or as a test fixture, change that file's rule in the same pull request (`ci/ci-required.test.ts`).
+- **A pull request runs the macOS jobs only for a path with a macOS-only side.** `ci/ci-required.test.ts` searches `core/` for Apple-only `cfg` blocks and fails when a file that has one is missing from the rule.
 - **Only `ci.yml`, `codeql.yml` and `pr-description.yml` start on a pull request.** No other workflow runs tests there (`ci/core-gate.test.ts`). The core's live checks, `core-live.yml`, are the `core` job of `ci.yml` for a pull request.
 - **Standard GitHub-hosted runners only,** never personal or paid third-party ones, and a Mac only where a Mac is needed (`ci/workflow-runner.test.ts`).
 - **A draft run and a ready run are in separate concurrency groups,** in `ci.yml` and in `codeql.yml`, so that neither cancels the other (`ci/workflow-runner.test.ts`).

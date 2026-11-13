@@ -42,6 +42,7 @@ Guidance, not rules:
 - A cost should grow with the change, not with the data.
 - A background part with nothing to do uses almost no CPU. A loop that wakes itself is a bug.
 - No request holds up the others. A long job runs in pages and lets other requests through.
+- After a release that changes the folder watch, measure a watch at rest on a real folder.
 
 ## Writing
 
@@ -53,7 +54,7 @@ Guidance, not rules:
 
 ## Versions
 
-A version exists only as a git tag. Every manifest carries `0.0.0`, and the release stamps the tag in its own checkout (`ci/version-fields.test.ts`). The `release` skill has the steps.
+A version exists only as a git tag, created when a logical set of merged work is ready, by the session that finishes that set unless its brief says not to. Releases are frequent. Every manifest carries `0.0.0`, and the release stamps the tag in its own checkout (`ci/version-fields.test.ts`). The `release` skill has the steps.
 
 ## Commands
 

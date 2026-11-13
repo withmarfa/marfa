@@ -11,14 +11,13 @@ A session merges its own pull request. Nobody else will, and nothing reaches `ma
 
 1. **Check the body.** It carries the sections **Summary**, **Changes**, **Testing**, **Notes for reviewers** and **Checklist**. Summary, Changes and Testing are filled in, and every box in the checklist is ticked. The required check `Pull request description` fails until that is true, and editing the body reruns only that check.
 2. **Run the quick check locally:** `pnpm test:changed`, with `pnpm typecheck`, `pnpm lint` and `pnpm format:check`. For a change under `core/`, also the checks in `core/AGENTS.md`.
-3. **Get the review its risk calls for,** and state that depth in Notes for reviewers. A typo or a rename needs none. A change to data, access, the contract, a migration or the release needs a reviewer who did not write it.
-4. **Let the draft's run finish** after your last push.
+3. **Get the review its risk calls for,** and state that depth in Notes for reviewers.
 
 ## Merge
 
 1. Mark it ready: `gh pr ready <number>`. This starts the full run, and the gate now reports as `Full CI`.
-2. Set it to merge when the required checks pass: `gh pr merge <number> --squash --auto --delete-branch`. The required checks are `Full CI` and `Pull request description`.
-3. `--auto` ignores a check that is not required. Wait for `CodeQL` to finish green before you run the merge, unless the change is documentation alone, which starts no CodeQL run.
+2. `CodeQL` is not a required check, so a merge does not wait for it. If the change is code, wait for `CodeQL` to finish green before the next step. A change to documentation alone starts no CodeQL run.
+3. Set it to merge when the required checks pass: `gh pr merge <number> --squash --auto --delete-branch`. The required checks are `Full CI` and `Pull request description`.
 4. Watch the run with `gh pr checks <number> --watch`. If a job failed for a reason outside the change, such as a registry or a package mirror being down, rerun the failed jobs with `gh run rerun <run> --failed`. If a test failed and then passed on a rerun, that is a flaky test: say which test on the pull request, and open an issue for it if none exists.
 5. Merge a stack in order, and retarget each pull request to `main` before the branch it sits on is deleted.
 
