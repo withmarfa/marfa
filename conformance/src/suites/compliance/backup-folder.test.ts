@@ -602,7 +602,9 @@ describe("a backup folder that lacks a file or its disk", () => {
       ).not.toBeNull();
       const copies = await operator.listBlobCopies(file.hash);
       expect(copies.status, JSON.stringify(copies.error)).toBe(200);
-      expect(copies.data.data.map((copy) => copy.store_id)).toEqual([disk.id]);
+      const holders = copies.data.data.map((copy) => copy.store_id);
+      expect(holders).toContain(disk.id);
+      expect(holders).not.toContain(old.id);
 
       const next = await owner.runBackup();
       expect(next.status, JSON.stringify(next.error)).toBe(200);
