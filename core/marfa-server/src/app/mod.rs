@@ -46,6 +46,7 @@ pub mod unit;
 pub mod views;
 pub mod webhooks;
 
+use std::path::Path;
 use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 
@@ -135,10 +136,23 @@ impl App {
         #[cfg(not(feature = "test-hooks"))]
         let clock = Arc::new(Clock::default());
         let at = clock.stamp();
+        if let Some(folder) = &start.backup_path {
+            let data = start.database.file().map(|_| start.database.folder());
+            let kept: Vec<(&str, &Path)> = data
+                .iter()
+                .map(|data| ("data directory", data.as_path()))
+                .chain([("blob folder", start.blob_path.as_path())])
+                .collect();
+            blobs::folder::outside(folder, &kept)?;
+        }
         let blobs = Blobs::open(
             &db,
             &start.blob_path,
             start.object_store.as_ref(),
+            start
+                .backup_path
+                .as_deref()
+                .map(|folder| (folder, instance_id.as_str())),
             &start.auth_secret,
             faults.clone(),
             at.clone(),

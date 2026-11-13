@@ -272,7 +272,7 @@ impl App {
             imported,
             missing,
             _held: held,
-            replicates: self.blobs.s3.is_some(),
+            replicates: self.blobs.replicates(),
         })
     }
 

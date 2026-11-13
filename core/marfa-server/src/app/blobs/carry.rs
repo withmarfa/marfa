@@ -217,8 +217,8 @@ impl App {
                 return Err(io::Error::other("the store failed the read"));
             }
             let mut bytes = match store {
-                Store::Disk(disk) => {
-                    let lie = self.faults.lie(blob.hash.as_str());
+                Store::Disk(disk) | Store::Folder(disk) => {
+                    let lie = self.blobs.lie_for(store, &blob.hash);
                     match lie {
                         Some(Lie::Lost) => return Err(io::ErrorKind::NotFound.into()),
                         Some(Lie::Unreadable) => return Err(store::unreadable()),

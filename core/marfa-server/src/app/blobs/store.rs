@@ -29,13 +29,24 @@ const CHUNK: usize = 256 * 1024;
 #[derive(Clone, Debug)]
 pub enum Store {
     Disk(Arc<Disk>),
+    /// The files area of the backup folder, which no blob fault touches.
+    Folder(Arc<Disk>),
     S3(Arc<S3>),
 }
 
 impl Store {
+    /// The store's own folder on a disk, and whether blob faults act on it.
+    pub fn on_disk(&self) -> Option<(&Arc<Disk>, bool)> {
+        match self {
+            Store::Disk(disk) => Some((disk, true)),
+            Store::Folder(disk) => Some((disk, false)),
+            Store::S3(_) => None,
+        }
+    }
+
     pub fn id(&self) -> &str {
         match self {
-            Store::Disk(disk) => disk.id(),
+            Store::Disk(disk) | Store::Folder(disk) => disk.id(),
             Store::S3(s3) => s3.id(),
         }
     }
@@ -43,6 +54,7 @@ impl Store {
     pub fn kind(&self) -> &'static str {
         match self {
             Store::Disk(_) => "disk",
+            Store::Folder(_) => "folder",
             Store::S3(_) => "s3",
         }
     }

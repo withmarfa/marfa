@@ -9,10 +9,10 @@ use serde_json::json;
 use super::rows::Held;
 use super::s3::S3;
 use super::store::{self, Answer, Failed, Store};
-use super::{App, Hash, room, rows};
+use super::{App, Hash, room_on, rows};
 use crate::app::access::Caller;
 use crate::app::clock::Stamp;
-use crate::app::faults::{FAIL_BLOB_READ, HOLD_BLOB_PURGE, HOLD_BLOB_READ, Lie};
+use crate::app::faults::{FAIL_BLOB_READ, HOLD_BLOB_PURGE, HOLD_BLOB_READ, Lie, Volume};
 use crate::app::housekeeping::{Report, Run};
 use crate::app::refusal::Result;
 use crate::app::stored;
@@ -85,7 +85,8 @@ impl App {
 
 enum Copy {
     Made { from: String, object: String },
-    Skipped,
+    /// Why no copy was made, where a store said.
+    Skipped(Option<String>),
     TargetSilent,
 }
 
@@ -121,21 +122,31 @@ async fn copy_to(
                 continue;
             }
         };
-        let bytes = store::idle_limited(bytes, blobs.check());
+        let mut bytes = store::idle_limited(bytes, blobs.check());
         let (hash, size, mime_type) = (blob.hash.clone(), blob.size_bytes, blob.mime_type.clone());
         let (written, object) = match target {
-            Store::Disk(disk) => {
+            Store::Disk(disk) | Store::Folder(disk) => {
                 let reserve = app.settings.live().get(DISK_RESERVE_BYTES);
-                if let Err(refused) = room(&app.faults, disk.root(), reserve, size) {
-                    tracing::warn!(error = %refused, "The disk has no room for a blob's copy");
-                    return Ok(Copy::Skipped);
+                let volume = match target {
+                    Store::Folder(_) => Volume::Backups,
+                    _ => Volume::Blobs,
+                };
+                if let Err(refused) = room_on(&app.faults, volume, disk.root(), reserve, size) {
+                    tracing::warn!(error = %refused, store = target.kind(), "A store has no room for a blob's copy");
+                    return Ok(Copy::Skipped(Some(refused.message.to_string())));
                 }
+                if matches!(target, Store::Folder(_)) {
+                    bytes = super::folder::filling(bytes, app.faults.clone());
+                }
+                let healed = matches!(target, Store::Disk(_));
                 let (disk, faults) = (disk.clone(), app.faults.clone());
                 let written = blobs
                     .writing(&blob.hash, size, async move {
                         let name = hash.clone();
                         store::place_on_disk(disk, hash, size, bytes).await?;
-                        faults.heal(name.as_str(), true);
+                        if healed {
+                            faults.heal(name.as_str(), true);
+                        }
                         Ok(())
                     })
                     .await;
@@ -169,16 +180,16 @@ async fn copy_to(
                 if error.kind() == io::ErrorKind::InvalidData {
                     continue;
                 }
-                Copy::Skipped
+                Copy::Skipped(Some(error.to_string()))
             }
         });
     }
-    Ok(Copy::Skipped)
+    Ok(Copy::Skipped(None))
 }
 
 /// Confirmation needs both the object's writer and the bucket's marker.
 async fn written_by_target(app: &App, target: &Store, blob: &super::Blob, object: &str) -> bool {
-    if matches!(target, Store::Disk(_)) {
+    if matches!(target, Store::Disk(_) | Store::Folder(_)) {
         return true;
     }
     match app.blobs.answer_of(target, &blob.hash, object).await {
@@ -191,6 +202,105 @@ async fn written_by_target(app: &App, target: &Store, blob: &super::Blob, object
             false
         }
     }
+}
+
+/// What one blob's replication to one store came to.
+pub enum Replicated {
+    Copied,
+    /// The store already held a written copy, or the blob is busy with other work.
+    Passed,
+    /// No copy was made, for the reason given where a store said.
+    Failed(Option<String>),
+}
+
+/// Copies one blob to `target` under its lock, recording the copy, unless `target` holds one.
+pub async fn replicate_one(
+    app: &App,
+    target: &Store,
+    blob: &super::Blob,
+    unreachable: &mut BTreeSet<String>,
+) -> Result<Replicated> {
+    let hash = blob.hash.clone();
+    let target_id = target.id().to_string();
+    if unreachable.contains(&target_id) || app.blobs.gate.unfinished(&hash) {
+        return Ok(Replicated::Passed);
+    }
+    let _held = app.blobs.gate.lock(&hash).await;
+    if app.blobs.gate.unfinished(&hash) {
+        return Ok(Replicated::Passed);
+    }
+    let looked = hash.clone();
+    let holders = app.db.read(move |tx| rows::holders(tx, &looked)).await?;
+    if holders
+        .iter()
+        .any(|held| held.store_id == target_id && held.written)
+    {
+        return Ok(Replicated::Passed);
+    }
+    let cleared = match app.finish_deletion(target, &hash).await {
+        Ok(()) => true,
+        Err(Failed::Late) => {
+            unreachable.insert(target_id.clone());
+            false
+        }
+        Err(Failed::Io(error)) => {
+            tracing::warn!(%error, "A queued deletion in a store to copy to failed");
+            false
+        }
+    };
+    let mut made = if cleared {
+        copy_to(app, target, &holders, blob, unreachable).await?
+    } else {
+        Copy::Skipped(Some("an earlier copy there is still being deleted".to_string()))
+    };
+    if let Copy::Made { object, .. } = &made
+        && !written_by_target(app, target, blob, object).await
+    {
+        made = Copy::TargetSilent;
+    }
+    let (from, object) = match made {
+        Copy::Made { from, object } => (from, object),
+        Copy::Skipped(_) | Copy::TargetSilent => {
+            let why = match made {
+                Copy::Skipped(why) => why,
+                _ => {
+                    unreachable.insert(target_id.clone());
+                    Some("the store did not answer in time".to_string())
+                }
+            };
+            let (failed, to) = (hash.clone(), target_id.clone());
+            app.db
+                .write(Write::own(), move |tx| rows::copy_failed(tx, &failed, &to))
+                .await?;
+            return Ok(Replicated::Failed(why));
+        }
+    };
+    let (recorded_hash, to) = (hash.clone(), target_id.clone());
+    let recorded = app
+        .write(&Caller::Server, "blob.copy_replicated", move |unit| {
+            let blob = recorded_hash;
+            let recorded = rows::record_copy(unit.tx(), &blob, &to, &object, true, &unit.at)?;
+            if recorded == rows::Recorded::Copy {
+                unit.audit(
+                    "blob",
+                    blob.as_str(),
+                    Some(json!({ "from": from, "store_id": to })),
+                )?;
+                return Ok(true);
+            }
+            rows::queue_deletion(unit.tx(), &blob, &to, &object, &unit.at)?;
+            Ok(false)
+        })
+        .await?;
+    if !recorded {
+        if let Err(failure) = app.finish_deletion(target, &hash).await {
+            tracing::warn!(?failure, "A copy not recorded waits for a later run");
+        }
+        return Ok(Replicated::Failed(Some(
+            "the copy was not recorded".to_string(),
+        )));
+    }
+    Ok(Replicated::Copied)
 }
 
 /// Failed copies yield to less-tried copies so one failure cannot monopolize the batch.
@@ -217,83 +327,13 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         if copied > 0 && bytes.saturating_add(size) > batch_bytes {
             break;
         }
-        let hash = pair.blob.hash.clone();
         let Some(target) = app.blobs.store(&pair.store_id) else {
             continue;
         };
-        if unreachable.contains(&pair.store_id) || app.blobs.gate.unfinished(&hash) {
-            continue;
+        if let Replicated::Copied = replicate_one(&app, &target, &pair.blob, &mut unreachable).await? {
+            copied += 1;
+            bytes = bytes.saturating_add(size);
         }
-        let _held = app.blobs.gate.lock(&hash).await;
-        if app.blobs.gate.unfinished(&hash) {
-            continue;
-        }
-        let blob = hash.clone();
-        let holders = app.db.read(move |tx| rows::holders(tx, &blob)).await?;
-        if holders
-            .iter()
-            .any(|held| held.store_id == pair.store_id && held.written)
-        {
-            continue;
-        }
-        let cleared = match app.finish_deletion(&target, &hash).await {
-            Ok(()) => true,
-            Err(Failed::Late) => {
-                unreachable.insert(pair.store_id.clone());
-                false
-            }
-            Err(Failed::Io(error)) => {
-                tracing::warn!(%error, "A queued deletion in a store to copy to failed");
-                false
-            }
-        };
-        let mut made = if cleared {
-            copy_to(&app, &target, &holders, &pair.blob, &mut unreachable).await?
-        } else {
-            Copy::Skipped
-        };
-        if let Copy::Made { object, .. } = &made
-            && !written_by_target(&app, &target, &pair.blob, object).await
-        {
-            made = Copy::TargetSilent;
-        }
-        let (from, object) = match made {
-            Copy::Made { from, object } => (from, object),
-            Copy::Skipped | Copy::TargetSilent => {
-                if matches!(made, Copy::TargetSilent) {
-                    unreachable.insert(pair.store_id.clone());
-                }
-                let (blob, to) = (hash.clone(), pair.store_id.clone());
-                app.db
-                    .write(Write::own(), move |tx| rows::copy_failed(tx, &blob, &to))
-                    .await?;
-                continue;
-            }
-        };
-        let (blob, to) = (hash.clone(), pair.store_id.clone());
-        let recorded = app
-            .write(&Caller::Server, "blob.copy_replicated", move |unit| {
-                let recorded = rows::record_copy(unit.tx(), &blob, &to, &object, true, &unit.at)?;
-                if recorded == rows::Recorded::Copy {
-                    unit.audit(
-                        "blob",
-                        blob.as_str(),
-                        Some(json!({ "from": from, "store_id": to })),
-                    )?;
-                    return Ok(true);
-                }
-                rows::queue_deletion(unit.tx(), &blob, &to, &object, &unit.at)?;
-                Ok(false)
-            })
-            .await?;
-        if !recorded {
-            if let Err(failure) = app.finish_deletion(&target, &hash).await {
-                tracing::warn!(?failure, "A copy not recorded waits for a later run");
-            }
-            continue;
-        }
-        copied += 1;
-        bytes = bytes.saturating_add(size);
     }
     let remaining = app.db.read(rows::missing_count).await?;
     Ok(Report {
@@ -316,14 +356,15 @@ enum Checked {
 async fn check(app: &App, store: &Store, copy: &rows::ToCheck) -> Checked {
     let blobs = &app.blobs;
     match store {
-        Store::Disk(disk) => {
+        Store::Disk(disk) | Store::Folder(disk) => {
+            let lied = matches!(store, Store::Disk(_));
             let (faults, disk, hash) = (app.faults.clone(), disk.clone(), copy.hash.clone());
             let read = async move {
                 faults.hold(HOLD_BLOB_READ, None).await;
                 if faults.fail(FAIL_BLOB_READ, None) {
                     return Err(io::Error::other("the store failed the read"));
                 }
-                let lie = faults.lie(hash.as_str());
+                let lie = if lied { faults.lie(hash.as_str()) } else { None };
                 match lie {
                     Some(Lie::Lost) => return Ok(None),
                     Some(Lie::Unreadable) => return Err(store::unreadable()),
@@ -401,7 +442,7 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
                 continue;
             };
             // A strike on a missing copy needs the marker both before and after the answer.
-            if matches!(store, Store::S3(_))
+            if matches!(store, Store::S3(_) | Store::Folder(_))
                 && !marked.contains(&copy.store_id)
                 && !app.blobs.is_itself(&store).await
             {
@@ -492,18 +533,18 @@ pub async fn integrity(app: Arc<App>, run: Run) -> Result<Report> {
 }
 
 /// Read from `tx`, since the live settings lag a committed change. Unless `surveyed`, a file
-/// with an object store copy stays.
+/// with a copy where backups go stays.
 fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App, surveyed: bool) -> Result<Vec<Hash>> {
     let mut found = past_grace(tx, app)?;
-    if let Some(bucket) = app.blobs.s3()
+    if let Some(store) = app.blobs.backup_store_id()
         && !found.is_empty()
     {
-        let held = crate::app::backups::held(tx, bucket.id(), &found)?;
+        let held = crate::app::backups::held(tx, store, &found)?;
         found.retain(|hash| !held.contains(hash));
         if !surveyed {
             let stored: HashSet<String> = rows::held_in(
                 tx,
-                bucket.id(),
+                store,
                 found.iter().map(|hash| hash.as_str().to_string()),
             )?
             .into_iter()
