@@ -1139,9 +1139,11 @@ describe("each job reads its own answer", () => {
 
   it("Typecheck and Lint are jobs of their own, for the workspace, so that a failure of either is known in minutes", () => {
     const { jobs } = workflow("ci.yml");
-    for (const [name, command] of [
-      ["typecheck", "pnpm typecheck"],
-      ["lint", "pnpm lint"],
+    // Only Typecheck builds: it is the one job before the release that shows
+    // the published client still builds, and nothing reads the build.
+    for (const [name, commands] of [
+      ["typecheck", ["pnpm build", "pnpm typecheck"]],
+      ["lint", ["pnpm lint"]],
     ] as const) {
       const job = jobs[name];
       expect(job?.needs, name).toBe("changes");
@@ -1154,8 +1156,7 @@ describe("each job reads its own answer", () => {
         "pnpm/action-setup@v6",
         "actions/setup-node@v7",
         "pnpm install --frozen-lockfile",
-        "pnpm build",
-        command,
+        ...commands,
       ]);
     }
   });

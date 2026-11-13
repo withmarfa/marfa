@@ -127,6 +127,7 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
+      # No check reads the build; it shows the published client still builds.
       - run: pnpm build
       - run: pnpm typecheck
 
@@ -146,7 +147,6 @@ jobs:
           node-version: 22
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm build
       - run: pnpm lint
 
   # A format, typecheck or lint failure is certain and known within minutes,
