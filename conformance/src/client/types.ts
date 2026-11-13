@@ -410,6 +410,15 @@ export interface BackupRun {
   backup: BackupRow;
   removed: number;
   unremoved: number;
+  blobs_lost: string[];
+}
+
+/** What `POST /backups/folder/adopt` answers. */
+export interface BackupFolderAdopted {
+  store_id: string;
+  replaced_store_id: string;
+  backups_forgotten: number;
+  copies_forgotten: number;
 }
 
 export interface ConnectorRun {

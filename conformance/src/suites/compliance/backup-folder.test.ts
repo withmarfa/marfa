@@ -1,5 +1,6 @@
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -335,6 +336,232 @@ describe("backups to a folder", () => {
     expect(readdirSync(own).sort()).toEqual(
       [...before, next.data.backup.name].sort(),
     );
+  });
+});
+
+describe("a backup folder that lacks a file or its disk", () => {
+  /** A server backing up to a folder of its own, stopped and removed after `body`. */
+  async function withFolder(
+    label: string,
+    body: (server: FreshServer, root: string) => Promise<void>,
+  ): Promise<void> {
+    const root = mkdtempSync(join(tmpdir(), `marfa-${label}-`));
+    const server = await bootFreshServer(label, {
+      ...FOLDER_ONLY,
+      MARFA_BACKUP_PATH: root,
+    });
+    try {
+      await body(server, root);
+    } finally {
+      await server.stop();
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  function copyIn(root: string, instance: string, hash: string): string {
+    const hex = hash.replace(/^sha256:/, "");
+    return join(root, "files", instance, hex.slice(0, 4), hex);
+  }
+
+  async function fileItem(server: FreshServer, bytes: Uint8Array) {
+    const { working } = clientsFor(server);
+    const uploaded = await working.uploadBlob(bytes, "text/plain");
+    expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
+    const file = await working.createItem({
+      type: "core.file",
+      properties: { blob_ref: uploaded.data.hash, mime_type: "text/plain" },
+    });
+    expect(file.status, JSON.stringify(file.error)).toBe(201);
+    return { hash: uploaded.data.hash, item: file.data.item.id };
+  }
+
+  it("puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it", async () => {
+    await withFolder("backup-folder-lost", async (server, root) => {
+      const id = await instanceIdOf(server);
+      const lost = await fileItem(
+        server,
+        bytesOf("a file whose copy went", 4096),
+      );
+      const kept = await fileItem(server, bytesOf("a file still held", 4096));
+      await server.setFault(`lose:blob=${lost.hash}`);
+      const run = await ownerOf(server).runBackup();
+      expect(run.status, JSON.stringify(run.error)).toBe(200);
+      expect(run.data.blobs_lost).toEqual([lost.hash]);
+      const archive = new Uint8Array(
+        readFileSync(join(root, "backups", id, run.data.backup.name)),
+      );
+      const manifest = archiveManifest<{ lost_blobs: string[] }>(archive);
+      expect(manifest.lost_blobs).toEqual([lost.hash]);
+      expect(existsSync(copyIn(root, id, kept.hash))).toBe(true);
+      const answer = await health(server);
+      expect(answer.backups.status).toBe("failing");
+      expect(answer.backups.last_error).toContain(lost.hash);
+
+      const fresh = await bootFreshServer("backup-folder-lost-fresh", {
+        ...FOLDER_ONLY,
+        MARFA_BACKUP_PATH: root,
+      });
+      try {
+        const restored = await ownerOf(fresh).restoreBackup(
+          id,
+          run.data.backup.name,
+        );
+        expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+        expect(restored.data.blobs_missing).toEqual([lost.hash]);
+        const { working } = clientsFor(fresh);
+        expect((await working.getItem(lost.item)).status).toBe(200);
+      } finally {
+        await fresh.stop();
+      }
+
+      await server.clearFault();
+      const next = await ownerOf(server).runBackup();
+      expect(next.status, JSON.stringify(next.error)).toBe(200);
+      expect(next.data.blobs_lost).toEqual([]);
+      expect((await health(server)).backups.status).toBe("ok");
+    });
+  });
+
+  it("refuses a restore that lacks a file before it reads any file from the folder", async () => {
+    await withFolder("backup-folder-first", async (server, root) => {
+      const id = await instanceIdOf(server);
+      const gone = await fileItem(
+        server,
+        bytesOf("a copy someone deleted", 4096),
+      );
+      const other = await fileItem(server, bytesOf("a copy still there", 4096));
+      const run = await ownerOf(server).runBackup();
+      expect(run.status, JSON.stringify(run.error)).toBe(200);
+      rmSync(copyIn(root, id, gone.hash));
+
+      const fresh = await bootFreshServer("backup-folder-first-fresh", {
+        ...FOLDER_ONLY,
+        MARFA_BACKUP_PATH: root,
+      });
+      try {
+        const refused = await ownerOf(fresh).restoreBackup(
+          id,
+          run.data.backup.name,
+        );
+        expect(refused.status, JSON.stringify(refused.data)).toBe(409);
+        expect(refused.error?.error.details).toEqual({
+          missing_blobs: [gone.hash],
+        });
+        const hex = other.hash.replace(/^sha256:/, "");
+        const blobs = join(fresh.stateDir, "blobs");
+        expect(existsSync(join(blobs, hex.slice(0, 4), hex))).toBe(false);
+        expect(readdirSync(join(blobs, "tmp"))).toEqual([]);
+      } finally {
+        await fresh.stop();
+      }
+    });
+  });
+
+  it("restores a backup over the instance that took it with room for none of the files it already holds", async () => {
+    await withFolder("backup-folder-rollback", async (server) => {
+      const id = await instanceIdOf(server);
+      const { operator } = clientsFor(server);
+      const reserve = await ownerOf(server).patchConfig({
+        disk_reserve_bytes: 100_000,
+      });
+      expect(reserve.status, JSON.stringify(reserve.error)).toBe(200);
+      const bytes = bytesOf("a file already on the disk", 1_000_000);
+      const held = await fileItem(server, bytes);
+      const run = await ownerOf(server).runBackup();
+      expect(run.status, JSON.stringify(run.error)).toBe(200);
+
+      await server.setFault("free:blobs=300000");
+      const restored = await ownerOf(server).restoreBackup(
+        id,
+        run.data.backup.name,
+      );
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      expect(restored.data.blobs_missing).toEqual([]);
+      const read = await operator.downloadBlob(held.hash);
+      expect(read.status).toBe(200);
+      expect(new Uint8Array(read.data)).toEqual(bytes);
+    });
+  });
+
+  it("refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store", async () => {
+    const parent = mkdtempSync(join(tmpdir(), "marfa-backup-folder-adopt-"));
+    const root = join(parent, "disk");
+    const replaced = join(parent, "old disk");
+    mkdirSync(root);
+    const server = await bootFreshServer("backup-folder-adopt", {
+      ...FOLDER_ONLY,
+      MARFA_BACKUP_PATH: root,
+    });
+    try {
+      const id = await instanceIdOf(server);
+      const owner = ownerOf(server);
+      const { operator } = clientsFor(server);
+      const bytes = bytesOf("a file the old disk held", 4096);
+      const file = await fileItem(server, bytes);
+      expect((await owner.runBackup()).status).toBe(200);
+      const before = (await operator.listBlobStores()).data.data;
+      const old = before.find((store) => store.kind === "folder")!;
+      const disk = before.find((store) => store.kind === "disk")!;
+
+      const held = await owner.adoptBackupFolder();
+      expect(held.status, JSON.stringify(held.data)).toBe(409);
+      expect(held.error?.error.code).toBe("conflict");
+
+      renameSync(root, replaced);
+      const missing = await owner.adoptBackupFolder();
+      expect(missing.status, JSON.stringify(missing.data)).toBe(503);
+      expect(missing.error?.error.code).toBe("blob_store_unavailable");
+      expect(existsSync(root)).toBe(false);
+
+      mkdirSync(root);
+      const refused = await owner.runBackup();
+      expect(refused.status, JSON.stringify(refused.data)).toBe(503);
+      expect(refused.error?.error.message).toContain(
+        "marfa backups folder adopt",
+      );
+      expect(readdirSync(root)).toEqual([]);
+      const failing = await health(server);
+      expect(failing.backups.last_error).toContain(
+        "marfa backups folder adopt",
+      );
+
+      const adopted = await owner.adoptBackupFolder();
+      expect(adopted.status, JSON.stringify(adopted.error)).toBe(200);
+      expect(adopted.data.replaced_store_id).toBe(old.id);
+      expect(adopted.data.backups_forgotten).toBeGreaterThan(0);
+      expect(adopted.data.store_id).not.toBe(old.id);
+      const after = (await operator.listBlobStores()).data.data;
+      const now = after.find((store) => store.id === adopted.data.store_id)!;
+      expect(now.kind).toBe("folder");
+      expect(now.locator).toBe(join(root, "files", id));
+      expect(now.detached_at).toBeNull();
+      expect(
+        after.find((store) => store.id === old.id)?.detached_at,
+      ).not.toBeNull();
+      const copies = await operator.listBlobCopies(file.hash);
+      expect(copies.status, JSON.stringify(copies.error)).toBe(200);
+      expect(copies.data.data.map((copy) => copy.store_id)).toEqual([disk.id]);
+
+      const next = await owner.runBackup();
+      expect(next.status, JSON.stringify(next.error)).toBe(200);
+      expect(new Uint8Array(readFileSync(copyIn(root, id, file.hash)))).toEqual(
+        bytes,
+      );
+      expect((await health(server)).backups.status).toBe("ok");
+      const read = await operator.downloadBlob(file.hash);
+      expect(new Uint8Array(read.data)).toEqual(bytes);
+    } finally {
+      await server.stop();
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a key at the adopt door", async () => {
+    await withFolder("backup-folder-adopt-key", async (server) => {
+      const refused = await clientsFor(server).operator.adoptBackupFolder();
+      expect(refused.status, JSON.stringify(refused.data)).toBe(403);
+      expect(refused.error?.error.details).toEqual({ needs: "local" });
+    });
   });
 });
 

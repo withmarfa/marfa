@@ -50,6 +50,7 @@ import type {
   BulkActionResponse,
   RestoreArchiveResponse,
   BackupRow,
+  BackupFolderAdopted,
   BackupRun,
   ErrorResponse,
   LookupInput,
@@ -1099,6 +1100,13 @@ export class MarfaClient {
   /** `POST /backups`: a backup, now. */
   async runBackup(): Promise<ApiResponse<BackupRun>> {
     return this.request<BackupRun>("/backups", { method: "POST" });
+  }
+
+  /** `POST /backups/folder/adopt`: a new store in a backup folder whose marker is gone. */
+  async adoptBackupFolder(): Promise<ApiResponse<BackupFolderAdopted>> {
+    return this.request<BackupFolderAdopted>("/backups/folder/adopt", {
+      method: "POST",
+    });
   }
 
   /** `POST /backups/{instance_id}/{name}/restore`: the named backup, read by the server. */

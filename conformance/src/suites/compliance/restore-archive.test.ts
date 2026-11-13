@@ -344,6 +344,8 @@ describe("restore", () => {
         }),
         path: `missing_blobs.${hash}.size_bytes`,
       },
+      { reshape: (m) => ({ ...m, lost_blobs: {} }), path: "lost_blobs" },
+      { reshape: (m) => ({ ...m, lost_blobs: [hash] }), path: "lost_blobs.0" },
       { reshape: (m) => without(m, "version"), path: "version" },
       { reshape: (m) => ({ ...m, version: "0" }), path: "version" },
       { reshape: (m) => without(m, "item_count"), path: "item_count" },

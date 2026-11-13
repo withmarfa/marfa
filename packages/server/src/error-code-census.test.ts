@@ -57,7 +57,7 @@ const RUST_SERVER_ONLY: Record<string, string> = {
     "`GET /export?format=archive`, for an item or an edge a restore would refuse",
   idempotency_contract_changed:
     "every door that takes an `Idempotency-Key`, for a key repeated under another contract version",
-  no_bucket: "the backup doors, `/backups`",
+  no_backup_destination: "the backup doors, `/backups`",
   row_not_found: "the row doors, `/items/{id}/tables/{table}/rows`",
   table_not_found: "the table doors, `/items/{id}/tables/{table}`",
   too_many_connections: "any door, past the connection cap",
