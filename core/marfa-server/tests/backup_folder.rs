@@ -747,6 +747,44 @@ async fn a_restore_that_lacks_a_copy_refuses_before_it_reads_any_file() {
 }
 
 #[tokio::test]
+async fn a_restore_that_meets_a_copy_altered_to_the_same_size_names_it_and_places_nothing() {
+    let folder = TempDir::new().unwrap();
+    let origin = Instance::start(folder.path()).await;
+    let note = origin.note("not restored past an altered copy").await;
+    let (altered, _) = origin.file(b"a copy someone changed").await;
+    let (other, _) = origin.file(b"a copy still whole").await;
+    let (status, body) = origin.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let name = body["backup"]["name"].as_str().unwrap().to_string();
+    let copy = copy_of(folder.path(), &origin.id(), &altered);
+    let mut bytes = fs::read(&copy).unwrap();
+    bytes[0] ^= 0xff;
+    fs::write(&copy, &bytes).unwrap();
+
+    let fresh = Instance::start(folder.path()).await;
+    let (status, refused) = fresh.restore(&origin.id(), &name).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(
+        refused["error"]["code"], "backup_files_missing",
+        "{refused}"
+    );
+    assert_eq!(
+        refused["error"]["details"]["missing_blobs"],
+        json!([altered]),
+        "{refused}"
+    );
+    let blobs = fresh.data.path().join("blobs");
+    assert!(copy_of(folder.path(), &origin.id(), &other).is_file());
+    assert!(!copy_of(&blobs, "", &other).exists());
+    assert!(!copy_of(&blobs, "", &altered).exists());
+    assert!(fresh.bytes_of(&other).await.is_none());
+    let (status, body) = fresh
+        .as_writer(Method::GET, &format!("/items/{note}"), None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{body}");
+}
+
+#[tokio::test]
 async fn a_rollback_reads_only_the_files_the_disk_lacks_and_needs_room_only_for_them() {
     let folder = TempDir::new().unwrap();
     let instance = Instance::start(folder.path()).await;
@@ -869,4 +907,45 @@ async fn a_replaced_disk_is_refused_until_the_owner_adopts_it_and_then_backs_up_
     let again = Instance::start_in(data, &folder).await;
     let (status, body) = again.back_up().await;
     assert_eq!(status, StatusCode::OK, "{body}");
+}
+
+#[tokio::test]
+async fn an_adopt_that_cannot_mark_the_folder_says_the_old_store_was_forgotten_and_adopts_once_it_is_writable()
+ {
+    use std::os::unix::fs::PermissionsExt;
+
+    let parent = TempDir::new().unwrap();
+    let folder = parent.path().join("disk");
+    fs::create_dir(&folder).unwrap();
+    let instance = Instance::start(&folder).await;
+    let (file, _) = instance.file(b"a file the old disk held").await;
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    fs::rename(&folder, parent.path().join("old disk")).unwrap();
+    fs::create_dir(&folder).unwrap();
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o555)).unwrap();
+
+    let (status, refused) = instance
+        .local(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    fs::set_permissions(&folder, fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{refused}");
+    assert_eq!(
+        refused["error"]["code"], "blob_store_unavailable",
+        "{refused}"
+    );
+    let says = refused["error"]["message"].as_str().unwrap();
+    assert!(says.contains("were forgotten"), "{refused}");
+    assert!(says.contains("writable"), "{refused}");
+    assert!(says.contains("marfa backups folder adopt"), "{refused}");
+    assert!(!says.contains("is not there"), "{refused}");
+
+    let (status, adopted) = instance
+        .local(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{adopted}");
+    assert_eq!(adopted["backups_forgotten"], 0, "{adopted}");
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(copy_of(&folder, &instance.id(), &file).is_file());
 }

@@ -788,7 +788,24 @@ impl App {
             Destination::Bucket(_) => false,
             Destination::Folder(folder) => {
                 let reading = self.files_to_read(folder, instance, &received).await?;
+                let needed = received.manifest.held_files();
+                let wanted: Vec<String> = reading
+                    .iter()
+                    .map(|named| named.hash.as_str().to_string())
+                    .filter(|hash| needed.contains(hash))
+                    .collect();
                 let copies = self.copies_in_folder(folder, instance, reading).await?;
+                let read: HashSet<&str> = copies
+                    .iter()
+                    .map(|(sealed, _)| sealed.hash.as_str())
+                    .collect();
+                let unread: Vec<String> = wanted
+                    .into_iter()
+                    .filter(|hash| !read.contains(hash.as_str()))
+                    .collect();
+                if !unread.is_empty() {
+                    return Err(archive::restore::files_missing(unread));
+                }
                 received.carried.extend(copies);
                 true
             }
@@ -913,7 +930,18 @@ impl App {
         let (claimed, new_id) = (folder.clone(), id.clone());
         blocking(move || claimed.claim(&new_id))
             .await
-            .map_err(|error| destination.unreachable("adopting the backup folder", &error))?;
+            .map_err(|error| {
+                Refusal::new(
+                    Code::BlobStoreUnavailable,
+                    format!(
+                        "The backup folder {root} could not take the new store's marker: {error}. \
+                         The old store's {} and {} were forgotten. Make the folder writable, \
+                         then run `marfa backups folder adopt` again.",
+                        counted(backups, "backup", "backups"),
+                        counted(copies, "file copy", "file copies"),
+                    ),
+                )
+            })?;
         tracing::info!(store = %id, replaced = %old_id, backups, copies, "The backup folder was adopted");
         Ok(json!({
             "store_id": id,
@@ -969,6 +997,13 @@ impl App {
             health.insert("last_failed_at".into(), state.last_failed_at.into());
         }
         Value::Object(health)
+    }
+}
+
+fn counted(count: usize, one: &str, many: &str) -> String {
+    match count {
+        1 => format!("1 {one}"),
+        count => format!("{count} {many}"),
     }
 }
 
@@ -1035,10 +1070,7 @@ fn lost_message(name: &str, lost: &[String]) -> Option<String> {
     if lost.len() > SHOWN {
         shown.push_str(&format!(" and {} more", lost.len() - SHOWN));
     }
-    let count = match lost.len() {
-        1 => "1 file".to_string(),
-        many => format!("{many} files"),
-    };
+    let count = counted(lost.len(), "file", "files");
     Some(format!(
         "The backup {name} was put without {count} that no store could give when it was taken: \
          {shown}. A restore of it goes ahead without them. Upload their bytes again to back them \
@@ -1146,13 +1178,32 @@ struct Put {
     lost: Vec<String>,
 }
 
-/// Of `hashes`, those no attached store answers that it holds whole.
+fn purged_while_taken(hash: &str) -> Refusal {
+    Refusal::new(
+        Code::Conflict,
+        format!(
+            "The file {hash} the backup names was purged while the backup was taken; the next \
+             run takes it again."
+        ),
+    )
+}
+
+/// Of `hashes`, those no attached store answers that it holds whole. A file purged since the
+/// archive was read refuses the run, so the next one takes it again.
 async fn readable_nowhere(app: &Arc<App>, hashes: Vec<String>) -> Result<Vec<String>> {
     let mut lost = Vec::new();
     for hash in hashes {
         let Ok(parsed) = Hash::parse(&hash) else {
             continue;
         };
+        let looked = hash.clone();
+        if !app
+            .db
+            .read(move |tx| super::blobs::registered(tx, &looked))
+            .await?
+        {
+            return Err(purged_while_taken(&hash));
+        }
         if app.readable(&parsed).await? == Readable::Nowhere {
             lost.push(hash);
         }
@@ -1181,13 +1232,7 @@ async fn copy_files(
             })
             .await?;
         let Some(blob) = blob else {
-            return Err(Refusal::new(
-                Code::Conflict,
-                format!(
-                    "The file {hash} the backup names was purged while the backup was taken; \
-                     the next run takes it again."
-                ),
-            ));
+            return Err(purged_while_taken(&hash));
         };
         let failed = match replicate_one(app, &target, &blob, &mut unreachable).await? {
             Replicated::Copied | Replicated::Passed => None,
@@ -1776,5 +1821,59 @@ mod tests {
 
         attempt(&tx, BUCKET, &named(1), &snapshot, &files(&[&a]), false).unwrap();
         assert_eq!(held_of(&tx, &[&a, &b]), ['a', 'b']);
+    }
+
+    #[tokio::test]
+    async fn the_object_store_path_refuses_a_file_purged_since_its_read_and_counts_one_held_nowhere_as_lost()
+     {
+        let dir = tempfile::TempDir::new().unwrap();
+        let (database, blobs, socket) = (
+            dir.path().join("marfa.db"),
+            dir.path().join("blobs"),
+            dir.path().join("s.sock"),
+        );
+        let pairs = [
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
+        ];
+        let settings =
+            crate::settings::Settings::read(crate::settings::Environment::from_pairs(&pairs))
+                .unwrap();
+        let app = App::start(settings).await.unwrap();
+        let (held_nowhere, purged) = (hash('a'), hash('b'));
+        let recorded = held_nowhere.as_str().to_string();
+        app.db
+            .write(Write::own(), move |tx| {
+                tx.execute(
+                    "INSERT INTO blobs (hash, mime_type, size_bytes, recorded_at) \
+                     VALUES (?1, 'text/plain', 1, '2026-01-01T00:00:00.000Z')",
+                    [&recorded],
+                )?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+
+        let lost = readable_nowhere(&app, vec![held_nowhere.as_str().to_string()])
+            .await
+            .unwrap();
+        assert_eq!(lost, [held_nowhere.as_str()]);
+
+        let refused = readable_nowhere(
+            &app,
+            vec![
+                held_nowhere.as_str().to_string(),
+                purged.as_str().to_string(),
+            ],
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(refused.code, Code::Conflict);
+        assert!(
+            refused.message.contains(purged.as_str()),
+            "{}",
+            refused.message
+        );
     }
 }
