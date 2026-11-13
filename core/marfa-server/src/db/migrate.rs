@@ -19,7 +19,9 @@ pub const MIGRATIONS: &[Migration] = &[Migration {
 const WAY_FORWARD: &str = "Export with the build that wrote the file, start on a fresh file and \
                            restore the archive there. A restore reads archive versions from 1 \
                            through its own, and refuses a later version or an archive written \
-                           before Marfa 0.1, naming the build that wrote it.";
+                           before Marfa 0.1, naming the build that wrote it. Within a version, \
+                           a restore skips a field or a kind of line it does not know, and \
+                           names each kind it skips.";
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Standing {

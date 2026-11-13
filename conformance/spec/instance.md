@@ -348,7 +348,7 @@ When `GET /openapi.json` is answered, the server MUST answer `info.version` as t
 
 When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 1.
 
-**Reason:** the version is the one marker of the archive's layout, and a restore reads every version up to its own build's and refuses a later one (`search-and-filters/restore-version`). An archive with a new entry, line file or field that a restore must read is a new version, because an older build would skip what it does not know.
+**Reason:** the version is the one marker of the archive's layout, and a restore reads every version up to its own build's and refuses a later one (`search-and-filters/restore-version`). A field or a line kind added within a version is optional to a reader of that version (`search-and-filters/archive-version-additions`): a restore skips a field it does not read and a line kind it does not know, and names the kind (`search-and-filters/restore-unknown-field`, `search-and-filters/restore-unknown-line-kind`). An archive with a new entry, line file or field that a restore must read is a new version, because an older build would skip what it does not know.
 
 **Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
 

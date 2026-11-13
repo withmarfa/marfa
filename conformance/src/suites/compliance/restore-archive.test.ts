@@ -738,6 +738,201 @@ describe("restore", () => {
     expect(restored.data.imported).toBe(1);
   });
 
+  it("refuses an archive that carries an item on two lines, naming the item, and writes nothing", async () => {
+    const id = uuidv7();
+    const twice = tar([
+      {
+        name: "manifest.json",
+        body: JSON.stringify(emptyManifest({ item_count: 2 })),
+      },
+      lineFile("files", ""),
+      lineFile("instance", ""),
+      lineFile(
+        "items",
+        archivedLine(id, "first copy") +
+          "\n" +
+          archivedLine(id, "second copy") +
+          "\n",
+      ),
+      lineFile("versions", ""),
+      lineFile("edges", ""),
+      lineFile("rows", ""),
+    ]);
+    const refused = await owner.restoreArchive(twice);
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.details?.item_id).toBe(id);
+    expect((await client.getItem(id)).status).toBe(404);
+
+    // The witness: the item on one line restores.
+    const restored = await owner.restoreArchive(
+      around([lineFile("items", archivedLine(id, "first copy") + "\n")]),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    expect(restored.data.imported).toBe(1);
+  });
+
+  it("refuses an archive whose entries are out of order, naming the first, and writes nothing", async () => {
+    const id = uuidv7();
+    const data = new Uint8Array(randomBytes(24));
+    const blob = `blobs/${blobHash(data)}`;
+    const entries = listEntries(
+      itemsArchive(
+        [{ id, type: "core.note", source: ctx.source, properties: {} }],
+        [{ data, mime_type: "text/plain" }],
+      ),
+    ).map(({ name, body }) => ({ name, body }));
+    const moved = (name: string, before: string) => {
+      const rest = entries.filter((entry) => entry.name !== name);
+      const at = rest.findIndex((entry) => entry.name === before);
+      return tar([
+        ...rest.slice(0, at),
+        entries.find((entry) => entry.name === name)!,
+        ...rest.slice(at),
+      ]);
+    };
+    const cases: [string, Uint8Array, string][] = [
+      [
+        "items before instance",
+        moved("items.ndjson.gz", "instance.ndjson.gz"),
+        "items.ndjson.gz",
+      ],
+      ["a blob before the file list", moved(blob, "files.ndjson.gz"), blob],
+      ["a blob before the rows", moved(blob, "rows.ndjson.gz"), blob],
+    ];
+    for (const [what, archive, entry] of cases) {
+      const refused = await owner.restoreArchive(archive);
+      expect(refused.status, what).toBe(400);
+      expect(refused.error?.error.code, what).toBe("validation_error");
+      expect(refused.error?.error.details?.entry, what).toBe(entry);
+      expect((await client.getItem(id)).status, what).toBe(404);
+    }
+
+    // The witness: in order, the same entries restore, the blob with them.
+    const restored = await owner.restoreArchive(tar(entries));
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    expect(restored.data.imported).toBe(1);
+    expect(restored.data.blobs_imported).toBe(1);
+  });
+
+  it("skips an instance line of a kind it does not know, names the kind in line_kinds_skipped, and restores the rest", async () => {
+    const archive = (id: string) =>
+      itemsArchive([
+        { id, type: "core.note", source: ctx.source, properties: {} },
+      ]);
+    const plainId = uuidv7();
+    const plain = await owner.restoreArchive(archive(plainId));
+    expect(plain.ok, JSON.stringify(plain.error)).toBe(true);
+    trackItem(ctx, plainId);
+    expect(plain.data.line_kinds_skipped).toEqual([]);
+
+    const id = uuidv7();
+    const later = editLineFile(
+      archive(id),
+      "instance",
+      (text) =>
+        text +
+        ndjson([
+          { later_kind: { name: "a" } },
+          { later_kind: { name: "b" }, provenance: {} },
+          { another_kind: {} },
+        ]),
+    );
+    const restored = await owner.restoreArchive(later);
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    expect(restored.data.line_kinds_skipped).toEqual([
+      "later_kind",
+      "another_kind",
+    ]);
+    expect(restored.data.imported).toBe(1);
+    expect((await client.getItem(id)).status).toBe(200);
+    await expectMatchesSchema("POST", "/restore", 200, restored.data);
+
+    // A line that names no kind at all is still refused.
+    const unnamed = editLineFile(
+      archive(uuidv7()),
+      "instance",
+      (text) => text + ndjson([{ provenance: {} }]),
+    );
+    const refused = await owner.restoreArchive(unnamed);
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.details?.entry).toBe("instance.ndjson.gz");
+  });
+
+  it("restores an archive whose manifest and lines carry fields it does not read as it restores one without them", async () => {
+    const data = new Uint8Array(randomBytes(24));
+    const archive = (id: string) =>
+      itemsArchive(
+        [
+          {
+            id,
+            type: "core.file",
+            source: ctx.source,
+            properties: { blob_ref: blobHash(data), mime_type: "text/plain" },
+          },
+        ],
+        [{ data, mime_type: "text/plain" }],
+      );
+    const withFields = (archive: Uint8Array): Uint8Array => {
+      const added = (text: string, add: (line: any) => void) =>
+        ndjson(
+          text
+            .split("\n")
+            .filter((line) => line !== "")
+            .map((line) => {
+              const held = JSON.parse(line);
+              add(held);
+              return held;
+            }),
+        );
+      const edited = editLineFile(
+        editLineFile(archive, "files", (text) =>
+          added(text, (line) => (line.later_field = "kept aside")),
+        ),
+        "items",
+        (text) =>
+          added(text, (line) => {
+            line.later_field = { held: true };
+            line.item.later_field = 1;
+          }),
+      );
+      return tar(
+        listEntries(edited).map(({ name, body }) =>
+          name === "manifest.json"
+            ? {
+                name,
+                body: JSON.stringify({
+                  ...JSON.parse(body.toString("utf8")),
+                  later_count: 2,
+                }),
+              }
+            : { name, body },
+        ),
+      );
+    };
+
+    const plainId = uuidv7();
+    const plain = await owner.restoreArchive(archive(plainId));
+    expect(plain.ok, JSON.stringify(plain.error)).toBe(true);
+    trackItem(ctx, plainId);
+
+    const id = uuidv7();
+    const restored = await owner.restoreArchive(withFields(archive(id)));
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    expect(restored.data.imported).toBe(plain.data.imported);
+    expect(restored.data.blobs_imported).toBe(plain.data.blobs_imported);
+    expect(restored.data.blobs_missing).toEqual(plain.data.blobs_missing);
+    const read = await client.getItem(id);
+    const held = await client.getItem(plainId);
+    expect(read.status).toBe(200);
+    expect(read.data?.item).not.toHaveProperty("later_field");
+    expect(read.data?.item.properties).toEqual(held.data?.item.properties);
+  });
+
   it("requires local authority", async () => {
     // A credential holding write on every type. Restoring takes the local
     // command, which is a different thing from holding every permission:
