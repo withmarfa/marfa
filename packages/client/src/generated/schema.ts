@@ -3138,7 +3138,7 @@ export interface components {
             /** @description Whether Marfa backs itself up to its backup folder or object store, how the last backup went, and whether the place it backs up to is taking copies. */
             backups: {
                 /**
-                 * @description `ok`: backing up on schedule, the last run succeeded, and the destination holds every file the last backup names. `incomplete`: the last backup names files that are still waiting for their copy in the destination, so a restore from it is refused until replication copies them; the overall `status` is unchanged. `failing`: the last run failed or lost files, or a store isn't taking copies, which makes the overall `status` at least `degraded`. `off`: no scheduled backups.
+                 * @description `ok`: on schedule, and the last backup is whole. `incomplete`: files it names wait for their copy. `failing`: a run failed or lost files, or a store isn't taking copies, so the overall `status` is at least `degraded`. `off`: no scheduled backups.
                  * @enum {string}
                  */
                 status: "ok" | "incomplete" | "failing" | "off";
@@ -30766,7 +30766,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `backup_files_missing`: neither the backup folder or object store nor this instance holds files the backup names, listed in `details.missing_blobs`. Nothing was restored.
+             * @description - `backup_files_missing`: neither the destination nor this instance holds files it needs, in `details.missing_blobs`. Nothing was restored.
              *     - `conflict`: the archive redefines a type registered here differently, carries a core edge type, or reuses a snapshot ID.
              *     - `link_taken`: the archive's type names a `link_field` two items share.
              *     - `no_backup_destination`: there is nowhere to put backups.
