@@ -56216,13 +56216,16 @@
             }
           },
           "409": {
-            "description": "- `conflict`: a file the backup names was purged, or its copy where backups go was dropped, while the backup was read, or a backup by this name is already recorded. The next run takes the backup again.\n- `housekeeping_job_running`: a backup is running. Try again once it ends.\n- `no_backup_destination`: the instance has nowhere to put backups, so it keeps none.",
+            "description": "- `conflict`: a file the backup names was purged, or its copy where backups go was dropped, while the backup was read, or a backup by this name is already recorded. The next run takes the backup again.\n- `export_entry_unrestorable`: the backup would hold an item or edge that a restore would refuse or skip, or whose line is longer than the 64 MiB a restore reads, so no backup was put. `details.entry` names it. Correct it or its type, then take the backup again.\n- `housekeeping_job_running`: a backup is running. Try again once it ends.\n- `no_backup_destination`: the instance has nowhere to put backups, so it keeps none.",
             "content": {
               "application/json": {
                 "schema": {
                   "anyOf": [
                     {
                       "$ref": "#/components/schemas/ConflictRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/ExportItemsUnrestorableRefusal"
                     },
                     {
                       "$ref": "#/components/schemas/HousekeepingJobRunningRefusal"

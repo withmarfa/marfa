@@ -31066,6 +31066,7 @@ export interface operations {
             };
             /**
              * @description - `conflict`: a file the backup names was purged, or its copy where backups go was dropped, while the backup was read, or a backup by this name is already recorded. The next run takes the backup again.
+             *     - `export_entry_unrestorable`: the backup would hold an item or edge that a restore would refuse or skip, or whose line is longer than the 64 MiB a restore reads, so no backup was put. `details.entry` names it. Correct it or its type, then take the backup again.
              *     - `housekeeping_job_running`: a backup is running. Try again once it ends.
              *     - `no_backup_destination`: the instance has nowhere to put backups, so it keeps none.
              */
@@ -31077,7 +31078,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
+                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["ExportItemsUnrestorableRefusal"] | components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
