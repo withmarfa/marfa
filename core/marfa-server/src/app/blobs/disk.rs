@@ -133,9 +133,24 @@ impl Disk {
         io::Error::other("the disk store's folder or marker is missing")
     }
 
+    /// Makes `tmp` where a disk that came back, or a tool that copied it, left it out. Only
+    /// the folder marked as this store gets it, and its own folder is never made.
+    fn staging(&self) -> io::Result<PathBuf> {
+        if !self.reachable() {
+            return Err(Disk::unreachable());
+        }
+        let tmp = self.tmp();
+        match fs::create_dir(&tmp) {
+            Ok(()) => File::open(&self.root)?.sync_all()?,
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists && tmp.is_dir() => {}
+            Err(error) => return Err(error),
+        }
+        Ok(tmp)
+    }
+
     /// A file of its own for an upload that is arriving.
     pub fn stage(&self) -> io::Result<Staged> {
-        let path = self.tmp().join(Uuid::now_v7().to_string());
+        let path = self.staging()?.join(Uuid::now_v7().to_string());
         let file = OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -151,7 +166,7 @@ impl Disk {
 
     /// A file of the server's own in `tmp`, which a start empties. It blocks.
     pub fn scratch(&self) -> io::Result<Scratch> {
-        let path = self.tmp().join(Uuid::now_v7().to_string());
+        let path = self.staging()?.join(Uuid::now_v7().to_string());
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -491,6 +506,25 @@ mod tests {
         assert_eq!(fs::read(disk.path_of(&hash)).unwrap(), b"kept");
         let hex = hash.hex();
         assert!(root.join(&hex[0..4]).join(hex).is_file());
+    }
+
+    #[test]
+    fn staging_makes_a_missing_tmp_inside_the_marked_folder_and_never_the_folder() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("blobs");
+        let disk = Disk::open(&root).unwrap();
+        fs::remove_dir(disk.tmp()).unwrap();
+        let staged = disk.stage().unwrap();
+        assert!(staged.path().is_file());
+        fs::remove_dir_all(disk.tmp()).unwrap();
+        assert!(disk.scratch().is_ok());
+        fs::remove_dir_all(&root).unwrap();
+        assert!(disk.stage().is_err());
+        assert!(disk.scratch().is_err());
+        assert!(!root.exists());
+        fs::create_dir(&root).unwrap();
+        assert!(disk.stage().is_err());
+        assert!(!root.join(TMP).exists());
     }
 
     #[test]

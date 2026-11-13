@@ -339,8 +339,29 @@ pub(crate) fn object_store_said(error: &io::Error) -> &'static str {
 fn told(store: &Store, error: &io::Error) -> String {
     match store {
         Store::S3(_) => object_store_said(error).into(),
-        _ => error.to_string(),
+        _ => folder_said(error),
     }
+}
+
+/// What a folder's failed write means and what to do, then the system's own words. An error the
+/// server worded itself already says it.
+fn folder_said(error: &io::Error) -> String {
+    if error.raw_os_error().is_none() {
+        return error.to_string();
+    }
+    let meaning = match error.kind() {
+        io::ErrorKind::NotFound => {
+            "a folder it writes into is missing, so check that its disk is mounted and unchanged"
+        }
+        io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded => {
+            "there is no room left on its disk, so free some space there"
+        }
+        io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem => {
+            "the server is not allowed to write there, so check the folder's permissions"
+        }
+        _ => "the disk refused the write, so check that it is healthy and writable",
+    };
+    format!("{meaning} (the system said: {error})")
 }
 
 /// How a failure to copy to `store` is told.
@@ -744,4 +765,21 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
     Ok(Report::done(
         json!({ "reported": reported, "purged": purged }),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_failure_is_told_with_what_to_do_and_keeps_the_systems_words() {
+        let gone = io::Error::from_raw_os_error(2);
+        let said = folder_said(&gone);
+        assert!(said.starts_with("a folder it writes into is missing, so check"));
+        assert!(said.ends_with(&format!("(the system said: {gone})")));
+        let full = folder_said(&io::Error::from_raw_os_error(28));
+        assert!(full.starts_with("there is no room left on its disk"));
+        let own = io::Error::other("the disk store's folder or marker is missing");
+        assert_eq!(folder_said(&own), own.to_string());
+    }
 }

@@ -1076,6 +1076,36 @@ async fn a_folder_whose_disk_goes_away_is_said_at_once_with_the_files_that_wait_
     assert!(instance.backup_concerns().await.is_empty());
 }
 
+#[tokio::test]
+async fn a_files_area_that_comes_back_without_its_staging_folder_takes_the_waiting_copy_in_the_next_run()
+ {
+    let parent = TempDir::new().unwrap();
+    let folder = parent.path().join("disk");
+    fs::create_dir(&folder).unwrap();
+    let instance = Instance::start(&folder).await;
+    instance.file(b"a file made before the disk went").await;
+
+    let away = parent.path().join("away");
+    fs::rename(&folder, &away).unwrap();
+    let (waiting, _) = instance.file(b"a file made while the disk was away").await;
+    let replicated = instance.run("blob-replicate").await;
+    assert_eq!(replicated["outcome"], "error", "{replicated}");
+
+    // The disk returns with its files area intact but its staging folder gone.
+    fs::rename(&away, &folder).unwrap();
+    let staging = folder.join("files").join(instance.id()).join("tmp");
+    fs::remove_dir(&staging).unwrap();
+
+    let replicated = instance.run("blob-replicate").await;
+    assert_eq!(replicated["outcome"], "ok", "{replicated}");
+    assert_eq!(replicated["result"]["remaining"], 0, "{replicated}");
+    assert!(copy_of(&folder, &instance.id(), &waiting).is_file());
+    let health = instance.health().await;
+    assert_eq!(health["store_error"], Value::Null, "{health}");
+    assert_eq!(health["copies_waiting"], 0, "{health}");
+    assert!(staging.is_dir());
+}
+
 #[cfg(debug_assertions)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_folder_whose_mount_hangs_is_told_as_not_answering_within_the_health_deadline() {
