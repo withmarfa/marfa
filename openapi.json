@@ -9657,51 +9657,63 @@
             "type": "array",
             "items": {
               "type": "string",
-              "format": "uri"
+              "format": "uri",
+              "maxLength": 2048
             },
             "minItems": 1,
-            "description": "The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. At most 10. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`."
+            "description": "The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. At most 10. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`.",
+            "maxItems": 10
           },
           "scope": {
             "type": "string",
-            "description": "Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out for your content and links: `content:read content:write edge.*:read edge.*:write offline_access`."
+            "description": "Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out for your content and links: `content:read content:write edge.*:read edge.*:write offline_access`.",
+            "maxLength": 4096
           },
           "client_name": {
             "type": "string",
-            "description": "The app's name, which Marfa shows a person asked to approve it."
+            "description": "The app's name, which Marfa shows a person asked to approve it.",
+            "maxLength": 200
           },
           "client_uri": {
             "type": "string",
-            "description": "The app's home page URL. Leave it out if the app has none."
+            "description": "The app's home page URL. Leave it out if the app has none.",
+            "maxLength": 2048
           },
           "logo_uri": {
             "type": "string",
-            "description": "The app's logo URL. Leave it out if the app has none."
+            "description": "The app's logo URL. Leave it out if the app has none.",
+            "maxLength": 2048
           },
           "contacts": {
             "type": "array",
             "items": {
               "type": "string",
-              "minLength": 1
+              "minLength": 1,
+              "maxLength": 254
             },
             "minItems": 1,
-            "description": "Contact addresses for the app. Leave it out if there are none."
+            "description": "Contact addresses for the app. Leave it out if there are none.",
+            "maxItems": 10
           },
           "tos_uri": {
             "type": "string",
-            "description": "The app's terms of service URL. Leave it out if the app has none."
+            "description": "The app's terms of service URL. Leave it out if the app has none.",
+            "maxLength": 2048
           },
           "policy_uri": {
             "type": "string",
-            "description": "The app's privacy policy URL. Leave it out if the app has none."
+            "description": "The app's privacy policy URL. Leave it out if the app has none.",
+            "maxLength": 2048
           },
           "software_id": {
             "type": "string",
-            "description": "The software's identifier. Leave it out if there is none."
+            "description": "The software's identifier. Leave it out if there is none.",
+            "maxLength": 200
           },
           "software_version": {
             "type": "string",
-            "description": "The software's version. Leave it out if there is none."
+            "description": "The software's version. Leave it out if there is none.",
+            "maxLength": 200
           },
           "token_endpoint_auth_method": {
             "type": "string",
@@ -46519,7 +46531,7 @@
             }
           },
           "400": {
-            "description": "- `invalid_client_metadata`: client metadata is invalid.\n- `invalid_redirect_uri`: a redirect URI is invalid, or there are more than 10.\n- `invalid_scope`: a scope is not allowed.\n- `invalid_target`: a resource is invalid.\n\nThese errors use RFC 7591. An unknown query parameter gets Marfa's `validation_error` instead.",
+            "description": "- `invalid_client_metadata`: client metadata is invalid, or a value is past its `maxLength` or `maxItems`.\n- `invalid_redirect_uri`: a redirect URI is invalid or too long, or there are more than 10.\n- `invalid_scope`: a scope is not allowed.\n- `invalid_target`: a resource is invalid.\n\nThese errors use RFC 7591. An unknown query parameter gets Marfa's `validation_error` instead.",
             "content": {
               "application/json": {
                 "schema": {

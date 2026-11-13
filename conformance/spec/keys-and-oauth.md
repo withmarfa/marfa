@@ -1389,6 +1389,40 @@ If a registration at `POST /auth/oauth2/register` names more than 10 redirect UR
 
 **Tests:** `compliance/web-page-register.test.ts › refuses a registration naming more than 10 redirect URIs, and takes one naming 10`.
 
+### `keys-and-oauth/register-redirect-uri-bound`
+
+If a registration at `POST /auth/oauth2/register` names a redirect URI of more than 2048 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_redirect_uri`.
+
+**Reason:** Registration takes no credential, and each value it stores is kept and shown on the consent screen, so each has a bound of its own.
+
+**Tests:** `compliance/web-page-register.test.ts › refuses each registered value past its bound with a description that names it, and takes one at the bound`.
+
+### `keys-and-oauth/register-name-bound`
+
+If a registration at `POST /auth/oauth2/register` sets `client_name`, `software_id` or `software_version` to more than 200 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata` and whose `error_description` names the member.
+
+**Reason:** Registration takes no credential, and the audit log keeps the name for as long as it keeps the registration's record.
+
+**Tests:** `compliance/web-page-register.test.ts › refuses each registered value past its bound with a description that names it, and takes one at the bound`.
+
+### `keys-and-oauth/register-uri-bound`
+
+If a registration at `POST /auth/oauth2/register` sets `client_uri`, `logo_uri`, `tos_uri` or `policy_uri` to more than 2048 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata` and whose `error_description` names the member.
+
+**Tests:** `compliance/web-page-register.test.ts › refuses each registered value past its bound with a description that names it, and takes one at the bound`.
+
+### `keys-and-oauth/register-scope-bound`
+
+If a registration at `POST /auth/oauth2/register` sets `scope` to more than 4096 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata` and whose `error_description` names `scope`.
+
+**Tests:** `compliance/web-page-register.test.ts › refuses each registered value past its bound with a description that names it, and takes one at the bound`.
+
+### `keys-and-oauth/register-contacts-bound`
+
+If a registration at `POST /auth/oauth2/register` names more than 10 `contacts`, or a contact of more than 254 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata`.
+
+**Tests:** `compliance/web-page-register.test.ts › refuses each registered value past its bound with a description that names it, and takes one at the bound`.
+
 ### `keys-and-oauth/register-session-ignored`
 
 When a registration at `POST /auth/oauth2/register` carries the owner's browser session cookie, from any origin, the server MUST register the client as it registers the same metadata sent without one.
