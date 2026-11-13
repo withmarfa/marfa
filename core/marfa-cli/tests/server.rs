@@ -1479,8 +1479,6 @@ MARFA_TRUSTED_PROXY_CIDRS=172.30.0.0/24
 OTEL_RESOURCE_ATTRIBUTES=service.instance.id=mine
 ";
 
-/// A tunnel reaches a native server from this machine's loopback, not from the
-/// Docker network.
 const NATIVE_CLOUDFLARE_FILE: &str =
     "MARFA_KEY_SALT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 MARFA_AUTH_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

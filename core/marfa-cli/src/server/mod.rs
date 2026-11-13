@@ -606,9 +606,6 @@ fn public_address(raw: &str) -> Result<String, CliError> {
     address::normalise(raw)
 }
 
-/// A proxy or tunnel reaches a native server from the loopback and a container
-/// from its network's gateway; Cloudflare's edge also overwrites a header with
-/// the exact caller, which the server believes only from those ranges.
 fn proxy_trust(
     runtime: Runtime,
     access: Access,

@@ -184,7 +184,7 @@ The server reads its start-only settings from its environment when it starts. Th
 | `S3_BUCKET`                  | Not set                                  | Not set                    | An S3-compatible bucket for the files and the backups, with the other `S3_*` settings.                                                                                   |
 | `MARFA_CONTROL_ONLY`         | `false`                                  | Not set                    | Opens the private socket and nothing else, for [recovery](#recover-the-owner).                                                                                           |
 
-- Set `MARFA_TRUSTED_PROXY_HEADER` together with `MARFA_TRUSTED_PROXY_CIDRS`, naming the ranges the edge connects from, such as `127.0.0.0/8,::1/128` for a tunnel on the same machine. The server refuses to start with the header alone. With neither proxy setting, the server ignores `X-Forwarded-For`.
+- Set `MARFA_TRUSTED_PROXY_HEADER` together with `MARFA_TRUSTED_PROXY_CIDRS`, naming the ranges the edge connects from, such as `127.0.0.0/8,::1/128` for a tunnel to a native server on the same machine. The server refuses to start with the header alone. With neither proxy setting, the server ignores `X-Forwarded-For`.
 - Set `MARFA_BACKUP_PATH`, an absolute path, or `S3_BUCKET`, not both. With neither, the server keeps no backup.
 - Serve an object store from a different site from your instance's address: a link to a file in the store is safe only because the store serves it from its own origin.
 - `OTEL_EXPORTER_OTLP_ENDPOINT` sets where an OpenTelemetry receiver is, `MARFA_POSTHOG_HOST` with `MARFA_POSTHOG_PROJECT_TOKEN` sets where exception reports go, and `OTEL_SDK_DISABLED=true` turns telemetry off.

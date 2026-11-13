@@ -2541,7 +2541,7 @@ While both `MARFA_TRUSTED_PROXY_HEADER` and `MARFA_TRUSTED_PROXY_CIDRS` are set,
 
 If `MARFA_TRUSTED_PROXY_HEADER` is set and `MARFA_TRUSTED_PROXY_CIDRS` is not, then the server MUST refuse to start with exit status 1 and a line that names `MARFA_TRUSTED_PROXY_CIDRS` as the setting to add.
 
-**Reason:** the header holds the caller's address only when the edge that writes it sent the request, and the ranges are what tell the server which peers are that edge. A tunnel on the same machine connects from `127.0.0.0/8,::1/128`; a platform that does not publish its edge's addresses names `0.0.0.0/0,::/0`, so trusting every peer is a setting someone wrote down.
+**Reason:** the header holds the caller's address only when the edge that writes it sent the request, and the ranges are what tell the server which peers are that edge. A tunnel to a native server on the same machine connects from `127.0.0.0/8,::1/128`; a platform that does not publish its edge's addresses names `0.0.0.0/0,::/0`, so trusting every peer is a setting someone wrote down.
 
 **Tests:** `compliance/trusted-proxy.test.ts › without MARFA_TRUSTED_PROXY_CIDRS stops the server starting, with a line that names the ranges to set`, `compliance/trusted-proxy.test.ts › is read only from a peer inside the ranges when ranges are set`.
 
