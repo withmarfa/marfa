@@ -248,7 +248,9 @@ describe("password sign-in", () => {
       const address = `203.0.113.${String(a)}`;
       for (let i = 0; i < 10; i++) {
         const email =
-          i < 5 ? OWNER.email : `stranger-${String(a)}-${String(i)}@example.test`;
+          i < 5
+            ? OWNER.email
+            : `stranger-${String(a)}-${String(i)}@example.test`;
         const response = await signIn(
           every,
           "not the password",
