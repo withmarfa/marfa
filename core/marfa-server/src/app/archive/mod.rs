@@ -21,9 +21,9 @@ use tokio::sync::{mpsc, oneshot};
 use super::App;
 use super::access::{Caller, Permission};
 use super::blobs::carry::{self, Carried, Copy};
-use super::blobs::{Hash, Room, references};
+use super::blobs::{Hash, Room, Scratch, references};
 use super::clock::Stamp;
-use super::faults::{FAIL_EXPORT_READ, HOLD_EXPORT_PAGE};
+use super::faults::{ARCHIVE_LINE_LANE, FAIL_EXPORT_READ, HOLD_EXPORT_PAGE};
 use super::items::{self, Archived, Reader, reading, reading_background};
 use super::query::{self, Ask};
 use super::refusal::{Code, Refusal, Result};
@@ -33,8 +33,20 @@ use crate::settings::registry::{self, ADDRESSES, SIGN_IN_ADDRESS};
 use spool::{Lines, Spooled};
 
 pub const VERSION: u64 = 1;
+/// What a manifest names itself, so a reader knows the archive for one before reading its version.
+pub const FORMAT: &str = "marfa-archive";
 /// The most a manifest, or one line of a line file, may hold.
 pub const LINE_CAP: usize = 64 * 1024 * 1024;
+/// The entries an archive holds, in the order it holds them, before its `blobs/` entries.
+pub const ENTRIES: [&str; 7] = [MANIFEST, FILES, INSTANCE, ITEMS, VERSIONS, EDGES, ROWS];
+pub const MANIFEST: &str = "manifest.json";
+pub const FILES: &str = "files.ndjson.gz";
+pub const INSTANCE: &str = "instance.ndjson.gz";
+pub const ITEMS: &str = "items.ndjson.gz";
+pub const VERSIONS: &str = "versions.ndjson.gz";
+pub const EDGES: &str = "edges.ndjson.gz";
+pub const ROWS: &str = "rows.ndjson.gz";
+pub const BLOBS: &str = "blobs/";
 const PAGE: i64 = 500;
 const EDGE_PAGE: i64 = 1000;
 const QUEUED: usize = 4;
@@ -132,12 +144,28 @@ struct RowNeed {
 struct Prepared {
     created_at: Stamp,
     manifest: Vec<u8>,
+    /// `None` for a backup until the files no store gave are known.
+    files: Option<Spooled<()>>,
     instance: Spooled<InstanceNeed>,
     items: Spooled<ItemNeed>,
+    versions: Spooled<ItemNeed>,
     edges: Spooled<EdgeNeed>,
     rows: Spooled<RowNeed>,
     blobs: Vec<(Carried, String)>,
 }
+
+/// One line of `files.ndjson.gz`.
+#[derive(serde::Serialize)]
+struct FileLine {
+    hash: String,
+    mime_type: Option<String>,
+    size_bytes: Option<u64>,
+    state: &'static str,
+}
+
+const CARRIED: &str = "carried";
+const NOT_CARRIED: &str = "not_carried";
+const LOST: &str = "lost";
 
 /// A backup read from its snapshot and not yet sent.
 pub struct Taken {
@@ -148,7 +176,9 @@ pub struct Taken {
     /// The files the backup store held a recorded copy of.
     pub in_store: Vec<String>,
     prepared: Prepared,
-    manifest: Map<String, Value>,
+    /// The lines of `files.ndjson.gz`, in order of hash, before the lost files are known.
+    listing: Vec<FileLine>,
+    scratch: Scratch,
 }
 
 pub struct Backup {
@@ -158,7 +188,7 @@ pub struct Backup {
 }
 
 impl Taken {
-    /// Sends the backup, its manifest naming under `lost_blobs` each file in `lost`.
+    /// Sends the backup, its `files.ndjson.gz` naming as lost each file in `lost`.
     pub fn send(
         self,
         app: &Arc<App>,
@@ -167,29 +197,70 @@ impl Taken {
     ) -> Result<Backup> {
         let Taken {
             mut prepared,
-            mut manifest,
+            mut listing,
+            scratch,
             ..
         } = self;
-        let mut lost = lost.to_vec();
-        lost.sort();
-        lost.dedup();
-        manifest.insert("lost_blobs".into(), lost.into());
-        prepared.manifest = print(&Value::Object(manifest))?.into_bytes();
+        let lost: HashSet<&str> = lost.iter().map(String::as_str).collect();
+        let mut listed = 0u64;
+        for line in &mut listing {
+            if lost.contains(line.hash.as_str()) {
+                line.state = LOST;
+            }
+            listed += print(line)?.len() as u64 + 1;
+        }
         let entry = |size: u64| tar::BLOCK as u64 + size + tar::padding(size) as u64;
         let size = entry(prepared.manifest.len() as u64)
+            + entry(listed + listed / 1000 + 1024)
             + entry(prepared.instance.size)
             + entry(prepared.items.size)
+            + entry(prepared.versions.size)
             + entry(prepared.edges.size)
             + entry(prepared.rows.size)
             + tar::END.len() as u64;
         let limit = super::blobs::store::write_deadline(check, size);
         let (sender, body) = channel(QUEUED);
-        let app = app.clone();
+        let (app, room, cap) = (app.clone(), app.room(), app.archive_line_cap());
         tokio::spawn(async move {
-            send::archive(app, Caller::Server, prepared, sender, limit).await;
+            let spooled =
+                tokio::task::spawn_blocking(move || spool_files(scratch, room, cap, &listing))
+                    .await;
+            match spooled {
+                Ok(Ok(files)) => {
+                    prepared.files = Some(files);
+                    send::archive(app, Caller::Server, prepared, sender, limit).await;
+                }
+                Ok(Err(refusal)) => {
+                    tracing::warn!(message = %refusal.message, "A backup's files were not spooled");
+                }
+                Err(_) => tracing::warn!("A backup's files were not spooled"),
+            }
         });
         Ok(Backup { body, limit })
     }
+}
+
+/// Writes `files.ndjson.gz`. It blocks.
+fn spool_files(scratch: Scratch, room: Room, cap: usize, listing: &[FileLine]) -> Result<Spooled<()>> {
+    let mut files: Lines<()> = Lines::new(scratch, room)?;
+    for line in listing {
+        let text = print(line)?;
+        fits(FILES, files.lines + 1, &text, cap)?;
+        files.push(&text, |_| ())?;
+    }
+    files.finish()
+}
+
+/// Refuses a line of `entry` that no restore would read; an item's or an edge's names it instead.
+fn fits(entry: &str, line: u64, text: &str, cap: usize) -> Result<()> {
+    if text.len() > cap {
+        return Err(Refusal::internal(&format!(
+            "line {line} of {entry} takes {} bytes, more than the {cap} a restore reads, so no \
+             archive was written",
+            text.len()
+        )));
+    }
+    Ok(())
 }
 
 /// What a backup's snapshot gave beside its lines.
@@ -205,11 +276,13 @@ struct Snapshot {
 struct Selected {
     instance: Spooled<InstanceNeed>,
     items: Spooled<ItemNeed>,
+    versions: Spooled<ItemNeed>,
     edges: Spooled<EdgeNeed>,
     rows: Spooled<RowNeed>,
     counts: Map<String, Value>,
     listed: Vec<Carried>,
-    missing: BTreeMap<String, Value>,
+    /// The files a carried `blob_ref` names that no blob record holds.
+    missing: BTreeSet<String>,
     backup: Option<Snapshot>,
 }
 
@@ -238,9 +311,8 @@ fn reads_row(read: &Reader<'_, '_>, row: &Archived) -> Result<bool> {
             .iter()
             .all(|name| caller.may_read_extension(name))
         && row
-            .snapshot_types
+            .mark_type
             .iter()
-            .chain(row.mark_type.iter())
             .all(|type_id| caller.may_read_type(type_id)))
 }
 
@@ -257,6 +329,14 @@ fn unrestorable(refused: &checks::Refused) -> Refusal {
 }
 
 impl App {
+    /// The most one archive line may hold, which the writer and the reader both keep to.
+    pub fn archive_line_cap(&self) -> usize {
+        self.faults
+            .limit(ARCHIVE_LINE_LANE)
+            .and_then(|lowered| usize::try_from(lowered).ok())
+            .map_or(LINE_CAP, |lowered| lowered.min(LINE_CAP))
+    }
+
     /// Every refusal comes before the first byte.
     pub async fn export_archive(
         self: &Arc<App>,
@@ -289,7 +369,8 @@ impl App {
                 files,
                 in_store,
             },
-            manifest,
+            listing,
+            scratch,
         )) = snapshot
         else {
             return Err(Refusal::internal("a backup's snapshot was not kept"));
@@ -300,7 +381,8 @@ impl App {
             files,
             in_store,
             prepared,
-            manifest,
+            listing,
+            scratch,
         })
     }
 
@@ -317,26 +399,31 @@ impl App {
         ask: Ask,
         files: bool,
         backup_store: Option<String>,
-    ) -> Result<(Prepared, Option<(Snapshot, Map<String, Value>)>)> {
+    ) -> Result<(Prepared, Option<(Snapshot, Vec<FileLine>, Scratch)>)> {
         let created_at = self.clock.instant();
         let scratch = [
             self.scratch().await?,
             self.scratch().await?,
             self.scratch().await?,
             self.scratch().await?,
+            self.scratch().await?,
         ];
+        let files_scratch = self.scratch().await?;
         let room = self.room();
-        let cap = self.bulk_cap();
+        let caps = Caps {
+            bulk: self.bulk_cap(),
+            line: self.archive_line_cap(),
+        };
         let selected = match backup_store {
             None => {
                 reading(self, caller, move |read| {
-                    select(read, &ask, scratch, room, cap, None)
+                    select(read, &ask, scratch, room, caps, None)
                 })
                 .await?
             }
             Some(backup_store) => {
                 reading_background(self, caller, move |read| {
-                    select(read, &ask, scratch, room, cap, Some(&backup_store))
+                    select(read, &ask, scratch, room, caps, Some(&backup_store))
                 })
                 .await?
             }
@@ -346,50 +433,73 @@ impl App {
         } else {
             selected.listed.iter().map(|_| Copy::Missing).collect()
         };
-        let mut missing = selected.missing;
-        let mut listed = Map::new();
+        let mut listing: BTreeMap<String, FileLine> = selected
+            .missing
+            .into_iter()
+            .map(|hash| {
+                let line = FileLine {
+                    hash: hash.clone(),
+                    mime_type: None,
+                    size_bytes: None,
+                    state: NOT_CARRIED,
+                };
+                (hash, line)
+            })
+            .collect();
         let mut blobs = Vec::new();
         for (carried, copy) in selected.listed.into_iter().zip(copies) {
-            let entry = json!({
-                "mime_type": carried.blob.mime_type,
-                "size_bytes": carried.blob.size_bytes,
-            });
             let hash = carried.blob.hash.as_str().to_string();
-            match copy {
+            let state = match copy {
                 Copy::Whole(store) => {
-                    listed.insert(hash, entry);
-                    blobs.push((carried, store));
+                    blobs.push((carried.clone(), store));
+                    CARRIED
                 }
-                Copy::Missing => {
-                    missing.insert(hash, entry);
-                }
-            }
+                Copy::Missing => NOT_CARRIED,
+            };
+            let line = FileLine {
+                hash: hash.clone(),
+                mime_type: Some(carried.blob.mime_type.clone()),
+                size_bytes: Some(carried.blob.size_bytes),
+                state,
+            };
+            listing.insert(hash, line);
         }
         let mut manifest = Map::new();
         manifest.insert("version".into(), VERSION.into());
+        manifest.insert("format".into(), FORMAT.into());
         manifest.insert("written_by".into(), writer().into());
         manifest.insert("created_at".into(), created_at.text().into());
         manifest.insert("instance_id".into(), self.instance_id.clone().into());
+        manifest.insert("file_count".into(), listing.len().into());
         manifest.insert("item_count".into(), selected.items.lines.into());
+        manifest.insert("version_count".into(), selected.versions.lines.into());
         manifest.insert("edge_count".into(), selected.edges.lines.into());
         manifest.insert("row_count".into(), selected.rows.lines.into());
         manifest.insert("blob_count".into(), blobs.len().into());
         manifest.extend(selected.counts);
-        manifest.insert("blobs".into(), Value::Object(listed));
-        manifest.insert(
-            "missing_blobs".into(),
-            Value::Object(missing.into_iter().collect()),
-        );
-        let (manifest, snapshot) = match selected.backup {
-            None => (print(&Value::Object(manifest))?.into_bytes(), None),
-            Some(snapshot) => (Vec::new(), Some((snapshot, manifest))),
+        let manifest = print(&Value::Object(manifest))?;
+        fits(MANIFEST, 1, &manifest, caps.line)?;
+        let listing: Vec<FileLine> = listing.into_values().collect();
+        let (files, snapshot) = match selected.backup {
+            None => {
+                let room = self.room();
+                let spooled = tokio::task::spawn_blocking(move || {
+                    spool_files(files_scratch, room, caps.line, &listing)
+                })
+                .await
+                .map_err(|_| Refusal::internal("an export's files were not spooled"))??;
+                (Some(spooled), None)
+            }
+            Some(snapshot) => (None, Some((snapshot, listing, files_scratch))),
         };
         reading(self, caller, |_| Ok(())).await?;
         let prepared = Prepared {
             created_at,
-            manifest,
+            manifest: manifest.into_bytes(),
+            files,
             instance: selected.instance,
             items: selected.items,
+            versions: selected.versions,
             edges: selected.edges,
             rows: selected.rows,
             blobs,
@@ -398,16 +508,25 @@ impl App {
     }
 }
 
+/// The bulk body limit the line checks hold properties to, and the most one line may hold.
+#[derive(Clone, Copy)]
+struct Caps {
+    bulk: usize,
+    line: usize,
+}
+
 /// Reads the whole selection in one snapshot, checking each row as a restore would.
 fn select(
     read: &Reader<'_, '_>,
     ask: &Ask,
-    [instance, items, edges, rows]: [crate::app::blobs::Scratch; 4],
+    [instance, items, versions, edges, rows]: [Scratch; 5],
     room: Room,
-    cap: usize,
+    caps: Caps,
     backup_store: Option<&str>,
 ) -> Result<Selected> {
+    let Caps { bulk: cap, line } = caps;
     let mut items: Lines<ItemNeed> = Lines::new(items, room.clone())?;
+    let mut versions: Lines<ItemNeed> = Lines::new(versions, room.clone())?;
     let mut edges: Lines<EdgeNeed> = Lines::new(edges, room.clone())?;
     let mut rows: Lines<RowNeed> = Lines::new(rows, room.clone())?;
     let mut instance: Lines<InstanceNeed> = Lines::new(instance, room)?;
@@ -448,17 +567,45 @@ fn select(
         };
         after = *last;
         read.hydrating();
-        let rows = items::archived(read.tx, caller, catalog, &read.read_only, &seqs, true)?;
-        for row in rows {
-            let line = line_value(&row.line)?;
-            checks::item(catalog, cap, &line, items.lines as usize + 1)
+        let held = items::archived(read.tx, caller, catalog, &read.read_only, &seqs, true)?;
+        for row in held {
+            let value = line_value(&row.line)?;
+            checks::item(catalog, cap, &value, items.lines as usize + 1)
                 .map_err(|refused| unrestorable(&refused))?;
+            if row.line.len() > line {
+                let bytes = row.line.len();
+                let refused =
+                    checks::too_long(checks::Kind::Item, &row.id, &row.type_id, None, bytes, line);
+                return Err(unrestorable(&refused));
+            }
             items.push(&row.line, |need| {
                 need.rows.insert((row.type_id.clone(), row.source.clone()));
                 need.namespaces.extend(row.namespaces.iter().cloned());
-                need.types.extend(row.snapshot_types.iter().cloned());
                 need.types.extend(row.mark_type.iter().cloned());
             })?;
+            for version in items::versions(read.tx, caller, catalog, &row)? {
+                let value = line_value(&version.line)?;
+                checks::version(cap, &value, versions.lines as usize + 1)
+                    .map_err(|refused| unrestorable(&refused))?;
+                if version.line.len() > line {
+                    let field = format!("versions.{}", version.version);
+                    let refused = checks::too_long(
+                        checks::Kind::Item,
+                        &row.id,
+                        &row.type_id,
+                        Some(&field),
+                        version.line.len(),
+                        line,
+                    );
+                    return Err(unrestorable(&refused));
+                }
+                versions.push(&version.line, |need| {
+                    need.rows.insert((row.type_id.clone(), row.source.clone()));
+                    need.types.insert(version.type_id.clone());
+                })?;
+                digests.extend(version.digests);
+                file_refs.extend(version.file_refs);
+            }
             if agreed.contains(row.id.as_str()) {
                 carried_ids.insert(row.id.clone(), (row.type_id.clone(), row.source.clone()));
             }
@@ -495,7 +642,7 @@ fn select(
                 edge.answered()?,
                 print(&lending)?
             );
-            let line = line_value(&text)?;
+            let value = line_value(&text)?;
             let ends = |id: &str| {
                 if id == edge.source_id {
                     Some(checks::End {
@@ -509,8 +656,19 @@ fn select(
                     None
                 }
             };
-            checks::edge(catalog, cap, &line, edges.lines as usize + 1, ends)
+            checks::edge(catalog, cap, &value, edges.lines as usize + 1, ends)
                 .map_err(|refused| unrestorable(&refused))?;
+            if text.len() > line {
+                let refused = checks::too_long(
+                    checks::Kind::Edge,
+                    &edge.id,
+                    &edge.edge_type,
+                    None,
+                    text.len(),
+                    line,
+                );
+                return Err(unrestorable(&refused));
+            }
             edges.push(&text, |need| {
                 need.0
                     .insert((edge.edge_type.clone(), source.type_id.clone()));
@@ -528,7 +686,9 @@ fn select(
                     refused.refusal.message
                 ))
             })?;
-            rows.push(&print(&row.line)?, |need| {
+            let text = print(&row.line)?;
+            fits(ROWS, rows.lines + 1, &text, line)?;
+            rows.push(&text, |need| {
                 need.hosts.insert(row.host);
                 need.types.extend(row.types);
                 need.unheld |= row.unheld;
@@ -536,7 +696,7 @@ fn select(
         },
     )?;
     let mut listed = Vec::new();
-    let mut missing = BTreeMap::new();
+    let mut missing = BTreeSet::new();
     for digest in digests.union(&file_refs) {
         let Ok(hash) = Hash::parse(digest) else {
             continue;
@@ -544,10 +704,7 @@ fn select(
         match carry::carried(read.tx, caller, &hash)? {
             Some(carried) => listed.push(carried),
             None if file_refs.contains(digest) => {
-                missing.insert(
-                    digest.clone(),
-                    json!({ "mime_type": null, "size_bytes": null }),
-                );
+                missing.insert(digest.clone());
             }
             None => {}
         }
@@ -559,6 +716,7 @@ fn select(
      -> Result<()> {
         counts.insert(name.into(), values.len().into());
         for (value, need) in values {
+            fits(INSTANCE, lines.lines + 1, &value, line)?;
             lines.push(&value, |open| {
                 for permission in need.permissions {
                     open.permission(permission);
@@ -678,7 +836,7 @@ fn select(
             let named = listed
                 .iter()
                 .map(|carried| carried.blob.hash.as_str().to_string())
-                .chain(missing.keys().cloned());
+                .chain(missing.iter().cloned());
             let mut in_store = crate::app::blobs::held_in(read.tx, backup_store, named)?;
             in_store.sort();
             let files = listed
@@ -695,6 +853,7 @@ fn select(
     Ok(Selected {
         instance: instance.finish()?,
         items: items.finish()?,
+        versions: versions.finish()?,
         edges: edges.finish()?,
         rows: rows.finish()?,
         counts,

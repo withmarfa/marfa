@@ -11,7 +11,10 @@ use sha2::{Digest, Sha256};
 
 use super::spool::{Spooled, read_chunk};
 use super::tar;
-use super::{EdgeNeed, InstanceNeed, ItemNeed, Prepared, RowNeed, Sender};
+use super::{
+    EDGES, EdgeNeed, FILES, INSTANCE, ITEMS, InstanceNeed, ItemNeed, MANIFEST, Prepared, ROWS,
+    RowNeed, Sender, VERSIONS,
+};
 use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::blobs::Hash;
@@ -111,20 +114,24 @@ impl Out<'_> {
     }
 
     async fn whole(&self, prepared: &Prepared) -> Result<(), Stop> {
+        let files = prepared
+            .files
+            .as_ref()
+            .ok_or_else(|| failed("an archive's files were not spooled"))?;
         self.holds(|_| Ok(true)).await?;
-        self.header("manifest.json", prepared.manifest.len() as u64)
+        self.header(MANIFEST, prepared.manifest.len() as u64)
             .await?;
         self.emit(Bytes::copy_from_slice(&prepared.manifest))
             .await?;
         self.pad(prepared.manifest.len() as u64).await?;
-        self.lines("instance.ndjson.gz", &prepared.instance, instance_need)
+        self.lines(FILES, files, |_| Box::new(|_| Ok(true))).await?;
+        self.lines(INSTANCE, &prepared.instance, instance_need)
             .await?;
-        self.lines("items.ndjson.gz", &prepared.items, items_need)
+        self.lines(ITEMS, &prepared.items, items_need).await?;
+        self.lines(VERSIONS, &prepared.versions, items_need)
             .await?;
-        self.lines("edges.ndjson.gz", &prepared.edges, edges_need)
-            .await?;
-        self.lines("rows.ndjson.gz", &prepared.rows, rows_need)
-            .await?;
+        self.lines(EDGES, &prepared.edges, edges_need).await?;
+        self.lines(ROWS, &prepared.rows, rows_need).await?;
         for (carried, store) in &prepared.blobs {
             self.blob(carried, store).await?;
         }
