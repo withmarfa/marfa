@@ -123,6 +123,25 @@ fn backing(health: &BackupHealth) -> Vec<Concern> {
                 .to_string(),
         ));
     }
+    let waiting = backups["last_backup_files_waiting"].as_u64().unwrap_or(0);
+    if waiting > 0 && backups["status"] != "failing" {
+        let place = match text("destination") {
+            Some("folder") => "backup folder",
+            _ => "object store",
+        };
+        let files = match waiting {
+            1 => "1 file it names waits".to_string(),
+            count => format!("{count} files it names wait"),
+        };
+        found.push(concern(
+            "incomplete",
+            "The newest backup is not complete yet",
+            format!(
+                "{files} for a copy in the {place}, so a restore from it would refuse. It is \
+                 complete once replication has copied them."
+            ),
+        ));
+    }
     found
 }
 

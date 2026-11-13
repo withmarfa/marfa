@@ -138,6 +138,26 @@ fn record_failure(tx: &Transaction<'_>, error: &str, at: Stamp, in_store: bool) 
     Ok(())
 }
 
+/// How many files the backup `name` in `store` names that the store holds no copy of, or `None`
+/// when it is not recorded there.
+fn files_waiting(tx: &Transaction<'_>, store: &str, name: &str) -> Result<Option<u64>> {
+    let seq: Option<i64> = tx
+        .prepare_cached("SELECT seq FROM backups WHERE store_id = ?1 AND name = ?2")?
+        .query_row(params![store, name], |row| row.get(0))
+        .optional()?;
+    let Some(seq) = seq else {
+        return Ok(None);
+    };
+    let waiting: i64 = tx
+        .prepare_cached(
+            "SELECT count(*) FROM backup_files f WHERE f.store_id = ?1 AND f.first_seq <= ?2 \
+             AND (f.last_seq IS NULL OR f.last_seq >= ?2) AND NOT EXISTS (SELECT 1 FROM \
+             blob_copies c WHERE c.hash = f.hash AND c.store_id = ?1)",
+        )?
+        .query_row(params![store, seq], |row| row.get(0))?;
+    Ok(Some(waiting.max(0) as u64))
+}
+
 /// The files the newest backup of `store` named; only one backup run at a time changes them.
 fn open_files(tx: &Transaction<'_>, store: &str) -> Result<HashSet<String>> {
     Ok(tx
@@ -625,6 +645,8 @@ enum Outcome {
         unremoved: usize,
         /// The files the backup names that no store could give.
         lost: Vec<String>,
+        /// How many files it names that the destination did not yet hold once it was put.
+        waiting: u64,
     },
     Unchanged,
     Running,
@@ -640,6 +662,7 @@ impl Outcome {
                 removed,
                 unremoved,
                 lost,
+                waiting,
                 ..
             } => json!({
                 "outcome": "put",
@@ -648,6 +671,7 @@ impl Outcome {
                 "removed": removed,
                 "unremoved": unremoved,
                 "blobs_lost": lost.len(),
+                "blobs_waiting": waiting,
             }),
             other => other.to_json(),
         }
@@ -663,12 +687,14 @@ impl Outcome {
                 removed,
                 unremoved,
                 lost,
+                waiting,
             } => json!({
                 "outcome": "put",
                 "backup": listed(instance, name, *taken, *size),
                 "removed": removed,
                 "unremoved": unremoved,
                 "blobs_lost": lost,
+                "blobs_waiting": waiting,
             }),
             Outcome::Unchanged => json!({ "outcome": "unchanged" }),
             Outcome::Running => json!({ "outcome": "running" }),
@@ -794,8 +820,8 @@ impl App {
             }
         }
         let mut received = receiving.finish().await?;
-        let whole = match &destination {
-            Destination::Bucket(_) => false,
+        let carries_files = match &destination {
+            Destination::Bucket(_) => true,
             Destination::Folder(folder) => {
                 let reading = self.files_to_read(folder, instance, &received).await?;
                 let needed = received.manifest.held_files();
@@ -820,7 +846,13 @@ impl App {
                 true
             }
         };
-        let mut answer = self.restore(caller, started_at, received, whole).await?;
+        let mut answer = self
+            .restore(caller, started_at, received, carries_files)
+            .await
+            .map_err(|refused| match destination {
+                Destination::Bucket(_) => lacking_in_bucket(refused),
+                Destination::Folder(_) => refused,
+            })?;
         answer["backup"] = json!({ "name": name, "instance_id": instance });
         Ok(answer)
     }
@@ -994,21 +1026,34 @@ impl App {
                 _ => None,
             }
         };
+        let store = destination.as_ref().map(Destination::id);
         let read = tokio::time::timeout(
             Duration::from_secs(2),
-            self.db
-                .read(|tx| Ok((state(tx)?, housekeeping::last_run(tx, REPLICATION)?))),
+            self.db.read(move |tx| {
+                let state = state(tx)?;
+                let files_waiting = match (&store, &state.last_backup) {
+                    (Some(store), Some(name)) => files_waiting(tx, store, name)?,
+                    _ => None,
+                };
+                Ok((
+                    state,
+                    housekeeping::last_run(tx, REPLICATION)?,
+                    files_waiting,
+                ))
+            }),
         );
         let (read, looked) = tokio::join!(read, look);
-        let (state, replication) = match read {
-            Ok(Ok((state, replication))) => (Some(state), replication),
+        let (state, replication, files_waiting) = match read {
+            Ok(Ok((state, replication, files_waiting))) => {
+                (Some(state), replication, files_waiting)
+            }
             Ok(Err(error)) => {
                 tracing::warn!(%error, "The backup state did not read for health");
-                (None, None)
+                (None, None, None)
             }
             Err(_) => {
                 tracing::warn!("The backup state did not read for health in time");
-                (None, None)
+                (None, None, None)
             }
         };
         let waiting = replication
@@ -1031,6 +1076,7 @@ impl App {
             .is_some_and(|state| state.failures > 0 && state.last_error_in_store);
         let turned_off = self.settings.live().get(BACKUP_INTERVAL_SECONDS) == 0;
         let failing = state.as_ref().is_none_or(|state| state.failures > 0);
+        let incomplete = files_waiting.is_some_and(|waiting| waiting > 0);
         let status = match (&destination, turned_off, failing, &store_error) {
             (None, ..) => {
                 health.insert("reason".into(), "no_backup_destination".into());
@@ -1042,6 +1088,7 @@ impl App {
                 "off"
             }
             (Some(_), false, true, None) => "failing",
+            (Some(_), false, false, None) if incomplete => "incomplete",
             (Some(_), false, false, None) => "ok",
         };
         health.insert("status".into(), status.into());
@@ -1054,6 +1101,7 @@ impl App {
         }
         if destination.is_some() {
             health.insert("copies_waiting".into(), waiting.into());
+            health.insert("last_backup_files_waiting".into(), files_waiting.into());
             health.insert("store_error".into(), store_error.into());
         }
         BackupHealth {
@@ -1062,6 +1110,35 @@ impl App {
             run_in_store,
         }
     }
+}
+
+/// Words a restore the object store lacks files for as the bucket's, not the folder's.
+fn lacking_in_bucket(mut refused: Refusal) -> Refusal {
+    const SHOWN: usize = 10;
+    if refused.code != Code::BackupFilesMissing {
+        return refused;
+    }
+    let lacking: Vec<String> = refused
+        .details
+        .as_ref()
+        .and_then(|details| details["missing_blobs"].as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|hash| hash.as_str().map(str::to_string))
+        .collect();
+    let mut shown = lacking[..lacking.len().min(SHOWN)].join(", ");
+    if lacking.len() > SHOWN {
+        shown.push_str(&format!(" and {} more", lacking.len() - SHOWN));
+    }
+    refused.message = format!(
+        "Nothing was restored: the backup names {} that neither this instance nor the object \
+         store holds whole: {shown}. They were still waiting for their copy when the backup was \
+         taken. Restore an earlier backup, or download this backup's object from the object \
+         store and restore it with `marfa restore` to leave them out.",
+        counted(lacking.len(), "file", "files")
+    )
+    .into();
+    refused
 }
 
 /// How the destination fails to take the copies that wait for it.
@@ -1142,11 +1219,14 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
         }) => {
             let store = destination.id();
             let (recorded, without) = (name.clone(), lost_message(&name, &lost));
-            app.db
+            let waiting = app
+                .db
                 .write(Write::own(), move |tx| {
-                    record_put(tx, &store, changes, &recorded, at, without.as_deref())
+                    record_put(tx, &store, changes, &recorded, at, without.as_deref())?;
+                    files_waiting(tx, &store, &recorded)
                 })
-                .await?;
+                .await?
+                .unwrap_or(0);
             let (removed, unremoved) = thin(app, &destination, at).await;
             Ok(Outcome::Put {
                 instance: app.instance_id.clone(),
@@ -1156,6 +1236,7 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
                 removed,
                 unremoved,
                 lost,
+                waiting,
             })
         }
         Err(refused) => {
@@ -1669,6 +1750,30 @@ mod tests {
 
         settled(&tx, &[&second], &[&first], at(1));
         assert!(held_of(&tx, &[&a]).is_empty());
+    }
+
+    #[test]
+    fn a_backup_waits_for_each_file_it_names_that_its_store_holds_no_copy_of() {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        let (a, b, c) = (hash('a'), hash('b'), hash('c'));
+        registered(&tx, &[&a, &b, &c]);
+        drop_copy(&tx, &c);
+        hold(&tx, BUCKET, &named(0), &files(&[&a, &c])).unwrap();
+        hold(&tx, BUCKET, &named(1), &files(&[&a, &b])).unwrap();
+        assert_eq!(files_waiting(&tx, BUCKET, &named(0)).unwrap(), Some(1));
+        assert_eq!(files_waiting(&tx, BUCKET, &named(1)).unwrap(), Some(0));
+
+        drop_copy(&tx, &b);
+        assert_eq!(files_waiting(&tx, BUCKET, &named(1)).unwrap(), Some(1));
+        tx.execute(
+            "INSERT INTO blob_copies (hash, store_id, object, written, recorded_at) \
+             VALUES (?1, ?2, 'found', 0, '2026-11-01T00:00:00.000Z')",
+            params![b.as_str(), BUCKET],
+        )
+        .unwrap();
+        assert_eq!(files_waiting(&tx, BUCKET, &named(1)).unwrap(), Some(0));
+        assert_eq!(files_waiting(&tx, "elsewhere", &named(1)).unwrap(), None);
     }
 
     #[test]
