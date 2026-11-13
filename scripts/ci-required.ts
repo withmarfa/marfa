@@ -230,7 +230,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^(?!(.*\/)?(fixtures|__fixtures__|testdata)\/)(?!packages\/types\/generated\/|packages\/client\/src\/generated\/).*\.md$/i,
     [],
   ],
-  // The settings census test holds it to the settings schema.
+  // `ci/env-example.test.ts` holds it to the contract's settings table.
   [/^\.env\.example$/, ["workspace"]],
   [/^LICENSE$/, []],
   // The README's images, which only GitHub reads.

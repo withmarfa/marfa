@@ -236,7 +236,6 @@ function namedPort(raw: string | undefined): number | undefined {
   return port;
 }
 
-
 /**
  * Whether the run's own environment says the program is a release build
  * without test hooks, which a measuring run starts as a person does.

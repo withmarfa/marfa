@@ -21,7 +21,7 @@ afterAll(async () => {
   await cleanup(ctx);
 });
 
-/** The sweeps both servers run whatever the configuration. */
+/** The sweeps the server runs whatever the configuration. */
 const ALWAYS_LISTED = [
   "audit-cleanup",
   "blob-integrity",
