@@ -74,6 +74,38 @@ impl Disk {
         Disk { id, root }
     }
 
+    /// The id the marker in `root` holds, where it holds one. It blocks.
+    pub fn marked(root: &Path) -> Result<Option<String>, Failure> {
+        read_marker(root)
+    }
+
+    /// Takes `root`, which must exist and hold no other store's marker, as the store `id`. It
+    /// blocks.
+    pub fn claim(root: &Path, id: &str) -> io::Result<Disk> {
+        match read_marker(root) {
+            Ok(None) => {}
+            Ok(Some(found)) if found == id => {}
+            Ok(Some(found)) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("it holds the marker of another store, {found}"),
+                ));
+            }
+            Err(failure) => return Err(io::Error::other(failure.message)),
+        }
+        let mut file = File::create(root.join(MARKER))?;
+        file.write_all(id.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        File::open(root)?.sync_all()?;
+        let disk = Disk {
+            id: id.to_string(),
+            root: root.to_path_buf(),
+        };
+        fs::create_dir_all(disk.tmp())?;
+        Ok(disk)
+    }
+
     pub fn id(&self) -> &str {
         &self.id
     }

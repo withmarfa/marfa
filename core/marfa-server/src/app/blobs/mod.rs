@@ -286,11 +286,25 @@ impl Blobs {
         self.folder.clone()
     }
 
+    /// Records the backup folder's files area as the store `id`, forgetting the store `old` and
+    /// every copy it records; answers how many copies it forgot.
+    pub fn replace_folder_store(
+        tx: &rusqlite::Transaction<'_>,
+        old: &str,
+        id: &str,
+        locator: &str,
+        at: &str,
+    ) -> Result<usize> {
+        let forgotten = rows::forget_store(tx, old, at)?;
+        rows::attach(tx, id, "folder", locator, at)?;
+        Ok(forgotten)
+    }
+
     /// The store backups name their files in: the object store or the backup folder.
-    pub fn backup_store_id(&self) -> Option<&str> {
+    pub fn backup_store_id(&self) -> Option<String> {
         match (&self.s3, &self.folder) {
-            (Some(s3), _) => Some(s3.id()),
-            (None, Some(folder)) => Some(folder.files().id()),
+            (Some(s3), _) => Some(s3.id().to_string()),
+            (None, Some(folder)) => Some(folder.files().id().to_string()),
             (None, None) => None,
         }
     }

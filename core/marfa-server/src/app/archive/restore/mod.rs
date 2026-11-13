@@ -45,7 +45,7 @@ pub(crate) fn conflicting(ids: Vec<String>) -> Refusal {
     .with_detail("conflicting_ids", ids)
 }
 
-fn files_missing(lacking: Vec<String>) -> Refusal {
+pub(crate) fn files_missing(lacking: Vec<String>) -> Refusal {
     const SHOWN: usize = 10;
     let mut shown = lacking[..lacking.len().min(SHOWN)].join(", ");
     if lacking.len() > SHOWN {
@@ -192,20 +192,7 @@ impl App {
         let task = async move {
             let absent = received.absent();
             let needed: HashSet<String> = if whole {
-                received
-                    .manifest
-                    .blobs
-                    .keys()
-                    .cloned()
-                    .chain(
-                        received
-                            .manifest
-                            .missing
-                            .iter()
-                            .filter(|(_, (_, size))| size.is_some())
-                            .map(|(hash, _)| hash.clone()),
-                    )
-                    .collect()
+                received.manifest.held_files()
             } else {
                 HashSet::new()
             };

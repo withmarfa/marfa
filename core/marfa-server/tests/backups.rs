@@ -339,7 +339,7 @@ async fn with_no_object_store_health_says_backups_are_off_and_the_doors_refuse()
     assert_eq!(body["status"], "ok");
     assert_eq!(
         body["backups"],
-        json!({ "status": "off", "reason": "no_bucket" })
+        json!({ "status": "off", "reason": "no_backup_destination" })
     );
 
     for (method, path) in [
@@ -352,7 +352,7 @@ async fn with_no_object_store_health_says_backups_are_off_and_the_doors_refuse()
     ] {
         let (status, body) = instance.local(method, path, None).await;
         assert_eq!(status, StatusCode::CONFLICT, "{path}: {body}");
-        assert_eq!(body["error"]["code"], "no_bucket", "{path}");
+        assert_eq!(body["error"]["code"], "no_backup_destination", "{path}");
     }
 
     let (status, body) = instance.local(Method::GET, "/housekeeping", None).await;
@@ -660,4 +660,66 @@ async fn a_copy_dropped_while_the_backup_is_read_fails_the_backup_and_one_droppe
     assert_eq!(running.await.unwrap().status(), StatusCode::OK);
     assert_eq!(store.objects_under(BACKUPS).len(), 1);
     assert!(instance.held(&late).await);
+}
+
+#[tokio::test]
+async fn a_file_no_store_can_give_is_recorded_lost_and_the_backup_to_the_object_store_goes_ahead() {
+    let store = FakeS3::start().await;
+    let instance = Instance::backing_up_to(&store).await;
+    let (kept, _) = instance.named_file("a file the object store holds").await;
+    let request = Request::builder()
+        .method(Method::POST)
+        .uri("/blobs")
+        .header(header::CONTENT_TYPE, "text/plain")
+        .header(header::AUTHORIZATION, format!("Bearer {}", instance.writer))
+        .body(Body::from("a file whose only copy went"))
+        .unwrap();
+    let response = instance.public.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+    let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let lost = serde_json::from_slice::<Value>(&bytes).unwrap()["hash"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (status, made) = instance
+        .as_writer(
+            Method::POST,
+            "/items",
+            Some(json!({
+                "type": "core.file",
+                "properties": { "blob_ref": lost, "mime_type": "text/plain" },
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{made}");
+    instance.app.faults.set("lose:blob", Some(&lost)).unwrap();
+
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["blobs_lost"], json!([lost]), "{body}");
+    let name = body["backup"]["name"].as_str().unwrap();
+    let key = store
+        .objects_under(BACKUPS)
+        .into_iter()
+        .find(|key| key.ends_with(name))
+        .unwrap();
+    let tar = store.object(&key).unwrap();
+    let octal = String::from_utf8_lossy(&tar[124..136]);
+    let size = usize::from_str_radix(octal.trim_matches(|c: char| c == '\0' || c == ' '), 8)
+        .unwrap();
+    let manifest: Value = serde_json::from_slice(&tar[512..512 + size]).unwrap();
+    assert_eq!(manifest["lost_blobs"], json!([lost]), "{manifest}");
+    assert!(manifest["missing_blobs"][&kept].is_object(), "{manifest}");
+    let health = instance.backups_health().await;
+    assert_eq!(health["status"], "failing", "{health}");
+    assert!(
+        health["last_error"].as_str().unwrap().contains(&lost),
+        "{health}"
+    );
+
+    instance.app.faults.clear(None);
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["blobs_lost"], json!([]), "{body}");
+    assert_eq!(instance.backups_health().await["status"], "ok");
 }

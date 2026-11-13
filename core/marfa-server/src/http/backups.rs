@@ -44,3 +44,10 @@ pub async fn restore(
         .await?;
     Ok(json_answer(StatusCode::OK, &answer))
 }
+
+pub async fn adopt_folder(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
+    caller.require_local()?;
+    query::only(&uri, &[])?;
+    let answer = app.adopt_backup_folder(&caller).await?;
+    Ok(json_answer(StatusCode::OK, &answer))
+}

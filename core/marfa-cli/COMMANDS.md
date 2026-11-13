@@ -2237,6 +2237,22 @@ marfa backups restore [OPTIONS] <INSTANCE_ID> <NAME>
 | `<INSTANCE_ID>` | The id of the instance that took the backup, as `backups list` shows it. |
 | `<NAME>` | The backup's name, as `backups list` shows it. |
 
+### marfa backups folder
+
+The backup folder that `MARFA_BACKUP_PATH` names. Requires private local authority (--socket).
+
+```text
+marfa backups folder [OPTIONS] <COMMAND>
+```
+
+### marfa backups folder adopt
+
+Start afresh on a disk that replaced the backup folder's disk. The server forgets the backups and file copies it kept on the old disk, which are gone, and copies every file again with the next backup. It changes no other store, and refuses while the folder still holds this instance's files or is not there.
+
+```text
+marfa backups folder adopt [OPTIONS]
+```
+
 ## views
 
 Views: saved lists of items, held as `system.view` and shared by every app. Writing one needs write on `system.view`.

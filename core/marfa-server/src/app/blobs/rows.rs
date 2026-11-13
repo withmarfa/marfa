@@ -391,6 +391,19 @@ pub fn attach(tx: &Transaction<'_>, id: &str, kind: &str, locator: &str, at: &st
     Ok(())
 }
 
+/// Detaches the store `id` and forgets every copy, failure and deletion it records, answering
+/// how many copies it forgot.
+pub fn forget_store(tx: &Transaction<'_>, id: &str, at: &str) -> Result<usize> {
+    let copies = tx.execute("DELETE FROM blob_copies WHERE store_id = ?1", [id])?;
+    tx.execute("DELETE FROM blob_copy_failures WHERE store_id = ?1", [id])?;
+    tx.execute("DELETE FROM blob_pending_deletions WHERE store_id = ?1", [id])?;
+    tx.execute(
+        "UPDATE stores SET detached_at = ?2 WHERE id = ?1 AND detached_at IS NULL",
+        params![id, at],
+    )?;
+    Ok(copies)
+}
+
 /// Every store the configuration no longer names is detached, from now.
 pub fn detach_others(tx: &Transaction<'_>, kept: &[&str], at: &str) -> Result<()> {
     let kept = serde_json::to_string(kept).map_err(|_| unread("store id"))?;

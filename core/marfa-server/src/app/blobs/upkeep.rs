@@ -90,6 +90,8 @@ enum Copy {
     },
     /// Why no copy was made, where a store said.
     Skipped(Option<String>),
+    /// Every store that records a copy answered, and none gave bytes that hash to the blob.
+    Unreadable,
     TargetSilent,
 }
 
@@ -103,14 +105,16 @@ async fn copy_to(
     unreachable: &mut BTreeSet<String>,
 ) -> Result<Copy> {
     let blobs = &app.blobs;
+    let mut silent = false;
     for source in blobs.attached() {
         let id = source.id().to_string();
-        if unreachable.contains(&id) {
-            continue;
-        }
         let Some(held) = holders.iter().find(|held| held.store_id == id) else {
             continue;
         };
+        if unreachable.contains(&id) {
+            silent = true;
+            continue;
+        }
         let bytes = match blobs
             .open_bytes(&source, &blob.hash, &held.object, 0, blob.size_bytes)
             .await
@@ -118,6 +122,7 @@ async fn copy_to(
             Ok(bytes) => bytes,
             Err(Failed::Late) => {
                 unreachable.insert(id);
+                silent = true;
                 continue;
             }
             Err(Failed::Io(error)) => {
@@ -187,7 +192,11 @@ async fn copy_to(
             }
         });
     }
-    Ok(Copy::Skipped(None))
+    Ok(if silent {
+        Copy::Skipped(Some("a store that holds it did not answer".to_string()))
+    } else {
+        Copy::Unreadable
+    })
 }
 
 /// Confirmation needs both the object's writer and the bucket's marker.
@@ -214,6 +223,8 @@ pub enum Replicated {
     Passed,
     /// No copy was made, for the reason given where a store said.
     Failed(Option<String>),
+    /// No store could give bytes that hash to the blob.
+    Unreadable,
 }
 
 /// Copies one blob to `target` under its lock, recording the copy, unless `target` holds one.
@@ -265,19 +276,20 @@ pub async fn replicate_one(
     }
     let (from, object) = match made {
         Copy::Made { from, object } => (from, object),
-        Copy::Skipped(_) | Copy::TargetSilent => {
-            let why = match made {
-                Copy::Skipped(why) => why,
+        Copy::Skipped(_) | Copy::Unreadable | Copy::TargetSilent => {
+            let failed = match made {
+                Copy::Skipped(why) => Replicated::Failed(why),
+                Copy::Unreadable => Replicated::Unreadable,
                 _ => {
                     unreachable.insert(target_id.clone());
-                    Some("the store did not answer in time".to_string())
+                    Replicated::Failed(Some("the store did not answer in time".to_string()))
                 }
             };
-            let (failed, to) = (hash.clone(), target_id.clone());
+            let (hash, to) = (hash.clone(), target_id.clone());
             app.db
-                .write(Write::own(), move |tx| rows::copy_failed(tx, &failed, &to))
+                .write(Write::own(), move |tx| rows::copy_failed(tx, &hash, &to))
                 .await?;
-            return Ok(Replicated::Failed(why));
+            return Ok(failed);
         }
     };
     let (recorded_hash, to) = (hash.clone(), target_id.clone());
@@ -550,12 +562,12 @@ fn purgeable(tx: &rusqlite::Transaction<'_>, app: &App, surveyed: bool) -> Resul
     if let Some(store) = app.blobs.backup_store_id()
         && !found.is_empty()
     {
-        let held = crate::app::backups::held(tx, store, &found)?;
+        let held = crate::app::backups::held(tx, &store, &found)?;
         found.retain(|hash| !held.contains(hash));
         if !surveyed {
             let stored: HashSet<String> = rows::held_in(
                 tx,
-                store,
+                &store,
                 found.iter().map(|hash| hash.as_str().to_string()),
             )?
             .into_iter()

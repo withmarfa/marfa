@@ -82,6 +82,16 @@ pub struct Copy {
     replaces: Option<String>,
 }
 
+/// What the attached stores answer for a blob the copy record names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Readable {
+    Whole,
+    /// No store records a copy, or every one that does answered that it does not hold it whole.
+    Nowhere,
+    /// No store answered that it holds it whole, and one did not answer.
+    Silent,
+}
+
 /// Where a blob the archive names and does not carry was found.
 enum Absent {
     /// An attached store holds the instance's recorded copy whole.
@@ -366,39 +376,52 @@ impl App {
         Ok(copies)
     }
 
+    /// Whether an attached store answers that it holds the blob's recorded copy whole.
+    pub async fn readable(&self, hash: &Hash) -> Result<Readable> {
+        let looked = hash.clone();
+        let (record, holders) = self
+            .db
+            .read(move |tx| Ok((rows::find(tx, &looked)?, rows::holders(tx, &looked)?)))
+            .await?;
+        let Some(blob) = record else {
+            return Ok(Readable::Nowhere);
+        };
+        let mut silent = false;
+        for copy in &holders {
+            let Some(store) = self.blobs.store(&copy.store_id) else {
+                continue;
+            };
+            match self.blobs.answer_of(&store, &blob.hash, &copy.object).await {
+                Ok(Answer::Holds(size)) if size == blob.size_bytes => return Ok(Readable::Whole),
+                Ok(_) => {}
+                Err(failure) => {
+                    tracing::warn!(?failure, store = store.kind(), "A store did not answer for a blob");
+                    silent = true;
+                }
+            }
+        }
+        Ok(if silent {
+            Readable::Silent
+        } else {
+            Readable::Nowhere
+        })
+    }
+
     /// A store that fails or stays silent, where none answers whole, refuses the restore.
     async fn find_absent(&self, named: &Named) -> Result<Absent> {
+        match self.readable(&named.hash).await? {
+            Readable::Whole => return Ok(Absent::Held),
+            Readable::Silent => return Err(unavailable()),
+            Readable::Nowhere => {}
+        }
+        let Some(s3) = self.blobs.s3.clone() else {
+            return Ok(Absent::Missing);
+        };
         let looked = named.hash.clone();
         let (record, holders) = self
             .db
             .read(move |tx| Ok((rows::find(tx, &looked)?, rows::holders(tx, &looked)?)))
             .await?;
-        let mut failed = false;
-        if let Some(blob) = &record {
-            for copy in &holders {
-                let Some(store) = self.blobs.store(&copy.store_id) else {
-                    continue;
-                };
-                match self.blobs.answer_of(&store, &blob.hash, &copy.object).await {
-                    Ok(Answer::Holds(size)) if size == blob.size_bytes => return Ok(Absent::Held),
-                    Ok(_) => {}
-                    Err(failure) => {
-                        tracing::warn!(
-                            ?failure,
-                            store = store.kind(),
-                            "A store did not answer for a restored blob"
-                        );
-                        failed = true;
-                    }
-                }
-            }
-        }
-        if failed {
-            return Err(unavailable());
-        }
-        let Some(s3) = self.blobs.s3.clone() else {
-            return Ok(Absent::Missing);
-        };
         let check = self.blobs.check();
         let hash = named.hash.clone();
         let faults = self.faults.clone();

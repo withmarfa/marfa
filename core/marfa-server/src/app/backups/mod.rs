@@ -18,7 +18,8 @@ use tokio::sync::Mutex;
 use super::App;
 use super::access::Caller;
 use super::archive::{self, Backup};
-use super::blobs::folder::{self as backup_folder, Folder};
+use super::blobs::folder::{self as backup_folder, Adoptable, Folder};
+use super::blobs::restore::{Named, Readable};
 use super::blobs::s3::S3;
 use super::blobs::store::{ByteStream, Store};
 use super::blobs::upkeep::{Replicated, replicate_one};
@@ -89,12 +90,14 @@ fn state(tx: &Transaction<'_>) -> Result<State> {
     Ok(found.unwrap_or_default())
 }
 
+/// Records the backup put; one put without files it names counts as a failed run, with `without`.
 fn record_put(
     tx: &Transaction<'_>,
     store: &str,
     changes: i64,
     name: &str,
     at: Stamp,
+    without: Option<&str>,
 ) -> Result<()> {
     tx.prepare_cached("UPDATE backups SET confirmed = 1 WHERE store_id = ?1 AND name = ?2")?
         .execute(params![store, name])?;
@@ -102,11 +105,20 @@ fn record_put(
         "INSERT INTO backup_state (id, backed_up, backed_up_version, last_backup, last_backup_at) \
          VALUES (1, ?1, ?4, ?2, ?3) ON CONFLICT (id) DO UPDATE SET \
          backed_up = max(coalesce(backed_up, ?1), ?1), backed_up_version = ?4, \
-         last_backup = ?2, last_backup_at = ?3, \
-         failures = 0, last_error = NULL, last_failed_at = NULL",
+         last_backup = ?2, last_backup_at = ?3",
         params![changes, name, at, archive::VERSION as i64],
     )?;
-    Ok(())
+    match without {
+        Some(message) => record_failure(tx, message, at),
+        None => {
+            tx.execute(
+                "UPDATE backup_state SET failures = 0, last_error = NULL, last_failed_at = NULL \
+                 WHERE id = 1",
+                [],
+            )?;
+            Ok(())
+        }
+    }
 }
 
 fn record_failure(tx: &Transaction<'_>, error: &str, at: Stamp) -> Result<()> {
@@ -331,6 +343,22 @@ fn reconcile(
     drop_uncovered(tx, store)
 }
 
+/// Forgets every backup recorded in `store` and the files they hold, so the next run backs up
+/// again; answers how many backups it forgot.
+fn forget_backups(tx: &Transaction<'_>, store: &str) -> Result<usize> {
+    let put = tx
+        .prepare_cached("DELETE FROM backups WHERE store_id = ?1")?
+        .execute([store])?;
+    tx.prepare_cached("DELETE FROM backup_files WHERE store_id = ?1")?
+        .execute([store])?;
+    tx.execute(
+        "UPDATE backup_state SET backed_up = NULL, backed_up_version = NULL, last_backup = NULL, \
+         last_backup_at = NULL WHERE id = 1",
+        [],
+    )?;
+    Ok(put + found::forget_store(tx, store)?)
+}
+
 /// Deletes each hold of `store` no recorded backup covers; an open one needs only the newest.
 fn drop_uncovered(tx: &Transaction<'_>, store: &str) -> Result<()> {
     tx.prepare_cached(
@@ -360,10 +388,10 @@ impl Destination {
     }
 
     /// The id of the store the backups' files are held in.
-    fn id(&self) -> &str {
+    fn id(&self) -> String {
         match self {
-            Destination::Bucket(bucket) => bucket.id(),
-            Destination::Folder(folder) => folder.files().id(),
+            Destination::Bucket(bucket) => bucket.id().to_string(),
+            Destination::Folder(folder) => folder.files().id().to_string(),
         }
     }
 
@@ -393,7 +421,9 @@ impl Destination {
                 } else {
                     format!(
                         "The backup folder {} is not there, or does not hold this instance's \
-                         files. Mount the disk it is on, then try again.",
+                         files. Mount the disk it is on, then try again. If that disk was \
+                         replaced, run `marfa backups folder adopt` to start afresh on the one \
+                         there now.",
                         folder.root().display()
                     )
                 };
@@ -542,9 +572,9 @@ pub fn held(tx: &Transaction<'_>, store: &str, hashes: &[Hash]) -> Result<HashSe
     Ok(held)
 }
 
-fn no_bucket() -> Refusal {
+fn no_backup_destination() -> Refusal {
     Refusal::new(
-        Code::NoBucket,
+        Code::NoBackupDestination,
         "This instance keeps no backups, because it has nowhere to put them. Set \
          MARFA_BACKUP_PATH to a folder, or S3_BUCKET to an object store, to keep them.",
     )
@@ -584,6 +614,8 @@ enum Outcome {
         size: u64,
         removed: usize,
         unremoved: usize,
+        /// The files the backup names that no store could give.
+        lost: Vec<String>,
     },
     Unchanged,
     Running,
@@ -598,6 +630,7 @@ impl Outcome {
                 size,
                 removed,
                 unremoved,
+                lost,
                 ..
             } => json!({
                 "outcome": "put",
@@ -605,6 +638,7 @@ impl Outcome {
                 "size_bytes": size,
                 "removed": removed,
                 "unremoved": unremoved,
+                "blobs_lost": lost.len(),
             }),
             other => other.to_json(),
         }
@@ -619,11 +653,13 @@ impl Outcome {
                 size,
                 removed,
                 unremoved,
+                lost,
             } => json!({
                 "outcome": "put",
                 "backup": listed(instance, name, *taken, *size),
                 "removed": removed,
                 "unremoved": unremoved,
+                "blobs_lost": lost,
             }),
             Outcome::Unchanged => json!({ "outcome": "unchanged" }),
             Outcome::Running => json!({ "outcome": "running" }),
@@ -676,7 +712,7 @@ fn put_stream(app: &Arc<App>, backup: Backup) -> BoxStream<'static, std::io::Res
 
 impl App {
     fn destination(&self) -> Result<Destination> {
-        Destination::of(self).ok_or_else(no_bucket)
+        Destination::of(self).ok_or_else(no_backup_destination)
     }
 
     /// The backups where this instance keeps them, of every instance that put them there, newest
@@ -752,9 +788,10 @@ impl App {
         let whole = match &destination {
             Destination::Bucket(_) => false,
             Destination::Folder(folder) => {
-                let copies = self
-                    .copies_in_folder(folder, instance, received.absent())
+                let reading = self
+                    .files_to_read(folder, instance, &received)
                     .await?;
+                let copies = self.copies_in_folder(folder, instance, reading).await?;
                 received.carried.extend(copies);
                 true
             }
@@ -762,6 +799,134 @@ impl App {
         let mut answer = self.restore(caller, started_at, received, whole).await?;
         answer["backup"] = json!({ "name": name, "instance_id": instance });
         Ok(answer)
+    }
+
+    /// The files a restore from the backup folder reads: each the backup names that no attached
+    /// store holds whole and the folder holds. Refuses, before any is read, where the folder lacks
+    /// one the instance that took the backup held and had not lost.
+    async fn files_to_read(
+        &self,
+        folder: &Arc<Folder>,
+        instance: &str,
+        received: &archive::restore::intake::Received,
+    ) -> Result<Vec<Named>> {
+        let needed = received.manifest.held_files();
+        let (mut reading, mut lacking) = (Vec::new(), Vec::new());
+        for named in received.absent() {
+            match self.readable(&named.hash).await? {
+                Readable::Whole => continue,
+                Readable::Silent => {
+                    return Err(Refusal::new(
+                        Code::BlobStoreUnavailable,
+                        format!(
+                            "A store did not answer whether it holds the file {}; try again.",
+                            named.hash.as_str()
+                        ),
+                    ));
+                }
+                Readable::Nowhere => {}
+            }
+            let (looked, instance, hash) = (folder.clone(), instance.to_string(), named.hash.clone());
+            let size = blocking(move || looked.copy_size(&instance, &hash))
+                .await
+                .map_err(|error| {
+                    Destination::Folder(folder.clone()).unreachable("looking for the files", &error)
+                })?;
+            match (size, named.size_bytes) {
+                (Some(found), Some(size)) if found != size => {}
+                (Some(_), _) => {
+                    reading.push(named);
+                    continue;
+                }
+                (None, _) => {}
+            }
+            if needed.contains(named.hash.as_str()) {
+                lacking.push(named.hash.as_str().to_string());
+            }
+        }
+        if !lacking.is_empty() {
+            return Err(archive::restore::files_missing(lacking));
+        }
+        Ok(reading)
+    }
+
+    /// Starts afresh in the backup folder now at `MARFA_BACKUP_PATH` whose files area holds no
+    /// marker, such as a disk that replaced the one the server recorded: forgets that store, the
+    /// copies it records and the backups put there, and takes the files area as a new store.
+    pub async fn adopt_backup_folder(self: &Arc<App>, caller: &Caller) -> Result<Value> {
+        caller.require_local()?;
+        let destination = self.destination()?;
+        let Destination::Folder(folder) = &destination else {
+            return Err(Refusal::new(
+                Code::Conflict,
+                "This instance backs up to an object store, so it has no backup folder to adopt.",
+            ));
+        };
+        let Ok(_running) = self.backups.running.try_lock() else {
+            return Err(running());
+        };
+        let looked = folder.clone();
+        let found = blocking(move || looked.adoptable())
+            .await
+            .map_err(|error| destination.unreachable("looking at the folder to adopt", &error))?;
+        let root = folder.root().display().to_string();
+        let old = folder.files();
+        match found {
+            Adoptable::Unmarked => {}
+            Adoptable::Held => {
+                return Err(Refusal::new(
+                    Code::Conflict,
+                    format!(
+                        "The backup folder {root} holds this instance's files, so there is \
+                         nothing to adopt."
+                    ),
+                ));
+            }
+            Adoptable::Missing => {
+                return Err(Refusal::new(
+                    Code::BlobStoreUnavailable,
+                    format!(
+                        "The backup folder {root} is not there, so nothing was adopted. Mount \
+                         the disk it is on, then try again."
+                    ),
+                ));
+            }
+            Adoptable::Foreign(id) => {
+                return Err(Refusal::new(
+                    Code::Conflict,
+                    format!(
+                        "The files folder {} holds the marker of another store, {id}, so it was \
+                         left as it is. Remove that marker to adopt the folder afresh.",
+                        old.root().display()
+                    ),
+                ));
+            }
+        }
+        let (old_id, id) = (old.id().to_string(), uuid::Uuid::now_v7().to_string());
+        let (locator, at) = (old.root().display().to_string(), self.clock.stamp());
+        let (forgotten, new_id) = (old_id.clone(), id.clone());
+        let (copies, backups) = self
+            .db
+            .write(Write::own(), move |tx| {
+                let backups = forget_backups(tx, &forgotten)?;
+                let copies = super::blobs::Blobs::replace_folder_store(
+                    tx, &forgotten, &new_id, &locator, &at,
+                )?;
+                housekeeping::bring_forward(tx, REPLICATION, &at)?;
+                Ok((copies, backups))
+            })
+            .await?;
+        let (claimed, new_id) = (folder.clone(), id.clone());
+        blocking(move || claimed.claim(&new_id))
+            .await
+            .map_err(|error| destination.unreachable("adopting the backup folder", &error))?;
+        tracing::info!(store = %id, replaced = %old_id, backups, copies, "The backup folder was adopted");
+        Ok(json!({
+            "store_id": id,
+            "replaced_store_id": old_id,
+            "backups_forgotten": backups,
+            "copies_forgotten": copies,
+        }))
     }
 
     /// What `/health` says of backups: whether they run, and how the last one went.
@@ -772,7 +937,7 @@ impl App {
             health.insert("destination".into(), destination.kind().into());
         }
         let status = if destination.is_none() {
-            health.insert("reason".into(), "no_bucket".into());
+            health.insert("reason".into(), "no_backup_destination".into());
             "off"
         } else if self.settings.live().get(BACKUP_INTERVAL_SECONDS) == 0 {
             health.insert("reason".into(), "turned_off".into());
@@ -827,21 +992,29 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
     }
     bring_replication_forward(app).await;
     match put(app, &destination).await {
-        Ok((taken, name, size, changes)) => {
-            let (store, recorded) = (destination.id().to_string(), name.clone());
+        Ok(Put {
+            at,
+            name,
+            size,
+            changes,
+            lost,
+        }) => {
+            let store = destination.id();
+            let (recorded, without) = (name.clone(), lost_message(&name, &lost));
             app.db
                 .write(Write::own(), move |tx| {
-                    record_put(tx, &store, changes, &recorded, taken)
+                    record_put(tx, &store, changes, &recorded, at, without.as_deref())
                 })
                 .await?;
-            let (removed, unremoved) = thin(app, &destination, taken).await;
+            let (removed, unremoved) = thin(app, &destination, at).await;
             Ok(Outcome::Put {
                 instance: app.instance_id.clone(),
                 name,
-                taken,
+                taken: at,
                 size,
                 removed,
                 unremoved,
+                lost,
             })
         }
         Err(refused) => {
@@ -858,6 +1031,24 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
     }
 }
 
+/// What the failure record says of a backup put without the files in `lost`.
+fn lost_message(name: &str, lost: &[String]) -> Option<String> {
+    const SHOWN: usize = 10;
+    if lost.is_empty() {
+        return None;
+    }
+    let mut shown = lost[..lost.len().min(SHOWN)].join(", ");
+    if lost.len() > SHOWN {
+        shown.push_str(&format!(" and {} more", lost.len() - SHOWN));
+    }
+    Some(format!(
+        "The backup {name} was put without {} files that no store could give when it was taken: \
+         {shown}. A restore of it goes ahead without them. Upload their bytes again to back them \
+         up.",
+        lost.len()
+    ))
+}
+
 /// Brings replication forward, so the copies a backup leaves to the store are made soon.
 async fn bring_replication_forward(app: &Arc<App>) {
     let at = app.clock.stamp();
@@ -872,9 +1063,9 @@ async fn bring_replication_forward(app: &Arc<App>) {
     }
 }
 
-/// Writes the archive and puts it whole. In the backup folder it is named only once every file
-/// it names has a copy there.
-async fn put(app: &Arc<App>, destination: &Destination) -> Result<(Stamp, String, u64, i64)> {
+/// Writes the archive and puts it whole. In the backup folder it is written only once every file
+/// it names has a copy there or is known to be lost.
+async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
     settle_attempts(app, destination).await?;
     if let Destination::Folder(folder) = destination {
         let cleared = folder.clone();
@@ -885,16 +1076,14 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<(Stamp, String
             })?;
     }
     let began = std::time::Instant::now();
-    let mut backup = app
-        .backup_archive(destination.id(), app.blobs.check())
-        .await?;
+    let mut taken = app.backup_archive(&destination.id()).await?;
     app.faults.hold(HOLD_BACKUP_READ, None).await;
     let read_ms = began.elapsed().as_millis() as u64;
-    let (taken, changes, limit) = (backup.created_at, backup.changes, backup.limit);
-    let name = name_of(taken);
+    let (at, changes) = (taken.created_at, taken.changes);
+    let name = name_of(at);
     let (files, in_store) = (
-        std::mem::take(&mut backup.files),
-        std::mem::take(&mut backup.in_store),
+        std::mem::take(&mut taken.files),
+        std::mem::take(&mut taken.in_store),
     );
     let held: HashSet<&String> = in_store.iter().collect();
     let uncopied: Vec<String> = files
@@ -902,16 +1091,22 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<(Stamp, String
         .filter(|hash| !held.contains(hash))
         .cloned()
         .collect();
-    hold(app, destination.id(), &name, files, in_store).await?;
+    hold(app, &destination.id(), &name, files, in_store).await?;
+    let copied = uncopied.len();
+    let lost = match destination {
+        Destination::Bucket(_) => readable_nowhere(app, uncopied).await?,
+        Destination::Folder(folder) => copy_files(app, destination, folder, uncopied).await?,
+    };
+    let backup = taken.send(app, &lost, app.blobs.check())?;
+    let limit = backup.limit;
     let bytes = put_stream(app, backup);
-    let (size, copied) = match destination {
+    let size = match destination {
         Destination::Bucket(bucket) => {
             let key = key_of(&app.instance_id, &name);
-            let size = bucket
+            bucket
                 .put_whole(&key, "application/x-tar", bytes, limit)
                 .await
-                .map_err(|error| destination.unreachable("taking the backup", &error))?;
-            (size, 0)
+                .map_err(|error| destination.unreachable("taking the backup", &error))?
         }
         Destination::Folder(folder) => {
             let written = super::blobs::store::within(
@@ -920,13 +1115,10 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<(Stamp, String
             )
             .await
             .map_err(|error| destination.unreachable("writing the backup", &error))?;
-            let copied = uncopied.len();
-            copy_files(app, destination, folder, uncopied).await?;
-            let size = written
+            written
                 .place()
                 .await
-                .map_err(|error| destination.unreachable("naming the backup", &error))?;
-            (size, copied)
+                .map_err(|error| destination.unreachable("naming the backup", &error))?
         }
     };
     tracing::info!(
@@ -934,23 +1126,55 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<(Stamp, String
         destination = destination.kind(),
         size,
         copied,
+        lost = lost.len(),
         read_ms,
         put_ms = began.elapsed().as_millis() as u64 - read_ms,
         "A backup was put"
     );
-    Ok((taken, name, size, changes))
+    Ok(Put {
+        at,
+        name,
+        size,
+        changes,
+        lost,
+    })
 }
 
-/// Copies each file to the backup folder that has no copy recorded there, failing the backup
-/// on the first that is not copied.
+/// What a backup put: when it was taken, its name and size, the change count it holds, and the
+/// files it names that no store could give.
+struct Put {
+    at: Stamp,
+    name: String,
+    size: u64,
+    changes: i64,
+    lost: Vec<String>,
+}
+
+/// Of `hashes`, those no attached store answers that it holds whole.
+async fn readable_nowhere(app: &Arc<App>, hashes: Vec<String>) -> Result<Vec<String>> {
+    let mut lost = Vec::new();
+    for hash in hashes {
+        let Ok(parsed) = Hash::parse(&hash) else {
+            continue;
+        };
+        if app.readable(&parsed).await? == Readable::Nowhere {
+            lost.push(hash);
+        }
+    }
+    Ok(lost)
+}
+
+/// Copies each file to the backup folder that has no copy recorded there, and answers those no
+/// store could give. Any other file that is not copied fails the backup.
 async fn copy_files(
     app: &Arc<App>,
     destination: &Destination,
     folder: &Arc<Folder>,
     hashes: Vec<String>,
-) -> Result<()> {
-    let target = Store::Folder(folder.files().clone());
+) -> Result<Vec<String>> {
+    let target = Store::Folder(folder.files());
     let mut unreachable = std::collections::BTreeSet::new();
+    let mut lost = Vec::new();
     for hash in hashes {
         let looked = hash.clone();
         let blob: Option<Blob> = app
@@ -971,9 +1195,11 @@ async fn copy_files(
         };
         let failed = match replicate_one(app, &target, &blob, &mut unreachable).await? {
             Replicated::Copied | Replicated::Passed => None,
-            Replicated::Failed(why) => {
-                Some(why.unwrap_or_else(|| "no store could read it".to_string()))
+            Replicated::Unreadable => {
+                lost.push(hash);
+                continue;
             }
+            Replicated::Failed(why) => Some(why.unwrap_or_else(|| "no copy was made".to_string())),
         };
         let (store, looked) = (target.id().to_string(), hash.clone());
         let held = app
@@ -988,7 +1214,7 @@ async fn copy_files(
             ));
         }
     }
-    Ok(())
+    Ok(lost)
 }
 
 /// Only names it listed in its own folder, could read as a backup and recorded putting are
@@ -1253,7 +1479,7 @@ mod tests {
         hold(&tx, BUCKET, &late, &files(&[&a])).unwrap();
         settled(&tx, &[], &[], at(1));
         hold(&tx, BUCKET, &next, &[]).unwrap();
-        record_put(&tx, BUCKET, 0, &next, at(1)).unwrap();
+        record_put(&tx, BUCKET, 0, &next, at(1), None).unwrap();
         settled(&tx, &[&next], &[], at(1));
         assert_eq!(held_of(&tx, &[&a]), ['a']);
 
@@ -1274,7 +1500,7 @@ mod tests {
         let (first, second) = (named(0), named(1));
 
         hold(&tx, BUCKET, &first, &files(&[&a])).unwrap();
-        record_put(&tx, BUCKET, 0, &first, at(0)).unwrap();
+        record_put(&tx, BUCKET, 0, &first, at(0), None).unwrap();
         hold(&tx, BUCKET, &second, &[]).unwrap();
         settled(&tx, &[&second], &[], at(1));
         assert_eq!(held_of(&tx, &[&a]), ['a']);
@@ -1292,7 +1518,7 @@ mod tests {
         let (kept, failed) = (named(0), named(1));
 
         hold(&tx, BUCKET, &kept, &files(&[&a])).unwrap();
-        record_put(&tx, BUCKET, 0, &kept, at(0)).unwrap();
+        record_put(&tx, BUCKET, 0, &kept, at(0), None).unwrap();
         hold(&tx, BUCKET, &failed, &[]).unwrap();
         settled(&tx, &[], &[], at(0).plus_ms(40 * DAY_MS).unwrap());
 

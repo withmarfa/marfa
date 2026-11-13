@@ -137,16 +137,57 @@ struct Prepared {
     blobs: Vec<(Carried, String)>,
 }
 
-pub struct Backup {
-    pub body: Body,
+/// A backup read from its snapshot and not yet sent.
+pub struct Taken {
     pub created_at: Stamp,
     pub changes: i64,
-    /// How long the destination has to take it, which also bounds how long its sender waits.
-    pub limit: std::time::Duration,
     /// Each file its rows name that the registry held in its snapshot.
     pub files: Vec<String>,
     /// The files the backup store held a recorded copy of.
     pub in_store: Vec<String>,
+    prepared: Prepared,
+    manifest: Map<String, Value>,
+}
+
+pub struct Backup {
+    pub body: Body,
+    /// How long the destination has to take it, which also bounds how long its sender waits.
+    pub limit: std::time::Duration,
+}
+
+impl Taken {
+    /// Sends the backup, its manifest naming under `lost_blobs` each file in `lost`.
+    pub fn send(
+        self,
+        app: &Arc<App>,
+        lost: &[String],
+        check: std::time::Duration,
+    ) -> Result<Backup> {
+        let Taken {
+            mut prepared,
+            mut manifest,
+            ..
+        } = self;
+        let mut lost = lost.to_vec();
+        lost.sort();
+        lost.dedup();
+        manifest.insert("lost_blobs".into(), lost.into());
+        prepared.manifest = print(&Value::Object(manifest))?.into_bytes();
+        let entry = |size: u64| tar::BLOCK as u64 + size + tar::padding(size) as u64;
+        let size = entry(prepared.manifest.len() as u64)
+            + entry(prepared.instance.size)
+            + entry(prepared.items.size)
+            + entry(prepared.edges.size)
+            + entry(prepared.rows.size)
+            + tar::END.len() as u64;
+        let limit = super::blobs::store::write_deadline(check, size);
+        let (sender, body) = channel(QUEUED);
+        let app = app.clone();
+        tokio::spawn(async move {
+            send::archive(app, Caller::Server, prepared, sender, limit).await;
+        });
+        Ok(Backup { body, limit })
+    }
 }
 
 /// What a backup's snapshot gave beside its lines.
@@ -231,12 +272,8 @@ impl App {
         Ok((body, created))
     }
 
-    /// Builds a row-only backup from one snapshot.
-    pub async fn backup_archive(
-        self: &Arc<App>,
-        backup_store: &str,
-        check: std::time::Duration,
-    ) -> Result<Backup> {
+    /// Reads a row-only backup from one snapshot; nothing is sent until its lost files are known.
+    pub async fn backup_archive(self: &Arc<App>, backup_store: &str) -> Result<Taken> {
         let ask = Ask {
             system: true,
             ..Ask::default()
@@ -244,35 +281,24 @@ impl App {
         let (prepared, snapshot) = self
             .prepare_archive(&Caller::Server, ask, false, Some(backup_store.to_string()))
             .await?;
-        let Some(Snapshot {
-            changes,
-            files,
-            in_store,
-        }) = snapshot
+        let Some((
+            Snapshot {
+                changes,
+                files,
+                in_store,
+            },
+            manifest,
+        )) = snapshot
         else {
             return Err(Refusal::internal("a backup's snapshot was not kept"));
         };
-        let created_at = prepared.created_at;
-        let entry = |size: u64| tar::BLOCK as u64 + size + tar::padding(size) as u64;
-        let size = entry(prepared.manifest.len() as u64)
-            + entry(prepared.instance.size)
-            + entry(prepared.items.size)
-            + entry(prepared.edges.size)
-            + entry(prepared.rows.size)
-            + tar::END.len() as u64;
-        let limit = super::blobs::store::write_deadline(check, size);
-        let (sender, body) = channel(QUEUED);
-        let app = self.clone();
-        tokio::spawn(async move {
-            send::archive(app, Caller::Server, prepared, sender, limit).await;
-        });
-        Ok(Backup {
-            body,
-            created_at,
+        Ok(Taken {
+            created_at: prepared.created_at,
             changes,
-            limit,
             files,
             in_store,
+            prepared,
+            manifest,
         })
     }
 
@@ -289,7 +315,7 @@ impl App {
         ask: Ask,
         files: bool,
         backup_store: Option<String>,
-    ) -> Result<(Prepared, Option<Snapshot>)> {
+    ) -> Result<(Prepared, Option<(Snapshot, Map<String, Value>)>)> {
         let created_at = self.clock.instant();
         let scratch = [
             self.scratch().await?,
@@ -352,11 +378,14 @@ impl App {
             "missing_blobs".into(),
             Value::Object(missing.into_iter().collect()),
         );
-        let snapshot = selected.backup;
+        let (manifest, snapshot) = match selected.backup {
+            None => (print(&Value::Object(manifest))?.into_bytes(), None),
+            Some(snapshot) => (Vec::new(), Some((snapshot, manifest))),
+        };
         reading(self, caller, |_| Ok(())).await?;
         let prepared = Prepared {
             created_at,
-            manifest: print(&Value::Object(manifest))?.into_bytes(),
+            manifest,
             instance: selected.instance,
             items: selected.items,
             edges: selected.edges,

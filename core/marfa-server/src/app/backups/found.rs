@@ -59,6 +59,18 @@ pub fn names(tx: &Transaction<'_>, store: &str, hash: &str) -> Result<bool> {
         .exists(params![store, hash])?)
 }
 
+/// Forgets every backup the server found in `store`, answering how many.
+pub(super) fn forget_store(tx: &Transaction<'_>, store: &str) -> Result<usize> {
+    tx.prepare_cached(
+        "DELETE FROM found_backup_files WHERE seq IN \
+         (SELECT seq FROM found_backups WHERE store_id = ?1)",
+    )?
+    .execute([store])?;
+    Ok(tx
+        .prepare_cached("DELETE FROM found_backups WHERE store_id = ?1")?
+        .execute([store])?)
+}
+
 fn forget(tx: &Transaction<'_>, seq: i64) -> Result<()> {
     tx.prepare_cached("DELETE FROM found_backup_files WHERE seq = ?1")?
         .execute([seq])?;

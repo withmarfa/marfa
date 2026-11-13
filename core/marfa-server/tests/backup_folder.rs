@@ -234,6 +234,16 @@ fn copy_of(folder: &Path, instance: &str, hash: &str) -> PathBuf {
     area.join(&hex[0..4]).join(hex)
 }
 
+/// The manifest of the backup file at `path`, its tar's first entry.
+fn manifest_of(path: &Path) -> Value {
+    let tar = fs::read(path).unwrap();
+    assert_eq!(&tar[..13], b"manifest.json");
+    let octal = String::from_utf8_lossy(&tar[124..136]);
+    let size = usize::from_str_radix(octal.trim_matches(|c: char| c == '\0' || c == ' '), 8)
+        .unwrap();
+    serde_json::from_slice(&tar[512..512 + size]).unwrap()
+}
+
 fn names_in(folder: &Path) -> Vec<String> {
     let mut names: Vec<String> = match fs::read_dir(folder) {
         Ok(entries) => entries
@@ -387,7 +397,7 @@ async fn a_full_disk_mid_archive_or_mid_file_leaves_nothing_half_written_and_the
     instance
         .app
         .faults
-        .set("fail:backup-folder-write", Some("2"))
+        .set("fail:backup-folder-write", Some("1"))
         .unwrap();
     let (status, body) = instance.back_up().await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
@@ -628,4 +638,199 @@ async fn the_server_refuses_to_start_with_both_destinations_or_a_folder_it_would
         .message;
     assert!(refused.contains("does not exist"), "{refused}");
     assert!(!missing.exists());
+}
+
+#[tokio::test]
+async fn a_file_no_store_can_read_is_recorded_lost_and_the_backup_still_goes_ahead() {
+    let folder = TempDir::new().unwrap();
+    let origin = Instance::start(folder.path()).await;
+    let note = origin.note("backed up beside a lost file").await;
+    let (lost, _) = origin.file(b"a file whose only copy went").await;
+    let (kept, _) = origin.file(b"a file still on the disk").await;
+    origin.app.faults.set("lose:blob", Some(&lost)).unwrap();
+
+    let (status, body) = origin.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["outcome"], "put", "{body}");
+    assert_eq!(body["blobs_lost"], json!([lost]), "{body}");
+    let name = body["backup"]["name"].as_str().unwrap().to_string();
+    let file = folder.path().join("backups").join(origin.id()).join(&name);
+    let manifest = manifest_of(&file);
+    assert_eq!(manifest["lost_blobs"], json!([lost]), "{manifest}");
+    assert!(manifest["missing_blobs"][&lost].is_object(), "{manifest}");
+    assert!(copy_of(folder.path(), &origin.id(), &kept).is_file());
+    assert!(!copy_of(folder.path(), &origin.id(), &lost).exists());
+    let health = origin.health().await;
+    assert_eq!(health["status"], "failing", "{health}");
+    assert_eq!(health["last_backup"], name.as_str(), "{health}");
+    assert!(
+        health["last_error"].as_str().unwrap().contains(&lost),
+        "{health}"
+    );
+
+    let fresh = Instance::start(folder.path()).await;
+    let (status, answer) = fresh.restore(&origin.id(), &name).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["blobs_missing"], json!([lost]), "{answer}");
+    let (status, body) = fresh
+        .as_writer(Method::GET, &format!("/items/{note}"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(fresh.bytes_of(&kept).await.unwrap(), b"a file still on the disk");
+
+    origin.app.faults.clear(None);
+    let (status, body) = origin.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["blobs_lost"], json!([]), "{body}");
+    assert!(copy_of(folder.path(), &origin.id(), &lost).is_file());
+    assert_eq!(origin.health().await["status"], "ok");
+}
+
+#[tokio::test]
+async fn a_restore_that_lacks_a_copy_refuses_before_it_reads_any_file() {
+    let folder = TempDir::new().unwrap();
+    let origin = Instance::start(folder.path()).await;
+    let (gone, _) = origin.file(b"a copy someone deleted").await;
+    let (other, _) = origin.file(b"a copy still in the folder").await;
+    let (status, body) = origin.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let name = body["backup"]["name"].as_str().unwrap().to_string();
+    fs::remove_file(copy_of(folder.path(), &origin.id(), &gone)).unwrap();
+
+    let fresh = Instance::start(folder.path()).await;
+    let (status, refused) = fresh.restore(&origin.id(), &name).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+    assert_eq!(
+        refused["error"]["details"]["missing_blobs"],
+        json!([gone]),
+        "{refused}"
+    );
+    let blobs = fresh.data.path().join("blobs");
+    assert!(!copy_of(&blobs, "", &other).exists());
+    assert!(names_in(&blobs.join("tmp")).is_empty());
+}
+
+#[tokio::test]
+async fn a_rollback_reads_only_the_files_the_disk_lacks_and_needs_room_only_for_them() {
+    let folder = TempDir::new().unwrap();
+    let instance = Instance::start(folder.path()).await;
+    let (status, body) = instance
+        .local(
+            Method::PATCH,
+            "/config",
+            Some(json!({ "disk_reserve_bytes": 100_000 })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let big = vec![b'x'; 1_000_000];
+    let (held, _) = instance.file(&big).await;
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let name = body["backup"]["name"].as_str().unwrap().to_string();
+
+    instance
+        .app
+        .faults
+        .set("free:blobs", Some("300000"))
+        .unwrap();
+    let (status, answer) = instance.restore(&instance.id(), &name).await;
+    assert_eq!(status, StatusCode::OK, "{answer}");
+    assert_eq!(answer["blobs_missing"], json!([]), "{answer}");
+    assert_eq!(instance.bytes_of(&held).await.unwrap(), big);
+}
+
+#[tokio::test]
+async fn a_replaced_disk_is_refused_until_the_owner_adopts_it_and_then_backs_up_afresh() {
+    let parent = TempDir::new().unwrap();
+    let folder = parent.path().join("disk");
+    fs::create_dir(&folder).unwrap();
+    let instance = Instance::start(&folder).await;
+    let (file, _) = instance.file(b"a file the old disk held").await;
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let (status, stores) = instance.local(Method::GET, "/blobs/stores", None).await;
+    assert_eq!(status, StatusCode::OK, "{stores}");
+    let old = stores["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|store| store["kind"] == "folder")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let (status, refused) = instance
+        .local(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{refused}");
+
+    fs::rename(&folder, parent.path().join("old disk")).unwrap();
+    let (status, refused) = instance
+        .local(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{refused}");
+    assert!(!folder.exists());
+
+    fs::create_dir(&folder).unwrap();
+    let (status, refused) = instance.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{refused}");
+    let says = refused["error"]["message"].as_str().unwrap();
+    assert!(says.contains("marfa backups folder adopt"), "{refused}");
+    let health = instance.health().await;
+    assert!(
+        health["last_error"]
+            .as_str()
+            .unwrap()
+            .contains("marfa backups folder adopt"),
+        "{health}"
+    );
+
+    let (status, adopted) = instance
+        .local(Method::POST, "/backups/folder/adopt", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{adopted}");
+    assert_eq!(adopted["replaced_store_id"], old.as_str(), "{adopted}");
+    assert_eq!(adopted["backups_forgotten"], 1, "{adopted}");
+    let new = adopted["store_id"].as_str().unwrap().to_string();
+    assert_ne!(new, old);
+    let (_, stores) = instance.local(Method::GET, "/blobs/stores", None).await;
+    let of = |id: &str| {
+        stores["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|store| store["id"] == id)
+            .cloned()
+            .unwrap()
+    };
+    assert!(of(&old)["detached_at"].is_string(), "{stores}");
+    assert!(of(&new)["detached_at"].is_null(), "{stores}");
+    assert_eq!(of(&new)["locator"], of(&old)["locator"], "{stores}");
+    let (status, copies) = instance
+        .local(Method::GET, &format!("/blobs/{file}/copies"), None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{copies}");
+    assert!(
+        copies["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|copy| copy["store_id"] != old.as_str()),
+        "{copies}"
+    );
+    assert_eq!(
+        instance.bytes_of(&file).await.unwrap(),
+        b"a file the old disk held"
+    );
+
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(copy_of(&folder, &instance.id(), &file).is_file());
+    assert_eq!(instance.health().await["status"], "ok");
+
+    let Instance { data, .. } = instance;
+    let again = Instance::start_in(data, &folder).await;
+    let (status, body) = again.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
 }

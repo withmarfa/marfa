@@ -74,12 +74,31 @@ impl Ids {
 pub struct Manifest {
     pub blobs: BTreeMap<String, (String, u64)>,
     pub missing: BTreeMap<String, (Option<String>, Option<u64>)>,
+    /// The files of `missing` that no store could give when the backup was taken.
+    pub lost: BTreeSet<String>,
     /// The lines it counts in `items.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`.
     pub counts: [u64; 3],
     /// The lines it counts of each kind in `instance.ndjson.gz`, in the order of `KINDS`.
     pub instance_counts: [u64; KINDS.len()],
     /// The `blobs/` entries it says the archive carries.
     pub blob_count: u64,
+}
+
+impl Manifest {
+    /// The files the instance that wrote the archive held and had not lost.
+    pub fn held_files(&self) -> HashSet<String> {
+        self.blobs
+            .keys()
+            .chain(
+                self.missing
+                    .iter()
+                    .filter(|(_, (_, size))| size.is_some())
+                    .map(|(hash, _)| hash),
+            )
+            .filter(|hash| !self.lost.contains(*hash))
+            .cloned()
+            .collect()
+    }
 }
 
 /// What `instance.ndjson.gz` registers and sets; the agreements stay in the spool.
@@ -1073,6 +1092,23 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
             }
         }
         Some(_) => wrong("missing_blobs".into(), "Must be an object."),
+    }
+    match held.get("lost_blobs") {
+        None => {}
+        Some(Value::Array(lost)) => {
+            for (at, hash) in lost.iter().enumerate() {
+                match hash.as_str() {
+                    Some(hash) if manifest.missing.contains_key(hash) => {
+                        manifest.lost.insert(hash.to_string());
+                    }
+                    _ => wrong(
+                        format!("lost_blobs.{at}"),
+                        "Must be a hash that missing_blobs names.",
+                    ),
+                }
+            }
+        }
+        Some(_) => wrong("lost_blobs".into(), "Must be an array."),
     }
     if !errors.is_empty() {
         let named: Vec<String> = errors

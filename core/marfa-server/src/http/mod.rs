@@ -347,6 +347,7 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/metrics", get(metrics::read))
         .route("/housekeeping/{name}/run", post(housekeeping::run))
         .route("/backups", get(backups::list).post(backups::run))
+        .route("/backups/folder/adopt", post(backups::adopt_folder))
         .route(
             "/backups/{instance_id}/{name}/restore",
             post(backups::restore),

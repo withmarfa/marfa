@@ -100,7 +100,7 @@ codes! {
     InstanceChanged = "instance_changed", 409;
     ItemExists = "item_exists", 409;
     LinkTaken = "link_taken", 409;
-    NoBucket = "no_bucket", 409;
+    NoBackupDestination = "no_backup_destination", 409;
     OwnerExists = "owner_exists", 409;
     ReachChanged = "reach_changed", 409;
     SignInAddressChangeUnconfirmed = "sign_in_address_change_unconfirmed", 409;

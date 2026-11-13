@@ -4,7 +4,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, PoisonError, RwLock};
 use std::time::SystemTime;
 
 use futures_util::StreamExt;
@@ -27,9 +27,23 @@ const PARTIAL: &str = ".partial";
 pub struct Folder {
     root: PathBuf,
     instance: String,
-    files: Arc<Disk>,
+    /// Replaced only when the owner adopts a folder whose files area lost its marker.
+    files: RwLock<Arc<Disk>>,
     /// A temporary file staged before this is a leftover of a process that ended.
     started: SystemTime,
+}
+
+/// What the folder holds when the owner asks to adopt it.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Adoptable {
+    /// Its files area holds this store's marker, so there is nothing to adopt.
+    Held,
+    /// The folder `MARFA_BACKUP_PATH` names is not there.
+    Missing,
+    /// Its files area holds the marker of the store with this id.
+    Foreign(String),
+    /// Its files area holds no marker.
+    Unmarked,
 }
 
 fn started(error: impl std::fmt::Display) -> Failure {
@@ -74,7 +88,8 @@ pub fn outside(root: &Path, data: &[(&str, &Path)]) -> Result<(), Failure> {
 impl Folder {
     /// Takes the named folder, which must exist, making only `files/<instance id>/` inside it.
     /// A folder whose files area went away since the server recorded it, such as a disk that
-    /// did not mount, is kept as it is, and each backup fails until it is back.
+    /// did not mount, is kept as it is, and each backup fails until it is back or the owner
+    /// adopts the folder there now.
     pub async fn open(db: &Db, root: &Path, instance: &str) -> Result<Folder, Failure> {
         let area = root.join(FILES).join(instance);
         let probed = area.clone();
@@ -97,7 +112,8 @@ impl Folder {
                     tracing::warn!(
                         folder = %root.display(),
                         "The backup folder is not there, or does not hold this instance's files; \
-                         backups fail until its disk is mounted"
+                         backups fail until its disk is mounted, or `marfa backups folder adopt` \
+                         takes a disk that replaced it"
                     );
                     Disk::unmounted(id, area)
                 }
@@ -128,7 +144,7 @@ impl Folder {
         Ok(Folder {
             root: root.to_path_buf(),
             instance: instance.to_string(),
-            files: Arc::new(files),
+            files: RwLock::new(Arc::new(files)),
             started: SystemTime::now(),
         })
     }
@@ -137,13 +153,58 @@ impl Folder {
         &self.root
     }
 
-    pub fn files(&self) -> &Arc<Disk> {
-        &self.files
+    pub fn files(&self) -> Arc<Disk> {
+        self.files
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
     }
 
     /// Whether the folder is the one the server took: its files area holds this store's marker.
     pub fn reachable(&self) -> bool {
-        self.files.reachable()
+        self.files().reachable()
+    }
+
+    fn area(&self) -> PathBuf {
+        self.root.join(FILES).join(&self.instance)
+    }
+
+    /// What adopting the folder would meet. It blocks.
+    pub fn adoptable(&self) -> io::Result<Adoptable> {
+        if self.reachable() {
+            return Ok(Adoptable::Held);
+        }
+        if !self.root.is_dir() {
+            return Ok(Adoptable::Missing);
+        }
+        match Disk::marked(&self.area()) {
+            Ok(Some(id)) => Ok(Adoptable::Foreign(id)),
+            Ok(None) => Ok(Adoptable::Unmarked),
+            Err(failure) => Err(io::Error::other(failure.message)),
+        }
+    }
+
+    /// Takes the files area as the store `id` from now, making it inside the folder and writing
+    /// its marker. Where that fails, the store `id` waits for its marker as one not mounted. It
+    /// blocks.
+    pub fn claim(&self, id: &str) -> io::Result<()> {
+        let area = self.area();
+        let claimed = if self.root.is_dir() {
+            make_inside(&self.root.join(FILES))
+                .and_then(|()| make_inside(&area))
+                .and_then(|()| Disk::claim(&area, id))
+        } else {
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "the backup folder is not there",
+            ))
+        };
+        let (disk, answer) = match claimed {
+            Ok(disk) => (disk, Ok(())),
+            Err(error) => (Disk::unmounted(id.to_string(), area), Err(error)),
+        };
+        *self.files.write().unwrap_or_else(PoisonError::into_inner) = Arc::new(disk);
+        answer
     }
 
     fn checked(&self) -> io::Result<()> {
@@ -218,6 +279,13 @@ impl Folder {
         }
     }
 
+    /// The size of the copy of `hash` in `instance`'s files area, where there is one. It blocks.
+    pub fn copy_size(&self, instance: &str, hash: &Hash) -> io::Result<Option<u64>> {
+        self.open_copy(instance, hash)?
+            .map(|file| file.metadata().map(|meta| meta.len()))
+            .transpose()
+    }
+
     /// Deletes this instance's backup `name`; one not there is already gone. It blocks.
     pub fn delete(&self, name: &str) -> io::Result<()> {
         self.checked()?;
@@ -235,7 +303,7 @@ impl Folder {
     pub fn clear_leftovers(&self) -> io::Result<usize> {
         self.checked()?;
         let own = self.folder_of(&self.instance);
-        let mut cleared = self.files.clear_tmp_before(self.started)?;
+        let mut cleared = self.files().clear_tmp_before(self.started)?;
         let entries = match fs::read_dir(&own) {
             Ok(entries) => entries,
             Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(cleared),
@@ -435,7 +503,7 @@ mod tests {
         Folder {
             root: root.to_path_buf(),
             instance: "instance".into(),
-            files: Arc::new(Disk::open(&area).unwrap()),
+            files: RwLock::new(Arc::new(Disk::open(&area).unwrap())),
             started: SystemTime::now(),
         }
     }
