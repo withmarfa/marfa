@@ -2403,7 +2403,7 @@ export interface paths {
         put?: never;
         /**
          * Adopt a backup folder
-         * @description Starts afresh in the backup folder `MARFA_BACKUP_PATH` names when its files folder for this instance holds no store marker, such as on a disk that replaced the one Marfa used. Marfa forgets the backups it put in the folder and the copies of files it kept there, which went with the old disk, and takes the files folder as a new store. Marfa changes no other store, and copies every file to the new one again. Requires the private local command.
+         * @description Starts afresh on a disk that replaced the backup folder's disk, when the folder holds no store marker for this instance. Marfa forgets the backups and file copies of the old disk and changes no other store. Requires the private local command.
          */
         post: operations["adoptBackupFolder"];
         delete?: never;
@@ -3122,7 +3122,7 @@ export interface components {
             /** @description Whether Marfa backs itself up to its backup folder or object store, and how the last backup went. */
             backups: {
                 /**
-                 * @description `ok`: Marfa backs up on its schedule and the last backup run succeeded. `failing`: the last backup run failed, or put a backup without files no store could give, which makes the overall `status` at least `degraded`. `off`: Marfa takes no scheduled backups.
+                 * @description `ok`: Marfa backs up on its schedule and the last run succeeded. `failing`: the last run failed, or put a backup without files no store could give, which makes the overall `status` at least `degraded`. `off`: Marfa takes no scheduled backups.
                  * @enum {string}
                  */
                 status: "ok" | "failing" | "off";
@@ -30746,7 +30746,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `backup_files_missing`: the backup folder and this instance both lack a file the backup names that no store had lost when the backup was taken, as `details.missing_blobs` lists. Nothing was restored or read.
+             * @description - `backup_files_missing`: neither the folder nor this instance holds files it needs, named in `details.missing_blobs`. Nothing was restored.
              *     - `conflict`: the archive redefines a type registered here differently, carries a core edge type, or reuses a snapshot ID.
              *     - `link_taken`: the archive's type names a `link_field` two items share.
              *     - `no_backup_destination`: there is nowhere to put backups.

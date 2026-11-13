@@ -31,6 +31,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { bytesOf, clientsFor, runJob } from "../../utils/own-blob-server.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
  * Backups to a folder the owner names with `MARFA_BACKUP_PATH`: one file per
@@ -533,6 +534,12 @@ describe("a backup folder that lacks a file or its disk", () => {
 
       const adopted = await owner.adoptBackupFolder();
       expect(adopted.status, JSON.stringify(adopted.error)).toBe(200);
+      await expectMatchesSchema(
+        "POST",
+        "/backups/folder/adopt",
+        200,
+        adopted.data,
+      );
       expect(adopted.data.replaced_store_id).toBe(old.id);
       expect(adopted.data.backups_forgotten).toBeGreaterThan(0);
       expect(adopted.data.store_id).not.toBe(old.id);
