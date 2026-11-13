@@ -10,7 +10,7 @@ These rules add to the root `AGENTS.md` and `core/AGENTS.md` for work under `cor
 
 ## Code Review Rules
 
-- **One write path.** Every item, edge and type write goes through its area's one write function inside `App::write`.
+- **One write path.** Every item, edge and type write goes through its area's one write function, inside `Db::write` (`src/db/mod.rs`).
 - **Access on the committed state.** Every permission is decided in `app/access`, on the state the write commits. An operation that checks a permission only before the write is a finding.
 - **SQL stays private.** SQL stays inside its area's module.
 - **No panics.** Server code never panics on a request or a stored value: no `unwrap`, `expect` or unchecked index on either.
@@ -18,3 +18,4 @@ These rules add to the root `AGENTS.md` and `core/AGENTS.md` for work under `cor
 - **Blocking work off the runtime.** Password hashing, file reading and SQLite outside the writer thread run off the async runtime.
 - **Nothing kept for compatibility.** A setting, column, name or shape kept only for compatibility with something that no longer exists is a finding.
 - **No stand-ins.** Code in the server that exists only to make a fixture pass is a finding.
+- **No weakened tests.** A test of the server weakened, skipped, retried or removed so that something passes is a finding.
