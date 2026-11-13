@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use super::{Destination, Listed, OMISSIONS, parse};
+use super::{Destination, Listing, OMISSIONS, parse};
 use crate::app::App;
 use crate::app::archive::restore::named::files_named;
 use crate::app::blobs::Hash;
@@ -20,23 +20,20 @@ struct Found {
     seq: i64,
     name: String,
     files_read: bool,
-    missing_since: Option<String>,
     omissions: i64,
 }
 
 fn found(tx: &Transaction<'_>, store: &str) -> Result<Vec<Found>> {
     Ok(tx
         .prepare_cached(
-            "SELECT seq, name, files_read, missing_since, omissions FROM found_backups \
-             WHERE store_id = ?1",
+            "SELECT seq, name, files_read, omissions FROM found_backups WHERE store_id = ?1",
         )?
         .query_map([store], |row| {
             Ok(Found {
                 seq: row.get(0)?,
                 name: row.get(1)?,
                 files_read: row.get(2)?,
-                missing_since: row.get(3)?,
-                omissions: row.get(4)?,
+                omissions: row.get(3)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?)
@@ -87,38 +84,21 @@ pub(super) fn settle(
     listed: &HashSet<String>,
     now: Stamp,
 ) -> Result<()> {
-    let days = Listed::of(listed);
+    let listing = Listing::of(listed);
+    let mut counted =
+        tx.prepare_cached("UPDATE found_backups SET omissions = ?2 WHERE seq = ?1")?;
     for backup in found(tx, store)? {
         if listed.contains(&backup.name) {
-            if backup.missing_since.is_some() || backup.omissions > 0 {
-                tx.prepare_cached(
-                    "UPDATE found_backups SET missing_since = NULL, omissions = 0 WHERE seq = ?1",
-                )?
-                .execute([backup.seq])?;
+            if backup.omissions > 0 {
+                counted.execute(params![backup.seq, 0])?;
             }
             continue;
         }
-        let since = match backup.missing_since.as_deref().map(Stamp::parsed) {
-            None => now,
-            Some(Some(since)) => since,
-            Some(None) => {
-                tracing::error!(
-                    backup = %backup.name,
-                    "When listings began to omit a found backup does not read, so the files it \
-                     names stay held"
-                );
-                continue;
-            }
-        };
         let omissions = backup.omissions.saturating_add(1);
-        let missing = parse(&backup.name).map_or(since, |taken| since.max(taken));
-        if omissions >= OMISSIONS && days.past_retention(missing) {
+        if omissions >= OMISSIONS && listing.would_thin(&backup.name, now) {
             forget(tx, backup.seq)?;
         } else {
-            tx.prepare_cached(
-                "UPDATE found_backups SET missing_since = ?2, omissions = ?3 WHERE seq = ?1",
-            )?
-            .execute(params![backup.seq, since, omissions])?;
+            counted.execute(params![backup.seq, omissions])?;
         }
     }
     Ok(())

@@ -66,39 +66,42 @@ fn by_age(listed: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<(DateTime<Ut
 
 /// Days are counted by the backups they hold, never by a span back on the clock.
 pub fn doomed(listed: &[String], taken: Stamp) -> Vec<String> {
+    doomed_of(&by_age(listed), taken).cloned().collect()
+}
+
+fn doomed_of(by_age: &[(DateTime<Utc>, String)], taken: Stamp) -> impl Iterator<Item = &String> {
     let since = taken.at() - Duration::days(1);
     let mut days: HashSet<NaiveDate> = HashSet::new();
-    let mut doomed = Vec::new();
-    for (index, (at, name)) in by_age(listed).into_iter().enumerate() {
-        let kept = index == 0 || at > since || newest_of_a_kept_day(&mut days, at);
-        if !kept {
-            doomed.push(name);
-        }
-    }
-    doomed
+    by_age
+        .iter()
+        .enumerate()
+        .filter(move |(index, (at, _))| {
+            !(*index == 0 || *at > since || newest_of_a_kept_day(&mut days, *at))
+        })
+        .map(|(_, (_, name))| name)
 }
 
 fn newest_of_a_kept_day(days: &mut HashSet<NaiveDate>, at: DateTime<Utc>) -> bool {
     days.len() < DAYS_KEPT && days.insert(at.date_naive())
 }
 
-/// The days a listing holds backups on, newest first.
-pub struct Listed(Vec<NaiveDate>);
+/// The backups a listing holds, newest first.
+pub struct Listing(Vec<(DateTime<Utc>, String)>);
 
-impl Listed {
-    pub fn of<'a>(listed: impl IntoIterator<Item = &'a String>) -> Listed {
-        let mut days: Vec<NaiveDate> = by_age(listed)
-            .into_iter()
-            .map(|(at, _)| at.date_naive())
-            .collect();
-        days.dedup();
-        Listed(days)
+impl Listing {
+    pub fn of<'a>(listed: impl IntoIterator<Item = &'a String>) -> Listing {
+        Listing(by_age(listed))
     }
 
-    /// Past retention once the listing holds more later days than thinning keeps.
-    pub fn past_retention(&self, missing: Stamp) -> bool {
-        let after = missing.at().date_naive();
-        self.0.iter().take_while(|day| **day > after).count() > DAYS_KEPT
+    /// Whether thinning at `taken` over the listing and `missing`, which it omits, deletes `missing`.
+    pub fn would_thin(&self, missing: &str, taken: Stamp) -> bool {
+        let Some(at) = parse(missing) else {
+            return false;
+        };
+        let entry = (at.at(), missing.to_string());
+        let mut backups = self.0.clone();
+        backups.insert(backups.partition_point(|listed| *listed > entry), entry);
+        doomed_of(&backups, taken).any(|name| name == missing)
     }
 }
 
@@ -326,27 +329,43 @@ mod tests {
     }
 
     #[test]
-    fn a_missing_backup_is_past_retention_once_the_listing_holds_32_later_days() {
+    fn a_backup_a_listing_omits_is_thinned_only_where_thinning_over_both_deletes_it() {
         let missing = at("2026-10-01T12:00:00.000Z");
-        let mut listed: Vec<String> = (0..=31)
-            .map(|day| name_of(missing.plus_ms(day * 86_400_000).unwrap()))
-            .collect();
-        listed.push(name_of(missing.plus_ms(31 * 86_400_000 + 1).unwrap()));
-        assert!(!Listed::of(&listed).past_retention(missing));
-        listed.push(name_of(missing.plus_ms(32 * 86_400_000).unwrap()));
-        assert!(Listed::of(&listed).past_retention(missing));
+        let day = |count: i64| missing.plus_ms(count * 86_400_000).unwrap();
+        let mut listed: Vec<String> = (1..=31).map(|count| name_of(day(count))).collect();
+        let name = name_of(missing);
+        assert!(!Listing::of(&listed).would_thin(&name, day(32)));
+        listed.push(name_of(day(32)));
+        assert!(Listing::of(&listed).would_thin(&name, day(32)));
+        let mut both = listed.clone();
+        both.push(name.clone());
+        assert!(doomed(&both, day(32)).contains(&name));
     }
 
     #[test]
-    fn one_backup_far_ahead_does_not_put_a_missing_backup_past_retention() {
+    fn a_backup_a_listing_omits_is_kept_while_it_is_the_newest_or_within_a_day_of_the_clock() {
         let missing = at("2026-11-01T12:00:00.000Z");
-        let listed = [
-            "2026-11-02T12:00:00.000Z",
-            "2026-11-09T12:00:00.000Z",
-            "2027-11-09T12:00:00.000Z",
-        ]
-        .map(|text| name_of(at(text)));
-        assert!(!Listed::of(&listed).past_retention(missing));
-        assert!(!Listed::of(&[]).past_retention(missing));
+        let name = name_of(missing);
+        let ahead: Vec<String> = (1..=40)
+            .map(|day| name_of(missing.plus_ms(day * 86_400_000).unwrap()))
+            .collect();
+        let earlier = [name_of(at("2026-09-01T12:00:00.000Z"))];
+        let a_day_on = missing.plus_ms(86_400_000 - 1).unwrap();
+        assert!(!Listing::of(&ahead).would_thin(&name, a_day_on));
+        assert!(!Listing::of(&earlier).would_thin(&name, at("2027-11-01T12:00:00.000Z")));
+        assert!(!Listing::of(&[]).would_thin(&name, a_day_on));
+        let after_them = missing.plus_ms(42 * 86_400_000).unwrap();
+        assert!(Listing::of(&ahead).would_thin(&name, after_them));
+        assert!(!Listing::of(&ahead).would_thin("notes.tar", after_them));
+    }
+
+    #[test]
+    fn a_backup_a_listing_omits_is_thinned_once_a_newer_one_holds_its_day() {
+        let missing = at("2026-11-01T10:00:00.000Z");
+        let taken = at("2026-11-03T12:00:00.000Z");
+        let listed = [name_of(taken), name_of(at("2026-11-01T11:00:00.000Z"))];
+        assert!(Listing::of(&listed).would_thin(&name_of(missing), taken));
+        let older = [name_of(taken), name_of(at("2026-11-01T09:00:00.000Z"))];
+        assert!(!Listing::of(&older).would_thin(&name_of(missing), taken));
     }
 }

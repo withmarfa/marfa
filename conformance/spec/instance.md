@@ -730,9 +730,9 @@ When the private local command sends `POST /backups`, the server MUST answer in 
 
 ### `instance/backup-keeps-files`
 
-While the server has recorded a backup it put in the object store or the backup folder, and has neither thinned that backup nor, while a later backup was recorded, found it missing from three or more consecutive listings of the store, the last of which lists backups of its own on more than 31 UTC days after both the backup's `created_at` and the first of those listings, the server MUST NOT purge a file that backup names.
+While the server has recorded a backup it put in the object store or the backup folder, and has neither thinned that backup nor, while a later backup was recorded, found it missing from three or more consecutive listings of the store, the last of which lists backups of its own such that thinning them together with that backup would delete that backup, the server MUST NOT purge a file that backup names.
 
-**Reason:** Backups contain no file bytes and outlive the orphan grace. The server knows a backup only by its record and the store's listings, and one listing can leave out an object the store holds. So the server takes a backup to be gone only once several listings have left it out and the store holds more days of backups after it than thinning keeps, and a listing that shows it again starts the count over. Days of backups are counted, not time on the clock, so a clock jump does not add the intervening days to retention.
+**Reason:** Backups contain no file bytes and outlive the orphan grace. The server knows a backup only by its record and the store's listings, and one listing can leave out an object the store holds. So the server takes a backup to be gone only once several listings in a row have left it out and thinning would delete it anyway, and a listing that shows it again starts the count over. Being missing never lets go of a backup that thinning keeps, however the clock has moved. Thinning is judged on the listed backups and that one backup, so another backup the listings leave out cannot push it out of the days thinning keeps.
 
 **Tests:** `compliance/backup-files.test.ts › keeps a file a retained backup names once nothing else names it, across a restart, so a fresh server on the bucket restores it whole`.
 
@@ -1040,7 +1040,7 @@ When the server thins its backups, the server MUST NOT delete an object or file 
 
 While a backup that the server did not record putting is listed directly under `<S3_PREFIX>/backups/<instance id>/` or `<MARFA_BACKUP_PATH>/backups/<instance id>/`, where `<instance id>` is its own, the server MUST NOT purge a file that backup's manifest names.
 
-**Reason:** a server started on an image of its data directory does not record the backups put after the image, and those backups restore their files from the bucket. Such a backup stops holding its files as `instance/backup-keeps-files` lets a recorded one go: once three or more consecutive listings have left it out, the last of which lists backups of its own on more than 31 UTC days after both its `created_at` and the first of those listings. Where the server cannot list or read that folder, a file the object store holds a copy of is not purged.
+**Reason:** a server started on an image of its data directory does not record the backups put after the image, and those backups restore their files from the bucket. Such a backup stops holding its files as `instance/backup-keeps-files` lets a recorded one go: once three or more consecutive listings have left it out and thinning the backups the last of them lists together with that backup would delete it. Where the server cannot list or read that folder, a file the object store holds a copy of is not purged.
 
 **Tests:** `compliance/bucket-sharing.test.ts › keeps the files a backup in its folder names when its database never recorded that backup, and deletes only the backups it recorded`.
 
