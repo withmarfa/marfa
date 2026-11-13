@@ -23,6 +23,16 @@ pnpm marfa:down
 
 `pnpm test:generators` runs the checks that need no server, including the checks of the contract's own form.
 
+## Measurements
+
+These measure a release build of the server, with no test hooks, from outside. Each checks what came back, so a figure cannot pass on a wrong answer.
+
+- `pnpm test:performance`, `pnpm test:load` and `pnpm test:hydration` run every night in `.github/workflows/benchmarks.yml`. `MARFA_LOAD_PROFILE` sizes the load suites (`smoke` when unset; `src/suites/load/profiles.ts` has the rest). `test:hydration` fills a working copy from a large image library with a release build of `marfa` (`MARFA_DEVICE_BIN`), `MARFA_HYDRATION_ROWS` items in each set (2,000 when unset), and writes `reports/load/hydration.json`.
+- `pnpm scale tables --server <marfa-server>` writes and reads one very large table, then times an undo, an export, a restore and a purge, and writes `reports/scale/tables.json`.
+- `pnpm scale conversations --server <marfa-server>` writes and reads chat conversations, including messages sent out of order, then exports and restores them, and writes `reports/scale/conversations.json`.
+
+The two `scale` tools run on request, boot servers of their own and stop them by process ID. Their options are defined in `scripts/scale/tables.ts` and `scripts/scale/conversations.ts`.
+
 ## Where the rest is
 
 - [`spec/README.md`](spec/README.md): how a contract statement is written, and the list of chapters.
