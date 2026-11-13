@@ -6270,6 +6270,14 @@ When a device answers a read of a table from the copy, a device MUST select, ord
 
 **Tests:** `device/tables-live.test.ts › pages, filters, sorts and totals from the copy as the server does`, `› reads a table in its declared order from the copy as the server does`.
 
+### `device/table-read-cursor-short`
+
+When a device answers a page of a table's rows from the copy with a `next_cursor`, a device MUST make the cursor only of letters, digits, `-` and `_`, and of at most 100 characters when the rows' sort value is no longer than 24 characters.
+
+**Reason:** a person copies a cursor from a screen, and a long one is hard to copy and to read. A cursor holds the sort value of the row it follows.
+
+**Tests:** `device/tables-live.test.ts › pages, filters, sorts and totals from the copy as the server does`.
+
 ### `device/table-read-refused`
 
 If a read of a table the copy holds names a `limit`, `filter`, `sort` or `cursor` the server would refuse, then a device MUST refuse it `invalid`, naming it.
