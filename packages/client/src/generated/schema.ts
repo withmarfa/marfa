@@ -13246,7 +13246,7 @@ export interface operations {
                 cursor?: string;
                 /** @description Only return rows that match this expression, in the item filter grammar, where `values.<column>` names a column and `id` and `updated_at` are the row's own. */
                 filter?: string;
-                /** @description What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to the table's `order` column, or to `id` for a table that names none. A page sorted by the table's `order` column reads only the rows it answers; a page sorted by another column reads every row. */
+                /** @description What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to the table's `order` column, or `id` when it names none. Sorting by the `order` column reads only the rows a page answers; another column reads every row. */
                 sort?: string;
                 /** @description The order of the sort: `asc` or `desc`. */
                 direction?: "asc" | "desc";
