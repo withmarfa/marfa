@@ -84,7 +84,7 @@ While the last backup run, taken on the schedule or by hand, failed or put a bac
 
 **Reason:** a backup taken by hand with `POST /backups` is not a run of the `backup` job, so the housekeeping check does not see it.
 
-**Tests:** `compliance/backup-folder.test.ts › lists in attention a backup run by hand that failed, until a later one is put`, `› puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`.
+**Tests:** `compliance/backup-folder.test.ts › lists in attention a backup run by hand that failed, until a later one is put`, `› puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`.
 
 ### `instance/attention-backup-told-once`
 
@@ -348,15 +348,23 @@ When `GET /openapi.json` is answered, the server MUST answer `info.version` as t
 
 When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 1.
 
-**Reason:** the version is the one marker of the archive's layout, and a restore reads only the version its own build writes (`search-and-filters/restore-version`).
+**Reason:** the version is the one marker of the archive's layout, and a restore reads every version up to its own build's and refuses a later one (`search-and-filters/restore-version`). An archive with a new entry, line file or field that a restore must read is a new version, because an older build would skip what it does not know.
 
 **Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
+
+### `instance/archive-format`
+
+When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `format` of `marfa-archive`.
+
+**Reason:** a restore knows an archive by its format before it reads its version, and refuses a manifest without one as written before Marfa 0.1 (`search-and-filters/restore-format`).
+
+**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`.
 
 ### `instance/archive-written-by`
 
 When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `written_by` of `marfa-server` and the version of the build, separated by a space.
 
-**Reason:** a restore that refuses an archive of another version names the build that can read it, and only the manifest says which build wrote it.
+**Reason:** a restore that refuses an archive written before Marfa 0.1, or at a later version, names the build that wrote it, and only the manifest says which build that was.
 
 **Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
 
@@ -552,7 +560,7 @@ Where `MARFA_BACKUP_PATH` is set, when the server takes a backup, the server MUS
 
 ### `instance/backup-folder-copies`
 
-Where `MARFA_BACKUP_PATH` is set, the server MUST NOT give a backup its name in the folder before `<MARFA_BACKUP_PATH>/files/<instance id>/<first four hex digits>/<hex>` holds the bytes of each file the backup names but those its manifest names in `lost_blobs`, where `<hex>` is the file's SHA-256 in hex.
+Where `MARFA_BACKUP_PATH` is set, the server MUST NOT give a backup its name in the folder before `<MARFA_BACKUP_PATH>/files/<instance id>/<first four hex digits>/<hex>` holds the bytes of each file the backup names but those its `files.ndjson.gz` names as `lost`, where `<hex>` is the file's SHA-256 in hex.
 
 **Reason:** a backup carries no file's bytes, so the folder alone restores a backup only while it holds a copy of each file. Each file is copied once and kept while a backup names it, so a backup costs what changed since the last.
 
@@ -560,7 +568,7 @@ Where `MARFA_BACKUP_PATH` is set, the server MUST NOT give a backup its name in 
 
 ### `instance/backup-folder-whole`
 
-Where `MARFA_BACKUP_PATH` is set, if a backup run fails, or the process ends, before the server has written the whole backup and a copy of each file it names but those it names in `lost_blobs`, then the server MUST NOT leave a file directly under `<MARFA_BACKUP_PATH>/backups/<instance id>/` whose name reads as a backup.
+Where `MARFA_BACKUP_PATH` is set, if a backup run fails, or the process ends, before the server has written the whole backup and a copy of each file it names but those it names as `lost`, then the server MUST NOT leave a file directly under `<MARFA_BACKUP_PATH>/backups/<instance id>/` whose name reads as a backup.
 
 **Reason:** the server writes a backup under a name that begins with `.`, which no listing reads, and gives it its name only once it is whole and synced to the disk.
 
@@ -684,7 +692,7 @@ When the server takes a backup, the server MUST put in it the items, edges, rows
 
 ### `instance/backup-no-file-bytes`
 
-When the server takes a backup, the server MUST name every file its items name under the manifest's `missing_blobs`, and carry no file's bytes.
+When the server takes a backup, the server MUST name every file its items name in its `files.ndjson.gz`, each as `not_carried` or `lost`, and carry no file's bytes.
 
 **Reason:** the object store or the backup folder already holds a copy of each file the instance has replicated, so a backup that carried them would put every file there again each time.
 
@@ -692,11 +700,11 @@ When the server takes a backup, the server MUST name every file its items name u
 
 ### `instance/backup-lost-files-named`
 
-When the server takes a backup, the server MUST name in the manifest's `lost_blobs` each file the backup names of which no attached store gives the bytes whole.
+When the server takes a backup, the server MUST name as `lost` in its `files.ndjson.gz` each file the backup names of which no attached store gives the bytes whole.
 
 **Reason:** a restore then tells a file that was gone before the backup from one taken out of the backup folder after it. Where `MARFA_BACKUP_PATH` is set the server learns it as it copies each file to the folder; for the object store, from each store's answer for the copies the copy record names.
 
-**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file in lost_blobs and in health, and clears health with the next backup that loses none`.
+**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file lost and in health, and clears health with the next backup that loses none`.
 
 ### `instance/backup-lost-files-put`
 
@@ -704,13 +712,21 @@ If a file a backup names is one no attached store gives the bytes of whole, then
 
 **Reason:** one lost file stops no backup of every item, edge and setting.
 
-**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file in lost_blobs and in health, and clears health with the next backup that loses none`.
+**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file lost and in health, and clears health with the next backup that loses none`.
 
 ### `instance/backup-lost-files-answered`
 
-When the private local command sends `POST /backups`, the server MUST answer in `blobs_lost` the hash of each file the manifest of the backup it put names in `lost_blobs`.
+When the private local command sends `POST /backups`, the server MUST answer in `blobs_lost` the hash of each file the backup it put names as `lost`.
 
-**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file in lost_blobs and in health, and clears health with the next backup that loses none`.
+**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file lost and in health, and clears health with the next backup that loses none`.
+
+### `instance/backup-line-cap`
+
+If an item, an earlier version of an item or an edge a backup would hold takes more than 67108864 bytes on its archive line, then the server MUST answer `POST /backups` with an error that names the item or edge, without putting the backup.
+
+**Reason:** a restore reads no line longer (`search-and-filters/restore-text-cap`), so such a backup could never be restored, and an owner told at the time can correct the item while the earlier backups still stand.
+
+**Tests:** `compliance/archive-line-cap.test.ts › refuses an export and a backup whose item line is past the limit, naming the item`.
 
 ### `instance/backup-keeps-files`
 
@@ -804,17 +820,17 @@ While the last backup run failed, the server MUST answer `GET /health` with `bac
 
 ### `instance/backup-health-lost`
 
-While the last backup run put a backup whose manifest names a file in `lost_blobs`, the server MUST answer `GET /health` with `backups.status` `failing`.
+While the last backup run put a backup that names a file as `lost`, the server MUST answer `GET /health` with `backups.status` `failing`.
 
 **Reason:** a lost file is a failure the owner learns of at once, and the run counts among `backups.failures`.
 
-**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file in lost_blobs and in health, and clears health with the next backup that loses none`.
+**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file lost and in health, and clears health with the next backup that loses none`.
 
 ### `instance/backup-health-lost-named`
 
-While the last backup run put a backup whose manifest names files in `lost_blobs`, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST name the first ten of those files in `backups.last_error`.
+While the last backup run put a backup that names files as `lost`, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST name the first ten of those files in `backups.last_error`.
 
-**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file in lost_blobs and in health, and clears health with the next backup that loses none`.
+**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file lost and in health, and clears health with the next backup that loses none`.
 
 ### `instance/backup-health-detail`
 
@@ -930,7 +946,7 @@ Where `MARFA_BACKUP_PATH` is set, when the private local command sends `POST /ba
 
 ### `instance/backup-folder-restore-lacking`
 
-Where `MARFA_BACKUP_PATH` is set, if a file the backup names, which the instance that took it held and the manifest does not name in `lost_blobs`, is held whole neither in `<MARFA_BACKUP_PATH>/files/<instance_id>/` nor by the restoring instance, then the server MUST answer `POST /backups/{instance_id}/{name}/restore` with `409 backup_files_missing` and each such file's hash in `details.missing_blobs`.
+Where `MARFA_BACKUP_PATH` is set, if a file the backup names, which the instance that took it held and the backup does not name as `lost`, is held whole neither in `<MARFA_BACKUP_PATH>/files/<instance_id>/` nor by the restoring instance, then the server MUST answer `POST /backups/{instance_id}/{name}/restore` with `409 backup_files_missing` and each such file's hash in `details.missing_blobs`.
 
 **Reason:** a restore that left a file out would lose it without a word. The refusal restores nothing; the backup's archive file, restored through `POST /restore`, restores the rest without those files.
 
@@ -954,11 +970,11 @@ Where `MARFA_BACKUP_PATH` is set, when the private local command sends `POST /ba
 
 ### `instance/backup-folder-restore-lost`
 
-Where `MARFA_BACKUP_PATH` is set, if a file the manifest names in `lost_blobs` is held whole neither in `<MARFA_BACKUP_PATH>/files/<instance_id>/` nor by the restoring instance, then the server MUST NOT refuse `POST /backups/{instance_id}/{name}/restore` for that file.
+Where `MARFA_BACKUP_PATH` is set, if a file the backup names as `lost` is held whole neither in `<MARFA_BACKUP_PATH>/files/<instance_id>/` nor by the restoring instance, then the server MUST NOT refuse `POST /backups/{instance_id}/{name}/restore` for that file.
 
 **Reason:** the file was gone before the backup was taken, so no folder could restore it. The restore names it in `blobs_missing`, as a restore of the same archive through `POST /restore` does.
 
-**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`.
+**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`.
 
 ### `instance/backup-restore-unknown`
 
