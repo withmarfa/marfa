@@ -1,6 +1,6 @@
 # Stores
 
-Where a blob's bytes live, and the rules that keep them. A store is a place bytes live: the disk every upload lands on, and an object store attached beside it when one is configured. The referee boots its server with both, so every rule about the object store is asserted against one rather than left to a deployment nobody runs.
+Where a blob's bytes live, and the rules that keep them. A store is a place bytes live: the disk every upload lands on, an object store attached beside it when one is configured, and the files area of the backup folder when `MARFA_BACKUP_PATH` names one. The referee boots its server with both, so every rule about the object store is asserted against one rather than left to a deployment nobody runs.
 
 ## The stores
 
@@ -18,9 +18,15 @@ The server MUST list the disk store on every instance, whatever its settings.
 
 ### `stores/list-kind`
 
-When a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer each store's `kind` as `disk` or `s3`.
+When a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer each store's `kind` as `disk`, `folder` or `s3`.
 
-**Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the management key`.
+**Tests:** `compliance/blob-stores.test.ts › lists the disk store and the object store to the management key`, `compliance/backup-folder.test.ts › lists the backup folder's files area as a store of kind folder at its path`.
+
+### `stores/list-folder-locator`
+
+Where `MARFA_BACKUP_PATH` is set, when a caller authorized by `instance.read` or local authority sends `GET /blobs/stores`, the server MUST answer the backup folder's store with its `locator` as `<MARFA_BACKUP_PATH>/files/<instance id>`, where `<instance id>` is the instance's id.
+
+**Tests:** `compliance/backup-folder.test.ts › lists the backup folder's files area as a store of kind folder at its path`.
 
 ### `stores/list-locator`
 
@@ -432,11 +438,11 @@ If a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs
 
 ### `stores/drop-held-by-backup`
 
-If a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs/{hash}/copies/{store}` naming an object store in which a backup the server keeps under `instance/backup-keeps-files` names the blob, then the server MUST answer `409 copy_held_by_backup` without changing any copy.
+If a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs/{hash}/copies/{store}` naming the object store or the backup folder's store, in which a backup the server keeps under `instance/backup-keeps-files` names the blob, then the server MUST answer `409 copy_held_by_backup` without changing any copy.
 
-**Reason:** a restore of that backup on a fresh server takes the file from that object store, which another store's copy does not reach.
+**Reason:** a restore of that backup on a fresh server takes the file from that store, which another store's copy does not reach.
 
-**Tests:** `compliance/backup-files.test.ts › refuses to drop the object store's copy of a file a retained backup names, and drops its disk copy`.
+**Tests:** `compliance/backup-files.test.ts › refuses to drop the object store's copy of a file a retained backup names, and drops its disk copy`, `compliance/backup-folder.test.ts › refuses to drop the folder's copy of a file a kept backup names`.
 
 ### `stores/drop-unreadable-minimum`
 

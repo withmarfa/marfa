@@ -1,26 +1,29 @@
 /**
- * The restore drill: an instance thrown away and rebuilt from its bucket
- * alone, every line and every file checked.
+ * The restore drill: an instance thrown away and rebuilt from its bucket, or
+ * its backup folder, alone, every line and every file checked.
  *
- *   tsx scripts/restore-drill.ts [--state <dir>] [--keep]
+ *   tsx scripts/restore-drill.ts [--folder] [--state <dir>] [--keep]
  *
- * Needs `MARFA_SERVER_BIN` and the `S3_*` names in the environment, which it
- * reads and never prints. `S3_PREFIX` is not read: the drill sets it to a
- * prefix of its own, `drill/<id>`, and removes what is under it, with its own
- * state directory, at the end unless `--keep` is given.
+ * Needs `MARFA_SERVER_BIN`. With the bucket, it needs the `S3_*` names in the
+ * environment too, which it reads and never prints. `S3_PREFIX` is not read:
+ * the drill sets it to a prefix of its own, `drill/<id>`, and removes what is
+ * under it, with its own state directory, at the end unless `--keep` is
+ * given. With `--folder`, the servers back up to `<state>/folder` through
+ * `MARFA_BACKUP_PATH` and no object store is attached.
  *
- * 1. A source server boots on the bucket and is given a registered type with
- *    a table and its rows, notes with a history, one in the trash, files
- *    (one large enough to take the object store's multipart path), edges
- *    with properties and a stored setting. Replication copies every file to
- *    the bucket, and the owner takes a backup.
+ * 1. A source server boots on the bucket or the folder and is given a
+ *    registered type with a table and its rows, notes with a history, one in
+ *    the trash, files (one large enough to take the object store's multipart
+ *    path), edges with properties and a stored setting. Replication copies
+ *    every file to the bucket or the folder, and the owner takes a backup.
  * 2. The source is fingerprinted: an archive export of everything, its
  *    instance, item, edge and row lines, and every file's bytes as served.
  * 3. The source stops, and its whole data directory is deleted.
- * 4. A fresh server boots on an empty data directory and the same bucket,
- *    lists the backup in the source's folder and restores it.
+ * 4. A fresh server boots on an empty data directory and the same bucket or
+ *    folder, lists the backup in the source's folder and restores it.
  * 5. The restored server is fingerprinted the same way, with every file read
- *    from the bucket, and the two must agree line for line and byte for byte.
+ *    from the bucket or the folder, and the two must agree line for line and
+ *    byte for byte.
  *
  * The report is printed and written to `reports/restore-drill.md` beside
  * the state directory; the exit code is non-zero on any mismatch.
@@ -58,14 +61,20 @@ const NOTES = 40;
 interface Args {
   state: string;
   keep: boolean;
+  folder: boolean;
 }
 
 function parseArgs(argv: string[]): Args {
-  const args: Args = { state: resolve(".marfa-drill"), keep: false };
+  const args: Args = {
+    state: resolve(".marfa-drill"),
+    keep: false,
+    folder: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--state") args.state = resolve(argv[++i] ?? "");
     else if (arg === "--keep") args.keep = true;
+    else if (arg === "--folder") args.folder = true;
     else throw new Error(`unexpected argument: ${arg ?? ""}`);
   }
   return args;
@@ -345,7 +354,7 @@ async function main(): Promise<void> {
   if (serverProgram() === undefined) {
     throw new Error("MARFA_SERVER_BIN does not name the server to drill");
   }
-  requireBucketEnv();
+  if (!args.folder) requireBucketEnv();
 
   const id = randomBytes(4).toString("hex");
   const prefix = `drill/${id}`;
@@ -368,20 +377,29 @@ async function main(): Promise<void> {
 
   say(`# Restore drill ${id}`);
   say("");
+  const folder = join(args.state, "folder");
   say(
-    `${new Date().toISOString()}. Bucket named by \`S3_BUCKET\`, prefix \`${prefix}/\`, ${process.env.S3_ENDPOINT ? "an endpoint set" : "no endpoint set"}.`,
+    args.folder
+      ? `${new Date().toISOString()}. Backup folder \`MARFA_BACKUP_PATH\`, no object store.`
+      : `${new Date().toISOString()}. Bucket named by \`S3_BUCKET\`, prefix \`${prefix}/\`, ${process.env.S3_ENDPOINT ? "an endpoint set" : "no endpoint set"}.`,
   );
   say("");
 
   rmSync(args.state, { recursive: true, force: true });
   const sourceState = join(args.state, "source");
   const restoredState = join(args.state, "restored");
-  for (const dir of [sourceState, restoredState]) {
+  for (const dir of [sourceState, restoredState, folder]) {
     mkdirSync(dir, { recursive: true });
   }
   process.env.S3_PREFIX = prefix;
+  const destination: Record<string, string> = args.folder
+    ? { S3_BUCKET: "", MARFA_BACKUP_PATH: folder }
+    : {};
   const boot = (state: string) =>
-    bootServer({ state, env: { MARFA_BACKUP_INTERVAL_SECONDS: "0" } });
+    bootServer({
+      state,
+      env: { MARFA_BACKUP_INTERVAL_SECONDS: "0", ...destination },
+    });
 
   try {
     // 1. The source, filled and backed up.
@@ -398,7 +416,7 @@ async function main(): Promise<void> {
       await source.owner.runBackup(),
     ).backup;
     say(
-      `Source \`${sourceId}\`: ${String(ROWS)} rows, ${String(NOTES)} notes, ${String(files.length)} files of ${String(bytes)} bytes, ${String(copied)} copies made to the bucket; backup \`${backup.name}\`, ${String(backup.size_bytes)} bytes.`,
+      `Source \`${sourceId}\`: ${String(ROWS)} rows, ${String(NOTES)} notes, ${String(files.length)} files of ${String(bytes)} bytes, ${String(copied)} copies made to the ${args.folder ? "folder" : "bucket"}; backup \`${backup.name}\`, ${String(backup.size_bytes)} bytes.`,
     );
 
     // 2. What the source holds.
@@ -412,7 +430,7 @@ async function main(): Promise<void> {
     rmSync(sourceState, { recursive: true, force: true });
     say("Source stopped and its data directory deleted.");
 
-    // 4. A fresh server on the same bucket, restoring the backup.
+    // 4. A fresh server on the same bucket or folder, restoring the backup.
     await boot(restoredState);
     const restored = await serverAt(restoredState);
     const listed = expectOk(
@@ -435,7 +453,8 @@ async function main(): Promise<void> {
       `Restored \`${backup.name}\` into a fresh server: ${JSON.stringify({ ...answer, set_up_again: undefined })}.`,
     );
 
-    // 5. What the restored server holds, every file read from the bucket.
+    // 5. What the restored server holds, every file read from the bucket or
+    //    the folder.
     const after = await fingerprint(restored.everything, files);
     say("");
     say("## Comparison");
@@ -472,7 +491,14 @@ async function main(): Promise<void> {
     await stopServer({ state: restoredState }).catch(() => undefined);
     say("");
     if (args.keep) {
-      say(`Kept the objects under \`${prefix}/\` and the state directory.`);
+      say(
+        args.folder
+          ? "Kept the state directory and the folder in it."
+          : `Kept the objects under \`${prefix}/\` and the state directory.`,
+      );
+    } else if (args.folder) {
+      rmSync(args.state, { recursive: true, force: true });
+      say("Removed the state directory and the folder in it.");
     } else {
       const removed = await deletePrefix(prefix);
       rmSync(args.state, { recursive: true, force: true });
@@ -488,7 +514,13 @@ async function main(): Promise<void> {
     );
     const reportDir = join(dirname(args.state), "reports");
     mkdirSync(reportDir, { recursive: true });
-    writeFileSync(join(reportDir, "restore-drill.md"), lines.join("\n") + "\n");
+    writeFileSync(
+      join(
+        reportDir,
+        args.folder ? "restore-drill-folder.md" : "restore-drill.md",
+      ),
+      lines.join("\n") + "\n",
+    );
   }
   if (failures.length > 0) process.exitCode = 1;
 }

@@ -37,6 +37,7 @@ async function health(server: FreshServer) {
     status: string;
     backups: {
       status: string;
+      destination?: string;
       failures?: number;
       last_error?: string | null;
       last_backup?: string | null;
@@ -78,6 +79,7 @@ describe("a backup the object store does not take", () => {
     expect(refused.error?.error.code).toBe("blob_store_unavailable");
     let seen = await health(server);
     expect(seen.backups.status).toBe("failing");
+    expect(seen.backups.destination).toBe("bucket");
     expect(seen.backups.failures).toBe(1);
     expect(seen.backups.last_error).toEqual(expect.any(String));
     expect(seen.status).toBe("degraded");

@@ -466,15 +466,77 @@ The server MUST cut each description and title in the `GET /overview` answer at 
 
 ## Backing up
 
-An owner has two backups of an instance. Where `S3_BUCKET` is set, the server backs itself up to that object store: on a schedule, and when the owner asks. Each backup is an archive, as `GET /export?format=archive` writes one, of every item and instance line, the trash included, and of no file's bytes, since the object store already keeps a copy of each file as an attached store. And an image of the data directory, such as a machine backup takes, holds everything the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. Neither holds the setting `MARFA_KEY_SALT`, and a backup holds no credential, so sign-in, keys and apps are set up again after a backup is restored.
+An owner has two backups of an instance. Where `S3_BUCKET` is set, the server backs itself up to that object store, and where `MARFA_BACKUP_PATH` is set, to that folder: on a schedule, and when the owner asks. With neither set, it keeps no backup. Each backup is an archive, as `GET /export?format=archive` writes one, of every item and instance line, the trash included, and of no file's bytes, since the object store, or the backup folder's files area, already keeps a copy of each file as an attached store. And an image of the data directory, such as a machine backup takes, holds everything the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. Neither holds the setting `MARFA_KEY_SALT`, and a backup holds no credential, so sign-in, keys and apps are set up again after a backup is restored.
 
 ### `instance/backup-object`
 
-When the server takes a backup, the server MUST put it in the object store as one object named `<S3_PREFIX>/backups/<instance id>/<created_at>.tar`, where `<instance id>` is the instance's id and `<created_at>` is its manifest's `created_at`.
+Where `S3_BUCKET` is set, when the server takes a backup, the server MUST put it in the object store as one object named `<S3_PREFIX>/backups/<instance id>/<created_at>.tar`, where `<instance id>` is the instance's id and `<created_at>` is its manifest's `created_at`.
 
 **Reason:** a server that replaces another can start on the same prefix, and the folder keeps each instance's backups apart.
 
 **Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything`.
+
+### `instance/backup-folder-file`
+
+Where `MARFA_BACKUP_PATH` is set, when the server takes a backup, the server MUST write it as one file named `<MARFA_BACKUP_PATH>/backups/<instance id>/<created_at>.tar`, where `<instance id>` is the instance's id and `<created_at>` is its manifest's `created_at`.
+
+**Reason:** a server that replaces another, given the same folder, restores its backups, and the folder keeps each instance's backups apart.
+
+**Tests:** `compliance/backup-folder.test.ts › writes each backup as one file named for its created_at in the folder's backups folder for its instance, and a copy of each file it names in the folder's files area`.
+
+### `instance/backup-folder-copies`
+
+Where `MARFA_BACKUP_PATH` is set, the server MUST NOT give a backup its name in the folder before `<MARFA_BACKUP_PATH>/files/<instance id>/<first four hex digits>/<hex>` holds the bytes of each file the backup names, where `<hex>` is the file's SHA-256 in hex.
+
+**Reason:** a backup carries no file's bytes, so the folder alone restores a backup only while it holds a copy of each file. Each file is copied once and kept while a backup names it, so a backup costs what changed since the last.
+
+**Tests:** `compliance/backup-folder.test.ts › writes each backup as one file named for its created_at in the folder's backups folder for its instance, and a copy of each file it names in the folder's files area`.
+
+### `instance/backup-folder-whole`
+
+Where `MARFA_BACKUP_PATH` is set, if a backup run fails, or the process ends, before the server has written the whole backup and a copy of each file it names, then the server MUST NOT leave a file directly under `<MARFA_BACKUP_PATH>/backups/<instance id>/` whose name reads as a backup.
+
+**Reason:** the server writes a backup under a name that begins with `.`, which no listing reads, and gives it its name only once it is whole and synced to the disk.
+
+**Tests:** `compliance/backup-folder.test.ts › leaves no file a listing reads as a backup when a run fails partway or its process ends, and clears what it left at the next run`.
+
+### `instance/backup-folder-leftovers`
+
+Where `MARFA_BACKUP_PATH` is set, when the server runs a backup, the server MUST first remove what a process that ended left half written under `<MARFA_BACKUP_PATH>/backups/<instance id>/` and `<MARFA_BACKUP_PATH>/files/<instance id>/`.
+
+**Tests:** `compliance/backup-folder.test.ts › leaves no file a listing reads as a backup when a run fails partway or its process ends, and clears what it left at the next run`.
+
+### `instance/backup-folder-not-made`
+
+Where `MARFA_BACKUP_PATH` is set, the server MUST NOT create the folder it names.
+
+**Reason:** a folder on a disk that is not mounted is missing, and one made in its place would be on another disk. The server makes only the folders inside it, and only once it holds the instance's store marker, so an empty mount point fails a backup too.
+
+**Tests:** `compliance/backup-folder.test.ts › counts a run while the folder is gone as failed, makes no folder, and puts the next backup once it is back`, `› refuses to start with a backup folder inside its blob folder, or one that does not exist, and makes none`.
+
+### `instance/backup-folder-missing-start`
+
+Where `MARFA_BACKUP_PATH` names a folder that does not exist, and the server has not attached a backup folder at that path before, the server MUST refuse to start.
+
+**Reason:** the owner learns at once that the folder is wrong. A folder the server has attached before may be on a disk that is not mounted yet, so the server starts and each backup fails until it is back.
+
+**Tests:** `compliance/backup-folder.test.ts › refuses to start with a backup folder inside its blob folder, or one that does not exist, and makes none`.
+
+### `instance/backup-folder-inside`
+
+Where `MARFA_BACKUP_PATH` names a folder inside the data directory or the blob folder, the server MUST refuse to start.
+
+**Reason:** a backup there is lost with what it backs up.
+
+**Tests:** `compliance/backup-folder.test.ts › refuses to start with a backup folder inside its blob folder, or one that does not exist, and makes none`.
+
+### `instance/backup-one-destination`
+
+Where both `S3_BUCKET` and `MARFA_BACKUP_PATH` are set, the server MUST refuse to start.
+
+**Reason:** backups go to one place, so a restore knows where to read them.
+
+**Tests:** `compliance/backup-folder.test.ts › refuses to start with both S3_BUCKET and MARFA_BACKUP_PATH set`.
 
 ### `instance/backup-holds-export`
 
@@ -486,13 +548,13 @@ When the server takes a backup, the server MUST put in it the items, edges, rows
 
 When the server takes a backup, the server MUST name every file its items name under the manifest's `missing_blobs`, and carry no file's bytes.
 
-**Reason:** the object store already holds a copy of each file the instance has replicated, so a backup that carried them would put every file in the bucket again each time.
+**Reason:** the object store or the backup folder already holds a copy of each file the instance has replicated, so a backup that carried them would put every file there again each time.
 
 **Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything`.
 
 ### `instance/backup-keeps-files`
 
-While the server has recorded a backup it put in the object store, and has neither thinned that backup nor, while a later backup was recorded, found it missing from three or more consecutive listings of the store of which the first and the last are more than 31 days apart, the server MUST NOT purge a file that backup names.
+While the server has recorded a backup it put in the object store or the backup folder, and has neither thinned that backup nor, while a later backup was recorded, found it missing from three or more consecutive listings of the store of which the first and the last are more than 31 days apart, the server MUST NOT purge a file that backup names.
 
 **Reason:** Backups contain no file bytes and outlive the orphan grace. The server knows a backup only by its record and the store's listings, and one listing can leave out an object the store holds. So the server takes a backup to be gone only once several listings over longer than retention have left it out, and a listing that shows it again starts the count over.
 
@@ -508,7 +570,7 @@ When the server takes a backup, the server MUST NOT put in it a key, an app's to
 
 ### `instance/backup-whole`
 
-If a backup run fails, or the process ends, before the object store has taken the whole backup, then the server MUST NOT leave an object under `<S3_PREFIX>/backups/` that holds part of it.
+Where `S3_BUCKET` is set, if a backup run fails, or the process ends, before the object store has taken the whole backup, then the server MUST NOT leave an object under `<S3_PREFIX>/backups/` that holds part of it.
 
 **Reason:** a backup larger than one part goes up as a multipart upload, which no listing or read sees until it completes. An upload the process left unfinished still holds its parts in the bucket until a lifecycle rule or the store's own clean-up removes them.
 
@@ -530,7 +592,7 @@ When the server starts after a process that ended during a backup, the server MU
 
 ### `instance/backup-interval`
 
-Where `S3_BUCKET` is set and `backup_interval_seconds` is above 0, the server MUST run a backup once that interval has passed since the last run ended.
+Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set and `backup_interval_seconds` is above 0, the server MUST run a backup once that interval has passed since the last run ended.
 
 **Tests:** `compliance/backups.test.ts › backs up on its interval with no request`.
 
@@ -568,9 +630,9 @@ While a backup run is under way, when the private local command sends `POST /bac
 
 ### `instance/backup-unreachable`
 
-If the object store does not take a backup, then the server MUST count the failed run and run again at the next interval.
+If the object store or the backup folder does not take a backup, then the server MUST count the failed run and run again at the next interval.
 
-**Tests:** `compliance/backup-faults.test.ts › counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put`, `› runs the next scheduled backup after a failed one when nothing has changed since the last backup put`.
+**Tests:** `compliance/backup-faults.test.ts › counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put`, `› runs the next scheduled backup after a failed one when nothing has changed since the last backup put`, `compliance/backup-folder.test.ts › counts a run while the folder is gone as failed, makes no folder, and puts the next backup once it is back`.
 
 ### `instance/backup-health-failing`
 
@@ -578,7 +640,7 @@ While the last backup run failed, the server MUST answer `GET /health` with `bac
 
 **Reason:** a backup that stops working is the failure an owner learns of only when they need the backup.
 
-**Tests:** `compliance/backup-faults.test.ts › counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put`.
+**Tests:** `compliance/backup-faults.test.ts › counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put`, `compliance/backup-folder.test.ts › counts a run while the folder is gone as failed, makes no folder, and puts the next backup once it is back`.
 
 ### `instance/backup-health-detail`
 
@@ -586,15 +648,21 @@ When a request authorized by `instance.read` or local authority sends `GET /heal
 
 **Tests:** `compliance/backup-faults.test.ts › counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put`.
 
+### `instance/backup-health-destination`
+
+Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST answer `backups.destination` as `bucket` or `folder`, for the one that is set.
+
+**Tests:** `compliance/backup-faults.test.ts › counts a backup the object store cannot take, shows it in health, and clears it with the next backup that is put`, `compliance/backup-folder.test.ts › says in health that backups go to a folder`.
+
 ### `instance/backup-health-off`
 
-Where `S3_BUCKET` is not set, the server MUST answer `GET /health` with `backups.status` `off` and `backups.reason` `no_bucket`.
+Where neither `S3_BUCKET` nor `MARFA_BACKUP_PATH` is set, the server MUST answer `GET /health` with `backups.status` `off` and `backups.reason` `no_bucket`.
 
 **Tests:** `compliance/backups.test.ts › says in health that backups are off on an instance with no object store, and answers 409 no_bucket at each door`.
 
 ### `instance/backup-no-bucket`
 
-Where `S3_BUCKET` is not set, when the private local command sends `GET /backups`, `POST /backups` or `POST /backups/{instance_id}/{name}/restore`, the server MUST answer `409 no_bucket`.
+Where neither `S3_BUCKET` nor `MARFA_BACKUP_PATH` is set, when the private local command sends `GET /backups`, `POST /backups` or `POST /backups/{instance_id}/{name}/restore`, the server MUST answer `409 no_bucket`.
 
 **Tests:** `compliance/backups.test.ts › says in health that backups are off on an instance with no object store, and answers 409 no_bucket at each door`.
 
@@ -608,23 +676,37 @@ When a key or an app's token sends `GET /backups`, `POST /backups` or `POST /bac
 
 ### `instance/backups-list`
 
-When the private local command sends `GET /backups`, the server MUST answer with each backup in an instance's folder under `<S3_PREFIX>/backups/`, this instance's and any other's, newest first, each with its `name`, `instance_id`, `created_at` and `size_bytes`.
+When the private local command sends `GET /backups`, the server MUST answer with each backup in an instance's folder under `<S3_PREFIX>/backups/` or `<MARFA_BACKUP_PATH>/backups/`, this instance's and any other's, newest first, each with its `name`, `instance_id`, `created_at` and `size_bytes`.
 
 **Reason:** a fresh server started on the prefix of an instance it replaces restores that instance's backup.
 
-**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key at all three doors`, `› restores a named backup into a fresh server on the same bucket, files included`.
+**Tests:** `compliance/backups.test.ts › lists the backups newest first to the owner, and refuses a key at all three doors`, `› restores a named backup into a fresh server on the same bucket, files included`, `compliance/backup-folder.test.ts › restores a named backup into a fresh server on another data path from the folder alone, every line and file`.
 
 ### `instance/backup-restore`
 
-When the private local command sends `POST /backups/{instance_id}/{name}/restore`, the server MUST restore the backup of that name in that instance's folder from the object store as `POST /restore` restores the same archive.
+When the private local command sends `POST /backups/{instance_id}/{name}/restore`, the server MUST restore the backup of that name in that instance's folder from the object store or the backup folder as `POST /restore` restores the same archive.
 
 **Reason:** the server reads the backup itself, so a restore after a move needs no copy of the backup on the owner's computer.
 
-**Tests:** `compliance/backups.test.ts › restores a named backup into a fresh server on the same bucket, files included`.
+**Tests:** `compliance/backups.test.ts › restores a named backup into a fresh server on the same bucket, files included`, `compliance/backup-folder.test.ts › restores a named backup into a fresh server on another data path from the folder alone, every line and file`.
+
+### `instance/backup-folder-restore-files`
+
+Where `MARFA_BACKUP_PATH` is set, when the private local command sends `POST /backups/{instance_id}/{name}/restore`, the server MUST read each file the backup names that the instance does not hold from `<MARFA_BACKUP_PATH>/files/<instance_id>/`.
+
+**Tests:** `compliance/backup-folder.test.ts › restores a named backup into a fresh server on another data path from the folder alone, every line and file`.
+
+### `instance/backup-folder-restore-lacking`
+
+Where `MARFA_BACKUP_PATH` is set, if a file the backup names, which the instance that took it held, is held whole neither in `<MARFA_BACKUP_PATH>/files/<instance_id>/` nor by the restoring instance, then the server MUST answer `POST /backups/{instance_id}/{name}/restore` with `409 backup_files_missing` and each such file's hash in `details.missing_blobs`.
+
+**Reason:** a restore that left a file out would lose it without a word. The refusal restores nothing; the backup's archive file, restored through `POST /restore`, restores the rest without those files.
+
+**Tests:** `compliance/backup-folder.test.ts › refuses a restore with 409 backup_files_missing naming each file the folder does not hold, and restores nothing`.
 
 ### `instance/backup-restore-unknown`
 
-If `POST /backups/{instance_id}/{name}/restore` names no backup the object store holds directly under `<S3_PREFIX>/backups/<instance_id>/`, then the server MUST answer `404 backup_not_found`.
+If `POST /backups/{instance_id}/{name}/restore` names no backup the object store holds directly under `<S3_PREFIX>/backups/<instance_id>/`, or the backup folder holds directly under `<MARFA_BACKUP_PATH>/backups/<instance_id>/`, then the server MUST answer `404 backup_not_found`.
 
 **Tests:** `compliance/backups.test.ts › answers 404 backup_not_found for a name the object store does not hold, or one that is not a backup's`.
 
@@ -650,7 +732,7 @@ When the server has put a backup, the server MUST delete each of its own backups
 
 ### `instance/backup-thinning-only-backups`
 
-When the server thins its backups, the server MUST NOT delete an object other than a backup it recorded putting, listed directly under `<S3_PREFIX>/backups/<instance id>/`, where `<instance id>` is its own.
+When the server thins its backups, the server MUST NOT delete an object or file other than a backup it recorded putting, listed directly under `<S3_PREFIX>/backups/<instance id>/` or `<MARFA_BACKUP_PATH>/backups/<instance id>/`, where `<instance id>` is its own.
 
 **Reason:** the prefix also holds the instance's files, another instance on the same prefix keeps its own backups, and the bucket may hold objects the instance did not write. A backup in its own folder that its database never recorded, such as one put after the image of the data directory the server started on, is kept (`instance/backup-found-keeps-files`).
 
@@ -658,7 +740,7 @@ When the server thins its backups, the server MUST NOT delete an object other th
 
 ### `instance/backup-found-keeps-files`
 
-While a backup that the server did not record putting is listed directly under `<S3_PREFIX>/backups/<instance id>/`, where `<instance id>` is its own, the server MUST NOT purge a file that backup's manifest names.
+While a backup that the server did not record putting is listed directly under `<S3_PREFIX>/backups/<instance id>/` or `<MARFA_BACKUP_PATH>/backups/<instance id>/`, where `<instance id>` is its own, the server MUST NOT purge a file that backup's manifest names.
 
 **Reason:** a server started on an image of its data directory does not record the backups put after the image, and those backups restore their files from the bucket. Such a backup stops holding its files as `instance/backup-keeps-files` lets a recorded one go: once three or more consecutive listings, the first and the last more than 31 days apart, have left it out. Where the server cannot list or read that folder, a file the object store holds a copy of is not purged.
 
@@ -2100,6 +2182,7 @@ The environment variables below are read once, when the server starts. Each is n
 | `MARFA_MAX_CONNECTIONS`                 | `1024`                                               | Whole number, 1 to 1000000                                         | The most connections the public listener holds open at once. The server lowers it at start where the open-file limit leaves too little room ("Open connections").                                                                                                                                                                                                                                                                                                                                                                   |
 | `MARFA_MAX_CONNECTIONS_PER_ADDRESS`     | `256`                                                | Whole number, 1 to 1000000                                         | The most connections the public listener holds open for one caller address, where the listener does not believe a forwarded address. An IPv6 address counts with the rest of its /64. A value above `MARFA_MAX_CONNECTIONS` has no effect.                                                                                                                                                                                                                                                                                          |
 | `MARFA_BLOB_PATH`                       | `./data/blobs`                                       | Any text                                                           | The folder of the disk store, where every upload lands.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `MARFA_BACKUP_PATH`                     | None                                                 | An absolute path with no `..` in it                                | The folder the server backs itself up to: each backup under `backups/<instance id>/` and a copy of each file under `files/<instance id>/`. The folder must exist, outside the data directory and the blob folder, and the server never creates it. Set it or `S3_BUCKET`, not both. When neither is set, the server keeps no backup.                                                                                                                                                                                                |
 | `S3_BUCKET`                             | None                                                 | Any text                                                           | The bucket of an S3-compatible object store. The store is attached when this is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 | `S3_REGION`                             | `us-east-1`                                          | Any text                                                           | The region of the object store.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `S3_ENDPOINT`                           | None                                                 | Absolute `http` or `https` URL                                     | The endpoint of the object store. When blank, the store's provider chooses it.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |

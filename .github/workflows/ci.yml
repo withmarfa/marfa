@@ -1136,9 +1136,10 @@ jobs:
 
   # The restore drill: a Rust server with an object store takes a backup,
   # its data directory is deleted, and a fresh server on the same bucket
-  # restores the backup from the bucket alone. Every instance, item, edge and
-  # row line and every file is compared; `conformance/scripts/restore-drill.ts`
-  # says what it proves and prints its report, which is kept when it failed.
+  # restores the backup from the bucket alone; then the same with a backup
+  # folder in place of the bucket. Every instance, item, edge and row line and
+  # every file is compared; `conformance/scripts/restore-drill.ts` says what it
+  # proves and prints its report, which is kept when it failed.
   restore-drill:
     needs: [changes, rust-contract]
     if: ${{ !cancelled() && needs.rust-contract.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.restore-drill != 'false') }}
@@ -1176,6 +1177,10 @@ jobs:
         working-directory: conformance
         run: pnpm drill:restore --state "$RUNNER_TEMP/drill/state"
 
+      - name: Run the drill on a backup folder
+        working-directory: conformance
+        run: pnpm drill:restore --folder --state "$RUNNER_TEMP/drill/folder-state"
+
       - name: Stop the object store
         if: always()
         working-directory: conformance
@@ -1186,7 +1191,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: restore-drill-report
-          path: ${{ runner.temp }}/drill/reports/restore-drill.md
+          path: ${{ runner.temp }}/drill/reports/
           if-no-files-found: ignore
 
   # The device and CLI fixtures against the Rust server on macOS, for what
