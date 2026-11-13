@@ -6,6 +6,9 @@ use marfa_server::settings::{Environment, Refused, Settings};
 use marfa_server::telemetry::config::{self, Config};
 use marfa_server::{log, run, telemetry};
 
+#[global_allocator]
+static ALLOCATOR: marfa_allocator::Allocator = marfa_allocator::Allocator;
+
 /// The Marfa server. It is configured through its environment.
 #[derive(Parser)]
 #[command(version, about)]
@@ -45,6 +48,7 @@ fn start() -> Result<u8, Failure> {
 }
 
 fn main() -> ExitCode {
+    marfa_allocator::route_sqlite();
     marfa_enrichment::serve_child_if_asked();
     Cli::parse();
     log::init();

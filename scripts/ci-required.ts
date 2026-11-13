@@ -443,6 +443,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // The ACL reading both the command line and the Rust server's private
   // socket use has macOS-only code, so a Mac builds and tests it too.
   [/^core\/marfa-acl\//, RUST],
+  // The allocator exists only on macOS, and the command line and the server
+  // are built with it there.
+  [/^core\/marfa-allocator\//, RUST],
   // The server's own use of it has a macOS-only test, and its process figures
   // read the resident size, and the open-file limit is raised, through
   // macOS-only calls.

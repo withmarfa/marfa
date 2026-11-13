@@ -43,6 +43,7 @@ hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
 ipnet = "2"
 libc = "0.2"
 marfa-acl.workspace = true
+marfa-allocator.workspace = true
 marfa-enrichment.workspace = true
 marfa-rules.workspace = true
 marfa-telemetry.workspace = true

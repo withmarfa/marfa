@@ -5,6 +5,7 @@ The Rust engine every native client embeds: a local SQLite working copy of a sli
 | Crate              | What it is                                                                                                   |
 | ------------------ | ------------------------------------------------------------------------------------------------------------ |
 | `marfa-acl`        | Judges each folder on the way to a private path, ACLs included, for the command line and the server          |
+| `marfa-allocator`  | The allocator of `marfa` and `marfa-server`: on macOS, one that gives freed memory back to the system         |
 | `marfa-rules`      | The rules a client and a server share. It has no SQLite, HTTP, async runtime or client code                  |
 | `marfa-core`       | The engine. `src/contract.rs` is written from `openapi.json` by `pnpm generate`                              |
 | `marfa-cli`        | The `marfa` binary                                                                                           |

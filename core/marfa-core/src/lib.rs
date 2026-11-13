@@ -3600,6 +3600,13 @@ impl Core {
         })
     }
 
+    /// Frees the connection's page cache, which a pass over a large folder fills.
+    pub(crate) fn release_cache(&self) {
+        if let Ok(conn) = self.conn.lock() {
+            let _ = conn.release_memory();
+        }
+    }
+
     pub(crate) fn conn(&self) -> Result<MutexGuard<'_, Connection>> {
         let mut conn = self.conn.lock().map_err(|_| {
             CoreError::Store("the connection was poisoned by an earlier panic".into())

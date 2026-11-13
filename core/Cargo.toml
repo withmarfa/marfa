@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["marfa-acl", "marfa-rules", "marfa-core", "marfa-telemetry", "marfa-cli", "marfa-server", "marfa-enrichment", "bindings/node"]
+members = ["marfa-acl", "marfa-allocator", "marfa-rules", "marfa-core", "marfa-telemetry", "marfa-cli", "marfa-server", "marfa-enrichment", "bindings/node"]
 exclude = ["bindings/swift"]
 
 [workspace.package]
@@ -12,6 +12,7 @@ publish = false
 [workspace.dependencies]
 marfa-core = { path = "marfa-core" }
 marfa-acl = { path = "marfa-acl" }
+marfa-allocator = { path = "marfa-allocator" }
 marfa-enrichment = { path = "marfa-enrichment" }
 marfa-rules = { path = "marfa-rules" }
 marfa-telemetry = { path = "marfa-telemetry" }

@@ -1500,6 +1500,7 @@ describe("what a job reads reaches it", () => {
     }
     expect([...crates].sort()).toEqual([
       "marfa-acl",
+      "marfa-allocator",
       "marfa-cli",
       "marfa-core",
       "marfa-rules",
