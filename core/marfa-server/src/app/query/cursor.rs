@@ -13,6 +13,7 @@ use crate::app::refusal::{Refusal, Result};
 pub const SECRET_KEY: &str = "cursor_secret";
 
 const TAG_BYTES: usize = 12;
+const KEYED_BYTES: usize = 16;
 
 #[derive(Clone)]
 pub struct Secret(pub Vec<u8>);
@@ -38,8 +39,16 @@ impl Secret {
         Ok(hex::encode(self.whole_tag(scope, payload.as_bytes())?))
     }
 
-    pub fn keyed(&self, scope: &str, text: &str) -> Result<String> {
+    /// The tag of a key a cursor stands in for, as short as the cursor's own.
+    pub fn key_tag(&self, scope: &str, text: &str) -> Result<String> {
         Ok(hex::encode(self.tag(scope, text.as_bytes())?))
+    }
+
+    /// A stored id derives from this, so its length is its own and never the cursor tag's.
+    pub fn keyed(&self, scope: &str, text: &str) -> Result<String> {
+        let mut tag = self.whole_tag(scope, text.as_bytes())?;
+        tag.truncate(KEYED_BYTES);
+        Ok(hex::encode(tag))
     }
 
     pub fn issue(&self, scope: &str, payload: &Json) -> Result<String> {
@@ -362,5 +371,19 @@ mod compact {
             let nan = [&[FRACTION][..], &f64::NAN.to_le_bytes()].concat();
             assert!(decode(&nan).is_none());
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_keyed_id_is_the_first_sixteen_bytes_of_the_tag_whatever_a_cursor_keeps() {
+        let secret = Secret(b"cursor-test-secret".to_vec());
+        assert_eq!(
+            secret.keyed("conflicted-copy", "claim-attempt-1").unwrap(),
+            "de3062e502ffeef8a3c8c74dd80548a0"
+        );
     }
 }
