@@ -290,9 +290,10 @@ enum Command {
     /// prints it and exits 1 with `blobs_missing`. Upload their bytes again
     /// with `blobs upload` to restore them.
     Restore(restore::RestoreArgs),
-    /// Backups the server puts in its object store on a schedule, and takes
-    /// and restores when asked. Each holds every item, edge and setting, the
-    /// trash included, and no file, which the object store already holds.
+    /// Backups the server puts in its backup folder or object store on a
+    /// schedule, and takes and restores when asked. Each holds every item,
+    /// edge and setting, the trash included, and no file, which the folder or
+    /// object store already holds a copy of.
     Backups {
         #[command(subcommand)]
         command: backups::BackupsCommand,

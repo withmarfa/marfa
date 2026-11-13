@@ -51,7 +51,9 @@ impl Instance {
     }
 
     async fn start_in(data: TempDir, folder: &Path) -> Instance {
-        let app = App::start(settings(data.path(), folder, &[])).await.unwrap();
+        let app = App::start(settings(data.path(), folder, &[]))
+            .await
+            .unwrap();
         let mut instance = Instance {
             public: public(app.clone()),
             control: control(app.clone()),
@@ -258,7 +260,7 @@ async fn a_backup_holds_each_file_once_and_restores_whole_into_a_fresh_install_e
     assert_eq!(status, StatusCode::OK, "{body}");
     let name = body["backup"]["name"].as_str().unwrap().to_string();
     let own = folder.path().join("backups").join(origin.id());
-    assert_eq!(names_in(&own), [name.clone()]);
+    assert_eq!(names_in(&own), std::slice::from_ref(&name));
     for (hash, bytes) in [
         (&kept, &b"a file the backup copies itself"[..]),
         (&replicated, &b"a file replication copied first"[..]),
@@ -414,8 +416,7 @@ async fn a_full_disk_mid_archive_or_mid_file_leaves_nothing_half_written_and_the
 }
 
 #[tokio::test]
-async fn what_a_process_that_ended_left_half_written_is_cleared_by_the_next_run_and_never_listed()
-{
+async fn what_a_process_that_ended_left_half_written_is_cleared_by_the_next_run_and_never_listed() {
     let folder = TempDir::new().unwrap();
     let instance = Instance::start(folder.path()).await;
     let (status, body) = instance.back_up().await;
@@ -453,7 +454,13 @@ async fn a_backup_being_written_is_never_listed_until_it_is_whole() {
     let running = instance.clone();
     let run = tokio::spawn(async move { running.back_up().await });
     let began = std::time::Instant::now();
-    while !instance.app.faults.list().iter().any(|fault| fault.waiting > 0) {
+    while !instance
+        .app
+        .faults
+        .list()
+        .iter()
+        .any(|fault| fault.waiting > 0)
+    {
         assert!(began.elapsed() < std::time::Duration::from_secs(10));
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     }
@@ -490,7 +497,10 @@ async fn a_restore_missing_a_files_copy_names_it_and_restores_nothing() {
     let fresh = Instance::start(folder.path()).await;
     let (status, refused) = fresh.restore(&origin_id, &name).await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
-    assert_eq!(refused["error"]["code"], "backup_files_missing", "{refused}");
+    assert_eq!(
+        refused["error"]["code"], "backup_files_missing",
+        "{refused}"
+    );
     assert_eq!(
         refused["error"]["details"]["missing_blobs"],
         json!([lost]),
@@ -584,10 +594,7 @@ async fn the_server_refuses_to_start_with_both_destinations_or_a_folder_it_would
         refused.contains("S3_BUCKET") && refused.contains("MARFA_BACKUP_PATH"),
         "{refused}"
     );
-    let relative = Settings::read(Environment::from_pairs(&[(
-        "MARFA_BACKUP_PATH",
-        "backups",
-    )]));
+    let relative = Settings::read(Environment::from_pairs(&[("MARFA_BACKUP_PATH", "backups")]));
     assert!(relative.is_err());
 
     let inside = data.path().join("backups");

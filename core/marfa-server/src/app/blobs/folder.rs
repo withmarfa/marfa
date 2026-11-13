@@ -152,11 +152,7 @@ impl Folder {
         }
         Err(io::Error::new(
             io::ErrorKind::NotFound,
-            format!(
-                "the backup folder {} is not there, or does not hold this instance's files; \
-                 mount the disk it is on",
-                self.root.display()
-            ),
+            "the backup folder is not there, or does not hold this instance's files",
         ))
     }
 
@@ -198,7 +194,7 @@ impl Folder {
         match File::open(self.folder_of(instance).join(name)) {
             Ok(file) => {
                 let meta = file.metadata()?;
-                Ok(meta.is_file().then(|| (meta.len(), file)))
+                Ok(meta.is_file().then_some((meta.len(), file)))
             }
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(error) => Err(error),
@@ -209,7 +205,12 @@ impl Folder {
     pub fn open_copy(&self, instance: &str, hash: &Hash) -> io::Result<Option<File>> {
         self.checked()?;
         let hex = hash.hex();
-        let path = self.root.join(FILES).join(instance).join(&hex[0..4]).join(hex);
+        let path = self
+            .root
+            .join(FILES)
+            .join(instance)
+            .join(&hex[0..4])
+            .join(hex);
         match File::open(path) {
             Ok(file) => Ok(file.metadata()?.is_file().then_some(file)),
             Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -500,7 +501,10 @@ mod tests {
         fs::create_dir_all(&own).unwrap();
         fs::write(own.join(".x.tar.0190.partial"), b"half").unwrap();
         fs::write(own.join("kept.tar"), b"whole").unwrap();
-        assert_eq!(folder.list_in("instance").unwrap(), [("kept.tar".into(), 5)]);
+        assert_eq!(
+            folder.list_in("instance").unwrap(),
+            [("kept.tar".into(), 5)]
+        );
         assert_eq!(folder.clear_leftovers().unwrap(), 1);
         assert!(own.join("kept.tar").exists());
         assert!(!own.join(".x.tar.0190.partial").exists());
@@ -529,8 +533,15 @@ mod tests {
         fs::create_dir(&data).unwrap();
         let link = dir.path().join("link");
         std::os::unix::fs::symlink(&data, &link).unwrap();
-        for inside in [data.clone(), data.join("backups"), link.join("later/backups")] {
-            assert!(outside(&inside, &[("data directory", &data)]).is_err(), "{inside:?}");
+        for inside in [
+            data.clone(),
+            data.join("backups"),
+            link.join("later/backups"),
+        ] {
+            assert!(
+                outside(&inside, &[("data directory", &data)]).is_err(),
+                "{inside:?}"
+            );
         }
         assert!(outside(&dir.path().join("elsewhere"), &[("data directory", &data)]).is_ok());
         assert!(outside(&dir.path().join("data2"), &[("data directory", &data)]).is_ok());

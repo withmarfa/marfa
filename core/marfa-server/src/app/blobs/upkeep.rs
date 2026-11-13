@@ -84,7 +84,10 @@ impl App {
 }
 
 enum Copy {
-    Made { from: String, object: String },
+    Made {
+        from: String,
+        object: String,
+    },
     /// Why no copy was made, where a store said.
     Skipped(Option<String>),
     TargetSilent,
@@ -251,7 +254,9 @@ pub async fn replicate_one(
     let mut made = if cleared {
         copy_to(app, target, &holders, blob, unreachable).await?
     } else {
-        Copy::Skipped(Some("an earlier copy there is still being deleted".to_string()))
+        Copy::Skipped(Some(
+            "an earlier copy there is still being deleted".to_string(),
+        ))
     };
     if let Copy::Made { object, .. } = &made
         && !written_by_target(app, target, blob, object).await
@@ -330,7 +335,9 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         let Some(target) = app.blobs.store(&pair.store_id) else {
             continue;
         };
-        if let Replicated::Copied = replicate_one(&app, &target, &pair.blob, &mut unreachable).await? {
+        if let Replicated::Copied =
+            replicate_one(&app, &target, &pair.blob, &mut unreachable).await?
+        {
             copied += 1;
             bytes = bytes.saturating_add(size);
         }
@@ -364,7 +371,11 @@ async fn check(app: &App, store: &Store, copy: &rows::ToCheck) -> Checked {
                 if faults.fail(FAIL_BLOB_READ, None) {
                     return Err(io::Error::other("the store failed the read"));
                 }
-                let lie = if lied { faults.lie(hash.as_str()) } else { None };
+                let lie = if lied {
+                    faults.lie(hash.as_str())
+                } else {
+                    None
+                };
                 match lie {
                     Some(Lie::Lost) => return Ok(None),
                     Some(Lie::Unreadable) => return Err(store::unreadable()),

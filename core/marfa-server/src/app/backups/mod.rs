@@ -386,13 +386,19 @@ impl Destination {
             }
             Destination::Folder(folder) => {
                 tracing::warn!(%error, "The backup folder did not take part in a backup");
-                Refusal::new(
-                    Code::BlobStoreUnavailable,
+                let message = if folder.reachable() {
                     format!(
                         "The backup folder {} failed while {what}: {error}",
                         folder.root().display()
-                    ),
-                )
+                    )
+                } else {
+                    format!(
+                        "The backup folder {} is not there, or does not hold this instance's \
+                         files. Mount the disk it is on, then try again.",
+                        folder.root().display()
+                    )
+                };
+                Refusal::new(Code::BlobStoreUnavailable, message)
             }
         }
     }

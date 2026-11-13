@@ -346,7 +346,9 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
         }
         "free" => {
             if !["database", "blobs", "backups"].contains(&rest) {
-                return Err(format!("{rest} is not a volume: database, blobs or backups"));
+                return Err(format!(
+                    "{rest} is not a volume: database, blobs or backups"
+                ));
             }
             if arg == Some("unknown") {
                 return Ok((None, Some(FREE_UNKNOWN)));

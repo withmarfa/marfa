@@ -174,11 +174,7 @@ async fn read(app: &App, destination: &Destination, name: &str) -> Result<()> {
 /// Records each backup `listed` in this instance's folder that the database records neither as
 /// put nor as found, with the files it names, and settles the found ones the listing omits. Only
 /// once this has succeeded do the found backups hold every file they name.
-pub(super) async fn survey(
-    app: &App,
-    destination: &Destination,
-    listed: &[String],
-) -> Result<()> {
+pub(super) async fn survey(app: &App, destination: &Destination, listed: &[String]) -> Result<()> {
     let store = destination.id().to_string();
     let looked = store.clone();
     let (put, held) = app

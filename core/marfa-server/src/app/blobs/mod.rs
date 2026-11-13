@@ -41,12 +41,14 @@ use crate::failure::Failure;
 use crate::settings::registry::{BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
 use crate::settings::start::ObjectStoreSettings;
 use disk::{Disk, Staged};
-pub use folder::Folder;
 pub use disk::{MARKER, Scratch};
+pub use folder::Folder;
 pub use hash::Hash;
 pub use restore::stored_size;
 use rows::Held;
-pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord, find as blob_record, held_in, registered};
+pub use rows::{
+    CopyRecord, Lender, OrphanRecord, StoreRecord, find as blob_record, held_in, registered,
+};
 use s3::{Marker, S3};
 pub use store::ByteStream;
 use store::{Answer, CHECK_DEADLINE, Failed, Gate, Store};
@@ -714,13 +716,7 @@ fn room(faults: &Faults, root: &Path, reserve: u64, incoming: u64) -> Result<()>
 }
 
 /// Refuses a body that would leave less free on `root`'s volume than the reserve.
-fn room_on(
-    faults: &Faults,
-    which: Volume,
-    root: &Path,
-    reserve: u64,
-    incoming: u64,
-) -> Result<()> {
+fn room_on(faults: &Faults, which: Volume, root: &Path, reserve: u64, incoming: u64) -> Result<()> {
     if reserve == 0 {
         return Ok(());
     }

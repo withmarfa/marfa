@@ -2200,7 +2200,7 @@ marfa restore [OPTIONS] <FILE>
 
 ## backups
 
-Backups the server puts in its object store on a schedule, and takes and restores when asked. Each holds every item, edge and setting, the trash included, and no file, which the object store already holds.
+Backups the server puts in its backup folder or object store on a schedule, and takes and restores when asked. Each holds every item, edge and setting, the trash included, and no file, which the folder or object store already holds a copy of.
 
 ### marfa backups
 
@@ -2210,7 +2210,7 @@ marfa backups [OPTIONS] <COMMAND>
 
 ### marfa backups list
 
-The backups in the instance's object store, newest first, from every instance that put them there. Requires private local authority (--socket).
+The backups where the instance keeps them, its backup folder or its object store, newest first, from every instance that put them there. Requires private local authority (--socket).
 
 ```text
 marfa backups list [OPTIONS]
@@ -2226,7 +2226,7 @@ marfa backups run [OPTIONS]
 
 ### marfa backups restore
 
-Restore a backup from the object store. The server reads it itself, so nothing is downloaded here. It restores as `restore` does an archive, and holds no sign-in, keys, apps or webhooks. Requires private local authority (--socket).
+Restore a backup from the instance's backup folder or object store. The server reads it itself, files included, so nothing is downloaded here. It restores as `restore` does an archive, and holds no sign-in, keys, apps or webhooks. Requires private local authority (--socket).
 
 ```text
 marfa backups restore [OPTIONS] <INSTANCE_ID> <NAME>
