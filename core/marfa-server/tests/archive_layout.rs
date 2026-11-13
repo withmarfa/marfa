@@ -744,3 +744,128 @@ async fn a_version_whose_item_the_archive_does_not_hold_is_refused() {
         "versions.ndjson.gz"
     );
 }
+
+fn at(held: &[(String, Vec<u8>)], name: &str) -> usize {
+    names(held).iter().position(|held| held == name).unwrap()
+}
+
+#[tokio::test]
+async fn an_item_on_two_lines_is_refused_naming_it() {
+    let folder = TempDir::new().unwrap();
+    let origin = Instance::start(folder.path(), &[]).await;
+    let id = origin.note("first").await;
+    origin.edit(&id, 1, "second").await;
+    let held = entries(&origin.archive().await);
+
+    // The witness: the archive as written restores.
+    let plain = Instance::start(folder.path(), &[]).await;
+    let restored = plain.restore(tar(&held)).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+
+    let mut held = held;
+    let items = at(&held, "items.ndjson.gz");
+    let mut lines_held = lines(&held[items].1);
+    let mut later = lines_held[0].clone();
+    later["item"]["version"] = Value::from(10);
+    lines_held.push(later);
+    held[items].1 = gzip(&lines_held);
+    let archive = with_manifest(held, |manifest| {
+        manifest.insert("item_count".into(), 2.into());
+    });
+    let fresh = Instance::start(folder.path(), &[]).await;
+    let refused = fresh.restore(archive).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+    let details = &refused.body["error"]["details"];
+    assert_eq!(details["item_id"], id.as_str(), "{details}");
+    assert_eq!(details["entry"], "items.ndjson.gz", "{details}");
+    assert_eq!(details["line"], 2, "{details}");
+    let read = fresh
+        .keyed(Method::GET, &format!("/items/{id}"), json!({}))
+        .await;
+    assert_eq!(read.status, StatusCode::NOT_FOUND, "{}", read.body);
+}
+
+#[tokio::test]
+async fn a_blob_before_the_file_list_is_refused_as_out_of_order() {
+    let folder = TempDir::new().unwrap();
+    let origin = Instance::start(folder.path(), &[]).await;
+    let hash = origin.upload(b"a file the archive carries").await;
+    let file = origin
+        .keyed(
+            Method::POST,
+            "/items",
+            json!({ "type": "core.file", "properties": { "blob_ref": hash, "mime_type": "text/plain" } }),
+        )
+        .await;
+    assert_eq!(file.status, StatusCode::CREATED, "{}", file.body);
+    let held = entries(&origin.archive().await);
+    let blob = format!("blobs/{hash}");
+
+    // The witness: in its place, the blob restores.
+    let plain = Instance::start(folder.path(), &[]).await;
+    let restored = plain.restore(tar(&held)).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+    assert_eq!(restored.body["blobs_imported"], 1, "{}", restored.body);
+
+    for before in ["files.ndjson.gz", "rows.ndjson.gz"] {
+        let mut moved = held.clone();
+        let entry = moved.remove(at(&moved, &blob));
+        moved.insert(at(&moved, before), entry);
+        let fresh = Instance::start(folder.path(), &[]).await;
+        let refused = fresh.restore(tar(&moved)).await;
+        assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+        let error = &refused.body["error"];
+        assert_eq!(error["details"]["entry"], blob.as_str(), "{error}");
+        assert!(
+            error["message"].as_str().unwrap().contains("out of order"),
+            "{error}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_line_kind_or_field_a_restore_does_not_know_is_skipped_and_the_kind_named() {
+    let folder = TempDir::new().unwrap();
+    let origin = Instance::start(folder.path(), &[]).await;
+    let id = origin.note("kept past a later kind").await;
+    let held = entries(&origin.archive().await);
+
+    let plain = Instance::start(folder.path(), &[]).await;
+    let restored = plain.restore(tar(&held)).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+    assert_eq!(restored.body["line_kinds_skipped"], json!([]));
+
+    let mut held = held;
+    let instance = at(&held, "instance.ndjson.gz");
+    let mut kinds = lines(&held[instance].1);
+    kinds.push(json!({ "later_kind": { "name": "a" } }));
+    kinds.push(json!({ "later_kind": { "name": "b" }, "provenance": {} }));
+    kinds.push(json!({ "another_kind": {} }));
+    held[instance].1 = gzip(&kinds);
+    let items = at(&held, "items.ndjson.gz");
+    let mut item_lines = lines(&held[items].1);
+    item_lines[0]["later_field"] = json!({ "held": true });
+    item_lines[0]["item"]["later_field"] = Value::from(1);
+    held[items].1 = gzip(&item_lines);
+    let archive = with_manifest(held, |manifest| {
+        manifest.insert("later_kind_count".into(), 2.into());
+    });
+
+    let fresh = Instance::start(folder.path(), &[]).await;
+    let restored = fresh.restore(archive).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+    assert_eq!(
+        restored.body["line_kinds_skipped"],
+        json!(["later_kind", "another_kind"])
+    );
+    assert_eq!(restored.body["imported"], 1, "{}", restored.body);
+    let read = fresh
+        .keyed(Method::GET, &format!("/items/{id}"), json!({}))
+        .await;
+    assert_eq!(read.status, StatusCode::OK, "{}", read.body);
+    assert!(
+        read.body["item"].get("later_field").is_none(),
+        "{}",
+        read.body
+    );
+}

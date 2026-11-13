@@ -205,6 +205,7 @@ impl App {
                 snapshots,
                 carried,
                 skipped,
+                unknown_kinds,
                 ..
             } = received;
             let placed = app.place_restored(carried, absent).await?;
@@ -385,6 +386,7 @@ impl App {
                             "rows_imported": rows_imported,
                             "rows_skipped": rows_skipped,
                             "entries_skipped": skipped,
+                            "line_kinds_skipped": unknown_kinds,
                         });
                         unit.audit_set("restore_archive", Some(answer.clone()))?;
                         let staged = (settings_added > 0)
