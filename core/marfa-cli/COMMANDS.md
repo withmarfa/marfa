@@ -2180,7 +2180,7 @@ Export the instance's data: everything, as an archive.
 
 With no `--format`, this writes the archive: every item, edge, table, setting and file the key may read, the bin included, which `restore` brings back. `--state` narrows the items. `--format ndjson` writes the items alone, one per line, without tables, settings or files, and leaves out the bin unless `--state any` asks for it.
 
-An archive is kept even when it lacks blobs it names: a blob no store could read whole, or a file's blob the key may not read, such as one only an earlier version names. A key holding `blobs.manage` reads every blob. The manifest lists the blobs it lacks under `missing_blobs`, and the command then exits 1 with `blobs_missing`, naming up to ten of them.
+An archive is kept even when it lacks blobs it names: a blob no store could read whole, or a file's blob the key may not read, such as one only an earlier version names. A key holding `blobs.manage` reads every blob. Its `files.ndjson.gz` marks each blob it lacks `not_carried` or `lost`, and the command then exits 1 with `blobs_missing`, naming up to ten of them.
 
 With `--output`, such an archive is not written to the path. It is kept beside it as `<PATH>.incomplete`, which replaces only an earlier file of that name, and the file at the path stays as it was, so a script that reads the path never gets an archive that lacks files. The message names both paths. When that name cannot be taken, the archive stays in a hidden partial file beside the path, and the message names it. Without `--output`, the archive goes to standard output, which it refuses when that is a terminal: save it with `--output <PATH>`, such as `marfa-export.tar`, or redirect it.
 
