@@ -1,16 +1,13 @@
 //! Backups in this instance's folder that the database never recorded, never deleted.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use super::{FOLDER, LIST_DEADLINE, OMISSIONS, key_of, missing_past_retention, parse, unreachable};
+use super::{Destination, OMISSIONS, missing_past_retention, parse};
 use crate::app::App;
 use crate::app::archive::restore::named::files_named;
 use crate::app::blobs::Hash;
-use crate::app::blobs::s3::S3;
-use crate::app::blobs::store::{self, CHECK_DEADLINE};
 use crate::app::clock::Stamp;
 use crate::app::refusal::Result;
 use crate::db::Write;
@@ -138,23 +135,23 @@ fn hold(tx: &Transaction<'_>, seq: i64, files: &[Hash]) -> Result<()> {
 
 /// Records every file the found backup `name` names, a page per write, and only then that its
 /// files are read, so an interrupted read is read again.
-async fn read(app: &App, bucket: &Arc<S3>, name: &str) -> Result<()> {
-    let key = key_of(&app.instance_id, name);
-    let got = store::within(CHECK_DEADLINE, bucket.get_whole(&key))
+async fn read(app: &App, destination: &Destination, name: &str) -> Result<()> {
+    let unreachable = |error: std::io::Error| {
+        destination.unreachable("reading a backup this instance did not record", &error)
+    };
+    let got = destination
+        .get(&app.instance_id, name, app.blobs.check())
         .await
-        .map_err(|error| unreachable("reading a backup this instance did not record", &error))?;
+        .map_err(unreachable)?;
     let Some((_, bytes)) = got else {
         return Ok(());
     };
-    let bytes = store::idle_limited(bytes, app.blobs.check());
-    let files = files_named(bytes)
-        .await
-        .map_err(|error| unreachable("reading a backup this instance did not record", &error))?;
+    let files = files_named(bytes).await.map_err(unreachable)?;
     let files = files.unwrap_or_else(|| {
         tracing::warn!(backup = %name, "A backup in this instance's folder holds no manifest");
         Vec::new()
     });
-    let (store, named) = (bucket.id().to_string(), name.to_string());
+    let (store, named) = (destination.id().to_string(), name.to_string());
     let seq = app
         .db
         .write(Write::own(), move |tx| begin(tx, &store, &named))
@@ -177,8 +174,12 @@ async fn read(app: &App, bucket: &Arc<S3>, name: &str) -> Result<()> {
 /// Records each backup `listed` in this instance's folder that the database records neither as
 /// put nor as found, with the files it names, and settles the found ones the listing omits. Only
 /// once this has succeeded do the found backups hold every file they name.
-pub async fn survey(app: &App, bucket: &Arc<S3>, listed: &[String]) -> Result<()> {
-    let store = bucket.id().to_string();
+pub(super) async fn survey(
+    app: &App,
+    destination: &Destination,
+    listed: &[String],
+) -> Result<()> {
+    let store = destination.id().to_string();
     let looked = store.clone();
     let (put, held) = app
         .db
@@ -200,7 +201,7 @@ pub async fn survey(app: &App, bucket: &Arc<S3>, listed: &[String]) -> Result<()
         .filter(|name| held.get(*name) != Some(&true))
         .collect();
     for name in unread {
-        read(app, bucket, name).await?;
+        read(app, destination, name).await?;
     }
     let (listed, now): (HashSet<String>, Stamp) =
         (listed.iter().cloned().collect(), app.clock.instant());
@@ -211,15 +212,15 @@ pub async fn survey(app: &App, bucket: &Arc<S3>, listed: &[String]) -> Result<()
 
 /// Lists this instance's folder and surveys it.
 pub async fn survey_folder(app: &App) -> Result<()> {
-    let Some(bucket) = app.blobs.s3() else {
+    let Some(destination) = Destination::of(app) else {
         return Ok(());
     };
-    let own = format!("{FOLDER}/{}", app.instance_id);
-    let listed: Vec<String> = store::within(LIST_DEADLINE, bucket.list_in(&own))
+    let listed: Vec<String> = destination
+        .list_in(&app.instance_id)
         .await
-        .map_err(|error| unreachable("listing this instance's backups", &error))?
+        .map_err(|error| destination.unreachable("listing this instance's backups", &error))?
         .into_iter()
         .map(|(name, _)| name)
         .collect();
-    survey(app, &bucket, &listed).await
+    survey(app, &destination, &listed).await
 }

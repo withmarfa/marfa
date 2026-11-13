@@ -45,6 +45,24 @@ pub(crate) fn conflicting(ids: Vec<String>) -> Refusal {
     .with_detail("conflicting_ids", ids)
 }
 
+fn files_missing(lacking: Vec<String>) -> Refusal {
+    const SHOWN: usize = 10;
+    let mut shown = lacking[..lacking.len().min(SHOWN)].join(", ");
+    if lacking.len() > SHOWN {
+        shown.push_str(&format!(" and {} more", lacking.len() - SHOWN));
+    }
+    Refusal::new(
+        Code::BackupFilesMissing,
+        format!(
+            "Nothing was restored: the backup names {} files that neither this instance nor the \
+             backup folder holds whole: {shown}. Put them back in the backup folder, or restore \
+             the backup's archive file with `marfa restore` to leave them out.",
+            lacking.len()
+        ),
+    )
+    .with_detail("missing_blobs", lacking)
+}
+
 /// A restore's body arriving: its parts go to a blocking thread that reads them in order.
 pub struct Receiving {
     parts: Option<mpsc::Sender<Bytes>>,
@@ -159,18 +177,38 @@ impl App {
         })
     }
 
-    /// Writes nothing unless it commits whole.
+    /// Writes nothing unless it commits whole. With `whole`, a file the archive names that the
+    /// instance held when the archive was written must be found, or nothing is restored.
     pub async fn restore(
         self: &Arc<App>,
         caller: &Caller,
         started_at: String,
         received: Received,
+        whole: bool,
     ) -> Result<Value> {
         caller.require_local()?;
         let app = self.clone();
         let caller = caller.clone();
         let task = async move {
             let absent = received.absent();
+            let needed: HashSet<String> = if whole {
+                received
+                    .manifest
+                    .blobs
+                    .keys()
+                    .cloned()
+                    .chain(
+                        received
+                            .manifest
+                            .missing
+                            .iter()
+                            .filter(|(_, (_, size))| size.is_some())
+                            .map(|(hash, _)| hash.clone()),
+                    )
+                    .collect()
+            } else {
+                HashSet::new()
+            };
             let Received {
                 registrations,
                 spools,
@@ -179,6 +217,15 @@ impl App {
                 ..
             } = received;
             let placed = app.place_restored(carried, absent).await?;
+            let lacking: Vec<String> = placed
+                .missing
+                .iter()
+                .filter(|hash| needed.contains(*hash))
+                .cloned()
+                .collect();
+            if !lacking.is_empty() {
+                return Err(files_missing(lacking));
+            }
             let copies = placed.copies.clone();
             let replicates = placed.replicates;
             let (imported_blobs, missing) = (placed.imported, placed.missing.clone());

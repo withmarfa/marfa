@@ -58,11 +58,11 @@ fn unread(what: &str) -> Refusal {
     Refusal::internal(&format!("a stored {what} does not read"))
 }
 
-/// A stored object name, which must be empty for the disk store and, for an object store,
+/// A stored object name, which must be empty for a store on a disk and, for an object store,
 /// the blob's own hex and a name of one write, so that it can never name another blob.
 fn object_of(hash: &Hash, kind: &str, object: String) -> Result<String> {
     let fits = match kind {
-        "disk" => object.is_empty(),
+        "disk" | "folder" => object.is_empty(),
         "s3" => object
             .strip_prefix(hash.hex())
             .and_then(|rest| rest.strip_prefix('/'))
@@ -977,7 +977,8 @@ pub fn purge(tx: &Transaction<'_>, hash: &Hash, at: &str) -> Result<()> {
     .execute(params![hash.as_str(), at])?;
     tx.prepare_cached(
         "INSERT INTO blob_pending_deletions (hash, store_id, object, queued_at) \
-         SELECT ?1, id, '', ?2 FROM stores WHERE kind = 'disk' AND detached_at IS NULL \
+         SELECT ?1, id, '', ?2 FROM stores WHERE kind IN ('disk', 'folder') \
+         AND detached_at IS NULL \
          ON CONFLICT (hash, store_id, object) DO NOTHING",
     )?
     .execute(params![hash.as_str(), at])?;

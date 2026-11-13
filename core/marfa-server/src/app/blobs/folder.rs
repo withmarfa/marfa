@@ -361,13 +361,30 @@ impl Drop for Partial {
     }
 }
 
-/// Writes a backup to this instance's folder under `name`, so it is listed whole or not at all.
+/// A backup written whole under a temporary name, which no listing reads until it is placed.
+pub struct Written {
+    partial: Partial,
+    pub size: u64,
+}
+
+impl Written {
+    /// Gives the backup its name, so it is listed whole or not at all.
+    pub async fn place(self) -> io::Result<u64> {
+        let Written { mut partial, size } = self;
+        tokio::task::spawn_blocking(move || partial.place())
+            .await
+            .map_err(io::Error::other)??;
+        Ok(size)
+    }
+}
+
+/// Writes a backup to a temporary name in this instance's folder.
 pub async fn write(
     folder: Arc<Folder>,
     name: String,
     mut bytes: ByteStream,
     faults: Arc<Faults>,
-) -> io::Result<u64> {
+) -> io::Result<Written> {
     let mut partial = tokio::task::spawn_blocking(move || folder.partial(&name))
         .await
         .map_err(io::Error::other)??;
@@ -383,10 +400,7 @@ pub async fn write(
             return Err(full());
         }
     }
-    tokio::task::spawn_blocking(move || partial.place())
-        .await
-        .map_err(io::Error::other)??;
-    Ok(size)
+    Ok(Written { partial, size })
 }
 
 fn full() -> io::Error {
@@ -438,7 +452,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let folder = Arc::new(opened(dir.path()));
         let faults = Arc::new(Faults::default());
-        let size = write(
+        let written = write(
             folder.clone(),
             "a.tar".into(),
             chunks(&[b"one", b"two"]),
@@ -446,8 +460,18 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(size, 6);
+        assert!(folder.list_in("instance").unwrap().is_empty());
+        assert_eq!(written.place().await.unwrap(), 6);
         assert_eq!(folder.list_in("instance").unwrap(), [("a.tar".into(), 6)]);
+        let dropped = write(
+            folder.clone(),
+            "c.tar".into(),
+            chunks(&[b"never placed"]),
+            faults.clone(),
+        )
+        .await
+        .unwrap();
+        drop(dropped);
 
         let broken = stream::iter([
             Ok(Bytes::from_static(b"half")),

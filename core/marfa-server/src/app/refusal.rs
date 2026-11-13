@@ -90,6 +90,7 @@ codes! {
     Conflict = "conflict", 409;
     ConnectorHeld = "connector_held", 409;
     CopiesBelowMinimum = "copies_below_minimum", 409;
+    BackupFilesMissing = "backup_files_missing", 409;
     CopyHeldByBackup = "copy_held_by_backup", 409;
     EdgeTypeInUse = "edge_type_in_use", 409;
     ExportEntryUnrestorable = "export_entry_unrestorable", 409;

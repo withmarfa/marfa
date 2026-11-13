@@ -1,4 +1,5 @@
-//! Backups: an archive without files, put as one object under `<prefix>/backups/<instance id>/`.
+//! Backups: an archive without files, put as one object under `<prefix>/backups/<instance id>/`
+//! in the object store, or as one file under `backups/<instance id>/` in the backup folder.
 
 mod found;
 mod names;
@@ -17,8 +18,11 @@ use tokio::sync::Mutex;
 use super::App;
 use super::access::Caller;
 use super::archive::{self, Backup};
-use super::blobs::Hash;
+use super::blobs::folder::{self as backup_folder, Folder};
 use super::blobs::s3::S3;
+use super::blobs::store::{ByteStream, Store};
+use super::blobs::upkeep::{Replicated, replicate_one};
+use super::blobs::{Blob, Hash};
 use super::clock::Stamp;
 use super::faults::{HOLD_BACKUP_PUT, HOLD_BACKUP_READ};
 use super::housekeeping::{self, Report, Run};
@@ -340,9 +344,154 @@ fn drop_uncovered(tx: &Transaction<'_>, store: &str) -> Result<()> {
     Ok(())
 }
 
+/// Where backups go: the object store or the backup folder.
+#[derive(Clone)]
+pub(crate) enum Destination {
+    Bucket(Arc<S3>),
+    Folder(Arc<Folder>),
+}
+
+impl Destination {
+    fn of(app: &App) -> Option<Destination> {
+        match (app.blobs.s3(), app.blobs.folder()) {
+            (Some(bucket), _) => Some(Destination::Bucket(bucket)),
+            (None, Some(folder)) => Some(Destination::Folder(folder)),
+            (None, None) => None,
+        }
+    }
+
+    /// The id of the store the backups' files are held in.
+    fn id(&self) -> &str {
+        match self {
+            Destination::Bucket(bucket) => bucket.id(),
+            Destination::Folder(folder) => folder.files().id(),
+        }
+    }
+
+    fn kind(&self) -> &'static str {
+        match self {
+            Destination::Bucket(_) => "bucket",
+            Destination::Folder(_) => "folder",
+        }
+    }
+
+    fn unreachable(&self, what: &str, error: &std::io::Error) -> Refusal {
+        match self {
+            Destination::Bucket(_) => {
+                tracing::warn!(%error, "The object store did not take part in a backup");
+                Refusal::new(
+                    Code::BlobStoreUnavailable,
+                    format!("The object store did not answer while {what}: {error}"),
+                )
+            }
+            Destination::Folder(folder) => {
+                tracing::warn!(%error, "The backup folder did not take part in a backup");
+                Refusal::new(
+                    Code::BlobStoreUnavailable,
+                    format!(
+                        "The backup folder {} failed while {what}: {error}",
+                        folder.root().display()
+                    ),
+                )
+            }
+        }
+    }
+
+    fn not_found(&self, instance: &str, name: &str) -> Refusal {
+        let place = match self {
+            Destination::Bucket(_) => "The object store",
+            Destination::Folder(_) => "The backup folder",
+        };
+        Refusal::new(
+            Code::BackupNotFound,
+            format!("{place} holds no backup named {name} from instance {instance}."),
+        )
+    }
+
+    /// The backups directly in `instance`'s folder, by name and size.
+    async fn list_in(&self, instance: &str) -> std::io::Result<Vec<(String, u64)>> {
+        match self {
+            Destination::Bucket(bucket) => {
+                let own = format!("{FOLDER}/{instance}");
+                super::blobs::store::within(LIST_DEADLINE, bucket.list_in(&own)).await
+            }
+            Destination::Folder(folder) => {
+                let (folder, instance) = (folder.clone(), instance.to_string());
+                blocking(move || folder.list_in(&instance)).await
+            }
+        }
+    }
+
+    /// Every backup in an instance's folder, as its folder and name, and its size.
+    async fn list_all(&self) -> std::io::Result<Vec<(Vec<String>, u64)>> {
+        match self {
+            Destination::Bucket(bucket) => {
+                super::blobs::store::within(LIST_DEADLINE, bucket.list_under(FOLDER)).await
+            }
+            Destination::Folder(folder) => {
+                let folder = folder.clone();
+                blocking(move || folder.list_all()).await
+            }
+        }
+    }
+
+    /// The backup `name` of `instance`, with its size.
+    async fn get(
+        &self,
+        instance: &str,
+        name: &str,
+        idle: Duration,
+    ) -> std::io::Result<Option<(u64, ByteStream)>> {
+        let found = match self {
+            Destination::Bucket(bucket) => {
+                let key = key_of(instance, name);
+                super::blobs::store::within(
+                    super::blobs::store::CHECK_DEADLINE,
+                    bucket.get_whole(&key),
+                )
+                .await?
+            }
+            Destination::Folder(folder) => {
+                let (folder, instance, name) =
+                    (folder.clone(), instance.to_string(), name.to_string());
+                blocking(move || folder.open_backup(&instance, &name))
+                    .await?
+                    .map(|(size, file)| (size, super::blobs::store::file_stream(file, 0, size)))
+            }
+        };
+        Ok(found.map(|(size, bytes)| (size, super::blobs::store::idle_limited(bytes, idle))))
+    }
+
+    /// Deletes this instance's backup `name`.
+    async fn delete(&self, instance: &str, name: &str) -> std::io::Result<()> {
+        match self {
+            Destination::Bucket(bucket) => {
+                let key = key_of(instance, name);
+                super::blobs::store::within(LIST_DEADLINE, bucket.delete_whole(&key)).await
+            }
+            Destination::Folder(folder) => {
+                let (folder, name) = (folder.clone(), name.to_string());
+                blocking(move || folder.delete(&name)).await
+            }
+        }
+    }
+}
+
+/// Runs blocking work on a folder within the time a listing is given.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> std::io::Result<T> + Send + 'static,
+) -> std::io::Result<T> {
+    super::blobs::store::within(LIST_DEADLINE, async move {
+        tokio::task::spawn_blocking(work)
+            .await
+            .map_err(std::io::Error::other)?
+    })
+    .await
+}
+
 /// Settles earlier attempts by the store's listing, refusing to go on while it does not answer.
-async fn settle_attempts(app: &Arc<App>, bucket: &Arc<S3>) -> Result<()> {
-    let store = bucket.id().to_string();
+async fn settle_attempts(app: &Arc<App>, destination: &Destination) -> Result<()> {
+    let store = destination.id().to_string();
     let looked = store.clone();
     let pending = app
         .db
@@ -355,10 +504,10 @@ async fn settle_attempts(app: &Arc<App>, bucket: &Arc<S3>) -> Result<()> {
     if !pending {
         return Ok(());
     }
-    let own = format!("{FOLDER}/{}", app.instance_id);
-    let listed: HashSet<String> = super::blobs::store::within(LIST_DEADLINE, bucket.list_in(&own))
+    let listed: HashSet<String> = destination
+        .list_in(&app.instance_id)
         .await
-        .map_err(|error| unreachable("checking the last backup", &error))?
+        .map_err(|error| destination.unreachable("checking the last backup", &error))?
         .into_iter()
         .map(|(name, _)| name)
         .collect();
@@ -391,7 +540,8 @@ pub fn held(tx: &Transaction<'_>, store: &str, hashes: &[Hash]) -> Result<HashSe
 fn no_bucket() -> Refusal {
     Refusal::new(
         Code::NoBucket,
-        "This instance has no object store, so it keeps no backups. Set S3_BUCKET to keep them.",
+        "This instance keeps no backups, because it has nowhere to put them. Set \
+         MARFA_BACKUP_PATH to a folder, or S3_BUCKET to an object store, to keep them.",
     )
 }
 
@@ -402,24 +552,9 @@ fn running() -> Refusal {
     )
 }
 
-fn unreachable(what: &str, error: &std::io::Error) -> Refusal {
-    tracing::warn!(%error, "The object store did not take part in a backup");
-    Refusal::new(
-        Code::BlobStoreUnavailable,
-        format!("The object store did not answer while {what}: {error}"),
-    )
-}
-
-fn not_found(instance: &str, name: &str) -> Refusal {
-    Refusal::new(
-        Code::BackupNotFound,
-        format!("The object store holds no backup named {name} from instance {instance}."),
-    )
-}
-
-/// Whether the schedule runs backups here: an object store is set and the interval is not 0.
+/// Whether the schedule runs backups here: a destination is set and the interval is not 0.
 pub fn scheduled(app: &App) -> bool {
-    app.blobs.s3().is_some() && app.settings.live().get(BACKUP_INTERVAL_SECONDS) > 0
+    Destination::of(app).is_some() && app.settings.live().get(BACKUP_INTERVAL_SECONDS) > 0
 }
 
 fn key_of(instance: &str, name: &str) -> String {
@@ -535,17 +670,19 @@ fn put_stream(app: &Arc<App>, backup: Backup) -> BoxStream<'static, std::io::Res
 }
 
 impl App {
-    fn bucket(&self) -> Result<Arc<S3>> {
-        self.blobs.s3().ok_or_else(no_bucket)
+    fn destination(&self) -> Result<Destination> {
+        Destination::of(self).ok_or_else(no_bucket)
     }
 
-    /// The backups the object store holds, of every instance that put them there, newest first.
+    /// The backups where this instance keeps them, of every instance that put them there, newest
+    /// first.
     pub async fn list_backups(&self, caller: &Caller) -> Result<Vec<Value>> {
         caller.require_local()?;
-        let bucket = self.bucket()?;
-        let found = super::blobs::store::within(LIST_DEADLINE, bucket.list_under(FOLDER))
+        let destination = self.destination()?;
+        let found = destination
+            .list_all()
             .await
-            .map_err(|error| unreachable("listing the backups", &error))?;
+            .map_err(|error| destination.unreachable("listing the backups", &error))?;
         let mut backups: Vec<(Stamp, String, String, u64)> = found
             .into_iter()
             .filter_map(|(parts, size)| match parts.as_slice() {
@@ -575,7 +712,8 @@ impl App {
         }
     }
 
-    /// Restores the named backup of `instance`, read from the object store by the server itself.
+    /// Restores the named backup of `instance`, read by the server itself from where it keeps
+    /// backups. From the backup folder, every file the backup names is read from the folder too.
     pub async fn restore_backup(
         self: &Arc<App>,
         caller: &Caller,
@@ -584,33 +722,39 @@ impl App {
         name: &str,
     ) -> Result<Value> {
         caller.require_local()?;
-        let bucket = self.bucket()?;
+        let destination = self.destination()?;
         if !instance_of(instance) || parse(name).is_none() {
-            return Err(not_found(instance, name));
+            return Err(destination.not_found(instance, name));
         }
-        let key = key_of(instance, name);
-        let found = super::blobs::store::within(
-            super::blobs::store::CHECK_DEADLINE,
-            bucket.get_whole(&key),
-        )
-        .await
-        .map_err(|error| unreachable("reading the backup", &error))?;
-        let Some((size, bytes)) = found else {
-            return Err(not_found(instance, name));
+        let found = destination
+            .get(instance, name, self.blob_read_idle())
+            .await
+            .map_err(|error| destination.unreachable("reading the backup", &error))?;
+        let Some((size, mut bytes)) = found else {
+            return Err(destination.not_found(instance, name));
         };
-        let mut bytes = super::blobs::store::idle_limited(bytes, self.blob_read_idle());
         let mut receiving = self.begin_restore(Some(size)).await?;
         while let Some(chunk) = bytes.next().await {
             match chunk {
                 Ok(chunk) => receiving.push(chunk).await?,
                 Err(error) => {
                     receiving.abandon().await;
-                    return Err(unreachable("reading the backup", &error));
+                    return Err(destination.unreachable("reading the backup", &error));
                 }
             }
         }
-        let received = receiving.finish().await?;
-        let mut answer = self.restore(caller, started_at, received).await?;
+        let mut received = receiving.finish().await?;
+        let whole = match &destination {
+            Destination::Bucket(_) => false,
+            Destination::Folder(folder) => {
+                let copies = self
+                    .copies_in_folder(folder, instance, received.absent())
+                    .await?;
+                received.carried.extend(copies);
+                true
+            }
+        };
+        let mut answer = self.restore(caller, started_at, received, whole).await?;
         answer["backup"] = json!({ "name": name, "instance_id": instance });
         Ok(answer)
     }
@@ -618,7 +762,11 @@ impl App {
     /// What `/health` says of backups: whether they run, and how the last one went.
     pub async fn backup_health(&self) -> Value {
         let mut health = serde_json::Map::new();
-        let status = if self.blobs.s3().is_none() {
+        let destination = Destination::of(self);
+        if let Some(destination) = &destination {
+            health.insert("destination".into(), destination.kind().into());
+        }
+        let status = if destination.is_none() {
             health.insert("reason".into(), "no_bucket".into());
             "off"
         } else if self.settings.live().get(BACKUP_INTERVAL_SECONDS) == 0 {
@@ -662,7 +810,7 @@ impl App {
 
 /// Runs one backup: skipped when nothing has changed since one written at this archive version, unless `forced`.
 async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
-    let bucket = app.bucket()?;
+    let destination = app.destination()?;
     let Ok(_running) = app.backups.running.try_lock() else {
         return Ok(Outcome::Running);
     };
@@ -673,15 +821,15 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
         return Ok(Outcome::Unchanged);
     }
     bring_replication_forward(app).await;
-    match put(app, &bucket).await {
+    match put(app, &destination).await {
         Ok((taken, name, size, changes)) => {
-            let (store, recorded) = (bucket.id().to_string(), name.clone());
+            let (store, recorded) = (destination.id().to_string(), name.clone());
             app.db
                 .write(Write::own(), move |tx| {
                     record_put(tx, &store, changes, &recorded, taken)
                 })
                 .await?;
-            let (removed, unremoved) = thin(app, &bucket, taken).await;
+            let (removed, unremoved) = thin(app, &destination, taken).await;
             Ok(Outcome::Put {
                 instance: app.instance_id.clone(),
                 name,
@@ -719,41 +867,129 @@ async fn bring_replication_forward(app: &Arc<App>) {
     }
 }
 
-/// Writes the archive and puts it whole.
-async fn put(app: &Arc<App>, bucket: &Arc<S3>) -> Result<(Stamp, String, u64, i64)> {
-    settle_attempts(app, bucket).await?;
+/// Writes the archive and puts it whole. In the backup folder it is named only once every file
+/// it names has a copy there.
+async fn put(app: &Arc<App>, destination: &Destination) -> Result<(Stamp, String, u64, i64)> {
+    settle_attempts(app, destination).await?;
+    if let Destination::Folder(folder) = destination {
+        let cleared = folder.clone();
+        blocking(move || cleared.clear_leftovers())
+            .await
+            .map_err(|error| {
+                destination.unreachable("clearing what an earlier backup left", &error)
+            })?;
+    }
     let began = std::time::Instant::now();
-    let mut backup = app.backup_archive(bucket.id(), app.blobs.check()).await?;
+    let mut backup = app
+        .backup_archive(destination.id(), app.blobs.check())
+        .await?;
     app.faults.hold(HOLD_BACKUP_READ, None).await;
     let read_ms = began.elapsed().as_millis() as u64;
     let (taken, changes, limit) = (backup.created_at, backup.changes, backup.limit);
     let name = name_of(taken);
-    let key = key_of(&app.instance_id, &name);
     let (files, in_bucket) = (
         std::mem::take(&mut backup.files),
         std::mem::take(&mut backup.in_bucket),
     );
-    hold(app, bucket.id(), &name, files, in_bucket).await?;
+    let held: HashSet<&String> = in_bucket.iter().collect();
+    let uncopied: Vec<String> = files
+        .iter()
+        .filter(|hash| !held.contains(hash))
+        .cloned()
+        .collect();
+    hold(app, destination.id(), &name, files, in_bucket).await?;
     let bytes = put_stream(app, backup);
-    let size = bucket
-        .put_whole(&key, "application/x-tar", bytes, limit)
-        .await
-        .map_err(|error| unreachable("taking the backup", &error))?;
+    let (size, copied) = match destination {
+        Destination::Bucket(bucket) => {
+            let key = key_of(&app.instance_id, &name);
+            let size = bucket
+                .put_whole(&key, "application/x-tar", bytes, limit)
+                .await
+                .map_err(|error| destination.unreachable("taking the backup", &error))?;
+            (size, 0)
+        }
+        Destination::Folder(folder) => {
+            let written = super::blobs::store::within(
+                limit,
+                backup_folder::write(folder.clone(), name.clone(), bytes, app.faults.clone()),
+            )
+            .await
+            .map_err(|error| destination.unreachable("writing the backup", &error))?;
+            let copied = uncopied.len();
+            copy_files(app, destination, folder, uncopied).await?;
+            let size = written
+                .place()
+                .await
+                .map_err(|error| destination.unreachable("naming the backup", &error))?;
+            (size, copied)
+        }
+    };
     tracing::info!(
         backup = %name,
+        destination = destination.kind(),
         size,
+        copied,
         read_ms,
         put_ms = began.elapsed().as_millis() as u64 - read_ms,
-        "A backup was put in the object store"
+        "A backup was put"
     );
     Ok((taken, name, size, changes))
 }
 
+/// Copies each file to the backup folder that has no copy recorded there, failing the backup
+/// on the first that is not copied.
+async fn copy_files(
+    app: &Arc<App>,
+    destination: &Destination,
+    folder: &Arc<Folder>,
+    hashes: Vec<String>,
+) -> Result<()> {
+    let target = Store::Folder(folder.files().clone());
+    let mut unreachable = std::collections::BTreeSet::new();
+    for hash in hashes {
+        let looked = hash.clone();
+        let blob: Option<Blob> = app
+            .db
+            .read(move |tx| match Hash::parse(&looked) {
+                Ok(parsed) => super::blobs::blob_record(tx, &parsed),
+                Err(_) => Ok(None),
+            })
+            .await?;
+        let Some(blob) = blob else {
+            return Err(Refusal::new(
+                Code::Conflict,
+                format!(
+                    "The file {hash} the backup names was purged while the backup was taken; \
+                     the next run takes it again."
+                ),
+            ));
+        };
+        let failed = match replicate_one(app, &target, &blob, &mut unreachable).await? {
+            Replicated::Copied | Replicated::Passed => None,
+            Replicated::Failed(why) => {
+                Some(why.unwrap_or_else(|| "no store could read it".to_string()))
+            }
+        };
+        let (store, looked) = (target.id().to_string(), hash.clone());
+        let held = app
+            .db
+            .read(move |tx| Ok(!super::blobs::held_in(tx, &store, [looked])?.is_empty()))
+            .await?;
+        if !held {
+            let why = failed.unwrap_or_else(|| "another task holds it".to_string());
+            return Err(destination.unreachable(
+                &format!("copying the file {hash}"),
+                &std::io::Error::other(why),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// Only names it listed in its own folder, could read as a backup and recorded putting are
 /// deleted.
-async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp) -> (usize, usize) {
-    let own = format!("{FOLDER}/{}", app.instance_id);
-    let listed = match super::blobs::store::within(LIST_DEADLINE, bucket.list_in(&own)).await {
+async fn thin(app: &Arc<App>, destination: &Destination, taken: Stamp) -> (usize, usize) {
+    let listed = match destination.list_in(&app.instance_id).await {
         Ok(listed) => listed,
         Err(error) => {
             tracing::warn!(%error, "The backups were not listed for thinning");
@@ -761,10 +997,10 @@ async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp) -> (usize, usize) 
         }
     };
     let names: Vec<String> = listed.into_iter().map(|(name, _)| name).collect();
-    if let Err(error) = found::survey(app, bucket, &names).await {
+    if let Err(error) = found::survey(app, destination, &names).await {
         tracing::warn!(%error, "The backups this instance did not record were not read");
     }
-    let looked = bucket.id().to_string();
+    let looked = destination.id().to_string();
     let put: HashSet<String> = match app
         .db
         .read(move |tx| {
@@ -787,8 +1023,7 @@ async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp) -> (usize, usize) 
         .into_iter()
         .filter(|name| put.contains(name))
     {
-        let key = key_of(&app.instance_id, &name);
-        match super::blobs::store::within(LIST_DEADLINE, bucket.delete_whole(&key)).await {
+        match destination.delete(&app.instance_id, &name).await {
             Ok(()) => {
                 deleted.insert(name);
                 removed += 1;
@@ -799,7 +1034,7 @@ async fn thin(app: &Arc<App>, bucket: &Arc<S3>, taken: Stamp) -> (usize, usize) 
             }
         }
     }
-    let store = bucket.id().to_string();
+    let store = destination.id().to_string();
     let listed: HashSet<String> = names.into_iter().collect();
     if let Err(error) = app
         .db

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use futures_util::StreamExt;
 
 use super::disk::{Disk, Staged};
+use super::folder::Folder;
 use super::store::{self, Answer, Failed, Held, Store};
 use super::{App, Blob, Hash, REPLICATE, Scratch, joined, room, rows, unavailable, unwritable};
 use crate::app::faults::{Faults, HOLD_BLOB_HAS, Lie};
@@ -305,6 +306,64 @@ impl App {
         let (disk, looked) = (self.blobs.disk.clone(), hash.clone());
         let read = tokio::task::spawn_blocking(move || disk.rehash(&looked, damaged)).await;
         matches!(read, Ok(Ok(Some((_, found)))) if &found == hash)
+    }
+
+    /// Reads into the restore's spool each file of `absent` that `instance`'s files area in the
+    /// backup folder holds whole; a copy that does not hash to its name is left out.
+    pub async fn copies_in_folder(
+        &self,
+        folder: &Arc<Folder>,
+        instance: &str,
+        absent: Vec<Named>,
+    ) -> Result<Vec<(Sealed, String)>> {
+        let mut copies = Vec::with_capacity(absent.len());
+        for named in absent {
+            let (folder, instance, spool) =
+                (folder.clone(), instance.to_string(), self.restore_spool());
+            let hash = named.hash.clone();
+            let read = tokio::task::spawn_blocking(move || -> Result<Option<Sealed>> {
+                let unread = |error: io::Error| {
+                    crate::app::refusal::Refusal::new(
+                        crate::app::refusal::Code::BlobStoreUnavailable,
+                        format!(
+                            "The backup folder {} failed while reading the file {}: {error}",
+                            folder.root().display(),
+                            hash.as_str()
+                        ),
+                    )
+                };
+                let Some(mut file) = folder.open_copy(&instance, &hash).map_err(unread)? else {
+                    return Ok(None);
+                };
+                let size = file.metadata().map_err(unread)?.len();
+                spool.room(size)?;
+                let mut arriving = spool.stage()?;
+                let mut buffer = vec![0; 256 * 1024];
+                loop {
+                    let count = io::Read::read(&mut file, &mut buffer).map_err(unread)?;
+                    if count == 0 {
+                        break;
+                    }
+                    arriving.append(&spool, &buffer[..count])?;
+                }
+                let sealed = arriving.seal()?;
+                if sealed.hash != hash {
+                    tracing::warn!(
+                        hash = hash.as_str(),
+                        "A file's copy in the backup folder does not hash to its name"
+                    );
+                    return Ok(None);
+                }
+                Ok(Some(sealed))
+            });
+            if let Some(sealed) = joined(read.await)?? {
+                let mime_type = named
+                    .mime_type
+                    .unwrap_or_else(|| super::DEFAULT_TYPE.to_string());
+                copies.push((sealed, mime_type));
+            }
+        }
+        Ok(copies)
     }
 
     /// A store that fails or stays silent, where none answers whole, refuses the restore.

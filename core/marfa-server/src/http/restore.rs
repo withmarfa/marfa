@@ -139,6 +139,6 @@ async fn receive(
     }
     read.ended = true;
     let received = receiving.finish().await?;
-    let answer = app.restore(&caller, started_at, received).await?;
+    let answer = app.restore(&caller, started_at, received, false).await?;
     Ok(json_answer(StatusCode::OK, &answer))
 }
