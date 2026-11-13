@@ -1266,7 +1266,7 @@ Where one request meets two refusals, each rule below names the refusal the requ
 
 If a request to an operation under `/connectors` declares a `Content-Length` over the cap its operation takes and carries no credential, then the server MUST answer `413 request_too_large`.
 
-**Reason:** the server reads the declared size of a body before it reads who sent it, and reads neither the body.
+**Reason:** the server checks the declared size before the credential, and neither check reads the body.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a declared body over the cap 413 before a missing credential's 401, and a missing credential 401 before a body nested too deep`.
 

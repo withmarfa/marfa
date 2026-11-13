@@ -10,13 +10,7 @@ import { DISK_ONLY } from "../../utils/own-blob-server.js";
 import { inParts, pause, slowPost } from "../../utils/slow-body.js";
 import { tuning } from "../../utils/tuning.js";
 
-/**
- * How long the public listener waits for a body it reads whole, and what it
- * asks of a request before it reads one, on a server of the fixture's own
- * whose body deadline is shortened to `DEADLINE_MS`. The upload's idle limit
- * is shortened too, so a blob whose parts keep coming outlasts the deadline
- * without a part outlasting the idle limit.
- */
+// Shorten both limits so a progressing upload can outlast the body deadline.
 const DEADLINE_MS = 3000;
 const BULK_CAP = 16 * 1024 * 1024;
 const JSON_HEADERS = { "content-type": "application/json" };

@@ -109,8 +109,7 @@ impl HttpBody for Shared {
     }
 }
 
-/// How long a request on the private control socket has to arrive whole, from
-/// the moment its head is in. The public listener's is `Tuning::body_deadline`.
+/// The private socket's body deadline; the public one is `Tuning::body_deadline`.
 pub const CONTROL_BODY_DEADLINE: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
@@ -506,8 +505,7 @@ pub struct Checking {
     pub credentials: Arc<Credentials>,
 }
 
-/// A connector's declared size is refused first, then a request that presents no credential
-/// its door could use, both with the body unread.
+/// A connector's declared size takes precedence over its credential.
 pub async fn checked(State(checking): State<Checking>, request: Request, next: Next) -> Response {
     let app = &checking.app;
     let path = request.uri().path();
@@ -552,7 +550,6 @@ pub async fn checked(State(checking): State<Checking>, request: Request, next: N
         .await
 }
 
-/// A body nested past 64 levels, or holding a surrogate escape with no partner, is refused.
 fn scanned(bytes: &[u8]) -> Result<(), Refusal> {
     if json_text::too_deep(bytes) {
         return Err(nested_too_deep());
@@ -631,7 +628,6 @@ mod presented_tests {
     const ID: &str = "019537a0-7b80-7000-8000-0000000000ff";
     const PROMPT: Duration = Duration::from_secs(2);
 
-    /// A body that never arrives.
     struct Held;
 
     impl HttpBody for Held {

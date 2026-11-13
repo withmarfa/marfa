@@ -206,8 +206,7 @@ async fn names_session(parts: &mut Parts, app: &Arc<App>) -> Result<bool> {
     Ok(found)
 }
 
-/// Whether a request presents what its door asks before the body is read. The door still
-/// decides what the caller may do.
+/// Admission checks the presented identity; the door still decides access.
 pub async fn presents(
     parts: &mut Parts,
     app: &Arc<App>,
