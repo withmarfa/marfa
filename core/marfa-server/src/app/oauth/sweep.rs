@@ -65,7 +65,7 @@ const CLIENT_UNREAD: [Unread<'static>; 2] = [
     },
 ];
 /// Swept only in passing by the writes that make them, so this stage reports them.
-const SWEPT_IN_PASSING: [Unread<'static>; 2] = [passkeys::UNREAD_CHALLENGES, confirm::UNREAD];
+const SWEPT_IN_PASSING: [Unread<'static>; 2] = [passkeys::UNREAD_ANSWERED, confirm::UNREAD];
 
 /// Once a stage is done, what it kept past the cutoff is only what it could not judge.
 async fn report_kept(

@@ -28,6 +28,7 @@ const MINUTE_MS: u64 = 60_000;
 const VERIFIED: u8 = 0x05;
 const PRESENT_ONLY: u8 = 0x01;
 const ATTESTED: u8 = 0x40;
+const ANSWERED: &str = "passkey_challenges_answered";
 
 fn text(bytes: &[u8]) -> String {
     URL_SAFE_NO_PAD.encode(bytes)
@@ -214,7 +215,7 @@ fn request(method: Method, path: &str, cookie: &str, origin: &str) -> axum::http
         .header(header::COOKIE, cookie)
 }
 
-async fn boot(dir: &TempDir, address: &str) -> Arc<App> {
+async fn boot(dir: &TempDir, address: &str, secret: Option<&str>) -> Arc<App> {
     let database = dir.path().join("marfa.db");
     let blobs = dir.path().join("blobs");
     let socket = dir.path().join("s.sock");
@@ -226,6 +227,8 @@ async fn boot(dir: &TempDir, address: &str) -> Arc<App> {
         ("MARFA_SIGN_IN_ADDRESS", address),
         ("MARFA_KEY_SALT", "a salt for these tests"),
     ];
+    let mut pairs = pairs.to_vec();
+    pairs.extend(secret.map(|secret| ("MARFA_AUTH_SECRET", secret)));
     let settings = Settings::read(Environment::from_pairs(&pairs)).unwrap();
     App::start(settings).await.unwrap()
 }
@@ -247,7 +250,7 @@ struct Instance {
 impl Instance {
     async fn at(address: &str) -> Instance {
         let dir = TempDir::new().unwrap();
-        let app = boot(&dir, address).await;
+        let app = boot(&dir, address, None).await;
         let mut instance = Instance {
             public: public(app.clone()),
             control: control(app.clone()),
@@ -265,6 +268,14 @@ impl Instance {
 
     async fn claimed() -> Instance {
         Instance::at(ORIGIN).await
+    }
+
+    async fn restarted_with(mut self, secret: &str) -> Instance {
+        self.app.db.close().await;
+        self.app = boot(&self._dir, &self.origin, Some(secret)).await;
+        self.public = public(self.app.clone());
+        self.control = control(self.app.clone());
+        self
     }
 
     async fn control_post(&self, path: &str, body: &Value) -> Reply {
@@ -400,7 +411,7 @@ fn is_refused(reply: &Reply) -> bool {
 }
 
 #[tokio::test]
-async fn a_passkey_added_signs_in_and_the_table_holds_no_token() {
+async fn a_passkey_added_signs_in_and_only_an_answered_challenge_is_stored() {
     let instance = Instance::claimed().await;
     let device = Device::new();
     let reply = instance
@@ -418,21 +429,10 @@ async fn a_passkey_added_signs_in_and_the_table_holds_no_token() {
     let line = reply.headers[header::SET_COOKIE].to_str().unwrap();
     assert!(line.contains("HttpOnly") && line.contains("SameSite=Strict"));
     assert!(line.contains("Max-Age=300"));
-    let token = line.split(';').next().unwrap().split_once('=').unwrap().1;
-    let held: Vec<String> = instance
-        .app
-        .db
-        .read(|tx| {
-            let mut statement = tx.prepare("SELECT digest FROM passkey_challenges")?;
-            let rows = statement.query_map([], |row| row.get(0))?;
-            Ok(rows.collect::<rusqlite::Result<_>>()?)
-        })
-        .await
-        .unwrap();
-    assert_eq!(held.len(), 1);
-    assert_ne!(held[0], token);
+    assert_eq!(instance.count(ANSWERED).await, 0);
 
     let id = instance.add(&device).await;
+    assert_eq!(instance.count(ANSWERED).await, 1);
     let excluded = instance
         .ask("/auth/passkeys/registration/options", &instance.owner)
         .await;
@@ -497,7 +497,6 @@ async fn a_refused_assertion_spends_its_challenge_and_moves_nothing() {
     assert_eq!(instance.listed().await[0]["last_used_at"], Value::Null);
     let after = instance.verify_assertion(&asked.cookie, good).await;
     assert_eq!(after.status, StatusCode::BAD_REQUEST);
-    assert_eq!(instance.count("passkey_challenges").await, 0);
 }
 
 #[tokio::test]
@@ -534,7 +533,6 @@ async fn a_challenge_from_before_an_address_change_is_spent() {
     let refused = instance.verify_assertion(&asked.cookie, response).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST);
     assert!(refused.session_cookie().is_none());
-    assert_eq!(instance.count("passkey_challenges").await, 0);
     let signed = instance.sign_in_with(&device, 1).await;
     assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
 }
@@ -659,18 +657,6 @@ async fn a_sign_in_whose_commit_is_unknown_sets_no_cookie_and_keeps_nothing() {
     let again = instance.verify_assertion(&asked.cookie, response).await;
     assert_eq!(again.status, StatusCode::OK, "{}", again.text);
     assert!(again.session_cookie().is_some());
-}
-
-#[tokio::test]
-async fn a_challenge_whose_commit_is_unknown_sets_no_cookie() {
-    let instance = Instance::claimed().await;
-    let faults = &instance.app.faults;
-    faults
-        .set("fail:commit-full", Some("auth.passkey.challenged"))
-        .unwrap();
-    let unknown = instance.ask("/auth/passkeys/sign-in/options", "").await;
-    assert!(unknown.status.is_server_error());
-    assert!(unknown.cookie().is_none());
 }
 
 #[tokio::test]
@@ -850,21 +836,20 @@ async fn a_user_handle_must_be_the_owners_when_it_is_sent() {
 async fn a_challenge_serves_only_its_own_ceremony_and_session() {
     let instance = Instance::claimed().await;
     let device = Device::new();
-    let adding = instance.asked_to_add().await;
     let saying = instance.saying();
+    let adding = instance.asked_to_add().await;
     let refused = instance
         .verify_assertion(&adding.cookie, device.assertion(&adding.challenge, &saying))
         .await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST);
-    let spent = instance
-        .verify_registration(
-            &adding.cookie,
-            device.registration(&adding.challenge, &saying),
-        )
+    let proving = instance.asked_to_prove().await;
+    let challenge_only = proving.cookie.split("; ").last().unwrap();
+    let cookie = [instance.owner.as_str(), challenge_only].join("; ");
+    let refused = instance
+        .verify_registration(&cookie, device.registration(&proving.challenge, &saying))
         .await;
-    assert_eq!(spent.status, StatusCode::BAD_REQUEST);
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST);
 
-    let adding = instance.asked_to_add().await;
     let other = instance.signed_in().await;
     let challenge_only = adding.cookie.split("; ").last().unwrap();
     let cookie = [other.as_str(), challenge_only].join("; ");
@@ -873,6 +858,15 @@ async fn a_challenge_serves_only_its_own_ceremony_and_session() {
         .await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST);
     assert_eq!(instance.count("passkeys").await, 0);
+
+    let fresh = instance.asked_to_add().await;
+    let added = instance
+        .verify_registration(
+            &fresh.cookie,
+            device.registration(&fresh.challenge, &saying),
+        )
+        .await;
+    assert_eq!(added.status, StatusCode::CREATED, "{}", added.text);
 }
 
 #[tokio::test]
@@ -967,7 +961,6 @@ async fn an_ip_address_or_plain_http_has_no_passkeys_and_says_why() {
             .contains("IP address")
     );
     assert!(reply.cookie().is_none());
-    assert_eq!(instance.count("passkey_challenges").await, 0);
     let adding = instance
         .ask("/auth/passkeys/registration/options", &instance.owner)
         .await;
@@ -1005,31 +998,82 @@ async fn a_foreign_page_cannot_start_or_finish_a_sign_in() {
 }
 
 #[tokio::test]
-async fn a_flood_of_challenges_stays_bounded_and_the_newest_still_works() {
+async fn a_burst_of_challenges_stores_nothing_and_leaves_pending_ones_answerable() {
     let instance = Instance::claimed().await;
     instance.without_limits();
     let device = Device::new();
     instance.add(&device).await;
+    let proving = instance.asked_to_prove().await;
+    let adding = instance.asked_to_add().await;
     for _ in 0..1100 {
         instance.asked_to_prove().await;
     }
-    assert_eq!(instance.count("passkey_challenges").await, 1024);
-    let signed = instance.sign_in_with(&device, 1).await;
+    assert_eq!(instance.count(ANSWERED).await, 1);
+    let response = device.assertion(&proving.challenge, &instance.saying());
+    let signed = instance.verify_assertion(&proving.cookie, response).await;
+    assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
+    let response = Device::new().registration(&adding.challenge, &instance.saying());
+    let added = instance.verify_registration(&adding.cookie, response).await;
+    assert_eq!(added.status, StatusCode::CREATED, "{}", added.text);
+}
+
+#[tokio::test]
+async fn a_challenge_cookie_that_does_not_open_is_refused_as_an_ended_one_is() {
+    let instance = Instance::claimed().await;
+    let elsewhere = Instance::claimed().await;
+    let device = Device::new();
+    instance.add(&device).await;
+    let ended = instance.asked_to_prove().await;
+    instance.app.clock.advance(5 * MINUTE_MS).unwrap();
+    let response = device.assertion(&ended.challenge, &instance.saying());
+    let expected = instance.verify_assertion(&ended.cookie, response).await;
+    assert_eq!(expected.status, StatusCode::BAD_REQUEST);
+
+    let asked = instance.asked_to_prove().await;
+    let (name, value) = asked.cookie.rsplit_once('=').unwrap();
+    let other = elsewhere.asked_to_prove().await;
+    let flipped = |at: usize| {
+        let mut bytes = value.as_bytes().to_vec();
+        bytes[at] = if bytes[at] == b'A' { b'B' } else { b'A' };
+        String::from_utf8(bytes).unwrap()
+    };
+    let shapes = [
+        flipped(2),
+        flipped(value.len() / 2),
+        flipped(value.len() - 1),
+        value[..value.len() - 4].to_string(),
+        value[..40].to_string(),
+        String::new(),
+        "not a sealed challenge".to_string(),
+        other.cookie.rsplit_once('=').unwrap().1.to_string(),
+    ];
+    for shape in shapes {
+        let cookie = format!("{name}={shape}");
+        let response = device.assertion(&asked.challenge, &instance.saying());
+        let refused = instance.verify_assertion(&cookie, response).await;
+        assert_eq!(refused.status, expected.status, "{shape}");
+        assert_eq!(refused.body, expected.body, "{shape}");
+        assert!(refused.session_cookie().is_none());
+    }
+    assert_eq!(instance.count(ANSWERED).await, 1);
+    let response = device.assertion(&asked.challenge, &instance.saying());
+    let signed = instance.verify_assertion(&asked.cookie, response).await;
     assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
 }
 
 #[tokio::test]
-async fn a_flood_of_sign_in_challenges_leaves_an_add_challenge_alive() {
+async fn a_new_instance_secret_ends_challenges_under_way_and_passkeys_still_sign_in() {
     let instance = Instance::claimed().await;
-    instance.without_limits();
     let device = Device::new();
-    let asked = instance.asked_to_add().await;
-    for _ in 0..1100 {
-        instance.asked_to_prove().await;
-    }
-    let response = device.registration(&asked.challenge, &instance.saying());
-    let added = instance.verify_registration(&asked.cookie, response).await;
-    assert_eq!(added.status, StatusCode::CREATED, "{}", added.text);
+    instance.add(&device).await;
+    let asked = instance.asked_to_prove().await;
+    let instance = instance.restarted_with(&"7".repeat(64)).await;
+    let response = device.assertion(&asked.challenge, &instance.saying());
+    let refused = instance.verify_assertion(&asked.cookie, response).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.text);
+    assert!(refused.session_cookie().is_none());
+    let signed = instance.sign_in_with(&device, 1).await;
+    assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
 }
 
 #[tokio::test]
@@ -1042,7 +1086,7 @@ async fn one_address_is_held_to_thirty_sign_in_challenges_a_minute() {
     let refused = instance.ask(door, "").await;
     assert_eq!(refused.status, StatusCode::TOO_MANY_REQUESTS);
     assert!(refused.headers.contains_key(header::RETRY_AFTER));
-    assert_eq!(instance.count("passkey_challenges").await, 30);
+    assert_eq!(instance.count(ANSWERED).await, 0);
     instance.app.clock.advance(MINUTE_MS).unwrap();
     instance.asked_to_prove().await;
 }

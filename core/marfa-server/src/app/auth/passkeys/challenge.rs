@@ -1,18 +1,28 @@
-//! A browser holds a random token and the table its digest, so a ceremony's state never leaves the server.
+//! The browser holds a ceremony's state, sealed under a key only this instance can derive;
+//! the table holds only the digests of challenges already answered.
 
-use rusqlite::{OptionalExtension, Transaction, params};
-use serde::Serialize;
+use aes_gcm::aead::{Aead, Nonce, Payload};
+use aes_gcm::{Aes256Gcm, KeyInit};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use hmac::{Hmac, Mac};
+use rusqlite::{Transaction, params};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 use crate::app::clock::{Stamp, Unread, readable};
-use crate::app::keys::digest_of;
 use crate::app::refusal::{Refusal, Result};
 
-const TOKEN_BYTES: usize = 32;
+const KEY_LABEL: &[u8] = b"marfa passkey ceremony key";
+/// A key of its own for each cookie, so random nonces never meet under one key.
+const ID_BYTES: usize = 16;
+const NONCE_BYTES: usize = 12;
+const TAG_BYTES: usize = 16;
+/// Above what a browser keeps for one cookie.
+const MOST_COOKIE_CHARS: usize = 4096;
 pub const LIFE_MS: i64 = 5 * 60 * 1000;
-/// Of each purpose. The sign-in door is open to anyone, so the oldest ceremony
-/// of its purpose goes first and a flood there never reaches the other's.
-const MOST_UNDER_WAY: i64 = 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Purpose {
@@ -21,10 +31,10 @@ pub enum Purpose {
 }
 
 impl Purpose {
-    const fn word(self) -> &'static str {
+    const fn word(self) -> &'static [u8] {
         match self {
-            Purpose::Add => "add",
-            Purpose::Prove => "prove",
+            Purpose::Add => b"add",
+            Purpose::Prove => b"prove",
         }
     }
 }
@@ -36,108 +46,141 @@ pub struct New<'a, S> {
     pub state: &'a S,
 }
 
+#[derive(Serialize, Deserialize)]
+struct Sealed {
+    expires_ms: i64,
+    origin: String,
+    session_id: Option<String>,
+    state: Value,
+}
+
 pub struct Taken {
     pub origin: String,
     pub session_id: Option<String>,
-    state: String,
+    state: Value,
 }
 
 impl Taken {
-    pub fn state<S: DeserializeOwned>(&self) -> Result<S> {
-        serde_json::from_str(&self.state)
+    pub fn state<S: DeserializeOwned>(self) -> Result<S> {
+        serde_json::from_value(self.state)
             .map_err(|_| Refusal::internal("a passkey challenge did not read"))
     }
 }
 
-fn new_token() -> Result<String> {
-    let mut bytes = [0u8; TOKEN_BYTES];
-    getrandom::fill(&mut bytes).map_err(|_| Refusal::internal("no randomness was available"))?;
-    Ok(hex::encode(bytes))
+fn mac(key: &[u8]) -> Result<Hmac<Sha256>> {
+    <Hmac<Sha256>>::new_from_slice(key)
+        .map_err(|_| Refusal::internal("the passkey challenge key was refused"))
 }
 
-fn looks_like_a_token(text: &str) -> bool {
-    text.len() == TOKEN_BYTES * 2 && text.bytes().all(|byte| byte.is_ascii_hexdigit())
+fn cipher(secret: &str, id: &[u8]) -> Result<Aes256Gcm> {
+    let mut derive = mac(secret.as_bytes())?;
+    derive.update(KEY_LABEL);
+    let mut each = mac(&derive.finalize().into_bytes())?;
+    each.update(id);
+    Aes256Gcm::new_from_slice(&each.finalize().into_bytes())
+        .map_err(|_| Refusal::internal("the passkey challenge key was refused"))
+}
+
+pub fn issue<S: Serialize>(secret: &str, now: Stamp, new: New<'_, S>) -> Result<String> {
+    let sealed = Sealed {
+        expires_ms: now.plus_ms(LIFE_MS)?.ms(),
+        origin: new.origin.to_string(),
+        session_id: new.session_id.map(str::to_string),
+        state: serde_json::to_value(new.state)
+            .map_err(|_| Refusal::internal("a passkey challenge did not write"))?,
+    };
+    let plain = serde_json::to_vec(&sealed)
+        .map_err(|_| Refusal::internal("a passkey challenge did not write"))?;
+    let mut random = [0u8; ID_BYTES + NONCE_BYTES];
+    getrandom::fill(&mut random).map_err(|_| Refusal::internal("no randomness was available"))?;
+    let (id, nonce) = random.split_at(ID_BYTES);
+    let nonce = Nonce::<Aes256Gcm>::try_from(nonce)
+        .map_err(|_| Refusal::internal("a passkey challenge did not write"))?;
+    let payload = Payload {
+        msg: &plain,
+        aad: new.purpose.word(),
+    };
+    let closed = cipher(secret, id)?
+        .encrypt(&nonce, payload)
+        .map_err(|_| Refusal::internal("a passkey challenge did not write"))?;
+    let cookie = URL_SAFE_NO_PAD.encode([random.as_slice(), &closed].concat());
+    if cookie.len() > MOST_COOKIE_CHARS {
+        return Err(Refusal::internal(
+            "a passkey challenge is too long for a cookie",
+        ));
+    }
+    Ok(cookie)
+}
+
+struct Opened {
+    digest: String,
+    expires_at: Stamp,
+    taken: Taken,
+}
+
+/// Any cookie that does not open is `None`, so none tells a forger why.
+fn open(secret: &str, cookie: &str, purpose: Purpose) -> Option<Opened> {
+    if cookie.len() > MOST_COOKIE_CHARS {
+        return None;
+    }
+    let bytes = URL_SAFE_NO_PAD.decode(cookie).ok()?;
+    if bytes.len() < ID_BYTES + NONCE_BYTES + TAG_BYTES {
+        return None;
+    }
+    let (id, rest) = bytes.split_at(ID_BYTES);
+    let (nonce, closed) = rest.split_at(NONCE_BYTES);
+    let nonce = Nonce::<Aes256Gcm>::try_from(nonce).ok()?;
+    let payload = Payload {
+        msg: closed,
+        aad: purpose.word(),
+    };
+    let plain = cipher(secret, id).ok()?.decrypt(&nonce, payload).ok()?;
+    let sealed: Sealed = serde_json::from_slice(&plain).ok()?;
+    Some(Opened {
+        digest: hex::encode(Sha256::digest(id)),
+        expires_at: Stamp::from_ms(sealed.expires_ms).ok()?,
+        taken: Taken {
+            origin: sealed.origin,
+            session_id: sealed.session_id,
+            state: sealed.state,
+        },
+    })
 }
 
 pub const UNREAD: Unread<'static> = Unread {
-    table: "passkey_challenges",
+    table: "passkey_challenges_answered",
     time: "expires_at",
     scope: "1",
 };
 
-fn make_room(tx: &Transaction<'_>, now: Stamp, purpose: Purpose) -> Result<()> {
-    let ends = readable("expires_at");
-    tx.execute(
-        &format!("DELETE FROM passkey_challenges WHERE {ends} AND expires_at <= ?1"),
-        params![now],
-    )?;
-    tx.execute(
-        &format!(
-            "DELETE FROM passkey_challenges WHERE digest IN (SELECT digest \
-             FROM passkey_challenges WHERE purpose = ?2 AND {ends} \
-             ORDER BY expires_at DESC LIMIT -1 OFFSET ?1)"
-        ),
-        params![MOST_UNDER_WAY - 1, purpose.word()],
-    )?;
-    Ok(())
-}
-
-pub fn issue<S: Serialize>(
-    tx: &Transaction<'_>,
-    salt: &str,
-    now: Stamp,
-    new: New<'_, S>,
-) -> Result<String> {
-    make_room(tx, now, new.purpose)?;
-    let token = new_token()?;
-    let state = serde_json::to_string(new.state)
-        .map_err(|_| Refusal::internal("a passkey challenge did not write"))?;
-    tx.execute(
-        "INSERT INTO passkey_challenges (digest, purpose, origin, session_id, state, \
-         expires_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-        params![
-            digest_of(salt, &token)?,
-            new.purpose.word(),
-            new.origin,
-            new.session_id,
-            state,
-            now.plus_ms(LIFE_MS)?,
-        ],
-    )?;
-    Ok(token)
-}
-
+/// Spends the challenge the cookie holds, or `None` where it is not this instance's,
+/// not for `purpose`, ended, or answered before.
 pub fn take(
     tx: &Transaction<'_>,
-    salt: &str,
-    token: Option<&str>,
+    secret: &str,
+    cookie: Option<&str>,
     purpose: Purpose,
     now: Stamp,
 ) -> Result<Option<Taken>> {
-    let Some(token) = token.filter(|token| looks_like_a_token(token)) else {
+    let Some(opened) = cookie.and_then(|cookie| open(secret, cookie, purpose)) else {
         return Ok(None);
     };
-    let found: Option<(String, Stamp, Taken)> = tx
-        .query_row(
-            "DELETE FROM passkey_challenges WHERE digest = ?1 \
-             RETURNING purpose, expires_at, origin, session_id, state",
-            params![digest_of(salt, token)?],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    Taken {
-                        origin: row.get(2)?,
-                        session_id: row.get(3)?,
-                        state: row.get(4)?,
-                    },
-                ))
-            },
-        )
-        .optional()?;
-    Ok(found.and_then(|(word, expires_at, taken)| {
-        (word == purpose.word() && expires_at > now).then_some(taken)
-    }))
+    if opened.expires_at <= now {
+        return Ok(None);
+    }
+    tx.execute(
+        &format!(
+            "DELETE FROM passkey_challenges_answered WHERE {} AND expires_at <= ?1",
+            readable("expires_at")
+        ),
+        params![now],
+    )?;
+    let recorded = tx.execute(
+        "INSERT INTO passkey_challenges_answered (digest, expires_at) VALUES (?1, ?2) \
+         ON CONFLICT (digest) DO NOTHING",
+        params![opened.digest, opened.expires_at],
+    )?;
+    Ok((recorded == 1).then_some(opened.taken))
 }
 
 #[cfg(test)]
@@ -146,21 +189,21 @@ mod tests {
 
     use super::*;
 
-    const SALT: &str = "salt";
+    const SECRET: &str = "an instance secret for these tests only";
     const NOW: i64 = 1_800_000_000_000;
 
     fn at(ms: i64) -> Stamp {
         Stamp::from_ms(ms).unwrap()
     }
 
-    fn issued(tx: &Transaction<'_>) -> String {
+    fn issued(purpose: Purpose) -> String {
         let new = New {
-            purpose: Purpose::Prove,
+            purpose,
             origin: "https://a.example",
-            session_id: None,
+            session_id: Some("a session"),
             state: &"state",
         };
-        issue(tx, SALT, at(NOW), new).unwrap()
+        issue(SECRET, at(NOW), new).unwrap()
     }
 
     fn database() -> Connection {
@@ -170,27 +213,90 @@ mod tests {
         db
     }
 
+    fn taken(db: &mut Connection, cookie: &str, purpose: Purpose, now: i64) -> bool {
+        let tx = db.transaction().unwrap();
+        let taken = take(&tx, SECRET, Some(cookie), purpose, at(now)).unwrap();
+        tx.commit().unwrap();
+        taken.is_some()
+    }
+
+    fn answered(db: &Connection) -> i64 {
+        db.query_row(
+            "SELECT count(*) FROM passkey_challenges_answered",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
     #[test]
-    fn a_ceremony_is_taken_until_the_millisecond_it_ends() {
+    fn a_challenge_is_taken_once_until_the_millisecond_it_ends() {
         for (taken_at, stands) in [(NOW + LIFE_MS - 1, true), (NOW + LIFE_MS, false)] {
             let mut db = database();
-            let tx = db.transaction().unwrap();
-            let token = issued(&tx);
-            let taken = take(&tx, SALT, Some(&token), Purpose::Prove, at(taken_at)).unwrap();
-            assert_eq!(taken.is_some(), stands, "{taken_at}");
+            let cookie = issued(Purpose::Prove);
+            assert_eq!(taken(&mut db, &cookie, Purpose::Prove, taken_at), stands);
+            assert!(!taken(&mut db, &cookie, Purpose::Prove, taken_at));
         }
     }
 
     #[test]
-    fn a_ceremony_whose_end_does_not_read_is_refused() {
+    fn an_unanswered_challenge_stores_nothing_and_an_answer_stays_only_until_its_end() {
+        let mut db = database();
+        let first = issued(Purpose::Prove);
+        let second = issued(Purpose::Prove);
+        assert_eq!(answered(&db), 0);
+        assert!(taken(&mut db, &first, Purpose::Prove, NOW));
+        assert_eq!(answered(&db), 1);
+        let later = issued(Purpose::Prove);
+        let new = New {
+            purpose: Purpose::Prove,
+            origin: "https://a.example",
+            session_id: None,
+            state: &"state",
+        };
+        let fresh = issue(SECRET, at(NOW + LIFE_MS), new).unwrap();
+        assert!(!taken(&mut db, &second, Purpose::Prove, NOW + LIFE_MS));
+        assert!(taken(&mut db, &fresh, Purpose::Prove, NOW + LIFE_MS));
+        assert_eq!(answered(&db), 1, "the first answer went once it ended");
+        assert!(!taken(&mut db, &later, Purpose::Prove, NOW + LIFE_MS));
+    }
+
+    #[test]
+    fn a_cookie_opens_only_for_its_purpose_and_its_instance_and_whole() {
+        let cookie = issued(Purpose::Add);
+        assert!(open(SECRET, &cookie, Purpose::Add).is_some());
+        assert!(open(SECRET, &cookie, Purpose::Prove).is_none());
+        assert!(open("another instance's secret", &cookie, Purpose::Add).is_none());
+        assert!(open(SECRET, &cookie[..cookie.len() - 1], Purpose::Add).is_none());
+        assert!(open(SECRET, "", Purpose::Add).is_none());
+        assert!(open(SECRET, "not base64!", Purpose::Add).is_none());
+        let bytes = URL_SAFE_NO_PAD.decode(&cookie).unwrap();
+        for at in [0, ID_BYTES, ID_BYTES + NONCE_BYTES, bytes.len() - 1] {
+            let mut flipped = bytes.clone();
+            flipped[at] ^= 1;
+            let flipped = URL_SAFE_NO_PAD.encode(flipped);
+            assert!(open(SECRET, &flipped, Purpose::Add).is_none(), "{at}");
+        }
+        let opened = open(SECRET, &cookie, Purpose::Add).unwrap();
+        assert_eq!(opened.taken.session_id.as_deref(), Some("a session"));
+        assert_eq!(opened.expires_at, at(NOW + LIFE_MS));
+    }
+
+    #[test]
+    fn an_answer_whose_end_does_not_read_is_kept_for_the_sweep_to_report() {
         for stored in ["soon", "1800000300000", "2027-01-15T08:00:00Z"] {
             let mut db = database();
-            let tx = db.transaction().unwrap();
-            let token = issued(&tx);
-            tx.execute("UPDATE passkey_challenges SET expires_at = ?1", [stored])
-                .unwrap();
-            let refused = take(&tx, SALT, Some(&token), Purpose::Prove, at(NOW)).err();
-            assert!(refused.is_some(), "{stored}");
+            db.execute(
+                "INSERT INTO passkey_challenges_answered (digest, expires_at) VALUES ('d', ?1)",
+                [stored],
+            )
+            .unwrap();
+            let cookie = issued(Purpose::Prove);
+            assert!(
+                taken(&mut db, &cookie, Purpose::Prove, NOW + LIFE_MS - 1),
+                "{stored}"
+            );
+            assert_eq!(answered(&db), 2, "{stored}");
         }
     }
 }

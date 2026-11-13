@@ -62,13 +62,21 @@ When a passkey assertion has an invalid signature or names an unregistered crede
 
 When a passkey authentication challenge has already been consumed by an accepted or refused assertion, the server MUST refuse another assertion using that challenge.
 
-**Tests:** `compliance/passkeys.test.ts › refuses wrong credentials and keeps password attempts independent`.
+**Tests:** `compliance/passkeys.test.ts › refuses wrong credentials and keeps password attempts independent`, `compliance/passkeys.test.ts › signs in on a challenge asked for before other callers asked for 1,100 more, and only once`.
+
+### `authentication/passkey-challenge-kept`
+
+While a passkey challenge is unanswered and has not expired, the server MUST accept a valid assertion on it, however many challenges other callers have asked for since.
+
+**Reason:** The challenge door takes no credential, so no caller may end a ceremony another caller has under way.
+
+**Tests:** `compliance/passkeys.test.ts › signs in on a challenge asked for before other callers asked for 1,100 more, and only once`.
 
 ### `authentication/passkey-challenge-limit`
 
 Where `rate_limit_enabled` is `true`, if one address has sent thirty `POST /auth/passkeys/sign-in/options` requests in a minute, then the server MUST answer its next one `429` with `Retry-After`.
 
-**Reason:** A challenge needs no credential, and each one is stored until it is used or ends.
+**Reason:** A challenge needs no credential, and each one answered is recorded until it would have ended.
 
 **Tests:** `compliance/sign-in-door-limits.test.ts › answers the thirty-first passkey sign-in challenge from one address in a minute 429`.
 

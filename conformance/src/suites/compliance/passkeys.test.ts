@@ -488,6 +488,40 @@ describe("owner passkeys", () => {
     expect((await signIn(first, 3)).status).toBe(200);
     expect((await post("/auth/sign-in", owner)).status).toBe(429);
   });
+  it("signs in on a challenge asked for before other callers asked for 1,100 more, and only once", async () => {
+    const device = testAuthenticator();
+    const id = (await register(device, "Pending")).id;
+    const pending = await options("authenticate");
+    for (let batch = 0; batch < 22; batch++)
+      await Promise.all(
+        Array.from({ length: 50 }, () => options("authenticate")),
+      );
+    const answer = (counter: number) =>
+      post(
+        "/auth/passkeys/sign-in",
+        {
+          response: device.authentication(
+            pending.body.challenge,
+            base,
+            counter,
+            HOST,
+          ),
+        },
+        pending.cookie,
+      );
+    const signed = await answer(1);
+    expect(signed.status).toBe(200);
+    expect(cookie(signed)).toContain("marfa_session");
+    const again = await answer(2);
+    expect(again.status).toBe(400);
+    expect(cookie(again)).not.toContain("marfa_session");
+    const removed = await controlRequest(
+      server.controlSocket,
+      "/owner/passkeys/" + id,
+      { method: "DELETE" },
+    );
+    expect(removed.status).toBe(200);
+  });
   it("records the last use of only the passkey that signed in, and only when it signed in", async () => {
     const used = testAuthenticator(),
       idle = testAuthenticator();
