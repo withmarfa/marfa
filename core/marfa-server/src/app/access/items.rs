@@ -1,7 +1,7 @@
 use serde_json::json;
 
 use super::levers::Holding;
-use super::{Axis, Caller, Level};
+use super::{Axis, Caller, Level, Permission};
 use crate::app::items::Writer;
 use crate::app::refusal::{Code, Refusal, Result};
 
@@ -27,6 +27,7 @@ impl Caller {
             Caller::Owner(_) => false,
             Caller::Key(key) | Caller::App { key, .. } => {
                 key.grants.map(Axis::Type).reads_every_name()
+                    && key.grants.holds(Permission::GrantsManage)
             }
         }
     }

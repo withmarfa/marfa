@@ -104,10 +104,12 @@ function local(
 async function mintKey(
   label: string,
   typePermissions: Record<string, string> = { "core.note": "write" },
+  permissions: string[] = [],
 ): Promise<{ id: string; key: string; label: string; source: string }> {
   const minted = await local("POST", "/keys", {
     label,
     source: `version-writers-${String(Date.now())}-${String(Math.random()).slice(2, 8)}`,
+    permissions,
     type_permissions: typePermissions,
   });
   expect(minted.status, JSON.stringify(minted.body)).toBe(201);
@@ -272,9 +274,11 @@ describe("who wrote each version", () => {
         .status,
     ).toBe(200);
 
-    const reader = await mintKey("record reader", {
-      "system.connection": "read",
-    });
+    const reader = await mintKey(
+      "record reader",
+      { "system.connection": "read" },
+      ["grants.manage"],
+    );
     const byBrowser = {
       kind: "browser",
       id: session.id,
@@ -294,10 +298,11 @@ describe("who wrote each version", () => {
     const app = await approveApp(other, "app that ends");
     const appRow = listedApp(await signIns(), "app that ends");
     const minted = await mintKey("key that ends");
-    const reader = await mintKey("reader that stays", {
-      "core.note": "read",
-      "system.connection": "read",
-    });
+    const reader = await mintKey(
+      "reader that stays",
+      { "core.note": "read", "system.connection": "read" },
+      ["grants.manage"],
+    );
 
     const note = await createNote(minted.key);
     await changeNote(app.accessToken, note, 1, "by the app");

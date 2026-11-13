@@ -2203,6 +2203,22 @@ If a request with no credential sends `GET /auth/grants`, then the server MUST a
 
 **Tests:** `compliance/auth-grants.test.ts › refuses a caller without grants.manage 403, naming it, and a request with no credential 401`.
 
+### `keys-and-oauth/grants-items-read`
+
+While a credential does not hold `grants.manage`, the server MUST answer every operation that reads items, edges or events as it answers a credential whose type map does not reach `system.connection`, whatever the credential's type map grants.
+
+**Reason:** A `system.connection` item is an app the owner approved, with its `client_id` and the scopes it holds, which is what `GET /auth/grants` lists, so it is read with the permission that listing takes (`keys-and-oauth/grants-permission`).
+
+**Tests:** `compliance/auth-grants.test.ts › shows a system.connection item at no door to a credential without grants.manage, though it reads every type`, `› shows an app's system.connection items only where it holds grants.manage, whatever data scope it holds`.
+
+### `keys-and-oauth/grants-items-type-refused`
+
+If a credential without `grants.manage` names `system.connection` as a type an item listing reads, then the server MUST answer `403 forbidden` with `details.required_scope` naming `grants.manage`.
+
+**Reason:** A type map could not open the listing, so the refusal names the permission that does.
+
+**Tests:** `compliance/auth-grants.test.ts › refuses a listing of system.connection to a credential without grants.manage, naming the permission`.
+
 ### `keys-and-oauth/grant-revoke-answer`
 
 When a caller holding `grants.manage` revokes a grant at `DELETE /auth/grants/{id}`, the server MUST answer `204`.
@@ -3005,7 +3021,7 @@ When `GET /owner/sign-ins` lists a browser session, the server MUST give it the 
 
 When `GET /owner/sign-ins` lists an app, the server MUST give it the `name` the owner gave it at `PATCH /owner/sign-ins/{id}`, or, where the owner gave none, the `client_name` the app registered with.
 
-**Reason:** Each install of an app registers on its own, so the name it registers with can say which machine it is on. The owner's name for an app is kept on the app's `system.connection` item, so any credential that can read `system.connection` items, such as an app holding the default read bundle, can read that name and the sign-in's `id`.
+**Reason:** Each install of an app registers on its own, so the name it registers with can say which machine it is on. The owner's name for an app is kept on the app's `system.connection` item, which a credential reads only with `grants.manage` (`keys-and-oauth/grants-items-read`).
 
 **Tests:** `compliance/owner-sign-ins.test.ts › lists every app and key beside the browsers, each with a name, a kind and its last use`, `› gives an app the owner's own name, which the listing shows`.
 
