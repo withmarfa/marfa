@@ -28,6 +28,7 @@ import {
   everythingClient,
   DISK_ONLY,
   ownObjectStore,
+  replicateUntilCaughtUp,
   runJob,
 } from "../../utils/own-blob-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
@@ -355,6 +356,94 @@ describe("a backup in the object store", () => {
     expect(listed.data.data.map((backup) => backup.name)).not.toContain(
       "notes.tar",
     );
+  });
+});
+
+describe("a backup taken while replication is held", () => {
+  it("calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them", async () => {
+    const own = ownObjectStore();
+    const server = await bootFreshServer("backups-incomplete", {
+      ...own,
+      MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,
+    });
+    let restorer: FreshServer | undefined;
+    try {
+      await afterFirstScheduledBackup(server);
+      const { operator, working } = clientsFor(server);
+      const id = await instanceIdOf(server);
+      await server.setFault("hold:housekeeping:blob-replicate");
+      const hashes: string[] = [];
+      const items: string[] = [];
+      for (const label of ["first", "second"]) {
+        const bytes = bytesOf(`a file waiting for its copy, ${label}`, 4096);
+        const uploaded = await working.uploadBlob(bytes, "text/plain");
+        expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
+        const file = await working.createItem({
+          type: "core.file",
+          properties: { blob_ref: uploaded.data.hash, mime_type: "text/plain" },
+        });
+        expect(file.status, JSON.stringify(file.error)).toBe(201);
+        hashes.push(uploaded.data.hash);
+        items.push(file.data.item.id);
+      }
+
+      const run = await ownerOf(server).runBackup();
+      expect(run.status, JSON.stringify(run.error)).toBe(200);
+      await expectMatchesSchema("POST", "/backups", 200, run.data);
+      expect(run.data.blobs_lost).toEqual([]);
+      expect(run.data.blobs_waiting).toBe(2);
+      const name = run.data.backup.name;
+      const waiting = await health(server, operator);
+      expect(waiting.status).toBe("ok");
+      expect(waiting.backups).toMatchObject({
+        status: "incomplete",
+        last_backup: name,
+        last_backup_files_waiting: 2,
+      });
+      const told = await backupConcerns(server);
+      expect(told.map((concern) => concern.reference)).toEqual(["incomplete"]);
+      expect(told[0]!.description).toContain("2 files it names wait");
+
+      restorer = await bootFreshServer("backups-incomplete-restore", {
+        ...own,
+        MARFA_BACKUP_INTERVAL_SECONDS: "0",
+      });
+      const refused = await ownerOf(restorer).restoreBackup(id, name);
+      expect(refused.status, JSON.stringify(refused.data)).toBe(409);
+      expect(refused.error?.error.code).toBe("backup_files_missing");
+      expect(
+        (refused.error?.error.details as { missing_blobs: string[] })
+          .missing_blobs,
+      ).toEqual([...hashes].sort());
+      for (const item of items) {
+        const absent = await clientsFor(restorer).working.getItem(item);
+        expect(absent.status).toBe(404);
+      }
+
+      await server.clearFault();
+      await replicateUntilCaughtUp(operator, "the files' copies in the bucket");
+      const whole = await health(server, operator);
+      expect(whole.backups).toMatchObject({
+        status: "ok",
+        last_backup: name,
+        last_backup_files_waiting: 0,
+      });
+      expect(await backupConcerns(server)).toEqual([]);
+      const restored = await ownerOf(restorer).restoreBackup(id, name);
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      expect(restored.data.blobs_missing).toEqual([]);
+      for (const item of items) {
+        const present = await clientsFor(restorer).working.getItem(item);
+        expect(present.status).toBe(200);
+      }
+      for (const hash of hashes) {
+        const read = await clientsFor(restorer).operator.downloadBlob(hash);
+        expect(read.status).toBe(200);
+      }
+    } finally {
+      await restorer?.stop();
+      await server.stop();
+    }
   });
 });
 

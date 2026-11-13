@@ -411,6 +411,7 @@ export interface BackupRun {
   removed: number;
   unremoved: number;
   blobs_lost: string[];
+  blobs_waiting: number;
 }
 
 /** What `POST /backups/folder/adopt` answers. */

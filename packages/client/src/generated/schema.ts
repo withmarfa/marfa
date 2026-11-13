@@ -3138,10 +3138,10 @@ export interface components {
             /** @description Whether Marfa backs itself up to its backup folder or object store, how the last backup went, and whether the place it backs up to is taking copies. */
             backups: {
                 /**
-                 * @description `ok`: backing up on schedule, and the last run succeeded. `failing`: the last run failed or lost files, or a store isn't taking copies, which makes the overall `status` at least `degraded`. `off`: no scheduled backups.
+                 * @description `ok`: backing up on schedule, the last run succeeded, and the destination holds every file the last backup names. `incomplete`: the last backup names files that are still waiting for their copy in the destination, so a restore from it is refused until replication copies them; the overall `status` is unchanged. `failing`: the last run failed or lost files, or a store isn't taking copies, which makes the overall `status` at least `degraded`. `off`: no scheduled backups.
                  * @enum {string}
                  */
-                status: "ok" | "failing" | "off";
+                status: "ok" | "incomplete" | "failing" | "off";
                 /**
                  * @description Why backups are `off`: `no_backup_destination` when the instance has nowhere to put them, with neither `MARFA_BACKUP_PATH` nor `S3_BUCKET` set, `turned_off` when `backup_interval_seconds` is 0.
                  * @enum {string}
@@ -3170,6 +3170,8 @@ export interface components {
                 last_failed_at?: string | null;
                 /** @description How many files waited for their copy in the object store or backup folder when `blob-replicate` last ran. Present only for a caller that holds `instance.read`, and only when a destination is set. */
                 copies_waiting?: number;
+                /** @description How many files the last backup names that the destination doesn't hold a copy of yet, or `null` when no backup was put or the count couldn't be read. Present only for a caller that holds `instance.read`, and only when a destination is set. */
+                last_backup_files_waiting?: number | null;
                 /** @description Why the object store or backup folder isn't taking copies, or `null` while it does. It covers a backup folder whose disk isn't there. Present only for a caller that holds `instance.read`, and only when a destination is set. */
                 store_error?: string | null;
             };
@@ -30375,6 +30377,8 @@ export interface operations {
                         unremoved: number;
                         /** @description The hashes of the files the backup names that no store could give when Marfa took it. A restore of the backup goes ahead without them, and `GET /health` answers `backups.status` `failing` until a backup is put without losing any. */
                         blobs_lost: string[];
+                        /** @description How many files the backup names that the destination doesn't hold a copy of yet. Until replication copies them, `GET /health` answers `backups.status` `incomplete` and a restore of the backup is refused with `backup_files_missing`. */
+                        blobs_waiting: number;
                     };
                 };
             };
@@ -30762,7 +30766,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `backup_files_missing`: neither the folder nor this instance holds files it needs, named in `details.missing_blobs`. Nothing was restored.
+             * @description - `backup_files_missing`: neither the backup folder or object store nor this instance holds files the backup names, listed in `details.missing_blobs`. Nothing was restored.
              *     - `conflict`: the archive redefines a type registered here differently, carries a core edge type, or reuses a snapshot ID.
              *     - `link_taken`: the archive's type names a `link_field` two items share.
              *     - `no_backup_destination`: there is nowhere to put backups.

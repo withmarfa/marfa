@@ -173,7 +173,9 @@ describe("the files a backup names", () => {
         const run = await ownerOf(origin).runBackup();
         expect(run.status, JSON.stringify(run.error)).toBe(200);
         expect(run.data.removed).toBe(day === 32 ? 1 : 0);
-        later.push(`${store.S3_PREFIX}/backups/${originId}/${run.data.backup.name}`);
+        later.push(
+          `${store.S3_PREFIX}/backups/${originId}/${run.data.backup.name}`,
+        );
       }
       expect((await bucket.backupKeys()).sort()).toEqual(later.sort());
 
