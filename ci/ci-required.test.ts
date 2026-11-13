@@ -82,6 +82,11 @@ describe("what a change runs", () => {
       ["quick-checks", "core-checks-linux"],
     ],
     [
+      "the telemetry page, which a Rust test holds to the variables the binary reads",
+      ["core/TELEMETRY.md"],
+      ["quick-checks", "core-checks-linux"],
+    ],
+    [
       "a published package's README, which the version check reads",
       ["packages/client/README.md"],
       ["quick-checks", "version-fields"],
@@ -719,7 +724,7 @@ describe("what a change runs", () => {
     expect(tracked().filter(unnamed)).toEqual([]);
   });
 
-  it("treats Markdown as documentation but the contract, package READMEs and the command reference", () => {
+  it("treats Markdown as documentation but the contract, package READMEs, the command reference and the telemetry page", () => {
     const beyond = (path: string) =>
       [...affected(path)].filter((job) => job !== "quick-checks");
     // The rule fixtures and generated trees fall through on purpose.
@@ -755,7 +760,10 @@ describe("what a change runs", () => {
                 ? ["workspace", "conformance-offline", "rust-contract"]
                 : ["workspace", "conformance-offline"],
         );
-      } else if (path === "core/marfa-cli/COMMANDS.md") {
+      } else if (
+        path === "core/marfa-cli/COMMANDS.md" ||
+        path === "core/TELEMETRY.md"
+      ) {
         expect(beyond(path), path).toEqual(["core-checks-linux"]);
       } else if (path === "GLOSSARY.md") {
         expect(beyond(path), path).toEqual(["workspace"]);
@@ -782,6 +790,7 @@ describe("what a change runs", () => {
       ["AGENTS.md", "packages/types/src/runtime.ts"],
       ["packages/client/README.md"],
       ["core/marfa-cli/COMMANDS.md"],
+      ["core/TELEMETRY.md"],
       ["conformance/spec/items.md"],
       [".env.example"],
       [".github/workflows/release.yml"],
