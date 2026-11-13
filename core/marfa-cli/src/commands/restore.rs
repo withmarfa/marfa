@@ -60,7 +60,11 @@ fn notes(answer: &serde_json::Value) -> Vec<String> {
         notes.push(format!(
             "Skipped {} archive {} this build does not know: {}.",
             skipped.len(),
-            if skipped.len() == 1 { "entry" } else { "entries" },
+            if skipped.len() == 1 {
+                "entry"
+            } else {
+                "entries"
+            },
             skipped.join(", ")
         ));
     }

@@ -265,8 +265,9 @@ enum Command {
     /// An archive is kept even when it lacks blobs it names: a blob no store
     /// could read whole, or a file's blob the key may not read, such as one
     /// only an earlier version names. A key holding `blobs.manage` reads every
-    /// blob. The manifest lists the blobs it lacks under `missing_blobs`, and
-    /// the command then exits 1 with `blobs_missing`, naming up to ten of them.
+    /// blob. Its `files.ndjson.gz` marks each blob it lacks `not_carried` or
+    /// `lost`, and the command then exits 1 with `blobs_missing`, naming up to
+    /// ten of them.
     ///
     /// With `--output`, such an archive is not written to the path. It is
     /// kept beside it as `<PATH>.incomplete`, which replaces only an earlier

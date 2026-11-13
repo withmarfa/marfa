@@ -131,7 +131,7 @@ fn run_waiting(
         });
         remote.stream(&request)?
     };
-    let mut reader = ManifestTap::new(reader, args.format == ExportFormat::Archive);
+    let mut reader = ArchiveTap::new(reader, args.format == ExportFormat::Archive);
     match &args.output {
         Some(path) => {
             let written = write_whole(path, &mut reader)?;
@@ -164,7 +164,7 @@ fn run_waiting(
 /// `<path>.incomplete`, replacing only an earlier file of that name, and is
 /// answered as [`CliError::ArchiveKeptApart`]. An archive whose manifest
 /// cannot be read is not an archive, so it is removed like a cut stream.
-fn write_whole(path: &Path, reader: &mut ManifestTap<impl Read>) -> Result<u64, CliError> {
+fn write_whole(path: &Path, reader: &mut ArchiveTap<impl Read>) -> Result<u64, CliError> {
     let name = path
         .file_name()
         .ok_or_else(|| CliError::Invalid(format!("{} names no file", path.display())))?;
@@ -289,82 +289,245 @@ impl Drop for Remarks {
 }
 
 const TAR_BLOCK: usize = 512;
+const MANIFEST: &[u8] = b"manifest.json";
+const FILES: &[u8] = b"files.ndjson.gz";
+const CARRIED: &str = "carried";
+/// A line of `files.ndjson.gz` holds one hash, a state, a media type and a size.
+const FILE_LINE_CAP: usize = 64 * 1024;
 
-/// Reads the archive's first entry, its `manifest.json`, out of the bytes as
-/// they pass, so the export can say what the archive lacks without reading
-/// what it wrote a second time, which it cannot do on stdout.
-struct ManifestTap<R> {
+/// Reads the archive's first two entries, `manifest.json` and the list of
+/// files in `files.ndjson.gz`, out of the bytes as they pass, so the export
+/// can say what the archive lacks without reading what it wrote a second
+/// time, which it cannot do on stdout.
+struct ArchiveTap<R> {
     inner: R,
     archive: bool,
-    /// Until the manifest is whole, the archive's first bytes.
-    head: Option<Vec<u8>>,
+    stage: Stage,
     manifest: Option<Vec<u8>>,
+    /// The files `files.ndjson.gz` names but the archive does not carry, once
+    /// it has been read to its end.
+    lacking: Option<Vec<String>>,
 }
 
-impl<R: Read> ManifestTap<R> {
+enum Stage {
+    /// The bytes so far of the header of entry `entry`.
+    Header {
+        entry: usize,
+        held: Vec<u8>,
+    },
+    Manifest {
+        body: Vec<u8>,
+        left: u64,
+        pad: u64,
+    },
+    Pad {
+        left: u64,
+    },
+    Files {
+        left: u64,
+        list: Box<flate2::write::GzDecoder<FileLines>>,
+    },
+    Done,
+}
+
+/// The lines of `files.ndjson.gz` as they inflate, keeping the hash of each
+/// file it does not mark carried.
+#[derive(Default)]
+struct FileLines {
+    pending: Vec<u8>,
+    lacking: Vec<String>,
+}
+
+impl FileLines {
+    fn line(&mut self, line: &[u8]) -> io::Result<()> {
+        let unreadable = || io::Error::new(io::ErrorKind::InvalidData, "a file line does not read");
+        let line: Value = serde_json::from_slice(line).map_err(|_| unreadable())?;
+        let hash = line
+            .get("hash")
+            .and_then(Value::as_str)
+            .ok_or_else(unreadable)?;
+        let state = line
+            .get("state")
+            .and_then(Value::as_str)
+            .ok_or_else(unreadable)?;
+        if state != CARRIED {
+            self.lacking.push(hash.to_string());
+        }
+        Ok(())
+    }
+
+    fn finish(mut self) -> io::Result<Vec<String>> {
+        if !self.pending.is_empty() {
+            let last = std::mem::take(&mut self.pending);
+            self.line(&last)?;
+        }
+        Ok(self.lacking)
+    }
+}
+
+impl Write for FileLines {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let mut rest = bytes;
+        while let Some(end) = rest.iter().position(|byte| *byte == b'\n') {
+            if self.pending.is_empty() {
+                self.line(&rest[..end])?;
+            } else {
+                self.pending.extend_from_slice(&rest[..end]);
+                let line = std::mem::take(&mut self.pending);
+                self.line(&line)?;
+            }
+            rest = &rest[end + 1..];
+        }
+        if self.pending.len() + rest.len() > FILE_LINE_CAP {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "a file line is too long",
+            ));
+        }
+        self.pending.extend_from_slice(rest);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// The name and size a ustar header holds, or `None` when it holds neither.
+fn header(block: &[u8]) -> Option<(&[u8], u64)> {
+    let name = &block[..100];
+    let name = &name[..name.iter().position(|b| *b == 0).unwrap_or(100)];
+    let field = std::str::from_utf8(&block[124..136]).ok()?;
+    let size = u64::from_str_radix(field.trim_matches(['\0', ' ']), 8).ok()?;
+    Some((name, size))
+}
+
+fn padding(size: u64) -> u64 {
+    size.next_multiple_of(TAR_BLOCK as u64) - size
+}
+
+impl<R: Read> ArchiveTap<R> {
     fn new(inner: R, archive: bool) -> Self {
-        ManifestTap {
+        ArchiveTap {
             inner,
             archive,
-            head: archive.then(Vec::new),
+            stage: if archive {
+                Stage::Header {
+                    entry: 0,
+                    held: Vec::new(),
+                }
+            } else {
+                Stage::Done
+            },
             manifest: None,
+            lacking: None,
         }
     }
 
-    /// The manifest's bytes once the tar holds them all: a header naming
-    /// `manifest.json` and its size, then that many bytes.
-    fn take_manifest(tar: &[u8]) -> Option<Option<Vec<u8>>> {
-        if tar.len() < TAR_BLOCK {
-            return None;
+    /// Follows the tar through `bytes` until the list of files has been read,
+    /// or the archive is found not to begin as the server writes one.
+    fn see(&mut self, mut bytes: &[u8]) {
+        while !bytes.is_empty() {
+            let stage = std::mem::replace(&mut self.stage, Stage::Done);
+            self.stage = match stage {
+                Stage::Done => return,
+                Stage::Header { entry, mut held } => {
+                    let take = (TAR_BLOCK - held.len()).min(bytes.len());
+                    held.extend_from_slice(&bytes[..take]);
+                    bytes = &bytes[take..];
+                    if held.len() < TAR_BLOCK {
+                        Stage::Header { entry, held }
+                    } else {
+                        match (entry, header(&held)) {
+                            (0, Some((MANIFEST, size))) => Stage::Manifest {
+                                body: Vec::new(),
+                                left: size,
+                                pad: padding(size),
+                            },
+                            (1, Some((FILES, size))) => Stage::Files {
+                                left: size,
+                                list: Box::new(flate2::write::GzDecoder::new(FileLines::default())),
+                            },
+                            _ => Stage::Done,
+                        }
+                    }
+                }
+                Stage::Manifest {
+                    mut body,
+                    left,
+                    pad,
+                } => {
+                    let take = usize::try_from(left).unwrap_or(usize::MAX).min(bytes.len());
+                    body.extend_from_slice(&bytes[..take]);
+                    bytes = &bytes[take..];
+                    let left = left - take as u64;
+                    if left > 0 {
+                        Stage::Manifest { body, left, pad }
+                    } else {
+                        self.manifest = Some(body);
+                        Stage::Pad { left: pad }
+                    }
+                }
+                Stage::Pad { left } => {
+                    let take = usize::try_from(left).unwrap_or(usize::MAX).min(bytes.len());
+                    bytes = &bytes[take..];
+                    let left = left - take as u64;
+                    if left > 0 {
+                        Stage::Pad { left }
+                    } else {
+                        Stage::Header {
+                            entry: 1,
+                            held: Vec::new(),
+                        }
+                    }
+                }
+                Stage::Files { left, mut list } => {
+                    let take = usize::try_from(left).unwrap_or(usize::MAX).min(bytes.len());
+                    let written = list.write_all(&bytes[..take]);
+                    bytes = &bytes[take..];
+                    let left = left - take as u64;
+                    match written {
+                        Err(_) => Stage::Done,
+                        Ok(()) if left > 0 => Stage::Files { left, list },
+                        Ok(()) => {
+                            self.lacking = list.finish().ok().and_then(|lines| lines.finish().ok());
+                            Stage::Done
+                        }
+                    }
+                }
+            };
         }
-        let name = &tar[..100];
-        let name = &name[..name.iter().position(|b| *b == 0).unwrap_or(100)];
-        if name != b"manifest.json" {
-            return Some(None);
-        }
-        let field = String::from_utf8_lossy(&tar[124..136]);
-        let Ok(size) = usize::from_str_radix(field.trim_matches(['\0', ' ']), 8) else {
-            return Some(None);
-        };
-        let end = TAR_BLOCK.checked_add(size)?;
-        (tar.len() >= end).then(|| Some(tar[TAR_BLOCK..end].to_vec()))
     }
 
-    /// The blobs the manifest lists under `missing_blobs`, refused when there
-    /// are any. An archive whose manifest cannot be read is refused too: the
-    /// server writes it first, so a stream without one is not an archive.
+    /// The files the archive names but does not carry, refused when there
+    /// are any. An archive whose manifest or list of files cannot be read is
+    /// refused too: the server writes them first, so a stream without them is
+    /// not an archive this build reads.
     fn whole(&self) -> Result<(), CliError> {
         if !self.archive {
             return Ok(());
         }
         let unreadable =
             || CliError::Invalid("the archive's manifest.json could not be read".into());
-        let manifest: Value =
+        let _: serde_json::Map<String, Value> =
             serde_json::from_slice(self.manifest.as_deref().ok_or_else(unreadable)?)
                 .map_err(|_| unreadable())?;
-        let mut missing: Vec<String> = manifest
-            .get("missing_blobs")
-            .and_then(Value::as_object)
-            .map(|blobs| blobs.keys().cloned().collect())
-            .unwrap_or_default();
-        if missing.is_empty() {
+        let mut lacking = self.lacking.clone().ok_or_else(|| {
+            CliError::Invalid("the archive's files.ndjson.gz could not be read".into())
+        })?;
+        if lacking.is_empty() {
             return Ok(());
         }
-        missing.sort();
-        Err(CliError::ArchiveLacksBlobs(missing))
+        lacking.sort();
+        lacking.dedup();
+        Err(CliError::ArchiveLacksBlobs(lacking))
     }
 }
 
-impl<R: Read> Read for ManifestTap<R> {
+impl<R: Read> Read for ArchiveTap<R> {
     fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
         let read = self.inner.read(buffer)?;
-        if let Some(head) = &mut self.head {
-            head.extend_from_slice(&buffer[..read]);
-            if let Some(found) = Self::take_manifest(head) {
-                self.manifest = found;
-                self.head = None;
-            }
-        }
+        self.see(&buffer[..read]);
         Ok(read)
     }
 }
@@ -373,13 +536,28 @@ impl<R: Read> Read for ManifestTap<R> {
 mod tests {
     use super::*;
 
-    /// A tar whose first entry is `manifest.json`, followed by an entry the
-    /// tap must not need.
-    fn archive(manifest: &str) -> Vec<u8> {
+    /// A tar that begins as the server writes an archive: `manifest.json`,
+    /// then `files.ndjson.gz` listing each file with its state, then an entry
+    /// the tap must not need.
+    fn archive(files: &[(&str, &str)]) -> Vec<u8> {
+        let manifest = format!(
+            r#"{{"version":1,"format":"marfa-archive","file_count":{}}}"#,
+            files.len()
+        );
+        let mut list = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        for (hash, state) in files {
+            writeln!(
+                list,
+                r#"{{"hash":"{hash}","mime_type":null,"size_bytes":null,"state":"{state}"}}"#
+            )
+            .unwrap();
+        }
+        let list = list.finish().unwrap();
         let mut tar = Vec::new();
         for (name, body) in [
             ("manifest.json", manifest.as_bytes()),
-            ("items.ndjson.gz", b"\x1f\x8b".as_slice()),
+            ("files.ndjson.gz", list.as_slice()),
+            ("instance.ndjson.gz", b"\x1f\x8b".as_slice()),
         ] {
             let mut header = [0u8; TAR_BLOCK];
             header[..name.len()].copy_from_slice(name.as_bytes());
@@ -402,23 +580,22 @@ mod tests {
                 self.0.read(&mut buffer[..end])
             }
         }
-        let mut tap = ManifestTap::new(Trickle(io::Cursor::new(bytes)), archive);
+        let mut tap = ArchiveTap::new(Trickle(io::Cursor::new(bytes)), archive);
         let mut copied = Vec::new();
         io::copy(&mut tap, &mut copied).unwrap();
         tap.whole().map(|()| copied)
     }
 
     #[test]
-    fn names_the_blobs_a_manifest_lists_as_missing_and_passes_the_bytes_on() {
-        let bytes =
-            archive(r#"{"version":0,"blobs":{},"missing_blobs":{"sha256:bb":{},"sha256:aa":{}}}"#);
+    fn names_the_files_an_archive_does_not_carry_and_passes_the_bytes_on() {
+        let bytes = archive(&[("sha256:bb", "not_carried"), ("sha256:aa", "lost")]);
         match tapped(bytes.clone(), true) {
             Err(CliError::ArchiveLacksBlobs(missing)) => {
                 assert_eq!(missing, ["sha256:aa", "sha256:bb"]);
             }
             other => panic!("expected blobs_missing, got {other:?}"),
         }
-        let whole = archive(r#"{"version":0,"blobs":{"sha256:aa":{}},"missing_blobs":{}}"#);
+        let whole = archive(&[("sha256:aa", "carried")]);
         assert_eq!(tapped(whole.clone(), true).unwrap(), whole);
     }
 
@@ -456,8 +633,7 @@ mod tests {
         let path = dir.join("backup.tar");
         // The witness: an earlier archive at the path is neither cut nor replaced.
         std::fs::write(&path, b"an earlier archive").unwrap();
-        let error =
-            write_whole(&path, &mut ManifestTap::new(CutShort(100_000), false)).unwrap_err();
+        let error = write_whole(&path, &mut ArchiveTap::new(CutShort(100_000), false)).unwrap_err();
         assert!(matches!(error, CliError::Io(_)), "{error:?}");
         assert!(error.to_string().contains("nothing was written"), "{error}");
         assert!(error.to_string().contains("removed"), "{error}");
@@ -467,7 +643,7 @@ mod tests {
 
         let written = write_whole(
             &path,
-            &mut ManifestTap::new(io::Cursor::new(b"whole".to_vec()), false),
+            &mut ArchiveTap::new(io::Cursor::new(b"whole".to_vec()), false),
         )
         .unwrap();
         assert_eq!(written, 5);
@@ -488,22 +664,19 @@ mod tests {
     fn written(path: &Path, bytes: &[u8]) -> Result<u64, CliError> {
         write_whole(
             path,
-            &mut ManifestTap::new(io::Cursor::new(bytes.to_vec()), true),
+            &mut ArchiveTap::new(io::Cursor::new(bytes.to_vec()), true),
         )
     }
 
     #[test]
     fn keeps_an_archive_that_lacks_blobs_beside_the_path_and_leaves_the_earlier_file() {
         let hashes: Vec<String> = (0..12).map(|n| format!("sha256:{n:02}")).collect();
-        let listed = hashes
+        let listed: Vec<(&str, &str)> = hashes
             .iter()
-            .map(|hash| format!(r#""{hash}":{{}}"#))
-            .collect::<Vec<_>>()
-            .join(",");
-        let lacking = archive(&format!(
-            r#"{{"version":0,"blobs":{{}},"missing_blobs":{{{listed}}}}}"#
-        ));
-        let whole = archive(r#"{"version":0,"blobs":{"sha256:aa":{}},"missing_blobs":{}}"#);
+            .map(|hash| (hash.as_str(), "not_carried"))
+            .collect();
+        let lacking = archive(&listed);
+        let whole = archive(&[("sha256:aa", "carried")]);
 
         let dir = scratch();
         let path = dir.join("nightly.tar");
@@ -545,7 +718,7 @@ mod tests {
 
         // The witness: a whole archive replaces the path and leaves no
         // partial file; the earlier incomplete archive is not its to remove.
-        let newer = archive(r#"{"version":0,"blobs":{"sha256:bb":{}},"missing_blobs":{}}"#);
+        let newer = archive(&[("sha256:bb", "carried")]);
         assert_eq!(written(&path, &newer).unwrap(), newer.len() as u64);
         assert_eq!(std::fs::read(&path).unwrap(), newer);
         assert_eq!(names_in(&dir), ["nightly.tar", "nightly.tar.incomplete"]);
@@ -554,7 +727,7 @@ mod tests {
 
     #[test]
     fn keeps_an_archive_that_lacks_blobs_beside_a_path_where_nothing_was_and_says_so() {
-        let lacking = archive(r#"{"version":0,"blobs":{},"missing_blobs":{"sha256:aa":{}}}"#);
+        let lacking = archive(&[("sha256:aa", "not_carried")]);
         let dir = scratch();
         let path = dir.join("first.tar");
         let error = written(&path, &lacking).unwrap_err();
@@ -582,8 +755,8 @@ mod tests {
 
     #[test]
     fn reports_the_blobs_and_keeps_the_bytes_when_the_incomplete_name_cannot_be_taken() {
-        let lacking = archive(r#"{"version":0,"blobs":{},"missing_blobs":{"sha256:aa":{}}}"#);
-        let whole = archive(r#"{"version":0,"blobs":{"sha256:bb":{}},"missing_blobs":{}}"#);
+        let lacking = archive(&[("sha256:aa", "not_carried")]);
+        let whole = archive(&[("sha256:bb", "carried")]);
         let dir = scratch();
         let path = dir.join("nightly.tar");
         let incomplete = dir.join("nightly.tar.incomplete");
@@ -629,6 +802,20 @@ mod tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"an earlier archive");
         assert_eq!(names_in(&dir), ["backup.tar"]);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn refuses_an_archive_whose_files_are_not_listed_after_its_manifest() {
+        let mut no_list = archive(&[("sha256:aa", "not_carried")]);
+        no_list[TAR_BLOCK * 2..TAR_BLOCK * 2 + FILES.len()].copy_from_slice(b"items.ndjson.gz");
+        match tapped(no_list, true) {
+            Err(CliError::Invalid(message)) => assert!(message.contains("files.ndjson.gz")),
+            other => panic!("expected the list to be unreadable, got {other:?}"),
+        }
+        let mut damaged = archive(&[("sha256:aa", "not_carried")]);
+        let list = TAR_BLOCK * 3;
+        damaged[list + 12] ^= 0xff;
+        assert!(matches!(tapped(damaged, true), Err(CliError::Invalid(_))));
     }
 
     #[test]
@@ -687,7 +874,7 @@ mod tests {
 
     #[test]
     fn waits_for_an_archive_longer_than_the_usual_answer_budget() {
-        let bytes = archive(r#"{"version":0,"blobs":{},"missing_blobs":{}}"#);
+        let bytes = archive(&[]);
         let url = slow_server(Duration::from_millis(1_500), bytes.clone(), bytes.len(), 2);
         let dir = scratch();
         let path = dir.join("big.tar");
@@ -737,7 +924,7 @@ mod tests {
 
     #[test]
     fn leaves_no_archive_when_the_server_ends_the_stream_short() {
-        let whole = archive(r#"{"version":0,"blobs":{},"missing_blobs":{}}"#);
+        let whole = archive(&[]);
         let url = slow_server(
             Duration::ZERO,
             whole[..whole.len() / 2].to_vec(),
