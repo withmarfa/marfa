@@ -107,13 +107,12 @@ impl Db {
         })
     }
 
-    /// Makes every write that arrives after `Begin::with` is called refused with that refusal,
-    /// until the returned guard is dropped.
+    /// Keeps a refusal armed by `Begin::with` until the returned guard is dropped.
     pub fn hold_writes(&self) -> Holding {
         Holding::new(self.held.clone())
     }
 
-    /// The refusal a write meets now, if a job holds the writer and asked for writes to be refused.
+    /// The refusal a new write meets while the hold is armed.
     pub fn writes_held(&self) -> Option<Refusal> {
         self.held.refusal()
     }
