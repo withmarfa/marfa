@@ -128,8 +128,7 @@ impl Out<'_> {
         self.lines(INSTANCE, &prepared.instance, instance_need)
             .await?;
         self.lines(ITEMS, &prepared.items, items_need).await?;
-        self.lines(VERSIONS, &prepared.versions, items_need)
-            .await?;
+        self.lines(VERSIONS, &prepared.versions, items_need).await?;
         self.lines(EDGES, &prepared.edges, edges_need).await?;
         self.lines(ROWS, &prepared.rows, rows_need).await?;
         for (carried, store) in &prepared.blobs {

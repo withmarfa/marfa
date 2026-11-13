@@ -241,7 +241,12 @@ impl Taken {
 }
 
 /// Writes `files.ndjson.gz`. It blocks.
-fn spool_files(scratch: Scratch, room: Room, cap: usize, listing: &[FileLine]) -> Result<Spooled<()>> {
+fn spool_files(
+    scratch: Scratch,
+    room: Room,
+    cap: usize,
+    listing: &[FileLine],
+) -> Result<Spooled<()>> {
     let mut files: Lines<()> = Lines::new(scratch, room)?;
     for line in listing {
         let text = print(line)?;

@@ -772,7 +772,10 @@ mod tests {
         untyped["type"] = json!("not a type");
         let refused = version(CAP, &untyped, 4).unwrap_err();
         assert_eq!(refused.field.as_deref(), Some("versions.2.type"));
-        assert_eq!(refused.id.as_deref(), Some("01a1bdba-8640-72ba-b7d6-9e27d94e7540"));
+        assert_eq!(
+            refused.id.as_deref(),
+            Some("01a1bdba-8640-72ba-b7d6-9e27d94e7540")
+        );
         let details = refused.refusal.details.unwrap();
         assert_eq!(details["item_id"], "01a1bdba-8640-72ba-b7d6-9e27d94e7540");
         assert_eq!(details["line"], 4);

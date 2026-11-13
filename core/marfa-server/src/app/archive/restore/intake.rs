@@ -11,14 +11,14 @@ use serde_json::{Map, Value, json};
 
 use super::untar::{NotTar, Part, Reader};
 use crate::app::archive::{
-    BLOBS, EDGES, ENTRIES, FILES, FORMAT, INSTANCE, ITEMS, MANIFEST, ROWS, VERSION, VERSIONS, checks,
+    BLOBS, EDGES, ENTRIES, FILES, FORMAT, INSTANCE, ITEMS, MANIFEST, ROWS, VERSION, VERSIONS,
+    checks,
 };
 use crate::app::blobs::Hash;
 use crate::app::blobs::restore::{Arriving, Named, Sealed, Spool};
 use crate::app::catalog::Catalog;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{edge_types, sources, stored, types};
-
 
 fn invalid(message: impl Into<String>) -> Refusal {
     Refusal::validation(message.into())
@@ -333,7 +333,12 @@ impl Rows {
         let mime_type = match object.get("mime_type") {
             Some(Value::String(mime)) => Some(served_type(mime)),
             Some(Value::Null) if state != State::Carried => None,
-            _ => return Err(wrong("mime_type", "a string, or null for a file not carried")),
+            _ => {
+                return Err(wrong(
+                    "mime_type",
+                    "a string, or null for a file not carried",
+                ));
+            }
         };
         let size_bytes = match object.get("size_bytes") {
             Some(Value::Null) if state != State::Carried => None,
@@ -1060,7 +1065,8 @@ impl Intake {
             rows.read[LineFile::Edges.slot()],
             rows.read[LineFile::Rows.slot()],
         ];
-        for (((count, file), lines), counted) in COUNTED.into_iter().zip(held).zip(manifest.counts) {
+        for (((count, file), lines), counted) in COUNTED.into_iter().zip(held).zip(manifest.counts)
+        {
             if lines as u64 != counted {
                 return Err(invalid(format!(
                     "{MANIFEST} counts {counted} in {count}, and {file} holds {lines} lines."
@@ -1234,8 +1240,8 @@ mod tests {
 
     #[test]
     fn a_manifest_with_no_format_is_refused_as_written_before_0_1() {
-        let refused =
-            manifest(br#"{"version":1,"written_by":"marfa-server 0.0.70","blobs":{}}"#).unwrap_err();
+        let refused = manifest(br#"{"version":1,"written_by":"marfa-server 0.0.70","blobs":{}}"#)
+            .unwrap_err();
         assert_eq!(
             refused.message,
             "This archive was written by marfa-server 0.0.70, before Marfa 0.1, and this build cannot read it."
@@ -1250,7 +1256,11 @@ mod tests {
     fn a_manifest_at_a_later_version_is_refused_and_one_at_none_is_mistyped() {
         let text = r#"{"format":"marfa-archive","version":2,"written_by":"marfa-server 9.0.0"}"#;
         let refused = manifest(text.as_bytes()).unwrap_err();
-        assert!(refused.message.contains("up to version 1"), "{}", refused.message);
+        assert!(
+            refused.message.contains("up to version 1"),
+            "{}",
+            refused.message
+        );
         let details = refused.details.unwrap();
         assert_eq!(details["version"], 2);
         assert_eq!(details["written_by"], "marfa-server 9.0.0");
@@ -1274,7 +1284,8 @@ mod tests {
         ] {
             assert!(message.contains(field), "{message}");
         }
-        let whole = format!(r#"{{"format":"marfa-archive","version":1,"written_by":"x",{COUNTS}}}"#);
+        let whole =
+            format!(r#"{{"format":"marfa-archive","version":1,"written_by":"x",{COUNTS}}}"#);
         assert!(manifest(whole.as_bytes()).is_ok());
     }
 
