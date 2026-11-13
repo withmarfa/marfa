@@ -1,14 +1,5 @@
 // Type schema shape — data lives in core/*.json; generated output in generated/.
 
-/**
- * Lifecycle states for items. Defined at the metadata layer, universal across
- * all types. Most types use the three-state graph (`active` ↔ `archived`,
- * either → `trashed`, `trashed` → `active`); `system.*` types are restricted
- * to `active` → `revoked` (terminal). Per-type validation enforces which
- * states a given type may occupy.
- */
-export type ItemState = "active" | "archived" | "trashed" | "revoked";
-
 export type FieldType =
   | "string"
   | "number"

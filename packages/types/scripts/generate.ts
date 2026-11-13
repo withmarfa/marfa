@@ -358,28 +358,22 @@ lines.push(
 );
 lines.push("");
 
-// The identifier set as literal types, so a consumer that keys a map or a
-// switch by type id is checked by the compiler: a plain `Record<string, …>`
-// cannot tell a live identifier from a dead one.
+// Every shipped type identifier, sorted.
 const allTypeIds = [...coreTypes, ...systemTypes]
   .map((schema) => schema.id)
   .sort();
 lines.push("export const ALL_TYPE_IDS = [");
 for (const id of allTypeIds) lines.push(`  ${quote(id)},`);
-lines.push("] as const;");
-lines.push("");
-lines.push("export type PlatformTypeId = (typeof ALL_TYPE_IDS)[number];");
+lines.push("];");
 lines.push("");
 
 /**
- * A shipped definition as literal types: every key sorted by code unit, the
- * prose (`label`, `plural`, `reverse_label`, `description`) and the id left out. The
- * consts above are annotated with the schema interfaces, which widen every value to `string`
- * and every list to `string[]`, so the shapes of fields, enum values,
- * parents, roles, constraints and cardinalities reach a built declaration
- * through these instead, and they are what `shipped-shapes.sha256` sees move
- * when a shipped definition does. Prose is left out because it moves nothing
- * a consumer compiles against.
+ * A shipped definition as its shape: every key sorted by code unit, the prose
+ * (`label`, `plural`, `reverse_label`, `description`) and the id left out. The
+ * shapes of fields, enum values, parents, roles, constraints and
+ * cardinalities are what `shipped-shapes.sha256` sees move when a shipped
+ * definition does. Prose is left out because it moves nothing a consumer
+ * compiles against.
  */
 function shapeLiteral(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(shapeLiteral);

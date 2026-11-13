@@ -1,6 +1,6 @@
 # @withmarfa/types
 
-Canonical Marfa type schemas. Owns the JSON source, the codegen, and the generated TypeScript registries that `@withmarfa/shared` consumes.
+Canonical Marfa type schemas. Owns the JSON source, the codegen, and the generated TypeScript registries that the core's catalog and the contract's tables are written from.
 
 ## Layout
 
@@ -11,8 +11,8 @@ Canonical Marfa type schemas. Owns the JSON source, the codegen, and the generat
 - `scripts/generate.ts`: codegen that turns the JSON into the two registries below
 - `generated/type-registry.ts`: auto-generated; do not edit
 - `generated/edge-type-registry.ts`: auto-generated; do not edit
-- `src/schema-types.ts`: schema-shape interfaces (`TypeSchema`, `FieldDefinition`, `ItemState`, `VersionPolicy`)
-- `src/index.ts`: the package entry, which re-exports the schema interfaces, `ALL_TYPES`, `ALL_SYSTEM_TYPES`, `ALL_EDGE_TYPES`, `ALL_TYPE_IDS` and `PlatformTypeId`
+- `src/schema-types.ts`: schema-shape interfaces (`TypeSchema`, `FieldDefinition`, `VersionPolicy`)
+- `src/index.ts`: the package entry, which re-exports the schema interfaces, `ALL_TYPES`, `ALL_SYSTEM_TYPES`, `ALL_EDGE_TYPES` and `ALL_TYPE_IDS`
 
 ## Schema format
 
@@ -49,7 +49,6 @@ Subtypes only declare fields they add. They inherit all parent fields and **may 
 pnpm validate      # validate every schema in core/, core/system/ and core/edges/
 pnpm generate      # regenerate both registries in generated/
 pnpm shapes:digest # rewrite shipped-shapes.sha256 after a shipped shape changes
-pnpm build         # bundle src/ to dist/ for downstream consumers
 pnpm typecheck
 ```
 

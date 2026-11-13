@@ -11,21 +11,62 @@
 import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
+  ALL_EDGE_TYPES,
+  ALL_SYSTEM_TYPES,
+  ALL_TYPES,
   ALWAYS_SEARCHED_FIELDS,
   ENTRY_MEMBER_TYPES,
   FIELD_TYPES,
   FORMAT_TO_FIELD_TYPE,
   RESERVED_ITEM_FIELDS,
-  RESERVED_ROOTS,
-  listEdgeTypes,
-  listTypes,
-  pluralOf,
+  SHIPPED_TABLES,
+  labelFromName,
+  pluralFromLabel,
   type TypeRole,
-} from "../packages/shared/src/index.js";
-import { SHIPPED_TABLES } from "../packages/types/generated/type-registry.js";
+} from "../packages/types/src/index.js";
 
-const shipped = listTypes();
+/**
+ * The first segments no type may take: the five namespace tiers, the root of
+ * each permission and scope family, and the one word the glossary bans.
+ */
+const RESERVED_ROOTS = [
+  "core",
+  "system",
+  "app",
+  "user",
+  "marfa",
+  "schema",
+  "keys",
+  "items",
+  "webhooks",
+  "config",
+  "audit",
+  "grants",
+  "instance",
+  "connectors",
+  "blobs",
+  "content",
+  "metadata",
+  "edge",
+  "profile",
+  "space",
+];
+
+const shipped = [...ALL_TYPES, ...ALL_SYSTEM_TYPES];
 const byId = new Map(shipped.map((schema) => [schema.id, schema]));
+
+/** The plural a type is listed with: its own, or the one its label makes. */
+function pluralOf(schema: { id: string; label?: string; plural?: string }) {
+  const named = (value: string | undefined) =>
+    value === undefined || value === "" ? undefined : value;
+  return (
+    named(schema.plural) ??
+    pluralFromLabel(
+      named(schema.label) ??
+        labelFromName(schema.id.split(".").at(-1) ?? schema.id),
+    )
+  );
+}
 
 /** The roles a type declares and every ancestor declares, sorted; absent when none. */
 function resolveRoles(id: string) {
@@ -67,14 +108,12 @@ const types = shipped
   })
   .sort((a, b) => a.id.localeCompare(b.id));
 
-const edgeTypes = listEdgeTypes()
-  .map((schema) => ({
-    ...schema,
-    shipped: true,
-    acyclic: ACYCLIC_EDGE_TYPES.has(schema.id),
-    flat: schema.id === FLAT_EDGE_TYPE,
-  }))
-  .sort((a, b) => a.id.localeCompare(b.id));
+const edgeTypes = ALL_EDGE_TYPES.map((schema) => ({
+  ...schema,
+  shipped: true,
+  acyclic: ACYCLIC_EDGE_TYPES.has(schema.id),
+  flat: schema.id === FLAT_EDGE_TYPE,
+})).sort((a, b) => a.id.localeCompare(b.id));
 
 writeFileSync(
   fileURLToPath(

@@ -5,7 +5,7 @@ import type {
   SchemaValidationIssue,
 } from "./schema-validation.js";
 import type { TypeSchema } from "./schema-types.js";
-import { mergeFieldChain, statusGroupOf } from "./status.js";
+import { mergeFieldDefinition } from "./status.js";
 import { ALL_TYPES } from "../generated/type-registry.js";
 
 /** A fixture's definition, as the registry would hold it. */
@@ -23,17 +23,6 @@ function registryWith(...types: TypeSchema[]): SchemaValidationContext {
   for (const type of types) byId.set(type.id, type);
   return {
     resolveSchema: (id) => byId.get(id),
-    descendantsOf: (id) =>
-      [...byId.values()].filter((type) => {
-        const seen = new Set<string>();
-        let parent = type.parent;
-        while (parent !== undefined && !seen.has(parent)) {
-          if (parent === id) return true;
-          seen.add(parent);
-          parent = byId.get(parent)?.parent;
-        }
-        return false;
-      }),
   };
 }
 
@@ -154,16 +143,21 @@ describe("a status field down a chain", () => {
       },
       ctx,
     );
-    const resolved = mergeFieldChain([workItem.fields, bug.fields]);
-    expect(resolved.stage?.status_values?.map((e) => e.value)).toEqual([
+    const resolved = mergeFieldDefinition(
+      workItem.fields.stage,
+      bug.fields.stage!,
+    );
+    expect(resolved.status_values?.map((e) => e.value)).toEqual([
       "todo",
       "doing",
       "done",
       "dropped",
       "blocked",
     ]);
-    expect(statusGroupOf(resolved.stage!, "blocked")).toBe("in_progress");
-    expect(statusGroupOf(resolved.stage!, "done")).toBe("completed");
+    const group = (word: string) =>
+      resolved.status_values?.find((entry) => entry.value === word)?.group;
+    expect(group("blocked")).toBe("in_progress");
+    expect(group("done")).toBe("completed");
   });
 
   it("lets a subtype redeclare the field without words to require it", () => {
@@ -227,121 +221,6 @@ describe("a status field down a chain", () => {
     );
     expect(errors).toContainEqual(
       expect.objectContaining({ code: "inheritance_violation" }),
-    );
-  });
-
-  it("refuses a parent change that adds a word a subtype declares", () => {
-    const bug = schema({
-      id: "acme.bug",
-      parent: "acme.work",
-      fields: {
-        stage: {
-          type: "status",
-          status_values: [{ value: "blocked", group: "in_progress" }],
-        },
-      },
-    });
-    const errors = refuse(
-      {
-        ...workItem,
-        fields: {
-          ...workItem.fields,
-          stage: {
-            type: "status",
-            status_values: [...WORDS, { value: "blocked", group: "canceled" }],
-          },
-        },
-      },
-      registryWith(workItem, bug),
-    );
-    expect(errors).toContainEqual(
-      expect.objectContaining({
-        field: "fields.stage.status_values",
-        code: "inheritance_violation",
-      }),
-    );
-  });
-
-  it("refuses a parent change that leaves a subtype's status field without words", () => {
-    const bug = schema({
-      id: "acme.bug",
-      parent: "acme.work",
-      required: ["stage"],
-      fields: { stage: { type: "status", required: true } },
-    });
-    const small = schema({
-      id: "acme.bug.small",
-      parent: "acme.bug",
-      fields: {},
-    });
-    const ctx = registryWith(workItem, bug, small);
-    for (const stage of [undefined, { type: "string" }]) {
-      const fields: Record<string, unknown> = { title: { type: "string" } };
-      if (stage) fields.stage = stage;
-      const errors = refuse({ ...workItem, fields }, ctx);
-      expect(errors, JSON.stringify(stage)).toContainEqual(
-        expect.objectContaining({
-          field: "fields.stage",
-          code: "inheritance_violation",
-        }),
-      );
-      expect(
-        errors.filter((e) => e.field === "fields.stage").length,
-        "one refusal for the subtype that declares the field",
-      ).toBe(1);
-    }
-
-    // The witnesses: the parent keeps its words, or the subtype holds its own.
-    accept(
-      {
-        ...workItem,
-        fields: {
-          ...workItem.fields,
-          stage: {
-            type: "status",
-            status_values: WORDS,
-            description: "Where it stands",
-          },
-        },
-      },
-      ctx,
-    );
-    const worded = schema({
-      id: "acme.bug",
-      parent: "acme.work",
-      fields: { stage: { type: "status", status_values: WORDS } },
-    });
-    accept(
-      { ...workItem, fields: { title: { type: "string" } } },
-      registryWith(workItem, worded, small),
-    );
-  });
-
-  it("refuses a parent status field beside a subtype's own under another name", () => {
-    const plain = schema({
-      id: "acme.plain",
-      fields: { title: { type: "string" } },
-    });
-    const child = schema({
-      id: "acme.plain.child",
-      parent: "acme.plain",
-      fields: { phase: { type: "status", status_values: WORDS } },
-    });
-    const errors = refuse(
-      {
-        ...plain,
-        fields: {
-          ...plain.fields,
-          stage: { type: "status", status_values: WORDS },
-        },
-      },
-      registryWith(plain, child),
-    );
-    expect(errors).toContainEqual(
-      expect.objectContaining({
-        field: "fields.stage",
-        code: "inheritance_violation",
-      }),
     );
   });
 });

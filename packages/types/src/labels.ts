@@ -1,5 +1,3 @@
-import type { FieldDefinition } from "./schema-types.js";
-
 /**
  * The label a name gets when nothing names one: each hyphen and underscore
  * made a space and the first letter after the start or a space capitalized,
@@ -33,31 +31,4 @@ export function pluralFromLabel(label: string): string {
   if (/[b-df-hj-np-tv-z]y$/.test(label)) return `${label.slice(0, -1)}ies`;
   if (/(s|x|z|ch|sh)$/.test(label)) return `${label}es`;
   return `${label}s`;
-}
-
-/**
- * Resolved fields with every label filled: a field or a member of a list's
- * entries that names none takes the one its name makes. Returns new
- * definitions and leaves those given unchanged.
- */
-export function withFieldLabels(
-  fields: Readonly<Record<string, FieldDefinition>>,
-): Record<string, FieldDefinition> {
-  return Object.fromEntries(
-    Object.entries(fields).map(([name, field]) => {
-      const labelled: FieldDefinition = {
-        ...field,
-        label: field.label ?? labelFromName(name),
-      };
-      if (field.items_fields) {
-        labelled.items_fields = Object.fromEntries(
-          Object.entries(field.items_fields).map(([member, definition]) => [
-            member,
-            { ...definition, label: definition.label ?? labelFromName(member) },
-          ]),
-        );
-      }
-      return [name, labelled];
-    }),
-  );
 }

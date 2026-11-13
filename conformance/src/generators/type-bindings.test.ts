@@ -1,20 +1,20 @@
 /**
  * Binds this suite's fixture type identifiers to the platform type registry.
  *
- * `@withmarfa/shared` is read here as a spec artifact rather than as an
+ * `packages/types` is read here as a spec artifact rather than as an
  * implementation: the only thing taken from it is `ALL_TYPE_IDS`, the list of
- * registered type identifiers. Nothing in `src/generators/` or `src/suites/`
+ * shipped type identifiers. Nothing else in `src/generators/` or `src/suites/`
  * imports it, so the suite still exercises a server over HTTP alone and the
  * no-implementation-imports rule stands.
  *
- * It resolves to the workspace package, so a commit that changes the registry
- * and leaves a fixture behind reddens in its own pull request rather than as a
- * puzzling `unknown_type` from a server during a conformance run. This test
- * needs no server and runs in `test:generators`.
+ * A commit that changes the shipped types and leaves a fixture behind reddens
+ * in its own pull request rather than as a puzzling `unknown_type` from a
+ * server during a conformance run. This test needs no server and runs in
+ * `test:generators`.
  */
 
 import { describe, it, expect } from "vitest";
-import { ALL_TYPE_IDS } from "@withmarfa/shared";
+import { ALL_TYPE_IDS } from "../../../packages/types/src/index.js";
 import * as itemGenerators from "./items.js";
 import { PROFILES } from "../suites/load/profiles.js";
 
