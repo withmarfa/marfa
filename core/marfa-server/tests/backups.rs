@@ -258,8 +258,7 @@ impl Instance {
         panic!("nothing was held");
     }
 
-    /// Takes a backup on each of the next 32 days, so thinning drops every older one, and
-    /// answers how many backups those runs deleted.
+    /// Backs up daily for 32 days, past retention, and answers how many backups were deleted.
     async fn past_retention(&self) -> u64 {
         self.app.clock.pause(true);
         let mut removed = 0;

@@ -1,5 +1,4 @@
-//! A backup's name is the instant it was taken in the ISO 8601 basic format, such as
-//! `20261109T101530.250Z.tar`, which every file system accepts and which sorts as it reads.
+//! A backup's name is its instant in ISO 8601 basic format, which FAT and exFAT accept.
 
 use std::collections::HashSet;
 
@@ -65,8 +64,7 @@ fn by_age(listed: impl IntoIterator<Item = impl AsRef<str>>) -> Vec<(DateTime<Ut
     backups
 }
 
-/// Keeps the newest backup, every backup from a day before `taken` on, and the newest of each of
-/// the 31 most recent days that hold an older one; no span is measured back to drop a day.
+/// Days are counted by the backups they hold, never by a span back on the clock.
 pub fn doomed(listed: &[String], taken: Stamp) -> Vec<String> {
     let since = taken.at() - Duration::days(1);
     let mut days: HashSet<NaiveDate> = HashSet::new();
@@ -84,8 +82,7 @@ fn newest_of_a_kept_day(days: &mut HashSet<NaiveDate>, at: DateTime<Utc>) -> boo
     days.len() < DAYS_KEPT && days.insert(at.date_naive())
 }
 
-/// The days a listing holds backups on, newest first, to tell when a missing backup is past
-/// retention without the clock.
+/// The days a listing holds backups on, newest first.
 pub struct Listed(Vec<NaiveDate>);
 
 impl Listed {
@@ -98,8 +95,7 @@ impl Listed {
         Listed(days)
     }
 
-    /// Whether a backup listings omit from `missing` on is past retention: the listing holds
-    /// backups on more days after it than thinning keeps.
+    /// Past retention once the listing holds more later days than thinning keeps.
     pub fn past_retention(&self, missing: Stamp) -> bool {
         let after = missing.at().date_naive();
         self.0.iter().take_while(|day| **day > after).count() > DAYS_KEPT

@@ -138,8 +138,7 @@ fn record_failure(tx: &Transaction<'_>, error: &str, at: Stamp, in_store: bool) 
     Ok(())
 }
 
-/// How many files the backup `name` in `store` names that the store holds no copy of, or `None`
-/// when it is not recorded there.
+/// Files the backup names that its store holds no copy of; `None` if it is not recorded.
 fn files_waiting(tx: &Transaction<'_>, store: &str, name: &str) -> Result<Option<u64>> {
     let seq: Option<i64> = tx
         .prepare_cached("SELECT seq FROM backups WHERE store_id = ?1 AND name = ?2")?
