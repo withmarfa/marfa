@@ -3,6 +3,7 @@
 pub mod carry;
 mod digests;
 mod disk;
+pub mod folder;
 mod hash;
 pub mod link;
 pub mod range;
@@ -41,10 +42,13 @@ use crate::settings::registry::{BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
 use crate::settings::start::ObjectStoreSettings;
 use disk::{Disk, Staged};
 pub use disk::{MARKER, Scratch};
+pub use folder::Folder;
 pub use hash::Hash;
 pub use restore::stored_size;
 use rows::Held;
-pub use rows::{CopyRecord, Lender, OrphanRecord, StoreRecord, held_in, registered};
+pub use rows::{
+    CopyRecord, Lender, OrphanRecord, StoreRecord, find as blob_record, held_in, registered,
+};
 use s3::{Marker, S3};
 pub use store::ByteStream;
 use store::{Answer, CHECK_DEADLINE, Failed, Gate, Store};
@@ -104,6 +108,7 @@ pub struct Link {
 pub struct Blobs {
     disk: Arc<Disk>,
     s3: Option<Arc<S3>>,
+    folder: Option<Arc<Folder>>,
     gate: Arc<Gate>,
     faults: Arc<Faults>,
     signer: link::Signer,
@@ -194,6 +199,7 @@ impl Blobs {
         db: &Db,
         root: &Path,
         object: Option<&ObjectStoreSettings>,
+        backup: Option<(&Path, &str)>,
         secret: &str,
         faults: Arc<Faults>,
         at: String,
@@ -218,6 +224,10 @@ impl Blobs {
             None if unfilled => return Err(folder_missing(root, "")),
             None => None,
         };
+        let backup = match backup {
+            Some((folder, instance)) => Some(Arc::new(Folder::open(db, folder, instance).await?)),
+            None => None,
+        };
         let folder = root.to_path_buf();
         let disk = Arc::new(
             tokio::task::spawn_blocking(move || Disk::open(&folder))
@@ -229,6 +239,14 @@ impl Blobs {
             "disk",
             disk.root().display().to_string(),
         ))
+        .chain(backup.iter().map(|folder| {
+            let files = folder.files();
+            (
+                files.id().to_string(),
+                "folder",
+                files.root().display().to_string(),
+            )
+        }))
         .chain(
             s3.iter()
                 .map(|s3| (s3.id().to_string(), "s3", s3.locator().to_string())),
@@ -246,6 +264,7 @@ impl Blobs {
         Ok(Blobs {
             disk,
             s3,
+            folder: backup,
             gate: Arc::new(Gate::default()),
             faults,
             signer,
@@ -262,9 +281,55 @@ impl Blobs {
         self.s3.clone()
     }
 
+    /// The backup folder, where one is configured.
+    pub fn folder(&self) -> Option<Arc<Folder>> {
+        self.folder.clone()
+    }
+
+    /// Records the backup folder's files area as the store `id`, forgetting the store `old` and
+    /// every copy it records; answers how many copies it forgot.
+    pub fn replace_folder_store(
+        tx: &rusqlite::Transaction<'_>,
+        old: &str,
+        id: &str,
+        locator: &str,
+        at: &str,
+    ) -> Result<usize> {
+        let forgotten = rows::forget_store(tx, old, at)?;
+        rows::attach(tx, id, "folder", locator, at)?;
+        Ok(forgotten)
+    }
+
+    /// The store backups name their files in: the object store or the backup folder.
+    pub fn backup_store_id(&self) -> Option<String> {
+        match (&self.s3, &self.folder) {
+            (Some(s3), _) => Some(s3.id().to_string()),
+            (None, Some(folder)) => Some(folder.files().id().to_string()),
+            (None, None) => None,
+        }
+    }
+
+    /// Whether a blob is copied to another store than the disk.
+    pub fn replicates(&self) -> bool {
+        self.s3.is_some() || self.folder.is_some()
+    }
+
+    /// What a blob fault makes `store` read of `hash`; only the disk store is ever faulted.
+    pub(crate) fn lie_for(&self, store: &Store, hash: &Hash) -> Option<Lie> {
+        match store {
+            Store::Disk(_) => self.faults.lie(hash.as_str()),
+            Store::Folder(_) | Store::S3(_) => None,
+        }
+    }
+
     /// The attached stores, the disk first.
     fn attached(&self) -> Vec<Store> {
         std::iter::once(Store::Disk(self.disk.clone()))
+            .chain(
+                self.folder
+                    .iter()
+                    .map(|folder| Store::Folder(folder.files().clone())),
+            )
             .chain(self.s3.iter().map(|s3| Store::S3(s3.clone())))
             .collect()
     }
@@ -283,8 +348,8 @@ impl Blobs {
         let asked = async {
             self.faults.hold(HOLD_BLOB_HAS, None).await;
             match store {
-                Store::Disk(disk) => {
-                    match self.faults.lie(hash.as_str()) {
+                Store::Disk(disk) | Store::Folder(disk) => {
+                    match self.lie_for(store, hash) {
                         Some(Lie::Lost) => return Ok(Answer::Missing),
                         Some(Lie::Unreadable) => return Err(store::unreadable()),
                         Some(Lie::Damaged) | None => {}
@@ -319,8 +384,8 @@ impl Blobs {
                 return Err(io::Error::other("the store failed the read"));
             }
             match store {
-                Store::Disk(disk) => {
-                    let lie = self.faults.lie(hash.as_str());
+                Store::Disk(disk) | Store::Folder(disk) => {
+                    let lie = self.lie_for(store, hash);
                     match lie {
                         Some(Lie::Lost) => return Err(io::ErrorKind::NotFound.into()),
                         Some(Lie::Unreadable) => return Err(store::unreadable()),
@@ -423,8 +488,8 @@ impl Blobs {
                 return Err(io::Error::other("the store failed the read"));
             }
             let size = match store {
-                Store::Disk(disk) => {
-                    match self.faults.lie(hash.as_str()) {
+                Store::Disk(disk) | Store::Folder(disk) => {
+                    match self.lie_for(store, hash) {
                         Some(Lie::Lost) => return Err(io::ErrorKind::NotFound.into()),
                         Some(Lie::Unreadable) => return Err(store::unreadable()),
                         Some(Lie::Damaged) | None => {}
@@ -449,7 +514,7 @@ impl Blobs {
     async fn holding(&self, store: &Store, hash: &Hash) -> (bool, bool) {
         let asked = async {
             match store {
-                Store::Disk(disk) => {
+                Store::Disk(disk) | Store::Folder(disk) => {
                     let (disk, hash) = (disk.clone(), hash.clone());
                     let read = tokio::task::spawn_blocking(move || {
                         disk.rehash(&hash, false)
@@ -487,10 +552,17 @@ impl Blobs {
         }
     }
 
-    /// Whether the object store answers with its own marker.
+    /// Whether the store answers with its own marker.
     async fn is_itself(&self, store: &Store) -> bool {
-        let Store::S3(s3) = store else {
-            return true;
+        let s3 = match store {
+            Store::Disk(_) => return true,
+            Store::Folder(disk) => {
+                let disk = disk.clone();
+                return tokio::task::spawn_blocking(move || disk.reachable())
+                    .await
+                    .unwrap_or(false);
+            }
+            Store::S3(s3) => s3,
         };
         let answer = match tokio::time::timeout(self.check(), s3.is_itself()).await {
             Ok(answer) => answer,
@@ -548,6 +620,9 @@ impl Blobs {
                         faults.heal(blob.as_str(), false);
                         Ok(())
                     }
+                    Store::Folder(disk) => tokio::task::spawn_blocking(move || disk.delete(&blob))
+                        .await
+                        .map_err(io::Error::other)?,
                     Store::S3(s3) => {
                         store::within(store::stall_limit(deadline), s3.delete(&object)).await
                     }
@@ -651,11 +726,16 @@ fn failed(refused: Refusal) -> Failed {
 
 /// Refuses a body that would leave less free on the blob volume than the reserve.
 fn room(faults: &Faults, root: &Path, reserve: u64, incoming: u64) -> Result<()> {
+    room_on(faults, Volume::Blobs, root, reserve, incoming)
+}
+
+/// Refuses a body that would leave less free on `root`'s volume than the reserve.
+fn room_on(faults: &Faults, which: Volume, root: &Path, reserve: u64, incoming: u64) -> Result<()> {
     if reserve == 0 {
         return Ok(());
     }
     let Some(available) = faults
-        .free(Volume::Blobs)
+        .free(which)
         .unwrap_or_else(|| volume::free_bytes(root))
     else {
         return Ok(());
@@ -874,7 +954,7 @@ impl App {
                     size_bytes: size,
                 },
                 store_id: self.blobs.disk.id().to_string(),
-                replicates: self.blobs.s3.is_some(),
+                replicates: self.blobs.replicates(),
             },
             _held: held,
         })
@@ -1224,7 +1304,7 @@ impl App {
             .store(store_id)
             .filter(|_| holders.iter().any(|held| held.store_id == store_id))
             .ok_or_else(copy_not_found)?;
-        if matches!(store, Store::S3(_)) {
+        if matches!(store, Store::S3(_) | Store::Folder(_)) {
             crate::app::backups::survey_folder(self).await?;
         }
         let (blob, kept_in) = (hash.clone(), store_id.to_string());

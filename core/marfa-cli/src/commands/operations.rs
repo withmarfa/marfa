@@ -102,6 +102,7 @@ pub const OPERATIONS: &[Operation] = &[
     reached("listBackups", "backups list"),
     reached("runBackup", "backups run"),
     reached("restoreBackup", "backups restore"),
+    reached("adoptBackupFolder", "backups folder adopt"),
     reached("createView", "views create"),
     reached("listViewItems", "views items"),
     reached("updateView", "views change"),

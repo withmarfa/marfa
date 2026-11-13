@@ -90,6 +90,7 @@ codes! {
     Conflict = "conflict", 409;
     ConnectorHeld = "connector_held", 409;
     CopiesBelowMinimum = "copies_below_minimum", 409;
+    BackupFilesMissing = "backup_files_missing", 409;
     CopyHeldByBackup = "copy_held_by_backup", 409;
     EdgeTypeInUse = "edge_type_in_use", 409;
     ExportEntryUnrestorable = "export_entry_unrestorable", 409;
@@ -99,7 +100,7 @@ codes! {
     InstanceChanged = "instance_changed", 409;
     ItemExists = "item_exists", 409;
     LinkTaken = "link_taken", 409;
-    NoBucket = "no_bucket", 409;
+    NoBackupDestination = "no_backup_destination", 409;
     OwnerExists = "owner_exists", 409;
     ReachChanged = "reach_changed", 409;
     SignInAddressChangeUnconfirmed = "sign_in_address_change_unconfirmed", 409;

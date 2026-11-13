@@ -1209,6 +1209,7 @@ const PRIVATE_SOCKET_TABLE: Record<string, () => string[]> = {
   "backups list": () => [],
   "backups run": () => [],
   "backups restore": () => [ID, `${WHEN}.tar`],
+  "backups folder adopt": () => [],
 };
 
 const stdinFor: Record<string, string> = {
@@ -1538,6 +1539,7 @@ describe("every command holds the server to the contract", () => {
       "backups list": "GET /backups",
       "backups run": "POST /backups",
       "backups restore": `POST /backups/${ID}/${WHEN}.tar/restore`,
+      "backups folder adopt": "POST /backups/folder/adopt",
     };
     expect(Object.keys(paths).sort()).toEqual(
       Object.keys(PRIVATE_SOCKET_TABLE)

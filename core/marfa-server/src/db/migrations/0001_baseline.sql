@@ -847,7 +847,7 @@ CREATE TABLE IF NOT EXISTS blobs (
 -- store's bucket and prefix.
 CREATE TABLE IF NOT EXISTS stores (
     id TEXT PRIMARY KEY NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('disk', 's3')),
+    kind TEXT NOT NULL CHECK (kind IN ('disk', 'folder', 's3')),
     locator TEXT NOT NULL,
     attached_at TEXT NOT NULL,
     detached_at TEXT

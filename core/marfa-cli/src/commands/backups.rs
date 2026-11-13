@@ -7,22 +7,38 @@ use crate::remote::request::Request;
 
 #[derive(Debug, Subcommand)]
 pub enum BackupsCommand {
-    /// The backups in the instance's object store, newest first, from every instance that put
-    /// them there. Requires private local authority (--socket).
+    /// The backups where the instance keeps them, its backup folder or its object store, newest
+    /// first, from every instance that put them there. Requires private local authority
+    /// (--socket).
     List,
     /// Take a backup now, whether or not anything changed since the last one.
     /// Requires private local authority (--socket).
     Run,
-    /// Restore a backup from the object store. The server reads it itself, so
-    /// nothing is downloaded here. It restores as `restore` does an archive,
-    /// and holds no sign-in, keys, apps or webhooks. Requires private local
-    /// authority (--socket).
+    /// Restore a backup from the instance's backup folder or object store. The
+    /// server reads it itself, files included, so nothing is downloaded here. It
+    /// restores as `restore` does an archive, and holds no sign-in, keys, apps
+    /// or webhooks. Requires private local authority (--socket).
     Restore {
         /// The id of the instance that took the backup, as `backups list` shows it.
         instance_id: String,
         /// The backup's name, as `backups list` shows it.
         name: String,
     },
+    /// The backup folder that `MARFA_BACKUP_PATH` names. Requires private local authority
+    /// (--socket).
+    Folder {
+        #[command(subcommand)]
+        command: FolderCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum FolderCommand {
+    /// Start afresh on a disk that replaced the backup folder's disk. The server forgets the
+    /// backups and file copies it kept on the old disk, which are gone, and copies every file
+    /// again with the next backup. It changes no other store, and refuses while the folder
+    /// still holds this instance's files or is not there.
+    Adopt,
 }
 
 pub fn request(command: &BackupsCommand) -> Request {
@@ -32,6 +48,9 @@ pub fn request(command: &BackupsCommand) -> Request {
         BackupsCommand::Restore { instance_id, name } => {
             Request::post(&["backups", instance_id, name, "restore"])
         }
+        BackupsCommand::Folder {
+            command: FolderCommand::Adopt,
+        } => Request::post(&["backups", "folder", "adopt"]),
     }
 }
 
@@ -39,6 +58,8 @@ pub fn run(command: BackupsCommand, remote: &Remote, out: &Printer) -> Result<()
     let answer = remote.json(&request(&command))?;
     match command {
         BackupsCommand::Restore { .. } => super::restore::answered(&answer, out),
-        BackupsCommand::List | BackupsCommand::Run => out.value(&answer),
+        BackupsCommand::List | BackupsCommand::Run | BackupsCommand::Folder { .. } => {
+            out.value(&answer)
+        }
     }
 }

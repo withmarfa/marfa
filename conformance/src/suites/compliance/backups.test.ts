@@ -255,7 +255,7 @@ describe("a backup in the object store", () => {
     }
   });
 
-  it("lists the backups newest first to the owner, and refuses a key at all three doors", async () => {
+  it("lists the backups newest first to the owner, and refuses a key at each door", async () => {
     const owner = ownerOf(origin);
     const second = await owner.runBackup();
     expect(second.status, JSON.stringify(second.error)).toBe(200);
@@ -274,12 +274,19 @@ describe("a backup in the object store", () => {
       await operator.listBackups(),
       await operator.runBackup(),
       await operator.restoreBackup(originId, firstName),
+      await operator.adoptBackupFolder(),
     ]) {
       expect(answer.status, JSON.stringify(answer.data)).toBe(403);
       expect(answer.error?.error.code).toBe("forbidden");
       expect(answer.error?.error.details).toEqual({ needs: "local" });
     }
     expect((await bucket.backupKeys()).length).toBe(2);
+  });
+
+  it("refuses to adopt a backup folder on an instance that backs up to an object store", async () => {
+    const refused = await ownerOf(origin).adoptBackupFolder();
+    expect(refused.status, JSON.stringify(refused.data)).toBe(409);
+    expect(refused.error?.error.code).toBe("conflict");
   });
 
   it("restores a named backup into a fresh server on the same bucket, files included", async () => {
@@ -460,12 +467,15 @@ describe("the backup schedule", () => {
     }
   });
 
-  it("says in health that backups are off on an instance with no object store, and answers 409 no_bucket at each door", async () => {
-    const server = await bootFreshServer("backups-no-bucket", DISK_ONLY);
+  it("says in health that backups are off on an instance with nowhere to put them, and answers 409 no_backup_destination at each door", async () => {
+    const server = await bootFreshServer("backups-no-destination", DISK_ONLY);
     try {
       const answer = await health(server);
       expect(answer.status).toBe("ok");
-      expect(answer.backups).toEqual({ status: "off", reason: "no_bucket" });
+      expect(answer.backups).toEqual({
+        status: "off",
+        reason: "no_backup_destination",
+      });
       const owner = ownerOf(server);
       for (const refused of [
         await owner.listBackups(),
@@ -474,9 +484,10 @@ describe("the backup schedule", () => {
           OTHER_INSTANCE,
           "2026-11-09T10:15:30.250Z.tar",
         ),
+        await owner.adoptBackupFolder(),
       ]) {
         expect(refused.status, JSON.stringify(refused.data)).toBe(409);
-        expect(refused.error?.error.code).toBe("no_bucket");
+        expect(refused.error?.error.code).toBe("no_backup_destination");
       }
     } finally {
       await server.stop();

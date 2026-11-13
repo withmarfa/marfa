@@ -69,6 +69,43 @@ impl Disk {
         Ok(disk)
     }
 
+    /// A store the server recorded at `root` whose folder is not there now; nothing is touched.
+    pub fn unmounted(id: String, root: PathBuf) -> Disk {
+        Disk { id, root }
+    }
+
+    /// The id the marker in `root` holds, where it holds one. It blocks.
+    pub fn marked(root: &Path) -> Result<Option<String>, Failure> {
+        read_marker(root)
+    }
+
+    /// Takes `root`, which must exist and hold no other store's marker, as the store `id`. It
+    /// blocks.
+    pub fn claim(root: &Path, id: &str) -> io::Result<Disk> {
+        match read_marker(root) {
+            Ok(None) => {}
+            Ok(Some(found)) if found == id => {}
+            Ok(Some(found)) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("it holds the marker of another store, {found}"),
+                ));
+            }
+            Err(failure) => return Err(io::Error::other(failure.message)),
+        }
+        let mut file = File::create(root.join(MARKER))?;
+        file.write_all(id.as_bytes())?;
+        file.sync_all()?;
+        drop(file);
+        File::open(root)?.sync_all()?;
+        let disk = Disk {
+            id: id.to_string(),
+            root: root.to_path_buf(),
+        };
+        fs::create_dir_all(disk.tmp())?;
+        Ok(disk)
+    }
+
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -202,6 +239,41 @@ impl Disk {
             size += count as u64;
         }
         Ok(Some((size, Hash::from_digest(&hasher.finalize()))))
+    }
+
+    /// Removes each file in `tmp` staged before `before`, which only a process that ended left.
+    /// It blocks.
+    pub fn clear_tmp_before(&self, before: std::time::SystemTime) -> io::Result<usize> {
+        if !self.reachable() {
+            return Err(Disk::unreachable());
+        }
+        let entries = match fs::read_dir(self.tmp()) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(0),
+            Err(error) => return Err(error),
+        };
+        let mut cleared = 0;
+        for entry in entries {
+            let entry = entry?;
+            let staged_at = Uuid::parse_str(&entry.file_name().to_string_lossy())
+                .ok()
+                .and_then(|id| id.get_timestamp())
+                .map(|stamp| {
+                    let (seconds, nanos) = stamp.to_unix();
+                    std::time::UNIX_EPOCH + std::time::Duration::new(seconds, nanos)
+                });
+            if staged_at.is_none_or(|at| at < before) {
+                match fs::remove_file(entry.path()) {
+                    Ok(()) => cleared += 1,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        if cleared > 0 {
+            File::open(self.tmp())?.sync_all()?;
+        }
+        Ok(cleared)
     }
 
     /// The name and size of each file in `tmp`. It blocks.
@@ -501,6 +573,23 @@ mod tests {
             File::open(path)
         });
         assert!(unmounted.is_err(), "{unmounted:?}");
+    }
+
+    #[test]
+    fn only_files_staged_before_the_cut_are_cleared_from_tmp() {
+        let dir = TempDir::new().unwrap();
+        let disk = Disk::open(dir.path()).unwrap();
+        fs::write(disk.tmp().join("not an id"), b"stray").unwrap();
+        let early = disk.stage().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let cut = std::time::SystemTime::now();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let late = disk.stage().unwrap();
+        assert_eq!(disk.clear_tmp_before(cut).unwrap(), 2);
+        assert!(!early.path().exists());
+        assert!(late.path().exists());
+        fs::remove_file(dir.path().join(MARKER)).unwrap();
+        assert!(disk.clear_tmp_before(cut).is_err());
     }
 
     #[test]

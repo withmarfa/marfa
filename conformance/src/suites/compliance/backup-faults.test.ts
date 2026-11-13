@@ -3,6 +3,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
+import { archiveManifest } from "../../utils/archive.js";
 import {
   afterFirstScheduledBackup,
   bucketAt,
@@ -37,6 +38,7 @@ async function health(server: FreshServer) {
     status: string;
     backups: {
       status: string;
+      destination?: string;
       failures?: number;
       last_error?: string | null;
       last_backup?: string | null;
@@ -78,6 +80,7 @@ describe("a backup the object store does not take", () => {
     expect(refused.error?.error.code).toBe("blob_store_unavailable");
     let seen = await health(server);
     expect(seen.backups.status).toBe("failing");
+    expect(seen.backups.destination).toBe("bucket");
     expect(seen.backups.failures).toBe(1);
     expect(seen.backups.last_error).toEqual(expect.any(String));
     expect(seen.status).toBe("degraded");
@@ -223,5 +226,55 @@ describe("a backup cut short", () => {
     expect(done.data.backup.size_bytes).toBeGreaterThan(2 * PART_BYTES);
     expect(await bucket.backupKeys()).toHaveLength(before.length + 1);
     expect(await bucket.unfinishedUploads()).toEqual(uploads);
+  });
+});
+
+describe("a file no store can give, in a backup to the object store", () => {
+  it("puts the backup, names the file in lost_blobs and in health, and clears health with the next backup that loses none", async () => {
+    const store = ownObjectStore();
+    const bucket = bucketAt(store.S3_PREFIX);
+    const server = await bootFreshServer("backup-lost-file", {
+      ...store,
+      MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,
+    });
+    try {
+      await afterFirstScheduledBackup(server);
+      await server.setFault("hold:housekeeping:blob-replicate");
+      const { working } = clientsFor(server);
+      const uploaded = await working.uploadBlob(
+        new TextEncoder().encode(
+          `a file whose copy went ${randomBytes(8).toString("hex")}`,
+        ),
+        "text/plain",
+      );
+      expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
+      const lost = uploaded.data.hash;
+      const file = await working.createItem({
+        type: "core.file",
+        properties: { blob_ref: lost, mime_type: "text/plain" },
+      });
+      expect(file.status, JSON.stringify(file.error)).toBe(201);
+      await server.setFault(`lose:blob=${lost}`);
+      const owner = ownerOf(server);
+      const run = await owner.runBackup();
+      expect(run.status, JSON.stringify(run.error)).toBe(200);
+      expect(run.data.blobs_lost).toEqual([lost]);
+      const key = `${store.S3_PREFIX}/backups/${run.data.backup.instance_id}/${run.data.backup.name}`;
+      const manifest = archiveManifest<{ lost_blobs: string[] }>(
+        await bucket.get(key),
+      );
+      expect(manifest.lost_blobs).toEqual([lost]);
+      const seen = await health(server);
+      expect(seen.backups.status).toBe("failing");
+      expect(seen.backups.last_error).toContain(lost);
+
+      await server.clearFault();
+      const next = await owner.runBackup();
+      expect(next.status, JSON.stringify(next.error)).toBe(200);
+      expect(next.data.blobs_lost).toEqual([]);
+      expect((await health(server)).backups.status).toBe("ok");
+    } finally {
+      await server.stop();
+    }
   });
 });

@@ -2576,7 +2576,7 @@ If the `manifest.json` of an archive names a `version` other than 1, then the se
 
 ### `search-and-filters/restore-manifest`
 
-If the `manifest.json` of an archive is missing `version`, `written_by`, `blobs`, `item_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `connector_state_count` or `connector_agreement_count`, or mistypes them, each count holding a non-negative integer, `written_by` a string, `missing_blobs`, an entry of `blobs`, which holds a string `mime_type` and a non-negative integer `size_bytes`, or an entry of `missing_blobs`, which holds the same or `null` for either, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a dotted `path`.
+If the `manifest.json` of an archive is missing `version`, `written_by`, `blobs`, `item_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `connector_state_count` or `connector_agreement_count`, or mistypes them, each count holding a non-negative integer, `written_by` a string, `missing_blobs`, an entry of `blobs`, which holds a string `mime_type` and a non-negative integer `size_bytes`, or an entry of `missing_blobs`, which holds the same or `null` for either, or mistypes `lost_blobs`, an array of hashes that `missing_blobs` names, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a dotted `path`.
 
 **Reason:** another version is free to lay its fields out differently, so a manifest naming one is refused for its version and not its shape.
 

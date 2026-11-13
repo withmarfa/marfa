@@ -58,11 +58,11 @@ fn unread(what: &str) -> Refusal {
     Refusal::internal(&format!("a stored {what} does not read"))
 }
 
-/// A stored object name, which must be empty for the disk store and, for an object store,
+/// A stored object name, which must be empty for a store on a disk and, for an object store,
 /// the blob's own hex and a name of one write, so that it can never name another blob.
 fn object_of(hash: &Hash, kind: &str, object: String) -> Result<String> {
     let fits = match kind {
-        "disk" => object.is_empty(),
+        "disk" | "folder" => object.is_empty(),
         "s3" => object
             .strip_prefix(hash.hex())
             .and_then(|rest| rest.strip_prefix('/'))
@@ -391,6 +391,22 @@ pub fn attach(tx: &Transaction<'_>, id: &str, kind: &str, locator: &str, at: &st
     Ok(())
 }
 
+/// Detaches the store `id` and forgets every copy, failure and deletion it records, answering
+/// how many copies it forgot.
+pub fn forget_store(tx: &Transaction<'_>, id: &str, at: &str) -> Result<usize> {
+    let copies = tx.execute("DELETE FROM blob_copies WHERE store_id = ?1", [id])?;
+    tx.execute("DELETE FROM blob_copy_failures WHERE store_id = ?1", [id])?;
+    tx.execute(
+        "DELETE FROM blob_pending_deletions WHERE store_id = ?1",
+        [id],
+    )?;
+    tx.execute(
+        "UPDATE stores SET detached_at = ?2 WHERE id = ?1 AND detached_at IS NULL",
+        params![id, at],
+    )?;
+    Ok(copies)
+}
+
 /// Every store the configuration no longer names is detached, from now.
 pub fn detach_others(tx: &Transaction<'_>, kept: &[&str], at: &str) -> Result<()> {
     let kept = serde_json::to_string(kept).map_err(|_| unread("store id"))?;
@@ -417,6 +433,18 @@ pub fn attached_object_store(tx: &Transaction<'_>, locator: &str) -> Result<Opti
     Ok(tx
         .query_row(
             "SELECT id FROM stores WHERE kind = 's3' AND locator = ?1 AND detached_at IS NULL \
+             ORDER BY attached_at DESC, id LIMIT 1",
+            [locator],
+            |row| row.get(0),
+        )
+        .optional()?)
+}
+
+/// The attached backup folder store recorded at this locator.
+pub fn attached_folder(tx: &Transaction<'_>, locator: &str) -> Result<Option<String>> {
+    Ok(tx
+        .query_row(
+            "SELECT id FROM stores WHERE kind = 'folder' AND locator = ?1 AND detached_at IS NULL \
              ORDER BY attached_at DESC, id LIMIT 1",
             [locator],
             |row| row.get(0),
@@ -965,7 +993,8 @@ pub fn purge(tx: &Transaction<'_>, hash: &Hash, at: &str) -> Result<()> {
     .execute(params![hash.as_str(), at])?;
     tx.prepare_cached(
         "INSERT INTO blob_pending_deletions (hash, store_id, object, queued_at) \
-         SELECT ?1, id, '', ?2 FROM stores WHERE kind = 'disk' AND detached_at IS NULL \
+         SELECT ?1, id, '', ?2 FROM stores WHERE kind IN ('disk', 'folder') \
+         AND detached_at IS NULL \
          ON CONFLICT (hash, store_id, object) DO NOTHING",
     )?
     .execute(params![hash.as_str(), at])?;

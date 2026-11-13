@@ -6,6 +6,7 @@ use std::sync::Arc;
 use futures_util::StreamExt;
 
 use super::disk::{Disk, Staged};
+use super::folder::Folder;
 use super::store::{self, Answer, Failed, Held, Store};
 use super::{App, Blob, Hash, REPLICATE, Scratch, joined, room, rows, unavailable, unwritable};
 use crate::app::faults::{Faults, HOLD_BLOB_HAS, Lie};
@@ -79,6 +80,16 @@ pub struct Copy {
     object: String,
     /// The store's recorded object, which did not answer whole.
     replaces: Option<String>,
+}
+
+/// What the attached stores answer for a blob the copy record names.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Readable {
+    Whole,
+    /// No store records a copy, or every one that does answered that it does not hold it whole.
+    Nowhere,
+    /// No store answered that it holds it whole, and one did not answer.
+    Silent,
 }
 
 /// Where a blob the archive names and does not carry was found.
@@ -272,7 +283,7 @@ impl App {
             imported,
             missing,
             _held: held,
-            replicates: self.blobs.s3.is_some(),
+            replicates: self.blobs.replicates(),
         })
     }
 
@@ -307,39 +318,114 @@ impl App {
         matches!(read, Ok(Ok(Some((_, found)))) if &found == hash)
     }
 
+    /// Reads into the restore's spool each file of `absent` that `instance`'s files area in the
+    /// backup folder holds whole; a copy that does not hash to its name is left out.
+    pub async fn copies_in_folder(
+        &self,
+        folder: &Arc<Folder>,
+        instance: &str,
+        absent: Vec<Named>,
+    ) -> Result<Vec<(Sealed, String)>> {
+        let mut copies = Vec::with_capacity(absent.len());
+        for named in absent {
+            let (folder, instance, spool) =
+                (folder.clone(), instance.to_string(), self.restore_spool());
+            let hash = named.hash.clone();
+            let read = tokio::task::spawn_blocking(move || -> Result<Option<Sealed>> {
+                let unread = |error: io::Error| {
+                    crate::app::refusal::Refusal::new(
+                        crate::app::refusal::Code::BlobStoreUnavailable,
+                        format!(
+                            "The backup folder {} failed while reading the file {}: {error}",
+                            folder.root().display(),
+                            hash.as_str()
+                        ),
+                    )
+                };
+                let Some(mut file) = folder.open_copy(&instance, &hash).map_err(unread)? else {
+                    return Ok(None);
+                };
+                let size = file.metadata().map_err(unread)?.len();
+                spool.room(size)?;
+                let mut arriving = spool.stage()?;
+                let mut buffer = vec![0; 256 * 1024];
+                loop {
+                    let count = io::Read::read(&mut file, &mut buffer).map_err(unread)?;
+                    if count == 0 {
+                        break;
+                    }
+                    arriving.append(&spool, &buffer[..count])?;
+                }
+                let sealed = arriving.seal()?;
+                if sealed.hash != hash {
+                    tracing::warn!(
+                        hash = hash.as_str(),
+                        "A file's copy in the backup folder does not hash to its name"
+                    );
+                    return Ok(None);
+                }
+                Ok(Some(sealed))
+            });
+            if let Some(sealed) = joined(read.await)?? {
+                let mime_type = named
+                    .mime_type
+                    .unwrap_or_else(|| super::DEFAULT_TYPE.to_string());
+                copies.push((sealed, mime_type));
+            }
+        }
+        Ok(copies)
+    }
+
+    /// Whether an attached store answers that it holds the blob's recorded copy whole.
+    pub async fn readable(&self, hash: &Hash) -> Result<Readable> {
+        let looked = hash.clone();
+        let (record, holders) = self
+            .db
+            .read(move |tx| Ok((rows::find(tx, &looked)?, rows::holders(tx, &looked)?)))
+            .await?;
+        let Some(blob) = record else {
+            return Ok(Readable::Nowhere);
+        };
+        let mut silent = false;
+        for copy in &holders {
+            let Some(store) = self.blobs.store(&copy.store_id) else {
+                continue;
+            };
+            match self.blobs.answer_of(&store, &blob.hash, &copy.object).await {
+                Ok(Answer::Holds(size)) if size == blob.size_bytes => return Ok(Readable::Whole),
+                Ok(_) => {}
+                Err(failure) => {
+                    tracing::warn!(
+                        ?failure,
+                        store = store.kind(),
+                        "A store did not answer for a blob"
+                    );
+                    silent = true;
+                }
+            }
+        }
+        Ok(if silent {
+            Readable::Silent
+        } else {
+            Readable::Nowhere
+        })
+    }
+
     /// A store that fails or stays silent, where none answers whole, refuses the restore.
     async fn find_absent(&self, named: &Named) -> Result<Absent> {
+        match self.readable(&named.hash).await? {
+            Readable::Whole => return Ok(Absent::Held),
+            Readable::Silent => return Err(unavailable()),
+            Readable::Nowhere => {}
+        }
+        let Some(s3) = self.blobs.s3.clone() else {
+            return Ok(Absent::Missing);
+        };
         let looked = named.hash.clone();
         let (record, holders) = self
             .db
             .read(move |tx| Ok((rows::find(tx, &looked)?, rows::holders(tx, &looked)?)))
             .await?;
-        let mut failed = false;
-        if let Some(blob) = &record {
-            for copy in &holders {
-                let Some(store) = self.blobs.store(&copy.store_id) else {
-                    continue;
-                };
-                match self.blobs.answer_of(&store, &blob.hash, &copy.object).await {
-                    Ok(Answer::Holds(size)) if size == blob.size_bytes => return Ok(Absent::Held),
-                    Ok(_) => {}
-                    Err(failure) => {
-                        tracing::warn!(
-                            ?failure,
-                            store = store.kind(),
-                            "A store did not answer for a restored blob"
-                        );
-                        failed = true;
-                    }
-                }
-            }
-        }
-        if failed {
-            return Err(unavailable());
-        }
-        let Some(s3) = self.blobs.s3.clone() else {
-            return Ok(Absent::Missing);
-        };
         let check = self.blobs.check();
         let hash = named.hash.clone();
         let faults = self.faults.clone();

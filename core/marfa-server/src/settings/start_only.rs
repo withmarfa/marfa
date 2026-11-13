@@ -66,6 +66,10 @@ pub const DECLARED: &[Declared] = &[
         "A folder of `<language>.traineddata` files that OCR reads beside the models the server carries, and in place of one of the same language. The server only reads it, and it may be missing.",
     ),
     plain(
+        "MARFA_BACKUP_PATH",
+        "A folder, outside the data directory, that the server backs itself up to.",
+    ),
+    plain(
         "S3_BUCKET",
         "The bucket of an object store kept beside the disk.",
     ),

@@ -2377,15 +2377,35 @@ export interface paths {
         };
         /**
          * List backups
-         * @description Returns the backups in the instance's object store, newest first, including those another instance on the same prefix took, so a new instance can restore the one it replaces. Requires the private local command.
+         * @description Returns the backups in the instance's backup folder or object store, newest first, including those another instance took there, so a new instance can restore the one it replaces. Requires the private local command.
          */
         get: operations["listBackups"];
         put?: never;
         /**
          * Take a backup
-         * @description Takes a backup now and puts it in the instance's object store, whether or not anything changed since the last one, then deletes this instance's backups that thinning no longer keeps. Requires the private local command.
+         * @description Takes a backup now and puts it in the instance's backup folder or object store, whether or not anything changed since the last one, then deletes this instance's backups that thinning no longer keeps. Requires the private local command.
          */
         post: operations["runBackup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/backups/folder/adopt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Adopt a backup folder
+         * @description Starts afresh on a disk that replaced the backup folder's disk, when the folder holds no store marker for this instance. Marfa forgets the backups and file copies of the old disk and changes no other store. Requires the private local command.
+         */
+        post: operations["adoptBackupFolder"];
         delete?: never;
         options?: never;
         head?: never;
@@ -2403,7 +2423,7 @@ export interface paths {
         put?: never;
         /**
          * Restore a backup
-         * @description Restores a backup from the instance's object store, as `POST /restore` restores an archive. Other writes wait until it finishes. Requires the private local command.
+         * @description Restores a backup from the instance's backup folder or object store, as `POST /restore` restores an archive, with a backup folder's files read from the folder. Other writes wait until it finishes. Requires the private local command.
          */
         post: operations["restoreBackup"];
         delete?: never;
@@ -3099,18 +3119,23 @@ export interface components {
             };
             /** @description The build the instance runs, when it is known. */
             version?: string;
-            /** @description Whether Marfa backs itself up to its object store, and how the last backup went. */
+            /** @description Whether Marfa backs itself up to its backup folder or object store, and how the last backup went. */
             backups: {
                 /**
-                 * @description `ok`: Marfa backs up on its schedule and the last backup run succeeded. `failing`: the last backup run failed, which makes the overall `status` at least `degraded`. `off`: Marfa takes no scheduled backups.
+                 * @description `ok`: Marfa backs up on its schedule and the last run succeeded. `failing`: the last run failed, or put a backup without files no store could give, which makes the overall `status` at least `degraded`. `off`: Marfa takes no scheduled backups.
                  * @enum {string}
                  */
                 status: "ok" | "failing" | "off";
                 /**
-                 * @description Why backups are `off`: `no_bucket` when the instance has no object store, `turned_off` when `backup_interval_seconds` is 0.
+                 * @description Why backups are `off`: `no_backup_destination` when the instance has nowhere to put them, with neither `MARFA_BACKUP_PATH` nor `S3_BUCKET` set, `turned_off` when `backup_interval_seconds` is 0.
                  * @enum {string}
                  */
-                reason?: "no_bucket" | "turned_off";
+                reason?: "no_backup_destination" | "turned_off";
+                /**
+                 * @description Where Marfa puts backups: `folder` for the backup folder `MARFA_BACKUP_PATH` names, `bucket` for the object store `S3_BUCKET` names. Present only for a caller that holds `instance.read`, and only when one is set.
+                 * @enum {string}
+                 */
+                destination?: "folder" | "bucket";
                 /** @description The name of the last backup Marfa put. Present only for a caller that holds `instance.read`. */
                 last_backup?: string | null;
                 /**
@@ -3118,9 +3143,9 @@ export interface components {
                  * @description When Marfa took the last backup it put. Present only for a caller that holds `instance.read`.
                  */
                 last_backup_at?: string | null;
-                /** @description How many backup runs in a row have failed. Present only for a caller that holds `instance.read`. */
+                /** @description How many backup runs in a row have failed or lost files. Present only for a caller that holds `instance.read`. */
                 failures?: number;
-                /** @description What went wrong in the last failed run. Present only for a caller that holds `instance.read`. */
+                /** @description What went wrong in the last failed run, or which files the last backup was put without. Present only for a caller that holds `instance.read`. */
                 last_error?: string | null;
                 /**
                  * Format: date-time
@@ -5010,10 +5035,10 @@ export interface components {
             /** @description Unique identifier for the store. */
             id: string;
             /**
-             * @description The kind of store: `disk` for the disk beside the server, `s3` for an S3-compatible bucket.
+             * @description The kind of store: `disk` for the disk beside the server, `folder` for the files area of the backup folder, `s3` for an S3-compatible bucket.
              * @enum {string}
              */
-            kind: "disk" | "s3";
+            kind: "disk" | "folder" | "s3";
             /** @description Where the store is: its directory for a `disk` store, `s3://<bucket>/<prefix>` for an `s3` store. */
             locator: string;
             /** @description When the instance first attached the store, in UTC. */
@@ -5067,10 +5092,10 @@ export interface components {
             /** @description The ID of the store that holds the copy. */
             store_id: string;
             /**
-             * @description The kind of store: `disk` for the disk beside the server, `s3` for an S3-compatible bucket.
+             * @description The kind of store: `disk` for the disk beside the server, `folder` for the files area of the backup folder, `s3` for an S3-compatible bucket.
              * @enum {string}
              */
-            kind: "disk" | "s3";
+            kind: "disk" | "folder" | "s3";
             /** @description `true` if the instance's configuration no longer names the store. A copy in a detached store doesn't count toward `min_copies`. */
             detached: boolean;
             /** @description When Marfa recorded the copy, in UTC. */
@@ -6759,14 +6784,14 @@ export interface components {
             };
         };
         /** @description An error response. */
-        NoBucketRefusal: {
+        NoBackupDestinationRefusal: {
             /** @description What went wrong. */
             error: {
                 /**
                  * @description A machine-readable code for the error. Use it in your logic.
                  * @enum {string}
                  */
-                code: "no_bucket";
+                code: "no_backup_destination";
                 /** @description A description of the error for a person to read. It can change, so don't match on it. */
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
@@ -6775,7 +6800,25 @@ export interface components {
                 };
             };
         };
-        /** @description A backup in the instance's object store. */
+        /** @description An error response. */
+        BackupFilesMissingRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "backup_files_missing";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description Names the files the restore could not find. */
+                details?: {
+                    /** @description The hash of each file the backup names that neither the backup folder nor this instance holds whole. */
+                    missing_blobs: string[];
+                };
+            };
+        };
+        /** @description A backup in the instance's backup folder or object store. */
         Backup: {
             /**
              * @description The backup's name: the instant Marfa took it, followed by `.tar`.
@@ -18411,7 +18454,7 @@ export interface operations {
             };
             /**
              * @description - `copies_below_minimum`: deleting the copy would leave fewer live copies than `min_copies`, or fewer that their stores confirm they hold within 15 seconds. Nothing changes.
-             *     - `copy_held_by_backup`: a backup kept in that object store names the blob, so its copy there stays until thinning deletes every such backup. Nothing changes.
+             *     - `copy_held_by_backup`: a backup kept where that store holds the files of backups names the blob, so its copy there stays until thinning deletes every such backup. Nothing changes.
              */
             409: {
                 headers: {
@@ -30171,7 +30214,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns every backup, in one page. A backup is an archive of every item, edge and instance line, the trash included, without file bytes, which the object store already holds. */
+            /** @description Returns every backup, in one page. A backup is an archive of every item, edge and instance line, the trash included, without file bytes, which the backup folder or object store already holds. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30223,7 +30266,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description `no_bucket`: the instance has no object store, so it keeps no backups. Set `S3_BUCKET` to keep them. */
+            /** @description `no_backup_destination`: the instance has nowhere to put backups, so it keeps none. Set `MARFA_BACKUP_PATH` to a folder, or `S3_BUCKET` to an object store, to keep them. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30232,7 +30275,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["NoBucketRefusal"];
+                    "application/json": components["schemas"]["NoBackupDestinationRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -30260,7 +30303,7 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `blob_store_unavailable`: the object store failed, or didn't answer in time. Try again later. */
+            /** @description `blob_store_unavailable`: the backup folder or object store failed, or didn't answer in time. Try again later. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30295,7 +30338,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the backup Marfa put, and how many old backups it deleted. */
+            /** @description Returns the backup Marfa put, how many old backups it deleted, and the files it lost. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30314,6 +30357,8 @@ export interface operations {
                         removed: number;
                         /** @description How many old backups Marfa tried to delete and couldn't. It tries again after the next backup. */
                         unremoved: number;
+                        /** @description The hashes of the files the backup names that no store could give when Marfa took it. A restore of the backup goes ahead without them, and `GET /health` answers `backups.status` `failing` until a backup is put without losing any. */
+                        blobs_lost: string[];
                     };
                 };
             };
@@ -30354,9 +30399,9 @@ export interface operations {
                 };
             };
             /**
-             * @description - `conflict`: a file the backup names was purged, or its object store copy was dropped, while the backup was read, or a backup by this name is already recorded. The next run takes the backup again.
+             * @description - `conflict`: a file the backup names was purged, or its copy where backups go was dropped, while the backup was read, or a backup by this name is already recorded. The next run takes the backup again.
              *     - `housekeeping_job_running`: a backup is running. Try again once it ends.
-             *     - `no_bucket`: the instance has no object store, so it keeps no backups.
+             *     - `no_backup_destination`: the instance has nowhere to put backups, so it keeps none.
              */
             409: {
                 headers: {
@@ -30366,7 +30411,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["NoBucketRefusal"];
+                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -30394,7 +30439,139 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `blob_store_unavailable`: the object store failed, or didn't answer in time. Try again later. */
+            /** @description `blob_store_unavailable`: the backup folder or object store failed, or didn't answer in time. Try again later. */
+            503: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BlobStoreUnavailableOrWriteContentionRefusal"];
+                };
+            };
+            /** @description `insufficient_storage`: the disk that holds the instance's data has no room for the request, or the request would leave less free than the instance keeps in reserve. Nothing changed, unless `details.write_outcome` is `unknown`, which means the write may have landed: read what you changed before you repeat it. Free space on the disk, then try the request again. */
+            507: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InsufficientStorageRefusal"];
+                };
+            };
+        };
+    };
+    adoptBackupFolder: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Returns the new store and what Marfa forgot of the old one. */
+            200: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description The ID of the store the backup folder's files folder is now. */
+                        store_id: string;
+                        /** @description The ID of the store Marfa forgot. `GET /blobs/stores` lists it as detached. */
+                        replaced_store_id: string;
+                        /** @description How many backups in the old store Marfa forgot. */
+                        backups_forgotten: number;
+                        /** @description How many copies of files in the old store Marfa forgot. */
+                        copies_forgotten: number;
+                    };
+                };
+            };
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            400: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ValidationErrorRefusal"];
+                };
+            };
+            /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
+            401: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UnauthorizedRefusal"];
+                };
+            };
+            /** @description Requires the private local command. `details.needs` is `local`. */
+            403: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ForbiddenRefusal"];
+                };
+            };
+            /**
+             * @description - `conflict`: the backup folder holds this instance's files, so there is nothing to adopt, its files folder holds another store's marker, or the instance backs up to an object store.
+             *     - `housekeeping_job_running`: a backup is running. Try again once it ends.
+             *     - `no_backup_destination`: the instance has nowhere to put backups, so it keeps none.
+             */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
+                };
+            };
+            /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
+            429: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RateLimitedRefusal"];
+                };
+            };
+            /** @description `internal_error`: Marfa failed in a way it didn't expect, and the request may not have completed. Read what you changed before you repeat a write. */
+            500: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InternalErrorRefusal"];
+                };
+            };
+            /** @description `blob_store_unavailable`: the backup folder is not there, or Marfa could not write the new store marker after it forgot the old disk's backups and file copies. Mount the disk it is on, or make the folder writable, then try again. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30556,7 +30733,7 @@ export interface operations {
                     "application/json": components["schemas"]["ForbiddenRefusal"];
                 };
             };
-            /** @description `backup_not_found`: the object store holds no backup by that name from that instance. */
+            /** @description `backup_not_found`: the backup folder or object store holds no backup by that name from that instance. */
             404: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30569,9 +30746,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `conflict`: the archive redefines a type this instance registers differently or registered while the restore ran, carries a core edge type, or carries a snapshot ID that already exists.
-             *     - `link_taken`: the archive registers a type naming a `link_field` in which two items a forced delete left share a value.
-             *     - `no_bucket`: the instance has no object store, so it keeps no backups.
+             * @description - `backup_files_missing`: neither the folder nor this instance holds files it needs, named in `details.missing_blobs`. Nothing was restored.
+             *     - `conflict`: the archive redefines a type registered here differently, carries a core edge type, or reuses a snapshot ID.
+             *     - `link_taken`: the archive's type names a `link_field` two items share.
+             *     - `no_backup_destination`: there is nowhere to put backups.
              */
             409: {
                 headers: {
@@ -30581,7 +30759,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConflictOrLinkTakenRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["NoBucketRefusal"];
+                    "application/json": components["schemas"]["BackupFilesMissingRefusal"] | components["schemas"]["ConflictOrLinkTakenRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
                 };
             };
             /** @description - `request_too_large`: an item's properties, the properties of one of its earlier versions, or an edge's properties are larger than the bulk write endpoints accept. `details` names the line and the field. */
@@ -30634,7 +30812,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `blob_store_unavailable`: the object store failed, or didn't answer in time, while Marfa read the backup or checked a blob's copy, or a store hasn't finished an earlier write or delete of a blob the archive names. Nothing was written. Try again later.
+             * @description - `blob_store_unavailable`: the backup folder or object store failed or was too slow while Marfa read the backup or checked a blob's copy, or a store is still writing or deleting a blob the archive names. Nothing was written. Try again later.
              *     - `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again.
              */
             503: {

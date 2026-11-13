@@ -1,5 +1,5 @@
 use std::ops::Deref;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use url::Url;
 
 use super::Environment;
@@ -85,6 +85,8 @@ pub struct Fixed {
     /// Never stored: a key that may change the configuration must not reach the owner's network.
     pub webhook_private_addresses: bool,
     pub object_store: Option<ObjectStoreSettings>,
+    /// The folder backups go to, which the server never creates.
+    pub backup_path: Option<PathBuf>,
 }
 
 /// Never logged: the endpoint and the secret can hold credentials.
@@ -120,6 +122,15 @@ fn prefix(text: &str) -> Result<String, String> {
         Ok(trimmed.to_string())
     } else {
         Err(PREFIX_RULE.to_string())
+    }
+}
+
+fn absolute_folder(text: &str) -> Result<PathBuf, String> {
+    let path = PathBuf::from(text);
+    if path.is_absolute() && !path.components().any(|part| part == Component::ParentDir) {
+        Ok(path)
+    } else {
+        Err("must be an absolute path with no `..` in it".to_string())
     }
 }
 
@@ -335,6 +346,14 @@ impl Fixed {
 
         let heartbeat_url = reader.url_kept_private("MARFA_HEARTBEAT_URL");
         let object_store = reader.object_store();
+        let backup_path = reader.take("MARFA_BACKUP_PATH", absolute_folder);
+        if object_store.is_some() && backup_path.is_some() {
+            reader.refuse(
+                "S3_BUCKET and MARFA_BACKUP_PATH are both set; backups go to one place, so set \
+                 only one of them"
+                    .to_string(),
+            );
+        }
         let database = DatabasePath::read(
             environment
                 .get("MARFA_DATABASE_PATH")
@@ -371,6 +390,7 @@ impl Fixed {
                     && environment.get("MARFA_POSTHOG_PROJECT_TOKEN").is_some()),
             webhook_private_addresses,
             object_store,
+            backup_path,
         };
         (!failed).then_some((fixed, given))
     }

@@ -59,7 +59,7 @@ export function unreadBlobs(
 /** One attached store and what it physically holds of a blob. */
 export interface StoreHolding {
   id: string;
-  kind: "disk" | "s3";
+  kind: "disk" | "folder" | "s3";
   /** The store has a copy of the bytes under the blob's name. */
   holds: boolean;
   /** The bytes it has hash to the blob's name. */

@@ -88,7 +88,7 @@ const CONTRACT_NAMES: Record<string, string> = {
 };
 
 /** Settings the contract names that this server does not read. */
-const CONTRACT_ONLY = ["MARFA_ADDRESSES"];
+const CONTRACT_ONLY = ["MARFA_ADDRESSES", "MARFA_BACKUP_PATH"];
 
 /** Settings this server reads that the contract no longer names. */
 const SERVER_ONLY = ["NODE_ENV"];

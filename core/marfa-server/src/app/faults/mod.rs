@@ -15,6 +15,7 @@ macro_rules! point_list {
         HOLD_RESTORE_COMMIT = Hold "restore:before-commit" None;
         HOLD_BACKUP_READ = Hold "backup:read" None;
         HOLD_BACKUP_PUT = Hold "backup:put" None;
+        FAIL_BACKUP_FOLDER_WRITE = Fail "backup-folder-write" Nth;
         HOLD_STREAM_OPEN = Hold "stream-open" None;
         HOLD_STREAM_HEAD = Hold "stream-head" None;
         HOLD_STREAM_REPLAY = Hold "stream-replay" None;
@@ -91,6 +92,7 @@ pub enum Lie {
 pub enum Volume {
     Database,
     Blobs,
+    Backups,
 }
 
 /// Lanes whose attempt cap a `limit:<lane>=<n>` fault lowers.

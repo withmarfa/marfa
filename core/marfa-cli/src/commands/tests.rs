@@ -1758,6 +1758,13 @@ fn backups_reach_their_doors_and_an_instance_and_a_name_are_one_path_segment_eac
         (run.method, run.path()),
         (Method::Post, "/backups".to_string())
     );
+    let adopt = backups::request(&backups::BackupsCommand::Folder {
+        command: backups::FolderCommand::Adopt,
+    });
+    assert_eq!(
+        (adopt.method, adopt.path()),
+        (Method::Post, "/backups/folder/adopt".to_string())
+    );
     let restore = backups::request(&backups::BackupsCommand::Restore {
         instance_id: "0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b".to_string(),
         name: "2026-11-09T10:15:30.250Z.tar".to_string(),
