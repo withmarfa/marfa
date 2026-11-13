@@ -65,4 +65,23 @@ describe("the catalogues in the contract", () => {
       expect(rows("event-types"), name).toContain(`| \`${name}\` `);
     }
   });
+
+  // A type under a permission's root would read as that permission in a
+  // scope, so the core refuses to register one.
+  it("reserve the root of every permission as a type root", () => {
+    const catalog = JSON.parse(
+      readFileSync(
+        new URL(
+          "../core/marfa-rules/src/builtin_catalog.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as { reserved_type_roots: string[] };
+    const roots = new Set(catalog.reserved_type_roots);
+    expect(roots.size).toBeGreaterThan(0);
+    for (const name of permissionNames()) {
+      expect(roots, name).toContain(name.split(".")[0]);
+    }
+  });
 });
