@@ -51,6 +51,8 @@ mod sources;
 mod tables;
 #[cfg(feature = "test-hooks")]
 mod test_hooks;
+#[cfg(test)]
+mod test_instance;
 mod trash;
 mod types;
 mod views;
@@ -74,7 +76,7 @@ pub use connections::Caps;
 pub use listening::serve;
 use observe::{Observed, Unmatched, observe as observe_request, remember_route};
 
-use doors::{Doors, delete, get, patch, post, put};
+use doors::{Asks, Doors, delete, get, patch, post, put};
 
 type Routes = Doors;
 
@@ -255,6 +257,8 @@ fn blob_doors() -> Routes {
             "/blobs/{hash}/fetch",
             get(blobs::fetch).head(blobs::fetch_head),
         )
+        .asking_at(Method::GET, "/blobs/{hash}/fetch", Asks::Nothing)
+        .asking_at(Method::HEAD, "/blobs/{hash}/fetch", Asks::Nothing)
 }
 
 fn owner_item_doors() -> Routes {
@@ -340,6 +344,7 @@ fn shared(app: Arc<App>) -> Routes {
         .route("/", get(root::describe))
         .route("/health", get(health::answer))
         .route("/openapi.json", get(root::document))
+        .asking(Asks::Nothing)
         .route("/audit", get(audit::list))
         .route("/housekeeping", get(housekeeping::list))
         .route("/metrics", get(metrics::read))
@@ -371,6 +376,10 @@ fn shared(app: Arc<App>) -> Routes {
 }
 
 fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
+    let checking = body::Checking {
+        app: app.clone(),
+        credentials: Arc::new(routes.credentials()),
+    };
     let judging = named_instance::Judging {
         app: app.clone(),
         writes: Arc::new(routes.judged_writes()),
@@ -382,7 +391,7 @@ fn finished(routes: Routes, app: Arc<App>, listener: Declaration) -> Router {
     let router = routes
         .into_router()
         .method_not_allowed_fallback(unmatched)
-        .route_layer(from_fn_with_state(app.clone(), body::checked))
+        .route_layer(from_fn_with_state(checking, body::checked))
         .route_layer(from_fn_with_state(app.clone(), conditional::judged))
         .route_layer(from_fn_with_state(judging, named_instance::judged))
         .route_layer(from_fn_with_state(app.clone(), limit::requests))
@@ -404,6 +413,7 @@ fn sender_doors() -> Routes {
     Doors::new()
         .route("/inbound/{token}", post(inbound::receive))
         .unjudged()
+        .asking(Asks::Nothing)
 }
 
 /// Sign-in, grant and OAuth callers hold no copy of the instance.
@@ -417,8 +427,10 @@ fn public_doors(app: Arc<App>) -> Routes {
 }
 
 pub fn public_on(app: Arc<App>, listener: Declaration) -> Router {
+    let deadline = app.settings.start.tuning.body_deadline;
     finished(public_doors(app.clone()), app.clone(), listener)
         .layer(from_fn_with_state(app, oauth::page_origins))
+        .layer(from_fn_with_state(deadline, body::due_within))
 }
 
 pub(crate) async fn no_store(request: Request, next: Next) -> Response {

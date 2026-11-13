@@ -13,6 +13,8 @@ pub struct Tuning {
     pub housekeeping_poll: Duration,
     pub write_wait: Duration,
     pub upload_idle: Duration,
+    /// How long a body the public listener buffers has to arrive whole.
+    pub body_deadline: Duration,
     pub blob_read_idle: Duration,
     /// How long a delivery's body may go without a byte before it is ended.
     pub inbound_idle: Duration,
@@ -31,6 +33,8 @@ impl Default for Tuning {
             housekeeping_poll: Duration::from_secs(3600),
             write_wait: Duration::from_secs(5),
             upload_idle: Duration::from_secs(60),
+            // A 16 MiB body takes about 134 seconds at 1 Mbit/s.
+            body_deadline: Duration::from_secs(180),
             blob_read_idle: Duration::from_secs(30),
             inbound_idle: Duration::from_secs(30),
             connector_hold: Duration::from_secs(180),
@@ -79,6 +83,7 @@ impl Tuning {
                 "housekeeping_poll_ms" => tuning.housekeeping_poll = millis,
                 "write_wait_ms" => tuning.write_wait = millis,
                 "upload_idle_ms" => tuning.upload_idle = millis,
+                "body_deadline_ms" => tuning.body_deadline = millis,
                 "blob_read_idle_ms" => tuning.blob_read_idle = millis,
                 "inbound_idle_ms" => tuning.inbound_idle = millis,
                 "connector_hold_ms" => tuning.connector_hold = millis,

@@ -11,6 +11,7 @@ use axum::extract::{FromRequest, Request, State};
 use axum::http::header::{ALLOW, ORIGIN, WWW_AUTHENTICATE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
+use marfa_rules::json_text;
 use serde_json::{Map, Value, json};
 
 use super::answer::{Unhandled, refusal_answer};
@@ -288,6 +289,12 @@ async fn post(app: Arc<App>, group: Group, request: Request) -> Response {
         Ok(read) => read,
         Err(stopped) => return axum::response::IntoResponse::into_response(stopped),
     };
+    if json_text::too_deep(read.bytes()) {
+        return unreadable(false);
+    }
+    if json_text::ill_formed_at(read.bytes()).is_some() {
+        return unreadable(true);
+    }
     if !read.declares_json() {
         return rpc::not_json().into_response();
     }
@@ -303,7 +310,7 @@ async fn post(app: Arc<App>, group: Group, request: Request) -> Response {
 }
 
 /// The answer to a body that is not a JSON-RPC message, at any MCP path.
-pub fn unreadable(is_text: bool) -> Response {
+fn unreadable(is_text: bool) -> Response {
     let (code, message) = if is_text {
         (rpc::PARSE_ERROR, "Parse error")
     } else {
@@ -344,7 +351,7 @@ async fn post_admin(State(app): State<Arc<App>>, request: Request) -> Response {
 }
 
 pub fn doors() -> super::Routes {
-    use super::doors::{Doors, post as post_to};
+    use super::doors::{Asks, Doors, post as post_to};
     Doors::new()
         .route(
             Group::Items.path(),
@@ -361,6 +368,7 @@ pub fn doors() -> super::Routes {
             post_to(post_admin).get(only_post).delete(only_post),
         )
         .refusing(axum::http::Method::DELETE, Group::Admin.path())
+        .asking(Asks::Nothing)
 }
 
 #[cfg(test)]

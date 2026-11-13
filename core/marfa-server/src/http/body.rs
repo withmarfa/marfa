@@ -6,7 +6,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use axum::body::{Body, Bytes, HttpBody};
-use axum::extract::{FromRequest, Request, State};
+use axum::extract::{FromRequest, MatchedPath, Request, State};
 use axum::http::{Extensions, HeaderMap, HeaderValue, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -16,7 +16,8 @@ use marfa_rules::{integers, json_text};
 use serde_json::{Map, Value, json};
 
 use super::answer::{Stopped, refusal_answer};
-use super::mcp;
+use super::caller::presents;
+use super::doors::Credentials;
 use super::observe::RequestContext;
 use crate::app::App;
 use crate::app::items::write::ruled;
@@ -109,7 +110,7 @@ impl HttpBody for Shared {
 }
 
 /// How long a request on the private control socket has to arrive whole, from
-/// the moment its head is in.
+/// the moment its head is in. The public listener's is `Tuning::body_deadline`.
 pub const CONTROL_BODY_DEADLINE: Duration = Duration::from_secs(30);
 
 #[derive(Debug, thiserror::Error)]
@@ -499,40 +500,63 @@ fn ill_formed(pointer: String) -> Refusal {
         .with_detail("errors", json!([{ "path": pointer, "message": message }]))
 }
 
-/// Connector size refusals precede credential checks.
-pub async fn checked(State(app): State<Arc<App>>, request: Request, next: Next) -> Response {
-    let limit = cap_on(&app, request.uri().path(), request.extensions());
-    if super::profile::reads_own_body(&request) || request.body().is_end_stream() {
+#[derive(Clone)]
+pub struct Checking {
+    pub app: Arc<App>,
+    pub credentials: Arc<Credentials>,
+}
+
+/// A connector's declared size is refused first, then a request that presents no credential
+/// its door could use, both with the body unread.
+pub async fn checked(State(checking): State<Checking>, request: Request, next: Next) -> Response {
+    let app = &checking.app;
+    let path = request.uri().path();
+    let limit = cap_on(app, path, request.extensions());
+    // The MCP doors judge the origin and the credential before they read the body.
+    if super::profile::reads_own_body(&request)
+        || request.body().is_end_stream()
+        || MCP_PATHS.contains(&path)
+    {
         return next.run(request).await;
     }
-    if declared_length(request.headers()) > Some(limit) {
-        if under_connectors(request.uri().path()) {
-            return refusal_answer(&too_large(limit));
-        }
-        return next.run(request).await;
+    let over = declared_length(request.headers()) > Some(limit);
+    if over && under_connectors(path) {
+        return refusal_answer(&too_large(limit));
     }
-    let (parts, body) = request.into_parts();
+    let (mut parts, body) = request.into_parts();
+    let door = parts
+        .extensions
+        .get::<MatchedPath>()
+        .and_then(|matched| checking.credentials.get(&(parts.method.clone(), matched.as_str())))
+        .copied();
+    if let Some((asks, admission)) = door
+        && let Err(refusal) = presents(&mut parts, app, asks, admission).await
+    {
+        return refusal_answer(&refusal);
+    }
+    if over {
+        return next.run(Request::from_parts(parts, body)).await;
+    }
     let bytes = match buffered(body, limit).await {
         Ok(bytes) => bytes,
         Err(stopped) => return stopped.into_response(),
     };
-    let for_mcp = MCP_PATHS.contains(&parts.uri.path());
-    if json_text::too_deep(&bytes) {
-        return if for_mcp {
-            mcp::unreadable(false)
-        } else {
-            refusal_answer(&nested_too_deep())
-        };
-    }
-    if let Some(pointer) = json_text::ill_formed_at(&bytes) {
-        return if for_mcp {
-            mcp::unreadable(true)
-        } else {
-            refusal_answer(&ill_formed(pointer))
-        };
+    if let Err(refusal) = scanned(&bytes) {
+        return refusal_answer(&refusal);
     }
     next.run(Request::from_parts(parts, Body::from(bytes)))
         .await
+}
+
+/// A body nested past 64 levels, or holding a surrogate escape with no partner, is refused.
+pub fn scanned(bytes: &[u8]) -> Result<(), Refusal> {
+    if json_text::too_deep(bytes) {
+        return Err(nested_too_deep());
+    }
+    match json_text::ill_formed_at(bytes) {
+        Some(pointer) => Err(ill_formed(pointer)),
+        None => Ok(()),
+    }
 }
 
 #[cfg(test)]
@@ -585,5 +609,118 @@ mod due_tests {
             Bytes::from_static(b"{}")
         );
         assert!(!late.load(Ordering::Acquire));
+    }
+}
+
+#[cfg(test)]
+mod presented_tests {
+    use std::collections::BTreeSet;
+
+    use axum::http::{Method, StatusCode};
+    use tower::ServiceExt;
+
+    use super::*;
+    use crate::http::doors::Asks;
+    use crate::http::test_instance::{Instance, start};
+    use crate::http::{public_doors, shared};
+
+    const ID: &str = "019537a0-7b80-7000-8000-0000000000ff";
+    const PROMPT: Duration = Duration::from_secs(2);
+
+    /// A body that never arrives.
+    struct Held;
+
+    impl HttpBody for Held {
+        type Data = Bytes;
+        type Error = axum::Error;
+
+        fn poll_frame(
+            self: Pin<&mut Self>,
+            _: &mut Context<'_>,
+        ) -> Poll<Option<Result<Frame<Bytes>, axum::Error>>> {
+            Poll::Pending
+        }
+    }
+
+    fn request(method: &Method, path: &str, key: Option<&str>, body: Body) -> Request {
+        let mut at = path.replace("{*path}", "x");
+        while let Some(open) = at.find('{') {
+            let close = at[open..].find('}').unwrap() + open;
+            at.replace_range(open..=close, ID);
+        }
+        let mut request = Request::builder()
+            .method(method)
+            .uri(at)
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(key) = key {
+            request = request.header(header::AUTHORIZATION, format!("Bearer {key}"));
+        }
+        request.body(body).unwrap()
+    }
+
+    async fn answer(instance: &Instance, request: Request) -> Option<StatusCode> {
+        let sent = instance.public.clone().oneshot(request);
+        tokio::time::timeout(PROMPT, sent)
+            .await
+            .ok()
+            .map(|answer| answer.unwrap().status())
+    }
+
+    #[tokio::test]
+    async fn a_door_that_asks_a_credential_refuses_none_with_the_body_unread_as_the_door_would() {
+        let instance = start().await;
+        let mut asked = 0;
+        let mut disagree = Vec::new();
+        for ((method, path), (asks, _)) in public_doors(instance.app.clone()).credentials() {
+            if asks == Asks::Nothing {
+                continue;
+            }
+            asked += 1;
+            let bare = answer(&instance, request(&method, path, None, Body::empty())).await;
+            let held_request = request(&method, path, None, Body::new(Held));
+            let held = if super::super::profile::reads_own_body(&held_request) {
+                bare
+            } else {
+                answer(&instance, held_request).await
+            };
+            if (bare, held) != (Some(StatusCode::UNAUTHORIZED), bare) {
+                disagree.push(format!("{method} {path}: {bare:?}, {held:?} with a body"));
+            }
+        }
+        assert!(asked > 100, "the witness: {asked} doors");
+        assert_eq!(disagree, Vec::<String>::new());
+    }
+
+    #[tokio::test]
+    async fn a_key_the_instance_holds_is_read_past_and_one_it_does_not_is_refused() {
+        let instance = start().await;
+        let held = |key| request(&Method::POST, "/items", Some(key), Body::new(Held));
+        assert_eq!(answer(&instance, held(&instance.key)).await, None);
+        let unknown = format!("{}x", instance.key);
+        assert_eq!(
+            answer(&instance, held(&unknown)).await,
+            Some(StatusCode::UNAUTHORIZED)
+        );
+    }
+
+    #[tokio::test]
+    async fn the_shared_doors_that_ask_nothing_are_the_root_health_document_link_and_claim() {
+        let instance = start().await;
+        let open: BTreeSet<String> = shared(instance.app.clone())
+            .credentials()
+            .into_iter()
+            .filter(|(_, (asks, _))| *asks == Asks::Nothing)
+            .map(|((method, path), _)| format!("{method} {path}"))
+            .collect();
+        let expected = [
+            "GET /",
+            "GET /blobs/{hash}/fetch",
+            "GET /health",
+            "GET /openapi.json",
+            "HEAD /blobs/{hash}/fetch",
+            "POST /owner",
+        ]
+        .map(String::from);
+        assert_eq!(open, BTreeSet::from(expected));
     }
 }

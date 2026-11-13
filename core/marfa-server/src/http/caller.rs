@@ -7,7 +7,9 @@ use axum::http::header::{AUTHORIZATION, ORIGIN};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method};
 
+use super::admission::{Admission, on_socket};
 use super::answer::Stopped;
+use super::doors::Asks;
 use super::auth::cookies;
 use super::observe::RequestContext;
 use crate::app::access::{self, Caller, unauthorized};
@@ -20,6 +22,10 @@ use crate::listener::Transport;
 
 #[derive(Clone)]
 struct Identified(Result<Option<Caller>>);
+
+/// The session a cookie named, read once whichever asks first.
+#[derive(Clone)]
+struct Named(Option<session::Session>);
 
 /// The request bore a stored key past its `expires_at`, which this holds.
 #[derive(Clone)]
@@ -83,7 +89,11 @@ async fn owner_by_cookie(
     let Some(token) = cookies::session_token(&parts.headers, &address) else {
         return Ok(None);
     };
-    let Some(session) = session::find(app, token).await? else {
+    let named = match parts.extensions.get::<Named>() {
+        Some(Named(named)) => named.clone(),
+        None => session::find(app, token).await?,
+    };
+    let Some(session) = named else {
         return Ok(None);
     };
     if !auth::carries_sessions(&address) {
@@ -182,6 +192,47 @@ impl FromRequestParts<Arc<App>> for OnPage {
         Ok(OnPage(
             owner_by_cookie(parts, app, context, Origin::Judged).await?,
         ))
+    }
+}
+
+async fn names_session(parts: &mut Parts, app: &Arc<App>) -> Result<bool> {
+    let address = app.addresses().sign_in();
+    let Some(token) = cookies::session_token(&parts.headers, &address) else {
+        return Ok(false);
+    };
+    let named = session::find(app, token).await?;
+    let found = named.is_some();
+    parts.extensions.insert(Named(named));
+    Ok(found)
+}
+
+/// Whether a request presents what its door asks before the body is read. The door still
+/// decides what the caller may do.
+pub async fn presents(
+    parts: &mut Parts,
+    app: &Arc<App>,
+    asks: Asks,
+    admission: Option<Admission>,
+) -> Result<()> {
+    let socket = on_socket(&parts.extensions);
+    let by_cookie = !socket && matches!(presented(&parts.headers), Presented::Nothing);
+    match asks {
+        Asks::Nothing => Ok(()),
+        Asks::Session if by_cookie => match names_session(parts, app).await? {
+            true => Ok(()),
+            false => Err(unauthorized()),
+        },
+        Asks::Session | Asks::Credential => match identify(parts, app).await? {
+            Some(caller)
+                if admission
+                    .is_none_or(|rule| rule.admits(Some(&caller), &parts.headers, socket)) =>
+            {
+                Ok(())
+            }
+            Some(_) => Err(unauthorized()),
+            None if asks == Asks::Session => Err(unauthorized()),
+            None => Err(refused(parts)),
+        },
     }
 }
 
