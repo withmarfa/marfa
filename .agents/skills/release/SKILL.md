@@ -10,7 +10,7 @@ A release is a git tag `v<version>` on a commit of `main`. Pushing the tag runs 
 ## The version
 
 - Every manifest in the tree carries `0.0.0`, and `ci/version-fields.test.ts` refuses any other. A version exists only as a tag. `release.yml` stamps it into every manifest in its own checkout with `scripts/release/stamp-version.sh`; never run that script in yours.
-- The next version is the highest `v0.0.N` tag plus 0.0.1. `Read the version` accepts nothing else: it refuses any `major.minor` but `0.0`, so `v0.1.0` fails there today, and a patch below 70, the first release of the Rust server.
+- The next version is the highest `v0.0.N` tag plus 0.0.1. `Read the version` accepts nothing else: it refuses any `major.minor` but `0.0`, so a `v0.1.0` tag fails there, and any patch below 70.
 - Find the highest tag:
 
   ```bash
@@ -54,7 +54,7 @@ Each job is named as GitHub shows it.
 4. **Sign the programs:** signs both with the Developer ID under the hardened runtime and has Apple notarize them (`scripts/release/sign-binary.sh`, six `APPLE_*` secrets; a dry run signs too), packs `marfa-<version>-darwin-arm64.tar.gz`, boots it and reads a PDF and a picture with it (`check-archive.sh`, `prove-reading.sh`).
 5. **Build the programs (x86_64 Linux)** and **(aarch64 Linux):** static musl builds in the pinned build image, packed as `marfa-<version>-linux-x86_64.tar.gz` and `marfa-<version>-linux-aarch64.tar.gz`. These programs are not signed.
 6. **Run the programs (x86_64 Linux)** and **(aarch64 Linux):** each archive booted and reading files on a runner of its own architecture.
-7. **Collect the release:** writes `marfa-<version>-checksums.txt` for the three archives and the Homebrew formula, and holds the release to six files: the three archives, the checksums and the two npm tarballs.
+7. **Collect the release:** writes the three archives' checksums to `marfa-<version>-checksums.txt`, writes the Homebrew formula from them, and holds the release to six files: the three archives, the checksums and the two npm tarballs.
 8. **Build the server image (linux/amd64)** and **(linux/arm64):** `deploy/Dockerfile` around the Linux archives' own programs, checked with `scripts/check-image.sh`. A tag run pushes each platform to `ghcr.io/withmarfa/marfa-server` by digest, untagged, and boots the pushed digest.
 9. **Prove the install (darwin-arm64)**, **(linux-x86_64)** and **(linux-aarch64):** `scripts/release/install-proof.sh` installs through `scripts/install.sh` from the run's own files, behind HTTPS, claims the server, and runs it to uninstall. The modes are a user service on the Mac and on aarch64 Linux, and a root install and Docker on x86_64 Linux.
 10. **Publish,** for a tag only: requires an npm that publishes by trusted publishing and npm's trust for this run; drafts the GitHub release with the six files and notes made of `scripts/release/upgrade-note.md` and the generated list of pull requests; checks the draft's archives against its checksums; tags the image `<version>` and `latest` and pulls it signed out; publishes `@withmarfa/core` and `@withmarfa/client` to npm with provenance; then makes the release public.
@@ -89,10 +89,10 @@ Each job is named as GitHub shows it.
 
 - **Before `Publish`,** nothing is public under the version: the image job pushes untagged digests only. Fix what failed outside the code (a runner, a secret, a network fault) and re-run the failed jobs with `gh run rerun <run id> --failed`. The build and signing artifacts are kept for one day; after that, re-run the whole run with `gh run rerun <run id>`.
 - **In `Publish`,** each step skips what is already there: a draft is given only the files it lacks, an image version that exists is kept, and an npm version that exists is skipped. Re-run the job after fixing what its error names:
-  - A new package on ghcr.io is private until it is made public in its package settings.
-  - A package npm has never published needs its first version published by hand from the run's artifacts and a trusted publisher set to this repository and `release.yml`.
+  - A new package on ghcr.io is private until a maintainer makes it public in its package settings.
+  - A package npm has never published stops the job before anything is published. Its first version is published by hand from the run's artifacts, with a trusted publisher set to this repository and `release.yml`: that is a maintainer's step, so stop and say so; never publish it yourself.
 - **`Update the Homebrew tap`** fails when `HOMEBREW_TAP` is `publish` and the secret `HOMEBREW_TAP_TOKEN` is missing. Set it to a fine-grained token with Contents read and write on `withmarfa/homebrew-tap`, then re-run the job. If several releases' tap jobs failed, re-run them oldest first: the job does not refuse to move the formula back to an older version.
-- **A fix that needs a code change** cannot reach a tag that already ran. `Read the version` refuses the next version while this one is tagged and not released, so stop and bring it to the owner.
+- **A fix that needs a code change** cannot reach a tag that already ran. `Read the version` refuses the next version while this one is tagged and not released, so stop and bring it to a maintainer.
 
 ## Never
 
