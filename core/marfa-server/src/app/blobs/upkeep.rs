@@ -1,6 +1,6 @@
 //! Jobs that keep every attached store whole: replicate, integrity and orphans.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io;
 use std::sync::Arc;
 
@@ -326,15 +326,19 @@ pub async fn replicate_one(
     Ok(Replicated::Copied)
 }
 
+/// Why the object store failed, in words that name no address or key; the log has the rest.
+pub(crate) fn object_store_said(error: &io::Error) -> &'static str {
+    match error.kind() {
+        io::ErrorKind::TimedOut => "the object store did not answer in time",
+        io::ErrorKind::NotFound => "the bucket or the file was not found",
+        _ => "the object store refused or failed the request, and the server's log has the detail",
+    }
+}
+
 /// Why a store failed, in words that name no address or key; the server's log has the rest.
 fn told(store: &Store, error: &io::Error) -> String {
-    match (store, error.kind()) {
-        (Store::S3(_), io::ErrorKind::TimedOut) => "the object store did not answer in time".into(),
-        (Store::S3(_), io::ErrorKind::NotFound) => "the bucket or the file was not found".into(),
-        (Store::S3(_), _) => {
-            "the object store refused or failed the request, and the server's log has the detail"
-                .into()
-        }
+    match store {
+        Store::S3(_) => object_store_said(error).into(),
         _ => error.to_string(),
     }
 }
@@ -367,7 +371,7 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
     let missing = app.db.read(move |tx| rows::missing(tx, batch)).await?;
     let mut unreachable = BTreeSet::new();
     let (mut copied, mut bytes) = (0u64, 0u64);
-    let mut refused: Option<String> = None;
+    let mut refused: BTreeMap<String, String> = BTreeMap::new();
     for pair in missing {
         if !run.go_on().await {
             break;
@@ -380,7 +384,7 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
             continue;
         };
         if app.blobs.gate.unfinished(&pair.blob.hash) {
-            refused.get_or_insert_with(|| {
+            refused.entry(target.id().to_string()).or_insert_with(|| {
                 refusal_to_copy(&target, Some("an earlier write to it has not finished"))
             });
             continue;
@@ -391,16 +395,24 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
                 bytes = bytes.saturating_add(size);
             }
             Replicated::Failed(why) => {
-                refused.get_or_insert_with(|| refusal_to_copy(&target, why.as_deref()));
+                refused
+                    .entry(target.id().to_string())
+                    .or_insert_with(|| refusal_to_copy(&target, why.as_deref()));
             }
             Replicated::Passed | Replicated::Unreadable => {}
         }
     }
     let remaining = app.db.read(rows::missing_count).await?;
+    let mut result = json!({ "copied": copied, "bytes": bytes, "remaining": remaining });
+    let mut failure = None;
+    if copied == 0 && !refused.is_empty() {
+        failure = Some(refused.values().cloned().collect::<Vec<_>>().join(" "));
+        result["refused"] = json!(refused);
+    }
     Ok(Report {
-        result: json!({ "copied": copied, "bytes": bytes, "remaining": remaining }),
+        result,
         again: copied > 0 && remaining > 0,
-        failure: refused.filter(|_| copied == 0),
+        failure,
     })
 }
 

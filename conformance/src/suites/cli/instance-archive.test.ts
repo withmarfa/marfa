@@ -95,6 +95,18 @@ describe("the instance's archive from the terminal", () => {
       JSON.stringify({ title, body: "b" }),
     ]);
     trackItem(c.ctx, created.item.id);
+    const binned = unique("cli-export-default-bin");
+    const inBin = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title: binned, body: "b" }),
+    ]);
+    trackItem(c.ctx, inBin.item.id);
+    const trashed = await c.cli.run(["items", "delete", inBin.item.id]);
+    expect(trashed.code, trashed.stderr).toBe(0);
 
     const plain = join(dir, "default.tar");
     const report = await c.cli.json<{ content_type: string }>([
@@ -105,6 +117,17 @@ describe("the instance's archive from the terminal", () => {
     expect(report.content_type).toBe("application/x-tar");
     const archive = new Uint8Array(readFileSync(plain));
     expect(readLineFile(archive, "items")).toContain(title);
+    // A plain export keeps everything, the bin included.
+    expect(readLineFile(archive, "items")).toContain(binned);
+    // The witness: naming a state narrows it, so the bin was producible apart.
+    const active = join(dir, "active.tar");
+    await c.cli.json(["export", "--state", "active", "--output", active]);
+    const narrowed = readLineFile(
+      new Uint8Array(readFileSync(active)),
+      "items",
+    );
+    expect(narrowed).toContain(title);
+    expect(narrowed).not.toContain(binned);
     // Standard output is the archive too, as bytes a redirect keeps.
     const piped = await c.cli.run(["export"]);
     expect(piped.code, piped.stderr).toBe(0);

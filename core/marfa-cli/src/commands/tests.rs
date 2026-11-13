@@ -2492,8 +2492,14 @@ fn a_state_list_is_sent_as_the_servers_comma_separated_list() {
             Some("any"),
             "{door}"
         );
-        assert_eq!(states_sent(door, &[]).unwrap(), None, "{door}");
+        // An archive carries the bin unless told otherwise; the other doors leave it to the server.
+        let unset = (door == "export").then_some("any");
+        assert_eq!(states_sent(door, &[]).unwrap().as_deref(), unset, "{door}");
     }
+    assert_eq!(
+        states_sent("export", &["--format", "ndjson"]).unwrap(),
+        None
+    );
 }
 
 #[test]

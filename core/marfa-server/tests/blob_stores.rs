@@ -936,9 +936,14 @@ async fn a_blob_that_never_copies_does_not_hold_back_the_others() {
     instance.app.clock.advance(5).unwrap();
     let other = instance.stored(b"copied all the same").await;
 
-    for _ in 0..3 {
+    // The batch is one blob and the stuck one yields to the other, so by the third run only
+    // the stuck file is left, and that run copies nothing.
+    for _ in 0..2 {
         instance.run_either("blob-replicate").await;
     }
+    let last = instance.failed_run("blob-replicate").await;
+    assert_eq!(last["copied"], 0, "{last}");
+    assert_eq!(last["remaining"], 1, "{last}");
     assert_eq!(instance.copies(&other).await.len(), 2);
     assert_eq!(instance.copies(&hash_of(stuck)).await.len(), 1);
 }
@@ -970,6 +975,27 @@ async fn a_copy_the_object_store_refuses_ends_the_run_as_failed_naming_the_store
     assert!(
         !error.contains("127.0.0.1") && !error.contains("http"),
         "{error}"
+    );
+
+    // One refused file is told as files waiting, never as a store that is not taking copies.
+    let attention = instance.call(Method::GET, "/attention", None).await;
+    let told: Vec<&Value> = attention.body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|concern| concern["kind"] == "backup")
+        .collect();
+    assert_eq!(told.len(), 1, "{}", attention.body);
+    assert_eq!(told[0]["reference"], "store");
+    assert_eq!(
+        told[0]["title"],
+        "Files are waiting for their copy in the object store"
+    );
+    let description = told[0]["description"].as_str().unwrap();
+    assert!(
+        description.starts_with("The object store did not take a copy: ")
+            && description.ends_with("1 file waits for its second copy."),
+        "{description}"
     );
 
     // The witness: the same run once the store takes writes copies the file and ends ok.

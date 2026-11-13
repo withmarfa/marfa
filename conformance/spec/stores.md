@@ -366,6 +366,14 @@ If a run of `blob-replicate` copies no blob because an attached store does not t
 
 **Tests:** `compliance/blob-store-silent.test.ts › finishes, copies nothing, counts the copy in remaining, and makes it once the stores answer`, `› finishes the run, counts the copy in remaining, skips the blob in later runs without waiting, and refuses an upload of its bytes`, `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`.
 
+### `stores/replicate-failure-by-store`
+
+If a run of `blob-replicate` ends with `outcome` `error` because attached stores do not take a copy, then the server MUST answer the run's `result` with `refused`, an object that holds, for each store that took none, the store's ID and why.
+
+**Reason:** a failure copying into the blob folder is not a failure of the backup destination, and only the store's ID tells them apart.
+
+**Tests:** `compliance/blob-store-silent.test.ts › tells one file the object store refused as files waiting for their copy, not as a store that is gone`.
+
 ### `stores/replicate-write-no-answer`
 
 If an attached store leaves a write of a blob's bytes from a run of `blob-replicate` unfinished for 15 seconds and one more second for each 256 KiB of the blob, then the server MUST answer the run with the copy it was making counted in `remaining`.

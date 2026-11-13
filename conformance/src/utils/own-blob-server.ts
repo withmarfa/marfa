@@ -87,7 +87,12 @@ export async function runJob<T = Record<string, number>>(
   operator: MarfaClient,
   name: string,
   ending: "ok" | "error" | "either" = "ok",
-): Promise<{ result: T; started_at: string; finished_at: string }> {
+): Promise<{
+  result: T;
+  outcome: string;
+  started_at: string;
+  finished_at: string;
+}> {
   for (let i = 0; i < 50; i++) {
     const res = await operator.runHousekeeping(name);
     if (res.status === 409) {
@@ -100,11 +105,33 @@ export async function runJob<T = Record<string, number>>(
     }
     return {
       result: res.data.result as T,
+      outcome: res.data.outcome,
       started_at: res.data.started_at,
       finished_at: res.data.finished_at,
     };
   }
   throw new Error(`${name} was held by a run for five seconds`);
+}
+
+/**
+ * Replicates until no store lacks a blob, once the stores answer again. A run
+ * on the way may meet a write the store still holds and end `error`; the run
+ * that leaves nothing waiting must end `ok`.
+ */
+export async function replicateUntilCaughtUp(
+  operator: MarfaClient,
+  what: string,
+): Promise<void> {
+  await waitFor(what, async () => {
+    const run = await runJob<{ remaining: number }>(
+      operator,
+      "blob-replicate",
+      "either",
+    );
+    if (run.result.remaining !== 0) return undefined;
+    expect(run.outcome).toBe("ok");
+    return true;
+  });
 }
 
 /** Bytes of exactly `size`, distinct for every `words`. */

@@ -1192,7 +1192,8 @@ CREATE TABLE IF NOT EXISTS backup_state (
     last_backup_at TEXT,
     failures INTEGER NOT NULL DEFAULT 0,
     last_error TEXT,
-    last_failed_at TEXT
+    last_failed_at TEXT,
+    last_error_in_store INTEGER NOT NULL DEFAULT 0 CHECK (last_error_in_store IN (0, 1))
 ) STRICT;
 
 CREATE TABLE IF NOT EXISTS backups (

@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 
 use super::App;
+use super::backups::BackupHealth;
 use super::blobs::MARKER;
 use super::faults::{FAIL_HEALTH_WRITE, HOLD_DISK_PROBE, REFUSE_BLOB_STORE, Volume};
 use super::refusal::{Code, Refusal};
@@ -92,7 +93,7 @@ pub struct Report {
     database_write: Component,
     disk: Component,
     blob_storage: Component,
-    backups: Value,
+    backup: BackupHealth,
 }
 
 /// Fields of the `backups` object given only to a caller who may read the reasons.
@@ -117,7 +118,7 @@ impl Report {
         ]
         .iter()
         .map(|component| component.status)
-        .chain((self.backups["status"] == "failing").then_some(Status::Degraded))
+        .chain((self.backup.report["status"] == "failing").then_some(Status::Degraded))
         .max()
         .unwrap_or(Status::Ok)
     }
@@ -139,13 +140,13 @@ impl Report {
         .collect()
     }
 
-    /// The `backups` object as the owner reads it, reasons included.
-    pub fn backups(&self) -> &Value {
-        &self.backups
+    /// What backups look like to the owner, reasons included.
+    pub fn backups(&self) -> &BackupHealth {
+        &self.backup
     }
 
     pub fn to_json(&self, with_errors: bool) -> Value {
-        let mut backups = self.backups.clone();
+        let mut backups = self.backup.report.clone();
         if !with_errors && let Some(fields) = backups.as_object_mut() {
             fields.retain(|key, _| !BACKUP_DETAIL.contains(&key.as_str()));
         }
@@ -316,7 +317,7 @@ async fn blob_storage(app: &Arc<App>) -> Component {
 }
 
 pub async fn check(app: &Arc<App>) -> Report {
-    let (database, database_write, disk, blob_storage, backups) = tokio::join!(
+    let (database, database_write, disk, blob_storage, backup) = tokio::join!(
         database(app),
         database_write(app),
         disk(app),
@@ -328,7 +329,7 @@ pub async fn check(app: &Arc<App>) -> Report {
         database_write,
         disk,
         blob_storage,
-        backups,
+        backup,
     }
 }
 

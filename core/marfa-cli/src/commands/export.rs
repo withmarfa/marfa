@@ -30,7 +30,8 @@ pub struct ExportArgs {
     #[arg(long = "type", value_name = "TYPE")]
     pub type_: Option<String>,
     /// A state to answer; repeat it or separate states with commas. `any` is
-    /// every state, and is given alone. Unset answers every state but the bin.
+    /// every state, and is given alone. Unset, an archive carries every state,
+    /// the bin included, and `ndjson` every state but the bin.
     #[arg(long, value_delimiter = ',')]
     pub state: Vec<StateFilter>,
     /// The source the items were written under.
@@ -75,10 +76,14 @@ pub fn request(args: &ExportArgs) -> Result<Request, CliError> {
 }
 
 fn request_waiting(args: &ExportArgs, archive_wait: Duration) -> Result<Request, CliError> {
+    let states = match state_list(&args.state)? {
+        None if args.format == ExportFormat::Archive => Some(StateFilter::Any.as_str().to_string()),
+        states => states,
+    };
     let request = Request::get(&["export"])
         .query("format", args.format.as_str())
         .query_opt("type", args.type_.clone())
-        .query_opt("state", state_list(&args.state)?)
+        .query_opt("state", states)
         .query_opt("source", args.source.clone())
         .query_opt("occurred_after", args.occurred_after.clone())
         .query_opt("occurred_before", args.occurred_before.clone())
@@ -781,6 +786,29 @@ mod tests {
         })
         .unwrap();
         assert!(items.query.contains(&("format".into(), "ndjson".into())));
+    }
+
+    #[test]
+    fn a_plain_archive_carries_the_bin_and_a_named_state_or_ndjson_leaves_it_to_the_server() {
+        let state = |args: &ExportArgs| {
+            request(args)
+                .unwrap()
+                .query
+                .iter()
+                .find(|(name, _)| name == "state")
+                .map(|(_, value)| value.clone())
+        };
+        assert_eq!(state(&ExportArgs::default()).as_deref(), Some("any"));
+        let named = ExportArgs {
+            state: vec![StateFilter::Active],
+            ..ExportArgs::default()
+        };
+        assert_eq!(state(&named).as_deref(), Some("active"));
+        let items = ExportArgs {
+            format: ExportFormat::Ndjson,
+            ..ExportArgs::default()
+        };
+        assert_eq!(state(&items), None);
     }
 
     #[test]

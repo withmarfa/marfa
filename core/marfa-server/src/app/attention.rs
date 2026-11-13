@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
+use super::backups::{BackupHealth, StoreFault};
 use super::connectors::{self, Reason};
 use super::faults::{FAIL_ATTENTION, HOLD_ATTENTION};
 use super::refusal::Result;
@@ -58,7 +59,8 @@ fn plural(count: i64, one: &str, many: &str) -> String {
 }
 
 /// What the backups part of the health report asks of the owner.
-fn backing(backups: &Value) -> Vec<Concern> {
+fn backing(health: &BackupHealth) -> Vec<Concern> {
+    let backups = &health.report;
     let text = |field: &str| backups[field].as_str().filter(|text| !text.is_empty());
     let concern = |reference: &str, title: &str, description: String| Concern {
         kind: "backup",
@@ -87,21 +89,32 @@ fn backing(backups: &Value) -> Vec<Concern> {
         )),
         _ => {}
     }
-    if let Some(error) = text("store_error") {
-        let title = match text("destination") {
-            Some("folder") => "The backup folder is not taking copies",
-            _ => "The object store is not taking copies",
+    let mut folded = false;
+    if let (Some(error), Some(fault)) = (text("store_error"), health.fault) {
+        let place = match text("destination") {
+            Some("folder") => "backup folder",
+            _ => "object store",
+        };
+        let title = match fault {
+            StoreFault::FolderGone => "The backup folder is not there".to_string(),
+            StoreFault::FolderSilent => "The backup folder is not answering".to_string(),
+            StoreFault::Refused => format!("Files are waiting for their copy in the {place}"),
         };
         let waiting = backups["copies_waiting"].as_u64().unwrap_or(0);
         let error = error.trim_end_matches('.');
-        let description = match waiting {
+        let mut description = match waiting {
             0 => format!("{error}."),
             1 => format!("{error}. 1 file waits for its second copy."),
             count => format!("{error}. {count} files wait for their second copy."),
         };
-        found.push(concern("store", title, description));
+        folded = health.run_in_store && backups["failures"].as_i64().unwrap_or(0) > 0;
+        if folded {
+            description.push_str(" The last backup run failed too.");
+        }
+        found.push(concern("store", &title, description));
     }
-    if backups["failures"].as_i64().unwrap_or(0) > 0 && !backups["destination"].is_null() {
+    if !folded && backups["failures"].as_i64().unwrap_or(0) > 0 && !backups["destination"].is_null()
+    {
         found.push(concern(
             "run",
             "The last backup run failed or lost files",
@@ -286,6 +299,7 @@ where
 }
 
 /// A job whose failure a backup concern already tells is left out, so one fault is one entry.
+/// A failed backup run always lands in the backup state, which `run` or `store` tells.
 fn without_covered_jobs(health: &[Concern], jobs: Vec<Concern>) -> Vec<Concern> {
     let told = |reference: &str| {
         health
@@ -294,7 +308,7 @@ fn without_covered_jobs(health: &[Concern], jobs: Vec<Concern>) -> Vec<Concern> 
     };
     jobs.into_iter()
         .filter(|job| {
-            !((job.reference == "backup" && told("run"))
+            !((job.reference == "backup" && (told("run") || told("store")))
                 || (job.reference == "blob-replicate" && told("store")))
         })
         .collect()

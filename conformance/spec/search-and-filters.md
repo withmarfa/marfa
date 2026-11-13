@@ -2348,9 +2348,9 @@ When `POST /restore` answers `503 blob_store_unavailable`, the server MUST NOT w
 
 ### `search-and-filters/cli-export-default`
 
-When `marfa export` is given no `--format`, the CLI MUST export the whole archive, as `--format archive` does.
+When `marfa export` is given no `--format` and no `--state`, the CLI MUST export the whole archive, as `--format archive` does, the bin included.
 
-**Reason:** a person who exports to keep their data and does not read the help gets every item, the bin on request, the tables, the settings and the files, not the items alone.
+**Reason:** a person who exports to keep their data and does not read the help gets every item, the bin included, the tables, the settings and the files, not the items alone. The server's own default leaves the bin out, and the CLI asks for it.
 
 **Tests:** `cli/instance-archive.test.ts › exports the whole archive when no format is given, and the items as text only when asked`.
 

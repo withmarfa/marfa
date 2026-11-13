@@ -2178,7 +2178,7 @@ Export the instance's data: everything, as an archive.
 
 ### marfa export
 
-With no `--format`, this writes the archive: every item, edge, table, setting and file the key may read, which `restore` brings back. The bin stays out unless `--state any` asks for it. `--format ndjson` writes the items alone, one per line, without tables, settings or files.
+With no `--format`, this writes the archive: every item, edge, table, setting and file the key may read, the bin included, which `restore` brings back. `--state` narrows the items. `--format ndjson` writes the items alone, one per line, without tables, settings or files, and leaves out the bin unless `--state any` asks for it.
 
 An archive is kept even when it lacks blobs it names: a blob no store could read whole, or a file's blob the key may not read, such as one only an earlier version names. A key holding `blobs.manage` reads every blob. The manifest lists the blobs it lacks under `missing_blobs`, and the command then exits 1 with `blobs_missing`, naming up to ten of them.
 
@@ -2193,7 +2193,7 @@ marfa export [OPTIONS]
 | `--format <FORMAT>` | `archive` for the whole instance, the default, or `ndjson` for items one per line, which leaves out tables, settings and files. One of `ndjson`, `archive`. Default: `archive`. |
 | `--output <PATH>` | Where to write. Omitted, the export goes to stdout, which an archive refuses when stdout is a terminal. The path is replaced only by an export that ends whole, and for an archive only by one that lacks no blobs. |
 | `--type <TYPE>` | A type identifier; its subtypes are included. |
-| `--state <STATE>` | A state to answer; repeat it or separate states with commas. `any` is every state, and is given alone. Unset answers every state but the bin. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
+| `--state <STATE>` | A state to answer; repeat it or separate states with commas. `any` is every state, and is given alone. Unset, an archive carries every state, the bin included, and `ndjson` every state but the bin. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
 | `--source <SOURCE>` | The source the items were written under. |
 | `--occurred-after <TIME>` | Exclusive lower bound on the item's own time, RFC 3339. |
 | `--occurred-before <TIME>` | Exclusive upper bound on the item's own time, RFC 3339. |

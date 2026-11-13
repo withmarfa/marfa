@@ -254,9 +254,10 @@ enum Command {
     /// Export the instance's data: everything, as an archive.
     ///
     /// With no `--format`, this writes the archive: every item, edge, table,
-    /// setting and file the key may read, which `restore` brings back. The bin
-    /// stays out unless `--state any` asks for it. `--format ndjson` writes the
-    /// items alone, one per line, without tables, settings or files.
+    /// setting and file the key may read, the bin included, which `restore`
+    /// brings back. `--state` narrows the items. `--format ndjson` writes the
+    /// items alone, one per line, without tables, settings or files, and
+    /// leaves out the bin unless `--state any` asks for it.
     ///
     /// An archive is kept even when it lacks blobs it names: a blob no store
     /// could read whole, or a file's blob the key may not read, such as one

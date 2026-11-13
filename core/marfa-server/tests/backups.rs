@@ -401,7 +401,17 @@ async fn a_scheduled_backup_runs_after_a_failed_one_when_nothing_has_changed() {
     store.set_mode(Mode::AllNotFound);
     let (status, body) = instance.local(Method::POST, "/backups", None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    assert_eq!(instance.backups_health().await["status"], "failing");
+    let health = instance.backups_health().await;
+    assert_eq!(health["status"], "failing");
+    let last_error = health["last_error"].as_str().unwrap();
+    assert!(
+        last_error.starts_with("The object store failed while "),
+        "{last_error}"
+    );
+    assert!(
+        !last_error.contains("127.0.0.1") && !last_error.contains("http"),
+        "the store's address stays in the log: {last_error}"
+    );
 
     store.set_mode(Mode::Normal);
     let (status, body) = instance

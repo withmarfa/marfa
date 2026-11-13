@@ -15,6 +15,7 @@ import {
   clientsFor,
   leaveBacklog,
   ownObjectStore,
+  replicateUntilCaughtUp,
   replicationIdle,
   runJob,
 } from "../../utils/own-blob-server.js";
@@ -113,18 +114,6 @@ async function replicated(
   );
   await replicationIdle(operator);
   return hash;
-}
-
-/** Replicates until no store lacks a blob, once the stores answer again. */
-async function replicatedAgain(what: string): Promise<void> {
-  await waitFor(what, async () => {
-    const run = await runJob<{ copied: number; remaining: number }>(
-      operator,
-      "blob-replicate",
-      "either",
-    );
-    return run.result.remaining === 0 ? true : undefined;
-  });
 }
 
 /** The instance's owner, who alone may restore an archive. */
@@ -233,14 +222,19 @@ describe("health and attention while the object store does not answer", () => {
     expect(typeof detail.backups.store_error).toBe("string");
     const told = await backupConcerns(server);
     expect(told.map((concern) => concern.reference)).toEqual(["store"]);
-    expect(told[0]!.title).toBe("The object store is not taking copies");
+    expect(told[0]!.title).toBe(
+      "Files are waiting for their copy in the object store",
+    );
     expect(told[0]!.description).toContain("1 file waits for its second copy");
     expect(
       (await attentionOf(server)).some((concern) => concern.kind === "job"),
     ).toBe(false);
 
     await server.clearFault();
-    await replicatedAgain("the object store's copy once it answers");
+    await replicateUntilCaughtUp(
+      operator,
+      "the object store's copy once it answers",
+    );
     await runJob(operator, "blob-replicate");
     expect((await operator.listBlobCopies(hash!)).data.data).toHaveLength(2);
     const healed = await healthDetail(server);
@@ -249,6 +243,38 @@ describe("health and attention while the object store does not answer", () => {
       store_error: null,
       copies_waiting: 0,
     });
+    expect(await backupConcerns(server)).toEqual([]);
+  });
+
+  it("tells one file the object store refused as files waiting for their copy, not as a store that is gone", async () => {
+    const [hash] = await leaveBacklog(operator, working, [
+      bytesOf("refused by the object store", 120),
+    ]);
+    await server.setFault("fail:blob-write=1");
+    const run = await runJob<{
+      copied: number;
+      remaining: number;
+      refused: Record<string, string>;
+    }>(operator, "blob-replicate", "error");
+    expect(run.result).toMatchObject({ copied: 0, remaining: 1 });
+    const bucket = (await operator.listBlobStores()).data.data.find(
+      (store) => store.kind === "s3",
+    )!;
+    expect(run.result.refused).toEqual({
+      [bucket.id]: expect.stringContaining("did not take a copy"),
+    });
+    const told = await backupConcerns(server);
+    expect(told.map((concern) => concern.reference)).toEqual(["store"]);
+    expect(told[0]!.title).toBe(
+      "Files are waiting for their copy in the object store",
+    );
+    expect(told[0]!.description).toContain("1 file waits for its second copy");
+    expect(told[0]!.title).not.toContain("not taking copies");
+
+    // The witness: the object store takes the file once the refusal ends.
+    await server.clearFault();
+    await replicateUntilCaughtUp(operator, "the refused file's copy");
+    expect((await operator.listBlobCopies(hash!)).data.data).toHaveLength(2);
     expect(await backupConcerns(server)).toEqual([]);
   });
 });
@@ -292,14 +318,10 @@ describe("a store's delete that does not answer", () => {
     expect(restoreRefused.error?.error.code).toBe("blob_store_unavailable");
 
     await server.clearFault();
-    await waitFor("the object store's copy made again", async () => {
-      const run = await runJob<{ copied: number; remaining: number }>(
-        operator,
-        "blob-replicate",
-        "either",
-      );
-      return run.result.remaining === 0 ? true : undefined;
-    });
+    await replicateUntilCaughtUp(
+      operator,
+      "the object store's copy made again",
+    );
     expect((await operator.listBlobCopies(hash)).data.data).toHaveLength(2);
     // The late delete took nothing the copy made after it holds: the check
     // takes the copy never checked first, and would strike it if gone.
@@ -343,7 +365,7 @@ describe("a strike whose delete does not answer", () => {
     await server.clearFault("store-check-deadline");
     const next = await runJob(operator, "blob-integrity");
     expect(next.result).toMatchObject({ struck: 1, unreachable: 0 });
-    await replicatedAgain("the disk's copies made again");
+    await replicateUntilCaughtUp(operator, "the disk's copies made again");
     for (const hash of hashes)
       expect(await kinds(hash)).toEqual(["disk", "s3"]);
   });
@@ -378,7 +400,7 @@ describe("an upload while the disk does not finish a queued deletion of its byte
       const stored = await working.uploadBlob(content, "text/plain");
       return stored.status === 201 ? true : undefined;
     });
-    await replicatedAgain("the copies of the uploaded blob");
+    await replicateUntilCaughtUp(operator, "the copies of the uploaded blob");
     expect(
       (await operator.listBlobCopies(hash)).data.data
         .map((copy) => copy.kind)
@@ -411,14 +433,7 @@ describe("a store's write that does not answer", () => {
     expect(refused.error?.error.code).toBe("blob_store_unavailable");
 
     await server.clearFault();
-    await waitFor("the object store's copy", async () => {
-      const copied = await runJob<{ copied: number; remaining: number }>(
-        operator,
-        "blob-replicate",
-        "either",
-      );
-      return copied.result.remaining === 0 ? true : undefined;
-    });
+    await replicateUntilCaughtUp(operator, "the object store's copy");
     expect((await operator.listBlobCopies(hash!)).data.data).toHaveLength(2);
   });
 });
@@ -450,7 +465,7 @@ describe("a drop while a store does not finish a write of the blob's bytes", () 
     // The witness: once the store answers and the copy is made, the same
     // drop goes through.
     await server.clearFault();
-    await replicatedAgain("the object store's copy");
+    await replicateUntilCaughtUp(operator, "the object store's copy");
     const dropped = await operator.deleteBlobCopy(hash!, disk);
     expect(dropped.status, JSON.stringify(dropped.error)).toBe(200);
     expect(

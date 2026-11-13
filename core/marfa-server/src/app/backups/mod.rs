@@ -23,10 +23,10 @@ use super::blobs::folder::{self as backup_folder, Adoptable, Folder};
 use super::blobs::restore::{Named, Readable};
 use super::blobs::s3::S3;
 use super::blobs::store::{ByteStream, Store};
-use super::blobs::upkeep::{Replicated, replicate_one};
+use super::blobs::upkeep::{Replicated, object_store_said, replicate_one};
 use super::blobs::{Blob, Hash};
 use super::clock::Stamp;
-use super::faults::{HOLD_BACKUP_PUT, HOLD_BACKUP_READ};
+use super::faults::{HOLD_BACKUP_PUT, HOLD_BACKUP_READ, HOLD_DISK_PROBE};
 use super::housekeeping::{self, Report, Run};
 use super::refusal::{Code, Refusal, Result};
 use crate::db::Write;
@@ -60,6 +60,8 @@ struct State {
     failures: i64,
     last_error: Option<String>,
     last_failed_at: Option<String>,
+    /// Whether the last failure was the destination not answering.
+    last_error_in_store: bool,
 }
 
 /// The change count a backup taken in this snapshot holds.
@@ -75,7 +77,7 @@ fn state(tx: &Transaction<'_>) -> Result<State> {
     let found = tx
         .prepare_cached(
             "SELECT changes, backed_up, backed_up_version, last_backup, last_backup_at, failures, \
-             last_error, last_failed_at FROM backup_state WHERE id = 1",
+             last_error, last_failed_at, last_error_in_store FROM backup_state WHERE id = 1",
         )?
         .query_row([], |row| {
             Ok(State {
@@ -87,6 +89,7 @@ fn state(tx: &Transaction<'_>) -> Result<State> {
                 failures: row.get(5)?,
                 last_error: row.get(6)?,
                 last_failed_at: row.get(7)?,
+                last_error_in_store: row.get(8)?,
             })
         })
         .optional()?;
@@ -112,11 +115,11 @@ fn record_put(
         params![changes, name, at, archive::VERSION as i64],
     )?;
     match without {
-        Some(message) => record_failure(tx, message, at),
+        Some(message) => record_failure(tx, message, at, false),
         None => {
             tx.execute(
-                "UPDATE backup_state SET failures = 0, last_error = NULL, last_failed_at = NULL \
-                 WHERE id = 1",
+                "UPDATE backup_state SET failures = 0, last_error = NULL, last_failed_at = NULL, \
+                 last_error_in_store = 0 WHERE id = 1",
                 [],
             )?;
             Ok(())
@@ -124,12 +127,13 @@ fn record_put(
     }
 }
 
-fn record_failure(tx: &Transaction<'_>, error: &str, at: Stamp) -> Result<()> {
+/// Records a failed run; `in_store` is whether the destination did not answer.
+fn record_failure(tx: &Transaction<'_>, error: &str, at: Stamp, in_store: bool) -> Result<()> {
     tx.execute(
-        "INSERT INTO backup_state (id, failures, last_error, last_failed_at) \
-         VALUES (1, 1, ?1, ?2) ON CONFLICT (id) DO UPDATE SET \
-         failures = failures + 1, last_error = ?1, last_failed_at = ?2",
-        params![error, at],
+        "INSERT INTO backup_state (id, failures, last_error, last_failed_at, last_error_in_store) \
+         VALUES (1, 1, ?1, ?2, ?3) ON CONFLICT (id) DO UPDATE SET \
+         failures = failures + 1, last_error = ?1, last_failed_at = ?2, last_error_in_store = ?3",
+        params![error, at, in_store],
     )?;
     Ok(())
 }
@@ -413,28 +417,27 @@ impl Destination {
         }
     }
 
+    /// The refusal for a store that did not take part, naming no address; the log has the error.
     fn unreachable(&self, what: &str, error: &std::io::Error) -> Refusal {
-        match self {
-            Destination::Bucket(_) => {
-                tracing::warn!(%error, "The object store did not take part in a backup");
-                Refusal::new(
-                    Code::BlobStoreUnavailable,
-                    format!("The object store did not answer while {what}: {error}"),
-                )
-            }
-            Destination::Folder(folder) => {
-                tracing::warn!(%error, "The backup folder did not take part in a backup");
-                let message = if folder.reachable() {
-                    format!(
-                        "The backup folder {} failed while {what}: {error}",
-                        folder.root().display()
-                    )
-                } else {
-                    folder_not_there(folder)
-                };
-                Refusal::new(Code::BlobStoreUnavailable, message)
-            }
-        }
+        tracing::warn!(%error, kind = self.kind(), "The destination did not take part in a backup");
+        let why = match self {
+            Destination::Bucket(_) => object_store_said(error).to_string(),
+            Destination::Folder(_) => error.to_string(),
+        };
+        self.failed_while(what, &why)
+    }
+
+    /// The same refusal for a reason already worded for the owner.
+    fn failed_while(&self, what: &str, why: &str) -> Refusal {
+        let message = match self {
+            Destination::Bucket(_) => format!("The object store failed while {what}: {why}."),
+            Destination::Folder(folder) if folder.reachable() => format!(
+                "The backup folder {} failed while {what}: {why}",
+                folder.root().display()
+            ),
+            Destination::Folder(folder) => folder_not_there(folder),
+        };
+        Refusal::new(Code::BlobStoreUnavailable, message)
     }
 
     fn not_found(&self, instance: &str, name: &str) -> Refusal {
@@ -963,8 +966,9 @@ impl App {
         if looking.swap(true, Ordering::AcqRel) {
             return None;
         }
-        let folder = folder.clone();
+        let (folder, faults) = (folder.clone(), self.faults.clone());
         let answered = super::health::bounded(move || {
+            faults.hold_blocking(HOLD_DISK_PROBE);
             let there = folder.reachable();
             looking.store(false, Ordering::Release);
             there
@@ -976,40 +980,25 @@ impl App {
         answered
     }
 
-    /// Why the destination takes no copies: the folder's disk, or what replication last found.
-    async fn store_error(
-        &self,
-        destination: &Destination,
-        replication: Option<&str>,
-    ) -> Option<String> {
-        if let Destination::Folder(folder) = destination {
-            match self.folder_there(folder).await {
-                Some(true) => {}
-                Some(false) => return Some(folder_not_there(folder)),
-                None => {
-                    return Some(format!(
-                        "The backup folder {} did not answer in time.",
-                        folder.root().display()
-                    ));
-                }
-            }
-        }
-        replication.map(str::to_string)
-    }
-
     /// What `/health` says of backups: whether they run, how the last went, and the store's state.
-    pub async fn backup_health(&self) -> Value {
+    pub async fn backup_health(&self) -> BackupHealth {
         let mut health = serde_json::Map::new();
         let destination = Destination::of(self);
         if let Some(destination) = &destination {
             health.insert("destination".into(), destination.kind().into());
         }
+        let look = async {
+            match &destination {
+                Some(Destination::Folder(folder)) => Some(self.folder_there(folder).await),
+                _ => None,
+            }
+        };
         let read = tokio::time::timeout(
             Duration::from_secs(2),
             self.db
                 .read(|tx| Ok((state(tx)?, housekeeping::last_run(tx, REPLICATION)?))),
-        )
-        .await;
+        );
+        let (read, looked) = tokio::join!(read, look);
         let (state, replication) = match read {
             Ok(Ok((state, replication))) => (Some(state), replication),
             Ok(Err(error)) => {
@@ -1026,13 +1015,19 @@ impl App {
             .and_then(|run| run.result.as_ref())
             .and_then(|result| result["remaining"].as_u64())
             .unwrap_or(0);
-        let store_error = match &destination {
-            Some(destination) => {
-                let failed = replication.as_ref().and_then(|run| run.failure.as_deref());
-                self.store_error(destination, failed).await
-            }
-            None => None,
-        };
+        let trouble = destination.as_ref().and_then(|destination| {
+            let refused = replication
+                .as_ref()
+                .filter(|run| run.failure.is_some())
+                .and_then(|run| run.result.as_ref())
+                .and_then(|result| refused_by(result, &destination.id()));
+            store_trouble(destination, looked, refused)
+        });
+        let fault = trouble.as_ref().map(|(fault, _)| *fault);
+        let store_error = trouble.map(|(_, error)| error);
+        let run_in_store = state
+            .as_ref()
+            .is_some_and(|state| state.failures > 0 && state.last_error_in_store);
         let turned_off = self.settings.live().get(BACKUP_INTERVAL_SECONDS) == 0;
         let failing = state.as_ref().is_none_or(|state| state.failures > 0);
         let status = match (&destination, turned_off, failing, &store_error) {
@@ -1060,8 +1055,60 @@ impl App {
             health.insert("copies_waiting".into(), waiting.into());
             health.insert("store_error".into(), store_error.into());
         }
-        Value::Object(health)
+        BackupHealth {
+            report: Value::Object(health),
+            fault,
+            run_in_store,
+        }
     }
+}
+
+/// How the destination fails to take the copies that wait for it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StoreFault {
+    /// The disk of the backup folder is not there.
+    FolderGone,
+    /// A look at the backup folder did not answer in time.
+    FolderSilent,
+    /// The last run of `blob-replicate` copied nothing because the destination refused.
+    Refused,
+}
+
+/// The `backups` part of the health report, and what the attention list reads besides it.
+pub struct BackupHealth {
+    pub report: Value,
+    pub fault: Option<StoreFault>,
+    /// The last backup run failed because the destination did not answer.
+    pub run_in_store: bool,
+}
+
+/// What the last run of `blob-replicate` said of the store `destination`, when it refused it.
+fn refused_by(result: &Value, destination: &str) -> Option<String> {
+    result["refused"][destination].as_str().map(str::to_string)
+}
+
+/// Why the destination takes no copies, from a look at the folder (`None` when the destination
+/// is not a folder, and `Some(None)` when the look did not answer) or from what replication
+/// found. A failure copying to another store is not the destination's.
+fn store_trouble(
+    destination: &Destination,
+    look: Option<Option<bool>>,
+    refused: Option<String>,
+) -> Option<(StoreFault, String)> {
+    if let Destination::Folder(folder) = destination {
+        match look {
+            Some(Some(false)) => return Some((StoreFault::FolderGone, folder_not_there(folder))),
+            Some(None) => {
+                let error = format!(
+                    "The backup folder {} did not answer in time.",
+                    folder.root().display()
+                );
+                return Some((StoreFault::FolderSilent, error));
+            }
+            _ => {}
+        }
+    }
+    refused.map(|error| (StoreFault::Refused, error))
 }
 
 fn counted(count: usize, one: &str, many: &str) -> String {
@@ -1112,9 +1159,12 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
         }
         Err(refused) => {
             let (message, at) = (refused.message.to_string(), app.clock.instant());
+            let in_store = refused.code == Code::BlobStoreUnavailable;
             if let Err(error) = app
                 .db
-                .write(Write::own(), move |tx| record_failure(tx, &message, at))
+                .write(Write::own(), move |tx| {
+                    record_failure(tx, &message, at, in_store)
+                })
                 .await
             {
                 tracing::error!(%error, "A failed backup was not recorded");
@@ -1313,10 +1363,7 @@ async fn copy_files(
             .await?;
         if !held {
             let why = failed.unwrap_or_else(|| "another task holds it".to_string());
-            return Err(destination.unreachable(
-                &format!("copying the file {hash}"),
-                &std::io::Error::other(why),
-            ));
+            return Err(destination.failed_while(&format!("copying the file {hash}"), &why));
         }
     }
     Ok(lost)
@@ -1939,5 +1986,20 @@ mod tests {
             "{}",
             refused.message
         );
+    }
+
+    #[test]
+    fn a_refusal_by_another_store_is_not_the_destinations() {
+        let result = json!({
+            "copied": 0,
+            "remaining": 2,
+            "refused": { "blob-folder": "The blob folder did not take a copy: no room." },
+        });
+        assert_eq!(refused_by(&result, "bucket"), None);
+        assert_eq!(
+            refused_by(&result, "blob-folder").as_deref(),
+            Some("The blob folder did not take a copy: no room.")
+        );
+        assert_eq!(refused_by(&json!({ "copied": 1 }), "bucket"), None);
     }
 }

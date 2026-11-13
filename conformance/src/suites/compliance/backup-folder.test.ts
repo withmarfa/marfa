@@ -34,7 +34,12 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { bytesOf, clientsFor, runJob } from "../../utils/own-blob-server.js";
+import {
+  bytesOf,
+  clientsFor,
+  replicateUntilCaughtUp,
+  runJob,
+} from "../../utils/own-blob-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { diskHolds, inspectStores } from "../../utils/store-faults.js";
 import { waitFor } from "../../utils/wait.js";
@@ -305,6 +310,12 @@ describe("backups to a folder", () => {
     }
     const run = await ownerOf(origin).runBackup();
     expect(run.status, JSON.stringify(run.error)).toBe(200);
+    // The run the backup brought forward may have met the folder gone, so a run that ends whole
+    // clears what it said.
+    await replicateUntilCaughtUp(
+      clientsFor(origin).operator,
+      "replication to clear what the folder being gone said",
+    );
     expect((await health(origin)).backups.status).toBe("ok");
   });
 
@@ -474,7 +485,16 @@ describe("a backup folder that lacks a file or its disk", () => {
         );
         const told = await backupConcerns(server);
         expect(told.map((concern) => concern.reference)).toEqual(["store"]);
-        expect(told[0]!.title).toBe("The backup folder is not taking copies");
+        expect(told[0]!.title).toBe("The backup folder is not there");
+
+        // A run of the backup that fails for the same folder is told once, as the folder's.
+        const failed = await ownerOf(server).runBackup();
+        expect(failed.status, JSON.stringify(failed.data)).toBe(503);
+        const together = await backupConcerns(server);
+        expect(together.map((concern) => concern.reference)).toEqual(["store"]);
+        expect(together[0]!.description).toContain(
+          "The last backup run failed too.",
+        );
 
         await fileItem(server, bytesOf("a file waiting for its copy", 2048));
         const run = await runJob(operator, "blob-replicate", "error");
@@ -491,16 +511,15 @@ describe("a backup folder that lacks a file or its disk", () => {
       } finally {
         renameSync(gone, root);
       }
-      await waitFor("replication to catch up", async () => {
-        const run = await runJob<{ remaining: number }>(
-          operator,
-          "blob-replicate",
-          "either",
-        );
-        return run.result.remaining === 0 ? true : undefined;
-      });
+      await replicateUntilCaughtUp(operator, "replication to catch up");
       const caught = await runJob(operator, "blob-replicate");
       expect(caught.result).toMatchObject({ remaining: 0 });
+      // The folder answers again, so the failed run stands on its own until one is put.
+      expect(
+        (await backupConcerns(server)).map((concern) => concern.reference),
+      ).toEqual(["run"]);
+      const put = await ownerOf(server).runBackup();
+      expect(put.status, JSON.stringify(put.error)).toBe(200);
       const detail = await healthDetail(server);
       expect(detail.status).toBe("ok");
       expect(detail.backups).toMatchObject({
@@ -512,6 +531,33 @@ describe("a backup folder that lacks a file or its disk", () => {
     });
   });
 
+  it("answers health within three seconds and says the folder is not answering while a look at its mount hangs", async () => {
+    await withFolder("backup-folder-hung", async (server) => {
+      await server.setFault("hold:disk-probe");
+      try {
+        const before = Date.now();
+        const detail = await healthDetail(server);
+        expect(Date.now() - before).toBeLessThan(3000);
+        expect(detail.backups.status).toBe("failing");
+        expect(detail.backups.store_error).toEqual(
+          expect.stringContaining("did not answer in time"),
+        );
+        const told = await backupConcerns(server);
+        expect(told.map((concern) => concern.reference)).toEqual(["store"]);
+        expect(told[0]!.title).toBe("The backup folder is not answering");
+      } finally {
+        await server.clearFault();
+      }
+      // The witness: once the mount answers, the same folder is quiet.
+      await waitFor("the folder to be told as answering", async () =>
+        (await healthDetail(server)).backups.store_error === null
+          ? true
+          : undefined,
+      );
+      expect(await attentionOf(server)).toEqual([]);
+    });
+  });
+
   it("lists in attention a backup run by hand that failed, until a later one is put", async () => {
     await withFolder("backup-folder-hand", async (server, root) => {
       const gone = `${root}-gone`;
@@ -519,16 +565,20 @@ describe("a backup folder that lacks a file or its disk", () => {
       try {
         const run = await ownerOf(server).runBackup();
         expect(run.status, JSON.stringify(run.data)).toBe(503);
-        const told = await backupConcerns(server);
-        expect(told.map((concern) => concern.reference)).toContain("run");
+        // While the folder is gone, the failed run and the folder are one fault.
+        expect(
+          (await attentionOf(server)).map((concern) => concern.reference),
+        ).toEqual(["store"]);
       } finally {
         renameSync(gone, root);
       }
+      // Once the folder answers, the failed run stands on its own.
+      expect(
+        (await attentionOf(server)).map((concern) => concern.reference),
+      ).toEqual(["run"]);
       const run = await ownerOf(server).runBackup();
       expect(run.status, JSON.stringify(run.error)).toBe(200);
-      expect(
-        (await backupConcerns(server)).map((concern) => concern.reference),
-      ).not.toContain("run");
+      expect(await attentionOf(server)).toEqual([]);
     });
   });
 
