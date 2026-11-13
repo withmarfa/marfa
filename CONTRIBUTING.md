@@ -121,10 +121,12 @@ A release is a git tag, each the previous plus 0.0.1. `.github/workflows/release
 
 ## Conformance suite
 
-`conformance/` holds the black-box suite and the written specification the server is held to. It boots the server in this checkout itself:
+`conformance/` holds the black-box suite and the written specification the server is held to. It boots the Rust server binary that `MARFA_SERVER_BIN` names, and the contract's fixtures need a build with the test hooks:
 
 ```bash
+(cd core && cargo build --release -p marfa-server --features test-hooks)
 cd conformance
+export MARFA_SERVER_BIN="$PWD/../core/target/release/marfa-server"
 pnpm marfa:up
 set -a; . .marfa-state/env; set +a
 pnpm test:conformance

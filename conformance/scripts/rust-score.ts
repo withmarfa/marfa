@@ -74,8 +74,9 @@ function parseArgs(argv: string[]): Args {
 }
 
 /**
- * What `vitest list` finds in the contract projects, by file. When a file fails to load Vitest prints no list at all. Then only the
- * files it names get a count, from reading them without running them (a test
+ * What `vitest list` finds in the contract projects, by file. When a file
+ * fails to load Vitest prints no list at all. Then only the files it names
+ * get a count, from reading them without running them (a test
  * written for several inputs counts once, so a read count can differ from a
  * run count), and every other file keeps the count its report lists. The
  * summary says so.
