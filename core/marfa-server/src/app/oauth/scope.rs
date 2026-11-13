@@ -221,8 +221,10 @@ impl Scope {
         }
     }
 
-    pub fn is_all_data(&self) -> bool {
-        matches!(self, Scope::Type { pattern, .. } if pattern == ALL)
+    /// All data or content: every type a page offers is under it, so types may be chosen in its place.
+    pub fn offers_types(&self) -> bool {
+        matches!(self, Scope::Content(_))
+            || matches!(self, Scope::Type { pattern, .. } if pattern == ALL)
     }
 
     /// What a sign-in of any age may approve.
@@ -630,17 +632,17 @@ pub fn needs_recent_sign_in(approved: &ScopeSet, held: &ScopeSet) -> bool {
 
 /// Pass `named` narrowed: what a request named and could not have is not covered.
 pub fn chosen_within(named: &ScopeSet, chosen: &ScopeSet, offered: &[&str]) -> bool {
-    let all_data: ScopeSet = named
+    let wide: ScopeSet = named
         .literals()
         .iter()
         .map(String::as_str)
-        .filter(|literal| Scope::parse(literal).is_some_and(|scope| scope.is_all_data()))
+        .filter(|literal| Scope::parse(literal).is_some_and(|scope| scope.offers_types()))
         .collect();
     chosen.literals().iter().all(|literal| {
         matches!(
             Scope::parse(literal),
             Some(Scope::Type { pattern, .. })
-                if offered.contains(&pattern.as_str()) && covers(&all_data, literal)
+                if offered.contains(&pattern.as_str()) && covers(&wide, literal)
         )
     })
 }
@@ -1290,8 +1292,18 @@ mod tests {
         ] {
             assert!(!chosen_within(&named, &set(beyond), &offered), "{beyond}");
         }
+        assert!(chosen_within(
+            &set("content:read"),
+            &set("core.note:read"),
+            &offered
+        ));
         assert!(!chosen_within(
             &set("content:read"),
+            &set("core.note:write"),
+            &offered
+        ));
+        assert!(!chosen_within(
+            &set("edge.*:read"),
             &set("core.note:read"),
             &offered
         ));

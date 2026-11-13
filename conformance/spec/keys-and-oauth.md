@@ -1299,7 +1299,7 @@ When a registration or a client ID metadata document names no scope, the server 
 
 **Reason:** An app that asks for nothing in particular is offered the owner's content and the links between items, and none of the `system` types, the twelve permissions, the metadata or the profile: an app that needs one names it. A client that may not exchange a refresh token is refused `offline_access` by `keys-and-oauth/device-offline-no-refresh`, so a default that held the scope would register the client for a scope it can never use.
 
-**Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `› registers a client naming an empty or blank scope for the owner's data alone`, `compliance/device-offline-access.test.ts › registers a client that may not refresh, naming no scope, for the owner's data alone without offline_access, and answers its device flow an access token alone`, `compliance/approval-screens.test.ts › offers an app that names no scope the owner's content and links, read only beside read and edit, and no permission`.
+**Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `› registers a client naming an empty or blank scope for the owner's data alone`, `compliance/device-offline-access.test.ts › registers a client that may not refresh, naming no scope, for the owner's data alone without offline_access, and answers its device flow an access token alone`, `compliance/approval-screens.test.ts › offers an app that names no scope the owner's content and links, read only beside read and edit or chosen types, and no permission`.
 
 ### `keys-and-oauth/register-unknown-scope`
 
@@ -1455,7 +1455,7 @@ When a person declines on the consent screen, the server MUST send the browser t
 
 ### `keys-and-oauth/consent-nothing-denies`
 
-Where a request names a scope other than `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, or with types chosen in place of all data and none of them turned on, and the post does not name `access` as `full` (`keys-and-oauth/approval-full-grants-request`), the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
+Where a request names a scope other than `offline_access` that the app's standing consent does not cover, when a person approves on the consent screen with none of those scopes chosen, or with types chosen in place of all data or content and none of them turned on, and the post does not name `access` as `full` (`keys-and-oauth/approval-full-grants-request`), the server MUST send the browser to the request's redirect URI with `error=access_denied`, the request's `state` and no code.
 
 **Reason:** Approving with everything turned off is declining, so the app is told what declining tells it, and no consent is recorded for an app that can do nothing with it. What a post carries without a choice is not a choice: `offline_access`, and every scope the app holds when the approval commits. An app that comes back and has everything newly asked turned off is denied, and keeps what it holds. A request that names nothing else offers nothing to turn off, and approving it is a yes.
 
@@ -1465,7 +1465,7 @@ Where a request names a scope other than `offline_access` that the app's standin
 
 When a person approves on the consent screen with only some of the scopes the request names chosen, and the post does not name `access` as `full`, the server MUST issue a token for exactly the scopes chosen, plus the reads `keys-and-oauth/approval-write-read` adds and the held scopes `keys-and-oauth/approval-held-now` adds.
 
-**Reason:** Types chosen in place of all data are a narrowing of the all-data scope, and `keys-and-oauth/authorize-narrowed-types` states them.
+**Reason:** Types chosen in place of all data or content are a narrowing of that scope, and `keys-and-oauth/authorize-narrowed-types` states them.
 
 **Tests:** `compliance/oauth-authorize.test.ts › issues a token for only the scopes the person chose`, `compliance/web-page-origin.test.ts › issues a narrowed page only what the person chose, though its origin is allowed`.
 
@@ -1505,17 +1505,17 @@ When an authorization request names `<type>:read` or `<type>:write` for a type r
 
 ### `keys-and-oauth/authorize-narrowed-types`
 
-When a person approves on the consent screen types chosen under an all-data scope the request named, the server MUST NOT let the token the code is exchanged for reach an item type the person left off.
+When a person approves on the consent screen types chosen under an all-data or content scope the request named, the server MUST NOT let the token the code is exchanged for reach an item type the person left off.
 
-**Reason:** A type under `*:read` is a narrowing of what was asked, not an addition to it, so it is granted though the request never wrote it, and the all-data scope that covers it is not granted beside it. A scope that no named all-data scope covers, such as a write beside `*:read` or a permission, is refused by `keys-and-oauth/approval-types-beyond`, so this grants nothing a request that kept `*:read` would not have granted.
+**Reason:** A type under `*:read` or `content:read` is a narrowing of what was asked, not an addition to it, so it is granted though the request never wrote it, and the scope that covers it is not granted beside it. A scope that no named all-data or content scope covers, such as a write beside `*:read` or a permission, is refused by `keys-and-oauth/approval-types-beyond`, so this grants nothing a request that kept `*:read` or `content:read` would not have granted.
 
-**Tests:** `compliance/approval-screens.test.ts › does not let a token for the types chosen reach a type left off`.
+**Tests:** `compliance/approval-screens.test.ts › does not let a token for the types chosen reach a type left off`, `› issues an app that names no scope a token for exactly the types chosen read only, which reads them, is refused the rest and writes nothing`.
 
 ### `keys-and-oauth/authorize-narrowed-refresh`
 
-When an app refreshes a token that was issued for types chosen in place of an all-data scope, the server MUST issue the new token for those types and not for the all-data scope.
+When an app refreshes a token that was issued for types chosen in place of an all-data or content scope, the server MUST issue the new token for those types and not for that scope.
 
-**Tests:** `compliance/approval-screens.test.ts › refreshes a token for the types chosen without widening them to all data`.
+**Tests:** `compliance/approval-screens.test.ts › refreshes a token for the types chosen without widening them to all data`, `› issues an app that names no scope a token for exactly the types chosen read only, which reads them, is refused the rest and writes nothing`.
 
 ### `keys-and-oauth/authorize-nothing-grantable`
 
@@ -1621,7 +1621,7 @@ When a browser session that signed in more than five minutes ago opens `/auth/au
 
 ## What the approval pages offer
 
-The consent screen at `/auth/authorize` and the device approval page at `/auth/device/consent` are the two pages a person approves an app on. Their choices come from the request's scopes and from the consent the app already holds. Every choice is a form field named `scopes` whose value is a scope the request names, except the types chosen in place of all data, which are fields named `types` whose values are scopes that an all-data scope the request names covers. So what a form posts is the request narrowed. Where a request names something to choose, a form also posts a field named `access`, whose value is `full` or `choose`.
+The consent screen at `/auth/authorize` and the device approval page at `/auth/device/consent` are the two pages a person approves an app on. Their choices come from the request's scopes and from the consent the app already holds. Every choice is a form field named `scopes` whose value is a scope the request names, except the types chosen in place of all data or content, which are fields named `types` whose values are scopes that an all-data or content scope the request names covers. So what a form posts is the request narrowed. Where a request names something to choose, a form also posts a field named `access`, whose value is `full` or `choose`.
 
 ### `keys-and-oauth/approval-full-access`
 
@@ -1763,27 +1763,27 @@ If an approval posted from the consent screen or the device approval page names 
 
 ### `keys-and-oauth/approval-all-data-types`
 
-Where a request names the all-data scope `*:read` or `*:write`, the server MUST offer on the consent screen and the device approval page the choice to choose types beside the levels the request names for all data, and one control for each item type registered on the instance that the app's registration can be approved for by name, except the types under the `system` and `marfa` roots and the types the app already holds in full.
+Where a request names the all-data scope `*:read` or `*:write`, or the content scope `content:read` or `content:write`, the server MUST offer on the consent screen and the device approval page the choice to choose types beside the levels the request names for that scope, and one control for each item type registered on the instance that the app's registration can be approved for by name, except the types under the `system` and `marfa` roots and the types the app already holds in full.
 
-**Reason:** All your data, including types added later, is one choice, and an owner who would give less chooses the types instead. A type under `system` or `marfa` holds the instance's own bookkeeping and is not data the person keeps, so it is never a choice, though all data reaches it. A type the app holds in full is shown under what the app already holds (`keys-and-oauth/approval-held-shown`) and offered no control. An app registered with a list of scopes is offered every registered type, because naming a type its list's all-data scope covers adds nothing to what it may ask for. An app registered with no list is offered only the types the server's supported scopes name, those it was started with, so a type registered since, such as a `user` or publisher type, gets no control and is reached only by all data. Registering through `POST /auth/oauth2/register` always stores a list, the scopes named or the server's supported scopes, so only an app registered another way has none.
+**Reason:** All your data, including types added later, is one choice, and an owner who would give less chooses the types instead. Your content is all data but the `system` and `marfa` types, and it is what an app that names no scope is registered for (`keys-and-oauth/register-default-scope`), so its row offers the same types, and the owner of an app such as an MCP client can narrow it to some of them. A type under `system` or `marfa` holds the instance's own bookkeeping and is not data the person keeps, so it is never a choice, though all data reaches it. A type the app holds in full is shown under what the app already holds (`keys-and-oauth/approval-held-shown`) and offered no control. An app registered with a list of scopes is offered every registered type, because naming a type its list's all-data or content scope covers adds nothing to what it may ask for. An app registered with no list is offered only the types the server's supported scopes name, those it was started with, so a type registered since, such as a `user` or publisher type, gets no control and is reached only by all data or content. Registering through `POST /auth/oauth2/register` always stores a list, the scopes named or, where it names none, those `keys-and-oauth/register-default-scope` states, so only an app registered another way has none.
 
-**Tests:** `compliance/approval-screens.test.ts › offers all data as one choice with the choice to choose types, and a control for each type, on both pages`, `› offers no choice of types for a request that does not name all data`, `› keeps the types an app holds when it asks again for all data, and shows them as held`.
+**Tests:** `compliance/approval-screens.test.ts › offers all data as one choice with the choice to choose types, and a control for each type, on both pages`, `› offers no choice of types for a request that does not name all data`, `› keeps the types an app holds when it asks again for all data, and shows them as held`, `› offers an app that names no scope the owner's content and links, read only beside read and edit or chosen types, and no permission`, `› offers content with the choice to choose types, at no level above the one asked, on both pages`.
 
 ### `keys-and-oauth/approval-types-levels`
 
-The server MUST NOT offer, for a type chosen in place of all data, a level above the highest level the request names for all data.
+The server MUST NOT offer, for a type chosen in place of all data or content, a level above the highest level the request names for that scope.
 
-**Tests:** `compliance/approval-screens.test.ts › offers a type no higher than the level asked for all data`.
+**Tests:** `compliance/approval-screens.test.ts › offers a type no higher than the level asked for all data`, `› offers content with the choice to choose types, at no level above the one asked, on both pages`.
 
 ### `keys-and-oauth/approval-types-grant`
 
-When a person approves on the consent screen or the device approval page with types chosen in place of all data, the server MUST issue a token for exactly the types turned on, plus the reads `keys-and-oauth/approval-write-read` adds and the held scopes `keys-and-oauth/approval-held-now` adds, and not the all-data scope.
+When a person approves on the consent screen or the device approval page with types chosen in place of all data or content, the server MUST issue a token for exactly the types turned on, plus the reads `keys-and-oauth/approval-write-read` adds and the held scopes `keys-and-oauth/approval-held-now` adds, and not the all-data or content scope.
 
-**Tests:** `compliance/approval-screens.test.ts › issues a token for exactly the types chosen, and not all data, on the consent screen`, `› issues a token for exactly the types chosen, and not all data, on the device approval page`.
+**Tests:** `compliance/approval-screens.test.ts › issues a token for exactly the types chosen, and not all data, on the consent screen`, `› issues a token for exactly the types chosen, and not all data, on the device approval page`, `› issues an app that names no scope a token for exactly the types chosen read only, which reads them, is refused the rest and writes nothing`, `› issues a token for exactly the types chosen in place of content, and not content, on the device approval page`.
 
 ### `keys-and-oauth/approval-types-unchosen`
 
-When a person approves on the consent screen or the device approval page with all data chosen and not types, the server MUST issue a token for the all-data scope and no scope from the type controls.
+When a person approves on the consent screen or the device approval page with all data or content chosen and not types, the server MUST issue a token for that scope and no scope from the type controls.
 
 **Reason:** A page without a script posts every control, so the controls for types that were not chosen are posted too and mean nothing, even one that names a type deleted since the page was drawn.
 
@@ -1791,17 +1791,17 @@ When a person approves on the consent screen or the device approval page with al
 
 ### `keys-and-oauth/approval-types-beyond`
 
-If an approval names, for a type chosen in place of all data, a scope that no all-data scope the request names covers, or a type the page did not offer, then the server MUST answer `400` and grant nothing.
+If an approval names, for a type chosen in place of all data or content, a scope that no all-data or content scope the request names covers, or a type the page did not offer, then the server MUST answer `400` and grant nothing.
 
-**Reason:** A form can only narrow the request: the write of a type is not covered by a request for `*:read`, and a `system` type or a permission is not a type the person was offered. The post is refused whole, as `keys-and-oauth/approval-beyond-shown` refuses one.
+**Reason:** A form can only narrow the request: the write of a type is not covered by a request for `*:read` or `content:read`, and a `system` or `marfa` type or a permission is not a type the person was offered. The post is refused whole, as `keys-and-oauth/approval-beyond-shown` refuses one.
 
-**Tests:** `compliance/approval-screens.test.ts › refuses a type the request does not reach, and grants nothing, on the consent screen`, `› refuses a type the request does not reach, and grants nothing, on the device approval page`.
+**Tests:** `compliance/approval-screens.test.ts › refuses a type the request does not reach, and grants nothing, on the consent screen`, `› refuses a type the request does not reach, and grants nothing, on the device approval page`, `› refuses a type that content read only does not reach, and grants nothing, on the consent screen`.
 
 ### `keys-and-oauth/approval-types-keep`
 
-While an app holds scopes for item types and a request names all data, when a person approves on the consent screen or the device approval page, the server MUST keep the scopes the app holds for those types, whether the person kept all data or chose types.
+While an app holds scopes for item types and a request names all data or content, when a person approves on the consent screen or the device approval page, the server MUST keep the scopes the app holds for those types, whether the person kept that scope or chose types.
 
-**Reason:** `keys-and-oauth/approval-never-lowers` holds when all data is the ask. A type the app holds in full is shown as held and offered no control, and one it holds in part is offered no level below the one it holds.
+**Reason:** `keys-and-oauth/approval-never-lowers` holds when all data or content is the ask. A type the app holds in full is shown as held and offered no control, and one it holds in part is offered no level below the one it holds.
 
 **Tests:** `compliance/approval-screens.test.ts › keeps the types an app holds when it asks again for all data, and shows them as held`, `› keeps the types an app holds on the device approval page when it asks again for all data`.
 
@@ -1825,7 +1825,7 @@ When the consent screen or the device approval page shows the identifier of an i
 
 When the consent screen or the device approval page shows an item type under a label that no row on the page for a different item type, and no row the page names itself, carries, the server MUST NOT show the identifier of that type under its label.
 
-**Reason:** A label that is its own needs no identifier, so the page stays as short as it was. One type can have two rows, such as a row of its own beside the list of types chosen in place of all data, or a row for what the app holds beside one for what it is asked, and two rows of one type are not a clash.
+**Reason:** A label that is its own needs no identifier, so the page stays as short as it was. One type can have two rows, such as a row of its own beside the list of types chosen in place of all data or content, or a row for what the app holds beside one for what it is asked, and two rows of one type are not a clash.
 
 **Tests:** `compliance/approval-screens.test.ts › shows each of them with its identifier, and a type with a label of its own without one, on both pages`, `› shows no identifier where only one type of a label is on the page, though the instance has two`, `› shows no identifier under either row, because both are the same type`.
 
