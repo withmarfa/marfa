@@ -1,4 +1,3 @@
-use std::io::{self, Write};
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
@@ -504,20 +503,7 @@ fn deliveries(command: DeliveriesCommand, remote: &Remote, out: &Printer) -> Res
             output,
         } => {
             let (_, mut reader) = remote.stream(&delivery_body_request(&id, &delivery))?;
-            let written = match &output {
-                Some(path) => {
-                    let mut file = std::fs::File::create(path).map_err(|error| {
-                        CliError::Invalid(format!("cannot write {}: {error}", path.display()))
-                    })?;
-                    io::copy(&mut reader, &mut file)?
-                }
-                None => {
-                    let mut stdout = io::stdout().lock();
-                    let written = io::copy(&mut reader, &mut stdout)?;
-                    stdout.flush()?;
-                    written
-                }
-            };
+            let written = super::blobs::save(&mut reader, output.as_deref(), None)?;
             // Bytes to stdout are the answer; a report there would corrupt it.
             if let Some(path) = output {
                 out.report(

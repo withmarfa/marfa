@@ -486,14 +486,19 @@ impl Http {
         let tls = ureq::tls::TlsConfig::builder()
             .root_certs(ureq::tls::RootCerts::PlatformVerifier)
             .build();
-        let config = Agent::config_builder()
+        let builder = Agent::config_builder()
             .tls_config(tls)
             .http_status_as_error(false)
             .max_redirects(0)
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(recv_response))
-            .timeout_recv_body(Some(recv_body))
-            .build();
+            .timeout_recv_body(Some(recv_body));
+        // Loopback credentials must not reach an environment proxy.
+        let config = if marfa_telemetry::host::may_use_proxy(url) {
+            builder.build()
+        } else {
+            builder.proxy(None).build()
+        };
         Self::with_connector(url, key, config, DefaultConnector::default)
     }
 

@@ -145,7 +145,7 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
         OwnerCommand::Picture { output } => {
             let (content_type, mut reader) =
                 remote.stream(&Request::get(&["owner", "picture"]).streamed())?;
-            let written = super::blobs::save(&mut reader, output.as_deref())?;
+            let written = super::blobs::save(&mut reader, output.as_deref(), None)?;
             // Bytes to stdout are the answer; a report there would corrupt it.
             if let Some(path) = output {
                 out.report(

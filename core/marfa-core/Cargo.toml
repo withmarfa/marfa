@@ -12,6 +12,7 @@ telemetry = ["dep:tracing"]
 
 [dependencies]
 marfa-rules.workspace = true
+marfa-telemetry.workspace = true
 chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
 chrono-tz = "0.10"
 regex = "1"

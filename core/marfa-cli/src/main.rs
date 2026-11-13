@@ -92,12 +92,14 @@ struct Cli {
     /// beside it. A command that sends a key
     /// from --key or MARFA_API_KEY needs the URL named, and so does any
     /// command with the keychain off.
+    /// With MARFA_API_KEY set, a different server from MARFA_API_URL requires --key.
     #[arg(long, global = true, value_name = "URL", help_heading = "Server")]
     url: Option<String>,
 
     /// A key or a token for that server. Prefer MARFA_API_KEY or the
     /// keychain: a command line is readable by other users of the machine and
-    /// stays in shell history. Falls back to MARFA_API_KEY, then to the
+    /// stays in shell history. Falls back to MARFA_API_KEY, which a --url for
+    /// another server than MARFA_API_URL names does not use, then to the
     /// keychain: the file MARFA_KEYCHAIN names, where it names one, unless
     /// the keychain is off. MARFA_PROFILE is not read beside it.
     #[arg(long, global = true, value_name = "KEY", help_heading = "Server")]

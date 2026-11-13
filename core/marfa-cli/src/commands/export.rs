@@ -7,6 +7,7 @@ use std::time::Duration;
 use clap::{Args, ValueEnum};
 use serde_json::{Value, json};
 
+use super::owner_file::Partial;
 use super::{StateFilter, state_list};
 use crate::error::CliError;
 use crate::output::Printer;
@@ -165,23 +166,8 @@ fn run_waiting(
 /// answered as [`CliError::ArchiveKeptApart`]. An archive whose manifest
 /// cannot be read is not an archive, so it is removed like a cut stream.
 fn write_whole(path: &Path, reader: &mut ManifestTap<impl Read>) -> Result<u64, CliError> {
-    let name = path
-        .file_name()
-        .ok_or_else(|| CliError::Invalid(format!("{} names no file", path.display())))?;
-    let partial = path.with_file_name(format!(
-        ".{}.partial-{}",
-        name.to_string_lossy(),
-        std::process::id()
-    ));
-    let mut file = std::fs::File::create(&partial).map_err(|error| {
-        CliError::Invalid(format!("cannot write {}: {error}", partial.display()))
-    })?;
-    let copied = io::copy(reader, &mut file).and_then(|written| {
-        file.sync_all()?;
-        Ok(written)
-    });
-    drop(file);
-    let written = match copied {
+    let mut partial = Partial::beside(path)?;
+    let written = match partial.copy_from(reader) {
         Ok(written) => written,
         Err(error) => {
             return Err(CliError::Io(io::Error::new(
@@ -189,28 +175,28 @@ fn write_whole(path: &Path, reader: &mut ManifestTap<impl Read>) -> Result<u64, 
                 format!(
                     "{error}: the export ended early, so nothing was written to {}, {}",
                     path.display(),
-                    removed(&partial)
+                    partial.discard()
                 ),
             )));
         }
     };
     match reader.whole() {
         Ok(()) => {
-            std::fs::rename(&partial, path).map_err(|error| {
-                let _ = std::fs::remove_file(&partial);
-                CliError::Invalid(format!("cannot write {}: {error}", path.display()))
-            })?;
+            partial.publish()?;
             Ok(written)
         }
         Err(CliError::ArchiveLacksBlobs(missing)) => {
+            let name = path.file_name().unwrap_or_default();
             let incomplete = path.with_file_name(format!("{}.incomplete", name.to_string_lossy()));
             let target_held = std::fs::symlink_metadata(path).is_ok();
             // A move that is refused (a directory at the name, say) keeps the
             // bytes where they are, and the answer still names the blobs.
-            let (kept, refused) = match std::fs::rename(&partial, &incomplete) {
+            let kept_at = partial.path().to_path_buf();
+            let (kept, refused) = match std::fs::rename(&kept_at, &incomplete) {
                 Ok(()) => (incomplete.clone(), None),
-                Err(error) => (partial, Some(error.to_string())),
+                Err(error) => (kept_at, Some(error.to_string())),
             };
+            let _ = partial.release();
             Err(CliError::ArchiveKeptApart {
                 missing,
                 target: path.to_path_buf(),
@@ -223,16 +209,8 @@ fn write_whole(path: &Path, reader: &mut ManifestTap<impl Read>) -> Result<u64, 
         Err(error) => Err(CliError::Invalid(format!(
             "{error}, so nothing was written to {}, {}",
             path.display(),
-            removed(&partial)
+            partial.discard()
         ))),
-    }
-}
-
-/// Removes the partial file and says what became of it.
-fn removed(partial: &Path) -> String {
-    match std::fs::remove_file(partial) {
-        Ok(()) => "and the partial file was removed".to_string(),
-        Err(_) => format!("and the partial file is left at {}", partial.display()),
     }
 }
 

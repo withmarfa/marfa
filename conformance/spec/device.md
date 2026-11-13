@@ -3500,6 +3500,46 @@ Where the address of the server is `https`, the CLI MUST NOT print the plain `ht
 
 **Tests:** `cli/cleartext.test.ts › prints no warning for an https address, which it reaches`.
 
+### `device/command-loopback-no-proxy`
+
+When the address of the server is `localhost`, an address in `127.0.0.0/8` or `::1`, the CLI MUST send each request to it directly, whatever proxy the environment names.
+
+**Reason:** a proxy cannot reach this machine, and would be handed the request with its key.
+
+**Tests:** `cli/key-and-files.test.ts › never goes through a proxy the environment names, and one to another host does`.
+
+### `device/command-key-own-server`
+
+If `--url` names a server other than the one `MARFA_API_URL` names, `MARFA_API_KEY` is set and `--key` is not given, then the CLI MUST exit 2 with `usage` and send no request.
+
+**Reason:** the two variables are exported as a pair for one server, and the key must not go to another.
+
+**Tests:** `cli/key-and-files.test.ts › goes only to the server MARFA_API_URL names, and a --url for another server refuses`.
+
+### `device/command-output-owner-only`
+
+When a command writes to a file named by `--output`, the CLI MUST make the file readable and writable by its owner alone, whatever the umask.
+
+**Reason:** an export or a download holds what the key could read, and a file made under the usual umask is open to other accounts on the machine.
+
+**Tests:** `cli/key-and-files.test.ts › is readable by its owner alone whatever the umask, for an export and a download`.
+
+### `device/command-output-whole`
+
+If a transfer to a file named by `--output` ends before the whole answer arrives, or a blob's bytes do not hash to the digest asked for, then the CLI MUST end with any earlier file at that path unchanged and no partial file beside it.
+
+**Reason:** a person keeps the earlier file until a whole one replaces it.
+
+**Tests:** `cli/key-and-files.test.ts › replaces the file at --output only when the download arrives whole and matches its digest`.
+
+### `device/command-listing-printable`
+
+When a command prints a listing or a table without `--json`, the CLI MUST print each control character and bidirectional formatting character in text a server holds as an escape sequence.
+
+**Reason:** a title or a name is text on the line it was printed on, and must not move the cursor, erase a line or reorder what follows it.
+
+**Tests:** `cli/key-and-files.test.ts › prints no control or bidirectional character from a title, and --json is unchanged`.
+
 ### `device/command-cleartext-allow-flag`
 
 Where `--allow-http` is given, the CLI MUST NOT print the plain `http` warning.

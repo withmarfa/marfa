@@ -82,9 +82,13 @@ pub fn item(item: &Item, shown: &Shown, json: bool) -> Result<(), CliError> {
         writeln!(out, "{}", serde_json::to_string_pretty(item)?)?;
     } else {
         writeln!(out, "{}", line(item, shown))?;
-        writeln!(out, "{}", serde_json::to_string_pretty(&item.properties)?)?;
+        writeln!(
+            out,
+            "{}",
+            printable_lines(&serde_json::to_string_pretty(&item.properties)?)
+        )?;
         if !item.tags.is_empty() {
-            writeln!(out, "tags: {}", item.tags.join(", "))?;
+            writeln!(out, "tags: {}", printable(&item.tags.join(", ")))?;
         }
     }
     Ok(())
@@ -159,7 +163,7 @@ pub fn queued(
             .verdict
             .map_or("unanswered", marfa_core::Verdict::as_str);
         let reason = match &write.reason {
-            Some(reason) => format!(" ({reason})"),
+            Some(reason) => format!(" ({})", printable(reason)),
             None => String::new(),
         };
         let subject = write
@@ -174,7 +178,7 @@ pub fn queued(
         };
         let refusal = write.refusal.as_ref().map(refused).unwrap_or_default();
         let last_failure = match &write.last_failure {
-            Some(failure) => format!("  last answer: {}", failure.describe()),
+            Some(failure) => format!("  last answer: {}", printable(&failure.describe())),
             None => String::new(),
         };
         // One missing from the whole queue was withdrawn or discarded, and
@@ -253,7 +257,7 @@ fn hit_lines(hits: &[SearchHit], shown: &[Shown]) -> Result<(), CliError> {
             writeln!(
                 out,
                 "         {}",
-                snippet_text(&hit.snippet).replace('\n', " ")
+                printable(&snippet_text(&hit.snippet).replace('\n', " "))
             )?;
         }
     }
@@ -287,10 +291,10 @@ fn line(item: &Item, shown: &Shown) -> String {
         .unwrap_or("");
     format!(
         "{}  {}  {}  {}{}",
-        item.id,
-        item.r#type,
-        item.occurred_at,
-        title,
+        printable(&item.id),
+        printable(&item.r#type),
+        printable(&item.occurred_at),
+        printable(title),
         if item.state.as_str() == "active" {
             String::new()
         } else {
@@ -333,7 +337,7 @@ pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
             ));
         }
         if let Some(stopped) = &drain.stopped {
-            lines.push(stopped.clone());
+            lines.push(printable(stopped));
         }
         lines.extend(unclaimed(drain));
         lines.join("\n")
@@ -359,7 +363,7 @@ pub fn verdict_line(
             .unwrap_or(verdict.id.as_str())
     );
     if let Some(reason) = &verdict.reason {
-        line.push_str(&format!(" ({reason})"));
+        line.push_str(&format!(" ({})", printable(reason)));
     }
     if let Some(refusal) = &verdict.refusal {
         line.push_str(&refused(refusal));
@@ -396,10 +400,17 @@ fn refused(refusal: &marfa_core::Refusal) -> String {
             marfa_core::GrantLevel::Read => "read",
             marfa_core::GrantLevel::Write => "write",
         };
-        said.push_str(&format!(" needs {level} on the {kind} {}", grant.name));
+        said.push_str(&format!(
+            " needs {level} on the {kind} {}",
+            printable(&grant.name)
+        ));
     }
     for field in &refusal.fields {
-        said.push_str(&format!(" {}: {}", field.field, field.message));
+        said.push_str(&format!(
+            " {}: {}",
+            printable(&field.field),
+            printable(&field.message)
+        ));
     }
     said
 }
@@ -470,7 +481,8 @@ pub fn undelivered(drain: &DrainReport) -> Option<String> {
     match (drain.undelivered, &drain.unavailable) {
         (0, None) => None,
         (count, Some(why)) => Some(format!(
-            "{count} write(s) not delivered, waiting for the next drain: {why}"
+            "{count} write(s) not delivered, waiting for the next drain: {}",
+            printable(why)
         )),
         (count, None) => Some(format!(
             "{count} write(s) not delivered, waiting for the next drain"
@@ -553,8 +565,8 @@ fn describe(value: &Value) -> Result<String, CliError> {
                 for failure in failures {
                     text.push(format!(
                         "{}: {}",
-                        field(failure, "id"),
-                        field(failure, "message")
+                        printable(field(failure, "id")),
+                        printable(field(failure, "message"))
                     ));
                 }
                 if failures.iter().any(|failure| {
@@ -565,7 +577,7 @@ fn describe(value: &Value) -> Result<String, CliError> {
                 }) {
                     text.push("Stopped: a deletion could not be confirmed. Read the bin again before retrying.".into());
                 } else if let Some(cursor) = map.get("next_cursor").and_then(Value::as_str) {
-                    text.push(format!("more: --cursor {cursor}"));
+                    text.push(format!("more: --cursor {}", printable(cursor)));
                 }
                 return Ok(text.join("\n"));
             }
@@ -579,7 +591,7 @@ fn describe(value: &Value) -> Result<String, CliError> {
                     if let Some(resolution) = map.get("conflict_resolution") {
                         text.push_str(&format!(
                             "\nconflict resolution: {}",
-                            serde_json::to_string(resolution)?
+                            printable(&serde_json::to_string(resolution)?)
                         ));
                     }
                     if map.get("acknowledged") == Some(&Value::Bool(true)) {
@@ -663,9 +675,9 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
             row.get("purged_at").and_then(Value::as_str),
         ) {
             let settled = row.get("settled_at").and_then(Value::as_str).unwrap_or("");
-            out.push(Row::Text(format!(
+            out.push(Row::Text(printable(&format!(
                 "tombstone  {key}  purged {purged}  settled {settled}"
-            )));
+            ))));
         } else if let (Some(starts), Some(item)) = (row.get("starts_at"), row.get("item")) {
             let ends = row
                 .get("ends_at")
@@ -692,7 +704,7 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
         } else if let Value::Object(_) = row {
             out.push(Row::Cells(flat_columns(row)));
         } else {
-            out.push(Row::Text(scalar_text(row)));
+            out.push(Row::Text(printable(&scalar_text(row))));
         }
     }
     let head: Vec<String> = out
@@ -734,7 +746,7 @@ fn finish(text: &mut Vec<String>, page: &serde_json::Map<String, Value>) {
         });
     }
     if let Some(cursor) = page.get("next_cursor").and_then(Value::as_str) {
-        text.push(format!("more: --cursor {cursor}"));
+        text.push(format!("more: --cursor {}", printable(cursor)));
     }
 }
 
@@ -765,6 +777,10 @@ fn table_with_head(head: &[String], rows: &[Vec<String>]) -> Vec<String> {
 }
 
 fn table(rows: &[Vec<String>]) -> Vec<String> {
+    let rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| row.iter().map(|cell| printable(cell)).collect())
+        .collect();
     let width = |cell: &str| cell.chars().count();
     let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
     let shown: Vec<(usize, usize)> = (0..columns)
@@ -1086,7 +1102,7 @@ fn scalar_text(value: &Value) -> String {
                 words.iter().map(scalar_text).collect::<Vec<_>>().join(", ")
             }
         }
-        other => other.to_string(),
+        other => printable(&other.to_string()),
     }
 }
 
@@ -1224,7 +1240,13 @@ pub fn body_links(links: &marfa_core::BodyLinks) -> String {
         .links
         .iter()
         .chain(&links.embeds)
-        .map(|name| format!("{}\t{}", name.text, named(&name.target)))
+        .map(|name| {
+            format!(
+                "{}\t{}",
+                printable(&name.text),
+                printable(&named(&name.target))
+            )
+        })
         .collect();
     if lines.is_empty() {
         "the body carries no link or embed of a file".into()
@@ -1242,16 +1264,19 @@ pub fn link_parts(parts: &[marfa_core::LinkParts]) -> String {
         .map(|link| {
             let mut line = format!(
                 "{}-{}\t{}\tname: {}",
-                link.start, link.end, link.text, link.name.text
+                link.start,
+                link.end,
+                printable(&link.text),
+                printable(&link.name.text)
             );
             if let Some(heading) = &link.heading {
-                line.push_str(&format!("\theading: {}", heading.text));
+                line.push_str(&format!("\theading: {}", printable(&heading.text)));
             }
             if let Some(row) = &link.row {
-                line.push_str(&format!("\trow: {}", row.text));
+                line.push_str(&format!("\trow: {}", printable(&row.text)));
             }
             if let Some(alias) = &link.alias {
-                line.push_str(&format!("\talias: {}", alias.text));
+                line.push_str(&format!("\talias: {}", printable(&alias.text)));
             }
             line
         })
@@ -1273,7 +1298,11 @@ pub fn link_candidates(answers: &[marfa_core::LinkCandidates]) -> String {
             } else {
                 answer.candidates.join(", ")
             };
-            format!("[[{}]]\t{state}\t{listed}", answer.target)
+            format!(
+                "[[{}]]\t{state}\t{}",
+                printable(&answer.target),
+                printable(&listed)
+            )
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -1772,6 +1801,26 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn server_text_in_a_listing_or_table_is_shown_escaped() {
+        let hostile = "a\u{1b}]0;x\u{7}\u{1b}[2K\u{85}\u{202e}b\u{2066}c";
+        let rows = json!({ "data": [
+            { "id": "1", "type": "core.note", "properties": { "title": hostile } },
+            { "id": "2", "type": "core.note", "properties": { "body": hostile } },
+            { "name": hostile, "count": 1, "tag": hostile },
+        ], "next_cursor": hostile });
+        let shown = describe(&rows).unwrap();
+        assert!(shown.contains("a\\u{1b}]0;x"), "{shown}");
+        for text in [&shown, &describe(&json!({ "tags": [hostile] })).unwrap()] {
+            assert!(
+                !text.chars().any(|c| c != '\n'
+                    && (c.is_control()
+                        || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_text_that_could_move_the_cursor_is_shown_escaped_in_a_document() {
         let text = describe(&json!({"name": "a\u{1b}[2Kb", "note": "two\nlines"})).unwrap();
         assert!(!text.contains('\u{1b}'), "{text}");
@@ -1815,6 +1864,11 @@ pub fn printable(text: &str) -> String {
             }
         })
         .collect()
+}
+
+/// `printable` for each line of `text`, keeping the line breaks between them.
+fn printable_lines(text: &str) -> String {
+    text.lines().map(printable).collect::<Vec<_>>().join("\n")
 }
 
 #[cfg(test)]

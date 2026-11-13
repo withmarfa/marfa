@@ -4,8 +4,10 @@ use std::path::{Path, PathBuf};
 use clap::Subcommand;
 use marfa_core::mime_type_for;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 use super::items::upload_request;
+use super::owner_file::Partial;
 use crate::error::CliError;
 use crate::output::Printer;
 use crate::remote::Remote;
@@ -84,14 +86,40 @@ pub fn orphans_request() -> Request {
     Request::get(&["blobs", "orphans"])
 }
 
-/// Copies `reader` into the file at `path`, or to stdout when there is none.
-pub(super) fn save(reader: &mut impl io::Read, path: Option<&Path>) -> Result<u64, CliError> {
+pub(super) fn save(
+    reader: &mut impl io::Read,
+    path: Option<&Path>,
+    digest: Option<&str>,
+) -> Result<u64, CliError> {
     match path {
         Some(path) => {
-            let mut file = std::fs::File::create(path).map_err(|error| {
-                CliError::Invalid(format!("cannot write {}: {error}", path.display()))
-            })?;
-            Ok(io::copy(reader, &mut file)?)
+            let mut partial = Partial::beside(path)?;
+            let mut hashing = HashingReader::new(reader);
+            let written = match partial.copy_from(&mut hashing) {
+                Ok(written) => written,
+                Err(error) => {
+                    return Err(CliError::Io(io::Error::new(
+                        error.kind(),
+                        format!(
+                            "{error}: the transfer ended early, so nothing was written to {}, {}",
+                            path.display(),
+                            partial.discard()
+                        ),
+                    )));
+                }
+            };
+            if let Some(digest) = digest {
+                let found = hashing.digest();
+                if !found.eq_ignore_ascii_case(digest) {
+                    return Err(CliError::Invalid(format!(
+                        "the bytes hash to {found}, not {digest}, so nothing was written to {}, {}",
+                        path.display(),
+                        partial.discard()
+                    )));
+                }
+            }
+            partial.publish()?;
+            Ok(written)
         }
         None => {
             let mut stdout = io::stdout().lock();
@@ -99,6 +127,32 @@ pub(super) fn save(reader: &mut impl io::Read, path: Option<&Path>) -> Result<u6
             stdout.flush()?;
             Ok(written)
         }
+    }
+}
+
+struct HashingReader<'a, R> {
+    inner: &'a mut R,
+    hash: Sha256,
+}
+
+impl<'a, R: io::Read> HashingReader<'a, R> {
+    fn new(inner: &'a mut R) -> Self {
+        HashingReader {
+            inner,
+            hash: Sha256::new(),
+        }
+    }
+
+    fn digest(self) -> String {
+        format!("sha256:{}", hex::encode(self.hash.finalize()))
+    }
+}
+
+impl<R: io::Read> io::Read for HashingReader<'_, R> {
+    fn read(&mut self, buffer: &mut [u8]) -> io::Result<usize> {
+        let read = self.inner.read(buffer)?;
+        self.hash.update(&buffer[..read]);
+        Ok(read)
     }
 }
 
@@ -127,7 +181,7 @@ pub fn run(command: BlobsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         }
         BlobsCommand::Download { hash, output } => {
             let (content_type, mut reader) = remote.stream(&download_request(&hash))?;
-            let written = save(&mut reader, output.as_deref())?;
+            let written = save(&mut reader, output.as_deref(), Some(&hash))?;
             // Bytes to stdout are the answer; a report there would corrupt it.
             if let Some(path) = output {
                 out.report(

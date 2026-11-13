@@ -359,7 +359,10 @@ impl Remote {
         let (key, credential) = match named.key.clone() {
             Some(key) => (Some(key), Some(CredentialSource::Flag)),
             None => match non_empty(std::env::var("MARFA_API_KEY").ok()) {
-                Some(key) => (Some(key), Some(CredentialSource::Environment)),
+                Some(key) => {
+                    Self::refuse_key_for_another_server(named, &origin)?;
+                    (Some(key), Some(CredentialSource::Environment))
+                }
                 None => match auth::resolve_credential(&origin, renew_stale) {
                     Ok(Some(found)) => {
                         let bearer = found.bearer().to_string();
@@ -372,6 +375,22 @@ impl Remote {
             },
         };
         Remote::keeping(&url, origin, credential, key, kept)
+    }
+
+    /// The environment exports the server and its key as a pair.
+    fn refuse_key_for_another_server(named: &Named, origin: &str) -> Result<(), CliError> {
+        if named.url.is_none() {
+            return Ok(());
+        }
+        let Some(exported) = non_empty(std::env::var("MARFA_API_URL").ok()) else {
+            return Ok(());
+        };
+        if marfa_core::http::origin_of(&exported).ok().as_deref() == Some(origin) {
+            return Ok(());
+        }
+        Err(CliError::Usage(format!(
+            "MARFA_API_KEY is for the server MARFA_API_URL names, not {origin}: pass --key for that server or set MARFA_API_URL to it"
+        )))
     }
 
     /// A profile's server, with the credential the keychain keeps for it or
