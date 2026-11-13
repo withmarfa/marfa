@@ -1,6 +1,6 @@
 # @withmarfa/types
 
-Canonical Marfa type schemas. Owns the JSON source, the codegen, and the generated TypeScript registries that the core's catalog and the contract's tables are written from.
+Canonical Marfa type schemas. Owns the JSON source, the codegen, and the generated TypeScript registries that the core's catalog and the contract's tables are written from. The package is private and has no entry point of its own: the root scripts and the tests import `src/index.ts` by path.
 
 ## Layout
 
@@ -8,11 +8,12 @@ Canonical Marfa type schemas. Owns the JSON source, the codegen, and the generat
 - `core/edges/*.json`: the core edge types
 - `core/system/*.json`: the `system.*` types, the platform's own records
 - `scripts/validate.ts`: JSON shape validator (runs in CI)
+- `scripts/generate-icons.ts`: writes the icon sets below from the pinned Iconify packages
 - `scripts/generate.ts`: codegen that turns the JSON into the two registries below
-- `generated/type-registry.ts`: auto-generated; do not edit
-- `generated/edge-type-registry.ts`: auto-generated; do not edit
+- `generated/type-registry.ts`, `generated/edge-type-registry.ts`: the registries; do not edit
+- `generated/icon-set-lucide.json`, `generated/icon-set-simple-icons.json`: the icon sets the Rust rules crate embeds; do not edit
 - `src/schema-types.ts`: schema-shape interfaces (`TypeSchema`, `FieldDefinition`, `VersionPolicy`)
-- `src/index.ts`: the package entry, which re-exports the schema interfaces, `ALL_TYPES`, `ALL_SYSTEM_TYPES`, `ALL_EDGE_TYPES` and `ALL_TYPE_IDS`
+- `src/index.ts`: what the root scripts import: the `TypeSchema`, `EdgeTypeSchema` and `TypeRole` types, the label helpers, the validation constants such as `FIELD_TYPES`, and the registries (`ALL_TYPES`, `ALL_SYSTEM_TYPES`, `ALL_TYPE_IDS`, `ALL_EDGE_TYPES`, `SHIPPED_TABLES` and the shipped shapes)
 
 ## Schema format
 
@@ -23,7 +24,7 @@ Each type is a JSON file with:
 - **`label`**: optional, the name people see for the type, at most 100 characters; a type that names none is shown by one made from the last segment of its `id`
 - **`plural`**: optional, the name of a list of the type's items, at most 100 characters; a type that names none is answered with one made from its label (`Story` makes `Stories`), and a subtype never takes its parent's
 - **`description`**: what this type represents
-- **`version`**: schema version, a non-negative integer; every shipped type is at 0 until the first public release
+- **`version`**: schema version, a non-negative integer; every shipped type is at 0
 - **`fields`**: field name → definition map
 - **`required`**: array of required field names
 
@@ -47,18 +48,19 @@ Subtypes only declare fields they add. They inherit all parent fields and **may 
 
 ```sh
 pnpm validate      # validate every schema in core/, core/system/ and core/edges/
-pnpm generate      # regenerate both registries in generated/
+pnpm generate      # regenerate the icon sets and both registries in generated/
 pnpm shapes:digest # rewrite shipped-shapes.sha256 after a shipped shape changes
 pnpm typecheck
 ```
 
-CI runs `pnpm validate` and a codegen-freshness check on every push to `main` and every pull request that can affect them: it empties `generated/`, regenerates it, and refuses any difference, a file the generator did not write included.
+These run in this folder, or from the root with `pnpm --filter @withmarfa/types <script>`. CI's `Types codegen freshness` job runs `validate`, empties `generated/`, regenerates it, and refuses any difference, a file the generator did not write included. `Generated clients are fresh` does the same for `core/marfa-rules/src/builtin_catalog.json`, which the root `pnpm generate:core` writes from this package.
 
 ## Adding a new type
 
 1. Create `core/<name>.json` following the schema format above
 2. If it's a subtype, set `parent` and include only new fields (do not redefine ancestor fields)
 3. `pnpm validate` to check the schema
-4. `pnpm generate` to regenerate the registry
+4. `pnpm generate` to regenerate the registries
 5. `pnpm shapes:digest` to rewrite `shipped-shapes.sha256`, since a new or changed type moves the shapes it holds
-6. Commit with `feat(types): add core.<name> type`
+6. From the repository root, `pnpm generate` to rewrite the core's catalog, `core/marfa-rules/src/builtin_catalog.json`, which the core and the Rust server are built with
+7. Commit with `feat(types): add core.<name> type`
