@@ -306,8 +306,7 @@ it(
       for (const part of [
         "MARFA_BACKUP_PATH",
         "S3_BUCKET",
-        "marfa server stop",
-        "marfa server start",
+        "marfa server restart",
       ]) {
         expect(said.stdout, part).toContain(part);
       }

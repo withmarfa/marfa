@@ -52,8 +52,8 @@ impl Said {
                 };
                 Some(format!(
                     "No backups are kept: this server has nowhere to put them. Set {folder}, or \
-                     S3_BUCKET to an object store, in {}, then run `marfa server stop` and \
-                     `marfa server start`.",
+                     S3_BUCKET to an object store, in {}, then run `marfa server \
+                     restart`.",
                     settings.display()
                 ))
             }
@@ -98,8 +98,7 @@ mod tests {
             "MARFA_BACKUP_PATH",
             "S3_BUCKET",
             "/srv/marfa/marfa.env",
-            "marfa server stop",
-            "marfa server start",
+            "marfa server restart",
         ] {
             assert!(words.contains(part), "{part}: {words}");
         }

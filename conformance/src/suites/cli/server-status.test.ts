@@ -157,8 +157,7 @@ describe("marfa server status", () => {
       "MARFA_BACKUP_PATH",
       "S3_BUCKET",
       join(dir, "install", "marfa.env"),
-      "marfa server stop",
-      "marfa server start",
+      "marfa server restart",
     ]) {
       expect(got.text, part).toContain(part);
     }

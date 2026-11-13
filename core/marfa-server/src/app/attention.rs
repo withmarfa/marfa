@@ -75,8 +75,8 @@ fn backing(health: &BackupHealth) -> Vec<Concern> {
             "No backups are kept",
             "This instance has nowhere to put them. Set MARFA_BACKUP_PATH to a folder on another \
              disk, or S3_BUCKET to an object store, in the server's settings (`marfa.env` for an \
-             install made by `marfa server install`), then run `marfa server stop` and `marfa \
-             server start`."
+             install made by `marfa server install`), then run `marfa server \
+             restart`."
                 .to_string(),
         )),
         Some("turned_off") => found.push(concern(

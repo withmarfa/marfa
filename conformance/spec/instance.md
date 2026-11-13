@@ -44,7 +44,7 @@ When `GET /attention` completes its checks, the server MUST include degraded or 
 
 ### `instance/attention-no-backup`
 
-Where neither `S3_BUCKET` nor `MARFA_BACKUP_PATH` is set, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `no_backup_destination`, the title `No backups are kept`, and a description that names `MARFA_BACKUP_PATH`, `S3_BUCKET`, `marfa server stop` and `marfa server start`.
+Where neither `S3_BUCKET` nor `MARFA_BACKUP_PATH` is set, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `no_backup_destination`, the title `No backups are kept`, and a description that names `MARFA_BACKUP_PATH`, `S3_BUCKET` and `marfa server restart`.
 
 **Reason:** an instance with no destination keeps no backup, and an owner who never reads the install output can run for months without knowing it.
 

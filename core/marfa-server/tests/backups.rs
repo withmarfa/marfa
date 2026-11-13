@@ -372,8 +372,7 @@ async fn with_no_backup_destination_health_says_backups_are_off_and_the_doors_re
         "MARFA_BACKUP_PATH",
         "S3_BUCKET",
         "marfa.env",
-        "marfa server stop",
-        "marfa server start",
+        "marfa server restart",
     ] {
         assert!(how.contains(part), "{part}: {how}");
     }

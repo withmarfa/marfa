@@ -507,8 +507,7 @@ describe("the backup schedule", () => {
       for (const part of [
         "MARFA_BACKUP_PATH",
         "S3_BUCKET",
-        "marfa server stop",
-        "marfa server start",
+        "marfa server restart",
       ]) {
         expect(concerns[0]!.description).toContain(part);
       }
