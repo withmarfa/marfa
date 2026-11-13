@@ -445,6 +445,75 @@ describe("a backup taken while replication is held", () => {
       await server.stop();
     }
   });
+
+  it("calls the newest backup incomplete again once blob-integrity finds a copy of a file it names gone from the object store, until replication copies the file again", async () => {
+    const own = ownObjectStore();
+    const mine = bucketAt(own.S3_PREFIX);
+    const server = await bootFreshServer("backups-integrity-struck", {
+      ...own,
+      MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,
+    });
+    try {
+      await afterFirstScheduledBackup(server);
+      const { operator, working } = clientsFor(server);
+      const bytes = bytesOf("a file whose copy goes missing", 4096);
+      const uploaded = await working.uploadBlob(bytes, "text/plain");
+      expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
+      const hash = uploaded.data.hash;
+      const file = await working.createItem({
+        type: "core.file",
+        properties: { blob_ref: hash, mime_type: "text/plain" },
+      });
+      expect(file.status, JSON.stringify(file.error)).toBe(201);
+      await replicateUntilCaughtUp(operator, "the file's copy in the bucket");
+
+      const whole = await ownerOf(server).runBackup();
+      expect(whole.status, JSON.stringify(whole.error)).toBe(200);
+      expect(whole.data.blobs_waiting).toBe(0);
+      const name = whole.data.backup.name;
+      expect((await health(server, operator)).backups).toMatchObject({
+        status: "ok",
+        last_backup_files_waiting: 0,
+      });
+
+      const object = (await mine.keys()).find(
+        (key) => !key.includes("/backups/") && key.includes(hash.slice(7)),
+      );
+      expect(object, "the file's object in the bucket").toBeTruthy();
+      await server.setFault("hold:housekeeping:blob-replicate");
+      await mine.delete(object!);
+      const checked = await runJob<{ struck: number }>(
+        operator,
+        "blob-integrity",
+      );
+      expect(checked.result.struck).toBe(1);
+      expect((await health(server, operator)).backups).toMatchObject({
+        status: "incomplete",
+        last_backup: name,
+        last_backup_files_waiting: 1,
+      });
+      const told = await backupConcerns(server);
+      expect(told.map((concern) => concern.reference)).toEqual(["incomplete"]);
+      const next = await ownerOf(server).runBackup();
+      expect(next.status, JSON.stringify(next.error)).toBe(200);
+      expect(next.data.blobs_waiting).toBe(1);
+
+      await server.clearFault();
+      await replicateUntilCaughtUp(operator, "the file's copy again");
+      const copied = (await mine.keys()).filter(
+        (key) => !key.includes("/backups/") && key.includes(hash.slice(7)),
+      );
+      expect(copied).toHaveLength(1);
+      expect((await health(server, operator)).backups).toMatchObject({
+        status: "ok",
+        last_backup: next.data.backup.name,
+        last_backup_files_waiting: 0,
+      });
+      expect(await backupConcerns(server)).toEqual([]);
+    } finally {
+      await server.stop();
+    }
+  });
 });
 
 describe("the backup schedule", () => {

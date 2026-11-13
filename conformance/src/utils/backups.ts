@@ -1,4 +1,5 @@
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   ListMultipartUploadsCommand,
   ListObjectsV2Command,
@@ -23,6 +24,7 @@ export interface Bucket {
   backupKeys(): Promise<string[]>;
   get(key: string): Promise<Uint8Array>;
   put(key: string, body: Uint8Array | string): Promise<void>;
+  delete(key: string): Promise<void>;
   /** The keys of multipart uploads begun under the prefix and not finished. */
   unfinishedUploads(): Promise<string[]>;
 }
@@ -68,6 +70,9 @@ export function bucketAt(prefix: string): Bucket {
       await client.send(
         new PutObjectCommand({ Bucket: bucket, Key: key, Body: body }),
       );
+    },
+    async delete(key) {
+      await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
     },
     async unfinishedUploads() {
       const found = await client.send(

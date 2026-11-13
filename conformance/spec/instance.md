@@ -88,11 +88,11 @@ While the last backup run, taken on the schedule or by hand, failed or put a bac
 
 ### `instance/attention-backup-incomplete`
 
-While the destination holds no copy of a file the last backup put names, the last backup run did not fail and the destination takes the copies that wait for it, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `incomplete`, whose description says how many of those files wait.
+While the copy record holds no copy in the destination of a file the last backup put names, the last backup run did not fail and the destination takes the copies that wait for it, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `incomplete`, whose description says how many of those files wait.
 
-**Reason:** a fresh instance cannot restore the files until replication copies them, and the owner learns it before they need the backup.
+**Reason:** a fresh instance cannot restore the files until replication copies them, and the owner learns it before they need the backup. The server reads the copy record and asks the destination about no file on a backup; `blob-integrity` strikes a copy it finds missing or altered (`stores/integrity-strikes`), and from then the file waits again.
 
-**Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`.
+**Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`, `› calls the newest backup incomplete again once blob-integrity finds a copy of a file it names gone from the object store, until replication copies the file again`.
 
 ### `instance/attention-backup-told-once`
 
@@ -112,7 +112,7 @@ While an entry of kind `backup` with the reference `run` or `store` is listed, t
 
 ### `instance/attention-backup-quiet`
 
-Where a destination is set, while it takes copies, no file waits for one, the last backup run was whole, the destination holds a copy of each file the last backup put names and `backup_interval_seconds` is above 0, the server MUST NOT include an entry of kind `backup` in `GET /attention`.
+Where a destination is set, while it takes copies, no file waits for one, the last backup run was whole, the copy record holds a copy in the destination of each file the last backup put names and `backup_interval_seconds` is above 0, the server MUST NOT include an entry of kind `backup` in `GET /attention`.
 
 **Tests:** `compliance/backup-folder.test.ts › says nothing in health or attention while the folder answers and no file waits for its copy`, `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
 
@@ -722,9 +722,9 @@ When the private local command sends `POST /backups`, the server MUST answer in 
 
 ### `instance/backup-answer-waiting`
 
-When the private local command sends `POST /backups`, the server MUST answer in `blobs_waiting` how many files the backup it put names of which the destination holds no copy.
+When the private local command sends `POST /backups`, the server MUST answer in `blobs_waiting` how many files the backup it put names of which the copy record holds no copy in the destination.
 
-**Reason:** the object store takes a file's copy when replication reaches it, which can be after the backup that names it.
+**Reason:** the object store takes a file's copy when replication reaches it, which can be after the backup that names it. The server reads the copy record and asks the destination about no file on a backup; `blob-integrity` strikes a copy it finds missing or altered (`stores/integrity-strikes`), and from then the file waits again.
 
 **Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`.
 
@@ -834,15 +834,15 @@ While the last backup run put a backup whose manifest names files in `lost_blobs
 
 ### `instance/backup-health-incomplete`
 
-Where `backup_interval_seconds` is above 0, while the destination holds no copy of a file the last backup put names, the last backup run did not fail and the destination takes the copies that wait for it, the server MUST answer `GET /health` with `backups.status` `incomplete`.
+Where `backup_interval_seconds` is above 0, while the copy record holds no copy in the destination of a file the last backup put names, the last backup run did not fail and the destination takes the copies that wait for it, the server MUST answer `GET /health` with `backups.status` `incomplete`.
 
-**Reason:** a backup is good only once its destination holds every file it names, so a fresh instance can restore them. Replication copies the files without the owner, so the overall `status` stays as it was.
+**Reason:** a backup is complete once the copy record holds a copy in its destination of every file it names, so a fresh instance can restore them. The server reads the copy record and asks the destination about no file on a backup; `blob-integrity` strikes a copy it finds missing or altered (`stores/integrity-strikes`), and from then the file waits again. Replication copies the files without the owner, so the overall `status` stays as it was.
 
-**Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`.
+**Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`, `› calls the newest backup incomplete again once blob-integrity finds a copy of a file it names gone from the object store, until replication copies the file again`.
 
 ### `instance/backup-health-files-waiting`
 
-Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST answer `backups.last_backup_files_waiting` with how many files the last backup put names of which the destination holds no copy, or `null` when no backup was put or the count could not be read.
+Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST answer `backups.last_backup_files_waiting` with how many files the last backup put names of which the copy record holds no copy in the destination, or `null` when no backup was put or the count could not be read.
 
 **Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`.
 
@@ -916,7 +916,7 @@ When the object store or the backup folder takes copies again and a run of `blob
 
 ### `instance/backup-health-quiet`
 
-Where a destination is set and `backup_interval_seconds` is above 0, while it takes copies, no file waits for one, the last backup run was whole and the destination holds a copy of each file the last backup put names, the server MUST answer `GET /health` with `backups.status` `ok` and `backups.store_error` `null`.
+Where a destination is set and `backup_interval_seconds` is above 0, while it takes copies, no file waits for one, the last backup run was whole and the copy record holds a copy in the destination of each file the last backup put names, the server MUST answer `GET /health` with `backups.status` `ok` and `backups.store_error` `null`.
 
 **Reason:** a report that is never empty is not read.
 

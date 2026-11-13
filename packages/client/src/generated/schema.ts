@@ -3138,7 +3138,7 @@ export interface components {
             /** @description Whether Marfa backs itself up to its backup folder or object store, how the last backup went, and whether the place it backs up to is taking copies. */
             backups: {
                 /**
-                 * @description `ok`: on schedule, and the last backup is whole. `incomplete`: files it names wait for their copy. `failing`: a run failed or lost files, or a store isn't taking copies, so the overall `status` is at least `degraded`. `off`: no scheduled backups.
+                 * @description `ok`: on schedule, and the last backup is whole. `incomplete`: files it names have no recorded copy. `failing`: a run failed or lost files, or a store isn't taking copies, so the overall `status` is at least `degraded`. `off`: no scheduled backups.
                  * @enum {string}
                  */
                 status: "ok" | "incomplete" | "failing" | "off";
@@ -3170,7 +3170,7 @@ export interface components {
                 last_failed_at?: string | null;
                 /** @description How many files waited for their copy in the object store or backup folder when `blob-replicate` last ran. Present only for a caller that holds `instance.read`, and only when a destination is set. */
                 copies_waiting?: number;
-                /** @description How many files the last backup names that the destination doesn't hold a copy of yet, or `null` when no backup was put or the count couldn't be read. Present only for a caller that holds `instance.read`, and only when a destination is set. */
+                /** @description How many files the last backup names with no recorded copy in the destination, or `null` when unknown. `blob-integrity` keeps the record true. Present only for a caller that holds `instance.read`, and only when a destination is set. */
                 last_backup_files_waiting?: number | null;
                 /** @description Why the object store or backup folder isn't taking copies, or `null` while it does. It covers a backup folder whose disk isn't there. Present only for a caller that holds `instance.read`, and only when a destination is set. */
                 store_error?: string | null;
@@ -30377,7 +30377,7 @@ export interface operations {
                         unremoved: number;
                         /** @description The hashes of the files the backup names that no store could give when Marfa took it. A restore of the backup goes ahead without them, and `GET /health` answers `backups.status` `failing` until a backup is put without losing any. */
                         blobs_lost: string[];
-                        /** @description How many files the backup names that the destination doesn't hold a copy of yet, including files listed in `blobs_lost`. A restore needs those files unless the restoring instance holds them or the backup lists them as lost. */
+                        /** @description How many files the backup names with no recorded copy in the destination, `blobs_lost` included. `blob-integrity` keeps the record true. A restore needs those files unless the restoring instance holds them or the backup lists them as lost. */
                         blobs_waiting: number;
                     };
                 };

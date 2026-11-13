@@ -1568,7 +1568,7 @@
                   "failing",
                   "off"
                 ],
-                "description": "`ok`: on schedule, and the last backup is whole. `incomplete`: files it names wait for their copy. `failing`: a run failed or lost files, or a store isn't taking copies, so the overall `status` is at least `degraded`. `off`: no scheduled backups."
+                "description": "`ok`: on schedule, and the last backup is whole. `incomplete`: files it names have no recorded copy. `failing`: a run failed or lost files, or a store isn't taking copies, so the overall `status` is at least `degraded`. `off`: no scheduled backups."
               },
               "reason": {
                 "type": "string",
@@ -1632,7 +1632,7 @@
                   "null"
                 ],
                 "minimum": 0,
-                "description": "How many files the last backup names that the destination doesn't hold a copy of yet, or `null` when no backup was put or the count couldn't be read. Present only for a caller that holds `instance.read`, and only when a destination is set."
+                "description": "How many files the last backup names with no recorded copy in the destination, or `null` when unknown. `blob-integrity` keeps the record true. Present only for a caller that holds `instance.read`, and only when a destination is set."
               },
               "store_error": {
                 "type": [
@@ -55002,7 +55002,7 @@
                     "blobs_waiting": {
                       "type": "integer",
                       "minimum": 0,
-                      "description": "How many files the backup names that the destination doesn't hold a copy of yet, including files listed in `blobs_lost`. A restore needs those files unless the restoring instance holds them or the backup lists them as lost."
+                      "description": "How many files the backup names with no recorded copy in the destination, `blobs_lost` included. `blob-integrity` keeps the record true. A restore needs those files unless the restoring instance holds them or the backup lists them as lost."
                     }
                   },
                   "required": [
