@@ -189,4 +189,107 @@ describe("row writes under an Idempotency-Key", () => {
       logged,
     );
   });
+
+  it("answers a put, a patch and a delete sent again under their key from the record, writing each once", async () => {
+    const { type, item } = await ledger();
+    const actor = await writer(type);
+    const kept = uuidv7();
+    const gone = uuidv7();
+    const seeded = await client.writeRows(item, "lines", {
+      operations: [
+        { op: "put", id: kept, values: { amount: 1, memo: "a" } },
+        { op: "put", id: gone, values: { amount: 2 } },
+      ],
+    });
+    expect(seeded.status, JSON.stringify(seeded.error)).toBe(200);
+    const made = uuidv7();
+    const doors: [string, Record<string, unknown>][] = [
+      ["put", { op: "put", id: made, values: { amount: 3, memo: "new" } }],
+      ["patch", { op: "patch", id: kept, values: { memo: "patched" } }],
+      ["delete", { op: "delete", id: gone }],
+    ];
+    for (const [door, operation] of doors) {
+      const send = keyed(actor, `/items/${item}/tables/lines/rows`, {
+        operations: [operation],
+      });
+      const first = await send();
+      expect(first.status, `${door}: ${JSON.stringify(first.error)}`).toBe(200);
+      expect(first.headers.get("Idempotency-Replayed")).toBeNull();
+      const logged = await batches(item);
+      const held = await values(item);
+      for (let again = 0; again < 2; again += 1) {
+        const replay = await send();
+        expectReplay(replay, first);
+        expect(await batches(item), `a repeated ${door} logged a batch`).toBe(
+          logged,
+        );
+        expect(await values(item), `a repeated ${door} changed a row`).toEqual(
+          held,
+        );
+      }
+    }
+    expect(await values(item)).toEqual({
+      [kept]: { amount: 1, memo: "patched" },
+      [made]: { amount: 3, memo: "new" },
+    });
+  });
+
+  it("writes a batch once when its answer was lost and the batch is sent again", async () => {
+    const { type, item } = await ledger();
+    const actor = await writer(type);
+    const row = uuidv7();
+    const made = await client.writeRows(item, "lines", {
+      operations: [{ op: "put", id: row, values: { amount: 1 } }],
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(200);
+    const send = keyed(actor, `/items/${item}/tables/lines/rows`, {
+      operations: [{ op: "delete", id: row }],
+    });
+    await send();
+    expect(await values(item), "the first send applied").toEqual({});
+    const before = await batches(item);
+
+    const retried = await send();
+    expect(retried.status, JSON.stringify(retried.error)).toBe(200);
+    expect(retried.headers.get("Idempotency-Replayed")).toBe("true");
+    expect(
+      (retried.data as { results: { outcome: string }[] }).results[0]?.outcome,
+      "a delete that ran again would answer absent",
+    ).toBe("deleted");
+    expect(await batches(item)).toBe(before);
+  });
+
+  it("refuses a key sent again with another batch, writing nothing", async () => {
+    const { type, item } = await ledger();
+    const actor = await writer(type);
+    const row = uuidv7();
+    const made = await client.writeRows(item, "lines", {
+      operations: [{ op: "put", id: row, values: { amount: 1, memo: "a" } }],
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(200);
+    const headers = { "Idempotency-Key": `rows-${randomUUID()}` };
+    const path = `/items/${item}/tables/lines/rows`;
+    const first = await actor.client.rawRequest<unknown>(path, {
+      method: "POST",
+      headers,
+      body: { operations: [{ op: "patch", id: row, values: { memo: "one" } }] },
+    });
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    const logged = await batches(item);
+    for (const operation of [
+      { op: "patch", id: row, values: { memo: "two" } },
+      { op: "delete", id: row },
+    ]) {
+      const other = await actor.client.rawRequest<unknown>(path, {
+        method: "POST",
+        headers,
+        body: { operations: [operation] },
+      });
+      expect(other.status, JSON.stringify(other.error)).toBe(422);
+      expect(other.error?.error.code).toBe("idempotency_key_reused");
+      expect(other.headers.get("Idempotency-Replayed")).toBeNull();
+    }
+    expect(await values(item)).toEqual({ [row]: { amount: 1, memo: "one" } });
+    expect(await batches(item)).toBe(logged);
+  });
 });

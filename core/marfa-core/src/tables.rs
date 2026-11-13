@@ -1313,14 +1313,31 @@ enum Key {
     Id,
     Updated,
     Column(String),
+    /// The table's `order` column, read by the key the server keeps for it.
+    Order {
+        column: String,
+        kind: String,
+    },
 }
 
 impl Key {
-    fn of(sort: Option<&str>, columns: &Map<String, Value>) -> Result<Key> {
+    /// With no `sort`, the table's own `order` column, or `id` for a table that names none.
+    fn of(sort: Option<&str>, definition: &Map<String, Value>) -> Result<Key> {
+        let columns = columns(definition);
+        let order = marfa_rules::schema::order_of(definition)
+            .filter(|(column, _)| marfa_rules::schema::order_column_inlinable(column));
+        let ordered = |column: &str| {
+            order
+                .clone()
+                .filter(|(named, _)| named == column)
+                .map(|(column, kind)| Key::Order { column, kind })
+        };
         match sort {
-            None | Some("id") => Ok(Key::Id),
+            None => Ok(order.map_or(Key::Id, |(column, kind)| Key::Order { column, kind })),
+            Some("id") => Ok(Key::Id),
             Some("updated_at") => Ok(Key::Updated),
             Some(sort) => match sort.strip_prefix("values.") {
+                Some(column) if let Some(key) = ordered(column) => Ok(key),
                 Some(column) if columns.contains_key(column) => Ok(Key::Column(column.into())),
                 _ => Err(refused(
                     "sort",
@@ -1342,18 +1359,24 @@ impl Key {
                 ));
                 text
             }
+            Key::Order { column, kind } => {
+                marfa_rules::schema::order_value_key_sql(kind, column, "r.body")
+            }
+        }
+    }
+
+    /// What the key is called in a `sort`, which a cursor is tied to.
+    fn label(&self) -> String {
+        match self {
+            Key::Id => "id".to_string(),
+            Key::Updated => "updated_at".to_string(),
+            Key::Column(column) | Key::Order { column, .. } => format!("values.{column}"),
         }
     }
 }
 
-fn scope(item: &str, table: &str, asked: &RowsAsked, descending: bool) -> String {
-    let named = json!([
-        item,
-        table,
-        asked.filter,
-        asked.sort.as_deref().unwrap_or("id"),
-        descending
-    ]);
+fn scope(item: &str, table: &str, asked: &RowsAsked, key: &Key, descending: bool) -> String {
+    let named = json!([item, table, asked.filter, key.label(), descending]);
     hex::encode(&Sha256::digest(named.to_string().as_bytes())[..16])
 }
 
@@ -1412,8 +1435,8 @@ fn page_from_copy(
         .as_deref()
         .map(|filter| expression(filter, &columns))
         .transpose()?;
-    let key = Key::of(asked.sort.as_deref(), &columns)?;
-    let scope = scope(item, table, asked, descending);
+    let key = Key::of(asked.sort.as_deref(), definition)?;
+    let scope = scope(item, table, asked, &key, descending);
     let position = asked
         .cursor
         .as_deref()
@@ -1447,7 +1470,7 @@ fn page_from_copy(
                 sql.push_str(&format!(" AND (k {after} ? OR (k = ? AND r.id > ?))"));
                 values.extend([at.clone(), at.clone(), Value::String(id.clone())]);
             }
-            (Key::Column(_), at) => {
+            (Key::Column(_) | Key::Order { .. }, at) => {
                 sql.push_str(&format!(
                     " AND (k IS NULL OR k {after} ? OR (k = ? AND r.id > ?))"
                 ));
@@ -1459,7 +1482,9 @@ fn page_from_copy(
     sql.push_str(&match key {
         Key::Id => format!(" ORDER BY r.id {direction}"),
         Key::Updated => format!(" ORDER BY k {direction}, r.id ASC"),
-        Key::Column(_) => format!(" ORDER BY k IS NULL, k {direction}, r.id ASC"),
+        Key::Column(_) | Key::Order { .. } => {
+            format!(" ORDER BY k IS NULL, k {direction}, r.id ASC")
+        }
     });
     sql.push_str(" LIMIT ?");
     values.push(json!(limit + 1));

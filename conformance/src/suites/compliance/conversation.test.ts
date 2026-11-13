@@ -295,6 +295,43 @@ describe("appending and reading", () => {
       expect(await texts(made.id, "desc", limit)).toEqual(order(-1));
     }
   });
+
+  it("reads the messages in sent_at order by default, however they were written", async () => {
+    const made = await conversation("Default order");
+    await append(made.id, [sent("first", 1), sent("second", 2)]);
+    await append(made.id, [
+      sent("newest, with an id from 2020", 10, idAt("2020-01-01T00:00:00Z")),
+    ]);
+    await append(made.id, [sent("third, written late", 3)]);
+    await append(made.id, [sent("oldest, imported last", -60)]);
+    const expected = [
+      "oldest, imported last",
+      "first",
+      "second",
+      "third, written late",
+      "newest, with an id from 2020",
+    ];
+    for (const limit of [1, 2, 50]) {
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      do {
+        const res = await client.listRows(made.id, "messages", {
+          limit,
+          cursor,
+        });
+        expect(res.status, JSON.stringify(res.error)).toBe(200);
+        seen.push(...res.data.data.map((r) => String(r.values.text)));
+        cursor = res.data.next_cursor ?? undefined;
+      } while (cursor);
+      expect(seen, `limit ${limit}`).toEqual(expected);
+    }
+    const newestFirst = await client.listRows(made.id, "messages", {
+      direction: "desc",
+    });
+    expect(newestFirst.data.data.map((r) => r.values.text)).toEqual(
+      [...expected].reverse(),
+    );
+  });
 });
 
 describe("activity on a stopped clock", () => {

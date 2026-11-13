@@ -23,10 +23,12 @@ interface Batch {
 
 let c: CliContext;
 let item: string;
+let ledgerType: string;
 
 beforeAll(async () => {
   c = await cliContext("tables");
   const type = `user.${unique("cli-ledger")}`;
+  ledgerType = type;
   await c.cli.json([
     "types",
     "register",
@@ -357,5 +359,199 @@ describe("tables and rows from the terminal", () => {
         ],
       });
     }
+  });
+
+  it("reads a table in its declared order by default, and by id when asked", async () => {
+    const made = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.conversation",
+    ]);
+    const chat = made.item.id;
+    trackItem(c.ctx, chat);
+    const sentAt = (minutes: number) =>
+      new Date(
+        Date.parse("2026-03-01T09:00:00Z") + minutes * 60_000,
+      ).toISOString();
+    const texts = ["third", "first", "second"];
+    const minutes = [3, 1, 2];
+    for (const [at, text] of texts.entries()) {
+      await c.cli.json<Batch>([
+        "rows",
+        "put",
+        chat,
+        "messages",
+        "--values",
+        JSON.stringify({
+          author: "alice",
+          text,
+          sent_at: sentAt(minutes[at]!),
+        }),
+      ]);
+    }
+    const plain = await c.cli.json<{ data: Row[] }>([
+      "rows",
+      "list",
+      chat,
+      "messages",
+    ]);
+    expect(plain.data.map((r) => r.values.text)).toEqual([
+      "first",
+      "second",
+      "third",
+    ]);
+    const newest = await c.cli.json<{ data: Row[] }>([
+      "rows",
+      "list",
+      chat,
+      "messages",
+      "--direction",
+      "desc",
+    ]);
+    expect(newest.data.map((r) => r.values.text)).toEqual([
+      "third",
+      "second",
+      "first",
+    ]);
+    const byId = await c.cli.json<{ data: Row[] }>([
+      "rows",
+      "list",
+      chat,
+      "messages",
+      "--sort",
+      "id",
+    ]);
+    expect(byId.data.map((r) => r.values.text)).toEqual(texts);
+  });
+
+  it("sends the key of a row write, so a repeat is answered from the record and writes once", async () => {
+    const made = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      ledgerType,
+      "--prop",
+      "title=Keyed",
+    ]);
+    const keyed = made.item.id;
+    trackItem(c.ctx, keyed);
+    const rows = async () =>
+      (await c.cli.json<{ data: Row[] }>(["rows", "list", keyed, "lines"]))
+        .data;
+    const logged = async () =>
+      (
+        await c.cli.json<{ data: unknown[] }>([
+          "rows",
+          "batches",
+          keyed,
+          "lines",
+        ])
+      ).data.length;
+    const a = uuidv7();
+    const b = uuidv7();
+    const key = (name: string) => ["--idempotency-key", `${name}-${uuidv7()}`];
+
+    const writeKey = key("write");
+    const write = ["rows", "write", keyed, "lines", "--file", "-", ...writeKey];
+    const batch = JSON.stringify({
+      operations: [
+        { op: "put", id: a, values: { amount: 1, memo: "a" } },
+        { op: "put", id: b, values: { amount: 2 } },
+      ],
+    });
+    const first = await c.cli.json<Batch>(write, { stdin: batch });
+    expect(await c.cli.json<Batch>(write, { stdin: batch })).toEqual(first);
+    expect(await logged()).toBe(1);
+
+    const patch = [
+      "rows",
+      "patch",
+      keyed,
+      "lines",
+      a,
+      "--values",
+      JSON.stringify({ memo: "patched" }),
+      ...key("patch"),
+    ];
+    const patched = await c.cli.json<Batch>(patch);
+    expect(patched.results).toEqual([{ id: a, outcome: "patched" }]);
+    await c.cli.json<Batch>([
+      "rows",
+      "patch",
+      keyed,
+      "lines",
+      a,
+      "--values",
+      JSON.stringify({ memo: "between" }),
+    ]);
+    expect(await c.cli.json<Batch>(patch), "a repeated patch").toEqual(patched);
+    expect(
+      (await rows()).find((r) => r.id === a)?.values.memo,
+      "the repeat put its change over a later one",
+    ).toBe("between");
+
+    const put = [
+      "rows",
+      "put",
+      keyed,
+      "lines",
+      "--values",
+      JSON.stringify({ amount: 9 }),
+      ...key("put"),
+    ];
+    const created = await c.cli.json<Batch>(put);
+    expect(await c.cli.json<Batch>(put), "a repeated put").toEqual(created);
+    expect(await rows()).toHaveLength(3);
+
+    const del = ["rows", "delete", keyed, "lines", b, ...key("delete")];
+    const deleted = await c.cli.json<Batch>(del);
+    expect(deleted.results).toEqual([{ id: b, outcome: "deleted" }]);
+    expect(
+      await c.cli.json<Batch>(del),
+      "a repeated delete would answer absent",
+    ).toEqual(deleted);
+
+    const undo = [
+      "rows",
+      "undo",
+      keyed,
+      "lines",
+      deleted.batch!,
+      ...key("undo"),
+    ];
+    const undone = await c.cli.json<Batch>(undo);
+    expect(undone.results).toEqual([{ id: b, outcome: "created" }]);
+    expect(await c.cli.json<Batch>(undo), "a repeated undo").toEqual(undone);
+    expect(await rows()).toHaveLength(3);
+
+    const bare = [
+      "rows",
+      "put",
+      keyed,
+      "lines",
+      "--id",
+      uuidv7(),
+      "--values",
+      JSON.stringify({ amount: 5 }),
+    ];
+    expect(
+      (await c.cli.json<Batch>(bare)).results[0]!.outcome,
+      "a first put",
+    ).toBe("created");
+    expect(
+      (await c.cli.json<Batch>(bare)).results[0]!.outcome,
+      "a second put sent with no key runs, and is not answered from a record",
+    ).toBe("unchanged");
+    const before = await logged();
+
+    const reused = await c.cli.refused([
+      ...patch.slice(0, 5),
+      "--values",
+      JSON.stringify({ memo: "another" }),
+      ...patch.slice(-2),
+    ]);
+    expect(reused.envelope.error.server?.code).toBe("idempotency_key_reused");
+    expect(await logged()).toBe(before);
   });
 });

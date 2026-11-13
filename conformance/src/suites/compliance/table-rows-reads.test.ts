@@ -683,6 +683,236 @@ describe("sorting by a table's order", () => {
     }
   });
 
+  async function walkDefault(
+    item: string,
+    direction: "asc" | "desc" | undefined,
+    limit: number,
+    table = "lines",
+  ): Promise<string[]> {
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    let pages = 0;
+    do {
+      const res = await client.listRows(item, table, {
+        direction,
+        limit,
+        cursor,
+      });
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+      seen.push(...res.data.data.map((r) => r.id));
+      cursor = res.data.next_cursor ?? undefined;
+      pages += 1;
+    } while (cursor && pages < 50);
+    return seen;
+  }
+
+  it("reads a table's rows in its declared order when no sort is named", async () => {
+    counter += 1;
+    const type = `user.rows-default-${counter}-${ctx.runId}`;
+    const made = await client.registerType({
+      id: type,
+      fields: { title: { type: "string" } },
+      tables: {
+        lines: {
+          columns: { at: { type: "datetime" }, memo: { type: "string" } },
+          order: "at",
+        },
+        plain: { columns: { at: { type: "datetime" } } },
+      },
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const created = await client.createItem({
+      type,
+      properties: { title: "Default" },
+    } as never);
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    const item = created.data.item.id;
+    trackItem(ctx, item);
+    const times = [
+      "2026-01-01T10:00:00+05:00",
+      "2026-01-01T06:00:00Z",
+      "2026-01-01",
+      "2026-01-01T01:00:00.500-03:00",
+      "2025-12-31T23:30+00:00",
+    ];
+    const operations = times.map(
+      (at) => ({ op: "put", values: { at } }) as RowOperation,
+    );
+    const ids: string[] = [];
+    for (const table of ["lines", "plain"]) {
+      const res = await client.writeRows(item, table, { operations });
+      expect(res.status, JSON.stringify(res.error)).toBe(200);
+      ids.push(...res.data.results.map((r) => r.id));
+    }
+    const [plus5, utc, date, minus3, before] = ids.slice(0, 5);
+    const byInstant = [before, date, minus3, plus5, utc];
+    expect(await walkDefault(item, undefined, 1000)).toEqual(byInstant);
+    expect(await walkDefault(item, "asc", 1000)).toEqual(byInstant);
+    const byId = [...ids.slice(0, 5)].sort();
+    expect(
+      byId,
+      "the instants must differ from the id order for this test to tell them apart",
+    ).not.toEqual(byInstant);
+    expect(
+      await walkDefault(item, undefined, 1000, "plain"),
+      "a table that names no order reads by id",
+    ).toEqual([...ids.slice(5)].sort());
+  });
+
+  it("reads a declared order descending, rows without a value last and ties by id", async () => {
+    const { item } = await ordered(
+      { rank: { type: "number" }, label: { type: "string" } },
+      "rank",
+    );
+    const plan: (number | null)[] = [2, null, 1, 2, 3, null, 2, 1.5];
+    const ids = await write(
+      item,
+      plan.map(
+        (rank) =>
+          ({
+            op: "put",
+            values: rank === null ? { label: "none" } : { rank },
+          }) as RowOperation,
+      ),
+    );
+    const rows = plan.map((rank, n) => ({ id: ids[n]!, rank }));
+    const byId = (a: { id: string }, b: { id: string }) =>
+      a.id < b.id ? -1 : 1;
+    const valued = rows.filter((r) => r.rank !== null);
+    const empty = rows.filter((r) => r.rank === null).sort(byId);
+    const sorted = (sign: 1 | -1) => [
+      ...[...valued]
+        .sort((a, b) =>
+          a.rank === b.rank ? byId(a, b) : (a.rank! - b.rank!) * sign,
+        )
+        .map((r) => r.id),
+      ...empty.map((r) => r.id),
+    ];
+    expect(await walkDefault(item, undefined, 1000)).toEqual(sorted(1));
+    expect(await walkDefault(item, "desc", 1000)).toEqual(sorted(-1));
+  });
+
+  it("continues a declared order across pages by its cursor, skipping none and repeating none", async () => {
+    const { item } = await ordered(
+      { rank: { type: "integer" }, label: { type: "string" } },
+      "rank",
+    );
+    const plan: (number | null)[] = [3, 1, null, 2, 2, 3, null, 1, 2, 4];
+    await write(
+      item,
+      plan.map(
+        (rank) =>
+          ({
+            op: "put",
+            values: rank === null ? { label: "none" } : { rank },
+          }) as RowOperation,
+      ),
+    );
+    for (const direction of ["asc", "desc"] as const) {
+      const whole = await walkDefault(item, direction, 1000);
+      expect(whole).toHaveLength(plan.length);
+      const listed = await client.listRows(item, "lines", {
+        direction,
+        limit: 1000,
+      });
+      expect(
+        listed.data.data.map((r) => r.values.rank ?? null),
+        direction,
+      ).toEqual(
+        direction === "asc"
+          ? [1, 1, 2, 2, 2, 3, 3, 4, null, null]
+          : [4, 3, 3, 2, 2, 2, 1, 1, null, null],
+      );
+      for (const limit of [1, 3, 4]) {
+        expect(
+          await walkDefault(item, direction, limit),
+          `${direction}, ${limit} to a page`,
+        ).toEqual(whole);
+      }
+      const first = await client.listRows(item, "lines", {
+        direction,
+        limit: 4,
+      });
+      const second = await client.listRows(item, "lines", {
+        direction,
+        limit: 4,
+        cursor: first.data.next_cursor!,
+      });
+      const third = await client.listRows(item, "lines", {
+        direction,
+        limit: 4,
+        cursor: second.data.next_cursor!,
+      });
+      expect(
+        [first, second, third].map((page) => page.data.data.length),
+        `${direction} in three pages`,
+      ).toEqual([4, 4, 2]);
+      expect(third.data.next_cursor).toBeNull();
+    }
+  });
+
+  it("answers a sort that is named, whatever the table's order", async () => {
+    const { item } = await ordered(
+      { rank: { type: "integer" }, label: { type: "string" } },
+      "rank",
+    );
+    const ids = await write(
+      item,
+      [3, 1, 2].map(
+        (rank) =>
+          ({
+            op: "put",
+            values: { rank, label: `l${4 - rank}` },
+          }) as RowOperation,
+      ),
+    );
+    const named = async (sort: string, cursor?: string) =>
+      client.listRows(item, "lines", { sort, limit: 100, cursor });
+    expect((await named("id")).data.data.map((r) => r.id)).toEqual(
+      [...ids].sort(),
+    );
+    expect((await named("values.label")).data.data.map((r) => r.id)).toEqual([
+      ids[0],
+      ids[2],
+      ids[1],
+    ]);
+    const byDefault = await client.listRows(item, "lines", { limit: 1 });
+    expect(byDefault.data.data.map((r) => r.id)).toEqual([ids[1]]);
+    const crossed = await named("id", byDefault.data.next_cursor!);
+    expect(crossed.status).toBe(400);
+    expect(crossed.error?.error.code).toBe("validation_error");
+  });
+
+  it("refuses a cursor of a default listing once the table's order has changed", async () => {
+    const columns = { rank: { type: "integer" }, other: { type: "integer" } };
+    const { type, item } = await ordered(columns, "rank");
+    await write(
+      item,
+      [1, 2, 3].map(
+        (n) =>
+          ({ op: "put", values: { rank: n, other: 4 - n } }) as RowOperation,
+      ),
+    );
+    const first = await client.listRows(item, "lines", { limit: 1 });
+    expect(first.data.next_cursor).not.toBeNull();
+    const changed = await client.replaceType(type, {
+      id: type,
+      fields: { title: { type: "string" } },
+      tables: { lines: { columns, order: "other" } },
+    });
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+    const stale = await client.listRows(item, "lines", {
+      limit: 1,
+      cursor: first.data.next_cursor!,
+    });
+    expect(stale.status).toBe(400);
+    expect(stale.error?.error.code).toBe("validation_error");
+    expect(stale.error?.error.details).toMatchObject({ field: "cursor" });
+    const fresh = await client.listRows(item, "lines", { limit: 1 });
+    expect(fresh.status, JSON.stringify(fresh.error)).toBe(200);
+    expect(fresh.data.data[0]?.values.other).toBe(1);
+  });
+
   it("sorts a value a forced change left of another type as no value", async () => {
     const columns = {
       kept: { type: "number" },
