@@ -10,8 +10,8 @@ let apiUrl: string;
 
 /** What a client that names no scope, and may refresh, is registered for. */
 const DATA_ALONE = [
-  "*:read",
-  "*:write",
+  "content:read",
+  "content:write",
   "edge.*:read",
   "edge.*:write",
   "offline_access",
@@ -152,11 +152,15 @@ describe("OAuth provider", () => {
     }
   });
 
-  it("advertises at /mcp the owner's data and links alone, as a client naming no scope is registered for", async () => {
-    const r = await fetch(`${apiUrl}/.well-known/oauth-protected-resource/mcp`);
-    expect(r.status).toBe(200);
-    const doc = (await r.json()) as { scopes_supported: string[] };
-    expect([...doc.scopes_supported].sort()).toEqual(DATA_ALONE);
+  it("advertises at the origin and at /mcp the owner's content and links alone, as a client naming no scope is registered for", async () => {
+    for (const path of ["", "/mcp"]) {
+      const r = await fetch(
+        `${apiUrl}/.well-known/oauth-protected-resource${path}`,
+      );
+      expect(r.status, path).toBe(200);
+      const doc = (await r.json()) as { scopes_supported: string[] };
+      expect([...doc.scopes_supported].sort(), path).toEqual(DATA_ALONE);
+    }
   });
 
   it("advertises client ID metadata documents beside public clients", async () => {

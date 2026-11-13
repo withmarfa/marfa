@@ -260,12 +260,11 @@ fn edge_pattern(pattern: &str) -> bool {
         && parts.all(tail)
 }
 
-/// What a client that names no scope asks for: the owner's items and the links between them.
+/// What a client that names no scope asks for: the owner's content and the links between items.
 pub fn data_alone(refreshes: bool) -> ScopeSet {
     let mut set = ScopeSet::default();
     for verb in Verb::BOTH {
-        let pattern = ALL.to_string();
-        set.insert(&Scope::Type { pattern, verb }.literal());
+        set.insert(&Scope::Content(verb).literal());
     }
     for verb in Verb::BOTH {
         let pattern = ALL.to_string();
@@ -690,13 +689,17 @@ mod tests {
         assert!(to_grants(&default).permissions.is_empty());
         let text = default.to_text();
         assert_eq!(level(&text, Axis::Type, "core.note"), Level::Write);
-        assert_eq!(level(&text, Axis::Type, "system.view"), Level::Write);
+        assert_eq!(level(&text, Axis::Type, "user.recipe"), Level::Write);
+        for system in ["system.view", "system.folder", "system.connection"] {
+            assert_eq!(level(&text, Axis::Type, system), Level::None, "{system}");
+        }
         assert_eq!(level(&text, Axis::Edge, "links_to"), Level::Write);
         assert_eq!(level(&text, Axis::Metadata, "types"), Level::None);
         assert_eq!(level(&text, Axis::Profile, "name"), Level::None);
         // The witness: what an app may be granted reaches the rest.
         let every = allowed.to_text();
         assert_eq!(to_grants(&allowed).permissions.len(), PERMISSIONS.len());
+        assert_eq!(level(&every, Axis::Type, "system.view"), Level::Write);
         assert_eq!(level(&every, Axis::Metadata, "types"), Level::Write);
         assert_eq!(level(&every, Axis::Profile, "name"), Level::Write);
         assert_eq!(data_alone(false), default.without(OFFLINE_ACCESS));

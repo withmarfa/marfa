@@ -478,7 +478,7 @@ mod tests {
     use proptest::prelude::*;
 
     fn data_alone() -> ScopeSet {
-        ScopeSet::parse("*:read *:write edge.*:read edge.*:write offline_access")
+        ScopeSet::parse("content:read content:write edge.*:read edge.*:write offline_access")
     }
 
     fn register(body: Value) -> Reading<Registration> {

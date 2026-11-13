@@ -6312,7 +6312,7 @@ export interface components {
         OAuthClientRegistration: {
             /** @description The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. At most 10. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`. */
             redirect_uris?: string[];
-            /** @description Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out for items and links alone: `*:read *:write edge.*:read edge.*:write offline_access`. */
+            /** @description Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out for your content and links: `content:read content:write edge.*:read edge.*:write offline_access`. */
             scope?: string;
             /** @description The app's name, which Marfa shows a person asked to approve it. */
             client_name?: string;
@@ -25706,7 +25706,7 @@ export interface operations {
                     "application/json": {
                         /** @description The redirect URIs, as registered. */
                         redirect_uris?: string[];
-                        /** @description Space-separated scopes the client is registered for: the ones you named, or `*:read *:write edge.*:read edge.*:write offline_access` when you named none, without `offline_access` for a client that can't use a refresh token. */
+                        /** @description Space-separated scopes the client is registered for: the ones you named, or `content:read content:write edge.*:read edge.*:write offline_access` when you named none, without `offline_access` for a client that can't use a refresh token. */
                         scope?: string;
                         /** @description The app's name, as registered. */
                         client_name?: string;

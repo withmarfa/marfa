@@ -12,6 +12,13 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import {
+  ALL_TOOLS,
+  callTool,
+  connectMcp,
+  toolNames,
+  toolResult,
+} from "../../utils/mcp.js";
+import {
   authorize,
   authorizeQuery,
   CALLBACK,
@@ -1917,7 +1924,7 @@ describe("what the approval pages offer and grant an app that names no scope", (
   beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
   afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-  const DATA = ["*:read", "*:write", "edge.*:read", "edge.*:write"];
+  const DATA = ["content:read", "content:write", "edge.*:read", "edge.*:write"];
   const PERMISSIONS = [
     "schema.write",
     "keys.mint",
@@ -1986,19 +1993,16 @@ describe("what the approval pages offer and grant an app that names no scope", (
     return response.status;
   }
 
-  it("offers an app that names no scope the owner's data and links, read only beside read and edit, and no permission", async () => {
+  it("offers an app that names no scope the owner's content and links, read only beside read and edit, and no permission", async () => {
     const { html } = await screenFor(await registerNamingNone(), undefined);
     expect(
-      selectNamed(html, "All your data")?.options.map((o) => [
-        o.value,
-        o.label,
-      ]),
+      selectNamed(html, "Your content")?.options.map((o) => [o.value, o.label]),
     ).toEqual([
       ["", "No access"],
-      ["*:read", "Read only"],
-      ["*:write", "Read and edit"],
-      [CHOOSE, "Choose types"],
+      ["content:read", "Read only"],
+      ["content:write", "Read and edit"],
     ]);
+    expect(selectNamed(html, "All your data")).toBeUndefined();
     expect(
       selectNamed(html, "Links between items")?.options.map((o) => [
         o.value,
@@ -2027,6 +2031,7 @@ describe("what the approval pages offer and grant an app that names no scope", (
         .map((c) => c.value),
     ).toEqual(["keys.mint"]);
     expect(selectNamed(html, "All your data")).toBeUndefined();
+    expect(selectNamed(html, "Your content")).toBeUndefined();
   });
 
   it("issues an app that names no scope a token that reads and writes items and links, and mints no key and reads no settings", async () => {
@@ -2056,6 +2061,10 @@ describe("what the approval pages offer and grant an app that names no scope", (
     ).toBe(201);
     expect(await call(bearer, "GET", "/items?limit=1")).toBe(200);
     expect(await call(bearer, "GET", "/edges?limit=1")).toBe(200);
+    // Content leaves out the system types, which a person's own key reads.
+    expect(
+      await call(bearer, "GET", "/items?type=system.folder&include=system"),
+    ).toBe(403);
     expect(
       await call(bearer, "POST", "/keys", {
         label: "minted",
@@ -2085,6 +2094,92 @@ describe("what the approval pages offer and grant an app that names no scope", (
     );
   });
 
+  it("serves an app that names no scope every tool at /mcp, and each works within its content", async () => {
+    const app = await registerNamingNone();
+    const { consent, proof } = await screenFor(app, undefined);
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      consent,
+      true,
+      [],
+      [],
+      "full",
+    );
+    const issued = await redeem(app, sent, proof);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    const mcp = await connectMcp(server.apiUrl, issued.body.access_token!);
+    try {
+      expect(await toolNames(mcp)).toEqual([...ALL_TOOLS].sort());
+      const overview = toolResult(await callTool(mcp, "marfa_overview", {}));
+      expect(overview.types).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "core.note" })]),
+      );
+      const note = toolResult(
+        await callTool(mcp, "marfa_create", {
+          type: "core.note",
+          properties: { title: "by the default", body: "one" },
+        }),
+      ) as { id: string; version: number };
+      const found = toolResult(
+        await callTool(mcp, "marfa_find", { type: "core.note" }),
+      ) as { items: { id: string }[] };
+      expect(found.items.map((item) => item.id)).toContain(note.id);
+      const got = toolResult(
+        await callTool(mcp, "marfa_get", { ids: [note.id] }),
+      ) as { items: { id: string }[] };
+      expect(got.items.map((item) => item.id)).toEqual([note.id]);
+      toolResult(
+        await callTool(mcp, "marfa_update", {
+          id: note.id,
+          version: note.version,
+          properties: { body: "two" },
+        }),
+      );
+      const talk = toolResult(
+        await callTool(mcp, "marfa_create", {
+          type: "core.conversation",
+          properties: { title: "a talk" },
+        }),
+      ) as { id: string };
+      toolResult(
+        await callTool(mcp, "marfa_write_rows", {
+          id: talk.id,
+          table: "messages",
+          operations: [
+            {
+              op: "put",
+              values: {
+                author: "person",
+                text: "hello",
+                sent_at: "2026-01-01T00:00:00Z",
+              },
+            },
+          ],
+        }),
+      );
+      const rows = toolResult(
+        await callTool(mcp, "marfa_read_rows", {
+          id: talk.id,
+          table: "messages",
+        }),
+      ) as { rows: { values: { text: string } }[] };
+      expect(rows.rows.map((row) => row.values.text)).toEqual(["hello"]);
+      const preview = toolResult(
+        await callTool(mcp, "marfa_delete", { ids: [note.id] }),
+      );
+      toolResult(
+        await callTool(mcp, "marfa_delete", {
+          ids: [note.id],
+          confirm: preview.confirm,
+        }),
+      );
+    } finally {
+      await mcp.close();
+    }
+  });
+
   it("issues an app that names no scope a token that only reads when the person chooses Read only", async () => {
     const app = await registerNamingNone();
     const { html, consent, proof } = await screenFor(app, undefined);
@@ -2093,13 +2188,13 @@ describe("what the approval pages offer and grant an app that names no scope", (
       value.replace(/:write$/, ":read"),
     );
     expect(readOnly.sort()).toEqual(
-      ["*:read", "edge.*:read", "offline_access"].sort(),
+      ["content:read", "edge.*:read", "offline_access"].sort(),
     );
     const sent = await decide(server, origin, cookie, consent, true, readOnly);
     const issued = await redeem(app, sent, proof);
     expect(issued.status, JSON.stringify(issued.body)).toBe(200);
     expect(sorted(issued.body.scope)).toEqual(
-      ["*:read", "edge.*:read", "offline_access"].sort(),
+      ["content:read", "edge.*:read", "offline_access"].sort(),
     );
     const bearer = issued.body.access_token!;
     expect(await call(bearer, "GET", "/items?limit=1")).toBe(200);

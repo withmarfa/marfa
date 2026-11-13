@@ -107,7 +107,12 @@ describe("offline_access on a device", () => {
   });
 
   it("registers a client that may not refresh, naming no scope, for the owner's data alone without offline_access, and answers its device flow an access token alone", async () => {
-    const data = ["*:read", "*:write", "edge.*:read", "edge.*:write"];
+    const data = [
+      "content:read",
+      "content:write",
+      "edge.*:read",
+      "edge.*:write",
+    ];
     // The witness: a client that may refresh, naming no scope, is registered
     // for `offline_access`.
     const refreshing = await startDeviceFlow(server!, ["core.note:read"]);

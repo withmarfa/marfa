@@ -1221,11 +1221,11 @@ When the server serves the protected resource metadata of `/mcp/schema` or `/mcp
 
 ### `keys-and-oauth/protected-resource-mcp-default`
 
-When the server serves the protected resource metadata of `/mcp`, the server MUST name in its `scopes_supported` exactly `*:read`, `*:write`, `edge.*:read`, `edge.*:write` and `offline_access`.
+When the server serves the protected resource metadata of its origin or of `/mcp`, the server MUST name in its `scopes_supported` exactly `content:read`, `content:write`, `edge.*:read`, `edge.*:write` and `offline_access`.
 
-**Reason:** An MCP client that is not told which scopes to ask for asks for every scope the metadata names, so `/mcp` names what `keys-and-oauth/register-default-scope` registers a client that names none for. A tool that needs more is answered with the scope it lacks (`keys-and-oauth/mcp-challenge-scope`).
+**Reason:** An MCP client that is not told which scopes to ask for asks for every scope the metadata names, so the metadata names what `keys-and-oauth/register-default-scope` registers a client that names none for. A tool that needs more is answered with the scope it lacks (`keys-and-oauth/mcp-challenge-scope`).
 
-**Tests:** `compliance/oauth.test.ts › advertises at /mcp the owner's data and links alone, as a client naming no scope is registered for`.
+**Tests:** `compliance/oauth.test.ts › advertises at the origin and at /mcp the owner's content and links alone, as a client naming no scope is registered for`.
 
 ### `keys-and-oauth/discovery-metadata-documents`
 
@@ -1295,11 +1295,11 @@ If a registration names `offline_access` in its scope and its `grant_types` name
 
 ### `keys-and-oauth/register-default-scope`
 
-When a registration or a client ID metadata document names no scope, the server MUST register the client for exactly `*:read`, `*:write`, `edge.*:read`, `edge.*:write` and `offline_access`, leaving out `offline_access` for a client whose `grant_types` name neither `refresh_token` nor `authorization_code`.
+When a registration or a client ID metadata document names no scope, the server MUST register the client for exactly `content:read`, `content:write`, `edge.*:read`, `edge.*:write` and `offline_access`, leaving out `offline_access` for a client whose `grant_types` name neither `refresh_token` nor `authorization_code`.
 
-**Reason:** An app that asks for nothing in particular is offered the owner's items and the links between them, and none of the twelve permissions, the metadata or the profile: an app that needs one names it. A client that may not exchange a refresh token is refused `offline_access` by `keys-and-oauth/device-offline-no-refresh`, so a default that held the scope would register the client for a scope it can never use.
+**Reason:** An app that asks for nothing in particular is offered the owner's content and the links between items, and none of the `system` types, the twelve permissions, the metadata or the profile: an app that needs one names it. A client that may not exchange a refresh token is refused `offline_access` by `keys-and-oauth/device-offline-no-refresh`, so a default that held the scope would register the client for a scope it can never use.
 
-**Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `› registers a client naming an empty or blank scope for the owner's data alone`, `compliance/device-offline-access.test.ts › registers a client that may not refresh, naming no scope, for the owner's data alone without offline_access, and answers its device flow an access token alone`, `compliance/approval-screens.test.ts › offers an app that names no scope the owner's data and links, read only beside read and edit, and no permission`.
+**Tests:** `compliance/oauth.test.ts › registers a native client dynamically and issues a client_id`, `› registers a client naming an empty or blank scope for the owner's data alone`, `compliance/device-offline-access.test.ts › registers a client that may not refresh, naming no scope, for the owner's data alone without offline_access, and answers its device flow an access token alone`, `compliance/approval-screens.test.ts › offers an app that names no scope the owner's content and links, read only beside read and edit, and no permission`.
 
 ### `keys-and-oauth/register-unknown-scope`
 

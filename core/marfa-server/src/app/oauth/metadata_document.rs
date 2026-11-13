@@ -804,7 +804,7 @@ mod tests {
         assert_eq!(registered.grant_types, [GrantType::AuthorizationCode]);
         assert_eq!(
             registered.scope.to_text(),
-            "*:read *:write edge.*:read edge.*:write offline_access"
+            "content:read content:write edge.*:read edge.*:write offline_access"
         );
     }
 
