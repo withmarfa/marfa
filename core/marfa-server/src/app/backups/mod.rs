@@ -1131,9 +1131,8 @@ fn lacking_in_bucket(mut refused: Refusal) -> Refusal {
     }
     refused.message = format!(
         "Nothing was restored: the backup names {} that neither this instance nor the object \
-         store holds whole: {shown}. They were still waiting for their copy when the backup was \
-         taken. Restore an earlier backup, or download this backup's object from the object \
-         store and restore it with `marfa restore` to leave them out.",
+         store holds whole: {shown}. Restore an earlier backup, or download this backup's \
+         object from the object store and restore it with `marfa restore` to leave them out.",
         counted(lacking.len(), "file", "files")
     )
     .into();

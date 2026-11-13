@@ -137,8 +137,8 @@ fn backing(health: &BackupHealth) -> Vec<Concern> {
             "incomplete",
             "The newest backup is not complete yet",
             format!(
-                "{files} for a copy in the {place}, so a restore from it would refuse. It is \
-                 complete once replication has copied them."
+                "{files} for a copy in the {place}. A restore needs those files unless the \
+                 restoring instance holds them or the backup lists them as lost."
             ),
         ));
     }

@@ -90,7 +90,7 @@ While the last backup run, taken on the schedule or by hand, failed or put a bac
 
 While the destination holds no copy of a file the last backup put names, the last backup run did not fail and the destination takes the copies that wait for it, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `incomplete`, whose description says how many of those files wait.
 
-**Reason:** a restore from that backup refuses until replication copies the files, and the owner learns it before they need the backup.
+**Reason:** a fresh instance cannot restore the files until replication copies them, and the owner learns it before they need the backup.
 
 **Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`.
 
@@ -836,7 +836,7 @@ While the last backup run put a backup whose manifest names files in `lost_blobs
 
 Where `backup_interval_seconds` is above 0, while the destination holds no copy of a file the last backup put names, the last backup run did not fail and the destination takes the copies that wait for it, the server MUST answer `GET /health` with `backups.status` `incomplete`.
 
-**Reason:** a backup is good only once its destination holds every file it names, since a restore from it refuses until then. Replication copies the files without the owner, so the overall `status` stays as it was.
+**Reason:** a backup is good only once its destination holds every file it names, so a fresh instance can restore them. Replication copies the files without the owner, so the overall `status` stays as it was.
 
 **Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`.
 

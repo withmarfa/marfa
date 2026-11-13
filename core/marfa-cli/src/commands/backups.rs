@@ -109,8 +109,8 @@ fn ran_text(answer: &Value) -> String {
             many => format!("{many} files it names wait for their copy"),
         };
         line.push_str(&format!(
-            "\nthe backup is incomplete: {files}, and a restore from it refuses until the \
-             copies are made"
+            "\nthe backup is incomplete: {files}. A restore needs those files unless the \
+             restoring instance holds them or the backup lists them as lost"
         ));
     }
     line

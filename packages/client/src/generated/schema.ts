@@ -30377,7 +30377,7 @@ export interface operations {
                         unremoved: number;
                         /** @description The hashes of the files the backup names that no store could give when Marfa took it. A restore of the backup goes ahead without them, and `GET /health` answers `backups.status` `failing` until a backup is put without losing any. */
                         blobs_lost: string[];
-                        /** @description How many files the backup names that the destination doesn't hold a copy of yet. Until replication copies them, `GET /health` answers `backups.status` `incomplete` and a restore of the backup is refused with `backup_files_missing`. */
+                        /** @description How many files the backup names that the destination doesn't hold a copy of yet, including files listed in `blobs_lost`. A restore needs those files unless the restoring instance holds them or the backup lists them as lost. */
                         blobs_waiting: number;
                     };
                 };

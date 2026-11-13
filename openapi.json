@@ -55002,7 +55002,7 @@
                     "blobs_waiting": {
                       "type": "integer",
                       "minimum": 0,
-                      "description": "How many files the backup names that the destination doesn't hold a copy of yet. Until replication copies them, `GET /health` answers `backups.status` `incomplete` and a restore of the backup is refused with `backup_files_missing`."
+                      "description": "How many files the backup names that the destination doesn't hold a copy of yet, including files listed in `blobs_lost`. A restore needs those files unless the restoring instance holds them or the backup lists them as lost."
                     }
                   },
                   "required": [
