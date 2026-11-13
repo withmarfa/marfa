@@ -292,9 +292,11 @@ enum Command {
     /// instance has none. Items in the bin are absent unless explicitly exported,
     /// for example with `export --format archive --state any`.
     ///
-    /// Until the first public release, restore only with the server build that
-    /// wrote the archive. Archive format 0 does not promise compatibility
-    /// between builds.
+    /// A build restores every archive version up to its own and refuses a later
+    /// one, or one written before Marfa 0.1, naming the build that wrote it.
+    /// An entry the build does not know, such as one a tar tool adds, is
+    /// skipped, and the answer names it in `entries_skipped`, which the command
+    /// also prints.
     ///
     /// When the archive lacks blobs it names and this instance does not hold
     /// them either, the answer lists them in `blobs_missing`, and the command
