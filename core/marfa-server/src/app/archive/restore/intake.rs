@@ -805,8 +805,7 @@ fn not_gzip(file: LineFile) -> Refusal {
 }
 
 impl Intake {
-    /// Opens the line spools at once, so the body is spooled from its first part. `cap` is the
-    /// bulk body limit, and `line_cap` the most one line may hold.
+    /// `cap` limits properties; `line_cap` limits each complete archive line.
     pub fn new(
         spool: Spool,
         committed: Arc<Catalog>,

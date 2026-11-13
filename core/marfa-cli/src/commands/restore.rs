@@ -25,8 +25,7 @@ pub fn run(args: RestoreArgs, remote: &Remote, out: &Printer) -> Result<(), CliE
     answered(&remote.json(&request(&args))?, out)
 }
 
-/// Prints a restore's answer, says what is set up again and which entries were skipped, and fails
-/// on blobs it lacks.
+/// Missing blobs make the command fail even when the restore succeeded.
 pub fn answered(answer: &serde_json::Value, out: &Printer) -> Result<(), CliError> {
     out.value(answer)?;
     for note in notes(answer) {

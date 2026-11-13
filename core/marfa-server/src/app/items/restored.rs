@@ -234,8 +234,7 @@ pub fn restore(unit: &Unit<'_, '_>, catalog: &Catalog, line: &Value) -> Result<R
     Ok(Restored::Written(row.seq))
 }
 
-/// Writes one earlier version, already judged by the archive's checks, under the restored row
-/// `seq`, unless the instance's history holds its id.
+/// Requires a checked snapshot; an existing snapshot ID refuses the restore.
 pub fn restore_version(
     tx: &Transaction<'_>,
     seq: i64,

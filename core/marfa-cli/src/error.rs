@@ -100,8 +100,7 @@ pub enum CliError {
         hash_list(.0)
     )]
     ArchiveLacksBlobs(Vec<String>),
-    /// An export to a file, written whole but for the files it names and does
-    /// not carry, and kept beside the path it was meant for instead of at it.
+    /// An incomplete archive kept beside the requested path.
     #[error("{}", archive_kept_apart(.missing, .target, .incomplete, .kept, *.target_held, .refused.as_deref()))]
     ArchiveKeptApart {
         missing: Vec<String>,
