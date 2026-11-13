@@ -84,6 +84,45 @@ describe("the instance's archive from the terminal", () => {
     ).toContain(title);
   });
 
+  it("exports the whole archive when no format is given, and the items as text only when asked", async () => {
+    const title = unique("cli-export-default");
+    const created = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title, body: "b" }),
+    ]);
+    trackItem(c.ctx, created.item.id);
+
+    const plain = join(dir, "default.tar");
+    const report = await c.cli.json<{ content_type: string }>([
+      "export",
+      "--output",
+      plain,
+    ]);
+    expect(report.content_type).toBe("application/x-tar");
+    const archive = new Uint8Array(readFileSync(plain));
+    expect(readLineFile(archive, "items")).toContain(title);
+    // Standard output is the archive too, as bytes a redirect keeps.
+    const piped = await c.cli.run(["export"]);
+    expect(piped.code, piped.stderr).toBe(0);
+    expect(piped.stdout.startsWith("manifest.json")).toBe(true);
+
+    // The witness: the flag still gives items, one per line, as text.
+    const items = await c.cli.run([
+      "export",
+      "--format",
+      "ndjson",
+      "--source",
+      c.ctx.source,
+    ]);
+    expect(items.code, items.stderr).toBe(0);
+    expect(items.stdout.startsWith("manifest.json")).toBe(false);
+    expect(items.stdout).toContain(title);
+  });
+
   it("takes an archive back through the private socket and refuses ordinary keys", async () => {
     // The other half of the archive round trip, reachable from the client
     // because the door is published: a published door the reference client

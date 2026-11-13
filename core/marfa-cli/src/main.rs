@@ -251,7 +251,12 @@ enum Command {
         #[command(subcommand)]
         command: config::ConfigCommand,
     },
-    /// Export the instance's data.
+    /// Export the instance's data: everything, as an archive.
+    ///
+    /// With no `--format`, this writes the archive: every item, edge, table,
+    /// setting and file the key may read, which `restore` brings back. The bin
+    /// stays out unless `--state any` asks for it. `--format ndjson` writes the
+    /// items alone, one per line, without tables, settings or files.
     ///
     /// An archive is kept even when it lacks blobs it names: a blob no store
     /// could read whole, or a file's blob the key may not read, such as one
@@ -265,7 +270,9 @@ enum Command {
     /// script that reads the path never gets an archive that lacks files. The
     /// message names both paths. When that name cannot be taken, the archive
     /// stays in a hidden partial file beside the path, and the message names
-    /// it. Without `--output`, the archive goes to standard output.
+    /// it. Without `--output`, the archive goes to standard output, which it
+    /// refuses when that is a terminal: save it with `--output <PATH>`, such as
+    /// `marfa-export.tar`, or redirect it.
     Export(export::ExportArgs),
     /// Restore an archive with local authority.
     ///

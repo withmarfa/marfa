@@ -1287,7 +1287,7 @@ fn the_instance_doors_are_reached_where_the_document_puts_them() {
     assert_eq!(check.method, Method::Post);
     assert_eq!(check.path(), "/config/address-check");
     let exported = export::request(&export::ExportArgs {
-        format: Some(export::ExportFormat::Archive),
+        format: export::ExportFormat::Archive,
         type_: Some("core.note".into()),
         ..Default::default()
     })

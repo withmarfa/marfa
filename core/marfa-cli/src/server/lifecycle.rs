@@ -4,14 +4,16 @@ use std::path::Path;
 
 use serde_json::{Value, json};
 
+use super::backups;
 use super::docker::{self, Docker};
 use super::install::{Watch, wait_until_healthy, write_compose};
 use super::prompt::Prompter;
 use super::run::{self, REFUSED_DATABASE};
 use super::service::{Control, Manager, Service};
 use super::{
-    Access, DirArgs, Folder, IMAGE, Runtime, StartArgs, State, Steps, UninstallArgs, UpgradeArgs,
-    checked_release, files, http_agent, launchd, native, own_release, refuse_older, tailscale,
+    Access, DirArgs, Folder, IMAGE, PrivateCommand, Runtime, StartArgs, State, Steps,
+    UninstallArgs, UpgradeArgs, checked_release, files, http_agent, launchd, native, own_release,
+    refuse_older, tailscale,
 };
 use crate::error::CliError;
 use crate::output::Printer;
@@ -408,6 +410,7 @@ struct Health {
     status: Option<String>,
     /// Each component that is not `ok`, in words.
     problems: Vec<String>,
+    backups: Option<backups::Said>,
 }
 
 impl Health {
@@ -438,6 +441,7 @@ impl Health {
             http,
             status,
             problems,
+            backups: backups::Said::of(&body),
         })
     }
 
@@ -538,6 +542,18 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
     };
     let login = autostart_word(&state, at_boot, exists);
     let service_name = service.as_ref().map(|service| service.describe());
+    let settings = folder.path(files::SETTINGS);
+    let private = PrivateCommand::of(&state, &folder);
+    let backups_say = answered
+        .as_ref()
+        .and_then(|health| health.backups.as_ref())
+        .and_then(|backups| {
+            backups.words(
+                &settings,
+                state.runtime == Runtime::Docker,
+                private.as_ref(),
+            )
+        });
     let report = json!({
         "dir": folder.dir,
         "name": state.name,
@@ -550,6 +566,10 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
         "answering": answering,
         "healthy": healthy,
         "health": answered.as_ref().map(Health::json),
+        "backups": answered
+            .as_ref()
+            .and_then(|health| health.backups.as_ref())
+            .map(|backups| backups.json(backups_say.as_deref())),
         "claimed": claimed,
         "address": address,
         "port": state.port,
@@ -584,6 +604,9 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
         );
         if state.runtime == Runtime::Native || launchd::supported() {
             text.push_str(&format!("\n  Login     {login}"));
+        }
+        if let Some(say) = &backups_say {
+            text.push_str(&format!("\n  Backups   {say}"));
         }
         if !tail.is_empty() {
             text.push_str(&format!("\n\nThe end of its log:\n{tail}"));

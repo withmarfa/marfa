@@ -5,6 +5,7 @@
 
 mod account;
 pub(crate) mod address;
+mod backups;
 mod docker;
 mod envfile;
 mod files;
@@ -73,11 +74,11 @@ pub enum ServerCommand {
     ///
     /// It says what the server's `/health` answers: healthy, or degraded or down with the
     /// components at fault, such as a disk with too little room. It says "not answering" only
-    /// when the server gave no answer. When the server is not answering, it shows the end of
-    /// its log.
+    /// when the server gave no answer. It also says when the server keeps no backups, and how
+    /// to set one. When the server is not answering, it shows the end of its log.
     ///
     /// It exits 0 whenever it can say how the server is, a stopped, degraded or silent server
-    /// included: `--json` has `running`, `answering`, `healthy` and `health` for a script to
+    /// included: `--json` has `running`, `answering`, `healthy`, `health` and `backups` for a script to
     /// read. It exits non-zero only when the command itself fails, such as for a folder with
     /// no install.
     Status(DirArgs),

@@ -2346,6 +2346,20 @@ When `POST /restore` answers `503 blob_store_unavailable`, the server MUST NOT w
 
 **Tests:** `compliance/export-missing-blob.test.ts › answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob`.
 
+### `search-and-filters/cli-export-default`
+
+When `marfa export` is given no `--format`, the CLI MUST export the whole archive, as `--format archive` does.
+
+**Reason:** a person who exports to keep their data and does not read the help gets every item, the bin on request, the tables, the settings and the files, not the items alone.
+
+**Tests:** `cli/instance-archive.test.ts › exports the whole archive when no format is given, and the items as text only when asked`.
+
+### `search-and-filters/cli-export-ndjson`
+
+When `marfa export --format ndjson` is run, the CLI MUST export the items as NDJSON.
+
+**Tests:** `cli/instance-archive.test.ts › exports the whole archive when no format is given, and the items as text only when asked`, `› exports as NDJSON to stdout and as an archive to a file`.
+
 ### `search-and-filters/cli-export-lacking`
 
 When `marfa export --format archive` has received an archive whose manifest names blobs in `missing_blobs`, the CLI MUST exit 1 with `blobs_missing`, naming up to ten of the blobs and counting the rest.

@@ -3116,6 +3116,50 @@ If the server of an install answers `/health` as degraded or down, then the CLI 
 
 **Tests:** `cli/server-status.test.ts › says a server that answers degraded is degraded, and leaves by 0`, `› says a server that answers down is down, not silent, and leaves by 0`.
 
+### `device/command-server-status-says-no-backups`
+
+If the server of an install answers `/health` with `backups.status` `off` and `backups.reason` `no_backup_destination`, then the CLI MUST say in `marfa server status` that no backups are kept.
+
+**Reason:** an install made with no destination keeps no backup, and the person who made it has no other sign.
+
+**Tests:** `cli/server-status.test.ts › says no backups are kept, and how to set one, when the server has no destination`.
+
+### `device/command-server-status-backup-setting`
+
+If the server of an install answers `/health` with `backups.reason` `no_backup_destination`, then the CLI MUST name in `marfa server status` `MARFA_BACKUP_PATH`, `S3_BUCKET`, the install's settings file, `marfa server stop` and `marfa server start`.
+
+**Reason:** a person needs to know which setting to add, where, and how to make the server read it.
+
+**Tests:** `cli/server-status.test.ts › says no backups are kept, and how to set one, when the server has no destination`.
+
+### `device/command-server-status-says-backups-off`
+
+If the server of an install answers `/health` with `backups.reason` `turned_off`, then the CLI MUST say in `marfa server status` that scheduled backups are turned off.
+
+**Tests:** `cli/server-status.test.ts › says scheduled backups are turned off, apart from having no destination`.
+
+### `device/command-server-status-off-not-none`
+
+If the server of an install answers `/health` with `backups.reason` `turned_off`, then the CLI MUST NOT say in `marfa server status` that no backups are kept.
+
+**Reason:** an interval of 0 is a choice about the schedule, and a destination is set.
+
+**Tests:** `cli/server-status.test.ts › says scheduled backups are turned off, apart from having no destination`.
+
+### `device/command-server-status-quiet-backups`
+
+If the server of an install answers `/health` with `backups.status` `ok`, then the CLI MUST NOT mention backups in the text of `marfa server status`.
+
+**Tests:** `cli/server-status.test.ts › says nothing of backups that run`.
+
+### `device/command-server-status-json-backups`
+
+When the server of an install answers `/health` with a `backups` object, the CLI MUST give `marfa server status --json` a `backups` member with its `status`, its `reason` and the `say` the text shows, or `null` when the text says nothing.
+
+**Reason:** a script reads the report, and the words are the same for it as for a person.
+
+**Tests:** `cli/server-status.test.ts › says no backups are kept, and how to set one, when the server has no destination`, `› says nothing of backups that run`.
+
 ### `device/command-redirect`
 
 If an answer to the CLI is a `3xx`, then the CLI MUST refuse it `redirect` with exit 1, naming the status and the destination, without following it.
