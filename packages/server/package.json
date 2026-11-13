@@ -46,7 +46,7 @@
     "@withmarfa/shared": "workspace:*",
     "better-auth": "1.7.14",
     "drizzle-orm": "^0.45.4",
-    "hono": "^4.13.14",
+    "hono": "^4.13.16",
     "htmlparser2": "^12.0.0",
     "image-dimensions": "^2.6.0",
     "ipaddr.js": "^2.5.0",
