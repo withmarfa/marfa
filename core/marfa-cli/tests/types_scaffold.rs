@@ -486,7 +486,7 @@ fn a_working_copy_refuses_a_definition_with_a_whole_number_a_float_would_change(
         let refused = declare(definition);
         assert_eq!(refused.code, 1, "{}", refused.stderr);
         let expected = format!(
-            "version: Must be a whole number that Marfa serves back with the same digits, not {number}, which it serves as {served}. Send it as a string."
+            "version: Must be a whole number that Marfa serves back with the same digits, not {number}, which it serves as {served}. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string."
         );
         assert!(refused.stderr.contains(&expected), "{}", refused.stderr);
     }

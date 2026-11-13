@@ -32,7 +32,7 @@ fn message(source: &str) -> String {
         format!(", which it serves as {served}")
     });
     format!(
-        "Must be a whole number that Marfa serves back with the same digits, not {source}{kept}. Send it as a string."
+        "Must be a whole number that Marfa serves back with the same digits, not {source}{kept}. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string."
     )
 }
 
@@ -318,10 +318,10 @@ mod tests {
         ] {
             let expected = match kept_as {
                 Some(kept_as) => format!(
-                    "Must be a whole number that Marfa serves back with the same digits, not {source}, which it serves as {kept_as}. Send it as a string."
+                    "Must be a whole number that Marfa serves back with the same digits, not {source}, which it serves as {kept_as}. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string."
                 ),
                 None => format!(
-                    "Must be a whole number that Marfa serves back with the same digits, not {source}. Send it as a string."
+                    "Must be a whole number that Marfa serves back with the same digits, not {source}. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string."
                 ),
             };
             assert_eq!(message(source), expected);
@@ -348,12 +348,12 @@ mod tests {
             [FieldError::new(
                 "list.1.deep",
                 field_code::INEXACT_INTEGER,
-                "Must be a whole number that Marfa serves back with the same digits, not -9007199254740993, which it serves as -9007199254740992. Send it as a string."
+                "Must be a whole number that Marfa serves back with the same digits, not -9007199254740993, which it serves as -9007199254740992. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string."
             )]
         );
         assert_eq!(
             message,
-            "list.1.deep: Must be a whole number that Marfa serves back with the same digits, not -9007199254740993, which it serves as -9007199254740992. Send it as a string."
+            "list.1.deep: Must be a whole number that Marfa serves back with the same digits, not -9007199254740993, which it serves as -9007199254740992. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string."
         );
     }
 
@@ -374,7 +374,7 @@ mod tests {
         };
         assert_eq!(
             message,
-            "list.1.deep: Must be a whole number that Marfa serves back with the same digits, not -9007199254740993, which it serves as -9007199254740992. Send it as a string."
+            "list.1.deep: Must be a whole number that Marfa serves back with the same digits, not -9007199254740993, which it serves as -9007199254740992. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string."
         );
     }
 
@@ -396,7 +396,7 @@ mod tests {
             assert_eq!(
                 message,
                 format!(
-                    "{member}: Must be a whole number that Marfa serves back with the same digits, not -0, which it serves as 0. Send it as a string."
+                    "{member}: Must be a whole number that Marfa serves back with the same digits, not -0, which it serves as 0. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string."
                 ),
                 "{text}"
             );

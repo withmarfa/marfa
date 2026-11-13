@@ -406,7 +406,7 @@ fn a_whole_number_a_float_would_change_is_refused_at_every_door_that_sends_prope
         );
     };
     let text = r#"{"a":{"b":[9999999999999999999]}}"#;
-    let expected = "a.b.0: Must be a whole number that Marfa serves back with the same digits, not 9999999999999999999, which it serves as 10000000000000000000. Send it as a string.";
+    let expected = "a.b.0: Must be a whole number that Marfa serves back with the same digits, not 9999999999999999999, which it serves as 10000000000000000000. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string.";
     let error = PropertyArgs {
         properties: Some(text.into()),
         props: vec![],
@@ -479,11 +479,11 @@ fn a_whole_number_a_float_would_change_is_refused_at_every_door_that_sends_prope
     for (text, expected) in [
         (
             r#"[{"source_id":"a","target_id":"b","edge_type":"references","properties":{"n":99999999999999999999999}}]"#,
-            "0.properties.n: Must be a whole number that Marfa serves back with the same digits, not 99999999999999999999999, which it serves as 1e+23. Send it as a string.",
+            "0.properties.n: Must be a whole number that Marfa serves back with the same digits, not 99999999999999999999999, which it serves as 1e+23. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string.",
         ),
         (
             r#"{"edges":[{"source_id":"a","target_id":"b","edge_type":"references","properties":{"n":-0}}]}"#,
-            "edges.0.properties.n: Must be a whole number that Marfa serves back with the same digits, not -0, which it serves as 0. Send it as a string.",
+            "edges.0.properties.n: Must be a whole number that Marfa serves back with the same digits, not -0, which it serves as 0. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string.",
         ),
     ] {
         std::fs::write(&edges, text).unwrap();
