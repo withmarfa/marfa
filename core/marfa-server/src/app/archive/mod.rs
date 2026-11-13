@@ -33,6 +33,8 @@ use crate::settings::registry::{self, ADDRESSES, SIGN_IN_ADDRESS};
 use spool::{Lines, Spooled};
 
 pub const VERSION: u64 = 1;
+/// The most a manifest, or one line of a line file, may hold.
+pub const LINE_CAP: usize = 64 * 1024 * 1024;
 const PAGE: i64 = 500;
 const EDGE_PAGE: i64 = 1000;
 const QUEUED: usize = 4;
