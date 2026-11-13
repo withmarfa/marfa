@@ -730,11 +730,12 @@ fn a_backup_run_and_an_adopted_folder_each_say_what_happened_in_a_sentence() {
     let home = scratch("backups");
     let taken = json!({
         "outcome": "put",
-        "backup": {"name": "2026-11-13T10-00-00Z", "instance_id": "i1",
+        "backup": {"name": "20261113T100000.000Z.tar", "instance_id": "i1",
                    "created_at": "2026-11-13T10:00:00.000Z", "size_bytes": 10},
         "removed": 1,
         "unremoved": 0,
         "blobs_lost": ["sha256-aa", "sha256-bb"],
+        "blobs_waiting": 3,
     });
     let adopted = json!({
         "store_id": "s2",
@@ -752,8 +753,10 @@ fn a_backup_run_and_an_adopted_folder_each_say_what_happened_in_a_sentence() {
     assert_eq!(ran.code, 0, "{}", ran.stderr);
     assert_eq!(
         ran.stdout,
-        "took backup 2026-11-13T10-00-00Z; deleted 1 old backup\n\
-         2 files lost, which the backup names and no store could give: sha256-aa, sha256-bb\n"
+        "took backup 20261113T100000.000Z.tar; deleted 1 old backup\n\
+         2 files lost, which the backup names and no store could give: sha256-aa, sha256-bb\n\
+         the backup is incomplete: 3 files it names wait for their copy, and a restore from it \
+         refuses until the copies are made\n"
     );
 
     let ran = run(&home, &door.url, &["backups", "folder", "adopt"]);
