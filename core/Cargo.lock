@@ -3425,7 +3425,7 @@ dependencies = [
  "chrono",
  "console_error_panic_hook",
  "console_log",
- "itertools 0.15.0",
+ "itertools 0.14.0",
  "js-sys",
  "libloading",
  "log",

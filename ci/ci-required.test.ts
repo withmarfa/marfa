@@ -672,6 +672,11 @@ describe("what a change runs", () => {
       ["ci-sqlite", "core-checks-linux", ...RUST_SERVER],
     ],
     [
+      "the Rust server's start, which routes memory to jemalloc on a Mac",
+      ["core/marfa-server/src/main.rs"],
+      ["ci-sqlite", "core-checks", "core-checks-linux", ...RUST_SERVER],
+    ],
+    [
       "the Rust server's manifest",
       ["core/marfa-server/Cargo.toml"],
       ["ci-sqlite", "core-checks-linux", ...RUST_SERVER, "version-fields"],

@@ -48,7 +48,7 @@ pub fn route_sqlite() {
     let status = unsafe {
         rusqlite::ffi::sqlite3_config(rusqlite::ffi::SQLITE_CONFIG_MALLOC, &raw mut methods)
     };
-    debug_assert_eq!(
+    assert_eq!(
         status,
         rusqlite::ffi::SQLITE_OK,
         "SQLite had already started"
