@@ -8,6 +8,7 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -32,6 +33,8 @@ import {
 } from "../../utils/fresh-server.js";
 import { bytesOf, clientsFor, runJob } from "../../utils/own-blob-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { diskHolds, inspectStores } from "../../utils/store-faults.js";
+import { waitFor } from "../../utils/wait.js";
 
 /**
  * Backups to a folder the owner names with `MARFA_BACKUP_PATH`: one file per
@@ -462,6 +465,52 @@ describe("a backup folder that lacks a file or its disk", () => {
     });
   });
 
+  it("refuses a restore that meets a copy altered to the same size, names it, and places no file", async () => {
+    await withFolder("backup-folder-altered", async (server, root) => {
+      const id = await instanceIdOf(server);
+      const altered = await fileItem(
+        server,
+        bytesOf("a copy someone changed", 4096),
+      );
+      const other = await fileItem(server, bytesOf("a copy still whole", 4096));
+      const run = await ownerOf(server).runBackup();
+      expect(run.status, JSON.stringify(run.error)).toBe(200);
+      const copy = copyIn(root, id, altered.hash);
+      const bytes = readFileSync(copy);
+      bytes[0] = bytes[0]! ^ 0xff;
+      writeFileSync(copy, bytes);
+
+      const fresh = await bootFreshServer("backup-folder-altered-fresh", {
+        ...FOLDER_ONLY,
+        MARFA_BACKUP_PATH: root,
+      });
+      try {
+        const refused = await ownerOf(fresh).restoreBackup(
+          id,
+          run.data.backup.name,
+        );
+        expect(refused.status, JSON.stringify(refused.data)).toBe(409);
+        expect(refused.error?.error.code).toBe("backup_files_missing");
+        expect(refused.error?.error.details).toEqual({
+          missing_blobs: [altered.hash],
+        });
+        expect(existsSync(copyIn(root, id, other.hash))).toBe(true);
+        for (const hash of [altered.hash, other.hash]) {
+          expect(await diskHolds(fresh.controlSocket, hash)).toBe(false);
+        }
+        await waitFor("the restore's spool to empty", async () =>
+          (await inspectStores(fresh.controlSocket)).spool.length === 0
+            ? true
+            : undefined,
+        );
+        const { working } = clientsFor(fresh);
+        expect((await working.getItem(other.item)).status).toBe(404);
+      } finally {
+        await fresh.stop();
+      }
+    });
+  });
+
   it("restores a backup over the instance that took it with room for none of the files it already holds", async () => {
     await withFolder("backup-folder-rollback", async (server) => {
       const id = await instanceIdOf(server);
@@ -567,6 +616,24 @@ describe("a backup folder that lacks a file or its disk", () => {
       await server.stop();
       rmSync(parent, { recursive: true, force: true });
     }
+  });
+
+  it("refuses to adopt a files folder that holds another store's marker, and leaves the marker as it is", async () => {
+    await withFolder("backup-folder-adopt-foreign", async (server, root) => {
+      const id = await instanceIdOf(server);
+      const marker = join(root, "files", id, ".marfa-store");
+      const before = readFileSync(marker, "utf8");
+      const foreign = randomUUID();
+      expect(foreign).not.toBe(before.trim());
+      writeFileSync(marker, foreign);
+
+      const refused = await ownerOf(server).adoptBackupFolder();
+      expect(refused.status, JSON.stringify(refused.data)).toBe(409);
+      expect(refused.error?.error.code).toBe("conflict");
+      expect(refused.error?.error.message).toContain(foreign);
+      expect(readFileSync(marker, "utf8")).toBe(foreign);
+      writeFileSync(marker, before);
+    });
   });
 
   it("refuses a key at the adopt door", async () => {

@@ -570,6 +570,22 @@ If the private local command sends `POST /backups/folder/adopt` while the folder
 
 **Tests:** `compliance/backup-folder.test.ts › refuses to back up into a files folder that lost its marker, names the adopt command, and adopts it afresh, changing no other store`.
 
+### `instance/backup-folder-adopt-object-store`
+
+Where `S3_BUCKET` is set, if the private local command sends `POST /backups/folder/adopt`, then the server MUST answer `409 conflict`.
+
+**Reason:** an instance that backs up to an object store has no backup folder to adopt.
+
+**Tests:** `compliance/backups.test.ts › refuses to adopt a backup folder on an instance that backs up to an object store`.
+
+### `instance/backup-folder-adopt-foreign`
+
+If the private local command sends `POST /backups/folder/adopt` while `<MARFA_BACKUP_PATH>/files/<instance id>/` holds the marker of a store other than the one the server recorded there, then the server MUST answer `409 conflict`.
+
+**Reason:** the marker may be another instance's or another server's store, and adopting over it would take that store's files as this instance's own. The refusal leaves the marker as it is, and the error message says to remove it to adopt the folder afresh.
+
+**Tests:** `compliance/backup-folder.test.ts › refuses to adopt a files folder that holds another store's marker, and leaves the marker as it is`.
+
 ### `instance/backup-folder-missing-start`
 
 Where `MARFA_BACKUP_PATH` names a folder that does not exist, and the server has not attached a backup folder at that path before, the server MUST refuse to start.
@@ -794,15 +810,15 @@ Where `MARFA_BACKUP_PATH` is set, if a file the backup names, which the instance
 
 **Reason:** a restore that left a file out would lose it without a word. The refusal restores nothing; the backup's archive file, restored through `POST /restore`, restores the rest without those files.
 
-**Tests:** `compliance/backup-folder.test.ts › refuses a restore with 409 backup_files_missing naming each file the folder does not hold, and restores nothing`, `› refuses a restore that lacks a file before it reads any file from the folder`.
+**Tests:** `compliance/backup-folder.test.ts › refuses a restore with 409 backup_files_missing naming each file the folder does not hold, and restores nothing`, `› refuses a restore that lacks a file before it reads any file from the folder`, `› refuses a restore that meets a copy altered to the same size, names it, and places no file`.
 
 ### `instance/backup-folder-restore-first`
 
 Where `MARFA_BACKUP_PATH` is set, if the server answers `POST /backups/{instance_id}/{name}/restore` with `409 backup_files_missing`, then the server MUST NOT hold in its blob folder a file it read from the backup folder for that restore.
 
-**Reason:** the server works out which files it lacks before it reads any, so a refused restore costs neither the reading nor the room.
+**Reason:** the server works out which files it lacks before it reads any, so a refused restore costs neither the reading nor the room. A copy that proves altered or gone only when it is read refuses the restore before any file is placed.
 
-**Tests:** `compliance/backup-folder.test.ts › refuses a restore that lacks a file before it reads any file from the folder`.
+**Tests:** `compliance/backup-folder.test.ts › refuses a restore that lacks a file before it reads any file from the folder`, `› refuses a restore that meets a copy altered to the same size, names it, and places no file`.
 
 ### `instance/backup-folder-restore-held`
 

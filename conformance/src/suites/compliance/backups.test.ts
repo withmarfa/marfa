@@ -283,6 +283,12 @@ describe("a backup in the object store", () => {
     expect((await bucket.backupKeys()).length).toBe(2);
   });
 
+  it("refuses to adopt a backup folder on an instance that backs up to an object store", async () => {
+    const refused = await ownerOf(origin).adoptBackupFolder();
+    expect(refused.status, JSON.stringify(refused.data)).toBe(409);
+    expect(refused.error?.error.code).toBe("conflict");
+  });
+
   it("restores a named backup into a fresh server on the same bucket, files included", async () => {
     fresh = await bootFreshServer("backups-fresh", {
       ...store,
