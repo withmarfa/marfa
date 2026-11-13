@@ -239,6 +239,7 @@ describe("a file no store can give, in a backup to the object store", () => {
     });
     try {
       await afterFirstScheduledBackup(server);
+      await server.setFault("hold:housekeeping:blob-replicate");
       const { working } = clientsFor(server);
       const uploaded = await working.uploadBlob(
         new TextEncoder().encode(

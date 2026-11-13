@@ -41,6 +41,7 @@ import { bytesOf, clientsFor, runJob } from "../../utils/own-blob-server.js";
 const LINE_FILES: readonly LineFile[] = ["instance", "items", "edges", "rows"];
 const folder = mkdtempSync(join(tmpdir(), "marfa-backup-folder-"));
 const away = `${folder}-away`;
+const YEAR_SECONDS = "31536000";
 const FOLDER_ONLY = {
   S3_BUCKET: "",
   MARFA_BACKUP_PATH: folder,
@@ -349,8 +350,10 @@ describe("a backup folder that lacks a file or its disk", () => {
     const server = await bootFreshServer(label, {
       ...FOLDER_ONLY,
       MARFA_BACKUP_PATH: root,
+      MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,
     });
     try {
+      await afterFirstScheduledBackup(server);
       await body(server, root);
     } finally {
       await server.stop();
@@ -378,6 +381,7 @@ describe("a backup folder that lacks a file or its disk", () => {
   it("puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it", async () => {
     await withFolder("backup-folder-lost", async (server, root) => {
       const id = await instanceIdOf(server);
+      await server.setFault("hold:housekeeping:blob-replicate");
       const lost = await fileItem(
         server,
         bytesOf("a file whose copy went", 4096),
@@ -491,8 +495,10 @@ describe("a backup folder that lacks a file or its disk", () => {
     const server = await bootFreshServer("backup-folder-adopt", {
       ...FOLDER_ONLY,
       MARFA_BACKUP_PATH: root,
+      MARFA_BACKUP_INTERVAL_SECONDS: YEAR_SECONDS,
     });
     try {
+      await afterFirstScheduledBackup(server);
       const id = await instanceIdOf(server);
       const owner = ownerOf(server);
       const { operator } = clientsFor(server);
