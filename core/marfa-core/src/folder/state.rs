@@ -515,6 +515,54 @@ pub fn bound_with_hash(conn: &Connection, content_hash: &str) -> Result<Vec<Boun
     bound_where(conn, "WHERE content_hash = ?1", [content_hash])
 }
 
+/// A bound file as a pull compares it from one pull to the next: whose item it is and a digest of
+/// everything its row records, so a pull holds neither the file's text nor its edges.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Binding {
+    pub item_id: String,
+    digest: u64,
+}
+
+/// Every bound file's binding, by path, read a row at a time.
+pub fn bindings(conn: &Connection) -> Result<HashMap<String, Binding>, CoreError> {
+    use rusqlite::types::ValueRef;
+    use std::hash::Hasher;
+    let mut statement = conn.prepare(
+        "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob, embeds FROM folder_files",
+    )?;
+    let mut rows = statement.query([])?;
+    let mut found = HashMap::new();
+    while let Some(row) = rows.next()? {
+        let mut hasher = std::hash::DefaultHasher::new();
+        for at in 0..14 {
+            match row.get_ref(at)? {
+                ValueRef::Null => hasher.write_u8(0),
+                ValueRef::Integer(number) => hasher.write_i64(number),
+                ValueRef::Real(number) => hasher.write_u64(number.to_bits()),
+                ValueRef::Text(bytes) | ValueRef::Blob(bytes) => {
+                    hasher.write_usize(bytes.len());
+                    hasher.write(bytes);
+                }
+            }
+        }
+        found.insert(
+            row.get(0)?,
+            Binding {
+                item_id: row.get(1)?,
+                digest: hasher.finish(),
+            },
+        );
+    }
+    Ok(found)
+}
+
+/// The ids of the items that have a file here.
+pub fn bound_item_ids(conn: &Connection) -> Result<std::collections::HashSet<String>, CoreError> {
+    let mut statement = conn.prepare("SELECT item_id FROM folder_files")?;
+    let ids = statement.query_map([], |row| row.get(0))?;
+    Ok(ids.collect::<rusqlite::Result<_>>()?)
+}
+
 fn bound_where<P: rusqlite::Params>(
     conn: &Connection,
     clause: &str,
