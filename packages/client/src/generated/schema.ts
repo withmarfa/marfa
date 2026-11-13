@@ -6312,7 +6312,7 @@ export interface components {
         OAuthClientRegistration: {
             /** @description The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. At most 10. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`. */
             redirect_uris?: string[];
-            /** @description Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out to register the client for reading and editing all items and the links between them (`*:read *:write edge.*:read edge.*:write offline_access`), and no permission; name any other scope to ask for it. */
+            /** @description Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out for items and links alone: `*:read *:write edge.*:read edge.*:write offline_access`. */
             scope?: string;
             /** @description The app's name, which Marfa shows a person asked to approve it. */
             client_name?: string;
