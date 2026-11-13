@@ -79,12 +79,20 @@ export function diskPath(server: FreshServer, hash: string): string {
 /**
  * Runs a housekeeping job through its door and answers the whole run. A run
  * the scheduler holds answers 409 and is asked for again once it has
- * finished.
+ * finished. A run is expected to end as `ending` says, `ok` unless a case
+ * runs a job against a store that will not answer, where the run ends as
+ * `error`, or `either` for a wait on what a run copied.
  */
 export async function runJob<T = Record<string, number>>(
   operator: MarfaClient,
   name: string,
-): Promise<{ result: T; started_at: string; finished_at: string }> {
+  ending: "ok" | "error" | "either" = "ok",
+): Promise<{
+  result: T;
+  outcome: string;
+  started_at: string;
+  finished_at: string;
+}> {
   for (let i = 0; i < 50; i++) {
     const res = await operator.runHousekeeping(name);
     if (res.status === 409) {
@@ -92,14 +100,38 @@ export async function runJob<T = Record<string, number>>(
       continue;
     }
     expect(res.status, `${name}: ${JSON.stringify(res.error)}`).toBe(200);
-    expect(res.data.outcome, res.data.error ?? "").toBe("ok");
+    if (ending !== "either") {
+      expect(res.data.outcome, res.data.error ?? "").toBe(ending);
+    }
     return {
       result: res.data.result as T,
+      outcome: res.data.outcome,
       started_at: res.data.started_at,
       finished_at: res.data.finished_at,
     };
   }
   throw new Error(`${name} was held by a run for five seconds`);
+}
+
+/**
+ * Replicates until no store lacks a blob, once the stores answer again. A run
+ * on the way may meet a write the store still holds and end `error`; the run
+ * that leaves nothing waiting must end `ok`.
+ */
+export async function replicateUntilCaughtUp(
+  operator: MarfaClient,
+  what: string,
+): Promise<void> {
+  await waitFor(what, async () => {
+    const run = await runJob<{ remaining: number }>(
+      operator,
+      "blob-replicate",
+      "either",
+    );
+    if (run.result.remaining !== 0) return undefined;
+    expect(run.outcome).toBe("ok");
+    return true;
+  });
 }
 
 /** Bytes of exactly `size`, distinct for every `words`. */

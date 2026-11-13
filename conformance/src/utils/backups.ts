@@ -6,6 +6,7 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { MarfaClient } from "../client/api.js";
+import { controlRequest } from "./control-request.js";
 import type { FreshServer } from "./fresh-server.js";
 import { clientsFor } from "./own-blob-server.js";
 import { waitFor } from "./wait.js";
@@ -117,4 +118,43 @@ export async function afterFirstScheduledBackup(
     },
     60_000,
   );
+}
+
+/** One entry of the owner's attention list. */
+export interface Concern {
+  kind: string;
+  reference: string;
+  title: string;
+  description: string;
+}
+
+/** The attention list, read through the private socket. */
+export async function attentionOf(server: FreshServer): Promise<Concern[]> {
+  const answer = await controlRequest(server.controlSocket, "/attention");
+  if (answer.status !== 200) {
+    throw new Error(`/attention answered ${String(answer.status)}`);
+  }
+  return (answer.body as { data: Concern[] }).data;
+}
+
+/** The entries of the attention list that concern backups. */
+export async function backupConcerns(server: FreshServer): Promise<Concern[]> {
+  return (await attentionOf(server)).filter(
+    (concern) => concern.kind === "backup",
+  );
+}
+
+/** `GET /health` as the operator reads it, with the reasons. */
+export async function healthDetail(server: FreshServer): Promise<{
+  status: string;
+  backups: Record<string, unknown>;
+}> {
+  const answer = await clientsFor(server).operator.rawRequest<{
+    status: string;
+    backups: Record<string, unknown>;
+  }>("/health");
+  if (answer.status !== 200) {
+    throw new Error(`/health answered ${String(answer.status)}`);
+  }
+  return answer.data;
 }

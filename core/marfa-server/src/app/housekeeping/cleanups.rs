@@ -116,6 +116,7 @@ pub async fn event_log(app: Arc<App>, run: Run) -> Result<Report> {
     Ok(Report {
         result: json!({ "deleted": deleted, "purged_records": purged_records }),
         again: !(records_done && events_done),
+        failure: None,
     })
 }
 
@@ -149,6 +150,7 @@ pub async fn audit(app: Arc<App>, run: Run) -> Result<Report> {
     Ok(Report {
         result: json!({ "deleted": deleted, "deliveries": deliveries }),
         again: !(entries_done && deliveries_done),
+        failure: None,
     })
 }
 
@@ -237,6 +239,7 @@ impl Tally {
             return Ok(Report {
                 result: json!({ "deleted": self.deleted, "retired": self.retired }),
                 again: self.stopped,
+                failure: None,
             });
         };
         let told: Vec<String> = self

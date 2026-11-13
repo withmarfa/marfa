@@ -889,7 +889,7 @@ describe("the instance from the terminal", () => {
     ];
     const keyed = [
       ["items", "list"],
-      ["export"],
+      ["export", "--format", "ndjson"],
       ["items", "tag", id, "socket-witness"],
       bulk("tags", "--add", "socket-witness", "--dry-run"),
       bulk("transition", "--to", "archived", "--dry-run"),

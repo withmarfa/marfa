@@ -356,6 +356,27 @@ async fn with_no_backup_destination_health_says_backups_are_off_and_the_doors_re
         assert_eq!(body["error"]["code"], "no_backup_destination", "{path}");
     }
 
+    let (status, body) = instance.local(Method::GET, "/attention", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let said: Vec<&Value> = body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|concern| concern["kind"] == "backup")
+        .collect();
+    assert_eq!(said.len(), 1, "{body}");
+    assert_eq!(said[0]["reference"], "no_backup_destination");
+    assert_eq!(said[0]["title"], "No backups are kept");
+    let how = said[0]["description"].as_str().unwrap();
+    for part in [
+        "MARFA_BACKUP_PATH",
+        "S3_BUCKET",
+        "marfa.env",
+        "marfa server restart",
+    ] {
+        assert!(how.contains(part), "{part}: {how}");
+    }
+
     let (status, body) = instance.local(Method::GET, "/housekeeping", None).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     let names: Vec<&str> = body["data"]
@@ -379,7 +400,17 @@ async fn a_scheduled_backup_runs_after_a_failed_one_when_nothing_has_changed() {
     store.set_mode(Mode::AllNotFound);
     let (status, body) = instance.local(Method::POST, "/backups", None).await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
-    assert_eq!(instance.backups_health().await["status"], "failing");
+    let health = instance.backups_health().await;
+    assert_eq!(health["status"], "failing");
+    let last_error = health["last_error"].as_str().unwrap();
+    assert!(
+        last_error.starts_with("The object store failed while "),
+        "{last_error}"
+    );
+    assert!(
+        !last_error.contains("127.0.0.1") && !last_error.contains("http"),
+        "the store's address stays in the log: {last_error}"
+    );
 
     store.set_mode(Mode::Normal);
     let (status, body) = instance

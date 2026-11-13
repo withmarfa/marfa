@@ -42,6 +42,72 @@ When `GET /attention` completes its checks, the server MUST include degraded or 
 
 **Tests:** `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
 
+### `instance/attention-no-backup`
+
+Where neither `S3_BUCKET` nor `MARFA_BACKUP_PATH` is set, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `no_backup_destination`, the title `No backups are kept`, and a description that names `MARFA_BACKUP_PATH`, `S3_BUCKET` and `marfa server restart`.
+
+**Reason:** an instance with no destination keeps no backup, and an owner who never reads the install output can run for months without knowing it.
+
+**Tests:** `compliance/backups.test.ts › says in attention that no backups are kept and how to set one, and says an interval of 0 differently`, `cli/attention.test.ts › tells the owner in plain words that no backups are kept, and how to set one`.
+
+### `instance/attention-backup-off`
+
+Where a destination is set and `backup_interval_seconds` is 0, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `turned_off`.
+
+**Reason:** an interval of 0 is a choice, and it is told differently from having nowhere to put a backup.
+
+**Tests:** `compliance/backups.test.ts › says in attention that no backups are kept and how to set one, and says an interval of 0 differently`.
+
+### `instance/attention-backup-destination-set`
+
+Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, the server MUST NOT include an entry with the reference `no_backup_destination` in `GET /attention`.
+
+**Tests:** `compliance/backups.test.ts › says in attention that no backups are kept and how to set one, and says an interval of 0 differently`.
+
+### `instance/attention-backup-store`
+
+While the object store or the backup folder does not take the copies that wait for it, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `store`, whose description gives the reason and, when files wait, how many wait for their second copy.
+
+**Tests:** `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`.
+
+### `instance/attention-backup-store-title`
+
+While the object store or the backup folder does not take the copies that wait for it, when `GET /attention` completes its checks, the server MUST title the entry with the reference `store` `The backup folder is not there` while the disk of the backup folder is not there, `The backup folder is not answering` while a look at it does not answer, and otherwise `Files are waiting for their copy in the object store` or `Files are waiting for their copy in the backup folder`.
+
+**Reason:** a run that copied nothing because one file was refused is not a store that is gone, and the title says what is known.
+
+**Tests:** `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`, `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `› tells one file the object store refused as files waiting for their copy, not as a store that is gone`.
+
+### `instance/attention-backup-run`
+
+While the last backup run, taken on the schedule or by hand, failed or put a backup that lacks files, and no entry with the reference `store` is listed for a destination that did not answer it, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `run`, whose description is `backups.last_error`.
+
+**Reason:** a backup taken by hand with `POST /backups` is not a run of the `backup` job, so the housekeeping check does not see it.
+
+**Tests:** `compliance/backup-folder.test.ts › lists in attention a backup run by hand that failed, until a later one is put`, `› puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`.
+
+### `instance/attention-backup-told-once`
+
+While an entry of kind `backup` with the reference `store` is listed, the server MUST NOT list an entry with the reference `run` for a last backup run that failed because the destination did not answer.
+
+**Reason:** one fault is one entry. A folder that is gone, or an object store that does not answer, fails the backup run and the copies together, and the owner reads the folder once.
+
+**Tests:** `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`, `› lists in attention a backup run by hand that failed, until a later one is put`.
+
+### `instance/attention-backup-no-job-twice`
+
+While an entry of kind `backup` with the reference `run` or `store` is listed, the server MUST NOT list as a job entry the failed last run of the `backup` job or the `blob-replicate` job that it tells.
+
+**Reason:** one fault is one entry.
+
+**Tests:** `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`, `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`.
+
+### `instance/attention-backup-quiet`
+
+Where a destination is set, while it takes copies, no file waits for one, the last backup run was whole and `backup_interval_seconds` is above 0, the server MUST NOT include an entry of kind `backup` in `GET /attention`.
+
+**Tests:** `compliance/backup-folder.test.ts › says nothing in health or attention while the folder answers and no file waits for its copy`, `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+
 ### `instance/attention-unavailable`
 
 If a check fails or does not answer within its bounded deadline, then the server MUST answer `GET /attention` with known concerns and an `unavailable` item identifying the check whose state is unknown.
@@ -767,6 +833,64 @@ Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when a request authorized by `i
 Where neither `S3_BUCKET` nor `MARFA_BACKUP_PATH` is set, the server MUST answer `GET /health` with `backups.status` `off` and `backups.reason` `no_backup_destination`.
 
 **Tests:** `compliance/backups.test.ts › says in health that backups are off on an instance with nowhere to put them, and answers 409 no_backup_destination at each door`.
+
+### `instance/backup-health-store-failing`
+
+While the object store or the backup folder does not take the copies that wait for it, the server MUST answer `GET /health` with `backups.status` `failing` and an overall `status` no better than `degraded`, whether or not `backup_interval_seconds` is 0.
+
+**Reason:** a store that stops answering is the failure an owner learns of only when the next backup fails or a restore needs the files, and an interval of 0 does not stop files waiting for their second copy.
+
+**Tests:** `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`.
+
+### `instance/backup-health-store-named`
+
+While the object store or the backup folder does not take the copies that wait for it, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST answer `backups.store_error` with the reason as text.
+
+**Tests:** `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`.
+
+### `instance/backup-health-copies-waiting`
+
+Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST answer `backups.copies_waiting` with the number of files that waited for their copy in the destination when `blob-replicate` last ran.
+
+**Tests:** `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `compliance/backup-folder.test.ts › says nothing in health or attention while the folder answers and no file waits for its copy`.
+
+### `instance/backup-health-folder-disk`
+
+While the disk of the backup folder is not there, the server MUST answer `GET /health` with `backups.status` `failing` without waiting for a backup run or a run of `blob-replicate`.
+
+**Reason:** a disk that was unplugged or did not mount is the commonest way a folder backup stops, and the owner should hear of it when they look, not at the next run.
+
+**Tests:** `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`.
+
+### `instance/backup-health-store-answers-in-time`
+
+While an attached store leaves the questions of `blob-replicate` unanswered, the server MUST answer `GET /health` within three seconds.
+
+**Reason:** health reads what the last run found and never asks the object store itself, so a store that hangs cannot make the report that names it hang too.
+
+**Tests:** `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`.
+
+### `instance/backup-health-folder-answers-in-time`
+
+While a look at the backup folder's disk does not answer, the server MUST answer `GET /health` within three seconds with `backups.status` `failing` and a `backups.store_error` that says the folder did not answer in time.
+
+**Reason:** a mount that hangs holds the look for as long as it likes, and the report that names it must not hang with it.
+
+**Tests:** `compliance/backup-folder.test.ts › answers health within three seconds and says the folder is not answering while a look at its mount hangs`.
+
+### `instance/backup-health-store-clears`
+
+When the object store or the backup folder takes copies again and a run of `blob-replicate` has ended `ok`, the server MUST answer `backups.store_error` as `null`.
+
+**Tests:** `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`, `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`.
+
+### `instance/backup-health-quiet`
+
+Where a destination is set, while it takes copies, no file waits for one and the last backup run was whole, the server MUST answer `GET /health` with `backups.status` `ok` and `backups.store_error` `null`.
+
+**Reason:** a report that is never empty is not read.
+
+**Tests:** `compliance/backup-folder.test.ts › says nothing in health or attention while the folder answers and no file waits for its copy`.
 
 ### `instance/backup-no-bucket`
 

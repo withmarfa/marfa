@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 
 use super::App;
+use super::backups::BackupHealth;
 use super::blobs::MARKER;
 use super::faults::{FAIL_HEALTH_WRITE, HOLD_DISK_PROBE, REFUSE_BLOB_STORE, Volume};
 use super::refusal::{Code, Refusal};
@@ -92,12 +93,14 @@ pub struct Report {
     database_write: Component,
     disk: Component,
     blob_storage: Component,
-    backups: Value,
+    backup: BackupHealth,
 }
 
 /// Fields of the `backups` object given only to a caller who may read the reasons.
-const BACKUP_DETAIL: [&str; 6] = [
+const BACKUP_DETAIL: [&str; 8] = [
     "destination",
+    "copies_waiting",
+    "store_error",
     "last_backup",
     "last_backup_at",
     "failures",
@@ -115,7 +118,7 @@ impl Report {
         ]
         .iter()
         .map(|component| component.status)
-        .chain((self.backups["status"] == "failing").then_some(Status::Degraded))
+        .chain((self.backup.report["status"] == "failing").then_some(Status::Degraded))
         .max()
         .unwrap_or(Status::Ok)
     }
@@ -137,8 +140,13 @@ impl Report {
         .collect()
     }
 
+    /// What backups look like to the owner, reasons included.
+    pub fn backups(&self) -> &BackupHealth {
+        &self.backup
+    }
+
     pub fn to_json(&self, with_errors: bool) -> Value {
-        let mut backups = self.backups.clone();
+        let mut backups = self.backup.report.clone();
         if !with_errors && let Some(fields) = backups.as_object_mut() {
             fields.retain(|key, _| !BACKUP_DETAIL.contains(&key.as_str()));
         }
@@ -250,7 +258,9 @@ async fn database_write(app: &Arc<App>) -> Component {
 
 /// Runs filesystem work off the async runtime, so a mount that hangs holds a
 /// blocking thread and not a worker, and gives up on it after the probe's wait.
-async fn bounded<T: Send + 'static>(work: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+pub(super) async fn bounded<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> Option<T> {
     tokio::time::timeout(PROBE_WAIT, tokio::task::spawn_blocking(work))
         .await
         .ok()?
@@ -307,7 +317,7 @@ async fn blob_storage(app: &Arc<App>) -> Component {
 }
 
 pub async fn check(app: &Arc<App>) -> Report {
-    let (database, database_write, disk, blob_storage, backups) = tokio::join!(
+    let (database, database_write, disk, blob_storage, backup) = tokio::join!(
         database(app),
         database_write(app),
         disk(app),
@@ -319,7 +329,7 @@ pub async fn check(app: &Arc<App>) -> Report {
         database_write,
         disk,
         blob_storage,
-        backups,
+        backup,
     }
 }
 

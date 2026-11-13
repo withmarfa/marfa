@@ -1287,7 +1287,7 @@ fn the_instance_doors_are_reached_where_the_document_puts_them() {
     assert_eq!(check.method, Method::Post);
     assert_eq!(check.path(), "/config/address-check");
     let exported = export::request(&export::ExportArgs {
-        format: Some(export::ExportFormat::Archive),
+        format: export::ExportFormat::Archive,
         type_: Some("core.note".into()),
         ..Default::default()
     })
@@ -2492,8 +2492,14 @@ fn a_state_list_is_sent_as_the_servers_comma_separated_list() {
             Some("any"),
             "{door}"
         );
-        assert_eq!(states_sent(door, &[]).unwrap(), None, "{door}");
+        // An archive carries the bin unless told otherwise; the other doors leave it to the server.
+        let unset = (door == "export").then_some("any");
+        assert_eq!(states_sent(door, &[]).unwrap().as_deref(), unset, "{door}");
     }
+    assert_eq!(
+        states_sent("export", &["--format", "ndjson"]).unwrap(),
+        None
+    );
 }
 
 #[test]

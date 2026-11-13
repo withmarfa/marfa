@@ -1,4 +1,4 @@
-use std::io::{self, Read, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
@@ -13,22 +13,25 @@ use crate::output::Printer;
 use crate::remote::Remote;
 use crate::remote::request::Request;
 
-/// Export the instance's data: items as NDJSON, or everything as an archive.
+/// Export the instance's data: everything as an archive, or items as NDJSON.
 #[derive(Debug, Default, Args)]
 pub struct ExportArgs {
-    /// `ndjson` for items one per line, `archive` for the whole instance.
-    #[arg(long)]
-    pub format: Option<ExportFormat>,
-    /// Where to write. Omitted, the export goes to stdout. The path is
-    /// replaced only by an export that ends whole, and for an archive only by
-    /// one that lacks no blobs.
+    /// `archive` for the whole instance, the default, or `ndjson` for items
+    /// one per line, which leaves out tables, settings and files.
+    #[arg(long, value_enum, default_value_t = ExportFormat::Archive)]
+    pub format: ExportFormat,
+    /// Where to write. Omitted, the export goes to stdout, which an archive
+    /// refuses when stdout is a terminal. The path is replaced only by an
+    /// export that ends whole, and for an archive only by one that lacks no
+    /// blobs.
     #[arg(long, value_name = "PATH")]
     pub output: Option<PathBuf>,
     /// A type identifier; its subtypes are included.
     #[arg(long = "type", value_name = "TYPE")]
     pub type_: Option<String>,
     /// A state to answer; repeat it or separate states with commas. `any` is
-    /// every state, and is given alone. Unset answers every state but the bin.
+    /// every state, and is given alone. Unset, an archive carries every state,
+    /// the bin included, and `ndjson` every state but the bin.
     #[arg(long, value_delimiter = ',')]
     pub state: Vec<StateFilter>,
     /// The source the items were written under.
@@ -42,9 +45,10 @@ pub struct ExportArgs {
     pub occurred_before: Option<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
 pub enum ExportFormat {
     Ndjson,
+    #[default]
     Archive,
 }
 
@@ -72,15 +76,19 @@ pub fn request(args: &ExportArgs) -> Result<Request, CliError> {
 }
 
 fn request_waiting(args: &ExportArgs, archive_wait: Duration) -> Result<Request, CliError> {
+    let states = match state_list(&args.state)? {
+        None if args.format == ExportFormat::Archive => Some(StateFilter::Any.as_str().to_string()),
+        states => states,
+    };
     let request = Request::get(&["export"])
-        .query_opt("format", args.format.map(ExportFormat::as_str))
+        .query("format", args.format.as_str())
         .query_opt("type", args.type_.clone())
-        .query_opt("state", state_list(&args.state)?)
+        .query_opt("state", states)
         .query_opt("source", args.source.clone())
         .query_opt("occurred_after", args.occurred_after.clone())
         .query_opt("occurred_before", args.occurred_before.clone())
         .streamed();
-    Ok(if args.format == Some(ExportFormat::Archive) {
+    Ok(if args.format == ExportFormat::Archive {
         request.awaiting(archive_wait)
     } else {
         request
@@ -88,7 +96,21 @@ fn request_waiting(args: &ExportArgs, archive_wait: Duration) -> Result<Request,
 }
 
 pub fn run(args: ExportArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    refuse_terminal(&args, io::stdout().is_terminal())?;
     run_waiting(args, remote, out, ARCHIVE_WAIT)
+}
+
+/// An archive is bytes, so it is not poured onto a screen; this is checked before the server is asked.
+fn refuse_terminal(args: &ExportArgs, stdout_is_terminal: bool) -> Result<(), CliError> {
+    if args.format == ExportFormat::Archive && args.output.is_none() && stdout_is_terminal {
+        return Err(CliError::Usage(
+            "an archive is binary, so it is not written to your screen. Save it with --output, \
+             for example `marfa export --output marfa-export.tar`, or redirect it with \
+             `marfa export > marfa-export.tar`. `--format ndjson` writes items as text"
+                .into(),
+        ));
+    }
+    Ok(())
 }
 
 fn run_waiting(
@@ -99,7 +121,7 @@ fn run_waiting(
 ) -> Result<(), CliError> {
     let request = request_waiting(&args, archive_wait)?;
     let (content_type, reader) = {
-        let _remarks = (args.format == Some(ExportFormat::Archive)).then(|| {
+        let _remarks = (args.format == ExportFormat::Archive).then(|| {
             Remarks::every(FIRST_REMARK, REMARK_EVERY, |waited| {
                 eprintln!(
                     "still preparing the archive ({}s): the server checks every item before it sends the first byte",
@@ -109,7 +131,7 @@ fn run_waiting(
         });
         remote.stream(&request)?
     };
-    let mut reader = ManifestTap::new(reader, args.format == Some(ExportFormat::Archive));
+    let mut reader = ManifestTap::new(reader, args.format == ExportFormat::Archive);
     match &args.output {
         Some(path) => {
             let written = write_whole(path, &mut reader)?;
@@ -655,7 +677,7 @@ mod tests {
 
     fn archive_to(path: &Path) -> ExportArgs {
         ExportArgs {
-            format: Some(ExportFormat::Archive),
+            format: ExportFormat::Archive,
             output: Some(path.to_path_buf()),
             ..ExportArgs::default()
         }
@@ -674,6 +696,7 @@ mod tests {
         // The witness: the same server and the same budget end an NDJSON
         // export, which the server begins at once, before the first byte.
         let ndjson = ExportArgs {
+            format: ExportFormat::Ndjson,
             output: Some(path.clone()),
             ..ExportArgs::default()
         };
@@ -739,19 +762,74 @@ mod tests {
     #[test]
     fn gives_an_archive_thirty_minutes_to_begin_and_ndjson_the_ordinary_budget() {
         let archive = request(&ExportArgs {
-            format: Some(ExportFormat::Archive),
+            format: ExportFormat::Archive,
             ..ExportArgs::default()
         })
         .unwrap();
         assert_eq!(archive.wait, Some(Duration::from_secs(30 * 60)));
-        for format in [Some(ExportFormat::Ndjson), None] {
-            let ndjson = request(&ExportArgs {
-                format,
-                ..ExportArgs::default()
-            })
-            .unwrap();
-            assert_eq!(ndjson.wait, None, "{format:?}");
-        }
+        let ndjson = request(&ExportArgs {
+            format: ExportFormat::Ndjson,
+            ..ExportArgs::default()
+        })
+        .unwrap();
+        assert_eq!(ndjson.wait, None);
+    }
+
+    #[test]
+    fn asks_for_the_whole_archive_unless_told_otherwise() {
+        let plain = request(&ExportArgs::default()).unwrap();
+        assert!(plain.query.contains(&("format".into(), "archive".into())));
+        assert_eq!(plain.wait, Some(Duration::from_secs(30 * 60)));
+        let items = request(&ExportArgs {
+            format: ExportFormat::Ndjson,
+            ..ExportArgs::default()
+        })
+        .unwrap();
+        assert!(items.query.contains(&("format".into(), "ndjson".into())));
+    }
+
+    #[test]
+    fn a_plain_archive_carries_the_bin_and_a_named_state_or_ndjson_leaves_it_to_the_server() {
+        let state = |args: &ExportArgs| {
+            request(args)
+                .unwrap()
+                .query
+                .iter()
+                .find(|(name, _)| name == "state")
+                .map(|(_, value)| value.clone())
+        };
+        assert_eq!(state(&ExportArgs::default()).as_deref(), Some("any"));
+        let named = ExportArgs {
+            state: vec![StateFilter::Active],
+            ..ExportArgs::default()
+        };
+        assert_eq!(state(&named).as_deref(), Some("active"));
+        let items = ExportArgs {
+            format: ExportFormat::Ndjson,
+            ..ExportArgs::default()
+        };
+        assert_eq!(state(&items), None);
+    }
+
+    #[test]
+    fn an_archive_is_not_written_to_a_terminal_and_says_how_to_save_it() {
+        let archive = ExportArgs::default();
+        let error = refuse_terminal(&archive, true).unwrap_err().to_string();
+        assert!(error.contains("--output"), "{error}");
+        assert!(error.contains("marfa-export.tar"), "{error}");
+        // The witness: the same command goes ahead when its output is a file or a pipe, and
+        // items as text may go to a terminal.
+        assert!(refuse_terminal(&archive, false).is_ok());
+        let to_file = ExportArgs {
+            output: Some(PathBuf::from("x.tar")),
+            ..ExportArgs::default()
+        };
+        assert!(refuse_terminal(&to_file, true).is_ok());
+        let items = ExportArgs {
+            format: ExportFormat::Ndjson,
+            ..ExportArgs::default()
+        };
+        assert!(refuse_terminal(&items, true).is_ok());
     }
 
     #[test]

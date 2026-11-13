@@ -2174,13 +2174,15 @@ marfa config check-address [OPTIONS]
 
 ## export
 
-Export the instance's data.
+Export the instance's data: everything, as an archive.
 
 ### marfa export
 
+With no `--format`, this writes the archive: every item, edge, table, setting and file the key may read, the bin included, which `restore` brings back. `--state` narrows the items. `--format ndjson` writes the items alone, one per line, without tables, settings or files, and leaves out the bin unless `--state any` asks for it.
+
 An archive is kept even when it lacks blobs it names: a blob no store could read whole, or a file's blob the key may not read, such as one only an earlier version names. A key holding `blobs.manage` reads every blob. The manifest lists the blobs it lacks under `missing_blobs`, and the command then exits 1 with `blobs_missing`, naming up to ten of them.
 
-With `--output`, such an archive is not written to the path. It is kept beside it as `<PATH>.incomplete`, which replaces only an earlier file of that name, and the file at the path stays as it was, so a script that reads the path never gets an archive that lacks files. The message names both paths. When that name cannot be taken, the archive stays in a hidden partial file beside the path, and the message names it. Without `--output`, the archive goes to standard output.
+With `--output`, such an archive is not written to the path. It is kept beside it as `<PATH>.incomplete`, which replaces only an earlier file of that name, and the file at the path stays as it was, so a script that reads the path never gets an archive that lacks files. The message names both paths. When that name cannot be taken, the archive stays in a hidden partial file beside the path, and the message names it. Without `--output`, the archive goes to standard output, which it refuses when that is a terminal: save it with `--output <PATH>`, such as `marfa-export.tar`, or redirect it.
 
 ```text
 marfa export [OPTIONS]
@@ -2188,10 +2190,10 @@ marfa export [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--format <FORMAT>` | `ndjson` for items one per line, `archive` for the whole instance. One of `ndjson`, `archive`. |
-| `--output <PATH>` | Where to write. Omitted, the export goes to stdout. The path is replaced only by an export that ends whole, and for an archive only by one that lacks no blobs. |
+| `--format <FORMAT>` | `archive` for the whole instance, the default, or `ndjson` for items one per line, which leaves out tables, settings and files. One of `ndjson`, `archive`. Default: `archive`. |
+| `--output <PATH>` | Where to write. Omitted, the export goes to stdout, which an archive refuses when stdout is a terminal. The path is replaced only by an export that ends whole, and for an archive only by one that lacks no blobs. |
 | `--type <TYPE>` | A type identifier; its subtypes are included. |
-| `--state <STATE>` | A state to answer; repeat it or separate states with commas. `any` is every state, and is given alone. Unset answers every state but the bin. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
+| `--state <STATE>` | A state to answer; repeat it or separate states with commas. `any` is every state, and is given alone. Unset, an archive carries every state, the bin included, and `ndjson` every state but the bin. One of `active`, `archived`, `trashed`, `revoked`, `any`. |
 | `--source <SOURCE>` | The source the items were written under. |
 | `--occurred-after <TIME>` | Exclusive lower bound on the item's own time, RFC 3339. |
 | `--occurred-before <TIME>` | Exclusive upper bound on the item's own time, RFC 3339. |
@@ -4748,9 +4750,9 @@ marfa server upgrade [OPTIONS]
 
 Whether the server runs, its release and address, and whether it is claimed.
 
-It says what the server's `/health` answers: healthy, or degraded or down with the components at fault, such as a disk with too little room. It says "not answering" only when the server gave no answer. When the server is not answering, it shows the end of its log.
+It says what the server's `/health` answers: healthy, or degraded or down with the components at fault, such as a disk with too little room. It says "not answering" only when the server gave no answer. It also says when the server keeps no backups, and how to set one. When the server is not answering, it shows the end of its log.
 
-It exits 0 whenever it can say how the server is, a stopped, degraded or silent server included: `--json` has `running`, `answering`, `healthy` and `health` for a script to read. It exits non-zero only when the command itself fails, such as for a folder with no install.
+It exits 0 whenever it can say how the server is, a stopped, degraded or silent server included: `--json` has `running`, `answering`, `healthy`, `health` and `backups` for a script to read. It exits non-zero only when the command itself fails, such as for a folder with no install.
 
 ```text
 marfa server status [OPTIONS]

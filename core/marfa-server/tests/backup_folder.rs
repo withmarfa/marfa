@@ -957,3 +957,244 @@ async fn an_adopt_that_cannot_mark_the_folder_says_the_old_store_was_forgotten_a
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(copy_of(&folder, &instance.id(), &file).is_file());
 }
+
+impl Instance {
+    /// The attention entries of kind `backup`, by reference.
+    async fn backup_concerns(&self) -> Vec<Value> {
+        let (status, body) = self.local(Method::GET, "/attention", None).await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|concern| concern["kind"] == "backup")
+            .cloned()
+            .collect()
+    }
+
+    async fn backup_references(&self) -> Vec<String> {
+        self.backup_concerns()
+            .await
+            .iter()
+            .map(|concern| concern["reference"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    async fn attention_kinds(&self) -> Vec<String> {
+        let (_, body) = self.local(Method::GET, "/attention", None).await;
+        body["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|concern| concern["kind"].as_str().unwrap().to_string())
+            .collect()
+    }
+}
+
+#[tokio::test]
+async fn a_folder_whose_disk_goes_away_is_said_at_once_with_the_files_that_wait_and_clears_once_it_is_back()
+ {
+    let parent = TempDir::new().unwrap();
+    let folder = parent.path().join("disk");
+    fs::create_dir(&folder).unwrap();
+    let instance = Instance::start(&folder).await;
+    let (file, _) = instance.file(b"a file waiting for its second copy").await;
+
+    let health = instance.health().await;
+    assert_eq!(health["status"], "ok", "{health}");
+    assert_eq!(health["store_error"], Value::Null, "{health}");
+    assert!(instance.backup_concerns().await.is_empty());
+
+    let away = parent.path().join("away");
+    fs::rename(&folder, &away).unwrap();
+    let health = instance.health().await;
+    assert_eq!(health["status"], "failing", "{health}");
+    assert!(
+        health["store_error"]
+            .as_str()
+            .unwrap()
+            .contains("is not there"),
+        "{health}"
+    );
+    let concerns = instance.backup_concerns().await;
+    assert_eq!(concerns.len(), 1, "{concerns:?}");
+    assert_eq!(concerns[0]["reference"], "store");
+    assert_eq!(concerns[0]["title"], "The backup folder is not there");
+
+    // A backup run that fails for the same folder is part of the same entry.
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert_eq!(instance.backup_references().await, ["store"]);
+    let concerns = instance.backup_concerns().await;
+    assert!(
+        concerns[0]["description"]
+            .as_str()
+            .unwrap()
+            .contains("The last backup run failed too."),
+        "{concerns:?}"
+    );
+
+    let replicated = instance.run("blob-replicate").await;
+    assert_eq!(replicated["outcome"], "error", "{replicated}");
+    assert_eq!(replicated["result"]["copied"], 0, "{replicated}");
+    assert_eq!(replicated["result"]["remaining"], 1, "{replicated}");
+    let health = instance.health().await;
+    assert_eq!(health["copies_waiting"], 1, "{health}");
+    let concerns = instance.backup_concerns().await;
+    assert!(
+        concerns[0]["description"]
+            .as_str()
+            .unwrap()
+            .contains("1 file waits for its second copy"),
+        "{concerns:?}"
+    );
+    assert!(
+        !instance
+            .attention_kinds()
+            .await
+            .contains(&"job".to_string()),
+        "the failed replication is told once"
+    );
+    let (status, body) = instance.local(Method::GET, "/health", None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "degraded", "{body}");
+
+    fs::rename(&away, &folder).unwrap();
+    let replicated = instance.run("blob-replicate").await;
+    assert_eq!(replicated["outcome"], "ok", "{replicated}");
+    assert_eq!(replicated["result"]["remaining"], 0, "{replicated}");
+    assert!(copy_of(&folder, &instance.id(), &file).is_file());
+    let health = instance.health().await;
+    assert_eq!(health["store_error"], Value::Null, "{health}");
+    assert_eq!(health["copies_waiting"], 0, "{health}");
+    // The folder answers again, so the failed run is told as its own entry until one is put.
+    assert_eq!(instance.backup_references().await, ["run"]);
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let health = instance.health().await;
+    assert_eq!(health["status"], "ok", "{health}");
+    assert!(instance.backup_concerns().await.is_empty());
+}
+
+#[cfg(debug_assertions)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_folder_whose_mount_hangs_is_told_as_not_answering_within_the_health_deadline() {
+    let folder = TempDir::new().unwrap();
+    let instance = Instance::start(folder.path()).await;
+    instance.app.faults.set("hold:disk-probe", None).unwrap();
+    let began = std::time::Instant::now();
+    let health = instance.health().await;
+    assert!(began.elapsed() < std::time::Duration::from_millis(2_900));
+    assert_eq!(health["status"], "failing", "{health}");
+    assert!(
+        health["store_error"]
+            .as_str()
+            .unwrap()
+            .contains("did not answer in time"),
+        "{health}"
+    );
+    let concerns = instance.backup_concerns().await;
+    assert_eq!(concerns.len(), 1, "{concerns:?}");
+    assert_eq!(concerns[0]["title"], "The backup folder is not answering");
+
+    // The witness: once the mount answers, the same folder is quiet again.
+    instance.app.faults.clear(Some("hold:disk-probe"));
+    let mut quiet = false;
+    for _ in 0..50 {
+        if instance.health().await["store_error"].is_null() {
+            quiet = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(quiet, "the folder was never told as answering again");
+}
+
+#[tokio::test]
+async fn a_folder_with_nothing_waiting_and_a_clean_backup_says_nothing_in_attention() {
+    let folder = TempDir::new().unwrap();
+    let instance = Instance::start(folder.path()).await;
+    instance.file(b"copied").await;
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    instance.run("blob-replicate").await;
+    let health = instance.health().await;
+    assert_eq!(health["status"], "ok", "{health}");
+    assert!(instance.attention_kinds().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_backup_taken_by_hand_that_failed_is_in_attention_until_the_next_one_is_put() {
+    let parent = TempDir::new().unwrap();
+    let folder = parent.path().join("disk");
+    fs::create_dir(&folder).unwrap();
+    let instance = Instance::start(&folder).await;
+    instance.note("kept").await;
+
+    let away = parent.path().join("away");
+    fs::rename(&folder, &away).unwrap();
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    // While the folder is gone the failed run and the folder are one fault, told once.
+    assert_eq!(instance.backup_references().await, ["store"]);
+
+    // Once it answers, the failed run stands on its own until a later one is put.
+    fs::rename(&away, &folder).unwrap();
+    assert_eq!(instance.backup_references().await, ["run"]);
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(instance.backup_concerns().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_backup_that_lost_a_file_is_in_attention_as_a_run_that_lost_files() {
+    let folder = TempDir::new().unwrap();
+    let instance = Instance::start(folder.path()).await;
+    let (file, _) = instance.file(b"a file every store loses").await;
+    for path in [
+        copy_of(&instance.data.path().join("blobs"), "", &file),
+        copy_of(folder.path(), &instance.id(), &file),
+    ] {
+        let _ = fs::remove_file(path);
+    }
+    let (status, body) = instance.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let concerns = instance.backup_concerns().await;
+    assert_eq!(concerns.len(), 1, "{concerns:?}");
+    assert_eq!(concerns[0]["reference"], "run");
+    assert!(
+        concerns[0]["description"]
+            .as_str()
+            .unwrap()
+            .contains("without 1 file"),
+        "{concerns:?}"
+    );
+}
+
+#[tokio::test]
+async fn backups_turned_off_by_interval_are_told_apart_from_having_no_destination() {
+    let folder = TempDir::new().unwrap();
+    let data = TempDir::new().unwrap();
+    let app = App::start(settings(
+        data.path(),
+        folder.path(),
+        &[("MARFA_BACKUP_INTERVAL_SECONDS", "0")],
+    ))
+    .await
+    .unwrap();
+    let instance = Instance {
+        public: public(app.clone()),
+        control: control(app.clone()),
+        app,
+        data,
+        writer: String::new(),
+    };
+    let health = instance.health().await;
+    assert_eq!(health["status"], "off", "{health}");
+    assert_eq!(health["reason"], "turned_off", "{health}");
+    assert_eq!(health["destination"], "folder", "{health}");
+    let concerns = instance.backup_concerns().await;
+    assert_eq!(concerns.len(), 1, "{concerns:?}");
+    assert_eq!(concerns[0]["reference"], "turned_off");
+    assert_eq!(concerns[0]["title"], "Scheduled backups are turned off");
+}

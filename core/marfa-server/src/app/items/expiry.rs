@@ -234,6 +234,7 @@ pub async fn feed_expiry(app: Arc<App>, run: Run) -> Result<Report> {
                 return Ok(Report {
                     result: result(moved, held),
                     again: true,
+                    failure: None,
                 });
             }
             let live = app.clone();

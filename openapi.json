@@ -1567,7 +1567,7 @@
                   "failing",
                   "off"
                 ],
-                "description": "`ok`: Marfa backs up on its schedule and the last run succeeded. `failing`: the last run failed, or put a backup without files no store could give, which makes the overall `status` at least `degraded`. `off`: Marfa takes no scheduled backups."
+                "description": "`ok`: backing up on schedule, and the last run succeeded. `failing`: the last run failed or lost files, or a store isn't taking copies, which makes the overall `status` at least `degraded`. `off`: no scheduled backups."
               },
               "reason": {
                 "type": "string",
@@ -1619,12 +1619,24 @@
                 ],
                 "format": "date-time",
                 "description": "When the last failed run ended. Present only for a caller that holds `instance.read`."
+              },
+              "copies_waiting": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "How many files waited for their copy in the object store or backup folder when `blob-replicate` last ran. Present only for a caller that holds `instance.read`, and only when a destination is set."
+              },
+              "store_error": {
+                "type": [
+                  "string",
+                  "null"
+                ],
+                "description": "Why the object store or backup folder isn't taking copies, or `null` while it does. It covers a backup folder whose disk isn't there. Present only for a caller that holds `instance.read`, and only when a destination is set."
               }
             },
             "required": [
               "status"
             ],
-            "description": "Whether Marfa backs itself up to its backup folder or object store, and how the last backup went."
+            "description": "Whether Marfa backs itself up to its backup folder or object store, how the last backup went, and whether the place it backs up to is taking copies."
           },
           "housekeeping": {
             "type": "object",
@@ -7613,13 +7625,14 @@
               "connector",
               "folder",
               "key",
+              "backup",
               "unavailable"
             ],
-            "description": "health: a component is degraded or down; job: a job failed its last run; connector: failed, reports problems, or quiet over a day; folder: sync problems; key: expires within seven days; unavailable: a check failed or ran out of time."
+            "description": "health: component degraded or down; job: last run failed; connector: failed, has problems, or quiet over a day; folder: sync problems; key: expires soon; backup: none kept, off, store failing, or run failed; unavailable: check could not answer."
           },
           "reference": {
             "type": "string",
-            "description": "The component, job, connector, folder, or key ID, or the name of the check that could not answer."
+            "description": "The component, job, connector, folder, or key ID, the name of the check that could not answer, or for a backup concern `no_backup_destination`, `turned_off`, `store` or `run`."
           },
           "title": {
             "type": "string",

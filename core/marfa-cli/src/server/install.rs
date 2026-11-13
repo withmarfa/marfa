@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use clap::ValueEnum;
 use serde_json::json;
 
+use super::backups;
 use super::docker::Docker;
 use super::envfile::{self, EnvFile};
 use super::prompt::Prompter;
@@ -649,6 +650,10 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         }
     }
     let notes = boot_notes(runtime, manager, autostart, &linger);
+    let backups = backups::Said::ask(&http_agent(), port);
+    let backups_say = backups
+        .as_ref()
+        .and_then(|said| said.words(&settings_path, runtime == Runtime::Docker, None));
     let host = crate::auth::machine_name();
     let report = json!({
         "installed": true,
@@ -668,6 +673,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         "settings": if external { "external" } else { "managed" },
         "autostart": autostart,
         "autostart_error": autostart_failed,
+        "backups": backups.as_ref().map(|said| said.json(backups_say.as_deref())),
         "claimed": claim.claimed,
         "setup_url": claim.url,
         "setup_expires_at": claim.expires_at,
@@ -725,6 +731,9 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         }
         for note in &notes {
             text.push_str(&format!("\n{note}\n"));
+        }
+        if let Some(say) = &backups_say {
+            text.push_str(&format!("\n{say}\n"));
         }
         text.push_str(&format!("\n{AGENT_HINT}\n"));
         style::labelled(Stream::Out, &text)

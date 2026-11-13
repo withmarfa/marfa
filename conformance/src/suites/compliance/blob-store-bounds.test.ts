@@ -699,7 +699,7 @@ describe("an object store that answers with another store's marker", () => {
       expect(later.status, JSON.stringify(later.error)).toBe(201);
       const second = later.data.hash;
       await replicationIdle(operator);
-      const copied = await runJob(operator, "blob-replicate");
+      const copied = await runJob(operator, "blob-replicate", "error");
       expect(copied.result).toMatchObject({ copied: 0, remaining: 1 });
       expect(await storesOf(second)).toEqual([disk.id]);
 

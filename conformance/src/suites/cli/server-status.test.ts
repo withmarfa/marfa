@@ -83,6 +83,11 @@ async function status(): Promise<{
     answering: boolean;
     healthy: boolean;
     health: { status: string } | null;
+    backups: {
+      status: string;
+      reason: string | null;
+      say: string | null;
+    } | null;
   };
 }> {
   const args = ["server", "status", "--dir", join(dir, "install")];
@@ -134,5 +139,66 @@ describe("marfa server status", () => {
       healthy: false,
       health: { status: "down" },
     });
+  });
+
+  it("says no backups are kept, and how to set one, when the server has no destination", async () => {
+    answer = {
+      status: 200,
+      body: JSON.stringify({
+        status: "ok",
+        components: {},
+        backups: { status: "off", reason: "no_backup_destination" },
+      }),
+    };
+    const got = await status();
+    expect(got.code).toBe(0);
+    expect(got.text).toContain("No backups are kept");
+    for (const part of [
+      "MARFA_BACKUP_PATH",
+      "S3_BUCKET",
+      join(dir, "install", "marfa.env"),
+      "marfa server restart",
+    ]) {
+      expect(got.text, part).toContain(part);
+    }
+    expect(got.report.backups).toMatchObject({
+      status: "off",
+      reason: "no_backup_destination",
+      say: expect.stringContaining("No backups are kept"),
+    });
+  });
+
+  it("says scheduled backups are turned off, apart from having no destination", async () => {
+    answer = {
+      status: 200,
+      body: JSON.stringify({
+        status: "ok",
+        components: {},
+        backups: { status: "off", reason: "turned_off" },
+      }),
+    };
+    const got = await status();
+    expect(got.text).toContain("Scheduled backups are turned off");
+    expect(got.text).not.toContain("No backups are kept");
+    expect(got.text).not.toContain("MARFA_BACKUP_PATH");
+    expect(got.report.backups).toMatchObject({
+      status: "off",
+      reason: "turned_off",
+    });
+  });
+
+  it("says nothing of backups that run", async () => {
+    answer = {
+      status: 200,
+      body: JSON.stringify({
+        status: "ok",
+        components: {},
+        backups: { status: "ok" },
+      }),
+    };
+    const got = await status();
+    expect(got.text).toContain("running and healthy");
+    expect(got.text).not.toContain("Backups ");
+    expect(got.report.backups).toMatchObject({ status: "ok", say: null });
   });
 });

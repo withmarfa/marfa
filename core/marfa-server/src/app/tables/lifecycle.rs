@@ -67,6 +67,7 @@ impl Tally {
                 "pages": self.pages,
             }),
             again,
+            failure: None,
         }
     }
 }

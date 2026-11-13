@@ -1,6 +1,6 @@
 //! Jobs that keep every attached store whole: replicate, integrity and orphans.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io;
 use std::sync::Arc;
 
@@ -130,7 +130,7 @@ async fn copy_to(
                 tracing::warn!(%error, store = source.kind(), "A store did not open a blob to copy");
                 // A failed read says nothing of the bytes the store holds.
                 if error.kind() != io::ErrorKind::NotFound {
-                    unanswered.get_or_insert_with(|| error.to_string());
+                    unanswered.get_or_insert_with(|| told(&source, &error));
                 }
                 continue;
             }
@@ -146,7 +146,9 @@ async fn copy_to(
                 };
                 if let Err(refused) = room_on(&app.faults, volume, disk.root(), reserve, size) {
                     tracing::warn!(error = %refused, store = target.kind(), "A store has no room for a blob's copy");
-                    return Ok(Copy::Skipped(Some(refused.message.to_string())));
+                    return Ok(Copy::Skipped(Some(
+                        "there is not enough free space on its disk".to_string(),
+                    )));
                 }
                 if matches!(target, Store::Folder(_)) {
                     bytes = super::folder::filling(bytes, app.faults.clone());
@@ -193,7 +195,7 @@ async fn copy_to(
                 if error.kind() == io::ErrorKind::InvalidData {
                     continue;
                 }
-                Copy::Skipped(Some(error.to_string()))
+                Copy::Skipped(Some(told(target, &error)))
             }
         });
     }
@@ -324,6 +326,36 @@ pub async fn replicate_one(
     Ok(Replicated::Copied)
 }
 
+/// Why the object store failed, in words that name no address or key; the log has the rest.
+pub(crate) fn object_store_said(error: &io::Error) -> &'static str {
+    match error.kind() {
+        io::ErrorKind::TimedOut => "the object store did not answer in time",
+        io::ErrorKind::NotFound => "the bucket or the file was not found",
+        _ => "the object store refused or failed the request, and the server's log has the detail",
+    }
+}
+
+/// Why a store failed, in words that name no address or key; the server's log has the rest.
+fn told(store: &Store, error: &io::Error) -> String {
+    match store {
+        Store::S3(_) => object_store_said(error).into(),
+        _ => error.to_string(),
+    }
+}
+
+/// How a failure to copy to `store` is told.
+fn refusal_to_copy(store: &Store, why: Option<&str>) -> String {
+    let place = match store {
+        Store::Disk(_) => "The blob folder",
+        Store::Folder(_) => "The backup folder",
+        Store::S3(_) => "The object store",
+    };
+    format!(
+        "{place} did not take a copy: {}",
+        why.unwrap_or("it gave no reason")
+    )
+}
+
 /// Failed copies yield to less-tried copies so one failure cannot monopolize the batch.
 pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
     let tuning = &app.settings.start.tuning;
@@ -332,14 +364,14 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         tuning.blob_replicate_batch_bytes,
     );
     if app.blobs.attached().len() < 2 {
-        return Ok(Report {
-            result: json!({ "copied": 0, "bytes": 0, "remaining": 0 }),
-            again: false,
-        });
+        return Ok(Report::done(
+            json!({ "copied": 0, "bytes": 0, "remaining": 0 }),
+        ));
     }
     let missing = app.db.read(move |tx| rows::missing(tx, batch)).await?;
     let mut unreachable = BTreeSet::new();
     let (mut copied, mut bytes) = (0u64, 0u64);
+    let mut refused: BTreeMap<String, String> = BTreeMap::new();
     for pair in missing {
         if !run.go_on().await {
             break;
@@ -351,17 +383,36 @@ pub async fn replicate(app: Arc<App>, run: Run) -> Result<Report> {
         let Some(target) = app.blobs.store(&pair.store_id) else {
             continue;
         };
-        if let Replicated::Copied =
-            replicate_one(&app, &target, &pair.blob, &mut unreachable).await?
-        {
-            copied += 1;
-            bytes = bytes.saturating_add(size);
+        if app.blobs.gate.unfinished(&pair.blob.hash) {
+            refused.entry(target.id().to_string()).or_insert_with(|| {
+                refusal_to_copy(&target, Some("an earlier write to it has not finished"))
+            });
+            continue;
+        }
+        match replicate_one(&app, &target, &pair.blob, &mut unreachable).await? {
+            Replicated::Copied => {
+                copied += 1;
+                bytes = bytes.saturating_add(size);
+            }
+            Replicated::Failed(why) => {
+                refused
+                    .entry(target.id().to_string())
+                    .or_insert_with(|| refusal_to_copy(&target, why.as_deref()));
+            }
+            Replicated::Passed | Replicated::Unreadable => {}
         }
     }
     let remaining = app.db.read(rows::missing_count).await?;
+    let mut result = json!({ "copied": copied, "bytes": bytes, "remaining": remaining });
+    let mut failure = None;
+    if copied == 0 && !refused.is_empty() {
+        failure = Some(refused.values().cloned().collect::<Vec<_>>().join(" "));
+        result["refused"] = json!(refused);
+    }
     Ok(Report {
-        result: json!({ "copied": copied, "bytes": bytes, "remaining": remaining }),
+        result,
         again: copied > 0 && remaining > 0,
+        failure,
     })
 }
 

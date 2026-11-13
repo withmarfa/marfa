@@ -169,6 +169,15 @@ impl Instance {
     }
 
     async fn run(&self, job: &str) -> Value {
+        self.run_ending(job, "ok").await
+    }
+
+    /// A run of a job that meets a store which will not take a copy, which ends as failed.
+    async fn failed_run(&self, job: &str) -> Value {
+        self.run_ending(job, "error").await
+    }
+
+    async fn run_ending(&self, job: &str, outcome: &str) -> Value {
         let run = self
             .call(
                 Method::POST,
@@ -176,7 +185,19 @@ impl Instance {
                 Some(json!({})),
             )
             .await;
-        assert_eq!(run.body["outcome"], "ok", "{}", run.body);
+        assert_eq!(run.body["outcome"], outcome, "{}", run.body);
+        run.body["result"].clone()
+    }
+
+    /// A run of a job that may end either way, for a wait on what it copied.
+    async fn run_either(&self, job: &str) -> Value {
+        let run = self
+            .call(
+                Method::POST,
+                &format!("/housekeeping/{job}/run"),
+                Some(json!({})),
+            )
+            .await;
         run.body["result"].clone()
     }
 
@@ -915,11 +936,72 @@ async fn a_blob_that_never_copies_does_not_hold_back_the_others() {
     instance.app.clock.advance(5).unwrap();
     let other = instance.stored(b"copied all the same").await;
 
-    for _ in 0..3 {
-        instance.run("blob-replicate").await;
+    // The batch is one blob and the stuck one yields to the other, so by the third run only
+    // the stuck file is left, and that run copies nothing.
+    for _ in 0..2 {
+        instance.run_either("blob-replicate").await;
     }
+    let last = instance.failed_run("blob-replicate").await;
+    assert_eq!(last["copied"], 0, "{last}");
+    assert_eq!(last["remaining"], 1, "{last}");
     assert_eq!(instance.copies(&other).await.len(), 2);
     assert_eq!(instance.copies(&hash_of(stuck)).await.len(), 1);
+}
+
+#[tokio::test]
+async fn a_copy_the_object_store_refuses_ends_the_run_as_failed_naming_the_store_and_no_address() {
+    let s3 = FakeS3::start().await;
+    let env = s3.settings(BUCKET, "blobs");
+    let instance = Instance::start(&pairs(&env)).await;
+    let bytes = b"refused by the object store, and told plainly";
+    s3.refuse_writes(&objects_of("blobs", &hash_of(bytes)));
+    instance.stored(bytes).await;
+
+    let run = instance
+        .call(
+            Method::POST,
+            "/housekeeping/blob-replicate/run",
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(run.body["outcome"], "error", "{}", run.body);
+    assert_eq!(run.body["result"]["copied"], 0, "{}", run.body);
+    assert_eq!(run.body["result"]["remaining"], 1, "{}", run.body);
+    let error = run.body["error"].as_str().unwrap();
+    assert!(
+        error.starts_with("The object store did not take a copy: "),
+        "{error}"
+    );
+    assert!(
+        !error.contains("127.0.0.1") && !error.contains("http"),
+        "{error}"
+    );
+
+    // One refused file is told as files waiting, never as a store that is not taking copies.
+    let attention = instance.call(Method::GET, "/attention", None).await;
+    let told: Vec<&Value> = attention.body["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|concern| concern["kind"] == "backup")
+        .collect();
+    assert_eq!(told.len(), 1, "{}", attention.body);
+    assert_eq!(told[0]["reference"], "store");
+    assert_eq!(
+        told[0]["title"],
+        "Files are waiting for their copy in the object store"
+    );
+    let description = told[0]["description"].as_str().unwrap();
+    assert!(
+        description.starts_with("The object store did not take a copy: ")
+            && description.ends_with("1 file waits for its second copy."),
+        "{description}"
+    );
+
+    // The witness: the same run once the store takes writes copies the file and ends ok.
+    s3.allow_writes();
+    let run = instance.run("blob-replicate").await;
+    assert_eq!(run["copied"], 1, "{run}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -968,7 +1050,7 @@ async fn a_deletion_that_lands_after_the_server_gave_it_up_leaves_the_copy_made_
     assert_eq!(dropped.status, StatusCode::OK, "{}", dropped.body);
     let began = Instant::now();
     loop {
-        let run = instance.run("blob-replicate").await;
+        let run = instance.run_either("blob-replicate").await;
         if run["copied"] == 1 {
             break;
         }
@@ -1111,7 +1193,7 @@ async fn an_object_store_reaching_another_bucket_takes_no_copy_and_the_blob_surv
     let door = format!("/blobs/{hash}/copies/{disk}");
 
     s3.swap_buckets();
-    let run = instance.run("blob-replicate").await;
+    let run = instance.failed_run("blob-replicate").await;
     assert_eq!(run["copied"], 0, "{run}");
     assert_eq!(instance.copies(&hash).await.len(), 1);
     let dropped = instance.call(Method::DELETE, &door, None).await;
@@ -1142,7 +1224,7 @@ async fn a_copy_written_to_another_bucket_than_the_one_answering_after_is_not_re
 
     s3.swap_buckets();
     s3.set_mode(Mode::SwapAfterPut);
-    let run = instance.run("blob-replicate").await;
+    let run = instance.failed_run("blob-replicate").await;
     assert_eq!(run["copied"], 0, "{run}");
     assert_eq!(instance.copies(&hash).await.len(), 1);
 

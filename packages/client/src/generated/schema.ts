@@ -3135,10 +3135,10 @@ export interface components {
             };
             /** @description The build the instance runs, when it is known. */
             version?: string;
-            /** @description Whether Marfa backs itself up to its backup folder or object store, and how the last backup went. */
+            /** @description Whether Marfa backs itself up to its backup folder or object store, how the last backup went, and whether the place it backs up to is taking copies. */
             backups: {
                 /**
-                 * @description `ok`: Marfa backs up on its schedule and the last run succeeded. `failing`: the last run failed, or put a backup without files no store could give, which makes the overall `status` at least `degraded`. `off`: Marfa takes no scheduled backups.
+                 * @description `ok`: backing up on schedule, and the last run succeeded. `failing`: the last run failed or lost files, or a store isn't taking copies, which makes the overall `status` at least `degraded`. `off`: no scheduled backups.
                  * @enum {string}
                  */
                 status: "ok" | "failing" | "off";
@@ -3168,6 +3168,10 @@ export interface components {
                  * @description When the last failed run ended. Present only for a caller that holds `instance.read`.
                  */
                 last_failed_at?: string | null;
+                /** @description How many files waited for their copy in the object store or backup folder when `blob-replicate` last ran. Present only for a caller that holds `instance.read`, and only when a destination is set. */
+                copies_waiting?: number;
+                /** @description Why the object store or backup folder isn't taking copies, or `null` while it does. It covers a backup folder whose disk isn't there. Present only for a caller that holds `instance.read`, and only when a destination is set. */
+                store_error?: string | null;
             };
             /** @description What needs attention in the background work. Present only for a caller that holds `instance.read`. */
             housekeeping?: {
@@ -5514,11 +5518,11 @@ export interface components {
         /** @description One known concern or unavailable check. */
         AttentionConcern: {
             /**
-             * @description health: a component is degraded or down; job: a job failed its last run; connector: failed, reports problems, or quiet over a day; folder: sync problems; key: expires within seven days; unavailable: a check failed or ran out of time.
+             * @description health: component degraded or down; job: last run failed; connector: failed, has problems, or quiet over a day; folder: sync problems; key: expires soon; backup: none kept, off, store failing, or run failed; unavailable: check could not answer.
              * @enum {string}
              */
-            kind: "health" | "job" | "connector" | "folder" | "key" | "unavailable";
-            /** @description The component, job, connector, folder, or key ID, or the name of the check that could not answer. */
+            kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "unavailable";
+            /** @description The component, job, connector, folder, or key ID, the name of the check that could not answer, or for a backup concern `no_backup_destination`, `turned_off`, `store` or `run`. */
             reference: string;
             /** @description A short name for the concern. */
             title: string;

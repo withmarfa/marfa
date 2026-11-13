@@ -545,6 +545,7 @@ pub async fn sweep(app: Arc<App>, run: Run) -> Result<Report> {
     Ok(Report {
         result: tally.result(),
         again,
+        failure: None,
     })
 }
 
