@@ -177,7 +177,152 @@ fn emptying_the_bin_pages_itself_and_counts_as_it_goes() {
         &["--json", "items", "bin", "empty", "--confirm", "PURGE"],
     );
     let said: Value = serde_json::from_str(&ran.stdout).unwrap();
-    assert_eq!(said, json!({"purged": 7, "failures": []}));
+    assert_eq!(said, json!({"purged": 7, "stayed": 0, "failures": []}));
+}
+
+fn kept(id: &str) -> Value {
+    json!({"id": id, "code": "version_conflict", "message": "This item changed and was kept."})
+}
+
+#[test]
+fn emptying_the_bin_says_how_many_items_stayed_in_it_and_still_exits_zero() {
+    let home = scratch("empty-stayed");
+    let batches = || {
+        vec![
+            ok(json!({"purged": 198, "failures": [kept("x"), kept("y")], "next_cursor": "c1"})),
+            ok(json!({"purged": 1, "failures": [kept("z")], "next_cursor": null})),
+        ]
+    };
+    let door = Door::open(batches());
+    let ran = run(
+        &home,
+        &door.url,
+        &["items", "bin", "empty", "--confirm", "PURGE"],
+    );
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let lines: Vec<&str> = ran.stdout.lines().collect();
+    assert_eq!(
+        lines,
+        [
+            "198 items deleted so far",
+            "199 items deleted from the bin",
+            "x: This item changed and was kept.",
+            "y: This item changed and was kept.",
+            "z: This item changed and was kept.",
+            "3 items stayed in the bin",
+        ]
+    );
+
+    let door = Door::open(batches());
+    let ran = run(
+        &home,
+        &door.url,
+        &["--json", "items", "bin", "empty", "--confirm", "PURGE"],
+    );
+    let said: Value = serde_json::from_str(&ran.stdout).unwrap();
+    assert_eq!(said["purged"], 199);
+    assert_eq!(said["stayed"], 3);
+}
+
+#[test]
+fn emptying_the_bin_stops_with_an_error_where_the_server_names_a_cursor_again() {
+    let home = scratch("empty-cycle");
+    // The batches name c1, c1 again; and c1, c2, then c1 again.
+    let scenes: [(&str, Vec<Answer>, &str); 2] = [
+        (
+            "same",
+            vec![emptied(200, Some("c1")), emptied(200, Some("c1"))],
+            "400 items",
+        ),
+        (
+            "round",
+            vec![
+                emptied(200, Some("c1")),
+                emptied(200, Some("c2")),
+                emptied(200, Some("c1")),
+            ],
+            "600 items",
+        ),
+    ];
+    for (name, answers, count) in scenes {
+        let asked = answers.len();
+        let door = Door::open(answers);
+        let ran = run(
+            &home,
+            &door.url,
+            &["items", "bin", "empty", "--confirm", "PURGE"],
+        );
+        assert_eq!(ran.code, 1, "{name}: {}{}", ran.stdout, ran.stderr);
+        assert!(ran.stderr.contains("\"c1\""), "{name}: {}", ran.stderr);
+        assert!(ran.stderr.contains(count), "{name}: {}", ran.stderr);
+        assert!(ran.stderr.contains("again"), "{name}: {}", ran.stderr);
+        assert_eq!(door.received().len(), asked, "{name}: it asked on");
+    }
+}
+
+#[test]
+fn a_batch_that_fails_midway_says_how_many_were_deleted_before_it() {
+    let home = scratch("empty-midway");
+    let answers = || {
+        vec![
+            emptied(200, Some("c1")),
+            emptied(200, Some("c2")),
+            refused(
+                "500 Internal Server Error",
+                "internal_error",
+                "Something broke",
+            ),
+        ]
+    };
+    let door = Door::open(answers());
+    let ran = run(
+        &home,
+        &door.url,
+        &["items", "bin", "empty", "--confirm", "PURGE"],
+    );
+    assert_eq!(ran.code, 3, "{}", ran.stderr);
+    assert!(
+        ran.stderr.contains(
+            "400 items were deleted before this failed, and the failed batch may have deleted more: "
+        ),
+        "{}",
+        ran.stderr
+    );
+    assert!(ran.stderr.contains("Something broke"), "{}", ran.stderr);
+
+    let door = Door::open(answers());
+    let ran = run(
+        &home,
+        &door.url,
+        &["--json", "items", "bin", "empty", "--confirm", "PURGE"],
+    );
+    assert_eq!(ran.code, 3);
+    assert_eq!(ran.stdout.trim(), "", "nothing else is on stdout");
+    let last = ran.stderr.lines().last().unwrap();
+    let said: Value = serde_json::from_str(last).expect(last);
+    assert_eq!(said["purged"], 400, "{said}");
+    assert_eq!(said["exit"], 3);
+    assert_eq!(said["error"]["server"]["status"], 500);
+
+    // Before any batch has gone, the failure is the plain one.
+    let door = Door::open(vec![refused(
+        "500 Internal Server Error",
+        "internal_error",
+        "Something broke",
+    )]);
+    let ran = run(
+        &home,
+        &door.url,
+        &["--json", "items", "bin", "empty", "--confirm", "PURGE"],
+    );
+    assert_eq!(ran.code, 3);
+    let said: Value = serde_json::from_str(ran.stderr.lines().last().unwrap()).unwrap();
+    assert!(said["purged"].is_null(), "{said}");
+    assert!(
+        !ran.stderr.contains("were deleted before"),
+        "{}",
+        ran.stderr
+    );
 }
 
 #[test]

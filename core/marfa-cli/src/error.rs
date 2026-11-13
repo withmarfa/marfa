@@ -19,6 +19,12 @@ pub enum CliError {
         error: Box<CliError>,
         catalog_changed: bool,
     },
+    /// Named by its cause; the count is what an emptied bin had lost before a
+    /// batch failed.
+    #[error(
+        "{purged} items were deleted before this failed, and the failed batch may have deleted more: {error}"
+    )]
+    BinPartlyEmptied { purged: u64, error: Box<CliError> },
     #[error("{0}")]
     Io(io::Error),
     #[error("{0} is not in the local copy")]
@@ -294,7 +300,8 @@ macro_rules! own_codes {
             pub fn code(&self) -> &'static str {
                 match self {
                     CliError::Core(core) => core.code(),
-                    CliError::CatchUp { error, .. } => error.code(),
+                    CliError::CatchUp { error, .. }
+                    | CliError::BinPartlyEmptied { error, .. } => error.code(),
                     CliError::Refused { status, .. } => refused_code(*status),
                     $($pattern => $code,)*
                 }
@@ -384,7 +391,9 @@ pub fn codes() -> Vec<&'static str> {
 impl CliError {
     pub fn exit(&self) -> Exit {
         match self {
-            CliError::CatchUp { error, .. } => error.exit(),
+            CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
+                error.exit()
+            }
             CliError::Core(core) => match core {
                 CoreError::RenewalFailed(cause) => CliError::from(*cause.clone()).exit(),
                 CoreError::Redirected { .. }
@@ -469,7 +478,9 @@ impl CliError {
     /// command line's own is reported by `telemetry::Run::panicked`.
     pub fn is_fault(&self) -> bool {
         match self {
-            CliError::CatchUp { error, .. } => error.is_fault(),
+            CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
+                error.is_fault()
+            }
             CliError::Core(CoreError::RenewalFailed(cause)) => {
                 CliError::from(*cause.clone()).is_fault()
             }
@@ -485,7 +496,9 @@ impl CliError {
 
     fn server(&self) -> Option<(Option<u16>, Option<&str>, Option<&serde_json::Value>)> {
         match self {
-            CliError::CatchUp { error, .. } => error.server(),
+            CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
+                error.server()
+            }
             CliError::Core(core) => match core {
                 CoreError::NotFound { code, .. } => Some((Some(404), Some(code), None)),
                 CoreError::Unauthorized { code, .. } => Some((Some(401), Some(code), None)),
@@ -523,7 +536,9 @@ impl CliError {
 
     fn retry_after_seconds(&self) -> Option<u64> {
         match self {
-            CliError::CatchUp { error, .. } => error.retry_after_seconds(),
+            CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
+                error.retry_after_seconds()
+            }
             CliError::Core(CoreError::RateLimited {
                 retry_after_seconds,
                 ..
@@ -554,6 +569,9 @@ impl CliError {
         } = self
         {
             envelope["catalog_changed"] = (*catalog_changed).into();
+        }
+        if let CliError::BinPartlyEmptied { purged, .. } = self {
+            envelope["purged"] = (*purged).into();
         }
         envelope
     }

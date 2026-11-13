@@ -234,12 +234,10 @@ it("pages the bin and empties it by itself, saying how many have gone", async ()
   const after = await local.json<{ data: unknown[] }>(["items", "bin", "list"]);
   expect(after.data).toEqual([]);
 
-  const again = await local.json<{ purged: number; failures: unknown[] }>([
-    "items",
-    "bin",
-    "empty",
-    "--confirm",
-    "PURGE",
-  ]);
-  expect(again).toEqual({ purged: 0, failures: [] });
+  const again = await local.json<{
+    purged: number;
+    stayed: number;
+    failures: unknown[];
+  }>(["items", "bin", "empty", "--confirm", "PURGE"]);
+  expect(again).toEqual({ purged: 0, stayed: 0, failures: [] });
 });

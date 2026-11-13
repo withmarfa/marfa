@@ -13,7 +13,9 @@ use crate::error::{CliError, refused_code};
 pub fn error(error: &CliError) -> &'static str {
     match error {
         CliError::Core(core) => core_error(core),
-        CliError::CatchUp { error, .. } => self::error(error),
+        CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
+            self::error(error)
+        }
         CliError::Io(_) => "reading or writing a file or a stream failed",
         CliError::NotHeld(_) => "the item asked for is not in the local working copy",
         CliError::FolderHeld(_) => "another process is working the folder",

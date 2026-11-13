@@ -610,7 +610,7 @@ marfa items bin purge [OPTIONS] --version <VERSION> <ID>
 
 ### marfa items bin empty
 
-Permanently delete everything in the bin, 200 at a time, and say how many have gone as it does. It stops where a deletion could not be confirmed; run it again to carry on, as an interrupted run is safe to repeat.
+Permanently delete everything in the bin, 200 at a time, and say how many have gone as it does. It stops where a deletion could not be confirmed; run it again to carry on, as an interrupted run is safe to repeat. Items that changed meanwhile stay in the bin, and it says how many. If a batch fails, the error says how many had gone, and with --json carries the count as "purged".
 
 ```text
 marfa items bin empty [OPTIONS] --confirm <CONFIRM>

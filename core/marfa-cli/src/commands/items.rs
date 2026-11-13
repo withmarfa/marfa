@@ -254,7 +254,9 @@ pub enum BinCommand {
     /// Permanently delete everything in the bin, 200 at a time, and say how
     /// many have gone as it does. It stops where a deletion could not be
     /// confirmed; run it again to carry on, as an interrupted run is safe to
-    /// repeat.
+    /// repeat. Items that changed meanwhile stay in the bin, and it says how
+    /// many. If a batch fails, the error says how many had gone, and with
+    /// --json carries the count as "purged".
     Empty {
         /// Confirm permanent deletion with `PURGE`.
         #[arg(long, value_parser = ["PURGE"])]
@@ -1256,24 +1258,28 @@ fn empty_bin(confirm: &str, remote: &Remote, out: &Printer) -> Result<(), CliErr
     bin_request(&BinCommand::Empty {
         confirm: confirm.to_string(),
     })?;
-    let mut purged = 0;
+    let mut purged: u64 = 0;
     let mut failures: Vec<Value> = Vec::new();
     let mut cursor: Option<String> = None;
+    let mut seen: Vec<String> = Vec::new();
     let unsure = loop {
-        let batch = remote.json(&empty_request(cursor.as_deref()))?;
-        let gone = batch.get("purged").and_then(Value::as_u64).unwrap_or(0);
-        purged += gone;
+        let batch =
+            remote
+                .json(&empty_request(cursor.as_deref()))
+                .map_err(|error| match purged {
+                    0 => error,
+                    purged => CliError::BinPartlyEmptied {
+                        purged,
+                        error: Box::new(error),
+                    },
+                })?;
+        purged += batch.get("purged").and_then(Value::as_u64).unwrap_or(0);
         let held: Vec<Value> = batch
             .get("failures")
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        let unsure = held.iter().any(|failure| {
-            failure
-                .pointer("/details/write_outcome")
-                .and_then(Value::as_str)
-                == Some("unknown")
-        });
+        let unsure = held.iter().any(is_unconfirmed);
         failures.extend(held);
         let next = batch
             .get("next_cursor")
@@ -1282,25 +1288,48 @@ fn empty_bin(confirm: &str, remote: &Remote, out: &Printer) -> Result<(), CliErr
         if !out.json && next.is_some() && !unsure {
             out.line(&format!("{purged} items deleted so far"))?;
         }
-        if unsure || next.is_none() || next == cursor {
+        let Some(next) = next.filter(|_| !unsure) else {
             break unsure;
+        };
+        if cursor.as_ref() == Some(&next) || seen.contains(&next) {
+            return Err(CliError::Invalid(format!(
+                "the server named the cursor \"{next}\" again after {purged} items were deleted, so emptying stopped rather than go round again"
+            )));
         }
-        cursor = next;
+        seen.push(next.clone());
+        cursor = Some(next);
     };
-    out.report(&json!({ "purged": purged, "failures": failures }), || {
-        let mut lines = vec![format!("{purged} items deleted from the bin")];
-        for failure in &failures {
-            let text = |name: &str| failure.get(name).and_then(Value::as_str).unwrap_or("");
-            lines.push(format!("{}: {}", text("id"), text("message")));
-        }
-        lines.join("\n")
-    })?;
+    let stayed = failures
+        .iter()
+        .filter(|failure| !is_unconfirmed(failure))
+        .count();
+    out.report(
+        &json!({ "purged": purged, "stayed": stayed, "failures": failures }),
+        || {
+            let mut lines = vec![format!("{purged} items deleted from the bin")];
+            for failure in &failures {
+                let text = |name: &str| failure.get(name).and_then(Value::as_str).unwrap_or("");
+                lines.push(format!("{}: {}", text("id"), text("message")));
+            }
+            if stayed > 0 {
+                lines.push(format!("{stayed} items stayed in the bin"));
+            }
+            lines.join("\n")
+        },
+    )?;
     if unsure {
         return Err(CliError::Invalid(
             "stopped: a deletion could not be confirmed, so read the bin again before running this again".into(),
         ));
     }
     Ok(())
+}
+
+fn is_unconfirmed(failure: &Value) -> bool {
+    failure
+        .pointer("/details/write_outcome")
+        .and_then(Value::as_str)
+        == Some("unknown")
 }
 
 /// The edge page carries only the other end's id, so the plain listing
