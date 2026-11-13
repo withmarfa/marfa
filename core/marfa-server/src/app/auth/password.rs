@@ -47,8 +47,7 @@ fn verified(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
-/// Who a check waits behind. The owner's own checks (a session, a known device, a new hash)
-/// never queue behind a check anyone can ask for.
+/// The owner's checks do not queue behind anonymous checks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Queue {
     Owner,
@@ -117,8 +116,7 @@ impl Passwords {
         Ok(decoy)
     }
 
-    /// Does the same work when there is nothing stored, so neither the time nor the queue tells
-    /// whether `stored` held a hash. The open queue refuses once full.
+    /// Missing hashes still require a password check to hide account existence.
     pub async fn check(
         &self,
         stored: Option<&str>,

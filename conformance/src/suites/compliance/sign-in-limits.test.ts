@@ -437,6 +437,58 @@ describe("counting only wrong passwords", () => {
     await recover(known);
   }, 240_000);
 
+  it("answers an address that spent its attempts at two emails alike after the password is changed", async () => {
+    await recover(known);
+    const address = "172.19.0.1";
+    const stranger = "stranger@example.test";
+    for (const email of [OWNER.email, stranger]) {
+      for (let i = 0; i < 10; i++) {
+        const response = await signIn(
+          known,
+          "wrong",
+          address,
+          undefined,
+          email,
+        );
+        expect(response.status).toBe(401);
+      }
+    }
+    // The witness: both emails are held before the change.
+    for (const email of [OWNER.email, stranger]) {
+      expect(
+        (await signIn(known, "wrong", address, undefined, email)).status,
+      ).toBe(429);
+    }
+    const signedIn = await signIn(known, OWNER.password, "172.19.0.2");
+    expect(signedIn.status).toBe(200);
+    const changed = await fetch(`${known.apiUrl}/auth/owner/password`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        origin: await issuerOrigin(known),
+        cookie: setCookie(signedIn, "marfa_session")!,
+        [CLIENT_HEADER]: "172.19.0.2",
+      },
+      body: JSON.stringify({
+        current_password: OWNER.password,
+        new_password: "sign-in limits another password",
+      }),
+    });
+    await changed.body?.cancel();
+    expect(changed.status).toBe(200);
+    const after = await Promise.all(
+      [OWNER.email, stranger].map((email) =>
+        signIn(known, "wrong", address, undefined, email),
+      ),
+    );
+    expect(after.map((response) => response.status)).toEqual([429, 429]);
+    const waits = after.map((response) =>
+      Number(response.headers.get("retry-after")),
+    );
+    expect(Math.abs(waits[0]! - waits[1]!)).toBeLessThanOrEqual(1);
+    await recover(known);
+  }, 240_000);
+
   it("holds every known device together to a hundred wrong passwords an hour", async () => {
     await recover(known);
     const devices: string[] = [];

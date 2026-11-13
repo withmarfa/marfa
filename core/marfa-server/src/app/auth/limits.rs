@@ -56,9 +56,7 @@ pub(super) fn account_key(email: &str) -> String {
         .collect()
 }
 
-/// No lane depends on whether `email` is the owner's, so no answer tells. Only the owner holds a
-/// known device, which is counted on its own and with every known device in place of the lane
-/// every other attempt shares.
+/// Known devices have a separate allowance from unrecognized browsers.
 pub fn password_lanes(email: &str, address: Option<IpAddr>, device: Option<&Known>) -> Vec<Lane> {
     let mut lanes = vec![
         Lane::new(ADDRESS, bucket(address), 30, 15 * MINUTE_MS),
@@ -167,11 +165,9 @@ pub fn hold_to(app: &App, lanes: [Lane; 1], message: &'static str) -> Result<()>
     admit(app, &lanes).map_or(Ok(()), |wait| Err(spent(message, wait)))
 }
 
-/// A password change starts the counts across addresses afresh, and an address's count at the
-/// owner's `email`, leaving every other address's own count.
-pub fn clear_for_new_password(limiter: &Limiter, email: &str) {
-    let prefix = format!("{}|", account_key(email));
-    limiter.forget(EMAIL_ADDRESS, |key| key.starts_with(&prefix));
+/// Leaves every address's counts, its counts at each email included, so no later answer
+/// depends on which email changed its password.
+pub fn clear_for_new_password(limiter: &Limiter) {
     for family in [UNKNOWN_DEVICES, DEVICE, KNOWN_DEVICES] {
         limiter.forget(family, |_| true);
     }
@@ -521,17 +517,37 @@ mod tests {
         }
         let fresh = "192.0.2.1".parse().ok();
         assert!(attempt(&limiter, 1, &no_device("a@example.test", fresh)).is_some());
-        clear_for_new_password(&limiter, "A@example.test");
+        clear_for_new_password(&limiter);
         assert_eq!(
             attempt(&limiter, 1, &no_device("a@example.test", fresh)),
             None
         );
         let back = "198.51.100.0".parse().ok();
-        assert_eq!(
-            attempt(&limiter, 1, &no_device("a@example.test", back)),
-            None
-        );
+        assert!(attempt(&limiter, 1, &no_device("a@example.test", back)).is_some());
         assert!(attempt(&limiter, 1, &no_device("a@example.test", address)).is_some());
+    }
+
+    #[test]
+    fn a_new_password_answers_every_email_from_an_address_alike() {
+        let limiter = Limiter::default();
+        let address = "203.0.113.1".parse().ok();
+        let owner = no_device("owner@example.test", address);
+        let stranger = no_device("stranger@example.test", address);
+        for _ in 0..10 {
+            assert_eq!(attempt(&limiter, 0, &owner), None);
+            assert_eq!(attempt(&limiter, 0, &stranger), None);
+        }
+        let before = [
+            attempt(&limiter, 1, &owner),
+            attempt(&limiter, 1, &stranger),
+        ];
+        assert_eq!(before, [Some(15 * MINUTE_MS - 1); 2]);
+        clear_for_new_password(&limiter);
+        let after = [
+            attempt(&limiter, 2, &owner),
+            attempt(&limiter, 2, &stranger),
+        ];
+        assert_eq!(after, [Some(15 * MINUTE_MS - 2); 2]);
     }
 
     #[test]

@@ -459,7 +459,7 @@ pub async fn change_password(
     );
     match counted(app, &email, known.as_ref(), &visit, attempt).await? {
         Ok((owner_id, credentials)) => {
-            limits::clear_for_new_password(&app.limiter, &email);
+            limits::clear_for_new_password(&app.limiter);
             let holder = Holder {
                 owner_id: &owner_id,
                 credentials,

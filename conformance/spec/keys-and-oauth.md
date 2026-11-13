@@ -2653,9 +2653,9 @@ The server MUST count an IPv6 address by its /64 for the password sign-in limits
 
 When a password sign-in that carries no known device cookie names an email that is not the owner's, the server MUST answer it with the status and `Retry-After` it would answer the same attempt at the owner's email with a wrong password.
 
-**Reason:** A wrong email and a wrong password are both answered `401`, so no limit may tell them apart and say which email holds the account.
+**Reason:** A wrong email and a wrong password are both answered `401`, so no limit may tell them apart and say which email holds the account, before or after the owner changes the password.
 
-**Tests:** `compliance/sign-in-door-limits.test.ts › answers password sign-ins at any email alike, the owner's among them, until the address's limit refuses them all`.
+**Tests:** `compliance/sign-in-door-limits.test.ts › answers password sign-ins at any email alike, the owner's among them, until the address's limit refuses them all`, `compliance/sign-in-limits.test.ts › answers an address that spent its attempts at two emails alike after the password is changed`.
 
 ### `keys-and-oauth/sign-in-decoy-queue`
 
