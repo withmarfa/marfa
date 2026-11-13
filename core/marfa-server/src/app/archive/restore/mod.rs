@@ -51,13 +51,16 @@ pub(crate) fn files_missing(lacking: Vec<String>) -> Refusal {
     if lacking.len() > SHOWN {
         shown.push_str(&format!(" and {} more", lacking.len() - SHOWN));
     }
+    let count = match lacking.len() {
+        1 => "1 file".to_string(),
+        many => format!("{many} files"),
+    };
     Refusal::new(
         Code::BackupFilesMissing,
         format!(
-            "Nothing was restored: the backup names {} files that neither this instance nor the \
+            "Nothing was restored: the backup names {count} that neither this instance nor the \
              backup folder holds whole: {shown}. Put them back in the backup folder, or restore \
-             the backup's archive file with `marfa restore` to leave them out.",
-            lacking.len()
+             the backup's archive file with `marfa restore` to leave them out."
         ),
     )
     .with_detail("missing_blobs", lacking)

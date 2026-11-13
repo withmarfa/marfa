@@ -1040,11 +1040,14 @@ fn lost_message(name: &str, lost: &[String]) -> Option<String> {
     if lost.len() > SHOWN {
         shown.push_str(&format!(" and {} more", lost.len() - SHOWN));
     }
+    let count = match lost.len() {
+        1 => "1 file".to_string(),
+        many => format!("{many} files"),
+    };
     Some(format!(
-        "The backup {name} was put without {} files that no store could give when it was taken: \
+        "The backup {name} was put without {count} that no store could give when it was taken: \
          {shown}. A restore of it goes ahead without them. Upload their bytes again to back them \
-         up.",
-        lost.len()
+         up."
     ))
 }
 
