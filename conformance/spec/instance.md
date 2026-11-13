@@ -2342,6 +2342,14 @@ When the private local process sends `confirm_sign_in_address_change` set to `tr
 
 **Tests:** `compliance/instance-addresses.test.ts › is not moved, and the answer names the consequences, until a write confirms it`.
 
+### `instance/sign-in-address-ends-sessions`
+
+When the private local process sends `confirm_sign_in_address_change` set to `true` with a new sign-in address, the server MUST end every browser session in the write that stores the address, so that no session cookie made before it opens anything afterward.
+
+**Reason:** the confirmation tells the person that everyone signed in on a browser is signed out (`browser_sessions_end`). Only the private local process makes the change, so no browser session confirms it and none is kept: the owner signs in again at the new address. Keys and app grants are not browser sessions, and the change leaves them as they were.
+
+**Tests:** `compliance/instance-addresses.test.ts › ends every browser session, so a session token from before the move opens nothing under either cookie name`.
+
 ### `instance/sign-in-needs-address`
 
 While no sign-in address is set, if a caller sends `POST /auth/sign-in` over a connection whose own address is not on the loopback, or names through a trusted proxy an address that is not on the loopback, then the server MUST answer `403 forbidden` with a message that says how to set the sign-in address.

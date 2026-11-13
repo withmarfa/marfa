@@ -7,6 +7,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { signIn } from "../../utils/signed-in.js";
 
 /**
  * The instance's addresses and the list of its settings (the instance
@@ -189,6 +190,8 @@ describe("the sign-in address", () => {
   });
 
   it("is not moved, and the answer names the consequences, until a write confirms it", async () => {
+    // A session at the address in force, for the move to end.
+    await signIn(server, SIGN_IN);
     const unconfirmed = await call("socket", "PATCH", "/config", {
       sign_in_address: "https://moved.example",
     });
@@ -357,4 +360,51 @@ describe("the list of settings", () => {
     expect(answer.status).toBe(200);
     expect(answer.body.data.length).toBeGreaterThan(0);
   });
+});
+
+describe("a confirmed move of the sign-in address", () => {
+  it(
+    "ends every browser session, so a session token from before the move opens nothing under either cookie name",
+    async () => {
+      // Its own server: the move ends the sessions this file's server holds.
+      const own = await bootFreshServer("instance-addresses-sessions");
+      const origin = new URL(own.apiUrl).origin;
+      const cookies = [await signIn(own, origin), await signIn(own, origin)];
+      const opens = async (cookie: string): Promise<number> => {
+        const answer = await fetch(`${own.apiUrl}/owner/passkeys`, {
+          headers: { cookie },
+        });
+        await answer.body?.cancel();
+        return answer.status;
+      };
+      const move = (confirm: boolean) =>
+        controlRequest(own.controlSocket, "/config", {
+          method: "PATCH",
+          body: {
+            sign_in_address: "https://moved.example",
+            ...(confirm ? { confirm_sign_in_address_change: true } : {}),
+          },
+        });
+      for (const cookie of cookies) expect(await opens(cookie)).toBe(200);
+
+      const unconfirmed = (await move(false)) as Answer;
+      expect(unconfirmed.status).toBe(409);
+      const ending = unconfirmed.body.error.details.consequences.find(
+        (consequence: { code: string }) =>
+          consequence.code === "browser_sessions_end",
+      );
+      expect(ending?.count).toBeGreaterThanOrEqual(cookies.length);
+      // The witness: the sessions live until the move is confirmed.
+      for (const cookie of cookies) expect(await opens(cookie)).toBe(200);
+
+      const confirmed = (await move(true)) as Answer;
+      expect(confirmed.status, JSON.stringify(confirmed.body)).toBe(200);
+      for (const cookie of cookies) {
+        const token = cookie.slice(cookie.indexOf("=") + 1);
+        expect(await opens(cookie), cookie).toBe(401);
+        expect(await opens(`__Host-marfa_session=${token}`)).toBe(401);
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
 });
