@@ -36,7 +36,7 @@ import { waitFor } from "../../utils/wait.js";
 /**
  * What a restore leaves when it does not finish, and what other requests see
  * while it writes, on a server of the fixture's own. The fixtures stop a
- * restore where the target interface's faults say (`conformance/README.md`,
+ * restore where the target interface's faults say (`conformance/TARGET-INTERFACE.md`,
  * "Faults"): `hold:restore:before-commit` makes it wait with every item
  * written and nothing committed, `fail:audit`, `fail:commit` and
  * `fail:commit-full` fail the write that would commit it, and a `SIGKILL`

@@ -21,7 +21,7 @@ import { waitFor } from "../../utils/wait.js";
  * on a disk and in the run's object store, and runs an integrity check of one
  * copy at a time. A drop commits, takes the copy out of the copy record and
  * then deletes the bytes; the target interface's `fail:blob-delete` fault
- * (`conformance/README.md`, "Faults") makes the store refuse that deletion
+ * (`conformance/TARGET-INTERFACE.md`, "Faults") makes the store refuse that deletion
  * once. What is left is the intent to delete the bytes, which the next run of
  * `blob-integrity` (and of `blob-replicate`) retries, a bounded number of
  * copies at a time.

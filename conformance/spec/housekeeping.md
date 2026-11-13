@@ -564,7 +564,7 @@ The server MUST NOT shorten how long the event log keeps an event because of a t
 
 ## Restarts and deadlines
 
-The fixtures here restart the server, hold a run open and shorten its deadline through the target interface (`conformance/README.md`, "Target interface"): the adapter's `restart` command, and its `hold:housekeeping:<job>` and `deadline:<job>` faults.
+The fixtures here restart the server, hold a run open and shorten its deadline through the target interface (`conformance/TARGET-INTERFACE.md`, "The adapter"): the adapter's `restart` command, and its `hold:housekeeping:<job>` and `deadline:<job>` faults.
 
 ### `housekeeping/schedule-survives-restart`
 

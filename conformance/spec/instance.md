@@ -1910,7 +1910,7 @@ When the configured private control socket path holds a file that is not a socke
 
 ## Test hooks
 
-A test hook is a route on the private control socket that moves the server's clock or sets a fault, or a setting that starts the server at another time or contract version. The conformance harness drives them through the target interface (`conformance/README.md`, "Target interface"). They exist only to test the server, so a release build does not contain them, and each rule here keeps them out of an instance that holds data.
+A test hook is a route on the private control socket that moves the server's clock or sets a fault, or a setting that starts the server at another time or contract version. The conformance harness drives them through the target interface (`conformance/TARGET-INTERFACE.md`, "The adapter"). They exist only to test the server, so a release build does not contain them, and each rule here keeps them out of an instance that holds data.
 
 ### `instance/test-hooks-off`
 

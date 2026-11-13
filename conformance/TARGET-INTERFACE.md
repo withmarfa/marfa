@@ -1,0 +1,678 @@
+# The target interface
+
+Reference for the conformance harness: how the fixtures start, arrange and read the server and the device under test. Any server is judged by the server's half when it supplies an adapter with the same commands and output, and any device by the device's half when it supplies the binding below.
+
+For how to run the suite, see the `run-the-contract` skill (`.agents/skills/run-the-contract/SKILL.md`). For the rules a fixture follows, see `conformance/AGENTS.md`.
+
+## The adapter
+
+The harness starts, stops and arranges the server under test through one
+adapter command, `scripts/marfa-server.ts`. Fixtures reach the server under
+test only through this adapter, HTTP and its private control socket, so any
+server that supplies an adapter with the same commands and output is judged by
+them. A few fixtures reach a server's own files, because the files are the
+subject of what they check; "Fixtures that reach past the target interface"
+lists them.
+
+Every command takes `--state <dir>`, the directory that holds the instance's
+data, log and env file. The default is `.marfa-state` in the working directory.
+
+| Command                                                          | What it does                                                                                                                                                                                                                                                                                                                                              |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `up [--port <n>] [--env K=V ...]`                                | Boots the target with the settings, claims it, mints the fixture keys and writes the env file. Exits 0 once the target answers `/health` and the keys exist.                                                                                                                                                                                              |
+| `restart [--signal TERM\|INT\|KILL] [--env K=V ...]`             | Stops the target with the signal, prints how it ended as `previous exit {"code":..,"signal":..,"ms":..}`, and boots it again on the same data. The URL may change.                                                                                                                                                                                        |
+| `down`                                                           | Stops the target and removes its data.                                                                                                                                                                                                                                                                                                                    |
+| `status`                                                         | Exits 0 when the target is running, and prints its URL.                                                                                                                                                                                                                                                                                                   |
+| `refused [--env K=V ...]`                                        | Boots with settings the target must refuse and waits for it to end. Exits 0 when it ended; its exit record and log are in the state directory.                                                                                                                                                                                                            |
+| `clock advance <ms>`                                             | Moves the target's clock forward. A negative or fractional step is refused and the exit status is 1.                                                                                                                                                                                                                                                      |
+| `clock pause` / `clock resume`                                   | Pauses system-time drift or resumes it, retaining explicit advances. Prints `now` and `offset_ms` as JSON.                                                                                                                                                                                                                                                |
+| `fault set <name>[=<arg>]`, `fault clear [<name>]`, `fault list` | Sets or clears a named fault. `list` prints `{"faults":[{"name":..,"arg":..,"waiting":..,"fired":..}]}`, where `waiting` counts the callers held at a `hold` fault and `fired` the times a `fail` fault has acted, a `resolve` fault has answered or a `release` fault has released its hold. A `release` fault that has acted adds `held_when_answered`. |
+| `image [--state <dir>] --to <dir>`                               | Copies the instance's data as it stands at one instant to `<dir>`, pausing the target while it copies and then letting it go on, as a snapshot a second target can boot from with `up --state <dir>`. The copy leaves out the target's process, log and exit records, its control directory and the harness's session file.                               |
+| `log`                                                            | Prints everything the target has written: its log, then what it printed to stderr.                                                                                                                                                                                                                                                                        |
+
+## Configuration
+
+| Variable                    | Description                                                                                                 |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| `MARFA_API_URL`             | The booted server. Unset, the run stops: there is no default target.                                        |
+| `MARFA_API_KEY`             | Ordinary content/provisioning key with seven named permissions and write access in all five maps.           |
+| `MARFA_MANAGEMENT_KEY`      | Ordinary management fixture key with all twelve named permissions and empty content maps.                   |
+| `MARFA_FIXTURE_AUTH_SECRET` | Launcher state used to keep cookie signatures valid across restarts; it does not configure other instances. |
+| `MARFA_OWNER_COOKIE`        | The owner's sign-in session, for the fixtures of the sign-in pages.                                         |
+| `MARFA_CONTROL_SOCKET`      | Absolute path to the fixture server's private socket, which owner-only fixtures use.                        |
+| `MARFA_DEVICE_BIN`          | The built `marfa` binary the device fixtures, scenario suite and hydration benchmark drive.                 |
+| `MARFA_DEVICE_MODULE`       | The built Node module, a debug build, the binding fixtures (`binding-*.test.ts`) drive.                     |
+| `MARFA_HYDRATION_ROWS`      | Rows in each set of the hydration benchmark. 2,000 when unset.                                              |
+| `MARFA_TWO_DEVICES_REPORT`  | File the two-devices scenario writes its timings and load averages to.                                      |
+| `MARFA_LOAD_PROFILE`        | Sizes the load suites. `smoke` when unset; `src/suites/load/profiles.ts` has the rest.                      |
+
+`pnpm marfa:up` writes the server URL, both ordinary keys, owner cookie and private socket path. Set `MARFA_DEVICE_BIN` to the binary and `MARFA_DEVICE_MODULE` to the module you built before running `pnpm test:conformance`. Required fixture credentials, the binary and the module fail explicitly when missing; they do not skip tests. The state file contains credentials and must remain private to the test account.
+
+`MARFA_API_KEY` delegates content access and the seven permissions `schema.write`, `keys.mint`, `items.purge`, `webhooks.manage`, `config.manage`, `audit.read` and `grants.manage`. Each test file mints its own key with a unique `source`. The server stamps each item with that source, or with one the key explicitly claims when the write names it, so each file can identify its own items. Teardown uses the management key to revoke the file's keys. Fixtures that need local authority use the private socket; neither ordinary fixture key supplies it.
+
+Each load suite seeds its own corpus under its own credential, measures, and
+deletes what it created.
+
+## What `marfa:up` does
+
+`pnpm marfa:up` starts the program `MARFA_SERVER_BIN` names under a small
+supervisor (unset, the command stops and says how to build one), waits for `/health`, claims the owner through the private socket using the
+production claim service, signs in, mints explicit ordinary fixture keys,
+and writes `.marfa-state/env`. The state directory holds the
+SQLite file, the disk store, the server log, what the server printed to stderr, the pid, the clock offset and the env file; pass
+`--state <dir>` to put it elsewhere and `--port <n>` to choose the port.
+The server listens on `127.0.0.1`. With no port given, the adapter asks the
+system for a free one, starts on it, and starts again on another if a
+different process took it first; the server is then reached, and signs people
+in, at `http://localhost:<port>`, its sign-in address, since passkeys refuse an
+IP address. On a port given with `--port` or `MARFA_PORT` it has no sign-in
+address set unless the last boot of the same state had one on that port, as a
+restart on the same port does. It reads the port from
+this boot's readiness log record before requesting `/health`, then reaches the
+server at the address the server reports as its own in
+`/auth/.well-known/oauth-authorization-server`, `localhost` or `127.0.0.1`. A restart
+ignores earlier readiness records. An explicitly occupied IPv4 port fails the
+boot instead of accepting another listener's health response.
+
+`pnpm marfa:down` stops the server and removes its instance state, so every `up` is
+a fresh instance. A database that outlives the bucket it was pointed at
+registers a second object store beside the first, and `scripts/marfa-server.ts`
+says why. `garage/` sits inside the same directory and is `garage:down`'s to
+remove.
+
+The server runs with enrichment, OCR and general request rate limiting switched off. Password sign-in throttling remains enabled. Owner fixtures share a session in a file with mode `0600`, validate its authentication time with the server, and serialize password sign-ins across workers when it needs renewal. The launcher retains its authentication secret in the protected env file so a restart can reuse a valid session.
+Enrichment rewrites file items in the background, which would make
+exact-property assertions on blobs depend on timing. Rate limiting is off so
+that a run's own key minting and revocation, one of each per file, cannot
+spend the allowance on the key operations (the tightest cap the server has, set
+as `rate_limit_keys_requests` in `core/marfa-server/src/settings/registry.rs`). `marfa:up` says so outright rather than
+leaving it to the boot script's default, so an ambient variable cannot flip
+the instance every file shares. What that allowance is, and what a caller
+past it is told, is asserted in `compliance/key-rate-limit.test.ts` against a
+server booted for it; nothing in the fixtures asserts enrichment. Two of the copy rules' settings are
+set for the fixtures that drive them through the housekeeping operations: the
+orphan sweep's grace is zero, so the run after a report purges, and
+replication's cadence is an hour, so nothing copies on a clock of its own
+between an upload's wake and the fixture's runs. The env file also carries
+`MARFA_BLOB_PATH`, the booted server's disk store, for the fixture that
+corrupts a copy under it.
+
+## Fixtures that reach past the target interface
+
+These fixtures read or change something no published door or fault reaches, so
+they judge only a server that keeps the same files or runs the same image. Each
+stays because that thing is what it checks.
+
+- `compliance/database-file.test.ts` reads, copies or damages the database
+  file and the log beside it: a stop that moves the log into the file, a copy
+  taken file by file under a read transaction, credential rows removed, a file
+  that is not a database, and the databases a start refuses or completes: one a
+  newer build wrote, one whose tables, columns or indexes differ from the
+  server's, and one a crash left holding some of its tables and no rows. Each is
+  a state no door reaches, made in the file before the server starts.
+- `compliance/device-grant.test.ts`, "is held by the server as something other
+  than the code it issued", reads the device code's row, because the contract is
+  about the bytes at rest.
+- `compliance/type-conflicts.test.ts` writes a stored type definition. Only a
+  build that ships a field on a type, below which a registered type declares the
+  field in another shape, holds a conflict: every door and a restore refuse one,
+  and no fault ships a build.
+- `compliance/type-standing-conflicts.test.ts` writes the stored fields of a
+  type below another. A build that ships a field, a status word or a thumbnail
+  above a registered type leaves it holding what its chain refuses; every door
+  refuses that, and no fault ships a build.
+- `compliance/stored-times.test.ts` reads every column that holds a time in
+  every table, and rewrites one key's `expires_at` and the browser sessions'
+  `expires_at` to values that do not read. The contract is about the form a
+  time has at rest, and no door or fault stores a time in another form.
+- `compliance/unreadable-deletion-settings.test.ts` and
+  `compliance/blob-store-settings.test.ts` write and remove rows of the
+  `settings` table (`trash_retention_days`, the version maximum,
+  `blob_min_copies`, `blob_cleanup_grace_seconds`) with a value outside the
+  setting's bounds. `PUT /config` and the start-up settings refuse such a
+  value, and no fault damages a stored setting, so only a hand edit, or a
+  release that narrows a bound, leaves one.
+- `compliance/health.test.ts`, "names a stored setting that no longer reads",
+  writes one such `settings` row before a restart, for the same reason.
+- `compliance/settings-seed.test.ts`, "starts with a row the server has no
+  setting for", writes a `settings` row for a setting the server does not
+  have before a restart. No door stores a setting the server does not know.
+- `compliance/table-rows-retention.test.ts` rewrites one row batch's stored
+  time (`row_batches.at`) to a value that does not read, for the same reason
+  as `stored-times`.
+- `compliance/backups.test.ts` reads `sign_ins.token`, the digest the instance
+  keeps of each sign-in, and the generated secrets in `marfa.secrets`, to show
+  that no backup carries them. No door answers either.
+- `compliance/durability.test.ts` runs `PRAGMA integrity_check` on a copy of
+  the database files a kill left. The files' integrity is the subject.
+- `compliance/bucket-sharing.test.ts` replaces the database files with an
+  image taken earlier, so a database that never recorded a backup sits on a
+  bucket that holds it. No door makes a database forget a backup it took.
+- `compliance/trash-purge-passed-over.test.ts` creates and drops a database
+  trigger that refuses the removal of one item. No door or fault fails the
+  removal of a single item, and the run must pass over that item and go on.
+- `compliance/control-socket-close.test.ts` starts the server directly and
+  holds a request open on its private socket through a stop, so the server is
+  inside its socket cleanup with the socket already closed, where no fault can
+  be set or cleared.
+- `blob-store-folders` moves, empties and unmarks the disk store's folder,
+  and looks inside it. A store is its folder, so the folder and its marker
+  are the subject.
+- `compliance/blob-store-rebuild.test.ts` moves the disk store's folder away
+  before a restart. No door or fault removes a store's folder.
+- `inbound-faults`, `inbound-logs` and the other fixtures that read the log
+  through `serverOutput` check what the server logged. The log is the subject.
+
+## The env file
+
+`up` and `restart` write `<state>/env`, one `KEY=value` per line:
+`MARFA_API_URL`, `MARFA_API_KEY`, `MARFA_MANAGEMENT_KEY`, `MARFA_CONTROL_SOCKET`,
+`MARFA_OWNER_COOKIE`, `MARFA_FIXTURE_AUTH_SECRET`,
+`MARFA_BLOB_PATH` and `MARFA_STATUS_LOGS`. The file is private to the test
+account.
+
+## Settings
+
+`--env K=V` names a setting for one boot. Any start-only setting in the second
+table of [`spec/instance.md`](spec/instance.md) may be passed by its name, and
+any stored setting by its seed name (`MARFA_` and its key in capitals). A value
+outside a rule is refused as that chapter says. The adapter sets these itself,
+and a value passed for one replaces its own:
+
+- The port, the paths of the database, the disk store and the private socket
+  (`MARFA_CONTROL_SOCKET` names its path, and then its folder is the caller's),
+  `MARFA_LISTEN_HOST` and `MARFA_AUTH_SECRET`. On a port the adapter picks,
+  `MARFA_SIGN_IN_ADDRESS` is `http://localhost:<port>`. On a port the caller
+  names, it is unset unless the last boot of the same state had it there.
+  `MARFA_SIGN_IN_ADDRESS=` boots with none.
+- Enrichment, OCR and the request limiter off, a blob cleanup grace of 0, and
+  webhook delivery to private addresses allowed, so the fixtures can use a
+  receiver on the loopback address.
+- `MARFA_TEST_HOOKS` true.
+
+## Stopping a server nobody stopped
+
+A booted server stops by itself, with the process that supervises it, when its
+state directory or its working directory no longer exists, and when no request
+has reached it for 30 minutes. The supervisor checks every 30 seconds, sends the
+server's process group `SIGTERM` as `down` does, and `SIGKILL` 20 seconds later
+if the group is still there. These two environment variables change the limits.
+Set them in the environment of the process that runs `up`, or pass them with
+`--env`, since the supervisor starts with the server's environment:
+
+| Variable                      | Default   | Meaning                                                   |
+| ----------------------------- | --------- | --------------------------------------------------------- |
+| `CONFORMANCE_SERVER_IDLE_MS`  | `1800000` | Time without a request before the stop. `0` turns it off. |
+| `CONFORMANCE_SERVER_WATCH_MS` | `30000`   | Time between checks.                                      |
+
+A request is a log line with a `request_id`, so the server's own background
+lines do not count as activity.
+
+## The clock
+
+The server reads the time in one place, `core/marfa-server/src/app/clock.rs`. In a build with the `test-hooks` feature that clock carries an offset and can be paused; in a release build it is the system clock.
+
+`clock pause` stops the system-time component at its current instant; `clock advance` still moves that paused clock by exactly the requested step. Timers and monotonic deadlines continue on real time. `clock resume` and a restart catch up with the system clock while retaining the accumulated offset. Both pause and resume print a JSON object with `now` and `offset_ms`. Pause is process-local and is not restored on restart. The private `POST /_control/test/clock` hook accepts either `{ "advance_ms": <ms> }` or `{ "paused": <boolean> }`.
+
+Retry fixtures pause before sending any delivery. A poll one millisecond before the retry deadline must send nothing; a poll at the deadline must complete the next attempt. A delayed fixture or automatic poll cannot make another retry due, because only an explicit advance changes the paused time. The fixture waits for the recorded outcome before advancing again. Its receiver uses `movedClock.now()` for arrival times and absolute `Retry-After` dates, so both sides share the paused clock.
+
+`clock advance` adds to an offset. The clock only moves forward, because ids,
+versions and cursors assume time does not go back. The adapter keeps the offset
+in the state directory and passes it back as `MARFA_TEST_CLOCK_OFFSET_MS`
+when the target is restarted, so a restarted target does not go back in time.
+
+The offset may not exceed 3153600000000 ms (100 years), the largest
+`MARFA_TEST_CLOCK_OFFSET_MS`, so a restart can always take the offset back. A
+move past it is refused and the clock stays where it was.
+
+The target's stored times and expiry checks follow the clock. Sessions, opaque
+access and refresh tokens, authorization links and registrations are stamped
+and judged by the target's clock, so a fixture that moves the clock ages them
+too and writes none of those times.
+
+Timers and elapsed-time measures stay on real time: a job's deadline, a busy
+wait, a stream's heartbeat and the server's uptime do not follow the clock. A
+fixture moves the clock and then runs the job it tests with
+`POST /housekeeping/{name}/run`.
+
+The model is "time passed": the target and every party the harness controls
+use the stated clock. A fixture's process keeps its real clock, so clients
+apply `FreshServer.clockOffsetMs` (the boot offset plus subsequent advances)
+when creating or checking protocol timestamps. Client assertions, explicit
+HTTP `Date` headers and signed timestamps must use that stated time.
+
+Webhook receivers in the harness also use the stated clock. Webhook signature
+timestamps, event-body timestamps, absolute `Retry-After` dates and retry
+scheduling follow it, just as opaque tokens and sessions do.
+
+The server verifies passkeys with the `webauthn-rs` crate, which does not read
+the server's clock. The passkey fixtures use `none` attestation and present no
+certificate.
+
+These stay on real time:
+
+- Requests to the object store and the links the store signs itself. Their
+  stated lifetime elapses in real seconds, including when the target starts
+  ahead or advances again. Links served by the target itself expire on the
+  target's clock.
+- OTLP export retries and PostHog transport, because a deployed telemetry
+  collector is outside the harness's clock control. A fixture standing in for
+  that collector uses real time for transport responses, including
+  `Retry-After`.
+- The timestamps of the server's log records, request records and traces,
+  which read the system clock so that a moved clock cannot misplace them.
+- The fixture process's automatic HTTP `Date` headers and its TLS certificate
+  checks. A fixture that sends a protocol timestamp sets it from the stated
+  clock rather than use an automatic header as the clock's witness.
+
+## The contract version
+
+The target reports a contract version in the root's `contract`, in
+`X-Marfa-Contract` and as the document's `info.version`. `up` and `restart`
+take `--env MARFA_TEST_CONTRACT_VERSION=<n>`, a whole number, to boot the
+target onto another version for that boot alone: the boot after it is back on
+the target's own. The setting is refused unless the hooks are on. A fixture
+uses it to show what a change of contract does to what the target kept, such as
+the answer stored for a repeated request.
+
+## Faults
+
+A fault is named for where it acts, lives in the target's memory, and is gone
+when the target starts. `FreshServer.stop()` clears the faults a fixture set.
+A name is `hold:<point>`, `fail:<point>`, `refuse:<point>`, `release:<point>`, `deadline:<job>`, `free:<volume>`, `limit:<lane>`,
+`unreadable:<stored>`, `lose:blob`, `damage:blob`, `damage:blob-unreadable`, `hide:event`, `hide:webhook-position`,
+`unfold-deadline`, `store-check-deadline` or `resolve:<hostname>`. The supported names are listed below: the target refuses any other name, an argument a point does
+not take, and a job it has not registered. A refused fault is never armed, so a
+typo cannot pass for one. A fault set again under the same name starts again.
+
+A `hold` fault makes the target wait at the point until the fault is cleared.
+A stop on `SIGTERM` or `SIGINT` clears every fault first, which lets the held
+callers go, so a run held at a point is one the stop's wait for work in flight
+can end rather than one it waits on for good. A restart on `SIGKILL` leaves a
+hold where it stood, for the new process to start without. A hold inside a
+write, such as `hold:bulk-job:in-chunk`, keeps the write lock while it waits, so
+another write waits with it.
+
+A `refuse:<point>` fault takes no argument. The target refuses what it is asked at the
+point every time, and `fired` counts the refusals, until the fault is cleared.
+
+A `release:<point>` fault clears `hold:<point>` when the target admits its next
+`GET /health`, before it reads anything for that request, and acts once. When
+that request has its answer, the fault records `held_when_answered`: the `hold`
+faults with a caller waiting at that moment. The health request is already in
+the target when the held work resumes, and the order of the answer and a later
+hold comes from the target itself, not from when the fixture's requests arrive.
+`fired` is 1 once the fault has acted. A `<point>` is any hold point below.
+
+Write holds act before admission because SQLite admits only one writer at a time. Holding a write between its checks and commit would block the competing write, so it would not reproduce a check made against stale state. A fixture arms the hold, starts its first request, waits for `waitForHold`, commits the competing request, and clears the hold. The delayed request then checks the committed state. Export holds leave the writer free between pages. These counted holds act once per arming; uncounted holds continue to hold every caller. Literal `<action>` and `<n>` placeholders are refused.
+
+| Name                                   | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `hold:housekeeping:<job>`              | A run of the job waits at its start until the fault is cleared.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `hold:version-thinning:item`           | The `version-thinning` job waits, for each item it has chosen to thin, before it removes anything from the item.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `hold:webhook:response`                | A webhook delivery waits after its HTTP attempt returns and before recording its outcome. Shutdown releases this hold so the delivery can finish its record.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `hold:bulk-job:selected`               | A `POST /items/bulk-actions` request waits, once it has gathered its matches and before the last check of its credential and the selection, until the fault is cleared.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `hold:bulk-job:claimed`                | The worker waits, once it has taken a job and before it writes the job's first chunk, so a job queued behind stays queued.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `hold:bulk-job:in-chunk`               | The worker waits, once a chunk's items are written and before the chunk is committed with its checkpoint.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `hold:bulk-job:between-chunks[=<n>]`   | The worker waits, once a chunk is committed and the job has more, before it begins the next. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `hold:bulk-job:finishing`              | The worker waits, once every chunk of a job is committed and before the job's last step: a type move's settings and the job's end.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `hold:bulk-page[=<n>]`                 | A request of `POST /items/bulk` or `POST /edges/bulk` waits before an entry of its page until the fault is cleared, keeping its write open meanwhile. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `deadline:<job>=<ms>`                  | Shortens the run deadline of the job.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `hold:blob-orphans:purge`              | A run of `blob-orphans` waits, for each blob it has chosen to purge, before it purges the blob.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `hold:restore:item[=<n>]`              | A restore waits, before it writes an item, once its blobs are placed. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `hold:restore:before-commit`           | A restore waits with every record written and the bytes placed, before it commits.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `hold:backup:read`                     | A backup waits once it has read its archive from the database, before it copies the files the archive names or sends the archive, until the fault is cleared.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `hold:backup:put`                      | A backup waits as it sends its archive, once more than 16 MiB of it is in hand, or all of a smaller one, until the fault is cleared. It waits once in each backup.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `hold:connector-write`                 | A write of a connector's state or agreements waits after the target has admitted its key and before the write reads that key's standing, so a fixture ends the key while the write waits. A hold on the write itself keeps no write lock.                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `hold:inbound-reserved[=<n>]`          | A delivery to an inbound endpoint waits once the bytes it declared are counted among the bytes in flight and before its body is read. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `hold:attention=<check>`               | The named check of `GET /attention` waits until the fault is cleared, so it runs out of its time and the answer carries an `unavailable` item naming it. `<check>` is as for `fail:attention`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `hold:disk-probe`                      | The free-space read and the blob folder check of `GET /health` wait until the fault is cleared, so each runs out of its two seconds and its component answers `degraded`, while the other requests are served.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `hold:metrics`                         | The counting of `GET /metrics` waits inside its read snapshot until the fault is cleared, holding one read connection.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `hold:folder-status-read`              | A request for `GET /folders/{id}/status` waits before it reads anything, until the fault is cleared.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `limit:device-owner-instance=<n>`      | The owner lane that counts every device-code lookup an owner session makes across the instance allows `<n>` attempts a window in place of 100. The count stays in the database, so a restart keeps it and the fault is set again after one. One owner reaches its own ten-attempt cap first, so no run of requests reaches the aggregate. No fixture asserts the default of 100 that the statements name: each runs at the lowered count.                                                                                                                                                                                                                                                              |
+| `unreadable:type-definition=<type id>` | A read of the type with that ID finds its stored definition damaged and answers `409 type_chain_unresolvable`, and a replacement of the type is still accepted, until the fault is cleared or set again.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `free:<volume>=<bytes>`                | The target reads that many bytes of free space on the volume, `database` or `blobs`, until the fault is cleared. With `unknown` in place of a number it cannot read the volume's free space.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `hold:stream-open`                     | A request for `GET /events` waits at the door of the stream, after it was authenticated and its reach checked, and before the target has read anything for it.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `hold:stream-head`                     | The stream waits once it has read the log's head, before it announces it or reads any page. There is no bound on the wait.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `hold:stream-replay`                   | A stream resumed from a cursor waits once, after it announced its position and before it reads the first page of its replay.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `hold:stream-drain`                    | A copy stream waits once its replay has read to the end of the log, before it reads what was written since and announces `stream_live`. A plain stream announces `stream_live` without reading to the end first, so it never waits here.                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `hold:read-snapshot`                   | A conditional read, one that names `X-Marfa-Reach`, waits inside the snapshot it reads from, after the target has judged the reach and before the door reads. The snapshot's own bound, five seconds, still runs.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `unfold-deadline=<check>`              | Expires each series at the numbered deadline check, starting at 1. A check comes every N candidates, where N is the server's own cadence. A fixture names a check number, not a candidate count, so expiry does not depend on that cadence or machine speed.                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `hold:webhook-schedule`                | Each time the server wakes to queue and send webhook deliveries, it waits before reading the event log until the hold is cleared, so nothing is queued or newly sent meanwhile.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `hold:webhook-schedule:queued`         | The server waits inside the transaction that queues webhook deliveries, after queuing them and advancing its position, before either change commits.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `resolve:<hostname>=<answers>`         | Supplies scripted answers for the name lookups of an outbound webhook and of a file the MCP tools fetch.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `hold:read-hydration`                  | An item, metadata, extension, history, lookup, list, occurrence or export read waits after selecting or authorizing items and before hydrating related data; an edge list waits between reading its edges and checking their sources. The five-second snapshot bound applies except to archive export pages, whose snapshots end with their page or on cancellation.                                                                                                                                                                                                                                                                                                                                   |
+| `hold:write=<action>@<n>`              | The nth attempted write for that audit action waits before it acquires the writer lock or checks mutable state. Later writes can commit while it waits. A bare action means its first attempt; a bare number counts all outer audited transactions. Fixed audit entries name their action directly; result-dependent entries declare it in advance for `item.create`, `item.update`, `item.delete`, `item.purge`, `item.transition`, `items.bulk`, `type.register`, `edge.create`, `edge.update`, `edge.delete`, and a grant's revocation, `auth.grant.revoked`, or its retirement, `auth.grant.retired`. `POST /items` declares `item.create` even when it updates a row. Refused attempts count too. |
+| `hold:export-page=<n>`                 | An archive export waits after its nth complete item or edge page has been spooled, and an NDJSON export after its nth item or edge page has been handed to the response, before it reads the next page or section. Item pages count first, then edge pages, including the last page of each section. The count starts when the fault is armed, across exports on that target.                                                                                                                                                                                                                                                                                                                          |
+| `hold:export-check[=<n>]`              | An export whose response has begun waits before each check of its credential, until the fault is cleared: an NDJSON export before each page after the first, and an archive export, or a backup as it sends its archive, before its first byte, before each segment of a line file and before each megabyte of a blob. The check that follows reads the credential as it stands once the export goes on. With no argument it waits every time; with `=<n>` only the nth time after the fault is set.                                                                                                                                                                                                   |
+| `hold:blob-has`                        | A store waits before it answers whether it holds a blob, until the fault is cleared or the target gives the request up. The object store gives a request up when it is cancelled, and so does the disk store under this fault.                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `hold:blob-read[=<n>]`                 | A read of a blob's bytes from a store waits before it opens the bytes, until the fault is cleared or the target gives the request up. With no argument every read waits; with `=<n>` only the nth read after the fault is set does.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `hold:blob-write`                      | A store waits before it places a blob's bytes, until the fault is cleared. The target can stop waiting for the write, but the write carries on once the fault is cleared, as a store's can after its caller stops waiting.                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `hold:blob-delete`                     | A store waits before it deletes a blob's bytes, until the fault is cleared. The target can stop waiting for the deletion, but the deletion carries on once the fault is cleared, as a store's can after its caller stops waiting.                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| `lose:blob=<hashes>`                   | The disk store answers that each named blob is absent, from now until it deletes that blob or places it again, or the fault is cleared or set again. `<hashes>` is a list of `sha256:` names separated by `,`. The bytes are not touched, so clearing the fault gives the store back what it held.                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `damage:blob=<hashes>`                 | The disk store returns each named blob with its first byte changed and the same length, until it deletes that blob or the fault is cleared or set again. Placing a blob already held does not end it, as a store leaves bytes already under a name alone. `<hashes>` is as for `lose:blob`.                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `damage:blob-unreadable=<hashes>`      | A read of each named blob from the disk store, and a question whether the disk store holds it, fail with `EIO`, until the store deletes that blob or the fault is cleared or set again. `<hashes>` is as for `lose:blob`.                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `hide:event=<first>[-<last>]`          | The server reads the events with ids from `<first>` to `<last>` (one id when `-<last>` is left out) as absent when it queues webhook deliveries, until the fault is cleared or set again. The server's own checks of its place in the log then meet the gap. Nothing is stored, so the fault ends with the clear.                                                                                                                                                                                                                                                                                                                                                                                      |
+| `hide:webhook-position`                | The server reads the place it keeps in the event log for webhooks as absent, until the fault is cleared. Nothing is stored, so the fault ends with the clear.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `store-check-deadline=<ms>`            | Shortens the 15,000 ms the target waits for a store to answer whether it holds a blob, to open its bytes, or to delete them, and the 15,000 ms a write waits before the time it allows for the blob's size, so a fixture shows what a store that does not answer does without waiting out the 15 seconds. It tests the bound, not the 15,000 ms.                                                                                                                                                                                                                                                                                                                                                       |
+
+For `resolve`, separate successive answers with `;` and addresses within one answer with `,`. The last answer repeats, and `fired` counts the lookups answered. An address can use the form `<checked>><connected>`: the address check evaluates `<checked>`, and the socket connects to `<connected>`. Without `>`, both use the same address. This lets a fixture check a public address and connect to a loopback receiver without sending a packet off the machine. Scripted answers replace only the underlying DNS resolver: every call to it consumes one answer, including an erroneous second lookup after the address check. The normal address check applies unchanged. The socket translates a returned checked address to its connected address without resolving or consuming another answer. The mapping remains necessary to exercise the public-address check with a loopback receiver.
+
+A `free` fault makes the target read the free space it says on one volume, for
+the reserve uploads, restores, and archive exports keep (`blobs`) and for the `disk` component
+of `GET /health` (both volumes). Setting it again while a body streams in
+changes what the next look at the volume finds, which is how a fixture fills a
+volume as the bytes arrive. The check interval is half the reserve, bounded
+to 64 KiB through 4 MiB; the target checks when a chunk reaches that interval.
+A reserve of zero disables these checks. `<bytes>` is a decimal integer from
+0 through 9007199254740991.
+
+A bare number in `hold:write` counts every outer audited transaction the target
+makes, the housekeeping jobs' own included. Those first run seconds after boot
+and again on their cadences, so a bare number can be taken by a job instead of
+the request a fixture means. A fixture that means one request's write names its
+action.
+
+Every caller selected by a hold waits, and `waiting` in the fault's
+listing counts them. An uncounted hold selects every caller. A hold does not suspend a stream's head-read budget or
+a read snapshot's lifetime. A target told to stop releases its faults as the
+stop begins, so a request held at `hold:stream-open` resumes after the stop
+has begun. Fixtures use this to open a stream during shutdown.
+
+A `fail` fault makes the target fail at the point, once. It acts on the nth
+time the point is reached after the fault was set, the first unless the
+argument says another: `fail:lock=3` acts on the third write. It then stays
+listed with the number of times it acted (`fired`), so a fixture can tell that
+it acted, and a fault that never acted is not mistaken for a pass. A fault
+that has acted does not act again until it is set again. The statement points (`audit`, `inbound-receipt`, `inbound-cleanup`, `export-read`, `housekeeping:<job>` and `job-row`) count only a statement that failed: a run that reaches the point and runs no statement, such as a job with nothing to do, leaves `fired` at 0 and the fault waiting for a reach that can fail.
+
+`<n>` is a decimal integer from 1 through 1000000, without leading zeros.
+`<ms>` is a whole number from 1 through 86400000, a day. `<check>` takes the same range as `<n>`. An action argument
+starts with a lowercase ASCII letter and contains only lowercase ASCII
+letters, digits, underscores, periods, or hyphens. The target validates this
+syntax; an action that no write records never fires.
+
+A _write_ is one change made for a caller: a request that changes stored
+state. A bulk page is one write, whatever its `atomic` says. A write that
+records an audit entry names it by the entry's `action`
+([The audit log](spec/events.md#the-audit-log)), and a write point may take that action in its
+argument as `<action>`, for the first such write, or `<action>@<n>`, so a
+request that makes other writes first does not shift the count. `fail:audit`
+also counts each entry of a page under `atomic: false` that is written or
+skipped, and then the page's commit: `fail:audit=items.bulk@2` fails the
+second entry, and its page writes the others. A write point
+without an action counts every write. A `fail` fault at a write point may take `<action>@always`
+instead, and then acts on every such write until it is cleared, as a fault
+that does not clear would.
+
+`fail:lock` counts only writes made for a caller. The target's own writes, such
+as a bulk-action job's chunks and the housekeeping jobs', are not counted, so a
+job that commits between setting the fault and the caller's request cannot take
+it.
+
+| Name                               | Reached                                                                                                                                                                                                          | What it does                                                                                                                                                                                                                                                    |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `fail:lock[=<n>]`                  | At the start of each write, before it does any work.                                                                                                                                                             | The write meets the write lock held by something else for longer than the target waits for it, and is refused as `write_contention`. Nothing of the write is done.                                                                                              |
+| `fail:audit[=<write>]`             | When a write records its audit entry.                                                                                                                                                                            | The statement that stores the entry fails with `SQLITE_IOERR`, as a database fails a statement, so the write and its events roll back. The failure carries the statement and the values it was bound to, as a real one does.                                    |
+| `fail:commit[=<write>]`            | When a write that recorded its audit entry commits.                                                                                                                                                              | The database refuses the commit with `SQLITE_IOERR` and has ended the transaction, so the target cannot prove whether the commit landed. Nothing did land. The write's outcome is unknown, and the audit entry, which the target reads to settle it, is absent. |
+| `fail:commit-full[=<write>]`       | The same.                                                                                                                                                                                                        | As `fail:commit`, refused with `SQLITE_FULL`, the volume having no room.                                                                                                                                                                                        |
+| `fail:commit-ack[=<write>]`        | The same.                                                                                                                                                                                                        | The commit lands and the database reports an error for it with `SQLITE_IOERR`, as when its answer is lost. The write's audit entry is stored, which the target reads to settle the outcome as committed.                                                        |
+| `fail:inbound-receipt[=<n>]`       | Before each of the two statements that store an inbound receipt, its metadata and then its body.                                                                                                                 | The statement fails with `SQLITE_IOERR`, carrying its values as `fail:audit` does, and the receipt is not stored.                                                                                                                                               |
+| `fail:inbound-cleanup[=<n>]`       | After a run of `inbound-delivery-cleanup` has removed the deliveries it chose.                                                                                                                                   | The run's next statement fails with `SQLITE_IOERR`, so its removal rolls back.                                                                                                                                                                                  |
+| `fail:export-read[=<n>]`           | Before each page of items that `GET /export` reads.                                                                                                                                                              | The page's read fails with `SQLITE_IOERR`. For an NDJSON export the response has begun by then; an archive export reads every page before it sends a byte, so it answers an error.                                                                              |
+| `fail:table-rows-page[=<table>]`   | Before each page of rows that `GET /items/{id}/tables/{table}/rows` reads. Its argument is `<n>`, `<table>`, `<table>@<n>` or `<table>@always`: the table's name stands where a write point's action does.       | The page answers `500 internal_error`.                                                                                                                                                                                                                          |
+| `fail:housekeeping:<job>[=<n>]`    | At the start of each run of the job, scheduled or asked for.                                                                                                                                                     | The run's first statement fails with `SQLITE_IOERR`. A job that runs no database statement (`heartbeat`) is refused.                                                                                                                                            |
+| `fail:job-row[=<n>]`               | Before each item a bulk-action job writes.                                                                                                                                                                       | The item's first statement fails with `SQLITE_IOERR` and the database ends the chunk's transaction, so the items of the chunk written before it are lost with it.                                                                                               |
+| `fail:blob-read[=<n>]`             | Before each read of a blob's bytes from a store.                                                                                                                                                                 | The read fails with `EIO` before it opens the bytes.                                                                                                                                                                                                            |
+| `fail:blob-read-short[=<n>]`       | When each read of a blob's bytes from a store opens.                                                                                                                                                             | The read carries the first half of the bytes it would and then ends cleanly, with no error.                                                                                                                                                                     |
+| `fail:blob-write[=<n>]`            | Before each placing of a blob's bytes in a store.                                                                                                                                                                | The write fails with `ENOSPC`, as a volume with no room fails it, and the store keeps no bytes.                                                                                                                                                                 |
+| `fail:backup-folder-write[=<n>]`   | After the first chunk of each write to the backup folder: a backup's archive, or a blob's copy.                                                                                                                  | The write fails with `ENOSPC`, as a volume with no room fails it.                                                                                                                                                                                               |
+| `fail:blob-delete[=<n>]`           | Before each deletion of a blob's bytes from a store.                                                                                                                                                             | The deletion fails with `EIO` and the store keeps the bytes.                                                                                                                                                                                                    |
+| `fail:stream-head[=<n>]`           | Before the read of the log's head that a stream makes as it opens.                                                                                                                                               | The read fails with `SQLITE_IOERR`.                                                                                                                                                                                                                             |
+| `fail:stream-replay[=<n>]`         | Before each page of the log that a stream's replay reads.                                                                                                                                                        | The read fails with `SQLITE_IOERR`.                                                                                                                                                                                                                             |
+| `fail:stream-credential[=<n>]`     | Each time an open stream reads its credential again: before a page of its replay, before a batch of frames, at a heartbeat, and at a commit or the credential's expiry while the reader has yet to take a piece. | The read fails with `SQLITE_IOERR`.                                                                                                                                                                                                                             |
+| `fail:stream-replay-row[=<n>]`     | Each event a plain stream's replay would send, in log order, across pages and streams.                                                                                                                           | The nth row's payload is returned as invalid JSON for that read only. Its ID and stored payload remain intact. Copy streams and other log readers do not count or consume this fault.                                                                           |
+| `fail:stream-replay-untyped[=<n>]` | Each row returned by a plain event stream's replay, counted as `fail:stream-replay-row` counts.                                                                                                                  | The nth row's payload is returned with its item's type removed, so it is valid JSON that names no type, for that read only. Its ID and stored payload remain intact. A row that holds no item is returned as it is.                                             |
+| `fail:session-lookup[=<n>]`        | Each read of a session that a browser sign-out makes.                                                                                                                                                            | The read fails with `SQLITE_IOERR`. The sign-out answers 500, clears no cookie and leaves the session as it was.                                                                                                                                                |
+| `fail:session-delete[=<n>]`        | Before a browser sign-out deletes its session.                                                                                                                                                                   | The delete fails with `SQLITE_IOERR`. The sign-out answers 500, clears no cookie and leaves the session as it was.                                                                                                                                              |
+| `fail:session-use[=<n>]`           | Before the target records the use of a browser session.                                                                                                                                                          | The write meets the write lock held by something else, as `fail:lock` does. The request is admitted, no cookie is sent again, and the session's last use stays as it was.                                                                                       |
+| `fail:health-write[=<n>]`          | Each time `GET /health` probes that the database accepts a write.                                                                                                                                                | The probe's write fails with `SQLITE_IOERR`, and the `database_write` component reports it.                                                                                                                                                                     |
+| `fail:event-stamp[=<n>]`           | Each event a write appends to the event log.                                                                                                                                                                     | The nth event is stamped a year after the target's clock.                                                                                                                                                                                                       |
+| `fail:folder-status-report[=<n>]`  | In `PUT /folders/{id}/status`, after the report is stored and before the transaction commits.                                                                                                                    | The request fails with `SQLITE_IOERR` and its transaction rolls back, so the folder keeps its earlier report.                                                                                                                                                   |
+| `fail:attention=<check>`           | Each time `GET /attention` runs the check it names: `health`, `housekeeping`, `connectors`, `folders` or `keys`.                                                                                                 | The check fails, so the answer carries an `unavailable` item naming it. It acts once, on the first run after the fault is set.                                                                                                                                  |
+| `refuse:read`                      | Every read of the database, until the fault is cleared.                                                                                                                                                          | The read fails with `SQLITE_IOERR`.                                                                                                                                                                                                                             |
+| `refuse:write`                     | Every write, before it takes the write lock, until the fault is cleared.                                                                                                                                         | The write fails with `SQLITE_IOERR`.                                                                                                                                                                                                                            |
+| `refuse:write-lock`                | Every write, until the fault is cleared.                                                                                                                                                                         | The write waits for the lock as if another connection held it. When its write wait is spent it is refused with `503 write_contention`; clearing the fault lets a write that still waits through.                                                                |
+| `refuse:blob-store`                | Each check of the disk store that `GET /health` makes.                                                                                                                                                           | The store does not answer, and `blob_storage` reports `down`.                                                                                                                                                                                                   |
+
+`<write>` stands for `<n>`, `<action>` or `<action>@<n>`. A target that
+cannot fail a point as described says so by refusing its name, and the fixtures
+that need it fail rather than skip.
+
+The blob points count a reach by any store and by any caller, including the
+target's own background work. With two stores attached, replication reads a
+blob from one store and writes it to the other, so it can take a `fail:blob-*`
+fault before the request under test reaches the point. A fixture that arms a
+blob fault boots a server with the disk store alone (`DISK_ONLY` in
+`src/utils/own-blob-server.ts`), or waits until replication has nothing left
+to copy, as `blob-cleanup-faults.test.ts` does.
+
+A webhook receiver's answers, status and `Retry-After` header alike, are the
+harness's own (`src/utils/webhook-receiver.ts`); the target does not fake them.
+The one thing a target scripts for a delivery is a name lookup, with `resolve`,
+so that a fixture can answer the same name differently on each lookup and see
+which address the delivery connects to.
+
+The disk store's physical holdings are read through `GET /_control/test/blob-stores`,
+which `src/utils/store-faults.ts` wraps. With `?hash=<sha256:...>` it answers each attached store's
+`id`, `kind`, whether it `holds` that blob and whether the bytes it holds are `intact` (hash to the
+name), without a `lose:blob` or `damage:blob` fault changing the answer. It always answers
+`spool`, the name and size in bytes of each file the disk store keeps while it receives bytes.
+
+`GET /_control/test/database` answers the `journal_mode`, `synchronous`, `fullfsync`,
+`checkpoint_fullfsync` and `foreign_keys` settings of the writer connection and of each reader
+connection, as numbers where SQLite answers one.
+
+## Who can reach the hooks
+
+The clock, fault, blob-store and database routes (`/_control/test/clock`, `/_control/test/faults`,
+`/_control/test/blob-stores` and `/_control/test/database`) exist only on the private control socket, and only when `MARFA_TEST_HOOKS` is
+`true`. They are never on the HTTP listener, and a Rust server built without the
+`test-hooks` feature, as a release is, refuses to start with the setting. It logs
+a warning at boot when the hooks are on. `spec/instance.md`, "Test hooks", holds
+these rules.
+
+## The device's binding
+
+The device fixtures reach the device two ways. The `marfa` binary
+(`MARFA_DEVICE_BIN`) runs one call at a time on a working copy it holds for
+that call alone. The binding (`MARFA_DEVICE_MODULE`, the Node module `napi
+build` writes) is for the rules a command cannot reach: a call that starts
+while another waits on the same working copy, a follow told what its caller
+was last told, a call held at a point, a wait read without being spent. Any
+device is judged by the binding fixtures when it supplies what follows.
+
+- **The module.** Each fixture loads it in a new process,
+  `src/device/binding-host.mjs`, which the fixture talks to over IPC. A
+  call that blocks its thread, as the engine's synchronous ones do while they
+  read from the server, would otherwise stop the scripted server in the
+  fixture's process answering it. Each request carries an `id` and is answered
+  with the same `id` in whatever order the calls end, so two calls on one
+  working copy can be in flight at once. The module exports the working
+  copy's calls as `MarfaCore`, `Stop` and the changes a follow tells, told
+  apart by `kind` (`applied`, `catalogChanged`, `serverUnreachable`,
+  `serverReachable`, `queueDrained`, `queueNotDrained`, `saved`,
+  `watchFailed`). A call that waits on the server, `withdraw` and `discard`
+  among them, answers a promise. The adapter in
+  [`src/device/binding-adapter.ts`](src/device/binding-adapter.ts) defines the
+  calls and result shapes the fixtures use; the host translates them to the
+  module's methods.
+- **Folders.** `Folders` provides `add`, `list`, `status`, `sync`,
+  `confirmFirstSync`, `confirm`, `restore`, `remove`, and `watch`. Calls
+  other than `watch` return promises, including while they ask a watch to let
+  a folder go. `watch` returns a subscription synchronously and throws if it
+  cannot open the folder. Watch events include `handedOver`, `takenBack`,
+  `heldElsewhere`, `removed`, and `unlisted`; its subscription ends once. Each fixture's host
+  uses an isolated registry. Debug methods retain an open folder across calls
+  (`testOpen`, `testClose`) and expose its existing `testScan`, `testPull`,
+  `testSubmitSettingsFile`, `testCatchUp`, `testHydrate`, and `testDrain`
+  operations. They let a fixture change the directory or the copy between
+  opening the folder and working it.
+- **Dispatcher callbacks.** Node delivers callbacks on its event loop. A
+  binding that calls listeners on the engine's dispatcher thread is tested
+  with `testHooks.probeReentry(core)`: a debug listener runs on that thread,
+  attempts a hydration and catch-up, and records their errors in `answers()`.
+  `stop()` unregisters it. The fixture proves both calls are refused from the
+  callback and that they can succeed outside it.
+- **`toldUnreachable`.** `follow` and `watch` take it as an optional last
+  argument. It says the caller was last told `serverUnreachable` by an earlier
+  one. A `follow` then tells `serverReachable` when a stream first takes an
+  event or goes live, and a `watch` when the listener joins a held stream that
+  is taking events; neither tells `serverUnreachable` again before.
+- **Holds.** The engine reaches named points, and a fixture arms one so that
+  the engine waits there until the fixture releases it. `testHooks.hold(point)`
+  arms a point, `testHooks.release(point)` lets go of what waits at it and
+  disarms it. `testHooks.observe(true)` enables reach counters;
+  `testHooks.observe(false)` disables them without resetting their values.
+  The binding fixture host enables observation when it loads the module.
+  `testHooks.reached(point)` counts the times the engine has reached it while
+  observation is enabled, and `testHooks.waiting(point)` counts the calls
+  held at it now. A point is reached by a call on the engine's own thread, so
+  a fixture waits for `waiting` before it acts on a held call.
+  - `hydration-replacing`: after a hydration has begun to replace the copy,
+    before it reads the first item.
+  - `recovery-drain-asked`, `recovery-drain-found-none`: a held stream's drain,
+    when it asks to drain and when it finds no work left.
+  - `drain-waiting`: a drain tried to acquire the drain lock and found another
+    call holding it. The fixture can hold that waiter while the first drain's
+    request remains in flight.
+  - `follow-waiting`: a follow that waits for a first hydration.
+  - `answer-dropped`: an answer reached a request that nobody waited for.
+  - `catalog-replacing`: a refresh of the catalog has written the item types
+    and not yet the edge types, inside the transaction that replaces both. A
+    reading handle that reads then must answer from the catalog before the
+    refresh.
+  - `folder-give-way-read`: before a give-way read starts;
+    `folder-give-way-withdrawn`: after withdrawing local placement writes,
+    inside the transaction that replaces them with the server's placement.
+  - `folder-scan-read`: after reading a file's bytes, before recording the
+    scan; `folder-status-catalog`: between loading the item and edge catalogs
+    from the status snapshot. In debug builds, `folder-status-edge:<id>`
+    records each edge type in the loaded status catalog, so a fixture can
+    identify its revision even where both catalogs produce the same status.
+  - `folder-watch-turn`, `folder-file-changed`, `folder-pass-start`,
+    `folder-pass-ended`, `folder-full-scan`, and `folder-quick-scan`: the watch
+    loop, a filesystem change, and its pass and scan boundaries.
+    `folder-pass-pull`: a pass that has scanned and sent, before a pull it
+    runs. `folder-render`: each item's file the folder renders.
+    `folder-render-missed`: a watch's hourly render of every file rewriting
+    one that the watch's choice of the files to render had left out.
+  - `folder-handover-wait`, `folder-handed-over`, and
+    `folder-take-back-wait`: an asking call's wait, its acquired folder, and
+    the watch's retry before taking it back. `folders-watch-polled` observes
+    the registry supervisor's turn.
+- **Failures.** `testHooks.fail(point, on)` makes the engine fail where it
+  reaches `point`, and `testHooks.fail(point, false)` stops. The engine counts
+  each reach as `testHooks.reached` does. Three points fail: `data-version`,
+  the read a reading handle's watch makes to learn that another process saved;
+  `replace-refused-make`, which fails the replacement of a refused store after
+  its empty store has been made, so the old store is put back; and
+  `folder-selection-narrow`, which makes a watch's pull choose no file a
+  change reaches, so the hourly render of every file has one to find.
+- **Listeners and stores.** `watch` can be called more than once on one working
+  copy, and each call is a listener. The host can make a listener block in each
+  change, throw from one, and open the store the moment it is told it ended
+  (the role the new handle is given says whether the watch had let go of it);
+  it can let go of its own core and collect it, so that a watch is the only
+  hold left on the store; and it can open the same store to read, in a second
+  process (`harness.reader()`), as an app's helper does.
+- **A stream the fixture speaks on.** The scripted server's held stream can
+  name a `StreamFeed`. The fixture pushes frames to the streams open on it,
+  so a change is told after a listener has joined, and the feed counts the
+  streams it was asked for.
+- **The clock.** `testClock.manual()` sets the clock the engine waits by to
+  one that moves only where `testClock.advance(ms)` moves it, and
+  `testClock.waits()` lists the waits the engine has asked of it and the clock
+  has not reached, each as the milliseconds asked and the milliseconds left.
+  Set it before the calls whose waits are read. A wait asked of the system
+  clock is not moved to the manual one. `testClock.manual(false)` goes back.
+  The wait between held streams, the two measures of a stream's age (how
+  long it has been held and how long it has been silent), and a reading
+  handle's save polling and read-failure backoff use this clock. Folder
+  watch settling, periodic scans, hydration retries, placement rereads, rename
+  grace, supervision, and handover deadlines use it too. The rename journal
+  uses a wall timestamp derived from the same manual elapsed time. Filesystem
+  events remain real; advancing the clock does not manufacture them.
+
+A release build has no `testHooks` and no `testClock`: a fixture that uses
+them fails on a module built `--release`, naming that. The module's build
+needs the `napi` command its `pnpm-lock.yaml` pins, and the fixtures refuse a
+module older than the binding's or the engine's source.
+
+## The request log
+
+The status gate, `pnpm check:statuses`, reads the target's stdout. The target
+writes JSON objects, one per line, and nothing else to stdout. Anything else
+the process prints goes to stderr, which the adapter
+keeps in `<state>/server.stderr` and the gate does not read.
+
+A line with a string `level` and a string `message` is a log record, and the
+gate skips it. Any other line is a request record, with the fields of `LogEntry`
+in `core/marfa-server/src/log.rs` (`Request`):
+
+| Field         | Type    | Notes                                                                         |
+| ------------- | ------- | ----------------------------------------------------------------------------- |
+| `timestamp`   | string  | ISO 8601.                                                                     |
+| `request_id`  | string  |                                                                               |
+| `method`      | string  |                                                                               |
+| `transport`   | string  | `http` for the public listener, `local_socket` for the private socket.        |
+| `path`        | string  | The concrete path.                                                            |
+| `route`       | string  | The route template, as the document spells it. Absent when no route answered. |
+| `status`      | integer |                                                                               |
+| `duration_ms` | number  |                                                                               |
+| `key_id`      | string  | Present when a key made the request.                                          |
+| `error_code`  | string  | Present on a refusal that has a code.                                         |
+
+The gate fails on a line that is not JSON, is not an object, or is a request
+record missing `method`, `path`, `status` or `transport`. It names the file and
+line and shows the start of the line. A request that no log line reaches is a
+request nothing checked, so an unreadable line is a failure and not noise.
+
+## How the score is counted
+
+`pnpm rust:score --reports <dir> [--platform <name>] [--projects <a,b>] [--markdown <file>]`
+reads every `vitest.json` under `<dir>`, one per shard, and prints the score.
+`--platform` names the machine the reports came from, `process.platform` by
+default, and `--projects` limits the score to some of the five projects. CI
+writes it to the job summary of `Rust contract score` and of
+`Rust contract score on macOS`.
+
+- A test passes when Vitest reports it `passed`. A skipped or todo test is not
+  passing, and still counts in the total, with two exceptions, which the
+  summary lists and leaves out of the count:
+  - A test that runs on one platform alone, which takes `ON_MACOS` from
+    `src/utils/platform.ts` and so carries `meta.onlyOn`, when it is skipped
+    on another platform. On its own platform its skip is not passing.
+  - A test that sets `meta.unobservable` to the reason just before it skips,
+    because the machine cannot show what it asserts. A test pins the one test
+    that does.
+- A file passes whole when a report names it, it lists at least one test, every
+  test passed, and the file did not fail around its tests, as when an
+  `afterAll` hook throws after every test passed.
+- The score is tests passing out of all tests, by file and by project, over the
+  five projects the server's half has: `correctness`, `compliance`, `sync`,
+  `device` and `cli`. A file on disk that no report names counts with nothing
+  passing and shows as "not reported".
+- Before it reads the reports, the command lists every test of those five
+  projects with `vitest list --json --staticParse=false`, which runs each file
+  to collect its tests and needs no server. A file's total is the larger of
+  that count and the tests its report lists, so a file that fails to load
+  still counts all its tests as not passing. When a file fails to load,
+  Vitest prints no list; the command then counts only the files Vitest names,
+  by reading them without running them, and the summary names each with the
+  count it used.
+- The shards run with `--retry=0`, so a test that passes only on a retry fails
+  its run and does not count as passing.
+- The command exits with an error when a file listed in `RUST_JUDGED` does not
+  pass whole or no report names it, when two reports name one file, and when
+  there is no report at all. A file that is not listed never fails it.

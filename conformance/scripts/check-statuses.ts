@@ -123,7 +123,7 @@ const parsed = logs.map((path) => ({
 const lines = parsed.flatMap((log) => log.lines);
 const report = reportStatuses(lines, document);
 
-// The server's stdout carries JSON lines only (`conformance/README.md`), so a
+// The server's stdout carries JSON lines only (`conformance/TARGET-INTERFACE.md`), so a
 // line this cannot read is a request it could not check, not noise.
 const unreadable = parsed.flatMap((log) =>
   log.unreadable.map(

@@ -20,7 +20,7 @@ import { waitFor } from "../../utils/wait.js";
  * disk. The sweep reports a blob nothing references on one run and purges it
  * on the next, which the grace of zero makes the very next one. The fixtures
  * cut a purge short with the target interface's faults
- * (`conformance/README.md`, "Faults"): `fail:blob-delete` makes the store
+ * (`conformance/TARGET-INTERFACE.md`, "Faults"): `fail:blob-delete` makes the store
  * refuse to delete the bytes after the blob has left the registry,
  * `fail:audit=blob.purge` fails the purge before it has removed anything, and
  * `hold:blob-orphans:purge` makes a run wait between choosing a blob to purge

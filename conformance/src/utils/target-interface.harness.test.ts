@@ -11,7 +11,7 @@ import { QUIET_SCHEDULE, runJob } from "./moved-clock.js";
 import { readRequestLog } from "./status-declarations.js";
 
 /**
- * The target interface as the harness uses it (`conformance/README.md`): a
+ * The target interface as the harness uses it (`conformance/TARGET-INTERFACE.md`): a
  * restart that keeps the data and the clock, a clock that only moves
  * forward, faults that last no longer than the process, and a log that holds
  * the server's JSON lines and nothing else. Each case runs the adapter
