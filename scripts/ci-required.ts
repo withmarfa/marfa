@@ -220,6 +220,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // a unit test in `marfa-cli` holds the committed file to it. Only the core
   // checks run the Rust tests.
   [/^core\/marfa-cli\/COMMANDS\.md$/, ["core-checks-linux"]],
+  // A unit test in `marfa-cli` holds the telemetry page to the variables the
+  // binary reads.
+  [/^core\/TELEMETRY\.md$/, ["core-checks-linux"]],
   // `ci/access-words.test.ts` holds the glossary's access words to the CLI's
   // and the server's.
   [/^GLOSSARY\.md$/, ["workspace"]],

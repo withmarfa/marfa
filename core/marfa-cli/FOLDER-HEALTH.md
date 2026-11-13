@@ -27,4 +27,4 @@ The local store keeps the newest pending report and its sequence before sending 
 
 Reporting uses the already confirmed server origin and the credential content sync currently holds. It does not initiate credential renewal; a refused report waits for content sync to renew the credential. The remote `folders health` command uses the CLI's usual renewal behavior.
 
-Attaching a directory retains the existing requirement to write `in-folder` placements. An already bound copy can report with read access to the folder, including when a content write is refused.
+Attaching a directory requires writing its `in-folder` placements. An already bound copy can report with read access to the folder, including when a content write is refused.

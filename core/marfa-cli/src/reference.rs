@@ -693,7 +693,7 @@ mod tests {
     }
 
     #[test]
-    fn the_reference_and_the_readme_name_every_variable_the_binary_reads() {
+    fn the_reference_and_the_telemetry_page_name_every_variable_the_binary_reads() {
         let settings = [
             include_str!("telemetry/settings.rs"),
             include_str!("telemetry/posthog.rs"),
@@ -701,7 +701,7 @@ mod tests {
             include_str!("../../marfa-telemetry/src/identity.rs"),
             include_str!("../../marfa-telemetry/src/otlp.rs"),
         ];
-        let readme = include_str!("../../README.md");
+        let page = include_str!("../../TELEMETRY.md");
         let mut variables: Vec<&str> = settings
             .iter()
             .flat_map(|source| source.split('"'))
@@ -722,8 +722,8 @@ mod tests {
                 "the reference lacks {variable}"
             );
             assert!(
-                readme.contains(&format!("`{variable}`")),
-                "core/README.md lacks {variable}"
+                page.contains(&format!("`{variable}`")),
+                "core/TELEMETRY.md lacks {variable}"
             );
         }
     }
