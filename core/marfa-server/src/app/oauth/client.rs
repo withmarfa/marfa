@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use url::Url;
 
 use super::redirect::{self, AppKind};
-use super::scope::{EMAIL_WRITE_REFUSED, OFFLINE_ACCESS, ScopeSet};
+use super::scope::{EMAIL_WRITE_REFUSED, OFFLINE_ACCESS, ScopeSet, data_alone};
 
 pub const MAX_REDIRECT_URIS: usize = 10;
 
@@ -361,11 +361,7 @@ fn is_scope_token(token: &str) -> bool {
 
 /// An unoffered scope still registers: it is narrowed away at authorization, and a type
 /// registered later may make it grantable.
-fn scope(
-    object: &Map<String, Value>,
-    grants: &[GrantType],
-    allowed: &ScopeSet,
-) -> Reading<ScopeSet> {
+fn scope(object: &Map<String, Value>, grants: &[GrantType]) -> Reading<ScopeSet> {
     let named = text(object, "scope")?.unwrap_or_default();
     if !named.split(' ').all(is_scope_token) {
         return Err(RegistrationError::metadata(
@@ -380,11 +376,7 @@ fn scope(
         });
     }
     if named.is_empty() {
-        return Ok(if can_refresh(grants) {
-            allowed.clone()
-        } else {
-            allowed.without(OFFLINE_ACCESS)
-        });
+        return Ok(data_alone(can_refresh(grants)));
     }
     if named.contains(OFFLINE_ACCESS) && !can_refresh(grants) {
         return Err(RegistrationError::metadata(
@@ -431,11 +423,7 @@ fn check_resources(object: &Map<String, Value>) -> Reading<()> {
 }
 
 /// RFC 7591 section 2 requires ignoring unsupported metadata.
-pub(super) fn read(
-    object: &Map<String, Value>,
-    source: Source,
-    allowed: &ScopeSet,
-) -> Reading<Registration> {
+pub(super) fn read(object: &Map<String, Value>, source: Source) -> Reading<Registration> {
     let token_endpoint_auth_method = auth_method(object)?;
     if source == Source::Registration {
         check_resources(object)?;
@@ -456,7 +444,7 @@ pub(super) fn read(
     Ok(Registration {
         application_type: kind,
         token_endpoint_auth_method,
-        scope: scope(object, &grants, allowed)?,
+        scope: scope(object, &grants)?,
         grant_types: grants,
         response_types,
         redirect_uris: uris.into_iter().map(str::to_string).collect(),
@@ -475,14 +463,13 @@ pub(super) fn read(
     })
 }
 
-/// `allowed` is the default scope of a client that names none.
-pub fn parse_registration(body: &[u8], allowed: &ScopeSet) -> Reading<Registration> {
+pub fn parse_registration(body: &[u8]) -> Reading<Registration> {
     let value: Value = serde_json::from_slice(body)
         .map_err(|_| RegistrationError::metadata("The body is not valid JSON."))?;
     let object = value
         .as_object()
         .ok_or_else(|| RegistrationError::metadata("The body must be a JSON object."))?;
-    read(object, Source::Registration, allowed)
+    read(object, Source::Registration)
 }
 
 #[cfg(test)]
@@ -490,12 +477,12 @@ mod tests {
     use super::*;
     use proptest::prelude::*;
 
-    fn allowed() -> ScopeSet {
-        ScopeSet::parse("core.note:read core.note:write offline_access")
+    fn data_alone() -> ScopeSet {
+        ScopeSet::parse("*:read *:write edge.*:read edge.*:write offline_access")
     }
 
     fn register(body: Value) -> Reading<Registration> {
-        parse_registration(body.to_string().as_bytes(), &allowed())
+        parse_registration(body.to_string().as_bytes())
     }
 
     fn refused(body: Value) -> RegistrationError {
@@ -526,7 +513,7 @@ mod tests {
         assert_eq!(registered.token_endpoint_auth_method, AuthMethod::None);
         assert_eq!(registered.grant_types, [GrantType::AuthorizationCode]);
         assert_eq!(registered.response_types, [ResponseType::Code]);
-        assert_eq!(registered.scope, allowed());
+        assert_eq!(registered.scope, data_alone());
     }
 
     #[test]
@@ -614,7 +601,7 @@ mod tests {
     #[test]
     fn a_body_that_is_not_an_object_is_an_rfc_error() {
         for body in [&b"not json"[..], b"", b"[]", b"1", b"null", &[0xff, 0xfe]] {
-            let error = parse_registration(body, &allowed()).expect_err("refused");
+            let error = parse_registration(body).expect_err("refused");
             assert_eq!(error.error, ErrorCode::InvalidClientMetadata);
             assert_eq!(error.to_json()["error"], "invalid_client_metadata");
             assert!(error.to_json()["error_description"].is_string());
@@ -751,7 +738,7 @@ mod tests {
     fn a_scope_of_nothing_is_no_scope_named() {
         for scope in [json!(""), json!("   "), json!(null)] {
             let body = with(web(), "scope", scope);
-            assert_eq!(register(body).expect("registered").scope, allowed());
+            assert_eq!(register(body).expect("registered").scope, data_alone());
         }
     }
 
@@ -773,8 +760,7 @@ mod tests {
         assert!(error.description.contains("refresh_token"));
 
         let default = register(device()).expect("registered").scope;
-        assert!(!default.contains(OFFLINE_ACCESS));
-        assert!(default.contains("core.note:read"));
+        assert_eq!(default, data_alone().without(OFFLINE_ACCESS));
 
         let refreshing = with(
             device(),
@@ -897,7 +883,7 @@ mod tests {
     proptest! {
         #[test]
         fn nothing_panics_on_any_bytes(body in proptest::collection::vec(any::<u8>(), 0..64)) {
-            let _ = parse_registration(&body, &allowed());
+            let _ = parse_registration(&body);
         }
 
         #[test]

@@ -102,8 +102,7 @@ where
         Err(Failure::Unavailable(_)) => return keep_or_busy(stored),
         Err(Failure::Refused(_)) => return Ok(Err(refused_document())),
     };
-    let allowed = Registries::of(&app.catalog_handle().load()).allowed();
-    let Ok(registration) = metadata_document::parse_document(id, &body, &allowed) else {
+    let Ok(registration) = metadata_document::parse_document(id, &body) else {
         return Ok(Err(refused_document()));
     };
     keep_document(app, id, registration, visit).await.map(Ok)

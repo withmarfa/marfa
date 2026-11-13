@@ -8,6 +8,15 @@ let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
 
+/** What a client that names no scope, and may refresh, is registered for. */
+const DATA_ALONE = [
+  "*:read",
+  "*:write",
+  "edge.*:read",
+  "edge.*:write",
+  "offline_access",
+].sort();
+
 beforeAll(async () => {
   ({ ctx, client, apiUrl } = await createTestContext("compliance", "oauth"));
 });
@@ -143,6 +152,13 @@ describe("OAuth provider", () => {
     }
   });
 
+  it("advertises at /mcp the owner's data and links alone, as a client naming no scope is registered for", async () => {
+    const r = await fetch(`${apiUrl}/.well-known/oauth-protected-resource/mcp`);
+    expect(r.status).toBe(200);
+    const doc = (await r.json()) as { scopes_supported: string[] };
+    expect([...doc.scopes_supported].sort()).toEqual(DATA_ALONE);
+  });
+
   it("advertises client ID metadata documents beside public clients", async () => {
     const doc = (await (
       await fetch(`${apiUrl}/.well-known/oauth-authorization-server/auth`)
@@ -170,16 +186,44 @@ describe("OAuth provider", () => {
     expect(r.data.application_type).toBe("native");
     expect(r.data.redirect_uris).toEqual(["http://127.0.0.1:9/callback"]);
     expect(r.data.token_endpoint_auth_method).toBe("none");
-    // A registration naming no scope is registered for every scope the
-    // instance allows, which is at least every scope discovery publishes.
-    const registered = new Set((r.data.scope as string).split(" "));
+    expect((r.data.scope as string).split(" ").sort()).toEqual(DATA_ALONE);
+    // The witness: discovery publishes permissions the default leaves out.
     const discovery = (await (
       await fetch(`${apiUrl}/.well-known/oauth-authorization-server/auth`)
     ).json()) as { scopes_supported: string[] };
-    expect(discovery.scopes_supported.length).toBeGreaterThan(0);
-    for (const scope of discovery.scopes_supported) {
-      expect(registered.has(scope), scope).toBe(true);
+    expect(discovery.scopes_supported).toEqual(
+      expect.arrayContaining(["keys.mint", "config.manage", "items.purge"]),
+    );
+  });
+
+  it("registers a client naming an empty or blank scope for the owner's data alone", async () => {
+    for (const scope of ["", "   "]) {
+      const r = await client.registerOAuthClient({
+        client_name: `conformance-blank-${ctx.runId}`,
+        application_type: "native",
+        redirect_uris: ["http://127.0.0.1:9/callback"],
+        grant_types: ["authorization_code"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+        scope,
+      });
+      expect(r.status, JSON.stringify(scope)).toBe(201);
+      expect((r.data.scope as string).split(" ").sort()).toEqual(DATA_ALONE);
     }
+  });
+
+  it("registers a client naming only scopes it cannot be granted at those scopes, not the default", async () => {
+    const r = await client.registerOAuthClient({
+      client_name: `conformance-unknown-${ctx.runId}`,
+      application_type: "native",
+      redirect_uris: ["http://127.0.0.1:9/callback"],
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+      scope: "unheard.thing:read keys.everything",
+    });
+    expect(r.status).toBe(201);
+    expect(r.data.scope).toBe("unheard.thing:read keys.everything");
   });
 
   it("registers a client naming a scope at that scope, once each", async () => {

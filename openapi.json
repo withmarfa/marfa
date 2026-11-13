@@ -9636,7 +9636,7 @@
           },
           "scope": {
             "type": "string",
-            "description": "Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out to register the client for every scope the instance allows that it can use."
+            "description": "Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out to register the client for reading and editing all items and the links between them (`*:read *:write edge.*:read edge.*:write offline_access`), and no permission; name any other scope to ask for it."
           },
           "client_name": {
             "type": "string",
@@ -46361,7 +46361,7 @@
                     },
                     "scope": {
                       "type": "string",
-                      "description": "Space-separated scopes the client is registered for: the ones you named, or every scope the instance allows, without `offline_access` for a client that can't use a refresh token."
+                      "description": "Space-separated scopes the client is registered for: the ones you named, or `*:read *:write edge.*:read edge.*:write offline_access` when you named none, without `offline_access` for a client that can't use a refresh token."
                     },
                     "client_name": {
                       "type": "string",

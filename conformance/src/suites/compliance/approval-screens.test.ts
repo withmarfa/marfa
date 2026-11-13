@@ -1911,3 +1911,204 @@ describe("what full access on the approval pages grants", () => {
     expect(minted.body.scope).toBe("core.note:read");
   });
 });
+
+describe("what the approval pages offer and grant an app that names no scope", () => {
+  const booted = bootFor("approval-no-scope");
+  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  const DATA = ["*:read", "*:write", "edge.*:read", "edge.*:write"];
+  const PERMISSIONS = [
+    "schema.write",
+    "keys.mint",
+    "items.purge",
+    "webhooks.manage",
+    "config.manage",
+    "audit.read",
+    "grants.manage",
+    "instance.read",
+    "instance.maintain",
+    "connectors.manage",
+    "blobs.manage",
+    "keys.manage",
+  ];
+
+  /** Registers as an MCP client does when it is told no scope: naming none. */
+  async function registerNamingNone(): Promise<App> {
+    const response = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "names no scope",
+        application_type: "native",
+        redirect_uris: [CALLBACK],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      }),
+    });
+    expect(response.status).toBe(201);
+    return {
+      clientId: ((await response.json()) as { client_id: string }).client_id,
+    };
+  }
+
+  /** The consent screen of an authorization request, naming `scope` or none. */
+  async function screenFor(
+    app: App,
+    scope: string | undefined,
+    proof = pkce(),
+  ) {
+    const query = authorizeQuery(app.clientId, scope ?? "", proof);
+    if (scope === undefined) query.delete("scope");
+    const landed = await sentTo(server, await authorize(server, query, cookie));
+    expect(landed?.pathname, String(landed)).toBe("/auth/authorize");
+    const page = await fetch(landed!, { headers: { cookie } });
+    expect(page.status).toBe(200);
+    return { html: await page.text(), consent: landed!, proof };
+  }
+
+  async function call(
+    accessToken: string,
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<number> {
+    const response = await fetch(`${server.apiUrl}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    await response.body?.cancel();
+    return response.status;
+  }
+
+  it("offers an app that names no scope the owner's data and links, read only beside read and edit, and no permission", async () => {
+    const { html } = await screenFor(await registerNamingNone(), undefined);
+    expect(
+      selectNamed(html, "All your data")?.options.map((o) => [
+        o.value,
+        o.label,
+      ]),
+    ).toEqual([
+      ["", "No access"],
+      ["*:read", "Read only"],
+      ["*:write", "Read and edit"],
+      [CHOOSE, "Choose types"],
+    ]);
+    expect(
+      selectNamed(html, "Links between items")?.options.map((o) => [
+        o.value,
+        o.label,
+      ]),
+    ).toEqual([
+      ["", "No access"],
+      ["edge.*:read", "Read only"],
+      ["edge.*:write", "Read and edit"],
+    ]);
+    expect(readControls(html).filter((c) => c.role === "switch")).toEqual([]);
+    const offered = offeredValues(html, "scopes");
+    for (const permission of PERMISSIONS)
+      expect(offered, permission).not.toContain(permission);
+    expect(offered.filter((v) => /^(metadata|profile)/.test(v))).toEqual([]);
+  });
+
+  it("offers a permission to an app that names no scope at registration and asks for it by name", async () => {
+    const { html } = await screenFor(
+      await registerNamingNone(),
+      "core.note:write keys.mint",
+    );
+    expect(
+      readControls(html)
+        .filter((c) => c.role === "switch")
+        .map((c) => c.value),
+    ).toEqual(["keys.mint"]);
+    expect(selectNamed(html, "All your data")).toBeUndefined();
+  });
+
+  it("issues an app that names no scope a token that reads and writes items and links, and mints no key and reads no settings", async () => {
+    const app = await registerNamingNone();
+    const { consent, proof } = await screenFor(app, undefined);
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      consent,
+      true,
+      [],
+      [],
+      "full",
+    );
+    const issued = await redeem(app, sent, proof);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    expect(sorted(issued.body.scope)).toEqual(
+      [...DATA, "offline_access"].sort(),
+    );
+    const bearer = issued.body.access_token!;
+    expect(
+      await call(bearer, "POST", "/items", {
+        type: "core.note",
+        properties: { title: "kept" },
+      }),
+    ).toBe(201);
+    expect(await call(bearer, "GET", "/items?limit=1")).toBe(200);
+    expect(await call(bearer, "GET", "/edges?limit=1")).toBe(200);
+    expect(
+      await call(bearer, "POST", "/keys", {
+        label: "minted",
+        source: "app/minted",
+      }),
+    ).toBe(403);
+    expect(await call(bearer, "GET", "/config")).toBe(403);
+    expect(await call(bearer, "GET", "/keys")).toBe(403);
+
+    // A refresh keeps what was approved and never adds a permission.
+    const widened = await token(server, {
+      grant_type: "refresh_token",
+      refresh_token: issued.body.refresh_token!,
+      client_id: app.clientId,
+      scope: "*:write keys.mint",
+    });
+    expect(widened.status).toBe(400);
+    expect(widened.body.error).toBe("invalid_scope");
+    const refreshed = await token(server, {
+      grant_type: "refresh_token",
+      refresh_token: issued.body.refresh_token!,
+      client_id: app.clientId,
+    });
+    expect(refreshed.status, JSON.stringify(refreshed.body)).toBe(200);
+    expect(sorted(refreshed.body.scope)).toEqual(
+      [...DATA, "offline_access"].sort(),
+    );
+  });
+
+  it("issues an app that names no scope a token that only reads when the person chooses Read only", async () => {
+    const app = await registerNamingNone();
+    const { html, consent, proof } = await screenFor(app, undefined);
+    // The page's own form, with Read only chosen in both of its rows.
+    const readOnly = defaultSubmission(html, "scopes").map((value) =>
+      value.replace(/:write$/, ":read"),
+    );
+    expect(readOnly.sort()).toEqual(
+      ["*:read", "edge.*:read", "offline_access"].sort(),
+    );
+    const sent = await decide(server, origin, cookie, consent, true, readOnly);
+    const issued = await redeem(app, sent, proof);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    expect(sorted(issued.body.scope)).toEqual(
+      ["*:read", "edge.*:read", "offline_access"].sort(),
+    );
+    const bearer = issued.body.access_token!;
+    expect(await call(bearer, "GET", "/items?limit=1")).toBe(200);
+    // The witness that the write is refused for its scope: the full token above writes.
+    expect(
+      await call(bearer, "POST", "/items", {
+        type: "core.note",
+        properties: { title: "refused" },
+      }),
+    ).toBe(403);
+  });
+});

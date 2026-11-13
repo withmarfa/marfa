@@ -106,19 +106,19 @@ describe("offline_access on a device", () => {
     expect(body.access_token).toEqual(expect.any(String));
   });
 
-  it("registers a client that may not refresh, naming no scope, for every scope but offline_access, and answers its device flow an access token alone", async () => {
+  it("registers a client that may not refresh, naming no scope, for the owner's data alone without offline_access, and answers its device flow an access token alone", async () => {
+    const data = ["*:read", "*:write", "edge.*:read", "edge.*:write"];
     // The witness: a client that may refresh, naming no scope, is registered
     // for `offline_access`.
     const refreshing = await startDeviceFlow(server!, ["core.note:read"]);
-    const everything = refreshing.registeredScope.split(" ");
-    expect(everything).toContain("offline_access");
+    expect(refreshing.registeredScope.split(" ").sort()).toEqual(
+      [...data, "offline_access"].sort(),
+    );
 
     const flow = await startDeviceFlow(server!, ["core.note:read"], {
       grantTypes: ["urn:ietf:params:oauth:grant-type:device_code"],
     });
-    expect(flow.registeredScope.split(" ")).toEqual(
-      everything.filter((scope) => scope !== "offline_access"),
-    );
+    expect(flow.registeredScope.split(" ").sort()).toEqual([...data].sort());
     await flow.approve();
     const approved = await flow.poll();
     expect(approved.status).toBe(200);

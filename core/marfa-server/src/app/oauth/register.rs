@@ -5,7 +5,6 @@ use uuid::Uuid;
 
 use super::client::{RegistrationError, parse_registration};
 use super::clients::CLIENT_CREATED;
-use super::scope::Registries;
 use super::store;
 use crate::app::App;
 use crate::app::audit::{self, Entry};
@@ -26,8 +25,7 @@ pub async fn register(
         register_lanes(visit.address),
         "Too many apps registered. Try again later.",
     )?;
-    let allowed = Registries::of(&app.catalog_handle().load()).allowed();
-    let registration = match parse_registration(body, &allowed) {
+    let registration = match parse_registration(body) {
         Ok(registration) => registration,
         Err(refused) => return Ok(Err(refused)),
     };

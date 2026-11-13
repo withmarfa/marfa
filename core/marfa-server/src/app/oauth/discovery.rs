@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use super::client::GrantType;
 use super::issuer;
 use super::resource::MCP_PATHS;
-use super::scope::{Registries, ScopeSet};
+use super::scope::{Registries, ScopeSet, data_alone};
 use crate::app::App;
 
 const SCHEMA_SCOPES: [&str; 3] = ["metadata.types:write", "schema.write", "system.view:write"];
@@ -54,15 +54,8 @@ pub fn protected_resource(app: &App, path: &str) -> Option<Value> {
         "/mcp/admin" => &ADMIN_SCOPES,
         _ => &[],
     };
-    let mut scopes: Vec<&str> = Vec::new();
-    let every = published(app);
-    scopes.extend(
-        every
-            .literals()
-            .iter()
-            .map(String::as_str)
-            .filter(|literal| !SCHEMA_SCOPES.contains(literal) && !ADMIN_SCOPES.contains(literal)),
-    );
+    let default = data_alone(true);
+    let mut scopes: Vec<&str> = default.literals().iter().map(String::as_str).collect();
     scopes.extend(endpoint_scopes);
     scopes.sort_unstable();
     scopes.dedup();
