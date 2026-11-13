@@ -2190,7 +2190,7 @@ marfa export [OPTIONS]
 
 | Option | Description |
 | --- | --- |
-| `--format <FORMAT>` | `archive` for the whole instance, the default, or `ndjson` for items one per line, which leaves out the bin, settings and files. One of `ndjson`, `archive`. Default: `archive`. |
+| `--format <FORMAT>` | `archive` for the whole instance, the default, or `ndjson` for items one per line, which leaves out tables, settings and files. One of `ndjson`, `archive`. Default: `archive`. |
 | `--output <PATH>` | Where to write. Omitted, the export goes to stdout, which an archive refuses when stdout is a terminal. The path is replaced only by an export that ends whole, and for an archive only by one that lacks no blobs. |
 | `--type <TYPE>` | A type identifier; its subtypes are included. |
 | `--state <STATE>` | A state to answer; repeat it or separate states with commas. `any` is every state, and is given alone. Unset answers every state but the bin. One of `active`, `archived`, `trashed`, `revoked`, `any`. |

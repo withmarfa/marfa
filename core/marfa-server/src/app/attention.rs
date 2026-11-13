@@ -93,10 +93,11 @@ fn backing(backups: &Value) -> Vec<Concern> {
             _ => "The object store is not taking copies",
         };
         let waiting = backups["copies_waiting"].as_u64().unwrap_or(0);
+        let error = error.trim_end_matches('.');
         let description = match waiting {
-            0 => error.to_string(),
-            1 => format!("{error} 1 file waits for its second copy."),
-            count => format!("{error} {count} files wait for their second copy."),
+            0 => format!("{error}."),
+            1 => format!("{error}. 1 file waits for its second copy."),
+            count => format!("{error}. {count} files wait for their second copy."),
         };
         found.push(concern("store", title, description));
     }

@@ -17,7 +17,7 @@ use crate::remote::request::Request;
 #[derive(Debug, Default, Args)]
 pub struct ExportArgs {
     /// `archive` for the whole instance, the default, or `ndjson` for items
-    /// one per line, which leaves out the bin, settings and files.
+    /// one per line, which leaves out tables, settings and files.
     #[arg(long, value_enum, default_value_t = ExportFormat::Archive)]
     pub format: ExportFormat,
     /// Where to write. Omitted, the export goes to stdout, which an archive
