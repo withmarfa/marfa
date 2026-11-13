@@ -14,6 +14,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { clientsFor } from "../../utils/own-blob-server.js";
+import { expectMatchesSchema } from "../../utils/openapi.js";
 
 /**
  * The most one archive line may hold, lowered with `limit:archive-line` so
@@ -89,12 +90,18 @@ describe("an archive line past what a restore reads", () => {
       const before = readdirSync(backups).sort();
       const backup = await ownerOf(server).runBackup();
       expect(backup.ok, JSON.stringify(backup.data)).toBe(false);
-      expect(JSON.stringify(backup.error ?? backup.data)).toContain(large.id);
+      expect(backup.status).toBe(409);
+      expect(backup.error?.error.code).toBe("export_entry_unrestorable");
+      expect(backup.error?.error.details).toMatchObject({
+        entry: { kind: "item", id: large.id },
+      });
+      await expectMatchesSchema("POST", "/backups", 409, backup.error);
       expect(readdirSync(backups).sort()).toEqual(before);
     } finally {
       await server.clearFault();
     }
 
+    expect((await working.deleteItem(large.id)).ok).toBe(true);
     const purged = await working.purgeItem(large.id);
     expect(purged.ok, JSON.stringify(purged.error)).toBe(true);
     const again = await exported();
@@ -132,6 +139,7 @@ describe("an archive line past what a restore reads", () => {
       await server.clearFault();
     }
 
+    expect((await working.deleteItem(big.id)).ok).toBe(true);
     const purged = await working.purgeItem(big.id);
     expect(purged.ok, JSON.stringify(purged.error)).toBe(true);
   });

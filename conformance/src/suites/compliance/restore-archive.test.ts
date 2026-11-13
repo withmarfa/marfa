@@ -1093,6 +1093,7 @@ describe("what a restore answers", () => {
         "edges_imported",
         "edges_skipped",
         "edges_skipped_reasons",
+        "entries_skipped",
         "imported",
         "type_icons_added",
         "type_icons_skipped",
@@ -1144,6 +1145,7 @@ describe("what a restore answers", () => {
       connector_agreements_skipped: 0,
       rows_imported: 0,
       rows_skipped: 0,
+      entries_skipped: [],
       set_up_again: expect.any(String),
     });
     await expectMatchesSchema("POST", "/restore", 200, first.data);
@@ -1193,6 +1195,7 @@ describe("what a restore answers", () => {
       connector_agreements_skipped: 0,
       rows_imported: 0,
       rows_skipped: 0,
+      entries_skipped: [],
       set_up_again: expect.any(String),
     });
     await expectMatchesSchema("POST", "/restore", 200, again.data);
@@ -1383,11 +1386,13 @@ describe("what a restore answers", () => {
         name: "manifest.json",
         body: JSON.stringify(emptyManifest({ edge_type_count: 1 })),
       },
+      lineFile("files", ""),
       lineFile(
         "instance",
         `${JSON.stringify({ edge_type: { id: "about", label: "About" } })}\n`,
       ),
       lineFile("items", ""),
+      lineFile("versions", ""),
       lineFile("edges", ""),
       lineFile("rows", ""),
     ]);
@@ -1749,7 +1754,11 @@ describe("a restore refused while its body is still arriving", () => {
     tar([
       {
         name: "manifest.json",
-        body: JSON.stringify({ version: 99, written_by: "marfa-server 0.0.1" }),
+        body: JSON.stringify({
+          version: 99,
+          format: "marfa-archive",
+          written_by: "marfa-server 0.0.1",
+        }),
       },
       { name: "padding.bin", body: new Uint8Array(size) },
     ]);
