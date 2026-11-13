@@ -706,3 +706,46 @@ fn a_list_has_a_header_and_a_status_with_no_items_says_so() {
     );
     assert!(!ran.stdout.contains("{}"), "{}", ran.stdout);
 }
+
+#[test]
+fn a_backup_run_and_an_adopted_folder_each_say_what_happened_in_a_sentence() {
+    let home = scratch("backups");
+    let taken = json!({
+        "outcome": "put",
+        "backup": {"name": "2026-11-13T10-00-00Z", "instance_id": "i1",
+                   "created_at": "2026-11-13T10:00:00.000Z", "size_bytes": 10},
+        "removed": 1,
+        "unremoved": 0,
+        "blobs_lost": ["sha256-aa", "sha256-bb"],
+    });
+    let adopted = json!({
+        "store_id": "s2",
+        "replaced_store_id": "s1",
+        "backups_forgotten": 1,
+        "copies_forgotten": 3,
+    });
+    let door = Door::open(vec![
+        ok(taken.clone()),
+        ok(adopted.clone()),
+        ok(adopted.clone()),
+    ]);
+
+    let ran = run(&home, &door.url, &["backups", "run"]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        ran.stdout,
+        "took backup 2026-11-13T10-00-00Z; deleted 1 old backup\n\
+         2 files lost, which the backup names and no store could give: sha256-aa, sha256-bb\n"
+    );
+
+    let ran = run(&home, &door.url, &["backups", "folder", "adopt"]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(
+        ran.stdout,
+        "adopted the backup folder as store s2, replacing s1; forgot 1 backup and 3 file copies\n"
+    );
+
+    let ran = run(&home, &door.url, &["--json", "backups", "folder", "adopt"]);
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    assert_eq!(serde_json::from_str::<Value>(&ran.stdout).unwrap(), adopted);
+}

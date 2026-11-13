@@ -1,7 +1,8 @@
 use clap::Subcommand;
+use serde_json::Value;
 
 use crate::error::CliError;
-use crate::output::Printer;
+use crate::output::{Printer, printable};
 use crate::remote::Remote;
 use crate::remote::request::Request;
 
@@ -54,12 +55,78 @@ pub fn request(command: &BackupsCommand) -> Request {
     }
 }
 
+fn count(answer: &Value, field: &str) -> u64 {
+    answer.get(field).and_then(Value::as_u64).unwrap_or(0)
+}
+
+fn plural(count: u64, one: &str, many: &str) -> String {
+    format!("{count} {}", if count == 1 { one } else { many })
+}
+
+fn text<'a>(answer: &'a Value, field: &str) -> &'a str {
+    answer.get(field).and_then(Value::as_str).unwrap_or("")
+}
+
+fn ran_text(answer: &Value) -> String {
+    let name = answer
+        .pointer("/backup/name")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    let mut line = format!(
+        "took backup {}; deleted {}",
+        printable(name),
+        plural(count(answer, "removed"), "old backup", "old backups")
+    );
+    let unremoved = count(answer, "unremoved");
+    if unremoved > 0 {
+        line.push_str(&format!(
+            ", could not delete {}",
+            plural(unremoved, "old backup", "old backups")
+        ));
+    }
+    let lost: Vec<String> = answer
+        .get("blobs_lost")
+        .and_then(Value::as_array)
+        .map(|hashes| {
+            hashes
+                .iter()
+                .filter_map(Value::as_str)
+                .map(printable)
+                .collect()
+        })
+        .unwrap_or_default();
+    if !lost.is_empty() {
+        line.push_str(&format!(
+            "\n{} lost, which the backup names and no store could give: {}",
+            plural(lost.len() as u64, "file", "files"),
+            lost.join(", ")
+        ));
+    }
+    line
+}
+
+fn adopted_text(answer: &Value) -> String {
+    format!(
+        "adopted the backup folder as store {}, replacing {}; forgot {} and {}",
+        printable(text(answer, "store_id")),
+        printable(text(answer, "replaced_store_id")),
+        plural(count(answer, "backups_forgotten"), "backup", "backups"),
+        plural(
+            count(answer, "copies_forgotten"),
+            "file copy",
+            "file copies"
+        )
+    )
+}
+
 pub fn run(command: BackupsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let answer = remote.json(&request(&command))?;
     match command {
         BackupsCommand::Restore { .. } => super::restore::answered(&answer, out),
-        BackupsCommand::List | BackupsCommand::Run | BackupsCommand::Folder { .. } => {
-            out.value(&answer)
-        }
+        BackupsCommand::Run => out.report(&answer, || ran_text(&answer)),
+        BackupsCommand::Folder {
+            command: FolderCommand::Adopt,
+        } => out.report(&answer, || adopted_text(&answer)),
+        BackupsCommand::List => out.value(&answer),
     }
 }
