@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use super::{Destination, OMISSIONS, missing_past_retention, parse};
+use super::{Destination, Listed, OMISSIONS, parse};
 use crate::app::App;
 use crate::app::archive::restore::named::files_named;
 use crate::app::blobs::Hash;
@@ -87,6 +87,7 @@ pub(super) fn settle(
     listed: &HashSet<String>,
     now: Stamp,
 ) -> Result<()> {
+    let days = Listed::of(listed);
     for backup in found(tx, store)? {
         if listed.contains(&backup.name) {
             if backup.missing_since.is_some() || backup.omissions > 0 {
@@ -110,7 +111,8 @@ pub(super) fn settle(
             }
         };
         let omissions = backup.omissions.saturating_add(1);
-        if omissions >= OMISSIONS && missing_past_retention(since, now) {
+        let missing = parse(&backup.name).map_or(since, |taken| since.max(taken));
+        if omissions >= OMISSIONS && days.past_retention(missing) {
             forget(tx, backup.seq)?;
         } else {
             tx.prepare_cached(

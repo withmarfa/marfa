@@ -33,7 +33,7 @@ use crate::db::Write;
 use crate::settings::registry::BACKUP_INTERVAL_SECONDS;
 
 pub use found::survey_folder;
-pub use names::{doomed, instance_of, missing_past_retention, name_of, parse};
+pub use names::{Listed, doomed, instance_of, name_of, parse};
 
 /// The folder under the object store's prefix that holds a folder of backups per instance.
 pub const FOLDER: &str = "backups";
@@ -267,7 +267,7 @@ async fn hold(
     Ok(())
 }
 
-/// How many listings must omit a backup, the first and last over retention apart, before it is gone.
+/// How many listings must omit a backup, once it is past retention, before it is gone.
 const OMISSIONS: i64 = 3;
 
 /// A backup as the database records it.
@@ -311,6 +311,7 @@ fn reconcile(
          WHERE seq = ?1",
     )?;
     let mut forget = tx.prepare_cached("DELETE FROM backups WHERE seq = ?1")?;
+    let remaining = Listed::of(listed.iter().filter(|name| !deleted.contains(*name)));
     for backup in recorded {
         let seq = backup.seq;
         if deleted.contains(&backup.name) {
@@ -320,13 +321,13 @@ fn reconcile(
                 shown.execute([seq])?;
             }
         } else if Some(seq) != newest {
-            if parse(&backup.name).is_none() {
+            let Some(taken) = parse(&backup.name) else {
                 tracing::error!(
                     backup = %backup.name,
                     "A recorded backup's name does not read, so the files it names stay held"
                 );
                 continue;
-            }
+            };
             let omissions = backup.omissions.saturating_add(1);
             let since = match backup.missing_since.as_deref().map(Stamp::parsed) {
                 None => now,
@@ -340,7 +341,7 @@ fn reconcile(
                     continue;
                 }
             };
-            if omissions >= OMISSIONS && missing_past_retention(since, now) {
+            if omissions >= OMISSIONS && remaining.past_retention(since.max(taken)) {
                 forget.execute([seq])?;
             } else {
                 omitted.execute(params![seq, now, omissions])?;
@@ -1541,6 +1542,15 @@ mod tests {
         listed.iter().map(|name| name.to_string()).collect()
     }
 
+    /// One backup at the start of each day in `days` after the first backup.
+    fn daily(days: std::ops::RangeInclusive<i64>) -> Vec<String> {
+        days.map(|day| named(day * 24)).collect()
+    }
+
+    fn refs(names: &[String]) -> Vec<&str> {
+        names.iter().map(String::as_str).collect()
+    }
+
     fn settled(tx: &Transaction<'_>, listed: &[&str], deleted: &[&str], now: Stamp) {
         reconcile(tx, BUCKET, &names(listed), &names(deleted), now).unwrap();
     }
@@ -1672,14 +1682,14 @@ mod tests {
         hold(&tx, BUCKET, &kept, &files(&[&a])).unwrap();
         record_put(&tx, BUCKET, 0, &kept, at(0), None).unwrap();
         hold(&tx, BUCKET, &failed, &[]).unwrap();
-        settled(&tx, &[], &[], at(0).plus_ms(40 * DAY_MS).unwrap());
+        settled(&tx, &refs(&daily(1..=40)), &[], at(40 * 24));
 
         assert_eq!(held_of(&tx, &[&a]), ['a']);
         assert_eq!(count(&tx, "SELECT COUNT(*) FROM backups"), 2);
     }
 
     #[test]
-    fn a_backup_is_forgotten_once_three_listings_over_more_than_retention_omit_it() {
+    fn a_backup_is_forgotten_once_three_listings_omit_it_and_list_32_later_days() {
         let mut conn = database();
         let tx = conn.transaction().unwrap();
         let a = hash('a');
@@ -1691,30 +1701,34 @@ mod tests {
         assert_eq!(held_of(&tx, &[&a]), ['a']);
 
         hold(&tx, BUCKET, &next, &[]).unwrap();
-        let since = at(1);
-        let retained = since.plus_ms(31 * DAY_MS).unwrap();
-        settled(&tx, &[], &[], since);
-        settled(&tx, &[], &[], retained);
-        settled(&tx, &[], &[], retained);
+        let (month, more) = (daily(1..=30), daily(1..=32));
+        let mut ahead = month.clone();
+        ahead.push(named(400 * 24));
+        settled(&tx, &[], &[], at(1));
+        settled(&tx, &refs(&month), &[], at(2));
+        settled(&tx, &refs(&ahead), &[], at(3));
         assert_eq!(held_of(&tx, &[&a]), ['a']);
-        settled(&tx, &[], &[], retained.plus_ms(1).unwrap());
+        settled(&tx, &refs(&more), &[], at(1));
         assert!(held_of(&tx, &[&a]).is_empty());
         assert_eq!(count(&tx, "SELECT COUNT(*) FROM backups"), 1);
         assert_eq!(count(&tx, "SELECT COUNT(*) FROM backup_files"), 0);
     }
 
     #[test]
-    fn two_listings_omitting_a_backup_over_more_than_retention_are_not_enough() {
+    fn two_listings_omitting_a_backup_past_retention_are_not_enough() {
         let mut conn = database();
         let tx = conn.transaction().unwrap();
         let a = hash('a');
         registered(&tx, &[&a]);
+        let later = daily(1..=40);
 
         hold(&tx, BUCKET, &named(0), &files(&[&a])).unwrap();
         hold(&tx, BUCKET, &named(1), &[]).unwrap();
-        settled(&tx, &[], &[], at(1));
-        settled(&tx, &[], &[], at(1).plus_ms(400 * DAY_MS).unwrap());
+        settled(&tx, &refs(&later), &[], at(1));
+        settled(&tx, &refs(&later), &[], at(2));
         assert_eq!(held_of(&tx, &[&a]), ['a']);
+        settled(&tx, &refs(&later), &[], at(3));
+        assert!(held_of(&tx, &[&a]).is_empty());
     }
 
     #[test]
@@ -1730,12 +1744,18 @@ mod tests {
         settled(&tx, &[], &[], at(1));
         settled(&tx, &[], &[], at(2));
         settled(&tx, &[&lost], &[], at(3));
-        let again = at(1).plus_ms(32 * DAY_MS).unwrap();
-        settled(&tx, &[], &[], again);
-        settled(&tx, &[], &[], again.plus_ms(DAY_MS).unwrap());
+        let (again, month) = (at(32 * 24), daily(1..=33));
+        for day in 0..3 {
+            settled(
+                &tx,
+                &refs(&month),
+                &[],
+                again.plus_ms(day * DAY_MS).unwrap(),
+            );
+        }
         assert_eq!(held_of(&tx, &[&a]), ['a']);
 
-        settled(&tx, &[], &[], again.plus_ms(31 * DAY_MS + 1).unwrap());
+        settled(&tx, &refs(&daily(1..=65)), &[], again);
         assert!(held_of(&tx, &[&a]).is_empty());
     }
 
@@ -1754,7 +1774,7 @@ mod tests {
             [&lost],
         )
         .unwrap();
-        settled(&tx, &[], &[], at(0).plus_ms(400 * DAY_MS).unwrap());
+        settled(&tx, &refs(&daily(1..=40)), &[], at(2));
         assert_eq!(held_of(&tx, &[&a]), ['a']);
     }
 
@@ -1767,7 +1787,10 @@ mod tests {
 
         hold(&tx, BUCKET, "stray.tar", &files(&[&a])).unwrap();
         hold(&tx, BUCKET, &named(0), &[]).unwrap();
-        settled(&tx, &[], &[], at(0).plus_ms(400 * DAY_MS).unwrap());
+        let later = daily(1..=40);
+        for hours in 1..=3 {
+            settled(&tx, &refs(&later), &[], at(hours));
+        }
         assert_eq!(held_of(&tx, &[&a]), ['a']);
     }
 
@@ -1778,39 +1801,43 @@ mod tests {
         let hashes: Vec<Hash> = (0..1_000).map(numbered).collect();
         registered(&tx, &hashes.iter().collect::<Vec<_>>());
 
+        let mut listed: Vec<String> = Vec::new();
         for (hour, hash) in hashes.iter().enumerate() {
             let hour = hour as i64;
-            settled(&tx, &[], &[], at(hour));
+            let gone = doomed(&listed, at(hour));
+            listed.retain(|name| !gone.contains(name));
+            settled(&tx, &refs(&listed), &refs(&gone), at(hour));
             let file = files(&[hash]);
-            attempt(&tx, BUCKET, &named(hour), &file, &file, hour % 2 == 1).unwrap();
+            let interrupted = hour % 2 == 1;
+            attempt(&tx, BUCKET, &named(hour), &file, &file, interrupted).unwrap();
+            if !interrupted {
+                listed.push(named(hour));
+            }
         }
         let recorded = count(&tx, "SELECT COUNT(*) FROM backups");
-        let rows = count(&tx, "SELECT COUNT(*) FROM backup_files");
         let open = count(
             &tx,
             "SELECT COUNT(*) FROM backup_files WHERE last_seq IS NULL",
         );
-        let kept = 31 * 24 + 3;
-        assert_eq!(recorded, kept, "{recorded}");
-        assert_eq!(rows, (kept - 1) / 2, "{rows}");
+        let interrupted_kept = recorded - listed.len() as i64;
+        assert!(
+            (30 * 12..=34 * 12).contains(&interrupted_kept),
+            "{interrupted_kept}"
+        );
         assert_eq!(open, 0, "{open}");
         assert!(
             held(&tx, BUCKET, &hashes[998..])
                 .unwrap()
                 .contains(&hashes[998])
         );
-        let forgotten = 1_000 - kept as usize;
-        assert!(held(&tx, BUCKET, &hashes[..forgotten]).unwrap().is_empty());
-        assert!(
-            held(&tx, BUCKET, &hashes[forgotten..=forgotten + 1])
-                .unwrap()
-                .contains(&hashes[forgotten + 1])
-        );
+        assert!(held(&tx, BUCKET, &hashes[1..100]).unwrap().is_empty());
 
-        let last = named(2_000);
+        let last = named(2_000 + 32 * 24);
         hold(&tx, BUCKET, &last, &[]).unwrap();
-        for hours in [2_000, 2_001, 2_000 + 31 * 24 + 1] {
-            settled(&tx, &[&last], &[], at(hours));
+        let later: Vec<String> = (0..=32).map(|day| named(2_000 + day * 24)).collect();
+        settled(&tx, &[], &[], at(1_000));
+        for hours in 1..=2 {
+            settled(&tx, &refs(&later), &[], at(2_000 + 32 * 24 + hours));
         }
         assert_eq!(count(&tx, "SELECT COUNT(*) FROM backups"), 1);
         assert_eq!(count(&tx, "SELECT COUNT(*) FROM backup_files"), 0);
@@ -1887,13 +1914,13 @@ mod tests {
         assert_eq!(held_of(&tx, &[&a, &b]), ['a']);
         assert_eq!(begin(&tx, BUCKET, &found).unwrap_err().code, Code::Conflict);
 
-        let since = at(6);
-        let retained = since.plus_ms(31 * DAY_MS).unwrap();
-        for now in [since, retained, retained] {
-            found::settle(&tx, BUCKET, &names(&[]), now).unwrap();
+        let mut ahead = daily(1..=30);
+        ahead.push(named(400 * 24));
+        for now in [at(6), at(7), at(8)] {
+            found::settle(&tx, BUCKET, &names(&refs(&ahead)), now).unwrap();
         }
         assert_eq!(held_of(&tx, &[&a, &b]), ['a']);
-        found::settle(&tx, BUCKET, &names(&[]), retained.plus_ms(1).unwrap()).unwrap();
+        found::settle(&tx, BUCKET, &names(&refs(&daily(1..=32))), at(9)).unwrap();
         assert!(held_of(&tx, &[&a, &b]).is_empty());
         assert_eq!(count(&tx, "SELECT COUNT(*) FROM found_backup_files"), 0);
     }
