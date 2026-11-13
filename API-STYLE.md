@@ -2,29 +2,19 @@
 
 How Marfa's API description is written: every summary, description and example in `openapi.json`. The committed `openapi.json` is the document: it is edited directly, the server is held to it, and this guide governs its text.
 
-The wording follows the [Google developer documentation style guide](https://developers.google.com/style), including its guidance on [API reference text](https://developers.google.com/style/api-reference-comments). Names and shapes follow `GLOSSARY.md`, which follows Stripe's API conventions. Where this guide is silent, follow Google.
+The wording follows the [Google developer documentation style guide](https://developers.google.com/style), including its guidance on [API reference text](https://developers.google.com/style/api-reference-comments). Names and shapes follow `GLOSSARY.md`. Where this guide is silent, follow Google. This guide adds only what is Marfa's own.
 
 **(checked)** marks a rule that `ci/openapi/style.test.ts` checks. A change that breaks one fails the test, naming what broke it.
 
-## Who reads it
-
-Two readers use every sentence:
-
-- A person reading the API reference, one operation at a time.
-- An agent or a code generator reading the document, often one operation, parameter or field at a time.
-
-So each operation, parameter, field and response says what it needs to on its own. A rule that applies everywhere is stated once, in the general sections, and never repeated in an operation.
+A person reading the API reference, and an agent or a code generator reading the document, often read one operation, parameter or field at a time. So each operation, parameter, field and response says what it needs to on its own, and a rule that applies everywhere is stated once, in the general sections, and never repeated in an operation.
 
 ## Voice
 
 - **"You" is the credential that sends the request**: an API key, or the token of an app someone signed in to. **Marfa** is the actor: "Marfa creates an ID", not "the server stamps an id".
-- Present tense and active voice. Short sentences, one idea each. Every word earns its place: the reader should get what they need in one pass.
 - No em dashes. Use a colon, a comma, parentheses or a new sentence. **(checked)**
-- Use the words in `GLOSSARY.md`, and none of its banned words. Write "ID" in prose and `id` only for the field.
+- Use the words in `GLOSSARY.md`, and none of its banned words. **(checked: `integration`, `substrate`, `hosted mode` and the British spelling of `canceled`)** Write "ID" in prose and `id` only for the field.
 - Say what you can do and what you get back. Don't describe how the server is built: no tables, handlers, middleware, history, issue numbers or reasons a design was chosen. Those belong in the contract or in code comments.
-- Use code formatting only for text you would type: field and parameter names, values, error codes, headers, type identifiers, paths.
 - Don't link out of the document. **(checked)**
-- American English.
 
 ## Operations
 
@@ -85,6 +75,7 @@ So each operation, parameter, field and response says what it needs to on its ow
   - An optional field: when it is present.
 - **(checked: at most 250 characters)**
 - **Property names are snake_case, and a refusal's `error` object holds `code`, `message` and, where there is one, `details`**, never the HTTP status. A name that belongs to JSON Schema, such as `maxLength` in a schema, keeps its spelling.
+- **An object declares its shape unless it is open on purpose.** `ci/openapi/open-objects.test.ts` lists each object whose `additionalProperties` takes any value, with the reason it stays open.
 - An enum's own description says what each value means, one clause each. For a list of values, that description goes on `items`.
 - A schema used in several places has text that is true in all of them. A list that never pages says so on its own page schema: "Always `null`: Marfa returns every webhook in one page."
 - In a request body, the field says what happens when you leave it out.
@@ -115,7 +106,7 @@ So each operation, parameter, field and response says what it needs to on its ow
 
 ## Groups
 
-Each operation has one tag, which is its group in the reference. The groups are the document's `tags`, each with a one-sentence description, its order and its operations. Add an operation to the group of the object it acts on; add a group only for a new kind of object.
+Each operation has one tag, which is its group in the reference. The groups are the document's `tags`, each with a one-sentence description and the order of its operations. Add an operation to the group of the object it acts on; add a group only for a new kind of object.
 
 Within a group, operations come in the order a developer meets them:
 
@@ -144,7 +135,7 @@ After any change, run `pnpm generate` and commit everything it writes in the sam
 ## Before you open a pull request
 
 1. The summary uses a verb from the table.
-2. The operation has its tag and its place in that group's `operations`.
+2. The operation has its tag and its place in that tag's `x-operation-order`.
 3. The description starts with a verb in the third person, is at most three sentences, and has no word it doesn't need.
 4. Every parameter, field and response you added or changed is described.
 5. Every fact matches the contract in `conformance/spec/`. Where the server and the contract disagree, fix the one that is wrong; never describe around it.
