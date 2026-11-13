@@ -637,7 +637,7 @@ export interface paths {
         };
         /**
          * List table rows
-         * @description Returns a page of a table's rows, by `id` unless you name a sort. A row without the sorted column comes last, and ties go by `id`.
+         * @description Returns a page of a table's rows, in the table's `order` unless you name a sort, and by `id` for a table that names no `order`. A row without the sorted column comes last, and ties go by `id`.
          */
         get: operations["listTableRows"];
         put?: never;
@@ -13246,7 +13246,7 @@ export interface operations {
                 cursor?: string;
                 /** @description Only return rows that match this expression, in the item filter grammar, where `values.<column>` names a column and `id` and `updated_at` are the row's own. */
                 filter?: string;
-                /** @description What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to `id`. A page sorted by the table's `order` column reads only the rows it answers; a page sorted by another column reads every row. */
+                /** @description What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to the table's `order` column, or to `id` for a table that names none. A page sorted by the table's `order` column reads only the rows it answers; a page sorted by another column reads every row. */
                 sort?: string;
                 /** @description The order of the sort: `asc` or `desc`. */
                 direction?: "asc" | "desc";
