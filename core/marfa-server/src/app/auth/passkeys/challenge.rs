@@ -1,5 +1,4 @@
-//! The browser holds a ceremony's state, sealed under a key only this instance can derive;
-//! the table holds only the digests of challenges already answered.
+//! A pending challenge lives sealed in the browser; the table keeps only answered ones.
 
 use aes_gcm::aead::{Aead, Nonce, Payload};
 use aes_gcm::{Aes256Gcm, KeyInit};
@@ -118,7 +117,7 @@ struct Opened {
     taken: Taken,
 }
 
-/// Any cookie that does not open is `None`, so none tells a forger why.
+/// Every failure is `None`, so a refusal never says why.
 fn open(secret: &str, cookie: &str, purpose: Purpose) -> Option<Opened> {
     if cookie.len() > MOST_COOKIE_CHARS {
         return None;
@@ -153,8 +152,7 @@ pub const UNREAD: Unread<'static> = Unread {
     scope: "1",
 };
 
-/// Spends the challenge the cookie holds, or `None` where it is not this instance's,
-/// not for `purpose`, ended, or answered before.
+/// `None` for a cookie not this instance's, not for `purpose`, ended or answered before.
 pub fn take(
     tx: &Transaction<'_>,
     secret: &str,
