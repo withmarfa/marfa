@@ -13,6 +13,9 @@ use crate::app::refusal::{Refusal, Result};
 pub const SECRET_KEY: &str = "cursor_secret";
 
 const TAG_BYTES: usize = 12;
+
+/// Every cursor starts with this letter, so a command line never reads one as a flag.
+const LEAD: &str = "c";
 const KEYED_BYTES: usize = 16;
 
 #[derive(Clone)]
@@ -55,7 +58,7 @@ impl Secret {
         let payload = compact::encode(payload);
         let mut bytes = self.tag(scope, &payload)?;
         bytes.extend(payload);
-        Ok(BASE64_URL_SAFE_NO_PAD.encode(bytes))
+        Ok(format!("{LEAD}{}", BASE64_URL_SAFE_NO_PAD.encode(bytes)))
     }
 
     /// A place in a listing ordered by one text key, then by id.
@@ -76,9 +79,10 @@ impl Secret {
     }
 
     pub fn open(&self, scope: &str, cursor: &str) -> Result<Json> {
-        let bytes = BASE64_URL_SAFE_NO_PAD
-            .decode(cursor)
-            .map_err(|_| refused())?;
+        let bytes = cursor
+            .strip_prefix(LEAD)
+            .ok_or_else(refused)
+            .and_then(|body| BASE64_URL_SAFE_NO_PAD.decode(body).map_err(|_| refused()))?;
         if bytes.len() < TAG_BYTES {
             return Err(refused());
         }
@@ -377,6 +381,29 @@ mod compact {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_cursor_never_starts_with_a_hyphen_and_needs_its_lead_letter() {
+        let secret = Secret(b"cursor-test-secret".to_vec());
+        let mut hyphen_first_without_lead = 0;
+        for at in 0..2000 {
+            let cursor = secret
+                .issue_at("scope", &format!("key {at}"), "id")
+                .unwrap();
+            assert!(cursor.starts_with('c'), "{cursor}");
+            assert!(secret.open_at("scope", &cursor).is_ok());
+            let bare = &cursor[1..];
+            hyphen_first_without_lead += usize::from(bare.starts_with('-'));
+            assert!(
+                secret.open_at("scope", bare).is_err(),
+                "no lead letter: {bare}"
+            );
+        }
+        assert!(
+            hyphen_first_without_lead > 0,
+            "without the lead letter some of these would start with a hyphen"
+        );
+    }
 
     #[test]
     fn a_keyed_id_is_the_first_sixteen_bytes_of_the_tag_whatever_a_cursor_keeps() {

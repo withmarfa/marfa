@@ -6272,9 +6272,9 @@ When a device answers a read of a table from the copy, a device MUST select, ord
 
 ### `device/table-read-cursor-short`
 
-When a device answers a page of a table's rows from the copy with a `next_cursor`, a device MUST make the cursor only of letters, digits, `-` and `_`, and of at most 100 characters when the rows' sort value is no longer than 24 characters.
+When a device answers a page of a table's rows from the copy with a `next_cursor`, a device MUST make the cursor only of letters, digits, `-` and `_`, beginning with a letter, and of at most 100 characters when the rows' sort value is no longer than 24 characters.
 
-**Reason:** a person copies a cursor from a screen, and a long one is hard to copy and to read. A cursor holds the sort value of the row it follows.
+**Reason:** a person copies a cursor from a screen into the next command as a separate argument, which a command line reads as a flag if it begins with `-`, and a long one is hard to copy and to read. A cursor holds the sort value of the row it follows.
 
 **Tests:** `device/tables-live.test.ts › pages, filters, sorts and totals from the copy as the server does`.
 

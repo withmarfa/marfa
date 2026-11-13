@@ -1227,7 +1227,7 @@ describe("reading a table on a device", () => {
         cursor = page.next_cursor;
         if (cursor !== null) {
           expect(cursor, JSON.stringify(query)).toMatch(
-            /^[A-Za-z0-9_-]{1,100}$/,
+            /^[A-Za-z][A-Za-z0-9_-]{0,99}$/,
           );
         }
         pages += 1;

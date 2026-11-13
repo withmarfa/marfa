@@ -1443,17 +1443,21 @@ fn cursor_of(scope: &[u8; SCOPE_BYTES], key: &Value, id: &str) -> String {
         }
     }
     bytes.extend_from_slice(key.to_string().as_bytes());
-    BASE64_URL_SAFE_NO_PAD.encode(bytes)
+    format!("{CURSOR_LEAD}{}", BASE64_URL_SAFE_NO_PAD.encode(bytes))
 }
+
+/// Every cursor starts with this letter, so a command line never reads one as a flag.
+const CURSOR_LEAD: &str = "c";
 
 const UUID_ID: u8 = 0;
 const TEXT_ID: u8 = 1;
 
 fn opened(scope: &[u8; SCOPE_BYTES], cursor: &str) -> Result<(Value, String)> {
     let refused = || refused("cursor", "the cursor does not belong to this listing");
-    let bytes = BASE64_URL_SAFE_NO_PAD
-        .decode(cursor)
-        .map_err(|_| refused())?;
+    let bytes = cursor
+        .strip_prefix(CURSOR_LEAD)
+        .ok_or_else(refused)
+        .and_then(|body| BASE64_URL_SAFE_NO_PAD.decode(body).map_err(|_| refused()))?;
     let rest = bytes
         .strip_prefix(scope.as_slice())
         .and_then(|rest| rest.split_first())
@@ -1786,6 +1790,7 @@ mod tests {
         OR_TERMS, Read, RowsAsked, SPAN_GAP, cursor_of, filter_of, opened, page_from_copy, plan,
     };
     use serde_json::{Map, Value, json};
+    use sha2::Digest;
 
     #[test]
     fn a_row_cursor_is_short_and_comes_back_only_to_its_own_listing() {
@@ -1800,9 +1805,27 @@ mod tests {
         let number = cursor_of(&here, &json!(12.5), "r");
         assert_eq!(opened(&here, &number).unwrap(), (json!(12.5), "r".into()));
         assert!(opened(&[2u8; 8], &cursor).is_err());
-        for bad in ["", "abc", "!!!!", &cursor[..cursor.len() - 3]] {
+        for bad in ["", "abc", "!!!!", &cursor[..cursor.len() - 3], &cursor[1..]] {
             assert!(opened(&here, bad).is_err(), "{bad}");
         }
+    }
+
+    #[test]
+    fn a_row_cursor_never_starts_with_a_hyphen() {
+        let mut bare_hyphens = 0;
+        for at in 0..2000u32 {
+            let scope: [u8; 8] = sha2::Sha256::digest(at.to_be_bytes())[..8]
+                .try_into()
+                .unwrap();
+            let cursor = cursor_of(&scope, &json!(at), "row");
+            assert!(cursor.starts_with('c'), "{cursor}");
+            assert!(opened(&scope, &cursor).is_ok());
+            bare_hyphens += usize::from(cursor[1..].starts_with('-'));
+        }
+        assert!(
+            bare_hyphens > 0,
+            "without the lead letter some would start with a hyphen"
+        );
     }
 
     fn ids(count: usize) -> Vec<String> {

@@ -118,7 +118,7 @@ describe("a cursor", () => {
       const page = await send(listing.key(), listing.path);
       const cursor = page.body.next_cursor as string;
       expect(cursor, listing.name).toEqual(expect.any(String));
-      expect(cursor, listing.name).toMatch(/^[A-Za-z0-9_-]+$/);
+      expect(cursor, listing.name).toMatch(/^[A-Za-z][A-Za-z0-9_-]*$/);
       expect(cursor.length, `${listing.name}: ${cursor}`).toBeLessThanOrEqual(
         100,
       );

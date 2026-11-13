@@ -1094,9 +1094,9 @@ If a request to an operation that answers `next_cursor` sends a `cursor` that an
 
 ### `search-and-filters/cursor-short`
 
-When an operation answers a `next_cursor`, the server MUST make the cursor only of letters, digits, `-` and `_`, and of at most 100 characters when the listing's order holds no text.
+When an operation answers a `next_cursor`, the server MUST make the cursor only of letters, digits, `-` and `_`, beginning with a letter, and of at most 100 characters when the listing's order holds no text.
 
-**Reason:** a person copies a cursor from a screen into the next command, and a long one is hard to copy and to read. A listing ordered by a text value holds that value in its cursor.
+**Reason:** a person copies a cursor from a screen into the next command as a separate argument, which a command line reads as a flag if it begins with `-`, and a long one is hard to copy and to read. A listing ordered by a text value holds that value in its cursor.
 
 **Tests:** `compliance/cursor-other-listing.test.ts › is short and made only of characters a URL carries as they are`.
 

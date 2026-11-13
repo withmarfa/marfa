@@ -115,6 +115,24 @@ fn all_alone_reads_a_page_that_has_no_next_and_refuses_a_cursor_beside_it() {
 }
 
 #[test]
+fn a_cursor_with_hyphens_and_underscores_is_taken_as_a_separate_argument() {
+    let home = scratch("cursor-separate");
+    let door = Door::open(vec![ok(json!({"data": [note("a")], "next_cursor": null}))]);
+    let ran = run(
+        &home,
+        &door.url,
+        &["items", "list", "--cursor", "cA-b_C-9", "--limit", "1"],
+    );
+    assert_eq!(ran.code, 0, "{}", ran.stderr);
+    let asked = door.received();
+    assert!(
+        asked[0].path().contains("cursor=cA-b_C-9"),
+        "{}",
+        asked[0].path()
+    );
+}
+
+#[test]
 fn all_stops_where_the_server_names_a_cursor_it_named_before() {
     let home = scratch("all-loop");
     let door = Door::open(vec![
