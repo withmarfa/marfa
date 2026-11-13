@@ -17,7 +17,11 @@ import {
   listEntries,
   type LineFile,
 } from "../../utils/archive.js";
-import { instanceIdOf, ownerOf } from "../../utils/backups.js";
+import {
+  afterFirstScheduledBackup,
+  instanceIdOf,
+  ownerOf,
+} from "../../utils/backups.js";
 import { same } from "../../utils/drill.js";
 import {
   bootFreshServer,
@@ -46,8 +50,12 @@ let originId: string;
 const others: FreshServer[] = [];
 
 beforeAll(async () => {
-  origin = await bootFreshServer("backup-folder-origin", FOLDER_ONLY);
+  origin = await bootFreshServer("backup-folder-origin", {
+    ...FOLDER_ONLY,
+    MARFA_BACKUP_INTERVAL_SECONDS: "31536000",
+  });
   originId = await instanceIdOf(origin);
+  await afterFirstScheduledBackup(origin);
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -58,11 +66,10 @@ afterAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 
 async function health(server: FreshServer) {
-  const answer = await new MarfaClient({
-    baseUrl: server.apiUrl,
-  }).rawRequest<{ status: string; backups: Record<string, unknown> }>(
-    "/health",
-  );
+  const answer = await clientsFor(server).operator.rawRequest<{
+    status: string;
+    backups: Record<string, unknown>;
+  }>("/health");
   expect(answer.status, JSON.stringify(answer.data)).toBe(200);
   return answer.data;
 }
@@ -85,8 +92,7 @@ function canonical(value: unknown): unknown {
 
 /** Every line an archive of everything carries, sorted. */
 async function linesOf(server: FreshServer) {
-  const { operator } = clientsFor(server);
-  const minted = await operator.createKey({
+  const minted = await ownerOf(server).createKey({
     label: "everything",
     source: `backup-folder-${String(Date.now())}`,
   });
@@ -153,6 +159,12 @@ describe("backups to a folder", () => {
       properties: { blob_ref: uploaded.data.hash, mime_type: "text/plain" },
     });
     expect(file.status, JSON.stringify(file.error)).toBe(201);
+    const edge = await working.createEdge({
+      source_id: ledger.data.item.id,
+      target_id: file.data.item.id,
+      edge_type: "references",
+    } as never);
+    expect(edge.status, JSON.stringify(edge.error)).toBe(201);
     made = {
       note: note.data.item.id,
       ledger: ledger.data.item.id,
@@ -160,12 +172,16 @@ describe("backups to a folder", () => {
       bytes,
     };
 
+    const scheduled = readdirSync(join(folder, "backups", originId));
+    expect(scheduled).toHaveLength(1);
     const run = await ownerOf(origin).runBackup();
     expect(run.status, JSON.stringify(run.error)).toBe(200);
     expect(run.data.outcome).toBe("put");
     name = run.data.backup.name;
     expect(name).toBe(`${run.data.backup.created_at}.tar`);
-    expect(readdirSync(join(folder, "backups", originId))).toEqual([name]);
+    expect(readdirSync(join(folder, "backups", originId)).sort()).toEqual(
+      [...scheduled, name].sort(),
+    );
     const archive = new Uint8Array(
       readFileSync(join(folder, "backups", originId, name)),
     );
