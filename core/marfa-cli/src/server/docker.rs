@@ -2,11 +2,13 @@
 //! another program in its place, which the tests use.
 
 use std::ffi::OsString;
+use std::net::IpAddr;
 use std::os::fd::AsFd;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
+use ipnet::IpNet;
 use serde_json::Value;
 
 use crate::error::CliError;
@@ -110,8 +112,9 @@ impl Docker {
         Ok(self.succeed(&args)?.lines().any(|line| line == name))
     }
 
-    /// The IPv4 range of a network, or `None` when there is no such network.
-    pub fn network_subnet(&self, name: &str) -> Result<Option<String>, CliError> {
+    /// Where a tunnel or proxy on this machine reaches a container on the
+    /// network from, or `None` when there is no such network.
+    pub fn network_gateways(&self, name: &str) -> Result<Option<String>, CliError> {
         if !self.exists(&["network", "ls"], name)? {
             return Ok(None);
         }
@@ -122,9 +125,9 @@ impl Docker {
             "--format",
             "{{json .IPAM.Config}}",
         ])?;
-        subnet_of(&config).map(Some).ok_or_else(|| {
+        gateways_of(&config).map(Some).ok_or_else(|| {
             CliError::Install(format!(
-                "the Docker network {name} has no IPv4 range, so the server cannot tell which address is its proxy. Remove it with `docker network rm {name}` and run this again"
+                "the Docker network {name} names no gateway, so the server cannot tell which address its tunnel or proxy connects from. Remove it with `docker network rm {name}` and run this again"
             ))
         })
     }
@@ -321,15 +324,17 @@ fn failed(args: &[&str], output: &Output) -> CliError {
     CliError::Install(format!("`docker {}` failed: {said}", args.join(" ")))
 }
 
-/// The first IPv4 range in what `docker network inspect` says of `.IPAM.Config`.
-pub fn subnet_of(config: &str) -> Option<String> {
+/// Each gateway in `.IPAM.Config`, as a range of one address: the published
+/// port forwards from the gateway, and any other address is a container.
+pub fn gateways_of(config: &str) -> Option<String> {
     let value: Value = serde_json::from_str(config).ok()?;
-    value
+    let ranges: Vec<String> = value
         .as_array()?
         .iter()
-        .filter_map(|entry| entry["Subnet"].as_str())
-        .find(|subnet| !subnet.contains(':'))
-        .map(str::to_string)
+        .filter_map(|entry| entry["Gateway"].as_str()?.parse::<IpAddr>().ok())
+        .map(|gateway| IpNet::from(gateway).to_string())
+        .collect();
+    (!ranges.is_empty()).then(|| ranges.join(","))
 }
 
 #[cfg(test)]
@@ -337,15 +342,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_first_ipv4_range_is_the_network() {
+    fn only_the_gateways_are_trusted() {
         assert_eq!(
-            subnet_of(
-                r#"[{"Subnet":"fd00::/64"},{"Subnet":"192.168.117.0/24","Gateway":"192.168.117.1"}]"#
-            ),
-            Some("192.168.117.0/24".into())
+            gateways_of(r#"[{"Subnet":"192.168.107.0/24","Gateway":"192.168.107.1"}]"#),
+            Some("192.168.107.1/32".into())
         );
-        assert_eq!(subnet_of("null"), None);
-        assert_eq!(subnet_of("[]"), None);
-        assert_eq!(subnet_of("nonsense"), None);
+        assert_eq!(
+            gateways_of(
+                r#"[{"Subnet":"192.168.117.0/24","Gateway":"192.168.117.1"},{"Subnet":"fd07::/64","Gateway":"fd07::1"}]"#
+            ),
+            Some("192.168.117.1/32,fd07::1/128".into())
+        );
+        for unread in [
+            r#"[{"Subnet":"192.168.107.0/24"}]"#,
+            r#"[{"Subnet":"192.168.107.0/24","Gateway":"not an address"}]"#,
+            r#"[{"Subnet":"192.168.107.0/24","Gateway":"192.168.107.1/24"}]"#,
+            "null",
+            "[]",
+            "nonsense",
+        ] {
+            assert_eq!(gateways_of(unread), None, "{unread}");
+        }
     }
 }

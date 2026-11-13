@@ -58,7 +58,7 @@ A passkey is bound to the address the owner signs in at, so that address must be
 
 ### Run the server in Docker
 
-`marfa server install --docker` runs the release image `ghcr.io/withmarfa/marfa-server` instead, for the same release as your `marfa`; choose another with `--release`. The install folder then holds a `compose.yaml` that is the same for every install, and the data lives in the Docker volume `<name>-data`. The container is named `<name>`, restarts unless you stop it, and publishes its port on `127.0.0.1` only. For proxy trust, the command makes a Docker network of its own, `<name>-net`, and trusts that network's range.
+`marfa server install --docker` runs the release image `ghcr.io/withmarfa/marfa-server` instead, for the same release as your `marfa`; choose another with `--release`. The install folder then holds a `compose.yaml` that is the same for every install, and the data lives in the Docker volume `<name>-data`. The container is named `<name>`, restarts unless you stop it, and publishes its port on `127.0.0.1` only. For proxy trust, the command makes a Docker network of its own, `<name>-net`, and trusts only that network's gateway, the address a tunnel or proxy on the host connects to the container from. Another container on the network isn't trusted. Docker Desktop and OrbStack forward a container's connection to `host.docker.internal` through the gateway too, so on a Mac a container that connects to the published port that way is trusted.
 
 An install keeps its runtime. To change it, export the data and restore it into a new install.
 

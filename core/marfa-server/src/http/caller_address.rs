@@ -107,6 +107,7 @@ mod tests {
     fn each_kind_of_trust_answers_as_it_should() {
         let inner = "10.0.0.0/8";
         let tunnel = "127.0.0.0/8, ::1/128";
+        let gateway = "192.168.107.1/32";
         #[rustfmt::skip]
         let table: &[Case] = &[
             ("no trust ignores a forwarded address", "192.0.2.1", Trust::Nothing, &[(XFF, "203.0.113.9")], "192.0.2.1"),
@@ -128,6 +129,8 @@ mod tests {
             ("edge from the tunnel: ignores X-Forwarded-For", "127.0.0.1", edge(tunnel), &[(XFF, "203.0.113.9")], "127.0.0.1"),
             ("edge from the tunnel: an IPv6 loopback peer", "::1", edge(tunnel), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
             ("edge from the tunnel: a peer off this machine", "192.0.2.1", edge(tunnel), &[(EDGE, "203.0.113.9")], "192.0.2.1"),
+            ("edge from a Docker gateway: the tunnel is believed", "::ffff:192.168.107.1", edge(gateway), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
+            ("edge from a Docker gateway: another container is not", "192.168.107.3", edge(gateway), &[(EDGE, "203.0.113.9")], "192.168.107.3"),
             ("edge from everywhere: one address", "192.0.2.1", edge("0.0.0.0/0, ::/0"), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
             ("edge from everywhere: an IPv6 peer", "2001:db8::1", edge("0.0.0.0/0, ::/0"), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
 
