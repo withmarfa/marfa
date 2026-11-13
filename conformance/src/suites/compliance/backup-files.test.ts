@@ -166,13 +166,16 @@ describe("the files a backup names", () => {
 
     await origin.pauseClock(true);
     try {
-      await origin.advanceClock(40 * DAY);
-      const later = await ownerOf(origin).runBackup();
-      expect(later.status, JSON.stringify(later.error)).toBe(200);
-      expect(later.data.removed).toBe(1);
-      expect(await bucket.backupKeys()).toEqual([
-        `${store.S3_PREFIX}/backups/${originId}/${later.data.backup.name}`,
-      ]);
+      // Thinning keeps the newest of each of 31 days, so the 32nd day's backup thins the first.
+      const later: string[] = [];
+      for (let day = 1; day <= 32; day++) {
+        await origin.advanceClock(DAY);
+        const run = await ownerOf(origin).runBackup();
+        expect(run.status, JSON.stringify(run.error)).toBe(200);
+        expect(run.data.removed).toBe(day === 32 ? 1 : 0);
+        later.push(`${store.S3_PREFIX}/backups/${originId}/${run.data.backup.name}`);
+      }
+      expect((await bucket.backupKeys()).sort()).toEqual(later.sort());
 
       await runJob(operator, "blob-orphans");
       expect((await operator.downloadBlob(kept.hash)).status).toBe(404);

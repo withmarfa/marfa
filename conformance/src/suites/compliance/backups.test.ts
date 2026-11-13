@@ -12,6 +12,7 @@ import {
 import {
   afterFirstScheduledBackup,
   backupConcerns,
+  backupName,
   bucketAt,
   instanceIdOf,
   ownerOf,
@@ -159,7 +160,8 @@ describe("a backup in the object store", () => {
     await expectMatchesSchema("POST", "/backups", 200, run.data);
     expect(run.data.outcome).toBe("put");
     const { name, instance_id, created_at, size_bytes } = run.data.backup;
-    expect(name).toBe(`${created_at}.tar`);
+    expect(name).toBe(backupName(new Date(created_at)));
+    expect(name).toMatch(/^\d{8}T\d{6}\.\d{3}Z\.tar$/);
     expect(instance_id).toBe(originId);
     firstName = name;
 
@@ -339,6 +341,7 @@ describe("a backup in the object store", () => {
     );
     const owner = ownerOf(origin);
     for (const [instance, name] of [
+      [originId, backupName(new Date("2020-01-01T00:00:00.000Z"))],
       [originId, "2020-01-01T00:00:00.000Z.tar"],
       [originId, "notes.tar"],
       [OTHER_INSTANCE, firstName],
@@ -483,7 +486,7 @@ describe("the backup schedule", () => {
         await owner.runBackup(),
         await owner.restoreBackup(
           OTHER_INSTANCE,
-          "2026-11-09T10:15:30.250Z.tar",
+          backupName(new Date("2026-11-09T10:15:30.250Z")),
         ),
         await owner.adoptBackupFolder(),
       ]) {

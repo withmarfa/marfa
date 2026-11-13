@@ -89,9 +89,9 @@ export function ownerOf(server: FreshServer): MarfaClient {
   });
 }
 
-/** The name a backup taken at `at` carries. */
+/** The name a backup taken at `at` carries: the instant in the ISO 8601 basic format. */
 export function backupName(at: Date): string {
-  return `${at.toISOString()}.tar`;
+  return `${at.toISOString().replace(/[-:]/g, "")}.tar`;
 }
 
 /** The server's instance id, which names the folder its backups go in. */

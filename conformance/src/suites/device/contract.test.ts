@@ -1005,6 +1005,7 @@ class PrivateSocket {
 const ID = "01JAAAAAAAAAAAAAAAAAAAAAAA";
 const HASH = `sha256:${"a".repeat(64)}`;
 const WHEN = "2026-01-01T00:00:00Z";
+const BACKUP = "20260101T000000.000Z.tar";
 const LATER = "2026-01-02T00:00:00Z";
 const invocations: Record<string, () => string[]> = {
   metrics: () => [],
@@ -1207,7 +1208,7 @@ const PRIVATE_SOCKET_TABLE: Record<string, () => string[]> = {
   "owner passkeys remove": () => [ID],
   "backups list": () => [],
   "backups run": () => [],
-  "backups restore": () => [ID, `${WHEN}.tar`],
+  "backups restore": () => [ID, BACKUP],
   "backups folder adopt": () => [],
 };
 
@@ -1539,7 +1540,7 @@ describe("every command holds the server to the contract", () => {
     const paths: Record<string, string> = {
       "backups list": "GET /backups",
       "backups run": "POST /backups",
-      "backups restore": `POST /backups/${ID}/${WHEN}.tar/restore`,
+      "backups restore": `POST /backups/${ID}/${BACKUP}/restore`,
       "backups folder adopt": "POST /backups/folder/adopt",
     };
     expect(Object.keys(paths).sort()).toEqual(
