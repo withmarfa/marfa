@@ -1,6 +1,6 @@
 # Stores
 
-Where a blob's bytes live, and the rules that keep them. A store is a place bytes live: the disk every upload lands on, an object store attached beside it when one is configured, and the files area of the backup folder when `MARFA_BACKUP_PATH` names one. The referee boots its server with both, so every rule about the object store is asserted against one rather than left to a deployment nobody runs.
+Where a blob's bytes live, and the rules that keep them. A store is a place bytes live: the disk every upload lands on, an object store attached beside it when one is configured, and the files area of the backup folder when `MARFA_BACKUP_PATH` names one. The referee boots its server with the disk and an object store, so every rule about the object store is asserted against one rather than left to a deployment nobody runs.
 
 ## The stores
 
