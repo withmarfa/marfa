@@ -3,7 +3,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { archiveManifest } from "../../utils/archive.js";
+import { lostFiles } from "../../utils/archive.js";
 import {
   afterFirstScheduledBackup,
   bucketAt,
@@ -230,7 +230,7 @@ describe("a backup cut short", () => {
 });
 
 describe("a file no store can give, in a backup to the object store", () => {
-  it("puts the backup, names the file in lost_blobs and in health, and clears health with the next backup that loses none", async () => {
+  it("puts the backup, names the file lost and in health, and clears health with the next backup that loses none", async () => {
     const store = ownObjectStore();
     const bucket = bucketAt(store.S3_PREFIX);
     const server = await bootFreshServer("backup-lost-file", {
@@ -260,10 +260,7 @@ describe("a file no store can give, in a backup to the object store", () => {
       expect(run.status, JSON.stringify(run.error)).toBe(200);
       expect(run.data.blobs_lost).toEqual([lost]);
       const key = `${store.S3_PREFIX}/backups/${run.data.backup.instance_id}/${run.data.backup.name}`;
-      const manifest = archiveManifest<{ lost_blobs: string[] }>(
-        await bucket.get(key),
-      );
-      expect(manifest.lost_blobs).toEqual([lost]);
+      expect(lostFiles(await bucket.get(key))).toEqual([lost]);
       const seen = await health(server);
       expect(seen.backups.status).toBe("failing");
       expect(seen.backups.last_error).toContain(lost);

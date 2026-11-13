@@ -320,8 +320,10 @@ describe("rows in an archive", () => {
   it("carries each row of a carried item in rows.ndjson.gz, in table and id order, and counts them in row_count", () => {
     expect(listEntries(archive).map((entry) => entry.name)).toEqual([
       "manifest.json",
+      "files.ndjson.gz",
       "instance.ndjson.gz",
       "items.ndjson.gz",
+      "versions.ndjson.gz",
       "edges.ndjson.gz",
       "rows.ndjson.gz",
     ]);

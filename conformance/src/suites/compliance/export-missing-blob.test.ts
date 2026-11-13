@@ -15,10 +15,13 @@ import {
   runJob,
 } from "../../utils/own-blob-server.js";
 import {
+  type ArchiveFileLine,
   blobHash,
+  carriedFiles,
   itemsArchive,
   archiveManifest,
   listEntries,
+  notCarried,
 } from "../../utils/archive.js";
 import {
   damageBlobs,
@@ -40,11 +43,6 @@ import {
 
 interface Manifest {
   blob_count: number;
-  blobs: Record<string, { mime_type: string; size_bytes: number }>;
-  missing_blobs: Record<
-    string,
-    { mime_type: string | null; size_bytes: number | null }
-  >;
 }
 
 async function upload(client: MarfaClient, bytes: Uint8Array) {
@@ -68,7 +66,13 @@ async function archiveOf(client: MarfaClient) {
   const archive = res.data;
   const manifest = archiveManifest<Manifest>(archive);
   const entries = listEntries(archive).map((entry) => entry.name);
-  return { archive, manifest, entries };
+  return {
+    archive,
+    manifest,
+    entries,
+    carried: carriedFiles(archive),
+    missing: notCarried(archive),
+  };
 }
 
 function ownerOf(server: FreshServer): MarfaClient {
@@ -95,7 +99,7 @@ describe("an archive export on an instance with one disk store", () => {
     await server?.stop();
   }, FRESH_SERVER_TIMEOUT_MS);
 
-  it("names a blob whose file has left the disk under missing_blobs, and carries the rest", async () => {
+  it("names a blob whose file has left the disk as not carried, and carries the rest", async () => {
     const keptBytes = bytesOf("a blob that stays on the disk", 110);
     const kept = await upload(working, keptBytes);
     lost = await upload(working, lostBytes);
@@ -104,26 +108,24 @@ describe("an archive export on an instance with one disk store", () => {
 
     // The witness: both are carried while both files are there.
     const before = await archiveOf(working);
-    expect(Object.keys(before.manifest.blobs).sort()).toEqual(
-      [kept, lost].sort(),
-    );
-    expect(before.manifest.missing_blobs).toEqual({});
+    expect(Object.keys(before.carried).sort()).toEqual([kept, lost].sort());
+    expect(before.missing).toEqual({});
     expect(before.entries).toContain(`blobs/${lost}`);
 
     await loseBlobs(server!, [lost]);
-    const { manifest, entries } = await archiveOf(working);
+    const { manifest, entries, carried, missing } = await archiveOf(working);
     expect(manifest.blob_count).toBe(1);
-    expect(manifest.blobs).toEqual({
+    expect(carried).toEqual({
       [kept]: { mime_type: "text/plain", size_bytes: keptBytes.length },
     });
-    expect(manifest.missing_blobs).toEqual({
+    expect(missing).toEqual({
       [lost]: { mime_type: "text/plain", size_bytes: lostBytes.length },
     });
     expect(entries).toContain(`blobs/${kept}`);
     expect(entries).not.toContain(`blobs/${lost}`);
   });
 
-  it("names a blob whose struck copy is the only one under missing_blobs, and answers a whole archive", async () => {
+  it("names a blob whose struck copy is the only one as not carried, and answers a whole archive", async () => {
     const content = bytesOf("a blob altered and then struck", 130);
     const hash = await upload(working, content);
     await noteNaming(working, hash);
@@ -133,9 +135,9 @@ describe("an archive export on an instance with one disk store", () => {
     expect(struck.result.struck).toBeGreaterThanOrEqual(1);
     expect((await operator.listBlobCopies(hash)).data.data).toEqual([]);
 
-    const { manifest, entries } = await archiveOf(working);
-    expect(Object.keys(manifest.missing_blobs)).toContain(hash);
-    expect(Object.keys(manifest.blobs)).not.toContain(hash);
+    const { entries, carried, missing } = await archiveOf(working);
+    expect(Object.keys(missing)).toContain(hash);
+    expect(Object.keys(carried)).not.toContain(hash);
     expect(entries).not.toContain(`blobs/${hash}`);
   });
 
@@ -161,8 +163,8 @@ describe("an archive export on an instance with one disk store", () => {
     // Struck as the integrity check would strike it, so the next export,
     // with no other store to read, names it instead of cutting again.
     expect((await operator.listBlobCopies(hash)).data.data).toEqual([]);
-    const { manifest } = await archiveOf(working);
-    expect(Object.keys(manifest.missing_blobs)).toContain(hash);
+    const { missing } = await archiveOf(working);
+    expect(Object.keys(missing)).toContain(hash);
   });
 
   it("answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob", async () => {
@@ -184,10 +186,16 @@ describe("an archive export on an instance with one disk store", () => {
       ],
       [],
       [],
-      (m) => ({
-        ...m,
-        blobs: { [hash]: { mime_type: "text/plain", size_bytes: 150 } },
-      }),
+      undefined,
+      [],
+      [
+        {
+          hash,
+          mime_type: "text/plain",
+          size_bytes: 150,
+          state: "carried",
+        },
+      ],
     );
 
     await unreadBlobs(server!, [hash]);
@@ -214,7 +222,7 @@ describe("an archive export on an instance with one disk store", () => {
     expect(again.data.blobs_missing).toEqual([]);
   });
 
-  it("names in a later archive's missing_blobs a file's blob that a restore answered missing", async () => {
+  it("names as not carried in a later archive a file's blob that a restore answered missing", async () => {
     const owner = ownerOf(server!);
     const absent = blobHash(new Uint8Array(randomBytes(64)));
     // A run of hex in a note's text that no upload made, which is no blob.
@@ -239,10 +247,16 @@ describe("an archive export on an instance with one disk store", () => {
         ],
         [],
         [],
-        (m) => ({
-          ...m,
-          blobs: { [absent]: { mime_type: "image/png", size_bytes: 64 } },
-        }),
+        undefined,
+        [],
+        [
+          {
+            hash: absent,
+            mime_type: "image/png",
+            size_bytes: 64,
+            state: "carried",
+          },
+        ],
       ),
     );
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
@@ -250,13 +264,13 @@ describe("an archive export on an instance with one disk store", () => {
 
     const res = await working.exportArchive();
     expect(res.status, JSON.stringify(res.error)).toBe(200);
-    const manifest = archiveManifest<Manifest>(res.data);
-    expect(manifest.missing_blobs[absent]).toEqual({
+    const missing = notCarried(res.data);
+    expect(missing[absent]).toEqual({
       mime_type: null,
       size_bytes: null,
     });
-    expect(Object.keys(manifest.missing_blobs)).not.toContain(noted);
-    expect(Object.keys(manifest.blobs)).not.toContain(absent);
+    expect(Object.keys(missing)).not.toContain(noted);
+    expect(Object.keys(carriedFiles(res.data))).not.toContain(absent);
 
     // The archive that names it with no type or size restores as well.
     const again = await owner.restoreArchive(res.data);
@@ -266,8 +280,8 @@ describe("an archive export on an instance with one disk store", () => {
 
   it("answers in blobs_missing a blob the archive names and lacks, and none the instance holds", async () => {
     const owner = ownerOf(server!);
-    const { archive, manifest } = await archiveOf(working);
-    const named = Object.keys(manifest.missing_blobs).sort();
+    const { archive, missing } = await archiveOf(working);
+    const named = Object.keys(missing).sort();
     expect(named).toContain(lost);
 
     const restored = await owner.restoreArchive(archive);
@@ -285,28 +299,34 @@ describe("an archive export on an instance with one disk store", () => {
     );
   });
 
-  it("answers in blobs_missing a blob the manifest lists that the archive carries no bytes for", async () => {
+  it("answers in blobs_missing a blob the archive lists as carried and carries no bytes for", async () => {
     const owner = ownerOf(server!);
     const carried = new Uint8Array(randomBytes(48));
     const absent = blobHash(new Uint8Array(randomBytes(48)));
-    const archive = (extra: Record<string, unknown>) =>
+    const archive = (extra: ArchiveFileLine[]) =>
       itemsArchive(
         [],
         [{ data: carried, mime_type: "text/plain" }],
         [],
-        (m) => ({
-          ...m,
-          blobs: { ...(m.blobs as Record<string, unknown>), ...extra },
-        }),
+        undefined,
+        [],
+        extra,
       );
 
     // The witness: the same archive without the extra name answers none.
-    const whole = await owner.restoreArchive(archive({}));
+    const whole = await owner.restoreArchive(archive([]));
     expect(whole.status, JSON.stringify(whole.error)).toBe(200);
     expect(whole.data.blobs_missing).toEqual([]);
 
     const lacking = await owner.restoreArchive(
-      archive({ [absent]: { mime_type: "text/plain", size_bytes: 48 } }),
+      archive([
+        {
+          hash: absent,
+          mime_type: "text/plain",
+          size_bytes: 48,
+          state: "carried",
+        },
+      ]),
     );
     expect(lacking.status, JSON.stringify(lacking.error)).toBe(200);
     expect(lacking.data).toMatchObject({
@@ -322,7 +342,7 @@ describe("an archive export on an instance with one disk store", () => {
     await noteNaming(working, hash);
     // The witness: the archive before the fault, carrying the blob.
     const before = await archiveOf(working);
-    expect(Object.keys(before.manifest.blobs)).toContain(hash);
+    expect(Object.keys(before.carried)).toContain(hash);
 
     await server!.setFault(`${fault}=1`);
     try {
@@ -339,10 +359,10 @@ describe("an archive export on an instance with one disk store", () => {
     }
 
     const after = await archiveOf(working);
-    expect(Object.keys(after.manifest.blobs).sort()).toEqual(
-      Object.keys(before.manifest.blobs).sort(),
+    expect(Object.keys(after.carried).sort()).toEqual(
+      Object.keys(before.carried).sort(),
     );
-    expect(after.manifest.missing_blobs).toEqual(before.manifest.missing_blobs);
+    expect(after.missing).toEqual(before.missing);
   }
 
   it("strikes no copy when a read of a blob's bytes fails", async () => {
@@ -422,9 +442,9 @@ describe("an archive export on an instance with an object store", () => {
     expect(kinds).toEqual(["disk", "s3"]);
 
     await loseBlobs(server!, [hash]);
-    const { archive, manifest } = await archiveOf(working);
-    expect(manifest.missing_blobs).toEqual({});
-    expect(Object.keys(manifest.blobs)).toEqual([hash]);
+    const { archive, carried, missing } = await archiveOf(working);
+    expect(missing).toEqual({});
+    expect(Object.keys(carried)).toEqual([hash]);
     const entry = listEntries(archive).find((e) => e.name === `blobs/${hash}`);
     expect(entry).toBeDefined();
     expect(blobHash(entry!.body)).toBe(hash);
@@ -452,12 +472,16 @@ describe("an archive export on an instance with an object store", () => {
       ],
       [],
       [],
-      (m) => ({
-        ...m,
-        blobs: {
-          [hash]: { mime_type: "text/plain", size_bytes: content.length },
+      undefined,
+      [],
+      [
+        {
+          hash,
+          mime_type: "text/plain",
+          size_bytes: content.length,
+          state: "carried",
         },
-      }),
+      ],
     );
 
     // The disk cannot be read for the blob; the object store answers for it.

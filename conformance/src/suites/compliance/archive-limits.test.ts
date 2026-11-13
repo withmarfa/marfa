@@ -150,21 +150,6 @@ describe("the size of an item or edge an archive carries", () => {
           ...extra,
         },
         metadata: { tags: [], extensions: {} },
-        ...(extra.version === 2 && {
-          versions: [
-            {
-              id: uuidv7(),
-              item_id: id,
-              version: 1,
-              properties: propertiesOf(bytes),
-              type: "core.note",
-              tier: "library",
-              occurred_at: "2030-01-01T00:00:00.000Z",
-              source_id: null,
-              created_at: "2030-01-01T00:00:00.000Z",
-            },
-          ],
-        }),
       });
     const lines = [
       row(first, {}),
@@ -189,13 +174,25 @@ describe("the size of an item or edge an archive carries", () => {
             },
           })}\n`
         : "";
-    const archive = editLineFile(
-      editLineFile(itemsArchive([]), "items", () =>
-        lines.map((l) => `${l}\n`).join(""),
-      ),
-      "edges",
-      () => edges,
+    const versions =
+      kind === "version"
+        ? `${JSON.stringify({
+            id: uuidv7(),
+            item_id: second,
+            version: 1,
+            properties: propertiesOf(bytes),
+            type: "core.note",
+            tier: "library",
+            occurred_at: "2030-01-01T00:00:00.000Z",
+            source_id: null,
+            created_at: "2030-01-01T00:00:00.000Z",
+          })}\n`
+        : "";
+    let archive = editLineFile(itemsArchive([]), "items", () =>
+      lines.map((l) => `${l}\n`).join(""),
     );
+    archive = editLineFile(archive, "versions", () => versions);
+    archive = editLineFile(archive, "edges", () => edges);
     return { archive, first, second, edge };
   }
 
@@ -204,9 +201,9 @@ describe("the size of an item or edge an archive carries", () => {
     [
       "the properties of an earlier version",
       "version",
-      "versions.0.properties",
+      "versions.1.properties",
       "item_id",
-      2,
+      1,
     ],
     ["an edge's properties", "edge", "properties", "edge_id", 1],
   ] as const)(
