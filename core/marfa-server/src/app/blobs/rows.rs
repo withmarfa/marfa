@@ -396,7 +396,10 @@ pub fn attach(tx: &Transaction<'_>, id: &str, kind: &str, locator: &str, at: &st
 pub fn forget_store(tx: &Transaction<'_>, id: &str, at: &str) -> Result<usize> {
     let copies = tx.execute("DELETE FROM blob_copies WHERE store_id = ?1", [id])?;
     tx.execute("DELETE FROM blob_copy_failures WHERE store_id = ?1", [id])?;
-    tx.execute("DELETE FROM blob_pending_deletions WHERE store_id = ?1", [id])?;
+    tx.execute(
+        "DELETE FROM blob_pending_deletions WHERE store_id = ?1",
+        [id],
+    )?;
     tx.execute(
         "UPDATE stores SET detached_at = ?2 WHERE id = ?1 AND detached_at IS NULL",
         params![id, at],

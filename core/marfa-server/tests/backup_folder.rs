@@ -239,8 +239,8 @@ fn manifest_of(path: &Path) -> Value {
     let tar = fs::read(path).unwrap();
     assert_eq!(&tar[..13], b"manifest.json");
     let octal = String::from_utf8_lossy(&tar[124..136]);
-    let size = usize::from_str_radix(octal.trim_matches(|c: char| c == '\0' || c == ' '), 8)
-        .unwrap();
+    let size =
+        usize::from_str_radix(octal.trim_matches(|c: char| c == '\0' || c == ' '), 8).unwrap();
     serde_json::from_slice(&tar[512..512 + size]).unwrap()
 }
 
@@ -676,7 +676,10 @@ async fn a_file_no_store_can_read_is_recorded_lost_and_the_backup_still_goes_ahe
         .as_writer(Method::GET, &format!("/items/{note}"), None)
         .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(fresh.bytes_of(&kept).await.unwrap(), b"a file still on the disk");
+    assert_eq!(
+        fresh.bytes_of(&kept).await.unwrap(),
+        b"a file still on the disk"
+    );
 
     origin.app.faults.clear(None);
     let (status, body) = origin.back_up().await;
@@ -684,6 +687,39 @@ async fn a_file_no_store_can_read_is_recorded_lost_and_the_backup_still_goes_ahe
     assert_eq!(body["blobs_lost"], json!([]), "{body}");
     assert!(copy_of(folder.path(), &origin.id(), &lost).is_file());
     assert_eq!(origin.health().await["status"], "ok");
+}
+
+#[tokio::test]
+async fn a_read_that_fails_is_not_a_lost_file_but_an_altered_copy_is() {
+    let folder = TempDir::new().unwrap();
+    let origin = Instance::start(folder.path()).await;
+    let (unread, _) = origin.file(b"a file the disk cannot read just now").await;
+    origin
+        .app
+        .faults
+        .set("damage:blob-unreadable", Some(&unread))
+        .unwrap();
+    let (status, body) = origin.back_up().await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
+    assert!(
+        body["error"]["message"].as_str().unwrap().contains(&unread),
+        "{body}"
+    );
+    let backups = folder.path().join("backups").join(origin.id());
+    assert!(names_in(&backups).is_empty());
+    origin.app.faults.clear(None);
+
+    let (altered, _) = origin.file(b"a file whose only copy changed").await;
+    origin
+        .app
+        .faults
+        .set("damage:blob", Some(&altered))
+        .unwrap();
+    let (status, body) = origin.back_up().await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["blobs_lost"], json!([altered]), "{body}");
+    assert!(copy_of(folder.path(), &origin.id(), &unread).is_file());
+    assert!(!copy_of(folder.path(), &origin.id(), &altered).exists());
 }
 
 #[tokio::test]

@@ -395,7 +395,11 @@ impl App {
                 Ok(Answer::Holds(size)) if size == blob.size_bytes => return Ok(Readable::Whole),
                 Ok(_) => {}
                 Err(failure) => {
-                    tracing::warn!(?failure, store = store.kind(), "A store did not answer for a blob");
+                    tracing::warn!(
+                        ?failure,
+                        store = store.kind(),
+                        "A store did not answer for a blob"
+                    );
                     silent = true;
                 }
             }

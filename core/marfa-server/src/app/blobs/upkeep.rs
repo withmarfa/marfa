@@ -105,14 +105,14 @@ async fn copy_to(
     unreachable: &mut BTreeSet<String>,
 ) -> Result<Copy> {
     let blobs = &app.blobs;
-    let mut silent = false;
+    let mut unanswered: Option<String> = None;
     for source in blobs.attached() {
         let id = source.id().to_string();
         let Some(held) = holders.iter().find(|held| held.store_id == id) else {
             continue;
         };
         if unreachable.contains(&id) {
-            silent = true;
+            unanswered.get_or_insert_with(|| "a store that holds it did not answer".to_string());
             continue;
         }
         let bytes = match blobs
@@ -122,11 +122,16 @@ async fn copy_to(
             Ok(bytes) => bytes,
             Err(Failed::Late) => {
                 unreachable.insert(id);
-                silent = true;
+                unanswered
+                    .get_or_insert_with(|| "a store that holds it did not answer".to_string());
                 continue;
             }
             Err(Failed::Io(error)) => {
                 tracing::warn!(%error, store = source.kind(), "A store did not open a blob to copy");
+                // A failed read says nothing of the bytes the store holds.
+                if error.kind() != io::ErrorKind::NotFound {
+                    unanswered.get_or_insert_with(|| error.to_string());
+                }
                 continue;
             }
         };
@@ -192,10 +197,9 @@ async fn copy_to(
             }
         });
     }
-    Ok(if silent {
-        Copy::Skipped(Some("a store that holds it did not answer".to_string()))
-    } else {
-        Copy::Unreadable
+    Ok(match unanswered {
+        Some(why) => Copy::Skipped(Some(why)),
+        None => Copy::Unreadable,
     })
 }
 

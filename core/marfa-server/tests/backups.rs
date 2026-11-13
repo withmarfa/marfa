@@ -1,4 +1,4 @@
-//! What counts as a change a backup must hold, what an instance with no object store says of
+//! What counts as a change a backup must hold, what an instance with nowhere to put backups says of
 //! backups, and how a backup meets an object store that fails or runs out of time.
 
 #[allow(dead_code)]
@@ -330,7 +330,7 @@ async fn a_row_or_a_setting_moves_the_change_count_and_the_health_probe_does_not
 }
 
 #[tokio::test]
-async fn with_no_object_store_health_says_backups_are_off_and_the_doors_refuse() {
+async fn with_no_backup_destination_health_says_backups_are_off_and_the_doors_refuse() {
     let instance = Instance::start().await;
     let (status, body) = instance
         .send(&instance.public, Method::GET, "/health", None)
@@ -345,6 +345,7 @@ async fn with_no_object_store_health_says_backups_are_off_and_the_doors_refuse()
     for (method, path) in [
         (Method::GET, "/backups"),
         (Method::POST, "/backups"),
+        (Method::POST, "/backups/folder/adopt"),
         (
             Method::POST,
             "/backups/0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b/2026-11-09T10:15:30.250Z.tar/restore",
@@ -705,8 +706,8 @@ async fn a_file_no_store_can_give_is_recorded_lost_and_the_backup_to_the_object_
         .unwrap();
     let tar = store.object(&key).unwrap();
     let octal = String::from_utf8_lossy(&tar[124..136]);
-    let size = usize::from_str_radix(octal.trim_matches(|c: char| c == '\0' || c == ' '), 8)
-        .unwrap();
+    let size =
+        usize::from_str_radix(octal.trim_matches(|c: char| c == '\0' || c == ' '), 8).unwrap();
     let manifest: Value = serde_json::from_slice(&tar[512..512 + size]).unwrap();
     assert_eq!(manifest["lost_blobs"], json!([lost]), "{manifest}");
     assert!(manifest["missing_blobs"][&kept].is_object(), "{manifest}");

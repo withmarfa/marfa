@@ -788,9 +788,7 @@ impl App {
         let whole = match &destination {
             Destination::Bucket(_) => false,
             Destination::Folder(folder) => {
-                let reading = self
-                    .files_to_read(folder, instance, &received)
-                    .await?;
+                let reading = self.files_to_read(folder, instance, &received).await?;
                 let copies = self.copies_in_folder(folder, instance, reading).await?;
                 received.carried.extend(copies);
                 true
@@ -826,7 +824,8 @@ impl App {
                 }
                 Readable::Nowhere => {}
             }
-            let (looked, instance, hash) = (folder.clone(), instance.to_string(), named.hash.clone());
+            let (looked, instance, hash) =
+                (folder.clone(), instance.to_string(), named.hash.clone());
             let size = blocking(move || looked.copy_size(&instance, &hash))
                 .await
                 .map_err(|error| {
