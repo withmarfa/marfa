@@ -732,7 +732,7 @@ When the private local command sends `POST /backups`, the server MUST answer in 
 
 While the server has recorded a backup it put in the object store or the backup folder, and has neither thinned that backup nor, while a later backup was recorded, found it missing from three or more consecutive listings of the store, the last of which lists backups of its own on more than 31 UTC days after both the backup's `created_at` and the first of those listings, the server MUST NOT purge a file that backup names.
 
-**Reason:** Backups contain no file bytes and outlive the orphan grace. The server knows a backup only by its record and the store's listings, and one listing can leave out an object the store holds. So the server takes a backup to be gone only once several listings have left it out and the store holds more days of backups after it than thinning keeps, and a listing that shows it again starts the count over. Days of backups are counted, not time on the clock, so one backup taken while the clock ran ahead adds one day and cannot make older backups look gone.
+**Reason:** Backups contain no file bytes and outlive the orphan grace. The server knows a backup only by its record and the store's listings, and one listing can leave out an object the store holds. So the server takes a backup to be gone only once several listings have left it out and the store holds more days of backups after it than thinning keeps, and a listing that shows it again starts the count over. Days of backups are counted, not time on the clock, so a clock jump does not add the intervening days to retention.
 
 **Tests:** `compliance/backup-files.test.ts › keeps a file a retained backup names once nothing else names it, across a restart, so a fresh server on the bucket restores it whole`.
 
@@ -1016,7 +1016,7 @@ When the server has put a backup, the server MUST keep every backup of its own t
 
 When the server has put a backup, the server MUST keep, of its own backups taken more than 24 hours before that backup, the newest of each of the 31 most recent UTC days that hold one, and delete the others.
 
-**Reason:** the days kept are the days that hold a backup, not a span back on the clock. A server that was off for weeks keeps its last month of backups after its first new one, and a backup taken while the clock ran ahead, or one taken after the clock was put back, takes up one day and deletes no older backup by itself.
+**Reason:** the days kept are the days that hold a backup, not a span back on the clock. A server that was off for weeks keeps the newest backup of each of its last 31 backup days after its first new one. A clock jump does not add days with no backups to the count.
 
 **Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each of the 31 older days that hold a backup, and deletes nothing that is not a listed backup of this instance`, `› keeps every backup when one is put 40 days after the last, and when the next comes six weeks later`.
 
