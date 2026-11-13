@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
-import { archiveManifest, itemsArchive } from "../../utils/archive.js";
+import { carriedFiles, itemsArchive, notCarried } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -77,12 +77,8 @@ describe("a restore of files the archive names and does not carry", () => {
       await everythingClient(origin)
     ).exportArchive({ files: "false" });
     expect(archive.status).toBe(200);
-    const manifest = archiveManifest<{
-      blobs: Record<string, unknown>;
-      missing_blobs: Record<string, unknown>;
-    }>(archive.data);
-    expect(Object.keys(manifest.missing_blobs)).toContain(one.hash);
-    expect(manifest.blobs).toEqual({});
+    expect(Object.keys(notCarried(archive.data))).toContain(one.hash);
+    expect(carriedFiles(archive.data)).toEqual({});
 
     fresh = await bootFreshServer("restore-from-store-fresh", store);
     const owner = ownerOf(fresh);
@@ -124,10 +120,16 @@ describe("a restore of files the archive names and does not carry", () => {
       ],
       [],
       [],
-      (manifest) => ({
-        ...manifest,
-        missing_blobs: { [absent]: { mime_type: null, size_bytes: null } },
-      }),
+      undefined,
+      [],
+      [
+        {
+          hash: absent,
+          mime_type: null,
+          size_bytes: null,
+          state: "not_carried",
+        },
+      ],
     );
     const restored = await ownerOf(fresh).restoreArchive(archive);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
@@ -141,11 +143,8 @@ describe("a restore of files the archive names and does not carry", () => {
       await everythingClient(origin)
     ).exportArchive({ files: "false" });
     expect(archive.status).toBe(200);
-    const manifest = archiveManifest<{
-      missing_blobs: Record<string, unknown>;
-    }>(archive.data);
     // The witness: the archive names the file and carries none of its bytes.
-    expect(Object.keys(manifest.missing_blobs)).toContain(held.hash);
+    expect(Object.keys(notCarried(archive.data))).toContain(held.hash);
 
     const restored = await ownerOf(origin).restoreArchive(archive.data);
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);

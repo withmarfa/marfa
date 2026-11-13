@@ -17,7 +17,8 @@
  *    path), edges with properties and a stored setting. Replication copies
  *    every file to the bucket or the folder, and the owner takes a backup.
  * 2. The source is fingerprinted: an archive export of everything, its
- *    instance, item, edge and row lines, and every file's bytes as served.
+ *    file, instance, item, version, edge and row lines, and every file's
+ *    bytes as served.
  * 3. The source stops, and its whole data directory is deleted.
  * 4. A fresh server boots on an empty data directory and the same bucket or
  *    folder, lists the backup in the source's folder and restores it.
@@ -37,7 +38,11 @@ import {
   S3Client,
 } from "@aws-sdk/client-s3";
 import { MarfaClient } from "../src/client/api.js";
-import { archiveLines, type LineFile } from "../src/utils/archive.js";
+import {
+  archiveLines,
+  LINE_FILES,
+  type LineFile,
+} from "../src/utils/archive.js";
 import { same } from "../src/utils/drill.js";
 import { parseEnvFile } from "../src/utils/target.js";
 import { bootServer, serverProgram, stopServer } from "./marfa-server.js";
@@ -54,7 +59,6 @@ const REQUIRED_NAMES = [
  *  size, 5 MiB), so the restore reads a multipart object back as well as a
  *  single-part one. */
 const LARGE_BLOB_BYTES = 70 * 1024 * 1024;
-const LINE_FILES: readonly LineFile[] = ["instance", "items", "edges", "rows"];
 const ROWS = 250;
 const NOTES = 40;
 

@@ -830,6 +830,7 @@ export interface RestoreArchiveResponse {
   connector_agreements_skipped: number;
   rows_imported: number;
   rows_skipped: number;
+  entries_skipped: string[];
   set_up_again: string;
 }
 

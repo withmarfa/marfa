@@ -4,10 +4,10 @@ import { gunzipSync, gzipSync } from "node:zlib";
 /**
  * An archive at version 1, read and built here rather than taken from the server.
  *
- * An archive is a plain tar: `manifest.json`, then `instance.ndjson.gz`,
- * `items.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`, each a
- * gzip-compressed line file, then a raw `blobs/<hash>` entry for each blob it
- * carries.
+ * An archive is a plain tar: `manifest.json`, then `files.ndjson.gz`,
+ * `instance.ndjson.gz`, `items.ndjson.gz`, `versions.ndjson.gz`,
+ * `edges.ndjson.gz` and `rows.ndjson.gz`, each a gzip-compressed line file,
+ * then a raw `blobs/<hash>` entry for each file it carries.
  *
  * Most archive fixtures post back what `GET /export?format=archive` produced,
  * which keeps the round trip honest. A few preconditions cannot be arranged
@@ -29,11 +29,35 @@ export interface ArchiveFile {
   body: string | Uint8Array;
 }
 
-/** The four line files, each written as `<name>.ndjson.gz`. */
-export type LineFile = "instance" | "items" | "edges" | "rows";
+/** The six line files, each written as `<name>.ndjson.gz`. */
+export type LineFile =
+  "files" | "instance" | "items" | "versions" | "edges" | "rows";
+
+/** The line files in the order an archive carries them. */
+export const LINE_FILES: LineFile[] = [
+  "files",
+  "instance",
+  "items",
+  "versions",
+  "edges",
+  "rows",
+];
 
 /** The version a restore reads, and the build that wrote the archive. */
 export const ARCHIVE_VERSION = 1;
+
+/** What every manifest names itself as. */
+export const ARCHIVE_FORMAT = "marfa-archive";
+
+/** One `files.ndjson.gz` line: a file the archive names. */
+export interface ArchiveFileLine {
+  hash: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  /** `carried` with a `blobs/` entry, `not_carried` without, or `lost` where
+   *  no store gave the bytes when a backup was taken. */
+  state: "carried" | "not_carried" | "lost";
+}
 
 /**
  * A manifest a restore accepts for an archive holding nothing, with `fields`
@@ -44,9 +68,12 @@ export function emptyManifest(
 ): Record<string, unknown> {
   return {
     version: ARCHIVE_VERSION,
+    format: ARCHIVE_FORMAT,
     written_by: "marfa-server 0.0.0",
     created_at: new Date().toISOString(),
+    file_count: 0,
     item_count: 0,
+    version_count: 0,
     edge_count: 0,
     row_count: 0,
     blob_count: 0,
@@ -57,15 +84,15 @@ export function emptyManifest(
     setting_count: 0,
     connector_state_count: 0,
     connector_agreement_count: 0,
-    blobs: {},
-    missing_blobs: {},
     ...fields,
   };
 }
 
 /** The manifest's count of each line file's lines, for those it counts. */
 const COUNTED: Partial<Record<LineFile, string>> = {
+  files: "file_count",
   items: "item_count",
+  versions: "version_count",
   edges: "edge_count",
   rows: "row_count",
 };
@@ -352,11 +379,13 @@ export function blobHash(data: Uint8Array): string {
 }
 
 /**
- * A minimal archive: `items`, and the `blobs` and type registrations
- * given. Each line file is written even when empty, so a restore can tell a
- * damaged archive from an empty one. `reshape` takes the manifest as built and
- * answers the one written, for a case that needs a manifest the server would
- * not write.
+ * A minimal archive: `items`, and the `blobs`, type registrations and
+ * `versions` given. Each line file is written even when empty, so a restore
+ * can tell a damaged archive from an empty one. `reshape` takes the manifest
+ * as built and answers the one written, for a case that needs a manifest the
+ * server would not write. `listed` adds lines to `files.ndjson.gz` with no
+ * `blobs/` entry behind them, such as a file listed as carried whose bytes the
+ * archive lacks.
  */
 export function itemsArchive(
   items: ArchiveItem[],
@@ -364,17 +393,24 @@ export function itemsArchive(
   types: Record<string, unknown>[] = [],
   reshape: (manifest: Record<string, unknown>) => unknown = (manifest) =>
     manifest,
+  versions: Record<string, unknown>[] = [],
+  listed: ArchiveFileLine[] = [],
 ): Uint8Array {
+  const files: ArchiveFileLine[] = [
+    ...blobs.map((blob) => ({
+      hash: blob.named ?? blobHash(blob.data),
+      mime_type: blob.mime_type,
+      size_bytes: blob.data.length,
+      state: "carried" as const,
+    })),
+    ...listed,
+  ].sort((a, b) => (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0));
   const manifest = emptyManifest({
+    file_count: files.length,
     item_count: items.length,
+    version_count: versions.length,
     blob_count: blobs.length,
     type_count: types.length,
-    blobs: Object.fromEntries(
-      blobs.map((blob) => [
-        blob.named ?? blobHash(blob.data),
-        { mime_type: blob.mime_type, size_bytes: blob.data.length },
-      ]),
-    ),
   });
   // Each item lends what it names among the blobs carried, as an export
   // writes an item whose writer sent the bytes.
@@ -384,6 +420,7 @@ export function itemsArchive(
       name: "manifest.json",
       body: JSON.stringify(reshape(manifest), null, 2),
     },
+    lineFile("files", ndjson(files)),
     lineFile("instance", ndjson(types.map((type) => ({ type })))),
     lineFile(
       "items",
@@ -397,6 +434,7 @@ export function itemsArchive(
         })),
       ),
     ),
+    lineFile("versions", ndjson(versions)),
     lineFile("edges", ""),
     lineFile("rows", ""),
     ...blobs.map((blob) => ({
@@ -404,4 +442,46 @@ export function itemsArchive(
       body: blob.data,
     })),
   ]);
+}
+
+/** Each line of `files.ndjson.gz`, parsed. */
+export function archiveFiles(archive: Uint8Array): ArchiveFileLine[] {
+  return archiveLines<ArchiveFileLine>(archive, "files");
+}
+
+/** What `files.ndjson.gz` says of a file besides its hash and state. */
+export interface ListedFile {
+  mime_type: string | null;
+  size_bytes: number | null;
+}
+
+function filesIn(
+  archive: Uint8Array,
+  keep: (file: ArchiveFileLine) => boolean,
+): Record<string, ListedFile> {
+  return Object.fromEntries(
+    archiveFiles(archive)
+      .filter(keep)
+      .map((file) => [
+        file.hash,
+        { mime_type: file.mime_type, size_bytes: file.size_bytes },
+      ]),
+  );
+}
+
+/** The files an archive carries, by hash. */
+export function carriedFiles(archive: Uint8Array): Record<string, ListedFile> {
+  return filesIn(archive, (file) => file.state === "carried");
+}
+
+/** The files an archive names and does not carry, lost or not, by hash. */
+export function notCarried(archive: Uint8Array): Record<string, ListedFile> {
+  return filesIn(archive, (file) => file.state !== "carried");
+}
+
+/** The hashes of the files a backup names as lost. */
+export function lostFiles(archive: Uint8Array): string[] {
+  return archiveFiles(archive)
+    .filter((file) => file.state === "lost")
+    .map((file) => file.hash);
 }

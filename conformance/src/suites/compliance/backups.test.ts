@@ -7,7 +7,9 @@ import { withInstanceDatabase } from "../../utils/instance-database.js";
 import {
   archiveLines,
   archiveManifest,
+  carriedFiles,
   listEntries,
+  notCarried,
 } from "../../utils/archive.js";
 import {
   afterFirstScheduledBackup,
@@ -172,20 +174,20 @@ describe("a backup in the object store", () => {
     expect(backup.length).toBe(size_bytes);
     const manifest = archiveManifest<{
       created_at: string;
-      blobs: Record<string, unknown>;
-      missing_blobs: Record<string, unknown>;
       item_count: number;
     }>(backup);
     expect(manifest.created_at).toBe(created_at);
     expect(listEntries(backup).map((entry) => entry.name)).toEqual([
       "manifest.json",
+      "files.ndjson.gz",
       "instance.ndjson.gz",
       "items.ndjson.gz",
+      "versions.ndjson.gz",
       "edges.ndjson.gz",
       "rows.ndjson.gz",
     ]);
-    expect(manifest.blobs).toEqual({});
-    expect(Object.keys(manifest.missing_blobs)).toContain(made.hash);
+    expect(carriedFiles(backup)).toEqual({});
+    expect(Object.keys(notCarried(backup))).toContain(made.hash);
 
     const exported = await (
       await everythingClient(origin)

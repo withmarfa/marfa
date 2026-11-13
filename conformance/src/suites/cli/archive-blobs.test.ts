@@ -18,7 +18,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { bytesOf, clientsFor, DISK_ONLY } from "../../utils/own-blob-server.js";
 import { damageBlobs, loseBlobs } from "../../utils/store-faults.js";
-import { tar } from "../../utils/archive.js";
+import { carriedFiles, notCarried, tar } from "../../utils/archive.js";
 import { Cli, releaseHeld, requireBinary } from "./harness.js";
 
 /**
@@ -54,6 +54,11 @@ beforeAll(async () => {
   expect(note.status, JSON.stringify(note.error)).toBe(201);
 }, FRESH_SERVER_TIMEOUT_MS);
 
+/** The hashes of the files the archive at `path` names and does not carry. */
+function uncarried(path: string): string[] {
+  return Object.keys(notCarried(new Uint8Array(readFileSync(path))));
+}
+
 afterAll(async () => {
   releaseHeld();
   rmSync(dir, { recursive: true, force: true });
@@ -67,9 +72,10 @@ describe("an archive that lacks a blob it names", () => {
     writeFileSync(path, "an earlier backup");
     await cli.json(["export", "--format", "archive", "--output", path]);
 
-    const tar = readFileSync(path).toString("latin1");
-    expect(tar).toContain('"missing_blobs":{}');
-    expect(tar).toContain(lost);
+    expect(uncarried(path)).toEqual([]);
+    expect(
+      Object.keys(carriedFiles(new Uint8Array(readFileSync(path)))),
+    ).toContain(lost);
     expect(readdirSync(wholeDir)).toEqual(["nightly.tar"]);
   });
 
@@ -81,7 +87,7 @@ describe("an archive that lacks a blob it names", () => {
     // complete archive, and it replaces the path.
     await cli.json(["export", "--format", "archive", "--output", path]);
     const earlier = readFileSync(path);
-    expect(earlier.toString("latin1")).toContain('"missing_blobs":{}');
+    expect(uncarried(path)).toEqual([]);
     // An earlier file of the incomplete name is the only file replaced.
     writeFileSync(incomplete, "an earlier incomplete archive");
 
@@ -99,10 +105,8 @@ describe("an archive that lacks a blob it names", () => {
     expect(refused.envelope.error.message).toContain(lost);
     expect(refused.envelope.error.message).toContain(path);
     expect(refused.envelope.error.message).toContain(incomplete);
-    // Written whole: the gzip stream ends, and the manifest names the blob.
-    const tar = readFileSync(incomplete).toString("latin1");
-    expect(tar).toContain('"missing_blobs":{');
-    expect(tar).toContain(lost);
+    // Written whole: the gzip stream ends, and the archive names the blob.
+    expect(uncarried(incomplete)).toEqual([lost]);
     expect(readdirSync(keptDir).sort()).toEqual([
       "nightly.tar",
       "nightly.tar.incomplete",
@@ -129,8 +133,7 @@ describe("an archive that lacks a blob it names", () => {
     expect(refused.envelope.error.message).toContain(
       `nothing was written to ${path}`,
     );
-    const tar = readFileSync(`${path}.incomplete`).toString("latin1");
-    expect(tar).toContain(lost);
+    expect(uncarried(`${path}.incomplete`)).toEqual([lost]);
   });
 
   it("keeps the archive where it is, and still names the blobs, when the incomplete name cannot be taken", async () => {
@@ -156,7 +159,7 @@ describe("an archive that lacks a blob it names", () => {
     expect(hidden).toHaveLength(1);
     const partial = join(heldDir, hidden[0]!);
     expect(refused.envelope.error.message).toContain(partial);
-    expect(readFileSync(partial).toString("latin1")).toContain(lost);
+    expect(uncarried(partial)).toEqual([lost]);
   });
 
   it("prints the answer of a restore of it and exits 1 with blobs_missing", async () => {
@@ -185,6 +188,7 @@ describe("an archive that lacks a blob it names", () => {
           name: "manifest.json",
           body: JSON.stringify({
             version: 99,
+            format: "marfa-archive",
             written_by: "marfa-server 0.0.1",
           }),
         },
@@ -253,9 +257,7 @@ describe("an archive that lacks a blob it names", () => {
     expect(lacking.envelope.error.message).toContain(rotten);
     // The archive that lacks it is kept beside the path, not at it.
     expect(readFileSync(path, "utf8")).toBe("an earlier backup");
-    expect(readFileSync(`${path}.incomplete`).toString("latin1")).toContain(
-      rotten,
-    );
+    expect(uncarried(`${path}.incomplete`)).toContain(rotten);
     expect(readdirSync(cutDir).sort()).toEqual([
       "backup.tar",
       "backup.tar.incomplete",
