@@ -45,6 +45,9 @@ use crate::folders::FoldersCommand;
 use crate::output::Printer;
 use crate::remote::{Named, Remote};
 
+#[global_allocator]
+static ALLOCATOR: marfa_allocator::Allocator = marfa_allocator::Allocator;
+
 /// Marfa from the command line: every operation of one instance, a working
 /// copy of a slice of it under `device`, and folders that hold a slice as
 /// files.
@@ -376,6 +379,7 @@ fn named_of(cli: &Cli) -> Named {
 }
 
 fn main() -> ExitCode {
+    marfa_allocator::route_sqlite();
     let (cli, command) = match parse() {
         Ok(parsed) => parsed,
         Err(error) => match usage(&error, std::env::args_os()) {

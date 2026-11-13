@@ -444,10 +444,13 @@ pub fn release_edge_end(conn: &Connection, id: &str, made: bool) -> Result<(), C
     Ok(())
 }
 
+/// What `read_bound` reads and `bindings` digests, in order. `seen_at` is left out: every scan rewrites it.
+const BOUND_COLUMNS: &str = "path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob, embeds";
+
 pub fn bound_at(conn: &Connection, path: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(
-            "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob, embeds FROM folder_files WHERE path = ?1",
+            &format!("SELECT {BOUND_COLUMNS} FROM folder_files WHERE path = ?1"),
             [path],
             read_bound,
         )
@@ -468,7 +471,7 @@ pub fn any_held_or_refused(conn: &Connection) -> Result<bool, CoreError> {
 pub fn bound_to_item(conn: &Connection, item_id: &str) -> Result<Option<Bound>, CoreError> {
     Ok(conn
         .query_row(
-            "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob, embeds FROM folder_files WHERE item_id = ?1",
+            &format!("SELECT {BOUND_COLUMNS} FROM folder_files WHERE item_id = ?1"),
             [item_id],
             read_bound,
         )
@@ -515,13 +518,59 @@ pub fn bound_with_hash(conn: &Connection, content_hash: &str) -> Result<Vec<Boun
     bound_where(conn, "WHERE content_hash = ?1", [content_hash])
 }
 
+/// A bound file's item and a digest of its row, so a pull keeps no file's text between pulls.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Binding {
+    pub item_id: String,
+    digest: u64,
+}
+
+/// Every bound file's binding, by path, read a row at a time.
+pub fn bindings(conn: &Connection) -> Result<HashMap<String, Binding>, CoreError> {
+    use rusqlite::types::ValueRef;
+    use std::hash::Hasher;
+    let mut statement = conn.prepare(&format!("SELECT {BOUND_COLUMNS} FROM folder_files"))?;
+    let columns = statement.column_count();
+    let mut rows = statement.query([])?;
+    let mut found = HashMap::new();
+    while let Some(row) = rows.next()? {
+        let mut hasher = std::hash::DefaultHasher::new();
+        for at in 0..columns {
+            match row.get_ref(at)? {
+                ValueRef::Null => hasher.write_u8(0),
+                ValueRef::Integer(number) => hasher.write_i64(number),
+                ValueRef::Real(number) => hasher.write_u64(number.to_bits()),
+                ValueRef::Text(bytes) | ValueRef::Blob(bytes) => {
+                    hasher.write_usize(bytes.len());
+                    hasher.write(bytes);
+                }
+            }
+        }
+        found.insert(
+            row.get(0)?,
+            Binding {
+                item_id: row.get(1)?,
+                digest: hasher.finish(),
+            },
+        );
+    }
+    Ok(found)
+}
+
+/// The ids of the items that have a file here.
+pub fn bound_item_ids(conn: &Connection) -> Result<std::collections::HashSet<String>, CoreError> {
+    let mut statement = conn.prepare("SELECT item_id FROM folder_files")?;
+    let ids = statement.query_map([], |row| row.get(0))?;
+    Ok(ids.collect::<rusqlite::Result<_>>()?)
+}
+
 fn bound_where<P: rusqlite::Params>(
     conn: &Connection,
     clause: &str,
     params: P,
 ) -> Result<Vec<Bound>, CoreError> {
     let mut statement = conn.prepare(&format!(
-        "SELECT path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob, embeds FROM folder_files {clause} ORDER BY path",
+        "SELECT {BOUND_COLUMNS} FROM folder_files {clause} ORDER BY path",
     ))?;
     let rows = statement.query_map(params, read_bound)?;
     let mut bound = Vec::new();
@@ -998,7 +1047,7 @@ pub fn set_new_outside_state(conn: &Connection, ids: &[String]) -> Result<(), Co
 mod tests {
     use std::collections::{HashMap, HashSet};
 
-    use super::{prune_unheld, set_unheld, unheld};
+    use super::{BOUND_COLUMNS, bindings, prune_unheld, set_unheld, unheld};
 
     #[test]
     fn keeps_an_unheld_answer_until_its_file_changes_is_bound_or_goes() {
@@ -1018,5 +1067,74 @@ mod tests {
 
         prune_unheld(&conn, &HashSet::from(["c.md".to_string()])).unwrap();
         assert!(unheld(&conn).unwrap().is_empty());
+    }
+
+    fn digest_of_only_row(conn: &rusqlite::Connection) -> (String, super::Binding) {
+        let mut all = bindings(conn).unwrap();
+        assert_eq!(all.len(), 1);
+        all.drain().next().unwrap()
+    }
+
+    #[test]
+    fn a_binding_changes_with_each_bound_column_and_not_with_when_it_was_seen() {
+        let conn = crate::store::open_in_memory().unwrap();
+        let columns: Vec<&str> = BOUND_COLUMNS.split(", ").collect();
+
+        // The query digests every column of the table but `seen_at`.
+        let mut table: Vec<String> = conn
+            .prepare("SELECT name FROM pragma_table_info('folder_files') WHERE name <> 'seen_at'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        let mut named: Vec<String> = columns.iter().map(|name| name.to_string()).collect();
+        table.sort();
+        named.sort();
+        assert_eq!(named, table);
+
+        let row = |conn: &rusqlite::Connection| {
+            conn.execute("DELETE FROM folder_files", []).unwrap();
+            conn.execute(
+                "INSERT INTO folder_files (path, item_id, identity, content_hash, written_hash, links, edge_lines, edit_line, held, own, writes, presentation, blob, embeds, seen_at)
+                 VALUES ('a.md', 'item', 'id', 'hash', NULL, '[]', '[]', 1, NULL, NULL, '{}', NULL, NULL, NULL, 'then')",
+                [],
+            )
+            .unwrap();
+        };
+        row(&conn);
+        let (_, before) = digest_of_only_row(&conn);
+
+        for column in &columns {
+            row(&conn);
+            let changed = if *column == "edit_line" {
+                "2"
+            } else {
+                "'changed'"
+            };
+            conn.execute(&format!("UPDATE folder_files SET {column} = {changed}"), [])
+                .unwrap();
+            let (_, after) = digest_of_only_row(&conn);
+            assert_ne!(
+                after, before,
+                "changing {column} left the binding as it was"
+            );
+        }
+
+        // A value that is the same text in a different column, or a null
+        // beside a value, is a change too.
+        row(&conn);
+        conn.execute("UPDATE folder_files SET held = 'x'", [])
+            .unwrap();
+        let (_, held) = digest_of_only_row(&conn);
+        row(&conn);
+        conn.execute("UPDATE folder_files SET own = 'x'", [])
+            .unwrap();
+        assert_ne!(digest_of_only_row(&conn).1, held);
+
+        row(&conn);
+        conn.execute("UPDATE folder_files SET seen_at = 'now'", [])
+            .unwrap();
+        assert_eq!(digest_of_only_row(&conn).1, before);
     }
 }

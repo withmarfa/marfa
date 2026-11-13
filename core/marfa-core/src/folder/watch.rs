@@ -469,6 +469,7 @@ impl Folder {
             }
             telling.settled();
             gate.passed(crate::clock::now());
+            self.core.release_cache();
             if let Some(event) = self.reclaim_space(&[stop, asked]) {
                 tell(event).map_err(WatchError::Told)?;
             }

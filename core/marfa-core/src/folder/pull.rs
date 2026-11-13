@@ -422,10 +422,7 @@ impl Folder {
         super::tests::READ_ITEMS.with(|read| read.set(read.get() + items.len()));
         let bound_items: HashSet<String> = {
             let conn = self.core.conn()?;
-            state::every_bound(&conn)?
-                .into_iter()
-                .map(|bound| bound.item_id)
-                .collect()
+            state::bound_item_ids(&conn)?
         };
         let mut work: Vec<(Item, bool)> = Vec::new();
         let mut skipped: Vec<String> = Vec::new();

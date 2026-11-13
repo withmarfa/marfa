@@ -63,7 +63,7 @@ struct Baseline {
     change: i64,
     generation: u64,
     settings: Settings,
-    bound: HashMap<String, state::Bound>,
+    bound: HashMap<String, state::Binding>,
     names: Names,
     /// The items whose file the pull found or left as their item renders.
     settled: HashSet<String>,
@@ -87,7 +87,7 @@ struct Changes {
 pub(super) struct Pick {
     change: i64,
     generation: u64,
-    bound: HashMap<String, state::Bound>,
+    bound: HashMap<String, state::Binding>,
     /// The items a change reaches; `None` where every file renders.
     reached: Option<HashSet<String>>,
     /// Where the pull reads only what a change reaches, the items it reads:
@@ -126,10 +126,7 @@ impl Selection {
         Ok(Pick {
             change: crate::store::last_change(&conn, crate::store::Changes::Items)?,
             generation: crate::reach::generation(&conn)?,
-            bound: state::every_bound(&conn)?
-                .into_iter()
-                .map(|bound| (bound.path.clone(), bound))
-                .collect(),
+            bound: state::bindings(&conn)?,
             reached: None,
             read: HashSet::new(),
             checking: false,
@@ -236,9 +233,9 @@ impl Selection {
         let renamed: BTreeSet<String> = changed.iter().chain(&moved).cloned().collect();
         let paths: Vec<(String, String)> = pick
             .bound
-            .values()
-            .filter(|bound| renamed.contains(&bound.item_id))
-            .map(|bound| (bound.path.clone(), bound.item_id.clone()))
+            .iter()
+            .filter(|(_, bound)| renamed.contains(&bound.item_id))
+            .map(|(path, bound)| (path.clone(), bound.item_id.clone()))
             .collect();
         let last = self.last.as_mut().expect("a baseline that holds");
         let differing = last
@@ -300,9 +297,9 @@ impl Selection {
                 .collect();
             read.extend(
                 pick.bound
-                    .values()
-                    .filter(|bound| paused.contains(&bound.path))
-                    .map(|bound| bound.item_id.clone()),
+                    .iter()
+                    .filter(|(path, _)| paused.contains(*path))
+                    .map(|(_, bound)| bound.item_id.clone()),
             );
         }
         read.extend(withheld.into_keys());
@@ -357,9 +354,9 @@ impl Selection {
         let ids: BTreeSet<String> = pinned.iter().cloned().collect();
         let paths: Vec<(String, String)> = pick
             .bound
-            .values()
-            .filter(|bound| ids.contains(&bound.item_id))
-            .map(|bound| (bound.path.clone(), bound.item_id.clone()))
+            .iter()
+            .filter(|(_, bound)| ids.contains(&bound.item_id))
+            .map(|(path, bound)| (path.clone(), bound.item_id.clone()))
             .collect();
         let mut differing = last
             .names

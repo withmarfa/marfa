@@ -443,11 +443,14 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // The ACL reading both the command line and the Rust server's private
   // socket use has macOS-only code, so a Mac builds and tests it too.
   [/^core\/marfa-acl\//, RUST],
-  // The server's own use of it has a macOS-only test, and its process figures
-  // read the resident size, and the open-file limit is raised, through
-  // macOS-only calls.
+  // The allocator is jemalloc only on macOS, where the command line and the
+  // server use it.
+  [/^core\/marfa-allocator\//, RUST],
+  // The server's own use of it has a macOS-only test, its start routes memory
+  // to jemalloc on a Mac only, and its process figures read the resident size,
+  // and the open-file limit is raised, through macOS-only calls.
   [
-    /^core\/marfa-server\/src\/(control_socket|app\/metrics|open_files)\.rs$/,
+    /^core\/marfa-server\/src\/(main|control_socket|app\/metrics|open_files)\.rs$/,
     ["core-checks", "core-checks-linux", ...RUST_SERVER],
   ],
   // A background read lowers its thread's priority each system's own way.

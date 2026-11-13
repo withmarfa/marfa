@@ -1,0 +1,16 @@
+[package]
+name = "marfa-allocator"
+description = "The global allocator of marfa and marfa-server: jemalloc on macOS, with SQLite's memory in it."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rusqlite.workspace = true
+tikv-jemalloc-sys = "0.7"
+tikv-jemallocator = "0.7"
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+# The counters the tests read.
+tikv-jemalloc-sys = { version = "0.7", features = ["stats"] }
