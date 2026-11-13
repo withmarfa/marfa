@@ -30507,7 +30507,7 @@ export interface operations {
                 occurred_after?: string;
                 /** @description Only export items whose own time (`occurred_at`, else `created_at`) is before this time. */
                 occurred_before?: string;
-                /** @description `ndjson` for lines of JSON, or `archive` for a tar file that `POST /restore` reads. Defaults to `ndjson`. An archive's `files.ndjson.gz` lists each file its items name, and marks one it doesn't carry `not_carried`, including a file's blob your credential can't read. */
+                /** @description `ndjson` for lines of JSON, or `archive` for a tar file that `POST /restore` reads. Defaults to `ndjson`. An archive's `files.ndjson.gz` marks each file it doesn't carry `not_carried`, including one your credential can't read. */
                 format?: "ndjson" | "archive";
                 /** @description With `format=archive`, `false` leaves out the bytes of files, which `files.ndjson.gz` then marks `not_carried`. Defaults to `true`. `format=ndjson` carries no file bytes either way. */
                 files?: "true" | "false";
@@ -30518,7 +30518,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description With `format=ndjson`, one JSON object per line: each item, then each readable edge between them. With `format=archive`, a tar of the manifest, then compressed line files of the files it names, your registrations and settings, items, their earlier versions, edges and table rows, then the blobs. If the export fails partway or your credential ends or stops reading what it carries, the connection ends early and an archive won't unpack. */
+            /** @description With `format=ndjson`, one JSON object per line: each item, then each readable edge between them. With `format=archive`, a tar of the manifest, compressed lines of its files, registrations and settings, items, versions, edges and table rows, then the blobs. If the export fails partway or your credential ends or stops reading what it carries, the connection ends early and an archive won't unpack. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30652,7 +30652,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns the counts. Items and edges keep their IDs, versions, dates and history, even if their type now refuses them or is gone. An item whose ID, natural key or link is taken is left as it is, and a setting, icon, source name or connector state is set only where none is. An archive holds no sign-in, keys, apps, webhooks or tombstones. An entry Marfa doesn't know, such as one a tar tool adds, is skipped and named in `entries_skipped`. */
+            /** @description Returns the counts. Items and edges keep their IDs, versions, dates and history, even if their type now refuses them or is gone. An item whose ID, natural key or link is taken is left as it is, and a setting, icon, source name or connector state is set only where none is. An archive holds no sign-in, keys, apps, webhooks or tombstones. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30727,7 +30727,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, was written before Marfa 0.1 or at a later archive version than this build reads, has an invalid line, or has a line over 64 MiB.
+             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.
              *     - `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.
              *     - `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.
              */
@@ -31065,10 +31065,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `conflict`: a file the backup names was purged, or its copy where backups go was dropped, while the backup was read, or a backup by this name is already recorded. The next run takes the backup again.
-             *     - `export_entry_unrestorable`: the backup would hold an item or edge that a restore would refuse or skip, or whose line is longer than the 64 MiB a restore reads, so no backup was put. `details.entry` names it. Correct it or its type, then take the backup again.
+             * @description - `conflict`: a file the backup names was purged or dropped while it was read, or the name is taken.
+             *     - `export_entry_unrestorable`: the backup would hold an item or edge that `GET /export` refuses, named in `details.entry`, so none was put.
              *     - `housekeeping_job_running`: a backup is running. Try again once it ends.
-             *     - `no_backup_destination`: the instance has nowhere to put backups, so it keeps none.
+             *     - `no_backup_destination`: the instance has nowhere to put backups.
              */
             409: {
                 headers: {
@@ -31278,7 +31278,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Returns the counts. Items and edges keep their IDs, versions, dates and history, even if their type now refuses them or is gone. An item whose ID, natural key or link is taken is left as it is, and a setting, icon, source name or connector state is set only where none is. An archive holds no sign-in, keys, apps, webhooks or tombstones. An entry Marfa doesn't know, such as one a tar tool adds, is skipped and named in `entries_skipped`. */
+            /** @description Returns the counts. Items and edges keep their IDs, versions, dates and history, even if their type now refuses them or is gone. An item whose ID, natural key or link is taken is left as it is, and a setting, icon, source name or connector state is set only where none is. An archive holds no sign-in, keys, apps, webhooks or tombstones. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -31363,7 +31363,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, was written before Marfa 0.1 or at a later archive version than this build reads, has an invalid line, or has a line over 64 MiB.
+             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.
              *     - `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.
              *     - `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.
              */
