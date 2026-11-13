@@ -6845,8 +6845,8 @@ export interface components {
         /** @description A backup in the instance's backup folder or object store. */
         Backup: {
             /**
-             * @description The backup's name: the instant Marfa took it, followed by `.tar`.
-             * @example 2026-11-09T10:15:30.250Z.tar
+             * @description The backup's name: the instant Marfa took it in ISO 8601 basic format, with no colons, followed by `.tar`.
+             * @example 20261109T101530.250Z.tar
              */
             name: string;
             /**
