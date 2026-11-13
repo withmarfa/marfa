@@ -165,6 +165,12 @@ describe("backups to a folder", () => {
       properties: { title: "kept in the folder" },
     });
     expect(note.status, JSON.stringify(note.error)).toBe(201);
+    // An edit, so the backup carries a version line.
+    const edited = await working.updateItem(note.data.item.id, {
+      version: note.data.item.version,
+      properties: { title: "kept in the folder, edited" },
+    });
+    expect(edited.status, JSON.stringify(edited.error)).toBe(200);
     const bytes = bytesOf("a file the backup copies", 4096);
     const uploaded = await working.uploadBlob(bytes, "text/plain");
     expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);

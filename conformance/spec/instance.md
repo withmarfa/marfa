@@ -722,7 +722,7 @@ When the private local command sends `POST /backups`, the server MUST answer in 
 
 ### `instance/backup-line-cap`
 
-If an item, an earlier version of an item or an edge a backup would hold takes more than 67108864 bytes on its archive line, then the server MUST answer `POST /backups` with an error that names the item or edge, without putting the backup.
+If an item, an earlier version of an item or an edge a backup would hold takes more than 67108864 bytes on its archive line, then the server MUST answer `POST /backups` with `409 export_entry_unrestorable`, with `details.entry` naming the item or edge, without putting the backup.
 
 **Reason:** a restore reads no line longer (`search-and-filters/restore-text-cap`), so such a backup could never be restored, and an owner told at the time can correct the item while the earlier backups still stand.
 
