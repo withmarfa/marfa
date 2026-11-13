@@ -519,15 +519,16 @@ describe("the backup schedule", () => {
       MARFA_BACKUP_INTERVAL_SECONDS: "1",
     });
     try {
-      const keys = await waitFor("a scheduled backup", async () => {
-        const found = await mine.backupKeys();
-        return found.length > 0 ? found : undefined;
+      // The object is listed before the server records it, so wait on the record.
+      const answer = await waitFor("a scheduled backup", async () => {
+        const read = await health(server, clientsFor(server).operator);
+        return read.backups.last_backup ? read : undefined;
       });
-      expect(keys[0]).toMatch(
-        /\/backups\/[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}\/\d{4}-\d\d-\d\dT[\d:.]+Z\.tar$/,
-      );
-      const answer = await health(server, clientsFor(server).operator);
       expect(answer.backups.status).toBe("ok");
+      const keys = await mine.backupKeys();
+      expect(keys[0]).toMatch(
+        /\/backups\/[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}\/\d{8}T\d{6}\.\d{3}Z\.tar$/,
+      );
       expect(answer.backups.last_backup).toBe(keys[0]!.split("/").pop());
     } finally {
       await server.stop();

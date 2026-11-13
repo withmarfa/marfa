@@ -28,8 +28,8 @@ import {
 
 const DAY = 24 * 3_600_000;
 const SETTINGS = {
-  MARFA_BACKUP_INTERVAL_MS: "0",
-  MARFA_BLOB_CLEANUP_GRACE_MS: "0",
+  MARFA_BACKUP_INTERVAL_SECONDS: "0",
+  MARFA_BLOB_CLEANUP_GRACE_SECONDS: "0",
 };
 const servers: FreshServer[] = [];
 const images: string[] = [];
