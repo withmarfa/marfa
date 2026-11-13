@@ -23715,7 +23715,7 @@
           "Tables"
         ],
         "summary": "List table rows",
-        "description": "Returns a page of a table's rows, by `id` unless you name a sort. A row without the sorted column comes last, and ties go by `id`.",
+        "description": "Returns a page of a table's rows, in the table's `order` unless you name a sort, and by `id` for a table that names no `order`. A row without the sorted column comes last, and ties go by `id`.",
         "security": [
           {
             "bearerAuth": []
@@ -23779,10 +23779,10 @@
             "schema": {
               "type": "string",
               "pattern": "^(id|updated_at|values\\.[a-z][a-z0-9_]*)$",
-              "description": "What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to `id`. A page sorted by the table's `order` column reads only the rows it answers; a page sorted by another column reads every row."
+              "description": "What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to the table's `order` column, or `id` when it names none. Sorting by the `order` column reads only the rows a page answers; another column reads every row."
             },
             "required": false,
-            "description": "What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to `id`. A page sorted by the table's `order` column reads only the rows it answers; a page sorted by another column reads every row.",
+            "description": "What to sort by: `id`, `updated_at` or `values.<column>`. Defaults to the table's `order` column, or `id` when it names none. Sorting by the `order` column reads only the rows a page answers; another column reads every row.",
             "name": "sort",
             "in": "query"
           },

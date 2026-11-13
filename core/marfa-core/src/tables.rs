@@ -1312,16 +1312,44 @@ fn json_of(bound: &Bound) -> Value {
 enum Key {
     Id,
     Updated,
-    Column(String),
+    /// A column named in `sort`, with the type the table declares for it.
+    Column {
+        name: String,
+        kind: String,
+    },
+    /// The table's `order` column, read by the key the server keeps for it.
+    Order {
+        column: String,
+        kind: String,
+    },
 }
 
 impl Key {
-    fn of(sort: Option<&str>, columns: &Map<String, Value>) -> Result<Key> {
+    /// With no `sort`, the table's own `order` column, or `id` for a table that names none.
+    fn of(sort: Option<&str>, definition: &Map<String, Value>) -> Result<Key> {
+        let columns = columns(definition);
+        let order = marfa_rules::schema::order_of(definition)
+            .filter(|(column, _)| marfa_rules::schema::order_column_inlinable(column));
+        let ordered = |column: &str| {
+            order
+                .clone()
+                .filter(|(named, _)| named == column)
+                .map(|(column, kind)| Key::Order { column, kind })
+        };
         match sort {
-            None | Some("id") => Ok(Key::Id),
+            None => Ok(order.map_or(Key::Id, |(column, kind)| Key::Order { column, kind })),
+            Some("id") => Ok(Key::Id),
             Some("updated_at") => Ok(Key::Updated),
             Some(sort) => match sort.strip_prefix("values.") {
-                Some(column) if columns.contains_key(column) => Ok(Key::Column(column.into())),
+                Some(column) if let Some(key) = ordered(column) => Ok(key),
+                Some(column) if let Some(definition) = columns.get(column) => Ok(Key::Column {
+                    name: column.into(),
+                    kind: definition
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .into(),
+                }),
                 _ => Err(refused(
                     "sort",
                     "sort is id, updated_at or values.<column> of a column the table declares",
@@ -1334,25 +1362,55 @@ impl Key {
         match self {
             Key::Id => "NULL".into(),
             Key::Updated => "r.updated_at".into(),
-            Key::Column(column) => {
+            Key::Column { name, kind }
+                if marfa_rules::schema::ORDER_KINDS.contains(&kind.as_str())
+                    && marfa_rules::schema::order_column_inlinable(name) =>
+            {
+                marfa_rules::schema::order_value_key_sql(kind, name, "r.body")
+            }
+            Key::Column { name, .. } => {
                 let text = property_sort_expression("r.body", "?");
                 values.extend(std::iter::repeat_n(
-                    Value::String(format!("$.{column}")),
+                    Value::String(format!("$.{name}")),
                     text.matches('?').count(),
                 ));
                 text
             }
+            Key::Order { column, kind } => {
+                marfa_rules::schema::order_value_key_sql(kind, column, "r.body")
+            }
+        }
+    }
+
+    /// What the key is called in a `sort`, which a cursor is tied to.
+    fn label(&self) -> String {
+        match self {
+            Key::Id => "id".to_string(),
+            Key::Updated => "updated_at".to_string(),
+            Key::Column { name: column, .. } | Key::Order { column, .. } => {
+                format!("values.{column}")
+            }
+        }
+    }
+
+    /// The type of value a cursor's position holds, which a cursor cannot outlive a change to.
+    fn kind(&self) -> Option<String> {
+        match self {
+            Key::Id | Key::Updated => None,
+            Key::Column { kind, .. } => Some(kind.clone()),
+            Key::Order { column, kind } => Some(format!("{kind}:{column}")),
         }
     }
 }
 
-fn scope(item: &str, table: &str, asked: &RowsAsked, descending: bool) -> String {
+fn scope(item: &str, table: &str, asked: &RowsAsked, key: &Key, descending: bool) -> String {
     let named = json!([
         item,
         table,
         asked.filter,
-        asked.sort.as_deref().unwrap_or("id"),
-        descending
+        key.label(),
+        descending,
+        key.kind()
     ]);
     hex::encode(&Sha256::digest(named.to_string().as_bytes())[..16])
 }
@@ -1412,8 +1470,8 @@ fn page_from_copy(
         .as_deref()
         .map(|filter| expression(filter, &columns))
         .transpose()?;
-    let key = Key::of(asked.sort.as_deref(), &columns)?;
-    let scope = scope(item, table, asked, descending);
+    let key = Key::of(asked.sort.as_deref(), definition)?;
+    let scope = scope(item, table, asked, &key, descending);
     let position = asked
         .cursor
         .as_deref()
@@ -1447,7 +1505,7 @@ fn page_from_copy(
                 sql.push_str(&format!(" AND (k {after} ? OR (k = ? AND r.id > ?))"));
                 values.extend([at.clone(), at.clone(), Value::String(id.clone())]);
             }
-            (Key::Column(_), at) => {
+            (Key::Column { .. } | Key::Order { .. }, at) => {
                 sql.push_str(&format!(
                     " AND (k IS NULL OR k {after} ? OR (k = ? AND r.id > ?))"
                 ));
@@ -1459,7 +1517,9 @@ fn page_from_copy(
     sql.push_str(&match key {
         Key::Id => format!(" ORDER BY r.id {direction}"),
         Key::Updated => format!(" ORDER BY k {direction}, r.id ASC"),
-        Key::Column(_) => format!(" ORDER BY k IS NULL, k {direction}, r.id ASC"),
+        Key::Column { .. } | Key::Order { .. } => {
+            format!(" ORDER BY k IS NULL, k {direction}, r.id ASC")
+        }
     });
     sql.push_str(" LIMIT ?");
     values.push(json!(limit + 1));
@@ -1675,7 +1735,8 @@ pub(crate) fn totals(core: &Core, item: &str, table: &str, filter: Option<&str>)
 
 #[cfg(test)]
 mod tests {
-    use super::{OR_TERMS, Read, SPAN_GAP, filter_of, plan};
+    use super::{OR_TERMS, Read, RowsAsked, SPAN_GAP, filter_of, page_from_copy, plan};
+    use serde_json::{Map, Value, json};
 
     fn ids(count: usize) -> Vec<String> {
         (0..count).map(|at| format!("{at:04}")).collect()
@@ -1738,5 +1799,134 @@ mod tests {
             0,
             "letting go of a table kept a purge's re-read"
         );
+    }
+
+    fn copy_with(rows: &[(&str, Value)]) -> (tempfile::TempDir, crate::Core) {
+        let dir = tempfile::tempdir().unwrap();
+        let core = crate::Core::open(dir.path().join("core.sqlite"), None).unwrap();
+        {
+            let conn = core.conn().unwrap();
+            for (id, body) in rows {
+                conn.execute(
+                    "INSERT INTO table_rows (item_id, name, id, body, updated_at)
+                     VALUES ('i', 't', ?, ?, '2026-01-01T00:00:00Z')",
+                    rusqlite::params![id, body.to_string()],
+                )
+                .unwrap();
+            }
+        }
+        (dir, core)
+    }
+
+    fn table(order: Option<&str>, kind: &str) -> Map<String, Value> {
+        let mut definition = json!({ "columns": { "at": { "type": kind } } });
+        if let Some(order) = order {
+            definition["order"] = json!(order);
+        }
+        definition.as_object().unwrap().clone()
+    }
+
+    fn asked(sort: Option<&str>, limit: i64, cursor: Option<String>) -> RowsAsked {
+        RowsAsked {
+            limit: Some(limit),
+            cursor,
+            filter: None,
+            sort: sort.map(str::to_string),
+            direction: None,
+        }
+    }
+
+    fn read(core: &crate::Core, definition: &Map<String, Value>, asked: &RowsAsked) -> Value {
+        let conn = core.conn().unwrap();
+        page_from_copy(&conn, "i", "t", definition, asked).unwrap()
+    }
+
+    fn ids_of(page: &Value) -> Vec<String> {
+        page["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["id"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn mixed_offsets() -> Vec<(&'static str, Value)> {
+        vec![
+            ("a", json!({ "at": "2026-01-01T10:00:00+05:00" })),
+            ("b", json!({ "at": "2026-01-01T06:00:00Z" })),
+            ("c", json!({ "at": "2026-01-01T03:00:00-04:00" })),
+            ("d", json!({ "at": "2026-01-01T04:00:00+00:00" })),
+        ]
+    }
+
+    #[test]
+    fn a_cursor_dies_when_the_type_of_its_order_column_changes() {
+        let (_dir, core) = copy_with(&mixed_offsets());
+        let ordered = table(Some("at"), "datetime");
+        let first = read(&core, &ordered, &asked(None, 2, None));
+        let cursor = first["next_cursor"].as_str().unwrap().to_string();
+        let conn = core.conn().unwrap();
+        let retyped = table(Some("at"), "string");
+        let error = page_from_copy(&conn, "i", "t", &retyped, &asked(None, 2, Some(cursor)))
+            .expect_err("a cursor outlived a change to the type of its order column");
+        assert!(error.to_string().contains("cursor"), "{error}");
+    }
+
+    #[test]
+    fn a_cursor_of_a_named_column_dies_when_the_type_of_the_column_changes() {
+        let (_dir, core) = copy_with(&mixed_offsets());
+        let first = read(
+            &core,
+            &table(None, "datetime"),
+            &asked(Some("values.at"), 2, None),
+        );
+        let cursor = first["next_cursor"].as_str().unwrap().to_string();
+        let conn = core.conn().unwrap();
+        let error = page_from_copy(
+            &conn,
+            "i",
+            "t",
+            &table(None, "string"),
+            &asked(Some("values.at"), 2, Some(cursor)),
+        )
+        .expect_err("a cursor outlived a change to the type of its column");
+        assert!(error.to_string().contains("cursor"), "{error}");
+    }
+
+    #[test]
+    fn a_datetime_column_that_is_not_the_order_sorts_by_instant_across_offsets() {
+        let (_dir, core) = copy_with(&mixed_offsets());
+        let page = read(
+            &core,
+            &table(None, "datetime"),
+            &asked(Some("values.at"), 10, None),
+        );
+        assert_eq!(ids_of(&page), ["d", "a", "b", "c"]);
+        let text = read(
+            &core,
+            &table(None, "string"),
+            &asked(Some("values.at"), 10, None),
+        );
+        assert_eq!(ids_of(&text), ["c", "d", "b", "a"]);
+    }
+
+    #[test]
+    fn number_and_integer_columns_sort_numerically() {
+        let rows = vec![
+            ("a", json!({ "at": 10 })),
+            ("b", json!({ "at": 9 })),
+            ("c", json!({ "at": 100 })),
+            ("d", json!({ "at": 2.5 })),
+            ("e", json!({})),
+        ];
+        let (_dir, core) = copy_with(&rows);
+        for kind in ["number", "integer"] {
+            let page = read(
+                &core,
+                &table(None, kind),
+                &asked(Some("values.at"), 10, None),
+            );
+            assert_eq!(ids_of(&page), ["d", "b", "a", "c", "e"], "{kind}");
+        }
     }
 }

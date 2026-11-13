@@ -6,6 +6,7 @@ mod edge;
 mod evolution;
 mod field;
 mod icons;
+mod order_key;
 mod registry;
 mod resolve;
 mod tables;
@@ -25,6 +26,7 @@ pub use edge::{
 pub use evolution::{evolution_of, item_table_changes};
 pub use field::normalize_field;
 pub use icons::{icon_issue, is_icon_id};
+pub use order_key::{order_column_inlinable, order_value_key_sql};
 pub use registry::Registry;
 pub use resolve::{
     ChainFault, MAX_RESOLUTION_DEPTH, canonical, chain, label_or_default, labelled, plural_of,

@@ -673,6 +673,42 @@ fn a_row_write_is_one_batch_of_operations() {
 }
 
 #[test]
+fn every_row_write_takes_an_idempotency_key() {
+    let key = |args: &[&str]| {
+        let parsed = <crate::Cli as clap::Parser>::try_parse_from(args).unwrap();
+        let crate::Command::Rows { command } = parsed.command else {
+            panic!("not a rows command");
+        };
+        let idempotency = match command {
+            rows::RowsCommand::Write { idempotency, .. }
+            | rows::RowsCommand::Put { idempotency, .. }
+            | rows::RowsCommand::Patch { idempotency, .. }
+            | rows::RowsCommand::Delete { idempotency, .. }
+            | rows::RowsCommand::Undo { idempotency, .. } => idempotency,
+            _ => panic!("a read takes no key"),
+        };
+        let sent = idempotency.apply(rows::get_request("i", "t", "r"));
+        sent.headers
+            .iter()
+            .find(|(name, _)| name == "Idempotency-Key")
+            .map(|(_, value)| value.clone())
+    };
+    let commands: [&[&str]; 5] = [
+        &["marfa", "rows", "write", "i", "t", "--file", "-"],
+        &["marfa", "rows", "put", "i", "t", "--values", "{}"],
+        &["marfa", "rows", "patch", "i", "t", "r", "--values", "{}"],
+        &["marfa", "rows", "delete", "i", "t", "r"],
+        &["marfa", "rows", "undo", "i", "t", "b"],
+    ];
+    for command in commands {
+        assert_eq!(key(command), None, "{command:?}");
+        let mut keyed = command.to_vec();
+        keyed.extend(["--idempotency-key", "k1"]);
+        assert_eq!(key(&keyed).as_deref(), Some("k1"), "{command:?}");
+    }
+}
+
+#[test]
 fn a_refusal_for_one_row_names_the_column_not_the_batch_place() {
     let refusal = |message: &str, path: &str| CliError::Refused {
         status: 400,

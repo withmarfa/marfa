@@ -3496,6 +3496,20 @@ If the server refuses the one operation that `marfa rows put` or `marfa rows pat
 
 **Tests:** `cli/tables.test.ts › names the column of a refused put or patch, where a batch names the operation too`.
 
+### `device/command-row-keyed`
+
+When `marfa rows write`, `put`, `patch`, `delete` or `undo` is given `--idempotency-key`, the CLI MUST send the value as `Idempotency-Key` on the one request the command makes.
+
+**Reason:** a person or a script that sends a `patch`, a `delete` or an undo again after an answer it lost needs the server to answer the first one (`tables/rows-keyed-once`), and the command makes no key of its own because it cannot know the write is a retry.
+
+**Tests:** `cli/tables.test.ts › sends the key of a row write, so a repeat is answered from the record and writes once`.
+
+### `device/command-row-unkeyed`
+
+When `marfa rows write`, `put`, `patch`, `delete` or `undo` is not given `--idempotency-key`, the CLI MUST NOT send an `Idempotency-Key`.
+
+**Tests:** `cli/tables.test.ts › sends the key of a row write, so a repeat is answered from the record and writes once`.
+
 ## Profiles
 
 A profile is a section of `profiles.toml`, a file a person writes by hand, that names a server and where its key comes from. It is not the owner's profile (`GLOSSARY.md`).
@@ -6252,9 +6266,9 @@ When a device answers a read of a table's rows, a row or a table's totals from t
 
 ### `device/table-read-rules`
 
-When a device answers a read of a table from the copy, a device MUST select, order, page and total the rows as `tables/rows-filter`, `tables/rows-sort`, `tables/rows-page`, `tables/totals-meaning` and `tables/totals-empty` say.
+When a device answers a read of a table from the copy, a device MUST select, order, page and total the rows as `tables/rows-filter`, `tables/rows-sort`, `tables/rows-page`, `tables/rows-default-order`, `tables/totals-meaning` and `tables/totals-empty` say.
 
-**Tests:** `device/tables-live.test.ts › pages, filters, sorts and totals from the copy as the server does`.
+**Tests:** `device/tables-live.test.ts › pages, filters, sorts and totals from the copy as the server does`, `› reads a table in its declared order from the copy as the server does`.
 
 ### `device/table-read-refused`
 

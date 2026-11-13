@@ -1,6 +1,7 @@
 use clap::{Args, Subcommand};
 use serde_json::{Value, json};
 
+use super::items::IdempotencyArgs;
 use super::{BodySource, PageArgs, object};
 use crate::error::CliError;
 use crate::output::Printer;
@@ -10,8 +11,9 @@ use crate::values::SortDirection;
 
 #[derive(Debug, Subcommand)]
 pub enum RowsCommand {
-    /// One page of a table's rows, by id unless a sort is given. Pass the
-    /// answer's `next_cursor` as `--cursor` for the next page.
+    /// One page of a table's rows, in the table's own order unless a sort is
+    /// given, and by id for a table that names none. Pass the answer's
+    /// `next_cursor` as `--cursor` for the next page.
     List(ListArgs),
     /// One row of a table.
     Get {
@@ -32,6 +34,8 @@ pub enum RowsCommand {
         table: String,
         #[command(flatten)]
         body: BodySource,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
     },
     /// Write one whole row: create it, or replace the row `--id` names.
     Put {
@@ -45,6 +49,8 @@ pub enum RowsCommand {
         /// The row's values as a JSON object, keyed by column.
         #[arg(long, value_name = "JSON")]
         values: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
     },
     /// Set the columns named on one row, leaving the others as they are.
     /// A `null` value clears a column.
@@ -58,6 +64,8 @@ pub enum RowsCommand {
         /// The values to set as a JSON object, keyed by column.
         #[arg(long, value_name = "JSON")]
         values: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
     },
     /// Delete one or more rows, all of them or none. A row that is not there
     /// is answered `absent`.
@@ -69,6 +77,8 @@ pub enum RowsCommand {
         /// One or more row ids.
         #[arg(required = true)]
         rows: Vec<String>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
     },
     /// How many rows a filter selects, and the total of each column that
     /// names `adds_up`.
@@ -103,6 +113,8 @@ pub enum RowsCommand {
         table: String,
         /// The batch id, as a write or `rows batches` answers it.
         batch: String,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
     },
 }
 
@@ -117,8 +129,8 @@ pub struct ListArgs {
     /// the row's own.
     #[arg(long)]
     pub filter: Option<String>,
-    /// What to order by: `id`, `updated_at` or `values.<column>`. The server's
-    /// default is `id`.
+    /// What to order by: `id`, `updated_at` or `values.<column>`. The default
+    /// is the table's own order, or `id` for a table that names none.
     #[arg(long, value_name = "FIELD")]
     pub sort: Option<String>,
     /// `asc` or `desc`; the server's default is `asc`.
@@ -258,27 +270,44 @@ pub fn run(command: RowsCommand, remote: &Remote, out: &Printer) -> Result<(), C
     let request = match &command {
         RowsCommand::List(args) => list_request(args),
         RowsCommand::Get { item, table, row } => get_request(item, table, row),
-        RowsCommand::Write { item, table, body } => write_request(item, table, body.read()?)?,
+        RowsCommand::Write {
+            item,
+            table,
+            body,
+            idempotency,
+        } => idempotency.apply(write_request(item, table, body.read()?)?),
         RowsCommand::Put {
             item,
             table,
             id,
             values,
-        } => put_request(item, table, id.as_deref(), values)?,
+            idempotency,
+        } => idempotency.apply(put_request(item, table, id.as_deref(), values)?),
         RowsCommand::Patch {
             item,
             table,
             row,
             values,
-        } => patch_request(item, table, row, values)?,
-        RowsCommand::Delete { item, table, rows } => delete_request(item, table, rows)?,
+            idempotency,
+        } => idempotency.apply(patch_request(item, table, row, values)?),
+        RowsCommand::Delete {
+            item,
+            table,
+            rows,
+            idempotency,
+        } => idempotency.apply(delete_request(item, table, rows)?),
         RowsCommand::Totals {
             item,
             table,
             filter,
         } => totals_request(item, table, filter.as_deref()),
         RowsCommand::Batches { item, table, page } => batches_request(item, table, page),
-        RowsCommand::Undo { item, table, batch } => undo_request(item, table, batch),
+        RowsCommand::Undo {
+            item,
+            table,
+            batch,
+            idempotency,
+        } => idempotency.apply(undo_request(item, table, batch)),
     };
     let answer = remote
         .json(&request)

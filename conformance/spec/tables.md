@@ -84,7 +84,7 @@ The server MUST take `searchable` `true` on a `string`, `email` or `url` column.
 
 The server MUST take a table that names in `order` one of its own columns of type `datetime`, `number`, `integer` or `string`, required or not.
 
-**Reason:** the server keeps a table's rows in the order of its `order` column, so a page sorted by that column reads only the rows it answers. The column need not be required: a row written before the column was added has no value, and sorts last under `tables/rows-sort`.
+**Reason:** the server keeps a table's rows in the order of its `order` column, so a page sorted by that column, or one with no `sort` (`tables/rows-default-order`), reads only the rows it answers. The column need not be required: a row written before the column was added has no value, and sorts last under `tables/rows-sort`.
 
 **Tests:** `compliance/type-tables.test.ts › takes an order naming a datetime, number, integer or string column, required or not`.
 
@@ -684,6 +684,28 @@ When a credential repeats a batch or an undo under its `Idempotency-Key` and may
 
 **Tests:** `compliance/table-rows-keyed.test.ts › answers a batch sent again under its key from the record, keeping a change made between the two`.
 
+### `tables/rows-keyed-once`
+
+When a credential repeats under its `Idempotency-Key` a batch holding a `put`, a `patch` or a `delete`, including a batch whose first answer the credential never read, the server MUST NOT change a row, log a batch or announce an event again.
+
+**Reason:** a `patch` or a `delete` sent again after a lost answer cannot be told from a new one without the key, and a `delete` run twice answers `absent` for a row it deleted the first time. The answer is the first answer's (`items/idempotency-replay`).
+
+**Tests:** `compliance/table-rows-keyed.test.ts › answers a put, a patch and a delete sent again under their key from the record, writing each once`, `› writes a batch once when its answer was lost and the batch is sent again`.
+
+### `tables/rows-keyed-reused`
+
+If a credential sends a batch under an `Idempotency-Key` it used with another batch, then the server MUST answer `422 idempotency_key_reused`.
+
+**Reason:** `items/idempotency-reused` states the refusal for every keyed door, and a batch is a body whose operations change rows.
+
+**Tests:** `compliance/table-rows-keyed.test.ts › refuses a key sent again with another batch, writing nothing`.
+
+### `tables/rows-keyed-reused-writes-nothing`
+
+If the server answers `422 idempotency_key_reused` to a batch, then the server MUST NOT change a row.
+
+**Tests:** `compliance/table-rows-keyed.test.ts › refuses a key sent again with another batch, writing nothing`.
+
 ### `tables/table-not-found`
 
 If a door under `/items/{id}/tables/{table}` names a table that the item's type does not declare and the item does not keep under `tables/own-table-listed`, then the server MUST answer `404 table_not_found`.
@@ -786,9 +808,25 @@ When a caller that may read an item sends `GET /items/{id}/tables`, the server M
 
 ### `tables/rows-page`
 
-When a caller sends `GET /items/{id}/tables/{table}/rows` with no `sort`, the server MUST answer the rows in `data` by `id` ascending, at most `limit` of them, with a `next_cursor` that continues the page while more remain.
+When a caller sends `GET /items/{id}/tables/{table}/rows` with no `sort` for a table that names no `order`, the server MUST answer the rows in `data` by `id` ascending, at most `limit` of them, with a `next_cursor` that continues the page while more remain.
 
 **Tests:** `compliance/table-rows-reads.test.ts › pages a table's rows by id, continuing by a signed cursor`.
+
+### `tables/rows-default-order`
+
+When a caller sends `GET /items/{id}/tables/{table}/rows` with no `sort` for a table that names an `order`, the server MUST answer the rows as it would for `sort` naming `values.<order>` with the same `direction`, so `asc` unless the caller names `desc`.
+
+**Reason:** a table names its `order` for the way its rows read, such as a conversation's messages by `sent_at`, so a row written late, by an import or a retried send, takes its place and not the end of the listing. `sort` still wins, and `sort=id` reads by `id`.
+
+**Tests:** `compliance/table-rows-reads.test.ts › reads a table's rows in its declared order when no sort is named`, `› reads a declared order descending, rows without a value last and ties by id`, `› continues a declared order across pages by its cursor, skipping none and repeating none`, `› answers a sort that is named, whatever the table's order`, `compliance/conversation.test.ts › reads the messages in sent_at order by default, however they were written`, `cli/tables.test.ts › reads a table in its declared order by default, and by id when asked`.
+
+### `tables/rows-default-order-cursor`
+
+If a `cursor` was answered for a listing with no `sort` and the table has since changed its `order`, removed it or changed the type of its column, then the server MUST answer `400 validation_error` naming `cursor`.
+
+**Reason:** the position a cursor holds is a value of the column the listing was read by, and a page that continued from it by another column would skip or repeat rows.
+
+**Tests:** `compliance/table-rows-reads.test.ts › refuses a cursor of a default listing once the table's order has changed`.
 
 ### `tables/rows-limit`
 

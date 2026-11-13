@@ -1650,7 +1650,7 @@ marfa rows [OPTIONS] <COMMAND>
 
 ### marfa rows list
 
-One page of a table's rows, by id unless a sort is given. Pass the answer's `next_cursor` as `--cursor` for the next page.
+One page of a table's rows, in the table's own order unless a sort is given, and by id for a table that names none. Pass the answer's `next_cursor` as `--cursor` for the next page.
 
 ```text
 marfa rows list [OPTIONS] <ITEM> <TABLE>
@@ -1664,7 +1664,7 @@ marfa rows list [OPTIONS] <ITEM> <TABLE>
 | Option | Description |
 | --- | --- |
 | `--filter <FILTER>` | Only the rows this expression matches, in the server's filter grammar, where `values.<column>` names a column, and `id` and `updated_at` are the row's own. |
-| `--sort <FIELD>` | What to order by: `id`, `updated_at` or `values.<column>`. The server's default is `id`. |
+| `--sort <FIELD>` | What to order by: `id`, `updated_at` or `values.<column>`. The default is the table's own order, or `id` for a table that names none. |
 | `--direction <DIRECTION>` | `asc` or `desc`; the server's default is `asc`. One of `asc`, `desc`. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
@@ -1700,6 +1700,7 @@ marfa rows write [OPTIONS] <ITEM> <TABLE>
 | --- | --- |
 | `--file <PATH>` | A file holding the JSON body; `-` reads stdin. |
 | `--body <JSON>` | The JSON body inline. |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa rows put
 
@@ -1718,6 +1719,7 @@ marfa rows put [OPTIONS] --values <JSON> <ITEM> <TABLE>
 | --- | --- |
 | `--id <ID>` | The row id to write; the server makes one when it is left out. |
 | `--values <JSON>` | The row's values as a JSON object, keyed by column. |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa rows patch
 
@@ -1736,6 +1738,7 @@ marfa rows patch [OPTIONS] --values <JSON> <ITEM> <TABLE> <ROW>
 | Option | Description |
 | --- | --- |
 | `--values <JSON>` | The values to set as a JSON object, keyed by column. |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa rows delete
 
@@ -1750,6 +1753,10 @@ marfa rows delete [OPTIONS] <ITEM> <TABLE> <ROWS>...
 | `<ITEM>` | The item id. |
 | `<TABLE>` | The table name. |
 | `<ROWS>...` | One or more row ids. |
+
+| Option | Description |
+| --- | --- |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ### marfa rows totals
 
@@ -1799,6 +1806,10 @@ marfa rows undo [OPTIONS] <ITEM> <TABLE> <BATCH>
 | `<ITEM>` | The item id. |
 | `<TABLE>` | The table name. |
 | `<BATCH>` | The batch id, as a write or `rows batches` answers it. |
+
+| Option | Description |
+| --- | --- |
+| `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
 ## blobs
 
@@ -3616,7 +3627,7 @@ marfa device rows list [OPTIONS] <ITEM> <TABLE>
 | Option | Description |
 | --- | --- |
 | `--filter <FILTER>` | Only the rows this expression matches, in the server's filter grammar, where `values.<column>` names a column, and `id` and `updated_at` are the row's own. |
-| `--sort <FIELD>` | What to order by: `id`, `updated_at` or `values.<column>`. The server's default is `id`. |
+| `--sort <FIELD>` | What to order by: `id`, `updated_at` or `values.<column>`. The default is the table's own order, or `id` for a table that names none. |
 | `--direction <DIRECTION>` | `asc` or `desc`; the server's default is `asc`. One of `asc`, `desc`. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |

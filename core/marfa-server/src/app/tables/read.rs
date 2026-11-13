@@ -277,9 +277,11 @@ enum Key {
 }
 
 impl Key {
+    /// With no `sort`, the table's own `order` column, or `id` for a table that names none.
     fn of(sort: Option<&str>, table: &Table) -> Result<Key> {
         match sort {
-            None | Some("id") => Ok(Key::Id),
+            None => Ok(table.order.clone().map_or(Key::Id, Key::Order)),
+            Some("id") => Ok(Key::Id),
             Some("updated_at") => Ok(Key::Updated),
             Some(sort) => match sort.strip_prefix("values.") {
                 Some(column)
@@ -302,6 +304,16 @@ impl Key {
                     "sort is id, updated_at or values.<column> of a column the table declares.",
                 )),
             },
+        }
+    }
+
+    /// What the key is called in a `sort`, which a cursor is tied to.
+    fn label(&self) -> String {
+        match self {
+            Key::Id => "id".to_string(),
+            Key::Updated => "updated_at".to_string(),
+            Key::Column { name, .. } => format!("values.{name}"),
+            Key::Order(order) => format!("values.{}", order.column),
         }
     }
 
@@ -387,7 +399,7 @@ fn scope(item: &str, table: &str, asked: &Page, key: &Key) -> String {
         item,
         table,
         asked.filter,
-        asked.sort.as_deref().unwrap_or("id"),
+        key.label(),
         asked.descending,
         key.kind()
     ])

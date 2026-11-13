@@ -1260,6 +1260,72 @@ describe("reading a table on a device", () => {
     }
   });
 
+  it("reads a table in its declared order from the copy as the server does", async () => {
+    const ordered = await tableType({
+      steps: { ...STEPS, order: "at" },
+    });
+    const own = await itemOf(ordered);
+    const times = [
+      "2026-01-01T10:00:00+05:00",
+      "2026-01-01T06:00:00Z",
+      "2026-01-01",
+      "2026-01-01T01:00:00.500-03:00",
+      "2025-12-31T23:30+00:00",
+      "2026-01-01T06:00:00Z",
+    ];
+    await write(own, [
+      ...times.map((at) => ({ op: "put", values: { at, count: 1 } })),
+      { op: "put", values: { count: 2 } },
+      { op: "put", values: { count: 3 } },
+    ]);
+    const copy = await hydrated([ordered], "declared");
+    value(await copy.holdTable(ordered, "steps"));
+    const asked: Record<string, string>[] = [
+      { limit: "3" },
+      { limit: "2", direction: "desc" },
+      { limit: "4", sort: "id" },
+      { limit: "4", sort: "values.at" },
+    ];
+    for (const query of asked) {
+      const flags = Object.entries(query).flatMap(([name, given]) => [
+        `--${name}`,
+        given,
+      ]);
+      const walked: Page["data"] = [];
+      let cursor: string | null = null;
+      let pages = 0;
+      do {
+        const page: Page & { held: boolean } = value(
+          await copy.tableRead<Page>([
+            "list",
+            own,
+            "steps",
+            ...flags,
+            ...(cursor === null ? [] : ["--cursor", cursor]),
+          ]),
+        );
+        expect(page.held).toBe(true);
+        walked.push(...page.data);
+        cursor = page.next_cursor;
+        pages += 1;
+      } while (cursor !== null && pages < 50);
+      const expected: Page["data"] = [];
+      let next: string | null = null;
+      do {
+        const page: Page = await serverPage(own, {
+          ...query,
+          ...(next === null ? {} : { cursor: next }),
+        });
+        expected.push(...page.data);
+        next = page.next_cursor;
+      } while (next !== null);
+      expect(walked, JSON.stringify(query)).toEqual(expected);
+      expect(walked).toHaveLength(times.length + 2);
+    }
+    const first: Page = await serverPage(own, { limit: "1" });
+    expect(first.data[0]?.values.at).toBe("2025-12-31T23:30+00:00");
+  });
+
   it("refuses from the copy what the server refuses", async () => {
     const refused: [string, string[], Record<string, string>][] = [
       ["limit", ["--limit", "0"], { limit: "0" }],
