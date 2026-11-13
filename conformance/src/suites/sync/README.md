@@ -69,25 +69,7 @@ these mean the server offers no way to reach the state.
 
 ## What a new test owes
 
-Everything in the repository's contributing rules, plus these.
-
-- **A control that fails when the observation would pass for the wrong
-  reason.** Every assertion in this project is about a silence: a filter that
-  matched everything, an event that never came, a stream that was not
-  listening. Each has an innocent explanation, and a test that cannot rule it
-  out is asserting nothing. Write the control first.
-- **A wait is on a frame the server sends either way.** Waiting on the frame
-  that may never arrive means the runner's budget expires and reports
-  `Test timed out` for the file, and nothing else. Wait on the control the
-  subscription delivers regardless, drain what follows, then assert.
-- **An absence is settled by a later frame, never by a quiet window.** A fixed
-  window cannot tell "nothing more is coming" from "not yet". Write a sentinel
-  row after the one under test and wait for the sentinel's own event. **The
-  proof holds across both kinds**: the stream delivers item and edge frames
-  in id order, so a sentinel of either kind orders against every frame
-  published before it.
-- **No hand-rolled deadline.** A `while (cond && Date.now() < deadline)`
-  followed by an assertion on `cond` takes the timeout away from the runner
-  and re-emits it as a logic failure. Wait on the runner's budget, and pass
-  `context.signal` into the stream helpers so an abort can name what it was
-  waiting for.
+`conformance/AGENTS.md`, "What a new test owes", applies here in full: every
+assertion in this project is about a silence. One fact is specific to the
+stream this project reads: it delivers item and edge frames in id order, so a
+sentinel of either kind orders against every frame published before it.
