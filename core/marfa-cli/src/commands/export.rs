@@ -295,17 +295,13 @@ const CARRIED: &str = "carried";
 /// A line of `files.ndjson.gz` holds one hash, a state, a media type and a size.
 const FILE_LINE_CAP: usize = 64 * 1024;
 
-/// Reads the archive's first two entries, `manifest.json` and the list of
-/// files in `files.ndjson.gz`, out of the bytes as they pass, so the export
-/// can say what the archive lacks without reading what it wrote a second
-/// time, which it cannot do on stdout.
+/// Inspects the passing stream because stdout cannot be read back.
 struct ArchiveTap<R> {
     inner: R,
     archive: bool,
     stage: Stage,
     manifest: Option<Vec<u8>>,
-    /// The files `files.ndjson.gz` names but the archive does not carry, once
-    /// it has been read to its end.
+    /// Set only once the complete file list has been read.
     lacking: Option<Vec<String>>,
 }
 
@@ -330,8 +326,7 @@ enum Stage {
     Done,
 }
 
-/// The lines of `files.ndjson.gz` as they inflate, keeping the hash of each
-/// file it does not mark carried.
+/// Retains only missing hashes as the file list inflates.
 #[derive(Default)]
 struct FileLines {
     pending: Vec<u8>,
@@ -424,8 +419,6 @@ impl<R: Read> ArchiveTap<R> {
         }
     }
 
-    /// Follows the tar through `bytes` until the list of files has been read,
-    /// or the archive is found not to begin as the server writes one.
     fn see(&mut self, mut bytes: &[u8]) {
         while !bytes.is_empty() {
             let stage = std::mem::replace(&mut self.stage, Stage::Done);
@@ -499,10 +492,6 @@ impl<R: Read> ArchiveTap<R> {
         }
     }
 
-    /// The files the archive names but does not carry, refused when there
-    /// are any. An archive whose manifest or list of files cannot be read is
-    /// refused too: the server writes them first, so a stream without them is
-    /// not an archive this build reads.
     fn whole(&self) -> Result<(), CliError> {
         if !self.archive {
             return Ok(());
@@ -536,9 +525,7 @@ impl<R: Read> Read for ArchiveTap<R> {
 mod tests {
     use super::*;
 
-    /// A tar that begins as the server writes an archive: `manifest.json`,
-    /// then `files.ndjson.gz` listing each file with its state, then an entry
-    /// the tap must not need.
+    /// The final entry must not be needed by the tap.
     fn archive(files: &[(&str, &str)]) -> Vec<u8> {
         let manifest = format!(
             r#"{{"version":1,"format":"marfa-archive","file_count":{}}}"#,

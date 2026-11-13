@@ -1,5 +1,4 @@
-//! The archive's layout: what each entry holds, that no line grows with an item's history, what a
-//! restore does with an entry it does not know, and which manifests it reads.
+//! Archive layout, history, line limits, and input validation.
 
 use std::io::{Read, Write};
 use std::path::Path;

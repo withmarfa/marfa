@@ -385,8 +385,7 @@ pub struct VersionKey {
     pub version: i64,
 }
 
-/// Judges a `versions.ndjson.gz` line's shape as a restore would, naming its item in each
-/// refusal; whether the archive holds the item, and below which version, the restore judges.
+/// Checks shape only; intake checks the item's presence and version order.
 pub fn version(cap: usize, line: &Value, row: usize) -> Result<VersionKey, Box<Refused>> {
     let item_id = line.get("item_id").and_then(Value::as_str);
     let at = At {

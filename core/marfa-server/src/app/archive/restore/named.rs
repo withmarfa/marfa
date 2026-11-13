@@ -1,5 +1,4 @@
-//! The files a backup names, read from the start of its archive alone: its manifest, then
-//! `files.ndjson.gz`.
+//! Reads a backup's file list without reading its items or blobs.
 
 use std::io::{self, Write};
 
@@ -68,8 +67,7 @@ enum Reading {
     Other,
 }
 
-/// Every file the backup names, or `None` for bytes that do not begin with a manifest of a
-/// version this build reads followed by `files.ndjson.gz`. An entry it does not know is passed.
+/// Returns `None` if the manifest or file list does not read.
 pub async fn files_named(mut bytes: ByteStream) -> io::Result<Option<Vec<Hash>>> {
     let mut reader = Reader::default();
     let mut reading = Reading::Before;
