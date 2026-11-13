@@ -70,7 +70,6 @@ The [Quickstart](https://docs.marfa.so/quickstart) continues from here: it makes
 | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | [`@withmarfa/types`](./packages/types)   | Core type and edge JSON schemas; emits the runtime registries                                                            |
 | [`@withmarfa/shared`](./packages/shared) | Wire types, Zod validation schemas, error codes                                                                          |
-| [`@withmarfa/server`](./packages/server) | The Hono HTTP server, on SQLite                                                                                          |
 | [`@withmarfa/client`](./packages/client) | The TypeScript SDK, generated from `openapi.json`                                                                        |
 | [`core/`](./core)                        | The Rust engine every native client embeds: a working copy, a queue, the `marfa` binary, and the Swift and Node bindings |
 | [`conformance/`](./conformance)          | The contract: black-box fixtures and the written specification under `conformance/spec/`                                 |
@@ -78,9 +77,9 @@ The [Quickstart](https://docs.marfa.so/quickstart) continues from here: it makes
 
 ## What is authoritative
 
-The committed `openapi.json` and the contract in `conformance/` are what both servers are held to. Where a server and either of them disagree, whichever is wrong is fixed.
+The committed `openapi.json` and the contract in `conformance/` are what the server is held to. Where the server and either of them disagree, whichever is wrong is fixed.
 
 - The contract: [`conformance/spec/`](./conformance/spec), with [`coverage.md`](./conformance/spec/coverage.md) naming the fixture behind every published operation.
 - The vocabulary: [`GLOSSARY.md`](./GLOSSARY.md).
 - Conventions and workflow: [`CONTRIBUTING.md`](./CONTRIBUTING.md) and [`AGENTS.md`](./AGENTS.md).
-- The published HTTP surface: [`openapi.json`](./openapi.json), edited directly, with both servers held to it in CI.
+- The published HTTP surface: [`openapi.json`](./openapi.json), edited directly, with the server held to it in CI.

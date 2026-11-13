@@ -14,39 +14,38 @@ pnpm test
 
 ## Running the server locally
 
-The server runs on SQLite, which is the only database it has:
+The server is the Rust `core/marfa-server`, on SQLite, which is the only database it has. Build it, then boot a throwaway instance:
 
 ```bash
-cd packages/server
-export MARFA_AUTH_SECRET="$(openssl rand -hex 32)"
-pnpm dev
+cargo build --release -p marfa-server --manifest-path core/Cargo.toml
+env_text="$(core/scripts/server-up.sh)" && eval "${env_text}"
 ```
 
-This starts the server on `http://localhost:8600` with a local SQLite database.
+The script starts the server on `127.0.0.1` with a fresh database, claims it through the private socket, and exports `MARFA_TEST_URL`, `MARFA_TEST_KEY`, `MARFA_TEST_SOCKET` and the throwaway owner's `MARFA_TEST_OWNER_EMAIL` and `MARFA_TEST_OWNER_PASSWORD`. `core/scripts/server-down.sh` stops it and removes its data.
 
 ### Claiming the instance and making a key
 
-Open `http://localhost:8600/setup` and enter the code from the server's terminal to create the owner. Alternatively, from a second terminal at the repository root, claim it through the private socket:
+`server-up.sh` has already claimed the instance, made an ordinary working key and printed the server's URL. To sign in as the owner, open `$MARFA_TEST_URL/auth/sign-in` with the throwaway owner's email and password. To claim an instance you started another way, run the `marfa` command line through the instance's private socket, at `control/marfa.sock` beside its database:
 
 ```bash
 cargo install --locked --path core/marfa-cli
 unset MARFA_API_URL MARFA_API_KEY MARFA_PROFILE
-marfa_socket="$(pwd -P)/packages/server/data/control/marfa.sock"
+marfa_socket=/path/to/control/marfa.sock
 marfa --socket "$marfa_socket" setup claim --email owner@example.com
 ```
 
 The command prompts for the password without echoing it. `setup claim --stdin` instead accepts a JSON object containing `email`, `password` and optional `name`. A remote claim uses `--url https://marfa.example.com setup claim --email owner@example.com` and prompts for both password and setup code; its JSON input also requires `code`. Supply secrets through the prompt or standard input, never command-line arguments.
 
-The socket command must run under the server's operating-system account. Linux requires the `acl` package. `--socket` cannot be combined with `--url`, `--key`, `--profile`, `MARFA_API_URL`, `MARFA_API_KEY` or `MARFA_PROFILE`, and an unavailable socket never falls back to HTTP or the keychain.
+The socket command must run under the server's operating-system account. `--socket` cannot be combined with `--url`, `--key`, `--profile`, `MARFA_API_URL`, `MARFA_API_KEY` or `MARFA_PROFILE`, and an unavailable socket never falls back to HTTP or the keychain.
 
-Sign in at `http://localhost:8600/auth/sign-in` and open `/auth/owner/keys` to create a key with the access you need. To create a content key from the machine instead:
+To create another content key from the machine:
 
 ```bash
 marfa --socket "$marfa_socket" keys create --label laptop --source laptop \
   --type-permission '*=write' --edge-permission '*=write' \
   --metadata-permission '*=write' --extension-permission '*=write' \
   --profile-permission '*=write'
-export MARFA_API_URL=http://localhost:8600
+export MARFA_API_URL="$MARFA_TEST_URL"
 marfa keys keep    # paste the returned key on standard input
 marfa status
 ```
@@ -136,5 +135,5 @@ See [`conformance/README.md`](./conformance/README.md) for the individual lanes 
 
 A change to what the server does and the change to the contract that admits
 it belong in the same pull request. The committed `openapi.json` and the
-contract are what both servers are held to; where a server and either of them
+contract are what the server is held to; where the server and either of them
 disagree, whichever is wrong is fixed.

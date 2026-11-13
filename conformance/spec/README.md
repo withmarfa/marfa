@@ -10,7 +10,7 @@ This file is the standard every chapter is written to. `src/utils/spec-form.test
 
 The contract has two halves.
 
-**The server's half** says what the server answers over HTTP. The committed `openapi.json` is the document both servers are held to. `pnpm check:statuses` holds what a server answers to it, so where the two disagree, one of them is fixed.
+**The server's half** says what the server answers over HTTP. The committed `openapi.json` is the document the server is held to. `pnpm check:statuses` holds what the server answers to it, so where the two disagree, one of them is fixed.
 
 - `folder-status.md`: folder-copy sync reports, their canonical sign-ins, receipt ages, current and historical totals, and the folder inventory.
 - `items.md`: items, their lifecycle, bulk writes, metadata, tags and extensions, the folder operation that writes `system.folder`, and links and the tombstones a purge leaves.
