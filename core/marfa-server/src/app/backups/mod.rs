@@ -297,8 +297,6 @@ struct Recorded {
     omissions: i64,
 }
 
-/// Confirms listed backups; forgets one thinning deleted, or one thinning would delete that
-/// listings in a row omit.
 fn reconcile(
     tx: &Transaction<'_>,
     store: &str,
