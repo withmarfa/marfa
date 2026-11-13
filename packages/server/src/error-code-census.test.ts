@@ -47,6 +47,8 @@ const REMOVED_FROM_CONTRACT: Record<string, string> = {
  * stale.
  */
 const RUST_SERVER_ONLY: Record<string, string> = {
+  backup_files_missing:
+    "`POST /backups/{instance_id}/{name}/restore`, from a backup folder",
   backup_not_found: "`POST /backups/{instance_id}/{name}/restore`",
   batch_not_found: "`POST /items/{id}/tables/{table}/batches/{batch}/undo`",
   copy_held_by_backup:
