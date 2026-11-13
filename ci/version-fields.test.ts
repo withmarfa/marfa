@@ -20,7 +20,7 @@
  * `info.version` is the contract version, not a product version.
  *
  * Two kinds of file that are not manifests are read for a product version
- * written as text: `packages/server/src/contract.ts`, where the contract
+ * written as text: `core/marfa-core/src/contract.rs`, where the contract
  * version lives and a product version could be mistaken for it, and every
  * README a published package ships, where an install line is the natural
  * place to write one. Either would pass the manifest rules untouched. What
@@ -167,8 +167,8 @@ export function versionsWritten(files: readonly Manifest[]): VersionHeld[] {
   );
 }
 
-/** The file that holds the contract version, beside the build's. */
-const CONTRACT_FILE = "packages/server/src/contract.ts";
+/** The file that states the contract version, generated from the document. */
+const CONTRACT_FILE = "core/marfa-core/src/contract.rs";
 
 /**
  * Every directory a published package is built from: a package.json that is
@@ -301,7 +301,7 @@ describe("no file holds a version", () => {
         },
         {
           path: CONTRACT_FILE,
-          text: 'export const CONTRACT_VERSION = 1;\nexport const BUILD = "0.0.4";\n',
+          text: 'pub const CONTRACT_VERSION: u64 = 1;\npub const BUILD: &str = "0.0.4";\n',
         },
         {
           path: CONTRACT_FILE,

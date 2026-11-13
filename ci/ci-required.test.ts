@@ -42,8 +42,8 @@ function runs(paths: string[]): Job[] {
 const OFFLINE: Job[] = ["conformance-offline"];
 /** The fixtures: the offline lane holds the citations, and the Rust contract jobs run them. */
 const CONTRACT: Job[] = [...OFFLINE, "rust-contract"];
-/** The TypeScript server's code reaches its own build and tests, and the offline lane. */
-const SERVER: Job[] = ["ci-sqlite", "workspace", ...OFFLINE];
+/** A workspace package's code reaches the workspace's build and tests, and the offline lane. */
+const PACKAGES: Job[] = ["quick-checks", "workspace", ...OFFLINE];
 /** Every job that boots the Rust server. */
 const RUST_SERVER: Job[] = [
   "rust-contract",
@@ -69,35 +69,35 @@ describe("what a change runs", () => {
         "conformance/src/suites/sync/README.md",
         "deploy/README.md",
       ],
-      ["ci-sqlite"],
+      ["quick-checks"],
     ],
     [
       "a README Prettier does not read, which the reference check does",
       ["core/README.md"],
-      ["ci-sqlite"],
+      ["quick-checks"],
     ],
     [
       "the command reference, which a Rust test holds to the binary's command tree",
       ["core/marfa-cli/COMMANDS.md"],
-      ["ci-sqlite", "core-checks-linux"],
+      ["quick-checks", "core-checks-linux"],
     ],
     [
       "a published package's README, which the version check reads",
       ["packages/client/README.md"],
-      ["ci-sqlite", "version-fields"],
+      ["quick-checks", "version-fields"],
     ],
     [
       "top-level documentation, the README's images and the licence",
       ["GLOSSARY.md", "LICENSE", "assets/architecture-light.svg"],
-      ["ci-sqlite"],
+      ["quick-checks"],
     ],
-    ["the licence alone", ["LICENSE"], ["ci-sqlite"]],
+    ["the licence alone", ["LICENSE"], ["quick-checks"]],
     [
       "agent instructions, settings and Git hooks, in any language ESLint does not read",
       [
         "AGENTS.md",
         "CLAUDE.md",
-        "packages/server/AGENTS.md",
+        "packages/client/AGENTS.md",
         ".agents/skills/release/SKILL.md",
         ".agents/skills/release/helper.py",
         ".claude/settings.json",
@@ -105,12 +105,12 @@ describe("what a change runs", () => {
         ".githooks/pre-push",
         ".github/ISSUE_TEMPLATE/bug.yml",
       ],
-      ["ci-sqlite"],
+      ["quick-checks"],
     ],
     [
       "JavaScript or TypeScript in an agent folder, which ESLint reads",
       [".agents/skills/release/helper.ts", ".githooks/check.mjs"],
-      ["ci-sqlite", "workspace"],
+      ["quick-checks", "workspace"],
     ],
     [
       "a path named like an agent folder that is not one",
@@ -124,12 +124,12 @@ describe("what a change runs", () => {
         ".github/SECURITY.md",
         ".github/PULL_REQUEST_TEMPLATE.md",
       ],
-      ["ci-sqlite"],
+      ["quick-checks"],
     ],
     [
       "the action that makes the native build image",
       [".github/actions/native-build-image/action.yml"],
-      ["ci-sqlite", "core-native", "image", "rust-contract"],
+      ["quick-checks", "core-native", "image", "rust-contract"],
     ],
     [
       "an action a workflow could use",
@@ -139,23 +139,23 @@ describe("what a change runs", () => {
     [
       "the core's ignore file, which can hide a generated client file",
       ["core/.gitignore"],
-      ["ci-sqlite", "clients-freshness"],
+      ["quick-checks", "clients-freshness"],
     ],
     [
-      "the settings example, which the settings census test reads",
+      "the settings example, which `ci/env-example.test.ts` reads",
       [".env.example"],
-      ["ci-sqlite", "workspace"],
+      ["quick-checks", "workspace"],
     ],
     [
       "the contract's specification, which only the offline lane and the reference checks read",
       ["conformance/spec/items.md"],
-      ["ci-sqlite", "workspace", ...OFFLINE],
+      ["quick-checks", "workspace", ...OFFLINE],
     ],
     [
       "the error table, which a compliance fixture reads at run time and the Rust server embeds",
       ["conformance/spec/errors.md"],
       [
-        "ci-sqlite",
+        "quick-checks",
         "workspace",
         ...OFFLINE,
         "core-checks-linux",
@@ -165,97 +165,47 @@ describe("what a change runs", () => {
     [
       "the coverage table, which a compliance fixture reads at run time",
       ["conformance/spec/coverage.md"],
-      ["ci-sqlite", "workspace", ...OFFLINE, "rust-contract"],
-    ],
-    ["a server-only change", ["packages/server/src/routes/items.ts"], SERVER],
-    [
-      "a page style, browser script or browser test",
-      [
-        "packages/server/src/pages/styles/parts.css",
-        "packages/server/src/pages/client/picker.ts",
-        "packages/server/src/pages/browser/home.browser.test.ts",
-      ],
-      ["ci-sqlite", "workspace"],
-    ],
-    [
-      "a page unit test or a helper only tests import",
-      [
-        "packages/server/src/pages/parts.test.tsx",
-        "packages/server/src/pages/test-fixture.tsx",
-      ],
-      ["ci-sqlite", "workspace"],
-    ],
-    [
-      "a page part or page view, which no contract job reads",
-      [
-        "packages/server/src/pages/parts/rows.tsx",
-        "packages/server/src/routes/sign-in-page.tsx",
-        "packages/server/src/routes/key-pages.tsx",
-      ],
-      SERVER,
-    ],
-    [
-      "the UI viewer, a development script",
-      [
-        "packages/server/scripts/ui-viewer.ts",
-        "packages/server/scripts/ui-viewer-fixtures.tsx",
-        "packages/server/src/routes/ui-viewer-coverage.test.ts",
-      ],
-      ["ci-sqlite", "workspace"],
-    ],
-    [
-      "the page that decides whether a refusal is a page or JSON",
-      ["packages/server/src/routes/http-error-page.tsx"],
-      SERVER,
-    ],
-    [
-      "page logic that handlers read, and the route that serves the assets",
-      [
-        "packages/server/src/pages/recent-sign-in.ts",
-        "packages/server/src/pages/assets.ts",
-        "packages/server/src/routes/auth-pages.ts",
-      ],
-      SERVER,
+      ["quick-checks", "workspace", ...OFFLINE, "rust-contract"],
     ],
     [
       "a type definition, which the core's catalog is written from",
       ["packages/types/core/note.json"],
-      [...SERVER, "types-freshness", "clients-freshness"],
+      [...PACKAGES, "types-freshness", "clients-freshness"],
     ],
     [
       "the registry that lists the types",
       ["packages/shared/src/type-registry.ts"],
-      [...SERVER, "clients-freshness"],
+      [...PACKAGES, "clients-freshness"],
     ],
     [
       "the catalog the core carries",
       ["core/marfa-rules/src/builtin_catalog.json"],
-      [...RUST_LINUX, "core", "clients-freshness", "workspace", "ci-sqlite"],
+      [...RUST_LINUX, "core", "clients-freshness", "workspace", "quick-checks"],
     ],
     [
       "a client-only change, which no contract job reads",
       ["packages/client/src/client.ts"],
-      ["ci-sqlite", "workspace", "clients-freshness"],
+      ["quick-checks", "workspace", "clients-freshness"],
     ],
     [
       "a Rust-only change",
       ["core/marfa-core/src/store.rs"],
-      [...RUST_LINUX, "core", "ci-sqlite"],
+      [...RUST_LINUX, "core", "quick-checks"],
     ],
     [
       "the core's folder watching, which FSEvents, name case and Finder packages change",
       ["core/marfa-core/src/folder/scan.rs", "core/marfa-core/src/watch.rs"],
-      [...RUST, "ci-sqlite"],
+      [...RUST, "quick-checks"],
     ],
     [
       "the command line, with its login keychain and launchd autostart",
       ["core/marfa-cli/src/main.rs"],
-      [...RUST, "ci-sqlite"],
+      [...RUST, "quick-checks"],
     ],
     [
       "the core's lockfile, since a dependency bump can break an Apple build",
       ["core/Cargo.lock"],
-      [...RUST, ...ENRICHMENT, "image", "ci-sqlite", "version-fields"],
+      [...RUST, ...ENRICHMENT, "image", "quick-checks", "version-fields"],
     ],
     [
       "the native readers' scripts, pins and patches, which the native build, the image's programs and the Rust server's build run",
@@ -266,7 +216,7 @@ describe("what a change runs", () => {
         "core/marfa-enrichment/native/shim.cc",
         "core/marfa-enrichment/native/linux/Dockerfile",
       ],
-      ["ci-sqlite", "core-native", "image", "rust-contract"],
+      ["quick-checks", "core-native", "image", "rust-contract"],
     ],
     [
       "the reader's parsers, which are pure Rust and read the same on a Mac",
@@ -275,7 +225,7 @@ describe("what a change runs", () => {
         "core/marfa-enrichment/src/lib.rs",
         "core/marfa-enrichment/fixtures/sample.docx",
       ],
-      ["ci-sqlite", ...RUST_LINUX, ...ENRICHMENT],
+      ["quick-checks", ...RUST_LINUX, ...ENRICHMENT],
     ],
     [
       "the reader's isolation, which is Landlock and seccomp on Linux and sandbox_init on a Mac",
@@ -287,13 +237,13 @@ describe("what a change runs", () => {
         "core/marfa-enrichment/Cargo.toml",
         "core/marfa-enrichment/tests/isolation.rs",
       ],
-      ["ci-sqlite", "version-fields", ...RUST, ...ENRICHMENT],
+      ["quick-checks", "version-fields", ...RUST, ...ENRICHMENT],
     ],
     [
       "nextest's budget and the runner that caps a test, which the fault-injection tests run under",
       ["core/.config/nextest.toml", "core/scripts/test-limits.sh"],
       [
-        "ci-sqlite",
+        "quick-checks",
         "workspace",
         "core-checks",
         "core-checks-linux",
@@ -304,23 +254,29 @@ describe("what a change runs", () => {
     [
       "a Rust test, which is not in the binary",
       ["core/marfa-cli/tests/folder.rs"],
-      ["ci-sqlite", "core-checks", "core-checks-linux", "core"],
+      ["quick-checks", "core-checks", "core-checks-linux", "core"],
     ],
     [
       "a Swift-only change, which the Linux job does not check",
       ["core/bindings/swift/src/lib.rs"],
-      ["ci-sqlite", "core-checks", "core", "swift-package"],
+      ["quick-checks", "core-checks", "core", "swift-package"],
     ],
     [
       "the Swift crate's lockfile, which pins the uniffi the glue is made with",
       ["core/bindings/swift/Cargo.lock"],
-      ["ci-sqlite", "core-checks", "core", "swift-package", "version-fields"],
+      [
+        "quick-checks",
+        "core-checks",
+        "core",
+        "swift-package",
+        "version-fields",
+      ],
     ],
     [
       "the Swift crate's manifest, which declares it",
       ["core/bindings/swift/Cargo.toml"],
       [
-        "ci-sqlite",
+        "quick-checks",
         "workspace",
         "core-checks",
         "core",
@@ -331,13 +287,13 @@ describe("what a change runs", () => {
     [
       "the script that builds the Swift package",
       ["core/bindings/swift/build.sh"],
-      ["ci-sqlite", "core-checks", "core", "swift-package"],
+      ["quick-checks", "core-checks", "core", "swift-package"],
     ],
     [
       "the Node module's Rust, a member of the core workspace, which the device fixtures drive a build of",
       ["core/bindings/node/src/lib.rs"],
       [
-        "ci-sqlite",
+        "quick-checks",
         "core-checks",
         "core-checks-linux",
         "core",
@@ -347,18 +303,18 @@ describe("what a change runs", () => {
     [
       "the Node module's manifest, which its build reads",
       ["core/bindings/node/package.json"],
-      ["ci-sqlite", "core", "rust-contract", "version-fields"],
+      ["quick-checks", "core", "rust-contract", "version-fields"],
     ],
     [
       "the Node module's JavaScript",
       ["core/bindings/node/test/pin.test.mjs"],
-      ["ci-sqlite", "core"],
+      ["quick-checks", "core"],
     ],
     [
       "the API document",
       ["openapi.json"],
       [
-        "ci-sqlite",
+        "quick-checks",
         "workspace",
         "core-checks-linux",
         ...CONTRACT,
@@ -368,17 +324,17 @@ describe("what a change runs", () => {
     [
       "a CLI scenario",
       ["conformance/src/suites/cli/folder.test.ts"],
-      ["ci-sqlite", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
       "the CLI harness, which a device fixture imports",
       ["conformance/src/suites/cli/harness.ts"],
-      ["ci-sqlite", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
       "the device harness shared by CLI scenarios",
       ["conformance/src/suites/device/harness.ts"],
-      ["ci-sqlite", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
       "the device suites' adapters and scripted server, which a CLI scenario imports",
@@ -386,7 +342,7 @@ describe("what a change runs", () => {
         "conformance/src/device/cli-adapter.ts",
         "conformance/src/device/scripted-server.ts",
       ],
-      ["ci-sqlite", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
       "a test beside the helpers, which only the offline lane runs",
@@ -394,7 +350,7 @@ describe("what a change runs", () => {
         "conformance/src/utils/shard-sequencer.test.ts",
         "conformance/src/utils/nested/helper.test.ts",
       ],
-      ["ci-sqlite", "workspace", ...OFFLINE],
+      ["quick-checks", "workspace", ...OFFLINE],
     ],
     [
       "the nightly scale benchmark, which only the offline lane tests",
@@ -402,13 +358,13 @@ describe("what a change runs", () => {
         "conformance/src/utils/scale/report.ts",
         "conformance/scripts/scale/seed.ts",
       ],
-      ["ci-sqlite", "workspace", ...OFFLINE],
+      ["quick-checks", "workspace", ...OFFLINE],
     ],
     [
       "a helper no test file is, which every fixture may import",
       ["conformance/src/utils/shard-drift.ts"],
       [
-        "ci-sqlite",
+        "quick-checks",
         "workspace",
         ...CONTRACT,
         "restore-drill",
@@ -418,18 +374,18 @@ describe("what a change runs", () => {
     [
       "a device fixture",
       ["conformance/src/suites/device/folders.test.ts"],
-      ["ci-sqlite", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
       "the helpers the folder fixtures share",
       ["conformance/src/suites/device/folders.shared.ts"],
-      ["ci-sqlite", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
       "the item names and previews the server and the core share",
       ["conformance/fixtures/item-display.json"],
       [
-        "ci-sqlite",
+        "quick-checks",
         "workspace",
         "core-checks-linux",
         ...OFFLINE,
@@ -439,27 +395,27 @@ describe("what a change runs", () => {
     [
       "the filter expressions the server and the core share",
       ["conformance/fixtures/filter-expressions.json"],
-      ["ci-sqlite", "workspace", "core-checks-linux", "core"],
+      ["quick-checks", "workspace", "core-checks-linux", "core"],
     ],
     [
       "the name fold the server and the core share",
       ["conformance/fixtures/name-fold.json"],
-      ["ci-sqlite", "workspace", "core-checks-linux", "rust-contract"],
+      ["quick-checks", "workspace", "core-checks-linux", "rust-contract"],
     ],
     [
       "a compliance fixture",
       ["conformance/src/suites/compliance/owner.test.ts"],
-      ["ci-sqlite", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
       "a correctness fixture",
       ["conformance/src/suites/correctness/items.test.ts"],
-      ["ci-sqlite", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
       "a sync fixture",
       ["conformance/src/suites/sync/streams.test.ts"],
-      ["ci-sqlite", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
       "a suite off the gate",
@@ -468,12 +424,12 @@ describe("what a change runs", () => {
         "conformance/src/suites/performance/items.test.ts",
         "conformance/src/suites/hydration/hydration.test.ts",
       ],
-      ["ci-sqlite", "workspace", ...OFFLINE],
+      ["quick-checks", "workspace", ...OFFLINE],
     ],
     [
       "a suite folder no rule names",
       ["conformance/src/suites/new/items.test.ts"],
-      ["ci-sqlite", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
       "fixtures of several projects, which reach the same jobs as one",
@@ -482,13 +438,13 @@ describe("what a change runs", () => {
         "conformance/src/suites/device/folders.test.ts",
         "conformance/src/suites/sync/streams.test.ts",
       ],
-      ["ci-sqlite", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
       "what every fixture uses",
       ["conformance/src/utils/setup.ts"],
       [
-        "ci-sqlite",
+        "quick-checks",
         "workspace",
         ...CONTRACT,
         "restore-drill",
@@ -502,7 +458,7 @@ describe("what a change runs", () => {
         "conformance/src/utils/shard-weights.ts",
       ],
       [
-        "ci-sqlite",
+        "quick-checks",
         "workspace",
         ...CONTRACT,
         "restore-drill",
@@ -513,7 +469,7 @@ describe("what a change runs", () => {
       "the configuration that decides which file lands in which project",
       ["conformance/vitest.config.ts"],
       [
-        "ci-sqlite",
+        "quick-checks",
         "workspace",
         ...CONTRACT,
         "restore-drill",
@@ -523,67 +479,59 @@ describe("what a change runs", () => {
     [
       "the restore drill",
       ["conformance/scripts/restore-drill.ts"],
-      ["ci-sqlite", "workspace", "restore-drill"],
+      ["quick-checks", "workspace", "restore-drill"],
     ],
     [
       "the script that runs the MCP conformance tool",
       ["conformance/scripts/mcp-conformance.ts"],
-      ["ci-sqlite", "workspace", "mcp-conformance"],
-    ],
-    [
-      "the MCP endpoint and the fetching its tools do",
-      [
-        "packages/server/src/mcp/door.ts",
-        "packages/server/src/net/public-fetch.ts",
-      ],
-      SERVER,
+      ["quick-checks", "workspace", "mcp-conformance"],
     ],
     [
       "the image, which the test hooks' test also reads",
       ["deploy/Dockerfile"],
-      ["ci-sqlite", "workspace", "image"],
+      ["quick-checks", "workspace", "image"],
     ],
     [
       "the script that builds the release's programs, which the image is made from",
       ["scripts/release/build-programs.sh"],
-      ["ci-sqlite", "workspace", "image"],
+      ["quick-checks", "workspace", "image"],
     ],
     [
       "the native readers' scripts, which the image's programs and the Rust server are built with",
       ["core/marfa-enrichment/native/lib.sh"],
-      ["ci-sqlite", "core-native", "image", "rust-contract"],
+      ["quick-checks", "core-native", "image", "rust-contract"],
     ],
     [
       "the settings, whose names the Dockerfile sets",
       ["core/marfa-server/src/settings/start.rs"],
-      ["ci-sqlite", "core-checks-linux", ...RUST_SERVER, "image"],
+      ["quick-checks", "core-checks-linux", ...RUST_SERVER, "image"],
     ],
     [
       "the script that boots the image",
       ["scripts/check-image.sh"],
-      ["ci-sqlite", "workspace", "image"],
+      ["quick-checks", "workspace", "image"],
     ],
     [
       "JavaScript that ESLint reads",
       ["deploy/healthcheck.js"],
-      ["ci-sqlite", "workspace"],
+      ["quick-checks", "workspace"],
     ],
     [
       "Markdown in a generated tree, which its freshness check refuses",
       ["packages/types/generated/NOTES.md"],
-      [...SERVER, "types-freshness", "clients-freshness"],
+      [...PACKAGES, "types-freshness", "clients-freshness"],
     ],
     ["the attributes checkout applies", [".gitattributes"], [...JOBS]],
     [
       "a crate the binary could come to be built from",
       ["core/marfa-wire/src/lib.rs"],
-      [...RUST_LINUX, "ci-sqlite"],
+      [...RUST_LINUX, "quick-checks"],
     ],
     [
       "a dependency",
       ["pnpm-lock.yaml"],
       [
-        "ci-sqlite",
+        "quick-checks",
         "workspace",
         ...CONTRACT,
         "mcp-conformance",
@@ -591,28 +539,12 @@ describe("what a change runs", () => {
         "types-freshness",
         "version-fields",
         "clients-freshness",
-        "control-socket",
       ],
-    ],
-    [
-      "the control socket's code, which its macOS tests run",
-      ["packages/server/src/control/socket.ts"],
-      [...SERVER, "control-socket"],
-    ],
-    [
-      "the setup every server test runs under, the control socket's among them",
-      ["packages/server/src/test-global-setup.ts"],
-      [...SERVER, "control-socket"],
-    ],
-    [
-      "server code the control socket's tests do not read",
-      ["packages/server/src/config.ts"],
-      SERVER,
     ],
     [
       "a crate manifest, which this test reads",
       ["core/marfa-core/Cargo.toml"],
-      ["ci-sqlite", ...RUST, "version-fields"],
+      ["quick-checks", ...RUST, "version-fields"],
     ],
     [
       "ci.yml, which defines every job it runs, the call of core-live.yml among them",
@@ -622,41 +554,41 @@ describe("what a change runs", () => {
     [
       "core-live.yml, which the ci/ tests read and ci.yml calls",
       [".github/workflows/core-live.yml"],
-      ["ci-sqlite", "workspace", "core"],
+      ["quick-checks", "workspace", "core"],
     ],
     [
       "core.yml, which the ci/ tests read and no pull request runs",
       [".github/workflows/core.yml"],
-      ["ci-sqlite", "workspace"],
+      ["quick-checks", "workspace"],
     ],
     [
       "another workflow",
       [".github/workflows/release.yml"],
-      ["ci-sqlite", "workspace"],
+      ["quick-checks", "workspace"],
     ],
     ["the classifier itself", ["scripts/ci-required.ts"], [...JOBS]],
-    ["a test of CI", ["ci/ci-required.test.ts"], ["ci-sqlite", "workspace"]],
+    ["a test of CI", ["ci/ci-required.test.ts"], ["quick-checks", "workspace"]],
     [
       "a test of the API document",
       ["ci/openapi/style.test.ts"],
-      ["ci-sqlite", "workspace"],
+      ["quick-checks", "workspace"],
     ],
     [
       "Markdown a test reads as a fixture",
-      ["packages/server/src/enrichment/fixtures/note.md"],
-      SERVER,
+      ["packages/shared/src/fixtures/note.md"],
+      [...PACKAGES, "clients-freshness"],
     ],
     ["a path no rule names", ["tools/new.ts"], [...JOBS]],
     [
-      "documentation beside a server change",
-      ["README.md", "conformance/spec/blobs.md", "packages/server/src/x.ts"],
-      SERVER,
+      "documentation beside a package change",
+      ["README.md", "conformance/spec/blobs.md", "packages/shared/src/x.ts"],
+      [...PACKAGES, "clients-freshness"],
     ],
     [
       "Rust beside a client change",
       ["core/marfa-cli/src/main.rs", "packages/client/src/client.ts"],
       [
-        "ci-sqlite",
+        "quick-checks",
         "workspace",
         "core-checks",
         "core-checks-linux",
@@ -669,27 +601,27 @@ describe("what a change runs", () => {
     [
       "the Rust server alone",
       ["core/marfa-server/src/lib.rs", "core/marfa-server/tests/config.rs"],
-      ["ci-sqlite", "core-checks-linux", ...RUST_SERVER],
+      ["quick-checks", "core-checks-linux", ...RUST_SERVER],
     ],
     [
       "the Rust server's start, which routes memory to jemalloc on a Mac",
       ["core/marfa-server/src/main.rs"],
-      ["ci-sqlite", "core-checks", "core-checks-linux", ...RUST_SERVER],
+      ["quick-checks", "core-checks", "core-checks-linux", ...RUST_SERVER],
     ],
     [
       "the Rust server's manifest",
       ["core/marfa-server/Cargo.toml"],
-      ["ci-sqlite", "core-checks-linux", ...RUST_SERVER, "version-fields"],
+      ["quick-checks", "core-checks-linux", ...RUST_SERVER, "version-fields"],
     ],
     [
       "an icon set the rules crate embeds",
       ["packages/types/generated/icon-set-lucide.json"],
-      [...SERVER, "types-freshness", "clients-freshness", ...RUST],
+      [...PACKAGES, "types-freshness", "clients-freshness", ...RUST],
     ],
     [
       "the score script",
       ["conformance/scripts/rust-score.ts"],
-      ["ci-sqlite", "workspace", "conformance-offline", "rust-contract"],
+      ["quick-checks", "workspace", "conformance-offline", "rust-contract"],
     ],
     [
       "an empty change, which cannot be told apart from an unread one",
@@ -762,10 +694,10 @@ describe("what a change runs", () => {
 
   it("treats Markdown as documentation but the contract, package READMEs and the command reference", () => {
     const beyond = (path: string) =>
-      [...affected(path)].filter((job) => job !== "ci-sqlite");
+      [...affected(path)].filter((job) => job !== "quick-checks");
     // The rule fixtures and generated trees fall through on purpose.
     const docs = RULES.find(([pattern]) => pattern.test("README.md"))?.[0];
-    expect(docs?.test("packages/server/src/fixtures/note.md")).toBe(false);
+    expect(docs?.test("packages/shared/src/fixtures/note.md")).toBe(false);
     // The witnesses: the contract and a package's README reach a job.
     expect(beyond("conformance/spec/items.md")).toEqual([
       "workspace",
@@ -818,7 +750,7 @@ describe("what a change runs", () => {
     }
     for (const paths of [
       [],
-      ["AGENTS.md", "packages/server/src/runtime.ts"],
+      ["AGENTS.md", "packages/shared/src/runtime.ts"],
       ["packages/client/README.md"],
       ["core/marfa-cli/COMMANDS.md"],
       ["conformance/spec/items.md"],
@@ -1006,98 +938,19 @@ describe("the contract's chapters", () => {
   });
 });
 
-describe("the page system's lanes", () => {
-  const SERVER_SRC = "packages/server/src";
-  const production = (file: string) =>
-    /\.tsx?$/.test(file) && !/\.test\.tsx?$/.test(file);
-  /** A page file whose change reaches the whole server, as the rules leave it. */
-  const wholeServer = (file: string) =>
-    affected(file).has("conformance-offline");
-
-  /** The local files a source file imports by value, and the rest by type. */
-  function imports(file: string): { value: string[]; type: string[] } {
-    const out: { value: string[]; type: string[] } = { value: [], type: [] };
-    const text = readFileSync(join(ROOT, file), "utf8");
-    for (const match of text.matchAll(
-      /(?:import|export)\s+(type\s+)?([^;]*?)\s+from\s+["'](\.{1,2}\/[^"']+)["']/g,
-    )) {
-      const spec = resolve(dirname(join(ROOT, file)), match[3] ?? "");
-      const found = [
-        spec,
-        spec.replace(/\.js$/, ".ts"),
-        spec.replace(/\.js$/, ".tsx"),
-      ].find(
-        (candidate) => existsSync(candidate) && statSync(candidate).isFile(),
-      );
-      if (found !== undefined)
-        out[match[1] === undefined ? "value" : "type"].push(
-          relative(ROOT, found),
-        );
-    }
-    return out;
-  }
-
-  it("reach no fixture of the contract through the stylesheet, the script or their hashes", () => {
-    const reader =
-      /pages\.(css|js)|assets\.generated|PAGE_(CSS|JS|ASSETS)|auth\/static\/pages/;
-    // Witness: the pattern finds each way a file names them.
-    for (const named of [
-      'fetch("/auth/static/pages.js")',
-      "PAGE_CSS",
-      "assets.generated.ts",
-    ]) {
-      expect(reader.test(named), named).toBe(true);
-    }
-    const readers = [...walk("conformance/src"), ...walk("conformance/scripts")]
-      .filter((file) => /\.[cm]?[jt]sx?$/.test(file))
-      .filter((file) => reader.test(readFileSync(join(ROOT, file), "utf8")));
-    expect(readers).toEqual([]);
-  });
-
-  it("leave the whole server every page file that code outside the pages reads", () => {
-    // A page file that a handler, the middleware or the error handler imports
-    // by value can change what the server does with no page involved, so its
-    // change runs everything. A type is erased and moves nothing.
-    const outside = walk(SERVER_SRC)
-      .filter(production)
-      .filter((file) => !file.startsWith(`${SERVER_SRC}/pages/`))
-      .filter((file) => !/\/routes\/[^/]+\.tsx$/.test(file));
-    const read = new Set(
-      outside.flatMap((file) =>
-        imports(file).value.filter((target) =>
-          target.startsWith(`${SERVER_SRC}/pages/`),
-        ),
-      ),
-    );
-    // Witness: handlers do read page files.
-    expect([...read]).toContain(`${SERVER_SRC}/pages/recent-sign-in.ts`);
-    expect([...read].filter((file) => !wholeServer(file))).toEqual([]);
-  });
-
-  it("are generated when needed and never committed", () => {
-    expect(tracked()).not.toContain(`${SERVER_SRC}/pages/assets.generated.ts`);
-    const ignored = execFileSync(
-      "git",
-      ["check-ignore", `${SERVER_SRC}/pages/assets.generated.ts`],
-      { cwd: ROOT, encoding: "utf8" },
-    ).trim();
-    expect(ignored).toBe(`${SERVER_SRC}/pages/assets.generated.ts`);
-  });
-});
-
 describe("what a draft runs", () => {
   it("runs the quick jobs the diff names, and nothing else", () => {
     expect(DRAFT_JOBS).toEqual([
-      "ci-sqlite",
+      "quick-checks",
       "workspace",
       "types-freshness",
       "version-fields",
     ]);
-    // A change only the core's tests read names no quick job but CI
-    // (SQLite), which every change names; `Draft CI` keeps the draft from
+    // A change only the core's tests read names no quick job but `Quick
+    // checks`, which every change names; `Draft CI` keeps the draft from
     // merging.
     expect(runs(["core/marfa-core/tests/sync.rs"])).toEqual([
-      "ci-sqlite",
+      "quick-checks",
       "core-checks",
       "core-checks-linux",
       "core",
@@ -1106,14 +959,14 @@ describe("what a draft runs", () => {
       JOBS.filter(
         (job) => forDraft(classify(["core/marfa-core/tests/sync.rs"]))[job],
       ),
-    ).toEqual(["ci-sqlite"]);
-    const server = forDraft(classify(["packages/server/src/runtime.ts"]));
-    expect(JOBS.filter((job) => server[job])).toEqual([
-      "ci-sqlite",
+    ).toEqual(["quick-checks"]);
+    const shared = forDraft(classify(["packages/shared/src/runtime.ts"]));
+    expect(JOBS.filter((job) => shared[job])).toEqual([
+      "quick-checks",
       "workspace",
     ]);
     const swift = forDraft(classify(["core/bindings/swift/build.sh"]));
-    expect(JOBS.filter((job) => swift[job])).toEqual(["ci-sqlite"]);
+    expect(JOBS.filter((job) => swift[job])).toEqual(["quick-checks"]);
     const all = forDraft(classify([]));
     expect(JOBS.filter((job) => all[job])).toEqual([...DRAFT_JOBS]);
   });
@@ -1122,10 +975,10 @@ describe("what a draft runs", () => {
 /**
  * The jobs of `ci.yml` that are not one job of the classifier's:
  * `Conformance` collects the offline lane and MCP conformance into one
- * verdict, the workspace's tests run as three shards of one job that reads
- * the answers for `workspace` and `full`, `Full CI` collects every job for
- * the ruleset and `report-failure` reports a failed night.
- * `ci/sqlite-shards.test.ts`, `ci/full-ci-gate.test.ts` and
+ * verdict, the workspace's tests are one job that reads the answers for
+ * `workspace` and `full`, `Full CI` collects every job for the ruleset and
+ * `report-failure` reports a failed night.
+ * `ci/workspace-tests.test.ts`, `ci/full-ci-gate.test.ts` and
  * `ci/nightly-report.test.ts` pin the last three.
  */
 const CONFORMANCE_GATE = "conformance";
@@ -1137,7 +990,7 @@ const STOP_JOBS = [
 ];
 const NOT_CLASSIFIED = [
   CONFORMANCE_GATE,
-  "ci-sqlite-tests",
+  "workspace-tests",
   "gate",
   "report-failure",
   // The jobs after each Rust server build wait for it, and
@@ -1208,8 +1061,8 @@ describe("each job reads its own answer", () => {
     ).toEqual({ GH_TOKEN: "${{ github.token }}" });
   });
 
-  it("CI (SQLite) checks formatting, these rules and the contract's references for any change and the rest only for the workspace", () => {
-    const steps = workflow("ci.yml").jobs["ci-sqlite"]?.steps ?? [];
+  it("Quick checks checks formatting, these rules and the contract's references for any change and the rest only for the workspace", () => {
+    const steps = workflow("ci.yml").jobs["quick-checks"]?.steps ?? [];
     const format = steps.findIndex((step) => step.run === "pnpm format:check");
     expect(format).toBeGreaterThan(0);
     expect(steps[format]?.if).toBeUndefined();
@@ -1223,8 +1076,8 @@ describe("each job reads its own answer", () => {
     // The build, typecheck and lint are jobs of their own, so that each one
     // reports as soon as it can: see the next test.
     expect(steps.slice(format + 3)).toEqual([]);
-    // The tests wait until the pull request is ready: they are the shards of
-    // `CI (SQLite) tests`, which `ci/sqlite-shards.test.ts` pins.
+    // The tests wait until the pull request is ready: they are the job
+    // `Workspace tests`, which `ci/workspace-tests.test.ts` pins.
     // A draft passes here with the rest skipped; `Draft CI` keeps it from
     // merging, so no step of any job fails a draft for being one.
     const draftSteps = (all: Workflow["jobs"]) =>
@@ -1237,13 +1090,13 @@ describe("each job reads its own answer", () => {
     // The witness: the same check finds a step that fails a draft.
     expect(
       draftSteps({
-        "ci-sqlite": {
+        "quick-checks": {
           steps: [
             { if: "${{ github.event.pull_request.draft }}", run: "exit 1" },
           ],
         },
       }),
-    ).toEqual(["ci-sqlite"]);
+    ).toEqual(["quick-checks"]);
     // Nothing before the gated steps needs Rust, and nothing after does now
     // that the version check, the one test that runs cargo, is left out.
     expect(steps.some((step) => step.uses?.includes("rust"))).toBe(false);
@@ -1400,9 +1253,9 @@ describe("CodeQL", () => {
       ".github/ISSUE_TEMPLATE/bug.yml",
     ]) {
       expect(skips(path), path).toBe(true);
-      expect([...affected(path)].filter((job) => job !== "ci-sqlite")).toEqual(
-        [],
-      );
+      expect(
+        [...affected(path)].filter((job) => job !== "quick-checks"),
+      ).toEqual([]);
     }
     expect(skips("conformance/spec/items.md")).toBe(true);
     // No tracked file it skips is in a language it analyzes.
@@ -1415,7 +1268,7 @@ describe("CodeQL", () => {
       ".github/workflows/ci.yml",
       ".agents/skills/release/helper.ts",
       ".githooks/check.mjs",
-      "packages/server/src/runtime.ts",
+      "packages/shared/src/runtime.ts",
       "core/marfa-core/src/lib.rs",
       "core/Cargo.toml",
       "openapi.json",
@@ -1640,13 +1493,13 @@ describe("the classifier as CI runs it", () => {
     git("config", "user.name", "CI Fixture");
     git("config", "commit.gpgsign", "false");
     commit("base", {
-      "packages/server/src/runtime.ts": "export const v = 1;\n",
+      "packages/shared/src/runtime.ts": "export const v = 1;\n",
     });
     commit("docs", { "deploy/README.md": "Words\n" });
     commit("server", {
-      "packages/server/src/runtime.ts": "export const v = 2;\n",
+      "packages/shared/src/runtime.ts": "export const v = 2;\n",
     });
-    git("mv", "packages/server/src/runtime.ts", "packages/server/README.md");
+    git("mv", "packages/shared/src/runtime.ts", "packages/shared/README.md");
     git("commit", "-qm", "rename");
     commits.rename = git("rev-parse", "HEAD");
     commit("instructions", {
@@ -1735,7 +1588,7 @@ describe("the classifier as CI runs it", () => {
       outputs("pull_request", commits.base ?? "", commits.docs ?? ""),
     ).toEqual({
       ...every("false"),
-      "ci-sqlite": "true",
+      "quick-checks": "true",
       full: "true",
     });
     const server = outputs(
@@ -1744,7 +1597,7 @@ describe("the classifier as CI runs it", () => {
       commits.server ?? "",
     );
     expect(JOBS.filter((job) => server[job] === "true")).toEqual(
-      JOBS.filter((job) => SERVER.includes(job)),
+      JOBS.filter((job) => [...PACKAGES, "clients-freshness"].includes(job)),
     );
     const fixture = outputs(
       "pull_request",
@@ -1753,7 +1606,7 @@ describe("the classifier as CI runs it", () => {
     );
     expect(JOBS.filter((job) => fixture[job] === "true")).toEqual(
       JOBS.filter((job) =>
-        ["ci-sqlite", "workspace", ...CONTRACT].includes(job),
+        ["quick-checks", "workspace", ...CONTRACT].includes(job),
       ),
     );
   });
@@ -1767,9 +1620,9 @@ describe("the classifier as CI runs it", () => {
       commits.server ?? "",
       true,
     );
-    expect(quick(server)).toEqual(["ci-sqlite", "workspace"]);
+    expect(quick(server)).toEqual(["quick-checks", "workspace"]);
     expect(server.full).toBe("false");
-    // Documentation names no quick job but the format check, which CI (SQLite)
+    // Documentation names no quick job but the format check, which `Quick checks`
     // runs for every change.
     const docs = outputs(
       "pull_request",
@@ -1777,7 +1630,7 @@ describe("the classifier as CI runs it", () => {
       commits.docs ?? "",
       true,
     );
-    expect(quick(docs)).toEqual(["ci-sqlite"]);
+    expect(quick(docs)).toEqual(["quick-checks"]);
     expect(docs.full).toBe("false");
     const ready = outputs(
       "pull_request",
@@ -1785,12 +1638,14 @@ describe("the classifier as CI runs it", () => {
       commits.server ?? "",
       false,
     );
-    expect(quick(ready)).toEqual(JOBS.filter((job) => SERVER.includes(job)));
+    expect(quick(ready)).toEqual(
+      JOBS.filter((job) => [...PACKAGES, "clients-freshness"].includes(job)),
+    );
     expect(ready.full).toBe("true");
     expect(
       outputs("pull_request", "invalid", commits.docs ?? "", true),
     ).toMatchObject({
-      "ci-sqlite": "true",
+      "quick-checks": "true",
       "rust-contract": "false",
       full: "false",
     });
@@ -1829,7 +1684,6 @@ describe("the classifier as CI runs it", () => {
     expect(NIGHTLY_JOBS).toEqual([
       "rust-contract-macos",
       "core-checks",
-      "control-socket",
       "swift-package",
     ]);
     // The pull request's lanes are untouched by the nightly's answer.
@@ -1892,7 +1746,7 @@ describe("the classifier as CI runs it", () => {
 
     const skipped = {
       ...every("false"),
-      "ci-sqlite": "true",
+      "quick-checks": "true",
       full: "true",
     };
 

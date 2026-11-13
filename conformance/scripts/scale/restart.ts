@@ -2,7 +2,7 @@
  * Stops and starts the server on its data, four times, and reads its memory
  * once it has settled.
  *
- * The time is the whole restart: the stop, the start of the built server and the
+ * The time is the whole restart: the stop, the start of the server and the
  * boot script's own sign-in once `/health` answers, which adds a little to
  * what a person waits for. The first restart follows the seeding, so it also
  * pays for checkpointing a database just written; it is recorded on its own, and the figure with the ceiling is

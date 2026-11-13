@@ -1,5 +1,5 @@
 {
-  "description": "Names as both implementations fold them: trimmed of Unicode White_Space, in NFC, lowercased one code point at a time with no context rules, and in NFC again. The server's title keys (packages/server/src/storage/sqlite/title-keys.ts) and the core's names::folded are held to these cases.",
+  "description": "Names as the server folds them: trimmed of Unicode White_Space, in NFC, lowercased one code point at a time with no context rules, and in NFC again. The core's names::folded and the contract's title lookups are held to these cases.",
   "cases": [
     {
       "about": "plain ASCII",

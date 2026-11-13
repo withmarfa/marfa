@@ -1,11 +1,5 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import {
-  ALL_DATA_TITLE,
-  LEVEL_LABELS,
-} from "../packages/server/src/routes/access-model.js";
-import { PERMISSION_LABELS } from "../packages/server/src/routes/permission-labels.js";
-import { SCOPE_LABELS } from "../packages/server/src/routes/scope-copy.js";
 
 /** `[key, words]` pairs from one table of GLOSSARY.md's "Access words" section. */
 type Pairs = [string, string][];
@@ -57,6 +51,47 @@ function cliPairs(name: string): Pairs {
   );
 }
 
+/** Rows the server titles that neither the glossary nor the CLI names yet. */
+const NOT_YET_IN_GLOSSARY = ["core.*"];
+
+/**
+ * The words the server's approval pages use, read from the source that holds
+ * them: the title of each level, of each named power and of each row that is
+ * not one item type, keyed as the glossary keys them.
+ */
+function serverWords(): {
+  levels: Map<string, string>;
+  powers: Map<string, string>;
+  rows: Map<string, string>;
+} {
+  const source = readFileSync(
+    new URL("../core/marfa-server/src/http/pages/words.rs", import.meta.url),
+    "utf8",
+  );
+  const levels = new Map(
+    Array.from(
+      source.matchAll(/Level::(None|Read|Write) => "([^"]*)"/g),
+      (match): [string, string] => [match[1]!.toLowerCase(), match[2]!],
+    ),
+  );
+  const powers = new Map(
+    Array.from(
+      source.matchAll(/\(\s*"([a-z.]+)",\s*PowerWords \{\s*title: "([^"]*)"/g),
+      (match): [string, string] => [match[1]!, match[2]!],
+    ),
+  );
+  const rows = new Map(
+    Array.from(
+      source.matchAll(/\(Reach::\w+, ("[^"]*"|_)\) => Some\("([^"]*)"\)/g),
+      (match): [string, string] => [
+        match[1] === "_" ? "content" : match[1]!.slice(1, -1),
+        match[2]!,
+      ],
+    ),
+  );
+  return { levels, powers, rows };
+}
+
 describe("the words access is read in", () => {
   const glossary = glossaryTables();
 
@@ -73,33 +108,27 @@ describe("the words access is read in", () => {
   });
 
   it("are the server's, character for character", () => {
+    const server = serverWords();
+    expect(server.levels).toHaveLength(3);
+    expect(server.powers).toHaveLength(12);
     expect(glossary.levels).toEqual(
-      (["none", "read", "write"] as const).map((level) => [
-        level,
-        LEVEL_LABELS[level],
-      ]),
+      glossary.levels.map(([level]) => [level, server.levels.get(level)]),
     );
     expect(glossary.rows).toEqual(
-      glossary.rows.map(([pattern]) => [
-        pattern,
-        pattern === "*" ? ALL_DATA_TITLE : SCOPE_LABELS[pattern],
-      ]),
+      glossary.rows.map(([pattern]) => [pattern, server.rows.get(pattern)]),
     );
     expect(glossary.powers).toEqual(
       glossary.powers.map(([permission]) => [
         permission,
-        (PERMISSION_LABELS as Record<string, string>)[permission],
+        server.powers.get(permission),
       ]),
     );
   });
 
   it("name every row the server titles apart from an item type", () => {
-    const titled = Object.keys(SCOPE_LABELS).sort();
+    const named = new Set(glossary.rows.map(([pattern]) => pattern));
     expect(
-      glossary.rows
-        .map(([pattern]) => pattern)
-        .filter((pattern) => pattern !== "*")
-        .sort(),
-    ).toEqual(titled);
+      [...serverWords().rows.keys()].filter((pattern) => !named.has(pattern)),
+    ).toEqual(NOT_YET_IN_GLOSSARY);
   });
 });

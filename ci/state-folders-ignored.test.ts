@@ -27,7 +27,7 @@ describe("a local server's state folder", () => {
       "conformance/.marfa-state/env",
       "conformance/.marfa-state-s7r/env",
       "conformance/.marfa-state-s7r/blobs/ab/cd",
-      "packages/server/.marfa-state.second/server.log",
+      "core/marfa-server/.marfa-state.second/server.log",
     ]) {
       expect(ignored(path), `${path} is committable`).toBe(true);
     }

@@ -44,9 +44,7 @@ async function holdRequest(socketPath: string): Promise<() => Promise<number>> {
 }
 
 async function fixture() {
-  const found = serverProgram();
-  if (!found) throw new Error("MARFA_SERVER_BIN names no server");
-  const program: string = found;
+  const program = serverProgram();
   const root = await mkdtemp(join(await realpath(tmpdir()), "marfa-restart-"));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const socket = join(root, "control.sock");

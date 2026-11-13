@@ -72,9 +72,9 @@ const FEATURE_DOORS: {
   { feature: "keys", path: "/keys" },
   { feature: "bulk", path: "/items/bulk", method: "POST", body: {} },
   { feature: "export", path: "/export?state=not-a-state" },
-  // Outside `/auth/*` deliberately: the better-auth catch-all at `/auth/*`
-  // answers the metadata paths under it, so a probe there stays green with
-  // Marfa's own handler deleted.
+  // Outside `/auth/*` deliberately: a catch-all at `/auth/*` can answer the
+  // metadata paths under it, so a probe there stays green with Marfa's own
+  // handler deleted.
   {
     feature: "oauth",
     path: "/.well-known/oauth-authorization-server/auth",

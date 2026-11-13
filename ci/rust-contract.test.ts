@@ -197,12 +197,6 @@ describe("the Rust contract shards", () => {
     ).toEqual(["correctness-sync", "cli"]);
   });
 
-  it("start nothing that is for the TypeScript server", () => {
-    const text = JSON.stringify(shards?.steps);
-    expect(text).not.toContain("@withmarfa/server...");
-    expect(text).not.toContain("MARFA_SERVER_BUILT");
-  });
-
   it("put an object store beside the server for the stores chapter, and always stop it", () => {
     const names = shards?.steps.map((s) => s.name) ?? [];
     const store = names.indexOf("Put an object store beside the server");
@@ -280,7 +274,6 @@ describe("MCP conformance and the restore drill", () => {
         "MARFA_SERVER_BIN=",
       );
       const text = JSON.stringify(job?.steps);
-      expect(text).not.toContain("@withmarfa/server...");
       expect(text).not.toContain("litestream");
     },
   );

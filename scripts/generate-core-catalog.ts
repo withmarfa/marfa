@@ -20,19 +20,34 @@ import {
   listEdgeTypes,
   listTypes,
   pluralOf,
+  type TypeRole,
 } from "../packages/shared/src/index.js";
 import { SHIPPED_TABLES } from "../packages/types/generated/type-registry.js";
-import { resolveRoles } from "../packages/server/src/storage/policy.js";
-import {
-  isAcyclicEdgeType,
-  isFlatEdgeType,
-} from "../packages/server/src/storage/edge-type-behavior.js";
 
-const resolve = (id: string) => listTypes().find((schema) => schema.id === id);
+const shipped = listTypes();
+const byId = new Map(shipped.map((schema) => [schema.id, schema]));
 
-const types = listTypes()
+/** The roles a type declares and every ancestor declares, sorted; absent when none. */
+function resolveRoles(id: string) {
+  const roles = new Set<TypeRole>();
+  for (
+    let type = byId.get(id);
+    type !== undefined;
+    type = type.parent === undefined ? undefined : byId.get(type.parent)
+  ) {
+    for (const role of type.roles ?? []) roles.add(role);
+  }
+  return roles.size > 0 ? [...roles].sort() : undefined;
+}
+
+/** Edge types where an edge can close a cycle over more than one edge. */
+const ACYCLIC_EDGE_TYPES = new Set(["parent-of", "supersedes"]);
+/** The edge type whose source must not itself be a valid target. */
+const FLAT_EDGE_TYPE = "in-collection";
+
+const types = shipped
   .map((schema) => {
-    const roles = resolveRoles(schema.id, resolve);
+    const roles = resolveRoles(schema.id);
     const tables = SHIPPED_TABLES[schema.id];
     // Written after `fields`, where the registry keeps them.
     const declared = tables
@@ -56,8 +71,8 @@ const edgeTypes = listEdgeTypes()
   .map((schema) => ({
     ...schema,
     shipped: true,
-    acyclic: isAcyclicEdgeType(schema.id),
-    flat: isFlatEdgeType(schema.id),
+    acyclic: ACYCLIC_EDGE_TYPES.has(schema.id),
+    flat: schema.id === FLAT_EDGE_TYPE,
   }))
   .sort((a, b) => a.id.localeCompare(b.id));
 

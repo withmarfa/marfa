@@ -37,12 +37,6 @@ const step = (job: string, name: string): Step => {
 };
 
 describe("the nightly benchmarks", () => {
-  it("start nothing that is for the TypeScript server", () => {
-    expect(text).not.toContain("MARFA_SERVER_BUILT");
-    expect(text).not.toContain("@withmarfa/server...");
-    expect(text).not.toContain("read-concurrency");
-  });
-
   it.each(["benchmarks", "scale"])(
     "boot the downloaded release server in the %s job, as a person runs it",
     (id) => {

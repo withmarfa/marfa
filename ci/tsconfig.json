@@ -1,12 +1,7 @@
 {
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true,
-    "jsx": "react-jsx",
-    "jsxImportSource": "hono/jsx"
+    "noEmit": true
   },
-  // The server's settings schema is imported by path, its error handler reads a
-  // global that only instrumentation.ts declares, and the pages it renders are
-  // Hono JSX.
-  "include": ["**/*.ts", "../packages/server/src/instrumentation.ts"]
+  "include": ["**/*.ts"]
 }

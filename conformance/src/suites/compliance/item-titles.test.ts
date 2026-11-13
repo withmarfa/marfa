@@ -3,8 +3,8 @@
  * the fold a name and a title are compared by, what the answer leaves out,
  * and the caps.
  *
- * The fold cases are `fixtures/name-fold.json`, which the server and the
- * core are both held to.
+ * The fold cases are `fixtures/name-fold.json`, which the core's unit tests
+ * and this file are both held to.
  */
 
 import { readFileSync } from "node:fs";

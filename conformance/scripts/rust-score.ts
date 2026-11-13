@@ -74,9 +74,7 @@ function parseArgs(argv: string[]): Args {
 }
 
 /**
- * What `vitest list` finds in the contract projects, by file. A judged file is
- * left out of a run with no `MARFA_SERVER_BIN`, so one is set; nothing starts
- * it. When a file fails to load Vitest prints no list at all. Then only the
+ * What `vitest list` finds in the contract projects, by file. When a file fails to load Vitest prints no list at all. Then only the
  * files it names get a count, from reading them without running them (a test
  * written for several inputs counts once, so a read count can differ from a
  * run count), and every other file keeps the count its report lists. The
@@ -101,7 +99,6 @@ function collect(projects: readonly ContractProject[]): {
         cwd: ROOT,
         encoding: "utf8",
         maxBuffer: 256 * 1024 * 1024,
-        env: { ...process.env, MARFA_SERVER_BIN: "list-only" },
       },
     );
   const listed = (output: ReturnType<typeof run>) => {

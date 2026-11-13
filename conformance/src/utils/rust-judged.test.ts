@@ -2,11 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import {
-  missingJudged,
-  RUST_JUDGED,
-  withoutRustJudged,
-} from "./rust-judged.js";
+import { missingJudged, RUST_JUDGED } from "./rust-judged.js";
 import { contractFiles } from "./rust-score.js";
 
 const ROOT = resolve(import.meta.dirname, "..", "..");
@@ -47,17 +43,6 @@ describe("the files the Rust server judges", () => {
     it("is missing when no file has the path, and only then", () => {
       expect(missingJudged(directory, [present])).toEqual([]);
       expect(missingJudged(directory, [present, absent])).toEqual([absent]);
-    });
-
-    it("is left out of a run against the TypeScript server and kept in a run against another program", () => {
-      const judged = [present, absent];
-      expect(withoutRustJudged({}, judged)).toEqual(judged);
-      expect(withoutRustJudged({ MARFA_SERVER_BIN: "" }, judged)).toEqual(
-        judged,
-      );
-      expect(
-        withoutRustJudged({ MARFA_SERVER_BIN: "/opt/marfa-server" }, judged),
-      ).toEqual([]);
     });
   });
 });

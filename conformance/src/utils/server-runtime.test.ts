@@ -13,15 +13,10 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { serverRuntime } from "../../scripts/marfa-server.js";
 
 const supervisor = resolve(
   dirname(fileURLToPath(import.meta.url)),
   "../../scripts/run-server.mjs",
-);
-const serverRoot = resolve(
-  dirname(fileURLToPath(import.meta.url)),
-  "../../../packages/server",
 );
 
 function rowsInFileAlone(database: string, copy: string): number {
@@ -41,7 +36,7 @@ describe("the supervised server runtime", () => {
     "records the server's clean exit when %s arrives during synchronous work",
     async (signal) => {
       const state = mkdtempSync(join(tmpdir(), "marfa-runtime-stop-"));
-      const script = join(state, "busy.ts");
+      const script = join(state, "busy.mjs");
       const entered = join(state, "entered");
       const finished = join(state, "finished");
       const exitFile = join(state, "exit.json");
@@ -52,23 +47,22 @@ describe("the supervised server runtime", () => {
         [
           'import { writeFileSync } from "node:fs";',
           'import { DatabaseSync } from "node:sqlite";',
-          "const db = new DatabaseSync(process.argv[5]!);",
+          "const db = new DatabaseSync(process.argv[5]);",
           'db.exec("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE notes(id TEXT)");',
           'db.exec("PRAGMA wal_checkpoint(TRUNCATE)");',
           'db.prepare("INSERT INTO notes(id) VALUES (?)").run("acknowledged");',
-          "const signal: NodeJS.Signals = process.argv[2] as NodeJS.Signals;",
+          "const signal = process.argv[2];",
           "process.prependListener(signal, () => {",
-          '  writeFileSync(process.argv[3]!, "entered");',
+          '  writeFileSync(process.argv[3], "entered");',
 
           '  db.exec("PRAGMA wal_checkpoint(TRUNCATE)");',
           "  db.close();",
-          '  writeFileSync(process.argv[4]!, "finished");',
+          '  writeFileSync(process.argv[4], "finished");',
           "  process.exit(0);",
           "});",
-          'writeFileSync(process.argv[3]!, "entered");',
+          'writeFileSync(process.argv[3], "entered");',
           'process.stdout.write("ready\\n");',
-          // Synchronous work prevents the runtime wrapper's signal
-          // acknowledgement from running until the work finishes.
+          // Synchronous work holds the signal handler off until it finishes.
           "Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500);",
           "setInterval(() => undefined, 1000);",
         ].join("\n"),
@@ -78,9 +72,14 @@ describe("the supervised server runtime", () => {
         [
           supervisor,
           exitFile,
-          ...serverRuntime([script, signal, entered, finished, database]),
+          process.execPath,
+          script,
+          signal,
+          entered,
+          finished,
+          database,
         ],
-        { cwd: serverRoot, detached: true, stdio: ["ignore", "pipe", "pipe"] },
+        { cwd: state, detached: true, stdio: ["ignore", "pipe", "pipe"] },
       );
       const closed = new Promise<void>((done) =>
         child.once("close", () => done()),
