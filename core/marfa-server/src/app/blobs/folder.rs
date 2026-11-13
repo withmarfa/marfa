@@ -184,8 +184,7 @@ impl Folder {
         }
     }
 
-    /// Takes the files area as the store `id` from now, making it inside the folder and writing
-    /// its marker. Where that fails, the store `id` waits for its marker as one not mounted. It
+    /// Takes the files area as the store `id`; where that fails, `id` waits as one not mounted. It
     /// blocks.
     pub fn claim(&self, id: &str) -> io::Result<()> {
         let area = self.area();

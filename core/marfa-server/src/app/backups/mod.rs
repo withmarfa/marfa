@@ -343,8 +343,7 @@ fn reconcile(
     drop_uncovered(tx, store)
 }
 
-/// Forgets every backup recorded in `store` and the files they hold, so the next run backs up
-/// again; answers how many backups it forgot.
+/// Forgets the backups recorded in `store` and their holds; answers how many backups.
 fn forget_backups(tx: &Transaction<'_>, store: &str) -> Result<usize> {
     let put = tx
         .prepare_cached("DELETE FROM backups WHERE store_id = ?1")?
@@ -799,9 +798,7 @@ impl App {
         Ok(answer)
     }
 
-    /// The files a restore from the backup folder reads: each the backup names that no attached
-    /// store holds whole and the folder holds. Refuses, before any is read, where the folder lacks
-    /// one the instance that took the backup held and had not lost.
+    /// The files a folder restore reads; refuses before any read where the folder lacks one it needs.
     async fn files_to_read(
         &self,
         folder: &Arc<Folder>,
@@ -849,9 +846,7 @@ impl App {
         Ok(reading)
     }
 
-    /// Starts afresh in the backup folder now at `MARFA_BACKUP_PATH` whose files area holds no
-    /// marker, such as a disk that replaced the one the server recorded: forgets that store, the
-    /// copies it records and the backups put there, and takes the files area as a new store.
+    /// Takes an unmarked backup folder as a new store, forgetting the old one's copies and backups.
     pub async fn adopt_backup_folder(self: &Arc<App>, caller: &Caller) -> Result<Value> {
         caller.require_local()?;
         let destination = self.destination()?;
@@ -1142,8 +1137,7 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<Put> {
     })
 }
 
-/// What a backup put: when it was taken, its name and size, the change count it holds, and the
-/// files it names that no store could give.
+/// What a backup put; `lost` names the files no store could give.
 struct Put {
     at: Stamp,
     name: String,
