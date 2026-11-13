@@ -750,7 +750,7 @@ describe("a body whatever its content type states", () => {
     { path: "/setup/claim", credential: false },
   ];
 
-  it("is refused for a surrogate escape with no partner, before any credential", async () => {
+  it("is refused for a surrogate escape with no partner, from a key or on a door that takes none", async () => {
     for (const contentType of types) {
       for (const door of doors) {
         const where = `${door.path} as ${contentType}`;
@@ -780,7 +780,7 @@ describe("a body whatever its content type states", () => {
     }
   });
 
-  it("is refused when it nests too deep, before any credential", async () => {
+  it("is refused when it nests too deep, from a key or on a door that takes none", async () => {
     const deep = '{"a":'.repeat(70) + "1" + "}".repeat(70);
     for (const contentType of types) {
       for (const door of doors) {

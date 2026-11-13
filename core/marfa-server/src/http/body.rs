@@ -527,7 +527,11 @@ pub async fn checked(State(checking): State<Checking>, request: Request, next: N
     let door = parts
         .extensions
         .get::<MatchedPath>()
-        .and_then(|matched| checking.credentials.get(&(parts.method.clone(), matched.as_str())))
+        .and_then(|matched| {
+            checking
+                .credentials
+                .get(&(parts.method.clone(), matched.as_str()))
+        })
         .copied();
     if let Some((asks, admission)) = door
         && let Err(refusal) = presents(&mut parts, app, asks, admission).await
@@ -549,7 +553,7 @@ pub async fn checked(State(checking): State<Checking>, request: Request, next: N
 }
 
 /// A body nested past 64 levels, or holding a surrogate escape with no partner, is refused.
-pub fn scanned(bytes: &[u8]) -> Result<(), Refusal> {
+fn scanned(bytes: &[u8]) -> Result<(), Refusal> {
     if json_text::too_deep(bytes) {
         return Err(nested_too_deep());
     }

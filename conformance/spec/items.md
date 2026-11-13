@@ -2564,7 +2564,7 @@ If a request body, other than one sent to `POST /blobs`, `POST /restore` or an i
 
 **Reason:** SQLite's JSON functions stop at 1,000 levels, so a deeper body would fail inside the database as `500`.
 
-**Tests:** `compliance/odd-input.test.ts › accepts 64 levels and refuses deeper item, extension and bulk bodies`, `compliance/well-formed-text.test.ts › is refused when it nests too deep, before any credential`.
+**Tests:** `compliance/odd-input.test.ts › accepts 64 levels and refuses deeper item, extension and bulk bodies`, `compliance/well-formed-text.test.ts › is refused when it nests too deep, from a key or on a door that takes none`.
 
 ### `items/json-text-well-formed`
 
@@ -2572,7 +2572,7 @@ If a request body, other than one sent to `POST /blobs`, `POST /restore` or an i
 
 **Reason:** RFC 8259 section 8.2 lets a JSON string carry a surrogate code unit with no partner, which no UTF-8 text can carry. The server holds only text that UTF-8 can represent, so every client can decode what it holds.
 
-**Tests:** `compliance/well-formed-text.test.ts › refuses $name, naming where, and takes a surrogate pair there`, `› writes nothing when it refuses a create`, `› refuses a lone low surrogate and a reversed pair, in either letter case of the escape`, `› refuses it on every published operation that takes a JSON body, from a key the instance holds`, `› is refused for a surrogate escape with no partner, before any credential`, `device/well-formed-text-live.test.ts › refuses a surrogate escape with no partner and leaves a device able to hydrate and catch up over the item that is`.
+**Tests:** `compliance/well-formed-text.test.ts › refuses $name, naming where, and takes a surrogate pair there`, `› writes nothing when it refuses a create`, `› refuses a lone low surrogate and a reversed pair, in either letter case of the escape`, `› refuses it on every published operation that takes a JSON body, from a key the instance holds`, `› is refused for a surrogate escape with no partner, from a key or on a door that takes none`, `device/well-formed-text-live.test.ts › refuses a surrogate escape with no partner and leaves a device able to hydrate and catch up over the item that is`.
 
 ### `items/json-text-pointer`
 
