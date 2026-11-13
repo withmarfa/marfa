@@ -130,7 +130,7 @@ async fn copy_to(
                 tracing::warn!(%error, store = source.kind(), "A store did not open a blob to copy");
                 // A failed read says nothing of the bytes the store holds.
                 if error.kind() != io::ErrorKind::NotFound {
-                    unanswered.get_or_insert_with(|| told(&source, &error));
+                    unanswered.get_or_insert_with(|| told(&source, Act::Read, &error));
                 }
                 continue;
             }
@@ -195,7 +195,7 @@ async fn copy_to(
                 if error.kind() == io::ErrorKind::InvalidData {
                     continue;
                 }
-                Copy::Skipped(Some(told(target, &error)))
+                Copy::Skipped(Some(told(target, Act::Write, &error)))
             }
         });
     }
@@ -335,12 +335,47 @@ pub(crate) fn object_store_said(error: &io::Error) -> &'static str {
     }
 }
 
+/// What a store was doing when it failed.
+#[derive(Clone, Copy)]
+enum Act {
+    Read,
+    Write,
+}
+
 /// Why a store failed, in words that name no address or key; the server's log has the rest.
-fn told(store: &Store, error: &io::Error) -> String {
+fn told(store: &Store, act: Act, error: &io::Error) -> String {
     match store {
         Store::S3(_) => object_store_said(error).into(),
-        _ => error.to_string(),
+        _ => folder_said(act, error),
     }
+}
+
+/// What a folder's failed read or write means and what to do, then the system's own words. An
+/// error the server worded itself already says it.
+fn folder_said(act: Act, error: &io::Error) -> String {
+    if error.raw_os_error().is_none() {
+        return error.to_string();
+    }
+    let meaning = match (error.kind(), act) {
+        (io::ErrorKind::NotFound, Act::Write) => {
+            "a folder it writes into is missing, so check that its disk is mounted and unchanged"
+        }
+        (io::ErrorKind::NotFound, Act::Read) => {
+            "a folder it reads from is missing, so check that its disk is mounted and unchanged"
+        }
+        (io::ErrorKind::StorageFull | io::ErrorKind::QuotaExceeded, _) => {
+            "there is no room left on its disk, so free some space there"
+        }
+        (io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem, Act::Write) => {
+            "the server is not allowed to write there, so check the folder's permissions"
+        }
+        (io::ErrorKind::PermissionDenied | io::ErrorKind::ReadOnlyFilesystem, Act::Read) => {
+            "the server is not allowed to read there, so check the folder's permissions"
+        }
+        (_, Act::Write) => "the disk refused the write, so check that it is healthy and writable",
+        (_, Act::Read) => "the disk refused the read, so check that it is healthy and readable",
+    };
+    format!("{meaning} (the system said: {error})")
 }
 
 /// How a failure to copy to `store` is told.
@@ -744,4 +779,51 @@ pub async fn orphans(app: Arc<App>, run: Run) -> Result<Report> {
     Ok(Report::done(
         json!({ "reported": reported, "purged": purged }),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_folder_failure_is_told_with_what_to_do_and_keeps_the_systems_words() {
+        let gone = io::Error::from_raw_os_error(2);
+        let said = folder_said(Act::Write, &gone);
+        assert!(said.starts_with("a folder it writes into is missing, so check"));
+        assert!(said.ends_with(&format!("(the system said: {gone})")));
+        let full = folder_said(Act::Write, &io::Error::from_raw_os_error(28));
+        assert!(full.starts_with("there is no room left on its disk"));
+        let own = io::Error::other("the disk store's folder or marker is missing");
+        assert_eq!(folder_said(Act::Write, &own), own.to_string());
+        assert_eq!(folder_said(Act::Read, &own), own.to_string());
+    }
+
+    #[test]
+    fn a_failed_read_is_worded_as_a_read_and_a_failed_write_as_a_write() {
+        for (code, read, write) in [
+            (
+                2,
+                "a folder it reads from is missing",
+                "a folder it writes into is missing",
+            ),
+            (
+                13,
+                "not allowed to read there",
+                "not allowed to write there",
+            ),
+            (5, "the disk refused the read", "the disk refused the write"),
+        ] {
+            let error = io::Error::from_raw_os_error(code);
+            let (r, w) = (
+                folder_said(Act::Read, &error),
+                folder_said(Act::Write, &error),
+            );
+            assert!(r.contains(read), "{r}");
+            assert!(w.contains(write), "{w}");
+            assert!(r.ends_with(&format!("(the system said: {error})")));
+            assert!(w.ends_with(&format!("(the system said: {error})")));
+        }
+        let full = io::Error::from_raw_os_error(28);
+        assert!(folder_said(Act::Read, &full).starts_with("there is no room left"));
+    }
 }
