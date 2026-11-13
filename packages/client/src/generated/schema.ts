@@ -30677,6 +30677,8 @@ export interface operations {
                         blobs_imported: number;
                         /** @description The name of each archive entry Marfa doesn't know and skipped, such as one a tar tool adds, in the order the archive holds them. */
                         entries_skipped: string[];
+                        /** @description Each kind of `instance.ndjson.gz` line Marfa doesn't know and skipped, such as one a later build of the same archive version adds, named once in the order the archive first holds it. */
+                        line_kinds_skipped: string[];
                         /** @description The hashes of the blobs the archive names but doesn't carry with matching bytes, and that Marfa holds no copy of. Upload their bytes again with `POST /blobs` to restore them. */
                         blobs_missing: string[];
                         /** @description How many types Marfa registered. */
@@ -31303,6 +31305,8 @@ export interface operations {
                         blobs_imported: number;
                         /** @description The name of each archive entry Marfa doesn't know and skipped, such as one a tar tool adds, in the order the archive holds them. */
                         entries_skipped: string[];
+                        /** @description Each kind of `instance.ndjson.gz` line Marfa doesn't know and skipped, such as one a later build of the same archive version adds, named once in the order the archive first holds it. */
+                        line_kinds_skipped: string[];
                         /** @description The hashes of the blobs the archive names but doesn't carry with matching bytes, and that Marfa holds no copy of. Upload their bytes again with `POST /blobs` to restore them. */
                         blobs_missing: string[];
                         /** @description How many types Marfa registered. */

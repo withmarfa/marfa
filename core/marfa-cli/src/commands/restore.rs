@@ -67,6 +67,14 @@ fn notes(answer: &serde_json::Value) -> Vec<String> {
             skipped.join(", ")
         ));
     }
+    let kinds = texts(answer, "line_kinds_skipped");
+    if !kinds.is_empty() {
+        notes.push(format!(
+            "Skipped instance lines of {} this build does not know: {}.",
+            if kinds.len() == 1 { "a kind" } else { "kinds" },
+            kinds.join(", ")
+        ));
+    }
     if let Some(note) = answer
         .get("set_up_again")
         .and_then(serde_json::Value::as_str)
@@ -101,5 +109,21 @@ mod tests {
             ["Skipped 1 archive entry this build does not know: .DS_Store."]
         );
         assert!(notes(&json!({ "entries_skipped": [] })).is_empty());
+    }
+
+    #[test]
+    fn names_each_skipped_line_kind() {
+        let answer =
+            json!({ "entries_skipped": [], "line_kinds_skipped": ["later_kind", "other"] });
+        assert_eq!(
+            notes(&answer),
+            ["Skipped instance lines of kinds this build does not know: later_kind, other."]
+        );
+        let one = json!({ "line_kinds_skipped": ["later_kind"] });
+        assert_eq!(
+            notes(&one),
+            ["Skipped instance lines of a kind this build does not know: later_kind."]
+        );
+        assert!(notes(&json!({ "line_kinds_skipped": [] })).is_empty());
     }
 }

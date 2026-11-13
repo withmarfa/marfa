@@ -147,6 +147,8 @@ pub struct Received {
     pub carried: Vec<(Sealed, String)>,
     /// Each entry the restore did not read, by name, in the order the archive holds them.
     pub skipped: Vec<String>,
+    /// Each kind of `instance.ndjson.gz` line the restore skipped, in the order first read.
+    pub unknown_kinds: Vec<String>,
 }
 
 impl Received {
@@ -235,6 +237,9 @@ struct Rows {
     /// The lines read of each line file, in the order of `LineFile`.
     read: [usize; LINE_FILES.len()],
     kinds: [u64; KINDS.len()],
+    /// Each kind of `instance.ndjson.gz` line this build does not know, in the order first read.
+    unknown_kinds: Vec<String>,
+    kinds_seen: HashSet<String>,
     /// The place of the last row line read, which the next must come after.
     last_row: Option<checks::RowKey>,
     /// The item line and version of the last version line read, which the next must come after.
@@ -251,6 +256,9 @@ const KINDS: [(&str, &str); 7] = [
     ("connector_state", "connector_state_count"),
     ("connector_agreement", "connector_agreement_count"),
 ];
+
+/// The key beside a line's kind that says who registered it.
+const PROVENANCE: &str = "provenance";
 
 fn kind_of(line: &Value) -> Option<usize> {
     let object = line.as_object()?;
@@ -440,11 +448,26 @@ impl Rows {
     }
 
     fn instance_line(&mut self, line: &Value, row: usize) -> Result<()> {
-        let at = kind_of(line).ok_or_else(|| {
+        let unnamed = || {
             invalid(format!(
-                "Line {row} of {INSTANCE} names none of type, edge_type, type_icon, source, setting, connector_state or connector_agreement."
+                "Line {row} of {INSTANCE} must be an object that names its kind."
             ))
-        })?;
+            .with_detail("entry", INSTANCE)
+            .with_detail("line", row)
+        };
+        let object = line.as_object().ok_or_else(unnamed)?;
+        let Some(at) = kind_of(line) else {
+            let kinds: Vec<&String> = object.keys().filter(|key| *key != PROVENANCE).collect();
+            if kinds.is_empty() {
+                return Err(unnamed());
+            }
+            for kind in kinds {
+                if self.kinds_seen.insert(kind.clone()) {
+                    self.unknown_kinds.push(kind.clone());
+                }
+            }
+            return Ok(());
+        };
         self.kinds[at] += 1;
         let kind = KINDS[at].0;
         let body = &line[kind];
@@ -611,14 +634,21 @@ impl Rows {
             (id.and_then(bits), item.get("type").and_then(Value::as_str))
         {
             let type_index = self.type_index(type_id);
-            self.items_held.insert(
-                held,
-                HeldItem {
-                    type_index,
-                    line: row,
-                    version,
-                },
-            );
+            let item = HeldItem {
+                type_index,
+                line: row,
+                version,
+            };
+            if self.items_held.insert(held, item).is_some() {
+                let id = id.unwrap_or_default();
+                return Err(invalid(format!(
+                    "Line {row} of {ITEMS} holds item {id}, which an earlier line holds."
+                ))
+                .with_detail("entry", ITEMS)
+                .with_detail("line", row)
+                .with_detail("item_id", id)
+                .with_detail("field", "id"));
+            }
         }
         Ok(())
     }
@@ -841,6 +871,8 @@ impl Intake {
                 snapshots: Ids::default(),
                 read: [0; LINE_FILES.len()],
                 kinds: [0; KINDS.len()],
+                unknown_kinds: Vec::new(),
+                kinds_seen: HashSet::new(),
                 last_row: None,
                 last_version: None,
             }),
@@ -919,6 +951,10 @@ impl Intake {
         }
         if let Some(rest) = name.strip_prefix(BLOBS) {
             self.blob_entries += 1;
+            if self.stage < ENTRIES.len() {
+                self.out_of_order(&name);
+                return Ok(());
+            }
             let listed = self
                 .rows
                 .as_ref()
@@ -1109,6 +1145,7 @@ impl Intake {
             snapshots: rows.snapshots,
             carried: std::mem::take(&mut self.carried),
             skipped: std::mem::take(&mut self.skipped),
+            unknown_kinds: rows.unknown_kinds,
         })
     }
 }

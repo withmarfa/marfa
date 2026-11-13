@@ -55476,6 +55476,13 @@
                       },
                       "description": "The name of each archive entry Marfa doesn't know and skipped, such as one a tar tool adds, in the order the archive holds them."
                     },
+                    "line_kinds_skipped": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Each kind of `instance.ndjson.gz` line Marfa doesn't know and skipped, such as one a later build of the same archive version adds, named once in the order the archive first holds it."
+                    },
                     "blobs_missing": {
                       "type": "array",
                       "items": {
@@ -55582,6 +55589,7 @@
                     "blobs_imported",
                     "blobs_missing",
                     "entries_skipped",
+                    "line_kinds_skipped",
                     "types_registered",
                     "types_skipped",
                     "edge_types_registered",
@@ -56628,6 +56636,13 @@
                       },
                       "description": "The name of each archive entry Marfa doesn't know and skipped, such as one a tar tool adds, in the order the archive holds them."
                     },
+                    "line_kinds_skipped": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "Each kind of `instance.ndjson.gz` line Marfa doesn't know and skipped, such as one a later build of the same archive version adds, named once in the order the archive first holds it."
+                    },
                     "blobs_missing": {
                       "type": "array",
                       "items": {
@@ -56753,6 +56768,7 @@
                     "blobs_imported",
                     "blobs_missing",
                     "entries_skipped",
+                    "line_kinds_skipped",
                     "types_registered",
                     "types_skipped",
                     "edge_types_registered",
