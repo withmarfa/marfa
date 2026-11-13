@@ -8,7 +8,7 @@ use tokio::sync::watch;
 
 use super::super::blobs::Hash;
 use super::super::{attention, housekeeping};
-use super::{DEVICE_OWNER_INSTANCE_LANE, Lie, Resolved, TYPE_DEFINITION, Volume};
+use super::{ARCHIVE_LINE_LANE, DEVICE_OWNER_INSTANCE_LANE, Lie, Resolved, TYPE_DEFINITION, Volume};
 use crate::db::Pulse;
 
 const MAX_NTH: u32 = 1_000_000;
@@ -268,7 +268,7 @@ fn unfold_deadline_of(arg: Option<&str>) -> Result<u64, String> {
             format!("{UNFOLD_DEADLINE} takes a deadline check number, from 1 to {MAX_NTH}")
         })
 }
-const LIMIT_LANES: [&str; 1] = [DEVICE_OWNER_INSTANCE_LANE];
+const LIMIT_LANES: [&str; 2] = [DEVICE_OWNER_INSTANCE_LANE, ARCHIVE_LINE_LANE];
 const MAX_LIMIT: u64 = 1_000_000;
 
 const UNREADABLE_STORED: [&str; 1] = [TYPE_DEFINITION];
@@ -396,7 +396,7 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
                 .and_then(|text| text.parse::<u64>().ok())
                 .filter(|count| (1..=MAX_LIMIT).contains(count))
                 .ok_or_else(|| {
-                    format!("a limit fault takes a whole number of attempts, from 1 to {MAX_LIMIT}")
+                    format!("a limit fault takes a whole number, from 1 to {MAX_LIMIT}")
                 })?;
             Ok((None, Some(count)))
         }

@@ -442,6 +442,14 @@ async fn the_layout_is_pinned_to_its_version() {
         )
         .await;
     assert_eq!(edge.status, StatusCode::CREATED, "{}", edge.body);
+    let registered = origin
+        .local(
+            Method::POST,
+            "/types",
+            json!({ "id": "user.pinned", "fields": { "title": { "type": "string" } } }),
+        )
+        .await;
+    assert_eq!(registered.status, StatusCode::CREATED, "{}", registered.body);
 
     let held = entries(&origin.archive().await);
     assert_eq!(
@@ -490,11 +498,26 @@ async fn the_layout_is_pinned_to_its_version() {
         ["hash", "mime_type", "size_bytes", "state"]
     );
     assert_eq!(line("files.ndjson.gz")[0]["state"], "carried");
+    let instance = line("instance.ndjson.gz");
     assert!(
-        line("instance.ndjson.gz")
+        instance
             .iter()
-            .any(|line| sorted_keys(line) == ["source"])
+            .any(|held| held["type"]["id"] == "user.pinned")
     );
+    let kinds = [
+        "connector_agreement",
+        "connector_state",
+        "edge_type",
+        "setting",
+        "source",
+        "type",
+        "type_icon",
+    ];
+    for held in &instance {
+        let mut keys = sorted_keys(held);
+        keys.retain(|key| key != "provenance");
+        assert!(keys.len() == 1 && kinds.contains(&keys[0].as_str()), "{held}");
+    }
     assert_eq!(
         sorted_keys(&line("items.ndjson.gz")[0]),
         [
@@ -530,7 +553,7 @@ async fn the_layout_is_pinned_to_its_version() {
     );
     assert_eq!(
         sorted_keys(&line("rows.ndjson.gz")[0]),
-        ["id", "item_id", "table", "values"]
+        ["id", "item_id", "table", "updated_at", "values"]
     );
 }
 

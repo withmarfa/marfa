@@ -4,7 +4,7 @@ pub mod intake;
 pub mod named;
 mod untar;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 
@@ -25,7 +25,7 @@ use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM};
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{connectors, edge_types, sources, stored, tables, types};
-use intake::{Intake, Received};
+use intake::{Intake, LineFile, Received};
 
 /// What every answer says of what an archive does not hold.
 pub const SET_UP_AGAIN: &str =
@@ -165,10 +165,10 @@ impl App {
             .read(move |tx| catalog::current(&cache, tx, Snapshot::Committed))
             .await?;
         let spool = self.restore_spool();
-        let cap = self.bulk_cap();
+        let (cap, line_cap) = (self.bulk_cap(), self.archive_line_cap());
         let (parts, mut arriving) = mpsc::channel::<Bytes>(QUEUED);
         let reading = tokio::task::spawn_blocking(move || {
-            let mut intake = Intake::new(spool, committed, cap)?;
+            let mut intake = Intake::new(spool, committed, cap, line_cap)?;
             while let Some(part) = arriving.blocking_recv() {
                 intake.push(&part)?;
             }
@@ -204,6 +204,7 @@ impl App {
                 spools,
                 snapshots,
                 carried,
+                skipped,
                 ..
             } = received;
             let placed = app.place_restored(carried, absent).await?;
@@ -289,16 +290,16 @@ impl App {
                         blobs::record(tx, &copies, replicates, &unit.caller.credential_handle(), &unit.at)?;
                         let held = restored::held_snapshots(tx, snapshots.each())?;
                         let (mut imported, mut duplicates) = (0usize, 0usize);
-                        let mut written: HashSet<u128> = HashSet::new();
-                        for (row, line) in lines(&spools[1])?.enumerate() {
+                        let mut written: HashMap<u128, i64> = HashMap::new();
+                        for (row, line) in lines(&spools[LineFile::Items.slot()])?.enumerate() {
                             let line = line?;
                             checks::item(&catalog, cap, &line, row + 1).map_err(|refused| refused.refusal)?;
                             faults.hold_writing(HOLD_RESTORE_ITEM);
-                            match restored::restore(unit, &catalog, &line, &held)? {
-                                Restored::Written => {
+                            match restored::restore(unit, &catalog, &line)? {
+                                Restored::Written(seq) => {
                                     imported += 1;
                                     if let Some(id) = line.pointer("/item/id").and_then(Value::as_str).and_then(bits) {
-                                        written.insert(id);
+                                        written.insert(id, seq);
                                     }
                                 }
                                 Restored::Duplicate => duplicates += 1,
@@ -307,10 +308,17 @@ impl App {
                                 restored::settle(tx, &catalog)?;
                             }
                         }
+                        for (row, line) in lines(&spools[LineFile::Versions.slot()])?.enumerate() {
+                            let line = line?;
+                            let key = checks::version(cap, &line, row + 1).map_err(|refused| refused.refusal)?;
+                            if let Some(seq) = bits(&key.item_id).and_then(|id| written.get(&id)) {
+                                restored::restore_version(tx, *seq, &line, &held)?;
+                            }
+                        }
                         restored::settle(tx, &catalog)?;
                         let writing = Writing::of(unit, &catalog, None);
                         let mut edges = Counted::default();
-                        for (row, line) in lines(&spools[2])?.enumerate() {
+                        for (row, line) in lines(&spools[LineFile::Edges.slot()])?.enumerate() {
                             let line = line?;
                             if let Err(refused) = checks::edge(&catalog, cap, &line, row + 1, |_| None)
                                 && refused.skip.is_none()
@@ -323,7 +331,7 @@ impl App {
                             }
                         }
                         let mut agreements = Counted::default();
-                        for line in lines(&spools[0])? {
+                        for line in lines(&spools[LineFile::Instance.slot()])? {
                             let line = line?;
                             let Some(agreement) = line.get("connector_agreement") else {
                                 continue;
@@ -342,10 +350,10 @@ impl App {
                             }
                         }
                         let mut restoring = tables::archive::Restoring::new(unit, &catalog);
-                        for (row, line) in lines(&spools[3])?.enumerate() {
+                        for (row, line) in lines(&spools[LineFile::Rows.slot()])?.enumerate() {
                             let line = line?;
                             let key = checks::row(&line, row + 1).map_err(|refused| refused.refusal)?;
-                            let holds = bits(&key.item_id).is_some_and(|id| written.contains(&id));
+                            let holds = bits(&key.item_id).is_some_and(|id| written.contains_key(&id));
                             restoring.row(&line, key, holds)?;
                         }
                         let (rows_imported, rows_skipped) = restoring.finish()?;
@@ -376,6 +384,7 @@ impl App {
                             "connector_agreements_skipped": agreements.skipped,
                             "rows_imported": rows_imported,
                             "rows_skipped": rows_skipped,
+                            "entries_skipped": skipped,
                         });
                         unit.audit_set("restore_archive", Some(answer.clone()))?;
                         let staged = (settings_added > 0)

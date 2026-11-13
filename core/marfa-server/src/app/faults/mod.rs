@@ -95,8 +95,10 @@ pub enum Volume {
     Backups,
 }
 
-/// Lanes whose attempt cap a `limit:<lane>=<n>` fault lowers.
+/// Lanes whose cap a `limit:<lane>=<n>` fault lowers: an attempt count, or the bytes one archive
+/// line may hold.
 pub const DEVICE_OWNER_INSTANCE_LANE: &str = "device-owner-instance";
+pub const ARCHIVE_LINE_LANE: &str = "archive-line";
 /// Stored values an `unreadable:<stored>=<id>` fault makes the server read as damaged.
 pub const TYPE_DEFINITION: &str = "type-definition";
 

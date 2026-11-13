@@ -277,13 +277,9 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
             return Err(at.invalid(field, "an instant"));
         }
     }
-    let Some(version) = item
-        .get("version")
-        .filter(|value| is_version(value))
-        .and_then(Value::as_i64)
-    else {
+    if !item.get("version").is_some_and(is_version) {
         return Err(at.invalid("version", "a whole number from 1 to 9007199254740991"));
-    };
+    }
     let binned = matches!(
         item.get("state").and_then(Value::as_str),
         Some("trashed" | "revoked")
@@ -337,22 +333,11 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
     {
         return Err(at.invalid("restored_at", "an instant or null"));
     }
-    history(&at, line.get("versions"), id, version)?;
     if let Some(refused) = item
         .get("properties")
         .and_then(|properties| oversized(&at, cap, "properties", properties))
     {
         return Err(refused);
-    }
-    if let Some(Value::Array(versions)) = line.get("versions") {
-        for (index, snapshot) in versions.iter().enumerate() {
-            if let Some(refused) = snapshot
-                .get("properties")
-                .and_then(|held| oversized(&at, cap, &format!("versions.{index}.properties"), held))
-            {
-                return Err(refused);
-            }
-        }
     }
     shape(catalog, &at, type_id, properties)
 }
@@ -392,66 +377,102 @@ fn shape(
     })
 }
 
-/// A row's history: an array of snapshots of the row, each below its version and none twice.
-fn history(
-    at: &At<'_>,
-    versions: Option<&Value>,
-    id: Option<&str>,
-    version: i64,
-) -> Result<(), Box<Refused>> {
-    let Some(versions) = versions else {
-        return Ok(());
+/// A `versions.ndjson.gz` line: one earlier version of an item.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct VersionKey {
+    pub item_id: String,
+    pub id: String,
+    pub version: i64,
+}
+
+/// Judges a `versions.ndjson.gz` line's shape as a restore would, naming its item in each
+/// refusal; whether the archive holds the item, and below which version, the restore judges.
+pub fn version(cap: usize, line: &Value, row: usize) -> Result<VersionKey, Box<Refused>> {
+    let item_id = line.get("item_id").and_then(Value::as_str);
+    let at = At {
+        kind: Kind::Item,
+        id: item_id,
+        type_id: None,
+        row,
     };
-    let Some(versions) = versions.as_array() else {
-        return Err(at.invalid("versions", "an array of snapshots"));
+    let Some(snapshot) = line.as_object() else {
+        let message = format!("Line {row} of versions.ndjson.gz must be an object.");
+        return Err(at.refused(None, Refusal::validation(message)));
     };
-    let mut seen = std::collections::HashSet::new();
-    for (index, snapshot) in versions.iter().enumerate() {
-        let field = |name: &str| format!("versions.{index}.{name}");
-        let Some(snapshot) = snapshot.as_object() else {
-            return Err(at.invalid(&format!("versions.{index}"), "a snapshot"));
-        };
-        if !text(snapshot, "id").is_some_and(|id| marfa_rules::validation::id("id", id).is_ok()) {
-            return Err(at.invalid(&field("id"), "a snapshot ID"));
-        }
-        if text(snapshot, "item_id") != id {
-            return Err(at.invalid(&field("item_id"), "the item's own ID"));
-        }
-        if !snapshot.get("properties").is_some_and(Value::is_object) {
-            return Err(at.invalid(&field("properties"), "an object"));
-        }
-        if !text(snapshot, "type").is_some_and(is_type_id) {
-            return Err(at.invalid(&field("type"), "a type identifier"));
-        }
-        if !snapshot
-            .get("tier")
-            .is_some_and(|tier| tier.is_null() || tier.as_str().is_some_and(|t| TIERS.contains(&t)))
-        {
-            return Err(at.invalid(&field("tier"), "library, feed or null"));
-        }
-        for name in ["created_at", "occurred_at"] {
-            if !snapshot.get(name).is_some_and(is_instant) {
-                return Err(at.invalid(&field(name), "an instant"));
-            }
-        }
-        if let Some(fault) = snapshot.get("writer").and_then(writer_fault) {
-            return Err(at.invalid(&writer_field(&field("writer"), fault), "a writer or null"));
-        }
-        if !snapshot
-            .get("source_id")
-            .is_some_and(|source_id| source_id.is_null() || source_id.is_string())
-        {
-            return Err(at.invalid(&field("source_id"), "a string or null"));
-        }
-        let held = snapshot.get("version").and_then(Value::as_i64);
-        if !held.is_some_and(|held| (1..version).contains(&held)) || !seen.insert(held) {
-            return Err(at.invalid(
-                &field("version"),
-                "a whole number from 1 to one below the item's version, once in its history",
-            ));
+    let Some(item_id) = item_id.filter(|id| is_id(id)) else {
+        return Err(at.invalid("item_id", "an item ID"));
+    };
+    let Some(version) = snapshot.get("version").filter(|held| is_version(held)) else {
+        return Err(at.invalid("version", "a whole number from 1 to 9007199254740991"));
+    };
+    let version = version.as_i64().unwrap_or_default();
+    let field = |name: &str| format!("versions.{version}.{name}");
+    let Some(id) = text(snapshot, "id").filter(|id| is_id(id)) else {
+        return Err(at.invalid(&field("id"), "a snapshot ID"));
+    };
+    if !snapshot.get("properties").is_some_and(Value::is_object) {
+        return Err(at.invalid(&field("properties"), "an object"));
+    }
+    if !text(snapshot, "type").is_some_and(is_type_id) {
+        return Err(at.invalid(&field("type"), "a type identifier"));
+    }
+    if !snapshot
+        .get("tier")
+        .is_some_and(|tier| tier.is_null() || tier.as_str().is_some_and(|t| TIERS.contains(&t)))
+    {
+        return Err(at.invalid(&field("tier"), "library, feed or null"));
+    }
+    for name in ["created_at", "occurred_at"] {
+        if !snapshot.get(name).is_some_and(is_instant) {
+            return Err(at.invalid(&field(name), "an instant"));
         }
     }
-    Ok(())
+    if let Some(fault) = snapshot.get("writer").and_then(writer_fault) {
+        return Err(at.invalid(&writer_field(&field("writer"), fault), "a writer or null"));
+    }
+    if !snapshot
+        .get("source_id")
+        .is_some_and(|source_id| source_id.is_null() || source_id.is_string())
+    {
+        return Err(at.invalid(&field("source_id"), "a string or null"));
+    }
+    if let Some(refused) = snapshot
+        .get("properties")
+        .and_then(|held| oversized(&at, cap, &field("properties"), held))
+    {
+        return Err(refused);
+    }
+    Ok(VersionKey {
+        item_id: item_id.to_string(),
+        id: id.to_string(),
+        version,
+    })
+}
+
+/// The line that holds an item, an edge or a version, longer than the `cap` a restore reads.
+pub fn too_long(
+    kind: Kind,
+    id: &str,
+    type_id: &str,
+    field: Option<&str>,
+    bytes: usize,
+    cap: usize,
+) -> Refused {
+    let what = match field {
+        Some(field) => format!("{field} of {} {id}", kind.word()),
+        None => format!("{} {id}", capitalized(kind.word())),
+    };
+    let message = format!(
+        "{what} takes {bytes} bytes on one archive line, more than the {cap} a restore reads."
+    );
+    Refused {
+        kind,
+        id: Some(id.to_string()),
+        type_id: Some(type_id.to_string()),
+        field: field.map(str::to_string),
+        refusal: Refusal::validation(message).with_detail("limit_bytes", cap),
+        skip: None,
+    }
 }
 
 /// A row line's place in the order `rows.ndjson.gz` holds: its item, its table and its id.
@@ -740,12 +761,21 @@ mod tests {
     fn a_row_its_type_takes_passes() {
         let catalog = Catalog::shipped();
         assert!(item(&catalog, CAP, &line(note(json!({}))), 1).is_ok());
-        let history = json!({ "versions": [snapshot(1), snapshot(2)] });
-        let mut held = line(note(json!({})));
-        held.as_object_mut()
-            .unwrap()
-            .extend(history.as_object().unwrap().clone());
-        assert!(item(&catalog, CAP, &held, 1).is_ok());
+    }
+
+    #[test]
+    fn a_version_line_names_its_item_and_version() {
+        let key = version(CAP, &snapshot(2), 1).unwrap();
+        assert_eq!(key.item_id, "01a1bdba-8640-72ba-b7d6-9e27d94e7540");
+        assert_eq!(key.version, 2);
+        let mut untyped = snapshot(2);
+        untyped["type"] = json!("not a type");
+        let refused = version(CAP, &untyped, 4).unwrap_err();
+        assert_eq!(refused.field.as_deref(), Some("versions.2.type"));
+        assert_eq!(refused.id.as_deref(), Some("01a1bdba-8640-72ba-b7d6-9e27d94e7540"));
+        let details = refused.refusal.details.unwrap();
+        assert_eq!(details["item_id"], "01a1bdba-8640-72ba-b7d6-9e27d94e7540");
+        assert_eq!(details["line"], 4);
     }
 
     #[test]
@@ -761,14 +791,20 @@ mod tests {
     }
 
     #[test]
-    fn a_snapshot_at_or_above_the_rows_version_or_repeated_is_refused() {
-        let catalog = Catalog::shipped();
-        for versions in [json!([snapshot(3)]), json!([snapshot(1), snapshot(1)])] {
-            let mut held = line(note(json!({})));
-            held["versions"] = versions;
-            let refused = field(item(&catalog, CAP, &held, 1)).unwrap();
-            assert!(refused.ends_with(".version"), "{refused}");
+    fn a_version_that_is_no_whole_number_or_whose_properties_pass_the_cap_is_refused() {
+        for held in [json!(0), json!(1.5), json!("2")] {
+            let mut line = snapshot(1);
+            line["version"] = held;
+            let refused = version(CAP, &line, 1).unwrap_err();
+            assert_eq!(refused.field.as_deref(), Some("version"));
         }
+        let mut large = snapshot(1);
+        large["properties"] = json!({ "t": "a".repeat(100) });
+        let size = r#"{"t":""}"#.len() + 100;
+        assert!(version(size, &large, 1).is_ok());
+        let refused = version(size - 1, &large, 1).unwrap_err();
+        assert_eq!(refused.refusal.code, Code::RequestTooLarge);
+        assert_eq!(refused.field.as_deref(), Some("versions.1.properties"));
     }
 
     #[test]

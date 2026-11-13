@@ -740,8 +740,10 @@ async fn a_file_no_store_can_give_is_recorded_lost_and_the_backup_to_the_object_
     let size =
         usize::from_str_radix(octal.trim_matches(|c: char| c == '\0' || c == ' '), 8).unwrap();
     let manifest: Value = serde_json::from_slice(&tar[512..512 + size]).unwrap();
-    assert_eq!(manifest["lost_blobs"], json!([lost]), "{manifest}");
-    assert!(manifest["missing_blobs"][&kept].is_object(), "{manifest}");
+    assert_eq!(manifest["file_count"], 2, "{manifest}");
+    let files = files_listed(&tar);
+    assert_eq!(listed(&files, &lost)["state"], "lost", "{files:?}");
+    assert_eq!(listed(&files, &kept)["state"], "not_carried", "{files:?}");
     let health = instance.backups_health().await;
     assert_eq!(health["status"], "failing", "{health}");
     assert!(
@@ -754,4 +756,29 @@ async fn a_file_no_store_can_give_is_recorded_lost_and_the_backup_to_the_object_
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["blobs_lost"], json!([]), "{body}");
     assert_eq!(instance.backups_health().await["status"], "ok");
+}
+
+/// The lines of the archive's `files.ndjson.gz`, which follows its manifest.
+fn files_listed(tar: &[u8]) -> Vec<Value> {
+    use std::io::Read;
+    let mut at = 0;
+    loop {
+        let block = &tar[at..at + 512];
+        let end = block[..100].iter().position(|byte| *byte == 0).unwrap_or(100);
+        let octal = String::from_utf8_lossy(&block[124..136]);
+        let size =
+            usize::from_str_radix(octal.trim_matches(|c: char| c == '\0' || c == ' '), 8).unwrap();
+        if &block[..end] == b"files.ndjson.gz" {
+            let mut text = String::new();
+            flate2::read::GzDecoder::new(&tar[at + 512..at + 512 + size])
+                .read_to_string(&mut text)
+                .unwrap();
+            return text.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+        }
+        at += 512 + size.div_ceil(512) * 512;
+    }
+}
+
+fn listed<'a>(files: &'a [Value], hash: &str) -> &'a Value {
+    files.iter().find(|line| line["hash"] == hash).unwrap()
 }

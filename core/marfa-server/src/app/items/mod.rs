@@ -26,7 +26,7 @@ use super::connectors::ReadOnly;
 use super::edges::{self, Reach};
 use super::refusal::{Code, Refusal, Result};
 
-pub(crate) use archived::{Archived, archived};
+pub(crate) use archived::{Archived, archived, versions};
 pub(crate) use plan::require_version;
 pub use read::{
     Caption, Detail, Listing, Many, Selector, bin, bin_selection, bulk_get, captions, detail,
