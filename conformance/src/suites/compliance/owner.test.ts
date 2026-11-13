@@ -28,6 +28,7 @@ const OWNER = {
 beforeAll(async () => {
   state = await mkdtemp(join(tmpdir(), "marfa-owner-conformance-"));
   vi.stubEnv("MARFA_TRUSTED_PROXY_HEADER", "x-conformance-client");
+  vi.stubEnv("MARFA_TRUSTED_PROXY_CIDRS", "127.0.0.0/8");
   server = await bootUnclaimedServer({ state });
   vi.stubEnv("MARFA_API_URL", server.url);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);

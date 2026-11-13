@@ -18,12 +18,11 @@ pub fn caller_address(peer: IpAddr, trust: &Trust, headers: &HeaderMap) -> IpAdd
     let peer = peer.to_canonical();
     match trust {
         Trust::Nothing => peer,
-        Trust::EdgeHeader(name) => edge_address(name, headers).unwrap_or(peer),
-        Trust::EdgeHeaderFrom { header, ranges } if inside(ranges, peer) => {
+        Trust::EdgeHeader { header, ranges } if inside(ranges, peer) => {
             edge_address(header, headers).unwrap_or(peer)
         }
         Trust::Proxies(ranges) if inside(ranges, peer) => walked(peer, ranges, headers),
-        Trust::EdgeHeaderFrom { .. } | Trust::Proxies(_) => peer,
+        Trust::EdgeHeader { .. } | Trust::Proxies(_) => peer,
     }
 }
 
@@ -84,12 +83,8 @@ mod tests {
         Trust::Proxies(crate::listener::proxy_ranges(text).unwrap())
     }
 
-    fn edge() -> Trust {
-        Trust::EdgeHeader(EDGE.to_string())
-    }
-
-    fn edge_from(text: &str) -> Trust {
-        Trust::EdgeHeaderFrom {
+    fn edge(text: &str) -> Trust {
+        Trust::EdgeHeader {
             header: EDGE.to_string(),
             ranges: crate::listener::proxy_ranges(text).unwrap(),
         }
@@ -111,34 +106,39 @@ mod tests {
     #[test]
     fn each_kind_of_trust_answers_as_it_should() {
         let inner = "10.0.0.0/8";
+        let tunnel = "127.0.0.0/8, ::1/128";
         #[rustfmt::skip]
         let table: &[Case] = &[
             ("no trust ignores a forwarded address", "192.0.2.1", Trust::Nothing, &[(XFF, "203.0.113.9")], "192.0.2.1"),
             ("no trust ignores an edge's header", "192.0.2.1", Trust::Nothing, &[(EDGE, "203.0.113.9")], "192.0.2.1"),
             ("no trust normalizes a mapped peer", "::ffff:192.0.2.1", Trust::Nothing, &[], "192.0.2.1"),
 
-            ("edge: one address is believed", "192.0.2.1", edge(), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
-            ("edge: IPv6", "192.0.2.1", edge(), &[(EDGE, "2001:db8::9")], "2001:db8::9"),
-            ("edge: mapped is normalized", "192.0.2.1", edge(), &[(EDGE, "::ffff:203.0.113.9")], "203.0.113.9"),
-            ("edge: missing", "192.0.2.1", edge(), &[], "192.0.2.1"),
-            ("edge: empty", "192.0.2.1", edge(), &[(EDGE, "")], "192.0.2.1"),
-            ("edge: repeated", "192.0.2.1", edge(), &[(EDGE, "203.0.113.9"), (EDGE, "203.0.113.10")], "192.0.2.1"),
-            ("edge: repeated the same", "192.0.2.1", edge(), &[(EDGE, "203.0.113.9"), (EDGE, "203.0.113.9")], "192.0.2.1"),
-            ("edge: malformed", "192.0.2.1", edge(), &[(EDGE, "unknown")], "192.0.2.1"),
-            ("edge: carries no chain", "192.0.2.1", edge(), &[(EDGE, "203.0.113.9, 203.0.113.10")], "192.0.2.1"),
-            ("edge: a port", "192.0.2.1", edge(), &[(EDGE, "203.0.113.9:443")], "192.0.2.1"),
-            ("edge: brackets", "192.0.2.1", edge(), &[(EDGE, "[2001:db8::9]")], "192.0.2.1"),
-            ("edge: stray whitespace", "192.0.2.1", edge(), &[(EDGE, " 203.0.113.9")], "192.0.2.1"),
-            ("edge: ignores X-Forwarded-For", "192.0.2.1", edge(), &[(XFF, "203.0.113.9")], "192.0.2.1"),
+            ("edge from the tunnel: one address is believed", "127.0.0.1", edge(tunnel), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
+            ("edge from the tunnel: IPv6", "127.0.0.1", edge(tunnel), &[(EDGE, "2001:db8::9")], "2001:db8::9"),
+            ("edge from the tunnel: mapped is normalized", "127.0.0.1", edge(tunnel), &[(EDGE, "::ffff:203.0.113.9")], "203.0.113.9"),
+            ("edge from the tunnel: missing", "127.0.0.1", edge(tunnel), &[], "127.0.0.1"),
+            ("edge from the tunnel: empty", "127.0.0.1", edge(tunnel), &[(EDGE, "")], "127.0.0.1"),
+            ("edge from the tunnel: repeated", "127.0.0.1", edge(tunnel), &[(EDGE, "203.0.113.9"), (EDGE, "203.0.113.10")], "127.0.0.1"),
+            ("edge from the tunnel: repeated the same", "127.0.0.1", edge(tunnel), &[(EDGE, "203.0.113.9"), (EDGE, "203.0.113.9")], "127.0.0.1"),
+            ("edge from the tunnel: malformed", "127.0.0.1", edge(tunnel), &[(EDGE, "unknown")], "127.0.0.1"),
+            ("edge from the tunnel: carries no chain", "127.0.0.1", edge(tunnel), &[(EDGE, "203.0.113.9, 203.0.113.10")], "127.0.0.1"),
+            ("edge from the tunnel: a port", "127.0.0.1", edge(tunnel), &[(EDGE, "203.0.113.9:443")], "127.0.0.1"),
+            ("edge from the tunnel: brackets", "127.0.0.1", edge(tunnel), &[(EDGE, "[2001:db8::9]")], "127.0.0.1"),
+            ("edge from the tunnel: stray whitespace", "127.0.0.1", edge(tunnel), &[(EDGE, " 203.0.113.9")], "127.0.0.1"),
+            ("edge from the tunnel: ignores X-Forwarded-For", "127.0.0.1", edge(tunnel), &[(XFF, "203.0.113.9")], "127.0.0.1"),
+            ("edge from the tunnel: an IPv6 loopback peer", "::1", edge(tunnel), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
+            ("edge from the tunnel: a peer off this machine", "192.0.2.1", edge(tunnel), &[(EDGE, "203.0.113.9")], "192.0.2.1"),
+            ("edge from everywhere: one address", "192.0.2.1", edge("0.0.0.0/0, ::/0"), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
+            ("edge from everywhere: an IPv6 peer", "2001:db8::1", edge("0.0.0.0/0, ::/0"), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
 
-            ("both: a peer inside is believed", "10.0.0.1", edge_from(inner), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
-            ("both: a mapped peer inside is believed", "::ffff:10.0.0.1", edge_from(inner), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
-            ("both: a peer outside is not", "192.0.2.1", edge_from(inner), &[(EDGE, "203.0.113.9")], "192.0.2.1"),
-            ("both: a mapped peer outside is not", "::ffff:192.0.2.1", edge_from(inner), &[(EDGE, "203.0.113.9")], "192.0.2.1"),
-            ("both: missing from inside", "10.0.0.1", edge_from(inner), &[], "10.0.0.1"),
-            ("both: repeated from inside", "10.0.0.1", edge_from(inner), &[(EDGE, "203.0.113.9"), (EDGE, "203.0.113.10")], "10.0.0.1"),
-            ("both: malformed from inside", "10.0.0.1", edge_from(inner), &[(EDGE, "unknown")], "10.0.0.1"),
-            ("both: ignores X-Forwarded-For", "10.0.0.1", edge_from(inner), &[(XFF, "203.0.113.9")], "10.0.0.1"),
+            ("edge from 10/8: a peer inside is believed", "10.0.0.1", edge(inner), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
+            ("edge from 10/8: a mapped peer inside is believed", "::ffff:10.0.0.1", edge(inner), &[(EDGE, "203.0.113.9")], "203.0.113.9"),
+            ("edge from 10/8: a peer outside is not", "192.0.2.1", edge(inner), &[(EDGE, "203.0.113.9")], "192.0.2.1"),
+            ("edge from 10/8: a mapped peer outside is not", "::ffff:192.0.2.1", edge(inner), &[(EDGE, "203.0.113.9")], "192.0.2.1"),
+            ("edge from 10/8: missing from inside", "10.0.0.1", edge(inner), &[], "10.0.0.1"),
+            ("edge from 10/8: repeated from inside", "10.0.0.1", edge(inner), &[(EDGE, "203.0.113.9"), (EDGE, "203.0.113.10")], "10.0.0.1"),
+            ("edge from 10/8: malformed from inside", "10.0.0.1", edge(inner), &[(EDGE, "unknown")], "10.0.0.1"),
+            ("edge from 10/8: ignores X-Forwarded-For", "10.0.0.1", edge(inner), &[(XFF, "203.0.113.9")], "10.0.0.1"),
 
             ("peer outside the ranges is not believed", "192.0.2.1", proxies(inner), &[(XFF, "203.0.113.9")], "192.0.2.1"),
             ("the first untrusted from the right", "10.0.0.1", proxies(inner), &[(XFF, "203.0.113.9, 10.0.0.2, 10.0.0.3")], "203.0.113.9"),
@@ -176,7 +176,7 @@ mod tests {
         let peer = ip("10.0.0.1");
         assert_eq!(caller_address(peer, &proxies("10.0.0.0/8"), &walked), peer);
         let edged = headers([(EDGE, opaque)]);
-        assert_eq!(caller_address(peer, &edge(), &edged), peer);
+        assert_eq!(caller_address(peer, &edge("10.0.0.0/8"), &edged), peer);
     }
 
     #[test]
@@ -245,7 +245,7 @@ mod tests {
             let peer_answer = peer.to_canonical();
             prop_assert_eq!(caller_address(peer, &Trust::Nothing, &sent), peer_answer);
 
-            for trust in [edge(), edge_from("0.0.0.0/0, ::/0"), edge_from("10.0.0.0/8")] {
+            for trust in [edge("0.0.0.0/0, ::/0"), edge("10.0.0.0/8")] {
                 let answer = caller_address(peer, &trust, &sent);
                 prop_assert!(answer == peer_answer || held_in(&edged).contains(&answer));
             }

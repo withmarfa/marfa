@@ -27,9 +27,8 @@ impl Transport {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Trust {
     Nothing,
-    /// Believed from any peer, since nothing reaches this listener except through that edge.
-    EdgeHeader(String),
-    EdgeHeaderFrom {
+    /// The header an edge writes, believed only from a peer in `ranges`.
+    EdgeHeader {
         header: String,
         ranges: Vec<IpNet>,
     },
@@ -78,8 +77,7 @@ impl Trust {
         let peer = peer.to_canonical();
         match self {
             Trust::Nothing => false,
-            Trust::EdgeHeader(_) => true,
-            Trust::EdgeHeaderFrom { ranges, .. } | Trust::Proxies(ranges) => {
+            Trust::EdgeHeader { ranges, .. } | Trust::Proxies(ranges) => {
                 ranges.iter().any(|range| range.contains(&peer))
             }
         }
@@ -145,7 +143,7 @@ mod tests {
     }
 
     #[test]
-    fn trust_is_read_with_or_without_test_hooks_and_both_settings_narrow_the_header() {
+    fn trust_is_read_with_or_without_test_hooks_and_the_header_needs_ranges() {
         let cidrs = ("MARFA_TRUSTED_PROXY_CIDRS", "10.0.0.0/8");
         let header = ("MARFA_TRUSTED_PROXY_HEADER", "X-Client");
         let hooks = ("MARFA_TEST_HOOKS", "true");
@@ -153,13 +151,15 @@ mod tests {
         assert_eq!(trust(&[]), Ok(Trust::Nothing));
         assert_eq!(trust(&[cidrs]), Ok(ranges.clone()));
         assert_eq!(trust(&[cidrs, hooks]), Ok(ranges));
-        assert_eq!(
-            trust(&[header]),
-            Ok(Trust::EdgeHeader("x-client".to_string()))
+        let alone = trust(&[header]).unwrap_err();
+        assert_eq!(alone.lines.len(), 1, "{alone}");
+        assert!(
+            alone.lines[0].contains("set MARFA_TRUSTED_PROXY_CIDRS"),
+            "{alone}"
         );
         assert_eq!(
             trust(&[cidrs, header]),
-            Ok(Trust::EdgeHeaderFrom {
+            Ok(Trust::EdgeHeader {
                 header: "x-client".to_string(),
                 ranges: proxy_ranges("10.0.0.0/8").unwrap(),
             })
