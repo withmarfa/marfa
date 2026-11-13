@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   catalogueTables,
+  permissionNames,
   webhookEvents,
 } from "../conformance/scripts/catalogue-sources.js";
 import {
@@ -14,7 +15,6 @@ import {
   ALL_SYSTEM_TYPES,
   ALL_TYPES,
 } from "../packages/types/src/index.js";
-import { PERMISSIONS } from "../packages/shared/src/scopes.js";
 
 const chapter = (name: (typeof CATALOGUES)[number]) =>
   readFileSync(
@@ -25,9 +25,8 @@ const chapter = (name: (typeof CATALOGUES)[number]) =>
 /**
  * The contract's catalogues are written from the server's own definitions by
  * `conformance/scripts/catalogue-tables.ts`: the shipped types and edge types
- * in `packages/types`, the permission list in `packages/shared` and the
- * event names in the webhook vocabulary and the stream's frame schema in
- * `openapi.json`. A definition added, removed or changed changes its table, so one
+ * in `packages/types`, and the permission list, the event names in the webhook
+ * vocabulary and the stream's frame schema in `openapi.json`. A definition added, removed or changed changes its table, so one
  * that was not rewritten is stale in the contract. Compared as text, because
  * the table is text a reader sees.
  */
@@ -55,8 +54,9 @@ describe("the catalogues in the contract", () => {
     for (const { id } of ALL_EDGE_TYPES) {
       expect(rows("edge-types"), id).toContain(`| \`${id}\` `);
     }
-    expect(PERMISSIONS).toHaveLength(12);
-    for (const name of PERMISSIONS) {
+    const permissions = permissionNames();
+    expect(permissions).toHaveLength(12);
+    for (const name of permissions) {
       expect(rows("permissions"), name).toContain(`| \`${name}\` `);
     }
     const events = webhookEvents();

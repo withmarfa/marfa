@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { PERMISSIONS } from "../packages/shared/src/scopes.js";
+import { permissionNames } from "../conformance/scripts/catalogue-sources.js";
 
 describe("the CLI owner sign-in scopes", () => {
   it("includes every permission the server offers apps", () => {
@@ -24,6 +24,6 @@ describe("the CLI owner sign-in scopes", () => {
             !["openid", "profile", "email", "offline_access"].includes(scope),
         )
         .sort(),
-    ).toEqual([...PERMISSIONS].sort());
+    ).toEqual(permissionNames().sort());
   });
 });

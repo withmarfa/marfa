@@ -1,14 +1,12 @@
 /**
  * The rows of the contract's catalogues, read from where the server keeps
- * them: the shipped type and edge type definitions in `@withmarfa/types`, the
- * permission list in `@withmarfa/shared`, and the event names in the webhook
- * vocabulary and the stream's frame schema in `openapi.json`, the document
- * the server is held to. Like the repository's other generators, this reads
+ * them: the shipped type and edge type definitions in `@withmarfa/types`, and
+ * the permission list, the event names in the webhook vocabulary and the
+ * stream's frame schema in `openapi.json`, the document the server is held to. Like the repository's other generators, this reads
  * files by path; nothing under `src/suites/` may.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { PERMISSIONS } from "../../packages/shared/src/scopes.js";
 import {
   ALL_EDGE_TYPES,
   ALL_SYSTEM_TYPES,
@@ -86,11 +84,17 @@ export function edgeTypeRows(): EdgeTypeRow[] {
   }));
 }
 
+/** The permissions a credential can hold, as `openapi.json` lists them, in order. */
 export function permissionNames(): string[] {
-  return [...PERMISSIONS];
+  const names = openApi().components.schemas["Permission"]?.enum ?? [];
+  if (names.length === 0) {
+    throw new Error("openapi.json lists no permission");
+  }
+  return names;
 }
 
 interface FrameSchema {
+  enum?: string[];
   properties?: { event_type?: { enum?: string[]; const?: string } };
 }
 
