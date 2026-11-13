@@ -248,10 +248,11 @@ async fn a_backup_holds_each_file_once_and_restores_whole_into_a_fresh_install_e
     let folder = TempDir::new().unwrap();
     let origin = Instance::start(folder.path()).await;
     let note = origin.note("kept in the folder").await;
-    let (kept, file_item) = origin.file(b"a file the backup copies itself").await;
     let (replicated, _) = origin.file(b"a file replication copied first").await;
     origin.run("blob-replicate").await;
     assert!(copy_of(folder.path(), &origin.id(), &replicated).is_file());
+    let (kept, file_item) = origin.file(b"a file the backup copies itself").await;
+    assert!(!copy_of(folder.path(), &origin.id(), &kept).exists());
 
     let (status, body) = origin.back_up().await;
     assert_eq!(status, StatusCode::OK, "{body}");
@@ -441,6 +442,36 @@ async fn what_a_process_that_ended_left_half_written_is_cleared_by_the_next_run_
     assert!(!own.join(&left).exists());
     assert!(names_in(&tmp).is_empty(), "{:?}", names_in(&tmp));
     assert_eq!(names_in(&own).len(), 2);
+}
+
+#[tokio::test]
+async fn a_backup_being_written_is_never_listed_until_it_is_whole() {
+    let folder = TempDir::new().unwrap();
+    let instance = Arc::new(Instance::start(folder.path()).await);
+    instance.note("a note").await;
+    instance.app.faults.set("hold:backup:put", None).unwrap();
+    let running = instance.clone();
+    let run = tokio::spawn(async move { running.back_up().await });
+    let began = std::time::Instant::now();
+    while !instance.app.faults.list().iter().any(|fault| fault.waiting > 0) {
+        assert!(began.elapsed() < std::time::Duration::from_secs(10));
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let own = folder.path().join("backups").join(instance.id());
+    let written = names_in(&own);
+    assert_eq!(written.len(), 1, "{written:?}");
+    assert!(written[0].starts_with('.'), "{written:?}");
+    let (status, listed) = instance.local(Method::GET, "/backups", None).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    assert_eq!(listed["data"], json!([]), "{listed}");
+
+    instance.app.faults.clear(Some("hold:backup:put"));
+    let (status, body) = run.await.unwrap();
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        names_in(&own),
+        [body["backup"]["name"].as_str().unwrap().to_string()]
+    );
 }
 
 #[tokio::test]
