@@ -606,23 +606,22 @@ fn public_address(raw: &str) -> Result<String, CliError> {
     address::normalise(raw)
 }
 
-/// A proxy reaches a native server from the loopback and a container from its
-/// network's gateway; Cloudflare's edge overwrites a header with the exact caller.
+/// A proxy or tunnel reaches a native server from the loopback and a container
+/// from its network's gateway; Cloudflare's edge also overwrites a header with
+/// the exact caller, which the server believes only from those ranges.
 fn proxy_trust(
     runtime: Runtime,
     access: Access,
     subnet: &str,
 ) -> (Option<String>, Option<&'static str>) {
+    let ranges = || match runtime {
+        Runtime::Native => native::LOOPBACK_PROXIES.to_string(),
+        Runtime::Docker => subnet.to_string(),
+    };
     match access {
         Access::Local => (None, None),
-        Access::Tailscale | Access::Proxy => (
-            Some(match runtime {
-                Runtime::Native => native::LOOPBACK_PROXIES.to_string(),
-                Runtime::Docker => subnet.to_string(),
-            }),
-            None,
-        ),
-        Access::Cloudflare => (None, Some(CLOUDFLARE_HEADER)),
+        Access::Tailscale | Access::Proxy => (Some(ranges()), None),
+        Access::Cloudflare => (Some(ranges()), Some(CLOUDFLARE_HEADER)),
     }
 }
 
@@ -657,8 +656,10 @@ fn external_problems(settings: &EnvFile, access: Access, network: &str, of: &str
     }
     let header = settings.get(names::PROXY_HEADER).filter(|v| !v.is_empty());
     let cidrs = settings.get(names::PROXY_CIDRS).filter(|v| !v.is_empty());
+    let covered =
+        cidrs.is_some_and(|cidrs| cidrs.split(',').any(|range| cidr_contains(range, network)));
     match access {
-        Access::Local => {}
+        Access::Local => return problems,
         Access::Cloudflare => {
             if !header.is_some_and(|header| header.eq_ignore_ascii_case(CLOUDFLARE_HEADER)) {
                 problems.push(format!(
@@ -669,17 +670,15 @@ fn external_problems(settings: &EnvFile, access: Access, network: &str, of: &str
         }
         Access::Tailscale | Access::Proxy => {
             if header.is_some() {
-                problems.push(format!("{} is set, and it takes precedence over the proxy range, which this way of reaching the server needs", names::PROXY_HEADER));
-            }
-            if !cidrs
-                .is_some_and(|cidrs| cidrs.split(',').any(|range| cidr_contains(range, network)))
-            {
-                problems.push(format!(
-                    "{} must include {network}, {of}, or every caller shares one address and ten wrong passwords lock the owner out",
-                    names::PROXY_CIDRS
-                ));
+                problems.push(format!("{} is set, so the server reads the caller's address from it and not from the X-Forwarded-For this way of reaching the server sends", names::PROXY_HEADER));
             }
         }
+    }
+    if !covered {
+        problems.push(format!(
+            "{} must include {network}, {of}, or every caller shares one address and ten wrong passwords lock the owner out",
+            names::PROXY_CIDRS
+        ));
     }
     problems
 }
@@ -794,9 +793,13 @@ mod tests {
         let subnet = "192.168.117.0/24";
         for runtime in [Runtime::Native, Runtime::Docker] {
             assert_eq!(proxy_trust(runtime, Access::Local, subnet), (None, None));
+            let ranges = match runtime {
+                Runtime::Native => "127.0.0.0/8,::1/128",
+                Runtime::Docker => subnet,
+            };
             assert_eq!(
                 proxy_trust(runtime, Access::Cloudflare, subnet),
-                (None, Some("CF-Connecting-IP"))
+                (Some(ranges.into()), Some("CF-Connecting-IP"))
             );
         }
         for access in [Access::Tailscale, Access::Proxy] {
@@ -806,7 +809,7 @@ mod tests {
             );
             assert_eq!(
                 proxy_trust(Runtime::Native, access, subnet),
-                (Some("127.0.0.1/32,::1/128".into()), None)
+                (Some("127.0.0.0/8,::1/128".into()), None)
             );
         }
     }
@@ -839,6 +842,31 @@ mod tests {
             .len(),
             1
         );
+    }
+
+    #[test]
+    fn a_cloudflare_tunnel_needs_the_header_and_the_range_it_connects_from() {
+        let mut settings = EnvFile::parse("");
+        settings.set(names::KEY_SALT, "a").unwrap();
+        settings.set(names::AUTH_SECRET, "b").unwrap();
+        settings
+            .set(names::PROXY_HEADER, "CF-Connecting-IP")
+            .unwrap();
+        let problems = |settings: &EnvFile| {
+            external_problems(
+                settings,
+                Access::Cloudflare,
+                native::LOOPBACK_NETWORK,
+                "the loopback",
+            )
+        };
+        let alone = problems(&settings);
+        assert_eq!(alone.len(), 1, "{alone:?}");
+        assert!(alone[0].starts_with(names::PROXY_CIDRS), "{alone:?}");
+        settings
+            .set(names::PROXY_CIDRS, native::LOOPBACK_PROXIES)
+            .unwrap();
+        assert_eq!(problems(&settings), Vec::<String>::new());
     }
 
     #[test]
