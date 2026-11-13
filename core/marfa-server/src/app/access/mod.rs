@@ -535,14 +535,58 @@ mod tests {
                 .unwrap_err();
             assert_eq!(refused.code, Code::TypeNotPermitted);
             credential.require_type("core.note", Level::Write).unwrap();
-            credential
-                .require_type("system.connection", Level::Read)
-                .unwrap();
+            credential.require_type("system.view", Level::Read).unwrap();
         }
         for direct in [Caller::local(), Caller::Server] {
             direct
                 .require_type("system.connection", Level::Write)
                 .unwrap();
+        }
+    }
+
+    #[test]
+    fn a_credential_reads_system_connection_items_only_with_grants_manage() {
+        let every = |permissions: &[Permission]| {
+            Caller::Key(Box::new(with_map(
+                key("k", "mine", permissions, &[]),
+                Axis::Type,
+                json!({ "*": "read" }),
+            )))
+        };
+        let plain = every(&[]);
+        assert!(plain.may_read_type("core.note"));
+        assert!(plain.may_read_type("system.folder"));
+        assert!(!plain.may_read_type("system.connection"));
+        assert!(!plain.may_read_every_type());
+        let refused = plain
+            .require_type("system.connection", Level::Read)
+            .unwrap_err();
+        assert_eq!(refused.code, Code::Forbidden);
+        assert_eq!(
+            refused
+                .details
+                .and_then(|d| d.get("required_scope").cloned()),
+            Some(json!("grants.manage"))
+        );
+
+        let manager = every(&[Permission::GrantsManage]);
+        assert!(manager.may_read_type("system.connection"));
+        assert!(manager.may_read_every_type());
+        manager
+            .require_type("system.connection", Level::Read)
+            .unwrap();
+        let unmapped = Caller::Key(Box::new(key("m", "mine", &[Permission::GrantsManage], &[])));
+        assert!(!unmapped.may_read_type("system.connection"));
+        assert_eq!(
+            unmapped
+                .require_type("system.connection", Level::Read)
+                .unwrap_err()
+                .code,
+            Code::TypeNotPermitted
+        );
+        for direct in [Caller::local(), Caller::Server] {
+            assert!(direct.may_read_type("system.connection"));
+            assert!(direct.may_read_every_type());
         }
     }
 

@@ -18,7 +18,6 @@ use url::{Host, Url};
 
 use super::client::{self, Registration, RegistrationError, Source};
 use super::redirect;
-use super::scope::ScopeSet;
 
 /// The draft's recommended limit.
 const MAX_DOCUMENT_BYTES: u64 = 5 * 1024;
@@ -244,11 +243,7 @@ fn is_json_media_type(value: &str) -> bool {
 }
 
 /// Every error here is `invalid_client` to whoever asked; the description is only for the log.
-pub fn parse_document(
-    client_id: &str,
-    body: &[u8],
-    allowed: &ScopeSet,
-) -> Result<Registration, RegistrationError> {
+pub fn parse_document(client_id: &str, body: &[u8]) -> Result<Registration, RegistrationError> {
     let value: Value = serde_json::from_slice(body)
         .map_err(|_| RegistrationError::metadata("The document is not valid JSON."))?;
     let object = value
@@ -283,7 +278,7 @@ pub fn parse_document(
     }
     let stated = client::text(object, "token_endpoint_auth_method")?;
     let registration = match supported {
-        None => client::read(object, Source::Document, allowed)?,
+        None => client::read(object, Source::Document)?,
         Some(methods) => {
             if let Some(method) = stated
                 && !methods.contains(&method)
@@ -300,7 +295,7 @@ pub fn parse_document(
             }
             let mut public = object.clone();
             public.remove("token_endpoint_auth_method");
-            client::read(&public, Source::Document, allowed)?
+            client::read(&public, Source::Document)?
         }
     };
     if registration
@@ -463,12 +458,8 @@ mod tests {
         base
     }
 
-    fn allowed() -> ScopeSet {
-        ScopeSet::parse("core.note:read offline_access")
-    }
-
     fn parse(body: &Value) -> Result<Registration, RegistrationError> {
-        parse_document(ID, body.to_string().as_bytes(), &allowed())
+        parse_document(ID, body.to_string().as_bytes())
     }
 
     #[test]
@@ -811,7 +802,10 @@ mod tests {
         assert_eq!(registered.client_name.as_deref(), Some("An app"));
         assert_eq!(registered.application_type, AppKind::Web);
         assert_eq!(registered.grant_types, [GrantType::AuthorizationCode]);
-        assert_eq!(registered.scope, allowed());
+        assert_eq!(
+            registered.scope.to_text(),
+            "content:read content:write edge.*:read edge.*:write offline_access"
+        );
     }
 
     #[test]
@@ -1040,7 +1034,7 @@ mod tests {
             let _ = is_url(&text);
             let _ = check_url(&text);
             let _ = is_json_media_type(&text);
-            let _ = parse_document(&text, text.as_bytes(), &allowed());
+            let _ = parse_document(&text, text.as_bytes());
         }
 
         #[test]

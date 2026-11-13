@@ -25,17 +25,31 @@ impl SchemaKind {
     }
 }
 
+/// Each item names an app the owner approved and what it holds, so it is read as the grants are.
+pub(super) const SIGN_IN_TYPE: &str = "system.connection";
+
 fn grant(kind: &str, name: &str, level: Level) -> serde_json::Value {
     json!({ "kind": kind, "name": name, "level": level.word() })
 }
 
 impl Caller {
     pub(super) fn level_on(&self, axis: Axis, name: &str) -> Level {
+        if self.withholds_sign_ins(axis, name) {
+            return Level::None;
+        }
         match self {
             Caller::Local(_) | Caller::Server => Level::Write,
             Caller::Owner(_) => Level::None,
             Caller::Key(key) | Caller::App { key, .. } => axis.level(key.grants.map(axis), name),
         }
+    }
+
+    fn withholds_sign_ins(&self, axis: Axis, name: &str) -> bool {
+        axis == Axis::Type
+            && name == SIGN_IN_TYPE
+            && self
+                .key()
+                .is_some_and(|key| !key.grants.holds(Permission::GrantsManage))
     }
 
     pub fn require_metadata(&self, registry: SchemaKind, level: Level) -> Result<()> {
@@ -86,6 +100,9 @@ impl Caller {
     }
 
     pub(super) fn require_type_map(&self, name: &str, level: Level) -> Result<()> {
+        if self.withholds_sign_ins(Axis::Type, name) {
+            return Err(super::requires(Permission::GrantsManage));
+        }
         let held = self.level_on(Axis::Type, name);
         if held >= level {
             return Ok(());

@@ -12,6 +12,13 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import {
+  ALL_TOOLS,
+  callTool,
+  connectMcp,
+  toolNames,
+  toolResult,
+} from "../../utils/mcp.js";
+import {
   authorize,
   authorizeQuery,
   CALLBACK,
@@ -1909,5 +1916,435 @@ describe("what full access on the approval pages grants", () => {
     await approved.body?.cancel();
     const minted = await poll(app, screen);
     expect(minted.body.scope).toBe("core.note:read");
+  });
+});
+
+describe("what the approval pages offer and grant an app that names no scope", () => {
+  const booted = bootFor("approval-no-scope");
+  beforeAll(booted.up, 2 * FRESH_SERVER_TIMEOUT_MS);
+  afterAll(booted.down, 2 * FRESH_SERVER_TIMEOUT_MS);
+
+  const DATA = ["content:read", "content:write", "edge.*:read", "edge.*:write"];
+  const PERMISSIONS = [
+    "schema.write",
+    "keys.mint",
+    "items.purge",
+    "webhooks.manage",
+    "config.manage",
+    "audit.read",
+    "grants.manage",
+    "instance.read",
+    "instance.maintain",
+    "connectors.manage",
+    "blobs.manage",
+    "keys.manage",
+  ];
+
+  /** Registers as an MCP client does when it is told no scope: naming none. */
+  async function registerNamingNone(): Promise<App> {
+    const response = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "names no scope",
+        application_type: "native",
+        redirect_uris: [CALLBACK],
+        grant_types: ["authorization_code", "refresh_token"],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      }),
+    });
+    expect(response.status).toBe(201);
+    return {
+      clientId: ((await response.json()) as { client_id: string }).client_id,
+    };
+  }
+
+  /** The consent screen of an authorization request, naming `scope` or none. */
+  async function screenFor(
+    app: App,
+    scope: string | undefined,
+    proof = pkce(),
+  ) {
+    const query = authorizeQuery(app.clientId, scope ?? "", proof);
+    if (scope === undefined) query.delete("scope");
+    const landed = await sentTo(server, await authorize(server, query, cookie));
+    expect(landed?.pathname, String(landed)).toBe("/auth/authorize");
+    const page = await fetch(landed!, { headers: { cookie } });
+    expect(page.status).toBe(200);
+    return { html: await page.text(), consent: landed!, proof };
+  }
+
+  async function call(
+    accessToken: string,
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<number> {
+    const response = await fetch(`${server.apiUrl}${path}`, {
+      method,
+      headers: {
+        authorization: `Bearer ${accessToken}`,
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    await response.body?.cancel();
+    return response.status;
+  }
+
+  it("offers an app that names no scope the owner's content and links, read only beside read and edit or chosen types, and no permission", async () => {
+    const { html } = await screenFor(await registerNamingNone(), undefined);
+    expect(
+      selectNamed(html, "Your content")?.options.map((o) => [o.value, o.label]),
+    ).toEqual([
+      ["", "No access"],
+      ["content:read", "Read only"],
+      ["content:write", "Read and edit"],
+      [CHOOSE, "Choose types"],
+    ]);
+    const types = readControls(html).filter((c) => c.name === "types");
+    const ids = types.map((c) =>
+      c.options.at(-1)?.value.replace(/:write$/, ""),
+    );
+    expect(ids).toEqual(expect.arrayContaining(["core.note", "core.task"]));
+    expect(ids.filter((id) => /^(system|marfa)\./.test(id ?? ""))).toEqual([]);
+    for (const c of types)
+      expect(c.options.map((o) => o.label)).toEqual([
+        "No access",
+        "Read only",
+        "Read and edit",
+      ]);
+    expect(selectNamed(html, "All your data")).toBeUndefined();
+    expect(
+      selectNamed(html, "Links between items")?.options.map((o) => [
+        o.value,
+        o.label,
+      ]),
+    ).toEqual([
+      ["", "No access"],
+      ["edge.*:read", "Read only"],
+      ["edge.*:write", "Read and edit"],
+    ]);
+    expect(readControls(html).filter((c) => c.role === "switch")).toEqual([]);
+    const offered = offeredValues(html, "scopes");
+    for (const permission of PERMISSIONS)
+      expect(offered, permission).not.toContain(permission);
+    expect(offered.filter((v) => /^(metadata|profile)/.test(v))).toEqual([]);
+  });
+
+  it("offers a permission to an app that names no scope at registration and asks for it by name", async () => {
+    const { html } = await screenFor(
+      await registerNamingNone(),
+      "core.note:write keys.mint",
+    );
+    expect(
+      readControls(html)
+        .filter((c) => c.role === "switch")
+        .map((c) => c.value),
+    ).toEqual(["keys.mint"]);
+    expect(selectNamed(html, "All your data")).toBeUndefined();
+    expect(selectNamed(html, "Your content")).toBeUndefined();
+  });
+
+  it("issues an app that names no scope a token that reads and writes items and links, and mints no key and reads no settings", async () => {
+    const app = await registerNamingNone();
+    const { consent, proof } = await screenFor(app, undefined);
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      consent,
+      true,
+      [],
+      [],
+      "full",
+    );
+    const issued = await redeem(app, sent, proof);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    expect(sorted(issued.body.scope)).toEqual(
+      [...DATA, "offline_access"].sort(),
+    );
+    const bearer = issued.body.access_token!;
+    expect(
+      await call(bearer, "POST", "/items", {
+        type: "core.note",
+        properties: { title: "kept" },
+      }),
+    ).toBe(201);
+    expect(await call(bearer, "GET", "/items?limit=1")).toBe(200);
+    expect(await call(bearer, "GET", "/edges?limit=1")).toBe(200);
+    // Content leaves out the system types, which a person's own key reads.
+    expect(
+      await call(bearer, "GET", "/items?type=system.folder&include=system"),
+    ).toBe(403);
+    expect(
+      await call(bearer, "POST", "/keys", {
+        label: "minted",
+        source: "app/minted",
+      }),
+    ).toBe(403);
+    expect(await call(bearer, "GET", "/config")).toBe(403);
+    expect(await call(bearer, "GET", "/keys")).toBe(403);
+
+    // A refresh keeps what was approved and never adds a permission.
+    const widened = await token(server, {
+      grant_type: "refresh_token",
+      refresh_token: issued.body.refresh_token!,
+      client_id: app.clientId,
+      scope: "*:write keys.mint",
+    });
+    expect(widened.status).toBe(400);
+    expect(widened.body.error).toBe("invalid_scope");
+    const refreshed = await token(server, {
+      grant_type: "refresh_token",
+      refresh_token: issued.body.refresh_token!,
+      client_id: app.clientId,
+    });
+    expect(refreshed.status, JSON.stringify(refreshed.body)).toBe(200);
+    expect(sorted(refreshed.body.scope)).toEqual(
+      [...DATA, "offline_access"].sort(),
+    );
+  });
+
+  it("serves an app that names no scope every tool at /mcp, and each works within its content", async () => {
+    const app = await registerNamingNone();
+    const { consent, proof } = await screenFor(app, undefined);
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      consent,
+      true,
+      [],
+      [],
+      "full",
+    );
+    const issued = await redeem(app, sent, proof);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    const mcp = await connectMcp(server.apiUrl, issued.body.access_token!);
+    try {
+      expect(await toolNames(mcp)).toEqual([...ALL_TOOLS].sort());
+      const overview = toolResult(await callTool(mcp, "marfa_overview", {}));
+      expect(overview.types).toEqual(
+        expect.arrayContaining([expect.objectContaining({ id: "core.note" })]),
+      );
+      const note = toolResult(
+        await callTool(mcp, "marfa_create", {
+          type: "core.note",
+          properties: { title: "by the default", body: "one" },
+        }),
+      ) as { id: string; version: number };
+      const found = toolResult(
+        await callTool(mcp, "marfa_find", { type: "core.note" }),
+      ) as { items: { id: string }[] };
+      expect(found.items.map((item) => item.id)).toContain(note.id);
+      const got = toolResult(
+        await callTool(mcp, "marfa_get", { ids: [note.id] }),
+      ) as { items: { id: string }[] };
+      expect(got.items.map((item) => item.id)).toEqual([note.id]);
+      toolResult(
+        await callTool(mcp, "marfa_update", {
+          id: note.id,
+          version: note.version,
+          properties: { body: "two" },
+        }),
+      );
+      const talk = toolResult(
+        await callTool(mcp, "marfa_create", {
+          type: "core.conversation",
+          properties: { title: "a talk" },
+        }),
+      ) as { id: string };
+      toolResult(
+        await callTool(mcp, "marfa_write_rows", {
+          id: talk.id,
+          table: "messages",
+          operations: [
+            {
+              op: "put",
+              values: {
+                author: "person",
+                text: "hello",
+                sent_at: "2026-01-01T00:00:00Z",
+              },
+            },
+          ],
+        }),
+      );
+      const rows = toolResult(
+        await callTool(mcp, "marfa_read_rows", {
+          id: talk.id,
+          table: "messages",
+        }),
+      ) as { rows: { values: { text: string } }[] };
+      expect(rows.rows.map((row) => row.values.text)).toEqual(["hello"]);
+      const preview = toolResult(
+        await callTool(mcp, "marfa_delete", { ids: [note.id] }),
+      );
+      toolResult(
+        await callTool(mcp, "marfa_delete", {
+          ids: [note.id],
+          confirm: preview.confirm,
+        }),
+      );
+    } finally {
+      await mcp.close();
+    }
+  });
+
+  it("issues an app that names no scope a token that only reads when the person chooses Read only", async () => {
+    const app = await registerNamingNone();
+    const { html, consent, proof } = await screenFor(app, undefined);
+    // The page's own form, with Read only chosen in both of its rows.
+    const readOnly = defaultSubmission(html, "scopes").map((value) =>
+      value.replace(/:write$/, ":read"),
+    );
+    expect(readOnly.sort()).toEqual(
+      ["content:read", "edge.*:read", "offline_access"].sort(),
+    );
+    const sent = await decide(server, origin, cookie, consent, true, readOnly);
+    const issued = await redeem(app, sent, proof);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    expect(sorted(issued.body.scope)).toEqual(
+      ["content:read", "edge.*:read", "offline_access"].sort(),
+    );
+    const bearer = issued.body.access_token!;
+    expect(await call(bearer, "GET", "/items?limit=1")).toBe(200);
+    // The witness that the write is refused for its scope: the full token above writes.
+    expect(
+      await call(bearer, "POST", "/items", {
+        type: "core.note",
+        properties: { title: "refused" },
+      }),
+    ).toBe(403);
+  });
+
+  it("issues an app that names no scope a token for exactly the types chosen read only, which reads them, is refused the rest and writes nothing", async () => {
+    const app = await registerNamingNone();
+    const { consent, proof } = await screenFor(app, undefined);
+    // Links left at No access, and the mechanism the page posts as a hidden field.
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      consent,
+      true,
+      [CHOOSE, "", "offline_access"],
+      ["core.note:read", "core.task:read", ""],
+    );
+    const issued = await redeem(app, sent, proof);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    expect(sorted(issued.body.scope)).toEqual([
+      "core.note:read",
+      "core.task:read",
+      "offline_access",
+    ]);
+    const bearer = issued.body.access_token!;
+    expect(await call(bearer, "GET", "/items?type=core.note&limit=1")).toBe(
+      200,
+    );
+    expect(await call(bearer, "GET", "/items?type=core.task&limit=1")).toBe(
+      200,
+    );
+    // The witness is the two reads above; a token for all of content reads this type.
+    expect(await call(bearer, "GET", "/items?type=core.event&limit=1")).toBe(
+      403,
+    );
+    // The full token of this group writes a note; this one may not.
+    expect(
+      await call(bearer, "POST", "/items", {
+        type: "core.note",
+        properties: { title: "refused" },
+      }),
+    ).toBe(403);
+    const refreshed = await token(server, {
+      grant_type: "refresh_token",
+      refresh_token: issued.body.refresh_token!,
+      client_id: app.clientId,
+    });
+    expect(refreshed.status, JSON.stringify(refreshed.body)).toBe(200);
+    expect(sorted(refreshed.body.scope)).toEqual([
+      "core.note:read",
+      "core.task:read",
+      "offline_access",
+    ]);
+  });
+
+  it("offers content with the choice to choose types, at no level above the one asked, on both pages", async () => {
+    for (const [scope, levels] of [
+      [
+        "content:read content:write",
+        ["No access", "Read only", "Read and edit"],
+      ],
+      ["content:read", ["No access", "Read only"]],
+    ] as const) {
+      for (const [page, html] of await bothPages(scope)) {
+        expect(offeredValues(html, "scopes"), page).toContain(CHOOSE);
+        const types = readControls(html).filter((c) => c.name === "types");
+        expect(types.length, page).toBeGreaterThanOrEqual(20);
+        for (const c of types)
+          expect(
+            c.options.map((o) => o.label),
+            page,
+          ).toEqual(levels);
+      }
+    }
+  });
+
+  it("issues a token for exactly the types chosen in place of content, and not content, on the device approval page", async () => {
+    const asked = "content:read content:write";
+    const app = await register(asked);
+    const screen = await deviceScreen(app, asked);
+    const approved = await decideDevice(
+      screen,
+      "approve",
+      [CHOOSE],
+      ["core.note:read", "core.task:write"],
+    );
+    expect(approved.status).toBe(200);
+    const issued = await poll(app, screen);
+    expect(issued.status, JSON.stringify(issued.body)).toBe(200);
+    expect(sorted(issued.body.scope)).toEqual([
+      "core.note:read",
+      "core.task:read",
+      "core.task:write",
+    ]);
+  });
+
+  it("refuses a type that content read only does not reach, and grants nothing, on the consent screen", async () => {
+    const asked = "content:read";
+    for (const bad of [
+      "core.note:write",
+      "system.connection:read",
+      "marfa.anything:read",
+      "core.unheard:read",
+      "*:read",
+    ]) {
+      const { consent } = await screenFor(await registerNamingNone(), asked);
+      const refused = await decideResponse(
+        server,
+        origin,
+        cookie,
+        consent,
+        true,
+        [CHOOSE],
+        ["core.task:read", bad],
+      );
+      expect(refused.status, bad).toBe(400);
+      expect(refused.headers.get("location"), bad).toBeNull();
+    }
+    // The witness: the same post without the stray type is granted.
+    const { consent } = await screenFor(await registerNamingNone(), asked);
+    const sent = await decide(
+      server,
+      origin,
+      cookie,
+      consent,
+      true,
+      [CHOOSE],
+      ["core.task:read"],
+    );
+    expect(sent?.searchParams.get("code")).toBeTruthy();
   });
 });

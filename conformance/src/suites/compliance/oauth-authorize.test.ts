@@ -479,7 +479,7 @@ describe("a type registered while the server runs", () => {
   it("is offered and granted at once, to an app registered before it", async () => {
     const type = "user.recipe_while_running";
     const scope = `${type}:read`;
-    // Registered with no scope, so for every scope the instance allows.
+    // Registered with no scope, so for the owner's content, which covers it.
     const app = await registerApp(server, NOTES, { scope: undefined });
 
     // The witness: before the type exists, its scope is dropped.

@@ -221,8 +221,10 @@ impl Scope {
         }
     }
 
-    pub fn is_all_data(&self) -> bool {
-        matches!(self, Scope::Type { pattern, .. } if pattern == ALL)
+    /// All data or content: every type a page offers is under it, so types may be chosen in its place.
+    pub fn offers_types(&self) -> bool {
+        matches!(self, Scope::Content(_))
+            || matches!(self, Scope::Type { pattern, .. } if pattern == ALL)
     }
 
     /// What a sign-in of any age may approve.
@@ -258,6 +260,22 @@ fn edge_pattern(pattern: &str) -> bool {
         .next()
         .is_some_and(|first| first.starts_with(|c: char| c.is_ascii_lowercase()) && tail(first))
         && parts.all(tail)
+}
+
+/// What a client that names no scope asks for: the owner's content and the links between items.
+pub fn data_alone(refreshes: bool) -> ScopeSet {
+    let mut set = ScopeSet::default();
+    for verb in Verb::BOTH {
+        set.insert(&Scope::Content(verb).literal());
+    }
+    for verb in Verb::BOTH {
+        let pattern = ALL.to_string();
+        set.insert(&Scope::Edge { pattern, verb }.literal());
+    }
+    if refreshes {
+        set.insert(OFFLINE_ACCESS);
+    }
+    set
 }
 
 #[derive(Clone, Debug, Default)]
@@ -614,17 +632,17 @@ pub fn needs_recent_sign_in(approved: &ScopeSet, held: &ScopeSet) -> bool {
 
 /// Pass `named` narrowed: what a request named and could not have is not covered.
 pub fn chosen_within(named: &ScopeSet, chosen: &ScopeSet, offered: &[&str]) -> bool {
-    let all_data: ScopeSet = named
+    let wide: ScopeSet = named
         .literals()
         .iter()
         .map(String::as_str)
-        .filter(|literal| Scope::parse(literal).is_some_and(|scope| scope.is_all_data()))
+        .filter(|literal| Scope::parse(literal).is_some_and(|scope| scope.offers_types()))
         .collect();
     chosen.literals().iter().all(|literal| {
         matches!(
             Scope::parse(literal),
             Some(Scope::Type { pattern, .. })
-                if offered.contains(&pattern.as_str()) && covers(&all_data, literal)
+                if offered.contains(&pattern.as_str()) && covers(&wide, literal)
         )
     })
 }
@@ -663,6 +681,30 @@ mod tests {
             ],
             ["links_to", "core.depends_on"],
         )
+    }
+
+    #[test]
+    fn naming_no_scope_reaches_items_and_links_and_nothing_else() {
+        let allowed = registries().allowed();
+        let default = data_alone(true);
+        assert!(default.literals().iter().all(|l| allowed.contains(l)));
+        assert!(to_grants(&default).permissions.is_empty());
+        let text = default.to_text();
+        assert_eq!(level(&text, Axis::Type, "core.note"), Level::Write);
+        assert_eq!(level(&text, Axis::Type, "user.recipe"), Level::Write);
+        for system in ["system.view", "system.folder", "system.connection"] {
+            assert_eq!(level(&text, Axis::Type, system), Level::None, "{system}");
+        }
+        assert_eq!(level(&text, Axis::Edge, "links_to"), Level::Write);
+        assert_eq!(level(&text, Axis::Metadata, "types"), Level::None);
+        assert_eq!(level(&text, Axis::Profile, "name"), Level::None);
+        // The witness: what an app may be granted reaches the rest.
+        let every = allowed.to_text();
+        assert_eq!(to_grants(&allowed).permissions.len(), PERMISSIONS.len());
+        assert_eq!(level(&every, Axis::Type, "system.view"), Level::Write);
+        assert_eq!(level(&every, Axis::Metadata, "types"), Level::Write);
+        assert_eq!(level(&every, Axis::Profile, "name"), Level::Write);
+        assert_eq!(data_alone(false), default.without(OFFLINE_ACCESS));
     }
 
     #[test]
@@ -1250,8 +1292,18 @@ mod tests {
         ] {
             assert!(!chosen_within(&named, &set(beyond), &offered), "{beyond}");
         }
+        assert!(chosen_within(
+            &set("content:read"),
+            &set("core.note:read"),
+            &offered
+        ));
         assert!(!chosen_within(
             &set("content:read"),
+            &set("core.note:write"),
+            &offered
+        ));
+        assert!(!chosen_within(
+            &set("edge.*:read"),
             &set("core.note:read"),
             &offered
         ));

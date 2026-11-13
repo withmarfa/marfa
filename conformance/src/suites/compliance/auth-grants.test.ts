@@ -2,6 +2,8 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { MarfaClient } from "../../client/api.js";
 import { controlRequest } from "../../utils/control-request.js";
+import { callTool, connectMcp } from "../../utils/mcp.js";
+import { collectUntil, withStream } from "../../utils/stream.js";
 import {
   DAY_MS,
   movedClock,
@@ -508,6 +510,192 @@ describe("PATCH /auth/grants/{id}", () => {
         Date.parse(app.last_used_at ?? app.created_at) + 365 * 86_400_000,
       ).toISOString(),
     );
+  });
+});
+
+describe("the apps a person approved, read as items", () => {
+  /** What a credential is answered at one door, as text. */
+  type Door = (credential: string) => Promise<{ status: number; text: string }>;
+
+  let connectionId: string;
+  /** Reads every type and holds no permission. */
+  let reader: string;
+  /** Reads every type and holds `grants.manage`. */
+  let manager: string;
+
+  function local(method: string, path: string, body?: unknown) {
+    return controlRequest(server.controlSocket, path, { method, body });
+  }
+
+  async function readingKey(
+    label: string,
+    permissions: string[],
+  ): Promise<string> {
+    const minted = await local("POST", "/keys", {
+      label,
+      source: label,
+      permissions,
+      type_permissions: { "*": "read" },
+      edge_permissions: { "*": "read" },
+    });
+    expect(minted.status, JSON.stringify(minted.body)).toBe(201);
+    return minted.body.key as string;
+  }
+
+  async function answered(
+    credential: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; text: string }> {
+    const response = await fetch(`${server.apiUrl}${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: {
+        authorization: `Bearer ${credential}`,
+        ...(body === undefined ? {} : { "content-type": "application/json" }),
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    return { status: response.status, text: await response.text() };
+  }
+
+  /** Every door that answers items, each asked for everything it can show. */
+  function doors(): [string, Door][] {
+    const get =
+      (path: string): Door =>
+      (credential) =>
+        answered(credential, path);
+    const post =
+      (path: string, body: unknown): Door =>
+      (credential) =>
+        answered(credential, path, body);
+    return [
+      ["GET /items", get("/items?include=system&limit=200")],
+      ["GET /items/{id}", get(`/items/${connectionId}`)],
+      [
+        "POST /items/bulk-get",
+        post("/items/bulk-get", {
+          ids: [connectionId],
+          include: ["system"],
+        }),
+      ],
+      ["GET /items/stats", get("/items/stats?by=type&include=system")],
+      ["GET /export", get("/export")],
+      [
+        "GET /events, replayed",
+        async (credential) =>
+          withStream(
+            server.apiUrl,
+            credential,
+            { lastEventId: "0" },
+            async (stream) => {
+              const { raw } = await collectUntil(
+                stream,
+                (frames) => frames.some((f) => f.event === "stream_live"),
+                "the replay's live marker",
+                AbortSignal.timeout(15_000),
+              );
+              return { status: stream.response.status, text: raw };
+            },
+          ),
+      ],
+      [
+        "marfa_find",
+        async (credential) => {
+          const mcp = await connectMcp(server.apiUrl, credential);
+          try {
+            const found = await callTool(mcp, "marfa_find", {
+              type: "system.connection",
+            });
+            return { status: found.isError ? 403 : 200, text: found.text };
+          } finally {
+            await mcp.close();
+          }
+        },
+      ],
+    ];
+  }
+
+  beforeAll(async () => {
+    const app = await registerApp(server, SCOPE);
+    await connect(server, origin, cookie, app, SCOPE);
+    reader = await readingKey("connections-reader", []);
+    manager = await readingKey("connections-manager", ["grants.manage"]);
+    const listed = await answered(
+      manager,
+      "/items?type=system.connection&include=system&limit=100",
+    );
+    expect(listed.status, listed.text).toBe(200);
+    const row = (
+      JSON.parse(listed.text) as {
+        data: { id: string; properties: { client_id?: string } }[];
+      }
+    ).data.find((item) => item.properties.client_id === app.clientId);
+    expect(row, "the approval wrote no system.connection item").toBeDefined();
+    connectionId = row!.id;
+  });
+
+  it("shows a system.connection item at no door to a credential without grants.manage, though it reads every type", async () => {
+    for (const [name, door] of doors()) {
+      // The witness: the same door shows the item to a credential holding
+      // grants.manage beside the same type map.
+      const shown = await door(manager);
+      expect(shown.status, `${name}: ${shown.text}`).toBe(200);
+      const witness =
+        name === "GET /items/stats" ? "system.connection" : connectionId;
+      expect(shown.text, name).toContain(witness);
+
+      const hidden = await door(reader);
+      expect(hidden.text, name).not.toContain(connectionId);
+      expect(hidden.text, name).not.toContain("system.connection");
+    }
+    // An item with no history yet shows only by its status.
+    const versions = `/items/${connectionId}/versions`;
+    expect((await answered(manager, versions)).status).toBe(200);
+    expect((await answered(reader, versions)).status).toBe(404);
+  });
+
+  it("refuses a listing of system.connection to a credential without grants.manage, naming the permission", async () => {
+    const path = "/items?type=system.connection&include=system";
+    const shown = await answered(manager, path);
+    expect(shown.status, shown.text).toBe(200);
+    expect(shown.text).toContain(connectionId);
+
+    const refused = await answered(reader, path);
+    expect(refused.status, refused.text).toBe(403);
+    const error = (
+      JSON.parse(refused.text) as {
+        error: { code: string; details?: { required_scope?: string } };
+      }
+    ).error;
+    expect(error.code).toBe("forbidden");
+    expect(error.details?.required_scope).toBe("grants.manage");
+  });
+
+  it("shows an app's system.connection items only where it holds grants.manage, whatever data scope it holds", async () => {
+    const path = "/items?include=system&limit=200";
+    const holding = await registerApp(server, "*:read grants.manage");
+    const manages = await connect(
+      server,
+      origin,
+      cookie,
+      holding,
+      "*:read grants.manage",
+    );
+    const shown = await answered(manages.access_token!, path);
+    expect(shown.status, shown.text).toBe(200);
+    expect(shown.text).toContain(connectionId);
+
+    const plain = await registerApp(server, "*:read *:write");
+    const reads = await connect(
+      server,
+      origin,
+      cookie,
+      plain,
+      "*:read *:write",
+    );
+    const hidden = await answered(reads.access_token!, path);
+    expect(hidden.status, hidden.text).toBe(200);
+    expect(hidden.text).not.toContain("system.connection");
   });
 });
 

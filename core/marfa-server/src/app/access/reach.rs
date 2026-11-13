@@ -3,6 +3,7 @@
 use rusqlite::Transaction;
 use serde_json::{Value, json};
 
+use super::schema::SIGN_IN_TYPE;
 use super::{Axis, Caller};
 use crate::app::App;
 use crate::app::instance;
@@ -28,6 +29,7 @@ impl Caller {
             "edges": Axis::Edge.read_form(grants.map(Axis::Edge)),
             "metadata": Axis::Metadata.read_form(grants.map(Axis::Metadata)),
             "extensions": Axis::Extension.read_form(grants.map(Axis::Extension)),
+            "sign_ins": self.may_read_type(SIGN_IN_TYPE),
             "source_filter": self.levers()?.source_filter_form(),
         }))
     }

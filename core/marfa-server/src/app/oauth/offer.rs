@@ -1,5 +1,5 @@
 //! Approval-page offers and the meaning of a post. Every value a control posts is a literal the
-//! request named, except chosen types, which the all-data literal covers.
+//! request named, except chosen types, which a named all-data or content literal covers.
 
 use url::Url;
 
@@ -57,7 +57,8 @@ pub struct LevelRow {
     pub selected: String,
     /// It reaches what is registered later, which a page must say.
     pub open_ended: bool,
-    /// On the all-data row: types offered in its place by a choice whose value is [`CHOOSE_TYPES`].
+    /// On the all-data and content rows: types offered in its place by a choice whose value is
+    /// [`CHOOSE_TYPES`].
     pub types: Vec<LevelRow>,
     pub label: Option<String>,
     pub description: Option<String>,
@@ -202,8 +203,15 @@ fn row_for(ask: &Ask, held: &ScopeSet) -> Option<LevelRow> {
     })
 }
 
-fn is_all_data(literal: &str) -> bool {
-    Scope::parse(literal).is_some_and(|scope| scope.is_all_data())
+fn offers_types(literal: &str) -> bool {
+    Scope::parse(literal).is_some_and(|scope| scope.offers_types())
+}
+
+fn is_wide(ask: &Ask) -> bool {
+    [&ask.read, &ask.write]
+        .into_iter()
+        .flatten()
+        .any(|literal| offers_types(literal))
 }
 
 fn type_rows(ask: &Ask, request: &Request<'_>) -> Vec<LevelRow> {
@@ -223,13 +231,18 @@ fn type_rows(ask: &Ask, request: &Request<'_>) -> Vec<LevelRow> {
 }
 
 fn offered_types(request: &Request<'_>) -> Vec<String> {
-    asks(request.named)
-        .iter()
-        .filter(|ask| ask.reach == Reach::Type && ask.pattern == "*")
-        .filter(|ask| row_for(ask, request.held).is_some())
-        .flat_map(|ask| type_rows(ask, request))
-        .map(|row| row.pattern)
-        .collect()
+    let mut offered: Vec<String> = Vec::new();
+    for ask in asks(request.named).iter().filter(|ask| is_wide(ask)) {
+        if row_for(ask, request.held).is_none() {
+            continue;
+        }
+        for row in type_rows(ask, request) {
+            if !offered.contains(&row.pattern) {
+                offered.push(row.pattern);
+            }
+        }
+    }
+    offered
 }
 
 fn carried(literal: &str, held: &ScopeSet) -> bool {
@@ -372,7 +385,7 @@ pub fn build(client: &Client, request: &Request<'_>) -> Offer {
         let Some(mut row) = row_for(&ask, held) else {
             continue;
         };
-        if ask.reach == Reach::Type && ask.pattern == "*" {
+        if is_wide(&ask) {
             row.types = type_rows(&ask, request);
         }
         offers_edit |= matches!(ask.reach, Reach::Type | Reach::Content)
@@ -464,16 +477,16 @@ pub fn read_decision(request: &Request<'_>, post: &Post) -> Decision {
     } else {
         Vec::new()
     };
-    let all_data: ScopeSet = named
+    let wide: ScopeSet = named
         .literals()
         .iter()
         .map(String::as_str)
-        .filter(|literal| is_all_data(literal))
+        .filter(|literal| offers_types(literal))
         .collect();
     let offered = offered_types(request);
     let offered: Vec<&str> = offered.iter().map(String::as_str).collect();
     let type_set: ScopeSet = chosen_types.iter().copied().collect();
-    if choosing && (all_data.is_empty() || !chosen_within(named, &type_set, &offered)) {
+    if choosing && (wide.is_empty() || !chosen_within(named, &type_set, &offered)) {
         return Decision::Beyond;
     }
 
@@ -490,23 +503,23 @@ pub fn read_decision(request: &Request<'_>, post: &Post) -> Decision {
     for literal in &chosen_types {
         if let Some(pattern) = literal.strip_suffix(":write") {
             let read = format!("{pattern}:read");
-            if all_data.literals().iter().any(|wide| {
-                wide.ends_with(":read") && covers(&[wide.as_str()].into_iter().collect(), &read)
+            if wide.literals().iter().any(|one| {
+                one.ends_with(":read") && covers(&[one.as_str()].into_iter().collect(), &read)
             }) {
                 scopes.insert(&read);
             }
         }
     }
     for literal in held.literals() {
-        let under_all_data = matches!(
+        let under_wide = matches!(
             Scope::parse(literal),
             Some(Scope::Type { pattern, .. }) if request.choosable.contains(&pattern.as_str())
-        ) && covers(&all_data, literal);
+        ) && covers(&wide, literal);
         let reached = scopes
             .literals()
             .iter()
             .any(|other| covers(&[other.as_str()].into_iter().collect(), literal));
-        if under_all_data && !reached {
+        if under_wide && !reached {
             scopes.insert(literal);
         }
     }
@@ -684,6 +697,24 @@ mod tests {
         assert_eq!(row.types.len(), CHOOSABLE.len());
         assert_eq!(values(&row.types[0]), ["", "core.bookmark:read"]);
         assert!(!row.types[0].open_ended);
+    }
+
+    #[test]
+    fn content_offers_types_at_no_level_above_its_own() {
+        let offered = offer("content:read content:write edge.*:read", "");
+        let row = &offered.data[0];
+        assert_eq!(row.reach, Reach::Content);
+        assert_eq!(row.types.len(), CHOOSABLE.len());
+        assert_eq!(
+            values(&row.types[0]),
+            ["", "core.bookmark:read", "core.bookmark:write"]
+        );
+        assert!(offered.data[1].types.is_empty());
+        let read_only = offer("content:read", "");
+        assert_eq!(
+            values(&read_only.data[0].types[0]),
+            ["", "core.bookmark:read"]
+        );
     }
 
     #[test]
@@ -914,6 +945,40 @@ mod tests {
     }
 
     #[test]
+    fn choosing_types_in_place_of_content_grants_them_and_not_content() {
+        let named = "content:read content:write edge.*:read edge.*:write offline_access";
+        assert_eq!(
+            decide(
+                named,
+                "",
+                &with_types(
+                    &[CHOOSE_TYPES, "", "offline_access"],
+                    &["core.note:read", "user.recipe:read", ""]
+                )
+            ),
+            approved("offline_access core.note:read user.recipe:read")
+        );
+        assert_eq!(
+            decide(
+                named,
+                "",
+                &with_types(&[CHOOSE_TYPES], &["core.note:write"])
+            ),
+            approved("core.note:read core.note:write")
+        );
+    }
+
+    #[test]
+    fn a_type_beyond_the_content_level_or_the_page_grants_nothing() {
+        let choose =
+            |types: &[&str]| decide("content:read", "", &with_types(&[CHOOSE_TYPES], types));
+        assert_eq!(choose(&["core.note:read"]), approved("core.note:read"));
+        assert_eq!(choose(&["core.note:write"]), Decision::Beyond);
+        assert_eq!(choose(&["system.key:read"]), Decision::Beyond);
+        assert_eq!(choose(&["core.deleted:read"]), Decision::Beyond);
+    }
+
+    #[test]
     fn types_mean_nothing_while_all_data_is_kept() {
         assert_eq!(
             decide(
@@ -995,6 +1060,18 @@ mod tests {
         assert_eq!(
             decide("*:write", "core.note:read", &post(&["*:write"])),
             approved("*:write")
+        );
+    }
+
+    #[test]
+    fn what_is_held_under_content_stays_when_types_are_taken() {
+        assert_eq!(
+            decide(
+                "content:read",
+                "core.note:read",
+                &with_types(&[CHOOSE_TYPES], &["core.bookmark:read"])
+            ),
+            approved("core.note:read core.bookmark:read")
         );
     }
 
