@@ -14,7 +14,7 @@
  * to count a file that no report lists. Exits non-zero when a file listed in
  * `src/utils/rust-judged.ts` did not pass whole or no report names it, and
  * when there is no report at all.
- * `conformance/README.md` says how the score is counted.
+ * `conformance/TARGET-INTERFACE.md` says how the score is counted.
  */
 import { spawnSync } from "node:child_process";
 import { appendFileSync, readdirSync, readFileSync } from "node:fs";

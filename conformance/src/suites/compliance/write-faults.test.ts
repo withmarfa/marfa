@@ -20,7 +20,7 @@ import { startReceiver } from "../../utils/webhook-receiver.js";
  * fails: the write fails before it commits, its commit is refused or turned
  * away by the volume, or its commit lands and the database reports an error.
  * The fixtures set the failure through the target interface's `fail` faults
- * (`conformance/README.md`, "Faults"), on a server of their own that nothing
+ * (`conformance/TARGET-INTERFACE.md`, "Faults"), on a server of their own that nothing
  * else writes to, so the count a fault is aimed at is the fixture's own.
  *
  * **What a lost answer proves.** A commit the database refuses leaves the

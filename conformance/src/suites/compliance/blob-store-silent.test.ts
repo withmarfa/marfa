@@ -26,7 +26,7 @@ import { waitFor } from "../../utils/wait.js";
  * What `blob-integrity`, `blob-replicate`, a drop and a read of a blob's
  * bytes do when a store does not answer, on a server of the fixture's own
  * that keeps its bytes on a disk and in the run's object store. The `hold:blob-has`
- * and `hold:blob-read` faults (`conformance/README.md`, "Faults") make every
+ * and `hold:blob-read` faults (`conformance/TARGET-INTERFACE.md`, "Faults") make every
  * store hang before it answers whether it holds a blob or opens its bytes,
  * until the fault is cleared or the server gives the request up;
  * `hold:blob-write` and `hold:blob-delete` make a store's write or delete

@@ -188,7 +188,7 @@ function requestProblem(record: Record<string, unknown>): string | undefined {
 }
 
 /**
- * Reads a server log in the format `conformance/README.md` states: the
+ * Reads a server log in the format `conformance/TARGET-INTERFACE.md` states: the
  * server's stdout carries JSON objects, one per line, and nothing else.
  * A line with a string `level` and a string `message` is a log record and
  * is not a request. Any other object is a request record: `method`, `path`,

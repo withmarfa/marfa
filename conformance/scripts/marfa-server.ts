@@ -19,7 +19,7 @@ import { createServer } from "node:net";
  * at the address it reports as its own, where that is `localhost`, and at
  * `127.0.0.1` otherwise.
  * Readiness comes from this boot's log before any health request is sent. Each `--env K=V` is a setting for the boot
- * (`conformance/README.md` lists the ones a fixture may pass), and wins over
+ * (`conformance/TARGET-INTERFACE.md` lists the ones a fixture may pass), and wins over
  * the script's own defaults and the caller's environment.
  *   tsx scripts/marfa-server.ts down [--state <dir>]
  *   tsx scripts/marfa-server.ts status [--state <dir>]

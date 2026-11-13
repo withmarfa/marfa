@@ -18,7 +18,7 @@ import { waitFor } from "../../utils/wait.js";
  * and the disk store's, and an upload or a restore is held to the reserve of
  * free space the instance keeps. The fixtures give the server a volume with
  * the room they choose through the target interface's `free` fault
- * (`conformance/README.md`, "Faults"), and fill it as an upload streams by
+ * (`conformance/TARGET-INTERFACE.md`, "Faults"), and fill it as an upload streams by
  * setting the fault again while the body is on its way. A blob store that has
  * no room is made through `fail:blob-write`.
  *

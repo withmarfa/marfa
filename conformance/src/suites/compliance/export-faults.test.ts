@@ -21,7 +21,7 @@ import { waitFor } from "../../utils/wait.js";
  * of the fixture's own: a page of items it cannot read, which fails it before
  * it has sent a byte, and a blob it cannot read, which fails it with the body
  * under way. The reads are failed through the target interface's `fail`
- * faults (`conformance/README.md`, "Faults").
+ * faults (`conformance/TARGET-INTERFACE.md`, "Faults").
  *
  * The archive carries two blobs of bytes that cannot be compressed, so a
  * complete read is the witness that the archive is whole when nothing fails.

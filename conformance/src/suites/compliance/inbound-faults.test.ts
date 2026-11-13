@@ -22,7 +22,7 @@ import { DAY_MS, QUIET_SCHEDULE, quiet } from "../../utils/moved-clock.js";
  * What the server does when storing an inbound receipt, or removing what is
  * past its retention, fails in the database. The target fails the statement
  * through its `fail:inbound-receipt` and `fail:inbound-cleanup` faults
- * (`conformance/README.md`, "Faults"), so the failure is a statement's own,
+ * (`conformance/TARGET-INTERFACE.md`, "Faults"), so the failure is a statement's own,
  * with the receipt's content among the values it was bound to.
  */
 let server: FreshServer;

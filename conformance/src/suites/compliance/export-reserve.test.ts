@@ -19,7 +19,7 @@ import { waitFor } from "../../utils/wait.js";
  * a server of the fixture's own. The export writes what it has read into the
  * disk store's `tmp` folder before its first byte, so those files count
  * against the reserve. The fixture gives the disk store's volume the room it
- * chooses through the target interface's `free` fault (`conformance/README.md`,
+ * chooses through the target interface's `free` fault (`conformance/TARGET-INTERFACE.md`,
  * "Faults").
  */
 const MiB = 1024 * 1024;

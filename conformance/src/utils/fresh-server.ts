@@ -114,7 +114,7 @@ export interface FreshServer {
    * unanswered, `release:<point>` clears `hold:<point>` as the next
    * `GET /health` arrives, and `resolve:<hostname>=<answers>` scripts the name
    * lookups of webhooks and of files the MCP tools fetch. The points are
-   * stated in `conformance/README.md`, "Faults".
+   * stated in `conformance/TARGET-INTERFACE.md`, "Faults".
    * The fault is cleared by `clearFault`, by `restart`, and by `stop`, so
    * none outlives the fixture that set it.
    */

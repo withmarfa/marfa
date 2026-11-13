@@ -1073,7 +1073,7 @@ jobs:
         run: pnpm garage:down --state "$RUNNER_TEMP/garage"
 
   # The score of the Rust server against the contract: tests passing out of
-  # all, by file, in the job summary (`conformance/README.md` says how it is
+  # all, by file, in the job summary (`conformance/TARGET-INTERFACE.md` says how it is
   # counted). It fails when a file the Rust server judges did not pass whole,
   # when a shard wrote no report, and when the build or a shard failed. A
   # skipped job passes only when the classifier skipped it; this job runs
