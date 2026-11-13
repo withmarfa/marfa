@@ -1,5 +1,6 @@
 //! The only door to SQLite; nothing outside holds a `Connection`.
 
+mod hold;
 pub mod migrate;
 mod open;
 pub mod rank;
@@ -17,6 +18,7 @@ use std::time::Duration;
 use rusqlite::Transaction;
 use tokio::sync::watch;
 
+pub use hold::{Begin, Holding};
 pub use open::Options;
 pub use writer::{Pulse, Watcher};
 
@@ -83,6 +85,7 @@ pub struct Db {
     readers: reader::Pool,
     writer: writer::Writer,
     faults: Arc<Faults>,
+    held: Arc<hold::Hold>,
     budget: Duration,
     /// A statement has met pages SQLite cannot read; nothing clears it but a restart.
     damaged: AtomicBool,
@@ -98,9 +101,21 @@ impl Db {
             readers: reader::Pool::new(opened.readers),
             writer,
             faults,
+            held: Arc::default(),
             budget: options.write_wait,
             damaged: AtomicBool::new(false),
         })
+    }
+
+    /// Makes every write that arrives after `Begin::with` is called refused with that refusal,
+    /// until the returned guard is dropped.
+    pub fn hold_writes(&self) -> Holding {
+        Holding::new(self.held.clone())
+    }
+
+    /// The refusal a write meets now, if a job holds the writer and asked for writes to be refused.
+    pub fn writes_held(&self) -> Option<Refusal> {
+        self.held.refusal()
     }
 
     /// Whether the file has answered a statement with damage since the server started.
@@ -183,6 +198,9 @@ impl Db {
         T: Send + 'static,
         F: FnOnce(&Transaction<'_>) -> Result<T> + Send + 'static,
     {
+        if let Some(refusal) = self.held.refusal() {
+            return Err(refusal);
+        }
         if write.action.is_some() {
             self.faults.hold(HOLD_WRITE, write.action).await;
         }

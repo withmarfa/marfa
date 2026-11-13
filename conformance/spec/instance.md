@@ -1154,9 +1154,17 @@ If the disk store refuses to look for a blob, or its folder or its `.marfa-store
 
 If the write that the `database_write` probe makes is refused with `write_contention`, then the server MUST answer the `database_write` component as `degraded`, not `down`.
 
-**Reason:** a lock held past the write wait is a busy instance rather than a broken one. An archive restore holds it until it commits (`search-and-filters/restore-writers-wait`).
+**Reason:** a lock held past the write wait is a busy instance rather than a broken one. An archive restore holds it until it commits, and `instance/health-restore-running` says so.
 
 **Tests:** `compliance/health.test.ts › answers 200 and degraded while the write is refused, and ok once the lock is released`.
+
+### `instance/health-restore-running`
+
+While a restore holds the write lock, when a credential with `instance.read` sends `GET /health`, the server MUST answer the `database_write` component as `degraded` with an `error` that says a restore is running.
+
+**Reason:** a bare `degraded` leaves an owner and a monitor guessing at a fault that is the restore doing its work, and a probe that queued behind the restore would only report a refusal.
+
+**Tests:** `compliance/restore-faults.test.ts › refuses each kind of write at once, naming the restore, while reads and the restore itself go on`.
 
 ### `instance/health-timeout-degraded`
 
