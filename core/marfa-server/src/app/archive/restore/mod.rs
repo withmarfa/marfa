@@ -24,6 +24,7 @@ use crate::app::edges::write::Writing;
 use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM};
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
+use crate::app::restore_running;
 use crate::app::{connectors, edge_types, sources, stored, tables, types};
 use intake::{Intake, Received};
 
@@ -223,9 +224,12 @@ impl App {
             let faults = app.faults.clone();
             let settings = app.clone();
             let cap = app.bulk_cap();
+            let holding = app.db.hold_writes();
+            let begin = holding.begin();
             let written = app
                 .write(&caller, "restore_archive", move |unit| {
                     let began = std::time::Instant::now();
+                    begin.with(restore_running::refusal());
                     unit.caller.require_local()?;
                     unit.caller.require_recent(&started_at)?;
                     unit.fanning(false, |unit| {
@@ -394,6 +398,7 @@ impl App {
                 })
                 .await;
             drop(placed);
+            drop(holding);
             let (mut answer, staged) = written?;
             let emptying = app.clone();
             tokio::spawn(async move { emptying.db.empty_log().await });
