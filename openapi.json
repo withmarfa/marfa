@@ -47204,17 +47204,28 @@
           {
             "schema": {
               "type": "string",
-              "description": "`true` or `1` also revokes keys the app minted. Every other value, or omission, leaves those keys working."
+              "enum": [
+                "true",
+                "false"
+              ],
+              "description": "Also revoke every key the app minted, and every key those keys minted. Omitting it, or `false`, leaves them working."
             },
             "required": false,
-            "description": "`true` or `1` also revokes keys the app minted. Every other value, or omission, leaves those keys working.",
+            "description": "Also revoke every key the app minted, and every key those keys minted. Omitting it, or `false`, leaves them working.",
             "name": "revoke_keys",
             "in": "query"
           }
         ],
         "responses": {
-          "204": {
-            "description": "The app's grant is revoked.",
+          "200": {
+            "description": "Returns `ok: true`. The app's grant is revoked.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Ok"
+                }
+              }
+            },
             "headers": {
               "X-Marfa-Contract": {
                 "$ref": "#/components/headers/X-Marfa-Contract"
@@ -47225,7 +47236,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "description": "- `validation_error`: the query has a parameter this endpoint doesn't take, or `revoke_keys` is neither `true` nor `false`. Nothing is revoked.",
             "content": {
               "application/json": {
                 "schema": {
@@ -49941,7 +49952,7 @@
             }
           },
           "400": {
-            "description": "- `validation_error`: `revoke_keys` is `true` and the ID names a browser or a key.",
+            "description": "- `validation_error`: `revoke_keys` is neither `true` nor `false`, or it is `true` and the ID names a browser or a key. Nothing ends.",
             "content": {
               "application/json": {
                 "schema": {

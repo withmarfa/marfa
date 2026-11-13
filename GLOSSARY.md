@@ -89,6 +89,7 @@ Access is read the same way wherever a person sees it: on the pages where they a
 | `*`                   | All your data              |
 | `content`             | Your content               |
 | `user.*`              | Your custom types          |
+| `app.*`               | Every app's data           |
 | `edge.*`              | Links between items        |
 | `profile`             | Profile                    |
 | `profile.name`        | Name                       |

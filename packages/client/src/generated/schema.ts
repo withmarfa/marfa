@@ -26028,8 +26028,8 @@ export interface operations {
     revokeAppGrant: {
         parameters: {
             query?: {
-                /** @description `true` or `1` also revokes keys the app minted. Every other value, or omission, leaves those keys working. */
-                revoke_keys?: string;
+                /** @description Also revoke every key the app minted, and every key those keys minted. Omitting it, or `false`, leaves them working. */
+                revoke_keys?: "true" | "false";
             };
             header?: never;
             path: {
@@ -26040,16 +26040,18 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description The app's grant is revoked. */
-            204: {
+            /** @description Returns `ok: true`. The app's grant is revoked. */
+            200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["Ok"];
+                };
             };
-            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take. */
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take, or `revoke_keys` is neither `true` nor `false`. Nothing is revoked. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27570,7 +27572,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description - `validation_error`: `revoke_keys` is `true` and the ID names a browser or a key. */
+            /** @description - `validation_error`: `revoke_keys` is neither `true` nor `false`, or it is `true` and the ID names a browser or a key. Nothing ends. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];

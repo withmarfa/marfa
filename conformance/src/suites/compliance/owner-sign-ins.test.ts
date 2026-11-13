@@ -840,6 +840,26 @@ describe("the keys an app minted", () => {
     expect(listed).not.toContain(descendant.id);
   });
 
+  it("refuses a revoke_keys that is neither true nor false 400, and leaves the app and its keys working", async () => {
+    const browser = await signIn();
+    const signedIn = await approveApp(browser, "app asked with a bad flag");
+    const minted = await mintAsApp(signedIn, "key of the badly asked app", [
+      "keys.mint",
+    ]);
+    const id = await appId("app asked with a bad flag");
+    for (const value of ["1", "yes", "True", ""]) {
+      const refused = await end(id, `?revoke_keys=${value}`);
+      expect(refused.status, value).toBe(400);
+      expect(refused.headers.get("x-error-code")).toBe("validation_error");
+      expect(await itemsStatus(server, signedIn.accessToken)).toBe(200);
+      expect(await itemsStatus(server, minted.key)).toBe(200);
+    }
+    // The witness: false reads, and the app was there to end.
+    expect((await end(id, "?revoke_keys=false")).status).toBe(200);
+    expect(await itemsStatus(server, signedIn.accessToken)).toBe(401);
+    expect(await itemsStatus(server, minted.key)).toBe(200);
+  });
+
   it("refuses revoke_keys on a browser and a key 400, and ends neither", async () => {
     const other = await signIn();
     const minted = await mintKey("key asked to revoke keys");
