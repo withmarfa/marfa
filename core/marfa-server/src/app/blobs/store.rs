@@ -35,15 +35,6 @@ pub enum Store {
 }
 
 impl Store {
-    /// The store's own folder on a disk, and whether blob faults act on it.
-    pub fn on_disk(&self) -> Option<(&Arc<Disk>, bool)> {
-        match self {
-            Store::Disk(disk) => Some((disk, true)),
-            Store::Folder(disk) => Some((disk, false)),
-            Store::S3(_) => None,
-        }
-    }
-
     pub fn id(&self) -> &str {
         match self {
             Store::Disk(disk) | Store::Folder(disk) => disk.id(),
