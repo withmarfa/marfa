@@ -224,15 +224,15 @@ The server MUST NOT refuse a write for naming no `X-Marfa-Instance-Id`.
 
 If a write names an `X-Marfa-Instance-Id` that is empty, repeated, or not one lowercase UUIDv7, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/instance-header.test.ts › refuses an empty, repeated, uppercase or malformed instance id 400 validation_error`, `› answers 401, or 400 to a body nested too deep, before it judges the header, and judges it before the write's own refusals`.
+**Tests:** `compliance/instance-header.test.ts › refuses an empty, repeated, uppercase or malformed instance id 400 validation_error`, `› answers 401 before it judges the header, and judges it before the body's depth and text and the write's own refusals`.
 
 ### `instance/write-instance-order`
 
-When a write names `X-Marfa-Instance-Id` and meets more than one of the answers this section gives it, the server MUST give the first in this order: no valid credential on an operation that requires one, `401`, or `400` before it to a body nested more than 64 levels or holding a surrogate escape with no partner; a header that is not one lowercase UUIDv7, `400`; another instance's id, `409 instance_changed`; then the answers it gives the same write without the header, a body nested more than 64 levels, a body holding a surrogate escape with no partner and an answer recorded under its `Idempotency-Key` among them.
+When a write names `X-Marfa-Instance-Id` and meets more than one of the answers this section gives it, the server MUST give the first in this order: no valid credential on an operation that requires one, `401`; a header that is not one lowercase UUIDv7, `400`; another instance's id, `409 instance_changed`; then the answers it gives the same write without the header, a body nested more than 64 levels, a body holding a surrogate escape with no partner and an answer recorded under its `Idempotency-Key` among them.
 
 **Reason:** a write sent to another instance is refused for that alone, so the refusal says nothing about the body, the items it names or the credential's reach there.
 
-**Tests:** `compliance/instance-header.test.ts › answers 401, or 400 to a body nested too deep, before it judges the header, and judges it before the write's own refusals`, `› keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`, `› refuses another instance on a conditional read before it judges the read's reach`.
+**Tests:** `compliance/instance-header.test.ts › answers 401 before it judges the header, and judges it before the body's depth and text and the write's own refusals`, `› keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`, `› refuses another instance on a conditional read before it judges the read's reach`.
 
 ### `instance/write-instance-not-recorded`
 
@@ -1497,6 +1497,40 @@ Where the server believes the forwarded address of a peer, the server MUST count
 **Reason:** A proxy holds one connection for many callers, and the server cannot tell the callers apart before it reads a request, so a per-address cap would hold back every caller behind the proxy.
 
 **Tests:** `compliance/connection-caps.test.ts › counts a believed proxy's connections in the listener's cap alone`.
+
+## Bodies on the public listener
+
+The public listener reads most request bodies whole before it answers. `POST /blobs`, `POST /restore`, `PUT /owner/picture`, `PUT /profile/picture` and a delivery to an inbound endpoint stream their bodies instead, under the idle limits their own chapters give.
+
+### `instance/body-deadline`
+
+If the public listener reads a request body whole, other than one sent to `POST /blobs`, `POST /restore`, `PUT /owner/picture`, `PUT /profile/picture` or an inbound endpoint, and the body has not arrived whole 180 seconds after the request's head, then the server MUST answer `408 request_timeout`.
+
+**Reason:** a body at the 16 MiB default of `max_bulk_request_bytes` takes about 134 seconds over a 1 Mbit/s link, and 180 seconds allows for that while a client that stops sending cannot hold the memory its body takes.
+
+**Tests:** `compliance/public-body.test.ts › is answered 408 request_timeout with the connection closed when it has not arrived by the deadline, and is taken when it arrives in time`, `› answers 401 unauthorized to a declared body before any of it is sent, when no credential comes with it`.
+
+### `instance/body-deadline-closes`
+
+When the server answers `408 request_timeout` to a body that has not arrived by the deadline `instance/body-deadline` gives, the server MUST close the connection.
+
+**Reason:** the rest of the body may still be on its way, and a connection kept open would read it as the next request.
+
+**Tests:** `compliance/public-body.test.ts › is answered 408 request_timeout with the connection closed when it has not arrived by the deadline, and is taken when it arrives in time`.
+
+### `instance/body-deadline-streamed`
+
+While bytes of a `POST /blobs` body keep arriving within the upload's idle limit, the server MUST NOT answer `408 request_timeout`, however long the whole body takes.
+
+**Tests:** `compliance/public-body.test.ts › leaves a blob upload whose parts keep arriving to its own idle limit, past the deadline`.
+
+### `instance/credential-before-body`
+
+If a request with a body is sent to an operation that requires a credential and carries no credential, or one that is malformed, unknown, expired or revoked, then the server MUST answer `401 unauthorized` before it reads the body.
+
+**Reason:** a caller with no credential cannot make the server hold a body the operation would refuse once it has arrived.
+
+**Tests:** `compliance/public-body.test.ts › answers 401 unauthorized to a declared body before any of it is sent, when no credential comes with it`, `› answers 401 naming the expiry to a key past its expires_at before any of the body is sent`, `compliance/well-formed-text.test.ts › answers a missing credential 401 before it reads a body holding a surrogate escape with no partner`, `compliance/connector-check-order.test.ts › answers a declared body over the cap 413 before a missing credential's 401, and a missing credential 401 before a body nested too deep`.
 
 ## The root in a browser
 

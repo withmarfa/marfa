@@ -2572,7 +2572,7 @@ If a request body, other than one sent to `POST /blobs`, `POST /restore` or an i
 
 **Reason:** RFC 8259 section 8.2 lets a JSON string carry a surrogate code unit with no partner, which no UTF-8 text can carry. The server holds only text that UTF-8 can represent, so every client can decode what it holds.
 
-**Tests:** `compliance/well-formed-text.test.ts › refuses $name, naming where, and takes a surrogate pair there`, `› writes nothing when it refuses a create`, `› refuses a lone low surrogate and a reversed pair, in either letter case of the escape`, `› refuses it on every published operation that takes a JSON body, before any credential`, `› is refused for a surrogate escape with no partner, before any credential`, `device/well-formed-text-live.test.ts › refuses a surrogate escape with no partner and leaves a device able to hydrate and catch up over the item that is`.
+**Tests:** `compliance/well-formed-text.test.ts › refuses $name, naming where, and takes a surrogate pair there`, `› writes nothing when it refuses a create`, `› refuses a lone low surrogate and a reversed pair, in either letter case of the escape`, `› refuses it on every published operation that takes a JSON body, from a key the instance holds`, `› is refused for a surrogate escape with no partner, before any credential`, `device/well-formed-text-live.test.ts › refuses a surrogate escape with no partner and leaves a device able to hydrate and catch up over the item that is`.
 
 ### `items/json-text-pointer`
 
@@ -2587,12 +2587,6 @@ When the server names a surrogate escape with no partner in a refusal and the po
 **Reason:** the pointer is itself text in the answer, so it follows the same rule.
 
 **Tests:** `compliance/well-formed-text.test.ts › writes U+FFFD in the pointer for each lone surrogate in a key`, `› refuses $name, naming where, and takes a surrogate pair there`.
-
-### `items/json-text-before-credential`
-
-If a request to an operation that requires a credential carries no credential and a body that is JSON holding a surrogate escape with no partner, then the server MUST answer `400 validation_error`, as `items/json-text-well-formed` says.
-
-**Tests:** `compliance/well-formed-text.test.ts › answers it before a missing credential, as it answers a body nested too deep`, `› refuses it on every published operation that takes a JSON body, before any credential`.
 
 ### `items/json-text-after-depth`
 

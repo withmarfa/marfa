@@ -1,4 +1,4 @@
-import { request } from "node:http";
+import { type IncomingHttpHeaders, request } from "node:http";
 
 /** Where a request goes: the public listener, or the private control socket. */
 export type Door = { apiUrl: string } | { socketPath: string };
@@ -9,7 +9,11 @@ export interface SlowUpload {
   /** Ends the body. */
   end(): void;
   /** The answer, which can arrive before the body is whole. */
-  answered: Promise<{ status: number; body: string }>;
+  answered: Promise<{
+    status: number;
+    headers: IncomingHttpHeaders;
+    body: string;
+  }>;
 }
 
 /**
@@ -33,21 +37,27 @@ export function slowPost(
     agent: false,
     headers: { ...headers, "transfer-encoding": "chunked" },
   });
-  const answered = new Promise<{ status: number; body: string }>(
-    (resolve, reject) => {
-      req.on("response", (response) => {
-        let body = "";
-        response.setEncoding("utf8");
-        response.on("data", (text: string) => (body += text));
-        response.once("error", reject);
-        response.once("end", () => {
-          resolve({ status: response.statusCode ?? 0, body });
-          req.destroy();
+  const answered = new Promise<{
+    status: number;
+    headers: IncomingHttpHeaders;
+    body: string;
+  }>((resolve, reject) => {
+    req.on("response", (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (text: string) => (body += text));
+      response.once("error", reject);
+      response.once("end", () => {
+        resolve({
+          status: response.statusCode ?? 0,
+          headers: response.headers,
+          body,
         });
+        req.destroy();
       });
-      req.on("error", reject);
-    },
-  );
+    });
+    req.on("error", reject);
+  });
   // A fixture that stops waiting for the answer must not leave it unhandled.
   answered.catch(() => undefined);
   return {
