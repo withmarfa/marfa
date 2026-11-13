@@ -45,7 +45,7 @@ pub(crate) fn list_with(
         clauses.push("source = ?".into());
         values.push(Value::String(source.clone()));
     }
-    narrow_by_tags(&filters.tags, &mut clauses, &mut values);
+    narrow_by_tags(&filters.tags, &mut clauses, &mut values)?;
     narrow_by_own_time(
         filters.occurred_after.as_deref(),
         filters.occurred_before.as_deref(),
@@ -299,13 +299,20 @@ pub(crate) fn narrow_by_type(
     Ok(())
 }
 
-pub(crate) fn narrow_by_tags(tags: &[String], clauses: &mut Vec<String>, values: &mut Vec<Value>) {
-    for tag in tags {
+pub(crate) fn narrow_by_tags(
+    tags: &[String],
+    clauses: &mut Vec<String>,
+    values: &mut Vec<Value>,
+) -> Result<()> {
+    for tag in marfa_rules::search::filter_tags(tags.iter().map(String::as_str))
+        .map_err(marfa_rules::RuleError::from)?
+    {
         clauses.push(
             "EXISTS (SELECT 1 FROM tags WHERE tags.item_id = items.id AND tags.tag = ?)".into(),
         );
-        values.push(Value::String(tag.clone()));
+        values.push(Value::String(tag));
     }
+    Ok(())
 }
 
 #[cfg(test)]

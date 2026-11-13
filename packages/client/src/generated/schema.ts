@@ -7338,7 +7338,7 @@ export interface operations {
                 source?: string;
                 /** @description Only return items in this tier. Omit it or send `all` for both tiers. */
                 tier?: "library" | "feed" | "all";
-                /** @description Comma-separated tags. Only return items that carry all of them. */
+                /** @description Comma-separated tags. Only return items that carry all of them. At most 100 distinct tags, each at most 128 characters. */
                 tags?: string;
                 /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on it; `edge[<type>]=<id>` also works as a query parameter. `status_group` matches by status group; `properties.<field>.<member>`, by a list entry. */
                 filter?: string;
@@ -10068,7 +10068,7 @@ export interface operations {
                 source?: string;
                 /** @description Only return items in this tier. Omit it or send `all` for both tiers. */
                 tier?: "library" | "feed" | "all";
-                /** @description Comma-separated tags. Only return items that carry all of them. */
+                /** @description Comma-separated tags. Only return items that carry all of them. At most 100 distinct tags, each at most 128 characters. */
                 tags?: string;
                 /** @description A filter expression. A term naming an edge type, `edge[<type>]` or `backref[<type>]`, needs read on it; `edge[<type>]=<id>` also works as a query parameter. `status_group` matches by status group; `properties.<field>.<member>`, by a list entry. */
                 filter?: string;
@@ -15861,7 +15861,7 @@ export interface operations {
     searchItems: {
         parameters: {
             query: {
-                /** @description The text to search for. Marfa matches every word by its stem, in any order, and the last word as the start of a word. Wrap the query in double quotes to match a phrase. */
+                /** @description The text to search for. Marfa matches every word by its stem, in any order, and the last word as the start of a word. Wrap the query in double quotes to match a phrase. At most 500 characters, and 16 distinct words outside quotes. */
                 q: string;
                 /** @description Only return items of these types and their subtypes: a comma-separated list of up to 10, such as `core.note,app.*`. A wildcard such as `core.*` matches every type under that prefix. */
                 type?: string;
@@ -15873,7 +15873,7 @@ export interface operations {
                 tier?: "library" | "feed" | "all";
                 /** @description Comma-separated extras. `system` also returns `system.*` items, which are left out by default. A `system.` type filter does the same. */
                 include?: string;
-                /** @description Comma-separated tags. Only return items that carry all of them. */
+                /** @description Comma-separated tags. Only return items that carry all of them. At most 100 distinct tags, each at most 128 characters. */
                 tags?: string;
                 /** @description The maximum number of results to return. */
                 limit?: number;

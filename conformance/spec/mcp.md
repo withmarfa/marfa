@@ -112,6 +112,24 @@ When a tool call writes, the server MUST record on the write's audit entry the c
 
 **Tests:** `compliance/mcp-scripted.test.ts › records a tool call's write with the caller's address and marks it as made through MCP`, `compliance/table-rows-mcp.test.ts › records a rows write made through MCP with the caller's key and address and via mcp`.
 
+### `mcp/find-query-bound`
+
+If a `marfa_find` call names a `query` that `GET /search` refuses for its length or its number of distinct words (`search-and-filters/search-q-length`, `search-and-filters/search-q-words`), then the server MUST answer the call with a tool error carrying `validation_error`.
+
+**Tests:** `compliance/search-bounds.test.ts › refuses a marfa_find query past the bound, and takes one at it`.
+
+### `mcp/find-tags-bound`
+
+If a `marfa_find` call names `tags` that `GET /items` refuses for their number or a tag's length (`search-and-filters/tags-count`, `search-and-filters/tags-length`), then the server MUST answer the call with a tool error carrying `validation_error`.
+
+**Tests:** `compliance/search-bounds.test.ts › refuses marfa_find tags past the bound, and takes them at it`.
+
+### `mcp/find-schema-bounds`
+
+The server MUST state in the input schema of `marfa_find` a `maxLength` of 500 for `query`, a `maxItems` of 100 for `tags` and a `maxLength` of 128 for each tag.
+
+**Tests:** `compliance/search-bounds.test.ts › states the bounds in the marfa_find input schema`.
+
 ## Reading items
 
 `marfa_get` keeps its answer short enough for a client to hand to the model whole, and says where to read what it left out.

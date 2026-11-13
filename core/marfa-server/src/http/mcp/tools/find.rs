@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use marfa_rules::search;
+use marfa_rules::validation::MAX_TAG_LENGTH;
 use serde_json::{Map, Value, json};
 
 use super::{Definition, parsed, text, texts};
@@ -25,11 +27,12 @@ pub fn definition() -> Definition {
         input: json!({
             "type": "object",
             "properties": {
-                "query": { "type": "string", "minLength": 1,
-                    "description": "Words to search for. Leave out to list items in order instead." },
+                "query": { "type": "string", "minLength": 1, "maxLength": search::MAX_QUERY_CHARS,
+                    "description": format!("Words to search for, at most {} characters and {} distinct words. Leave out to list items in order instead.", search::MAX_QUERY_CHARS, search::MAX_QUERY_TERMS) },
                 "type": { "type": "string", "minLength": 1,
                     "description": "Only items of this type or its subtypes, such as `core.note`; `core.*` matches every type under `core`." },
-                "tags": { "type": "array", "items": { "type": "string", "minLength": 1 },
+                "tags": { "type": "array", "maxItems": search::MAX_FILTER_TAGS,
+                    "items": { "type": "string", "minLength": 1, "maxLength": MAX_TAG_LENGTH },
                     "description": "Only items that carry all of these tags." },
                 "source": { "type": "string", "minLength": 1,
                     "description": "Only items saved by this source." },

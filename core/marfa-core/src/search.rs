@@ -30,7 +30,7 @@ pub(crate) fn search(
         clauses.push("items.tier = ?".into());
         values.push(Value::String(tier.as_str().into()));
     }
-    query::narrow_by_tags(&filters.tags, &mut clauses, &mut values);
+    query::narrow_by_tags(&filters.tags, &mut clauses, &mut values)?;
     query::narrow_by_own_time(
         filters.occurred_after.as_deref(),
         filters.occurred_before.as_deref(),
@@ -59,6 +59,7 @@ pub(crate) fn search_where(
     limit: usize,
     unreadable: &mut Unreadable,
 ) -> Result<Vec<SearchHit>> {
+    marfa_rules::search::check_query(query).map_err(marfa_rules::RuleError::from)?;
     let Some(expression) = fts_expression(query) else {
         return Ok(Vec::new());
     };

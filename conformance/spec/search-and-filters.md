@@ -320,6 +320,22 @@ When `GET /items`, `GET /items/stats` or `GET /search` names a `tags` list that 
 
 **Tests:** `correctness/tags.test.ts › ignores a blank entry of a tags list on the listing, the stats and the search`.
 
+### `search-and-filters/tags-count`
+
+If `GET /items`, `GET /items/stats`, `GET /search` or the `filter` of `POST /items/bulk-actions` names more than 100 distinct tags, then the server MUST answer `400 validation_error` naming the field that holds them.
+
+**Reason:** an item holds at most 100 tags (`items/tags-count`), so a longer list is not a real request. Blank entries and repeats do not count.
+
+**Tests:** `compliance/search-bounds.test.ts › takes 100 distinct tags and refuses 101, at each door that takes tags`, `› does not count blank entries or repeated tags`.
+
+### `search-and-filters/tags-length`
+
+If `GET /items`, `GET /items/stats`, `GET /search` or the `filter` of `POST /items/bulk-actions` names a tag longer than 128 characters, then the server MUST answer `400 validation_error` naming the field that holds it.
+
+**Reason:** a tag longer than that cannot be stored (`items/tag-text`).
+
+**Tests:** `compliance/search-bounds.test.ts › takes a tag of 128 characters and refuses one of 129, at each door that takes tags`.
+
 ### `search-and-filters/tier-narrows`
 
 When `GET /items`, `GET /items/stats` or `GET /search` names `tier=library` or `tier=feed`, the server MUST select only the items in that tier.
@@ -1157,6 +1173,28 @@ If `GET /search` carries a `q` that is empty, then the server MUST answer `400 v
 The server MUST take a `q` that holds quotes, ampersands and parentheses.
 
 **Tests:** `compliance/validation.test.ts › accepts quotes, ampersands and parentheses in a search query`.
+
+### `search-and-filters/search-q-length`
+
+If `GET /search` carries a `q` longer than 500 characters once its surrounding whitespace is trimmed, then the server MUST answer `400 validation_error` naming `q`.
+
+**Reason:** a character outside the Basic Multilingual Plane counts once, and a query that is cut short would answer as though the person had typed less.
+
+**Tests:** `compliance/search-bounds.test.ts › takes a q of 500 characters and refuses one of 501, counting characters and not bytes`.
+
+### `search-and-filters/search-q-words`
+
+If `GET /search` carries a `q` that is not wholly inside double quotes and holds more than 16 distinct whitespace-separated words, then the server MUST answer `400 validation_error` naming `q`.
+
+**Tests:** `compliance/search-bounds.test.ts › takes 16 distinct words and refuses 17`.
+
+### `search-and-filters/search-repeated-word`
+
+When a query is not wholly inside double quotes and repeats a word, the server MUST match it as it matches the query with each repeated word typed once.
+
+**Reason:** a repeat adds no condition, so it does not count toward `search-and-filters/search-q-words`.
+
+**Tests:** `compliance/search-bounds.test.ts › searches a repeated word once and does not count it again`.
 
 ### `search-and-filters/search-matches`
 

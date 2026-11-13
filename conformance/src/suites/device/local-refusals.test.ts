@@ -224,6 +224,69 @@ describe("a device refuses a filter outside the listing grammar", () => {
   });
 });
 
+describe("a device refuses a search or a tag list past the server's bound", () => {
+  const distinct = (count: number): string =>
+    Array.from({ length: count }, (_, n) => `w${String(n)}`).join(" ");
+  const tags = (count: number): string[] =>
+    Array.from({ length: count }, (_, n) => `bound-tag-${String(n)}`);
+
+  it("refuses a search query past the server's bound, and takes one at it", async () => {
+    harness = await hydrated("search-bound");
+    const { device } = harness;
+    const found = await device.search("n1");
+    expect(found.ok, JSON.stringify(found)).toBe(true);
+    for (const query of [
+      "x".repeat(500),
+      "\u{1F600}".repeat(500),
+      ` ${"x".repeat(500)} `,
+      distinct(16),
+      `"${distinct(40)}"`,
+      `"open ${distinct(3)}`,
+      `${distinct(16)}${" ".repeat(80)}${distinct(16)}`,
+      Array(160).fill("n1").join(" "),
+    ]) {
+      const taken = await device.search(query);
+      expect(taken.ok, `refused: ${query.slice(0, 40)}`).toBe(true);
+    }
+    for (const [query, why] of [
+      ["x".repeat(501), "501 characters"],
+      ["\u{1F600}".repeat(501), "501 characters outside the basic plane"],
+      [distinct(17), "17 distinct words"],
+    ] as const) {
+      expectRefusedAsTheServerDoes(await device.search(query), why);
+    }
+  });
+
+  it("refuses tags past the server's bound on a list and a search, and takes them at it", async () => {
+    harness = await hydrated("tags-bound");
+    const { device } = harness;
+    const padded = [...tags(100), "", "  ", "bound-tag-0"];
+    for (const [list, why] of [
+      [tags(100), "100 tags"],
+      [padded, "100 tags beside blank entries and a repeat"],
+      [["x".repeat(128)], "a tag of 128 characters"],
+    ] as const) {
+      const listed = await device.list({ tags: [...list] });
+      expect(listed.ok, `a list of ${why} was refused`).toBe(true);
+      const searched = await device.search("n1", { tags: [...list] });
+      expect(searched.ok, `a search of ${why} was refused`).toBe(true);
+    }
+    for (const [list, why] of [
+      [tags(101), "101 tags"],
+      [["x".repeat(129)], "a tag of 129 characters"],
+    ] as const) {
+      expectRefusedAsTheServerDoes(
+        await device.list({ tags: [...list] }),
+        `a list of ${why}`,
+      );
+      expectRefusedAsTheServerDoes(
+        await device.search("n1", { tags: [...list] }),
+        `a search of ${why}`,
+      );
+    }
+  });
+});
+
 describe("a device refuses a condition its copy cannot answer as the server does", () => {
   it("refuses a backref condition on a list and a search where the copy does not hold the edge type whole", async () => {
     harness = await hydrated("backref-filter");
