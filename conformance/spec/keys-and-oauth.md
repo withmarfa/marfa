@@ -1125,7 +1125,7 @@ If a signed-in app mints a key naming any extension namespace, then the server M
 
 ## The rate limiter
 
-One limiter, held in the server's memory, counts every limit in this chapter. Every count starts afresh when the server starts. The limiter holds a bounded number of windows for each kind of limit. When one kind is full, it drops that kind's window that ends soonest, and the key that window counted starts afresh. It never drops the windows that count password sign-in attempts at an account from every address once the instance has an owner, with a known device cookie or without one, the owner's device code lookup window or the instance-wide windows. The limits on a credential's requests are off for a run, so their rules are asserted against a server booted with the limiter on.
+One limiter, held in the server's memory, counts every limit in this chapter. Every count starts afresh when the server starts. The limiter holds a bounded number of windows for each kind of limit. When one kind is full, it drops that kind's window that ends soonest, and the key that window counted starts afresh. It never drops the windows that count password sign-in attempts from every address, with a known device cookie or without one, the owner's device code lookup window or the instance-wide windows. The limits on a credential's requests are off for a run, so their rules are asserted against a server booted with the limiter on.
 
 ### `keys-and-oauth/keys-rate-cap`
 
@@ -1601,7 +1601,7 @@ When a browser session that signed in more than five minutes ago accepts on the 
 
 ### `keys-and-oauth/consent-recent-needed`
 
-If a browser session that signed in more than five minutes ago accepts on the consent screen with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST answer `403 forbidden` with the message `Sign in again to perform this operation`, whatever the request's `Accept`, and issue no code.
+If a browser session that signed in more than five minutes ago accepts on the consent screen with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST answer the refusal `authentication/recent-refusal` states, whatever the request's `Accept`, and issue no code.
 
 **Reason:** A browser left signed in, or a copied cookie, cannot hand an app a write or a power over the instance without the password. The page recognises the refusal and asks the person to confirm it's them (`authentication/confirm-replaces`), then sends the approval once more.
 
@@ -2467,7 +2467,7 @@ When a browser session that signed in more than five minutes ago approves a devi
 
 ### `keys-and-oauth/device-recent-needed`
 
-If a browser session that signed in more than five minutes ago approves a device code with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST answer `403 forbidden` with the message `Sign in again to perform this operation`, whatever the request's `Accept`, and leave the code pending.
+If a browser session that signed in more than five minutes ago approves a device code with a scope that `keys-and-oauth/consent-older-reads` does not list and the app's standing consent does not cover, then the server MUST answer the refusal `authentication/recent-refusal` states, whatever the request's `Accept`, and leave the code pending.
 
 **Reason:** As on the authorization screen, a browser left signed in cannot hand a device a write or a power over the instance.
 
@@ -2527,31 +2527,39 @@ When the sign-in form receives a `return_to` that resolves to a path on the inst
 
 ### `keys-and-oauth/sign-in-address-limit`
 
-If one address has made ten counted password sign-in attempts at an account in fifteen minutes, then the server MUST answer its next attempt `429` with `Retry-After`, before it judges the password.
+If one address has made ten counted password sign-in attempts at one email in fifteen minutes, then the server MUST answer its next attempt at that email `429` with `Retry-After`, before it judges the password.
 
 **Reason:** The refusal comes before the password is judged, so it cannot tell anyone whether the password was right.
 
-**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at an account, and leaves the owner signing in from another`.
+**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one email, and leaves the owner signing in from another`.
+
+### `keys-and-oauth/sign-in-address-emails-limit`
+
+If one address has made thirty counted password sign-in attempts in fifteen minutes, at any emails, then the server MUST answer its next attempt at any email `429` with `Retry-After`, before it judges the password.
+
+**Reason:** An address cannot spread its attempts over many emails, and the count is the same whether or not an email is the owner's (`keys-and-oauth/sign-in-limits-alike`).
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › answers password sign-ins at any email alike, the owner's among them, until the address's limit refuses them all`.
 
 ### `keys-and-oauth/sign-in-form-limit`
 
 If the sign-in form's attempt is refused by a sign-in limit, then the server MUST redirect with `error=too_many_attempts`.
 
-**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at an account, and leaves the owner signing in from another`.
+**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one email, and leaves the owner signing in from another`.
 
 ### `keys-and-oauth/sign-in-form-limit-cookie`
 
 If the sign-in form's attempt is refused by a sign-in limit, then the server MUST set no session cookie.
 
-**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at an account, and leaves the owner signing in from another`.
+**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one email, and leaves the owner signing in from another`.
 
 ### `keys-and-oauth/sign-in-form-limit-wait`
 
 If the sign-in form's attempt is refused by a sign-in limit, then the server MUST redirect with `retry_after` holding the whole seconds, from 1 to 86400, until another attempt will be allowed, which is the latest end among the sign-in limits that are spent, the value `Retry-After` carries on the same refusal.
 
-**Reason:** The sign-in page tells the owner how long to wait. The address limit and the account limit end at different times, and an address that has spent both is refused again at the end of the shorter wait.
+**Reason:** The sign-in page tells the owner how long to wait. The address limit and the limit every address shares end at different times, and an address that has spent both is refused again at the end of the shorter wait.
 
-**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at an account, and leaves the owner signing in from another`, `compliance/sign-in-limits.test.ts › holds every address together to a hundred attempts at an account in an hour, counting none an address made past its own limit`.
+**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one email, and leaves the owner signing in from another`, `compliance/sign-in-limits.test.ts › holds every address together to a hundred attempts in an hour, counting none an address made past its own limit`.
 
 ### `keys-and-oauth/sign-in-lockout-page`
 
@@ -2571,49 +2579,49 @@ When a password sign-in attempt, or a password sent to `POST /auth/confirm`, pro
 
 ### `keys-and-oauth/sign-in-account-limit`
 
-If every address together has made a hundred counted password sign-in attempts at an account in an hour without a known device cookie, then the server MUST answer the next such attempt from any address `429` with `Retry-After`.
+If every address together has made a hundred counted password sign-in attempts in an hour without a known device cookie, at any emails, then the server MUST answer the next such attempt from any address `429` with `Retry-After`.
 
-**Reason:** An attempt one address makes past its own limit is not counted here, so one guessing address cannot hold the owner out.
+**Reason:** An attempt one address makes past its own limit is not counted here, so one guessing address cannot fill it. The count is the same whatever email an attempt names (`keys-and-oauth/sign-in-limits-alike`), and a known device (`keys-and-oauth/sign-in-known-device`) and a passkey still sign the owner in while it is spent.
 
-**Tests:** `compliance/sign-in-limits.test.ts › holds every address together to a hundred attempts at an account in an hour, counting none an address made past its own limit`.
+**Tests:** `compliance/sign-in-limits.test.ts › holds every address together to a hundred attempts in an hour, counting none an address made past its own limit`, `› holds attempts at every email together to the same hundred, and a known device still signs in`.
 
 ### `keys-and-oauth/sign-in-device-cookie`
 
-When a password sign-in or a password sent to `POST /auth/confirm` signs the owner in, the server MUST set a device cookie, named `__Host-marfa_device` over HTTPS and `marfa_device` on this machine, with `HttpOnly`, `SameSite=Lax` and a `Max-Age` of 400 days, that holds only a random id, the time it was set and a signature from the instance's secret.
+When a password sign-in, a password sent to `POST /auth/confirm` or a password change at `POST /auth/owner/password` succeeds, the server MUST set a device cookie, named `__Host-marfa_device` over HTTPS and `marfa_device` on this machine, with `HttpOnly`, `SameSite=Lax` and a `Max-Age` of 400 days, that holds only a random id, the time it was set and a signature from the instance's secret.
 
 **Reason:** The cookie marks a browser the right password has signed in from, and names no person.
 
-**Tests:** `compliance/sign-in-limits.test.ts › keeps a known device signing in while strangers are limited`.
+**Tests:** `compliance/sign-in-limits.test.ts › keeps a known device signing in while strangers are limited`, `› forgets every other known device when the password is changed`.
 
 ### `keys-and-oauth/sign-in-known-device`
 
-While the account limit (`keys-and-oauth/sign-in-account-limit`) is spent, when a password sign-in carries a device cookie the server set for the current credentials within the last 400 days, the server MUST NOT refuse the attempt for the account limit.
+While the limit on attempts without a known device cookie (`keys-and-oauth/sign-in-account-limit`) is spent, when a password sign-in carries a device cookie the server set for the current credentials within the last 400 days, the server MUST NOT refuse the attempt for that limit.
 
-**Reason:** A known device keeps signing in while strangers are limited, so the account limit cannot hold the owner out.
+**Reason:** A known device keeps signing in while strangers are limited, so that limit cannot hold the owner out.
 
 **Tests:** `compliance/sign-in-limits.test.ts › keeps a known device signing in while strangers are limited`.
 
 ### `keys-and-oauth/sign-in-known-device-limit`
 
-If one device cookie has made ten counted password sign-in attempts at an account in fifteen minutes, then the server MUST answer its next attempt `429` with `Retry-After`, before it judges the password.
+If one device cookie has made ten counted password sign-in attempts in fifteen minutes, then the server MUST answer its next attempt `429` with `Retry-After`, before it judges the password.
 
 **Tests:** `compliance/sign-in-limits.test.ts › holds a known device to ten wrong passwords across addresses`.
 
 ### `keys-and-oauth/sign-in-known-devices-limit`
 
-If every device cookie together has made a hundred counted password sign-in attempts at an account in an hour, then the server MUST answer the next attempt that carries a device cookie `429` with `Retry-After`, before it judges the password.
+If every device cookie together has made a hundred counted password sign-in attempts in an hour, then the server MUST answer the next attempt that carries a device cookie `429` with `Retry-After`, before it judges the password.
 
-**Reason:** A device cookie only lifts the account limit for a browser the password signed in from, so many cookies together are held to the same hundred as every address without one.
+**Reason:** A device cookie only lifts the limit without a known device cookie for a browser the password signed in from, so many cookies together are held to the same hundred as every address without one.
 
 **Tests:** `compliance/sign-in-limits.test.ts › holds every known device together to a hundred wrong passwords an hour`.
 
 ### `keys-and-oauth/sign-in-device-reset`
 
-When the owner's password is recovered, the server MUST count each later password sign-in that carries a device cookie set before the recovery as one with no device cookie.
+When the owner's password is recovered or changed, the server MUST count each later password sign-in that carries a device cookie set before the recovery or the change as one with no device cookie.
 
-**Reason:** A device cookie is signed for the owner's credentials as they stand, and a recovery renews them, so a recovery leaves no browser known.
+**Reason:** A device cookie is signed for the owner's credentials as they stand, and a recovery or a change renews them, so a recovery leaves no browser known and a change leaves known only the browser that made it (`keys-and-oauth/sign-in-device-cookie`).
 
-**Tests:** `compliance/sign-in-limits.test.ts › forgets every known device when the password is recovered`.
+**Tests:** `compliance/sign-in-limits.test.ts › forgets every known device when the password is recovered`, `› forgets every other known device when the password is changed`.
 
 ### `keys-and-oauth/sign-in-unknown-device`
 
@@ -2633,7 +2641,7 @@ If a request carries a device cookie and no session, then the server MUST answer
 
 When one address is held to its sign-in limit, the server MUST still answer a sign-in from another address on the password.
 
-**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at an account, and leaves the owner signing in from another`.
+**Tests:** `compliance/sign-in-surface.test.ts › holds one address to ten attempts at one email, and leaves the owner signing in from another`.
 
 ### `keys-and-oauth/address-ipv6`
 
@@ -2641,19 +2649,19 @@ The server MUST count an IPv6 address by its /64 for the password sign-in limits
 
 **Tests:** `compliance/sign-in-limits.test.ts › counts an IPv6 address as its /64`.
 
-### `keys-and-oauth/sign-in-other-emails-limit`
+### `keys-and-oauth/sign-in-limits-alike`
 
-If one address has made ten password sign-in attempts in fifteen minutes at emails that are not the owner's, then the server MUST answer its next attempt at an email that is not the owner's `429` with `Retry-After`, before it judges the password.
+When a password sign-in that carries no known device cookie names an email that is not the owner's, the server MUST answer it with the status and `Retry-After` it would answer the same attempt at the owner's email with a wrong password.
 
-**Reason:** Every email but the owner's has no account to guess, so all of them share one count, and an address cannot spread its attempts over made-up emails.
+**Reason:** A wrong email and a wrong password are both answered `401`, so no limit may tell them apart and say which email holds the account.
 
-**Tests:** `compliance/sign-in-door-limits.test.ts › counts password sign-ins at every email but the owner's together, and still judges the owner's password`.
+**Tests:** `compliance/sign-in-door-limits.test.ts › answers password sign-ins at any email alike, the owner's among them, until the address's limit refuses them all`.
 
 ### `keys-and-oauth/sign-in-decoy-queue`
 
-If eight password sign-ins at emails that are not the owner's are already waiting for their password check, then the server MUST answer the next such sign-in `429` with `Retry-After`.
+If eight password sign-ins that carry no known device cookie are already waiting for their password check, then the server MUST answer the next such sign-in `429` with `Retry-After`, whatever email it names.
 
-**Reason:** A sign-in at an email with no account still does the work of a password check, so it cannot be told from a wrong password by its time; those checks wait in a queue of their own, so they can never hold up the owner's.
+**Reason:** A sign-in at an email with no account still does the work of a password check, so it cannot be told from a wrong password by its time or by this queue. The owner's own checks, from a known device or a browser session, wait in a queue of their own, so these can never hold them up.
 
 **Tests:** waiting on #2892.
 

@@ -469,9 +469,30 @@ describe("claiming the one owner", () => {
           )
         ).status,
       ).toBe(401);
+    // Then the address's own limit across every email, so that no email
+    // signs in from it.
+    for (let i = 0; i < 20; i++)
+      expect(
+        (
+          await post(
+            "/auth/sign-in",
+            { email: `stranger-${String(i)}@example.test`, password },
+            lockedAddress,
+          )
+        ).status,
+      ).not.toBe(200);
     expect((await post("/auth/sign-in", OWNER, lockedAddress)).status).toBe(
       429,
     );
+    expect(
+      (
+        await post(
+          "/auth/sign-in",
+          { email: "stranger-new@example.test", password },
+          lockedAddress,
+        )
+      ).status,
+    ).toBe(429);
     expect((await local("/_control/owner/recover", { password })).status).toBe(
       200,
     );

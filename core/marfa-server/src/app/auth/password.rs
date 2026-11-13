@@ -11,9 +11,9 @@ use super::limits::too_many_passwords;
 use crate::app::refusal::{Refusal, Result};
 
 const AT_ONCE: usize = 2;
-const DECOYS_AT_ONCE: usize = 1;
-const DECOY_PLACES: usize = 8;
-const DECOY_WAIT_MS: i64 = 1_000;
+const OPEN_AT_ONCE: usize = 1;
+const OPEN_PLACES: usize = 8;
+const OPEN_WAIT_MS: i64 = 1_000;
 const MIN_LENGTH: usize = 8;
 const MAX_LENGTH: usize = 128;
 
@@ -47,6 +47,14 @@ fn verified(password: &str, hash: &str) -> bool {
         .is_ok()
 }
 
+/// Who a check waits behind. The owner's own checks (a session, a known device, a new hash)
+/// never queue behind a check anyone can ask for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Queue {
+    Owner,
+    Open,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Checked {
     Wrong,
@@ -56,8 +64,8 @@ pub enum Checked {
 
 pub struct Passwords {
     owner: Arc<Semaphore>,
-    decoys: Arc<Semaphore>,
-    decoy_places: Arc<Semaphore>,
+    open: Arc<Semaphore>,
+    open_places: Arc<Semaphore>,
     decoy: OnceCell<String>,
 }
 
@@ -65,8 +73,8 @@ impl Default for Passwords {
     fn default() -> Passwords {
         Passwords {
             owner: Arc::new(Semaphore::new(AT_ONCE)),
-            decoys: Arc::new(Semaphore::new(DECOYS_AT_ONCE)),
-            decoy_places: Arc::new(Semaphore::new(DECOY_PLACES)),
+            open: Arc::new(Semaphore::new(OPEN_AT_ONCE)),
+            open_places: Arc::new(Semaphore::new(OPEN_PLACES)),
             decoy: OnceCell::new(),
         }
     }
@@ -109,29 +117,36 @@ impl Passwords {
         Ok(decoy)
     }
 
-    /// Does the same work when there is nothing stored. That work runs in a lane of its own,
-    /// which refuses once full, so no email but the owner's can hold up the owner.
-    pub async fn check(&self, stored: Option<&str>, password: String) -> Result<Checked> {
+    /// Does the same work when there is nothing stored, so neither the time nor the queue tells
+    /// whether `stored` held a hash. The open queue refuses once full.
+    pub async fn check(
+        &self,
+        stored: Option<&str>,
+        password: String,
+        queue: Queue,
+    ) -> Result<Checked> {
         let today = self.decoy().await?.to_string();
-        let Some(stored) = stored else {
-            let place = self
-                .decoy_places
-                .clone()
-                .try_acquire_owned()
-                .map_err(|_| too_many_passwords(DECOY_WAIT_MS))?;
-            self.off_thread(&self.decoys, move || {
+        let (place, lane) = match queue {
+            Queue::Owner => (None, &self.owner),
+            Queue::Open => {
+                let place = self
+                    .open_places
+                    .clone()
+                    .try_acquire_owned()
+                    .map_err(|_| too_many_passwords(OPEN_WAIT_MS))?;
+                (Some(place), &self.open)
+            }
+        };
+        let dated = stored.is_some_and(|stored| shape(stored) != shape(&today));
+        let against = stored.map_or(today, str::to_string);
+        let held = stored.is_some();
+        let matched = self
+            .off_thread(lane, move || {
                 let _place = place;
-                Ok(verified(&password, &today))
+                Ok(verified(&password, &against))
             })
             .await?;
-            return Ok(Checked::Wrong);
-        };
-        let against = stored.to_string();
-        let dated = shape(&against) != shape(&today);
-        let matched = self
-            .off_thread(&self.owner, move || Ok(verified(&password, &against)))
-            .await?;
-        Ok(match (matched, dated) {
+        Ok(match (held && matched, dated) {
             (false, _) => Checked::Wrong,
             (true, false) => Checked::Right,
             (true, true) => Checked::RightButDated,
@@ -171,32 +186,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn decoys_queue_only_so_far_and_never_ahead_of_the_owner() {
+    async fn the_open_queue_refuses_any_email_alike_and_never_holds_up_the_owner() {
         let passwords = Arc::new(Passwords::default());
         let hash = passwords.hash("a good long password".into()).await.unwrap();
         let _lane = passwords
-            .decoys
+            .open
             .clone()
-            .acquire_many_owned(DECOYS_AT_ONCE as u32)
+            .acquire_many_owned(OPEN_AT_ONCE as u32)
             .await
             .unwrap();
         let mut waiting = tokio::task::JoinSet::new();
-        for _ in 0..DECOY_PLACES {
+        for _ in 0..OPEN_PLACES {
             let passwords = passwords.clone();
-            waiting.spawn(async move { passwords.check(None, "a guess".into()).await });
+            waiting
+                .spawn(async move { passwords.check(None, "a guess".into(), Queue::Open).await });
         }
         let filled = async {
-            while passwords.decoy_places.available_permits() > 0 {
+            while passwords.open_places.available_permits() > 0 {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
         };
         tokio::time::timeout(Duration::from_secs(20), filled)
             .await
             .unwrap();
-        let refused = passwords.check(None, "a guess".into()).await.unwrap_err();
-        assert_eq!(refused.code, Code::RateLimited);
-        assert_eq!(refused.details.unwrap()["retry_after"], 1);
-        let owner = passwords.check(Some(&hash), "a good long password".into());
+        for stored in [None, Some(hash.as_str())] {
+            let refused = passwords
+                .check(stored, "a guess".into(), Queue::Open)
+                .await
+                .unwrap_err();
+            assert_eq!(refused.code, Code::RateLimited);
+            assert_eq!(refused.details.unwrap()["retry_after"], 1);
+        }
+        let owner = passwords.check(Some(&hash), "a good long password".into(), Queue::Owner);
         let checked = tokio::time::timeout(Duration::from_secs(20), owner).await;
         assert_eq!(checked.unwrap().unwrap(), Checked::Right);
     }
@@ -217,7 +238,14 @@ mod tests {
         let check = |stored: Option<String>, password: &str| {
             let password = password.to_string();
             let passwords = &passwords;
-            async move { passwords.check(stored.as_deref(), password).await.unwrap() }
+            async move {
+                let stored = stored.as_deref();
+                let open = passwords.check(stored, password.clone(), Queue::Open);
+                let owner = passwords.check(stored, password, Queue::Owner);
+                let (open, owner) = (open.await.unwrap(), owner.await.unwrap());
+                assert_eq!(open, owner);
+                owner
+            }
         };
         let right = "a good long password";
         assert_eq!(check(Some(today.clone()), right).await, Checked::Right);

@@ -245,7 +245,7 @@ describe("the sign-in surface", () => {
     expect((await signIn(OWNER.password, "192.0.2.4")).status).toBe(200);
   });
 
-  it("holds one address to ten attempts at an account, and leaves the owner signing in from another", async () => {
+  it("holds one address to ten attempts at one email, and leaves the owner signing in from another", async () => {
     const guesser = "203.0.113.10";
     for (let i = 0; i < 10; i++) {
       expect((await signIn("not the password", guesser)).status).toBe(401);
