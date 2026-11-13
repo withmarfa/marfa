@@ -93,16 +93,18 @@ pub fn rows(table: &str, answer: &Value) -> String {
             format!("rows: {}", parts.join(", "))
         }
     };
-    let batch = text(answer, "batch");
     let undid = match answer.get("undoes").and_then(Value::as_str) {
         Some(undone) => format!(" (undoing batch {})", printable(undone)),
         None => String::new(),
     };
-    format!(
-        "{what} in {} as batch {}{undid}",
-        printable(table),
-        printable(batch)
-    )
+    match text(answer, "batch") {
+        "" => format!("{what} in {}; no batch was made{undid}", printable(table)),
+        batch => format!(
+            "{what} in {} as batch {}{undid}",
+            printable(table),
+            printable(batch)
+        ),
+    }
 }
 
 #[cfg(test)]
@@ -160,6 +162,11 @@ mod tests {
         assert_eq!(
             rows("pantry", &deleted),
             "rows: 2 deleted, 1 absent in pantry as batch b2"
+        );
+        let absent = json!({"batch": null, "results": [{"id": "r9", "outcome": "absent"}]});
+        assert_eq!(
+            rows("pantry", &absent),
+            "absent row r9 in pantry; no batch was made"
         );
         let undone =
             json!({"batch": "b3", "undoes": "b2", "results": [{"id": "r1", "outcome": "created"}]});
