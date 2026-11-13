@@ -338,7 +338,7 @@ If a revoked key sends a request to any operation under `/connectors` with no bo
 
 ### `connectors/revoked-run-not-recorded`
 
-If a revoked key sends `POST /connectors/{id}/runs`, then the server MUST NOT record a run.
+If a revoked key sends `POST /connectors/runs`, then the server MUST NOT record a run.
 
 **Tests:** `compliance/connector-codes.test.ts › answers 401 unauthorized to a revoked key on every door, and leaves its runs to the manager`.
 
@@ -349,6 +349,14 @@ An access token is not a key, so no registration is made under one and none is t
 ### `connectors/token-refused`
 
 If an app token lacking `connectors.manage` sends any operation under `/connectors/{id}` other than `GET /connectors/{id}` and `GET /connectors/{id}/runs`, naming a registration that exists, then the server MUST answer `403 forbidden`.
+
+**Tests:** `compliance/connector-session-token.test.ts › refuses an app's session token 403 on every door that admits the connector's key`.
+
+### `connectors/token-refused-own-key`
+
+If an app token sends `POST /connectors/heartbeat` or `POST /connectors/runs`, then the server MUST answer `403 forbidden`.
+
+**Reason:** a heartbeat and a report of a run are made under the key a registration was made under, and a token is not a key.
 
 **Tests:** `compliance/connector-session-token.test.ts › refuses an app's session token 403 on every door that admits the connector's key`.
 
@@ -376,7 +384,7 @@ A heartbeat says only that the process was alive at the time. What a stale one m
 
 ### `connectors/heartbeat-recorded`
 
-When the connector's own key sends `POST /connectors/{id}/heartbeat`, the server MUST answer `200` with `last_heartbeat_at`.
+When a working key that has registered a connector sends `POST /connectors/heartbeat`, the server MUST answer `200` with `last_heartbeat_at` of that registration.
 
 **Tests:** `compliance/connectors.test.ts › takes a heartbeat from the connector's key alone`.
 
@@ -394,13 +402,19 @@ When the server has recorded a heartbeat, the server MUST give the registration 
 
 ### `connectors/heartbeat-other-refused`
 
-If a caller other than the connector's own key, including an app token or a key holding `connectors.manage`, sends `POST /connectors/{id}/heartbeat`, then the server MUST answer `403 forbidden`.
+If a caller that is not a working key, such as an app token or the private socket, sends `POST /connectors/heartbeat`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connectors.test.ts › takes a heartbeat from the connector's key alone`, `compliance/connector-direct-authority.test.ts › refuses private socket 403 on every own-key read and write`.
+**Tests:** `compliance/connector-session-token.test.ts › refuses an app's session token 403 on every door that admits the connector's key`, `compliance/connector-direct-authority.test.ts › refuses private socket 403 on every own-key read and write`.
+
+### `connectors/heartbeat-unregistered`
+
+If a working key that has registered no connector, including a key holding `connectors.manage`, sends `POST /connectors/heartbeat`, then the server MUST answer `404 connector_not_found`.
+
+**Tests:** `compliance/connectors.test.ts › takes a heartbeat from the connector's key alone`, `compliance/connector-check-order.test.ts › answers 404 connector_not_found to a key with no registration, where the connector's own key is taken`.
 
 ### `connectors/heartbeat-refused-keeps`
 
-If the server refuses `POST /connectors/{id}/heartbeat`, then the server MUST NOT move the registration's `last_heartbeat_at`.
+If the server refuses `POST /connectors/heartbeat`, then the server MUST NOT move the `last_heartbeat_at` of any registration.
 
 **Tests:** `compliance/connectors.test.ts › takes a heartbeat from the connector's key alone`.
 
@@ -422,7 +436,7 @@ A run is what a connector reports of one pass of its work. The server keeps the 
 
 ### `connectors/run-created`
 
-When the connector's own key sends `POST /connectors/{id}/runs` with an `outcome`, a `started_at` and a `finished_at`, the server MUST answer `201` with the run's `id`, `connector_id`, `outcome`, `started_at`, `finished_at`, `summary`, `error` and `reported_at`.
+When a working key that has registered a connector sends `POST /connectors/runs` with an `outcome`, a `started_at` and a `finished_at`, the server MUST answer `201` with the run's `id`, `connector_id`, `outcome`, `started_at`, `finished_at`, `summary`, `error` and `reported_at`.
 
 **Tests:** `compliance/connectors.test.ts › records a run from the connector's key and refuses an outcome it does not know`.
 
@@ -504,13 +518,19 @@ When the server decides whether a run's `finished_at` is before its `started_at`
 
 ### `connectors/run-other-refused`
 
-If a caller other than the connector's own key, including an app token or a key holding `connectors.manage`, sends `POST /connectors/{id}/runs`, then the server MUST answer `403 forbidden`.
+If a caller that is not a working key, such as an app token or the private socket, sends `POST /connectors/runs`, then the server MUST answer `403 forbidden`.
 
-**Tests:** `compliance/connectors.test.ts › records a run from the connector's key and refuses an outcome it does not know`, `compliance/connector-direct-authority.test.ts › refuses private socket 403 on every own-key read and write`.
+**Tests:** `compliance/connector-session-token.test.ts › refuses an app's session token 403 on every door that admits the connector's key`, `compliance/connector-direct-authority.test.ts › refuses private socket 403 on every own-key read and write`.
+
+### `connectors/run-unregistered`
+
+If a working key that has registered no connector, including a key holding `connectors.manage`, sends `POST /connectors/runs`, then the server MUST answer `404 connector_not_found`.
+
+**Tests:** `compliance/connectors.test.ts › stores a run's times in UTC and compares them as instants`, `compliance/connector-check-order.test.ts › answers 404 connector_not_found to a key with no registration, where the connector's own key is taken`.
 
 ### `connectors/run-refused-not-recorded`
 
-If the server refuses `POST /connectors/{id}/runs`, then the server MUST NOT record a run.
+If the server refuses `POST /connectors/runs`, then the server MUST NOT record a run.
 
 **Tests:** `compliance/connectors.test.ts › records a run from the connector's key and refuses an outcome it does not know`.
 
@@ -1284,7 +1304,7 @@ If a request to an operation under `/connectors/{id}` has a body field or a quer
 
 ### `connectors/order-key-before-handler-checks`
 
-If a key that `POST /connectors/{id}/runs`, `PUT /connectors/{id}/state` or `POST /connectors/{id}/agreements` refuses `403 forbidden` on an existing registration sends it a run that finishes before it starts or names a time whose UTC year is outside 0000 to 9999, a state of more than 512 KiB serialized, or a batch that names an item twice or holds a record of more than 16 KiB serialized, then the server MUST answer `403 forbidden`.
+If a key that `PUT /connectors/{id}/state` or `POST /connectors/{id}/agreements` refuses `403 forbidden` on an existing registration sends it a state of more than 512 KiB serialized, or a batch that names an item twice or holds a record of more than 16 KiB serialized, then the server MUST answer `403 forbidden`.
 
 **Reason:** the server makes these checks after it finds the registration and judges the key, unlike the declared shape that `connectors/order-body-before-registration` checks first. A top-level field the operation does not declare is ordered the same way, as `connectors/order-key-before-stray-field` says.
 
@@ -1307,6 +1327,14 @@ If a key that an operation under `/connectors/{id}` refuses `403 forbidden` send
 If a key sends a request to an operation under `/connectors/{id}` that names an id no registration carries, with a body whose declared fields fit the declaration and that carries a top-level field the operation does not declare, then the server MUST answer `404 connector_not_found`.
 
 **Tests:** `compliance/connector-check-order.test.ts › answers the key's 403 and the registration's 404 before a field the door does not declare`.
+
+### `connectors/order-registration-before-run-checks`
+
+If a working key that has registered no connector sends `POST /connectors/runs` with a body whose declared fields fit the declaration and that names a run that finishes before it starts, names a time whose UTC year is outside 0000 to 9999, or carries a top-level field the operation does not declare, then the server MUST answer `404 connector_not_found`.
+
+**Reason:** a run is reported for the registration the key made, and the server looks for that registration before it judges what the run says, as it does under `/connectors/{id}` for a registration the key does not hold.
+
+**Tests:** `compliance/connector-check-order.test.ts › answers another key's 403 before the checks its body meets once the key is the connector's own`, `› answers the key's 403 and the registration's 404 before a field the door does not declare`.
 
 ### `connectors/order-stray-field-before-fence`
 

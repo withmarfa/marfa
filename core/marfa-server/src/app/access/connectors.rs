@@ -28,6 +28,18 @@ impl Caller {
         self.is_connector_key(key_id) || self.manages_connectors()
     }
 
+    /// A heartbeat and a report of a run are made under a working key.
+    pub fn require_connector_key(&self) -> Result<()> {
+        if matches!(self, Caller::Key(_)) {
+            Ok(())
+        } else {
+            Err(Refusal::new(
+                Code::Forbidden,
+                "Only a connector's own key can do this.",
+            ))
+        }
+    }
+
     pub fn require_own_connector_key(&self, key_id: &str) -> Result<()> {
         if self.is_connector_key(key_id) {
             Ok(())

@@ -55,7 +55,7 @@ describe("registration", () => {
     const theirs = await register(other, `${ctx.runId} another reader`);
     const unrelated = await createSecondClient(ctx, "unregistered-reader");
     const at = new Date().toISOString();
-    const run = await client.reportConnectorRun(mine.data.id, {
+    const run = await client.reportConnectorRun({
       outcome: "failed",
       started_at: at,
       finished_at: at,
@@ -203,10 +203,10 @@ describe("registration", () => {
       ["GET", base],
       ["DELETE", base],
       ["GET", `${base}/runs`],
-      ["POST", `${base}/heartbeat`],
+      ["POST", "/connectors/heartbeat"],
       [
         "POST",
-        `${base}/runs`,
+        "/connectors/runs",
         {
           outcome: "failed",
           started_at: "2026-10-05T18:00:00Z",
@@ -394,7 +394,7 @@ describe("registration", () => {
     const old = await register(client, `${ctx.runId} before removal`);
     const at = new Date().toISOString();
     for (const outcome of ["succeeded", "failed"] as const) {
-      const run = await client.reportConnectorRun(old.data.id, {
+      const run = await client.reportConnectorRun({
         outcome,
         started_at: at,
         finished_at: at,
@@ -450,18 +450,14 @@ describe("registration", () => {
   it("answers 404 for an unknown connector, where a registered one answers", async () => {
     const real = await register(client, `${ctx.runId} real`);
     expect((await client.getConnector(real.data.id)).status).toBe(200);
-    expect((await client.sendConnectorHeartbeat(real.data.id)).status).toBe(
-      200,
-    );
+    expect((await client.sendConnectorHeartbeat()).status).toBe(200);
     const at = new Date().toISOString();
     const run = {
       outcome: "succeeded" as const,
       started_at: at,
       finished_at: at,
     };
-    expect((await client.reportConnectorRun(real.data.id, run)).status).toBe(
-      201,
-    );
+    expect((await client.reportConnectorRun(run)).status).toBe(201);
     expect((await client.listConnectorRuns(real.data.id)).status).toBe(200);
     expect((await client.takeConnectorHold(real.data.id, "p")).status).toBe(
       200,
@@ -491,16 +487,11 @@ describe("registration", () => {
     expect((await client.deleteConnectorState(real.data.id)).status).toBe(200);
 
     const unknown = "01a0c000-0000-7000-8000-000000000000";
+    const bare = await createSecondClient(ctx, "no-registration");
     for (const [door, res] of [
       ["GET /connectors/{id}", await client.getConnector(unknown)],
-      [
-        "POST /connectors/{id}/heartbeat",
-        await client.sendConnectorHeartbeat(unknown),
-      ],
-      [
-        "POST /connectors/{id}/runs",
-        await client.reportConnectorRun(unknown, run),
-      ],
+      ["POST /connectors/heartbeat", await bare.sendConnectorHeartbeat()],
+      ["POST /connectors/runs", await bare.reportConnectorRun(run)],
       ["GET /connectors/{id}/runs", await client.listConnectorRuns(unknown)],
       [
         "POST /connectors/{id}/hold",
@@ -565,16 +556,14 @@ describe("registration", () => {
       name: `${ctx.runId} short-lived reader`,
     });
     expect(mine.status).toBe(201);
-    expect((await shortLived.sendConnectorHeartbeat(mine.data.id)).status).toBe(
-      200,
-    );
+    expect((await shortLived.sendConnectorHeartbeat()).status).toBe(200);
     await new Promise((resolve) => setTimeout(resolve, 5));
-    const lastBeat = await shortLived.sendConnectorHeartbeat(mine.data.id);
+    const lastBeat = await shortLived.sendConnectorHeartbeat();
     expect(lastBeat.status).toBe(200);
 
     const operator = getManagementClient();
     expect((await operator.revokeKey(mine.data.key_id)).status).toBe(200);
-    const refused = await shortLived.sendConnectorHeartbeat(mine.data.id);
+    const refused = await shortLived.sendConnectorHeartbeat();
     expect(refused.status).toBe(401);
     const standing = await operator.getConnector(mine.data.id);
     expect(standing.status).toBe(200);
@@ -596,22 +585,18 @@ describe("registration", () => {
 describe("heartbeats and runs", () => {
   it("takes a heartbeat from the connector's key alone", async () => {
     const mine = await register(client, `${ctx.runId} beats`);
-    for (const c of [other, getManagementClient()]) {
-      const refused = await c.sendConnectorHeartbeat(mine.data.id);
-      expect(refused.status).toBe(403);
-      expect(refused.error?.error.code).toBe("forbidden");
+    const unregistered = await createSecondClient(ctx, "unregistered-beater");
+    for (const c of [unregistered, getManagementClient()]) {
+      const refused = await c.sendConnectorHeartbeat();
+      expect(refused.status).toBe(404);
+      expect(refused.error?.error.code).toBe("connector_not_found");
     }
     expect(
       (await client.getConnector(mine.data.id)).data.last_heartbeat_at,
     ).toBeNull();
-    const beat = await client.sendConnectorHeartbeat(mine.data.id);
+    const beat = await client.sendConnectorHeartbeat();
     expect(beat.status).toBe(200);
-    await expectMatchesSchema(
-      "POST",
-      "/connectors/{id}/heartbeat",
-      200,
-      beat.data,
-    );
+    await expectMatchesSchema("POST", "/connectors/heartbeat", 200, beat.data);
     expect(beat.data.last_heartbeat_at).toMatch(ISO);
     // The server's clock: no later than now, no earlier than the
     // registration, and moved by the next beat.
@@ -626,7 +611,7 @@ describe("heartbeats and runs", () => {
         .last_heartbeat_at,
     ).toBe(beat.data.last_heartbeat_at);
     await new Promise((resolve) => setTimeout(resolve, 5));
-    const again = await client.sendConnectorHeartbeat(mine.data.id);
+    const again = await client.sendConnectorHeartbeat();
     expect(again.status).toBe(200);
     expect(Date.parse(again.data.last_heartbeat_at)).toBeGreaterThan(
       Date.parse(beat.data.last_heartbeat_at),
@@ -636,7 +621,7 @@ describe("heartbeats and runs", () => {
 
   it("stores a run's times in UTC and compares them as instants", async () => {
     const mine = await register(client, `${ctx.runId} run times`);
-    const offset = await client.reportConnectorRun(mine.data.id, {
+    const offset = await client.reportConnectorRun({
       outcome: "succeeded",
       started_at: "2026-10-05T18:00:00+02:00",
       finished_at: "2026-10-05T18:30:00.5-05:00",
@@ -645,13 +630,13 @@ describe("heartbeats and runs", () => {
     expect(offset.data.started_at).toBe("2026-10-05T16:00:00.000Z");
     expect(offset.data.finished_at).toBe("2026-10-05T23:30:00.500Z");
     // 19:00 at +02:00 is before 18:00Z, though the text sorts after it.
-    const ordered = await client.reportConnectorRun(mine.data.id, {
+    const ordered = await client.reportConnectorRun({
       outcome: "succeeded",
       started_at: "2026-10-05T19:00:00+02:00",
       finished_at: "2026-10-05T18:00:00Z",
     });
     expect(ordered.status).toBe(201);
-    const inverted = await client.reportConnectorRun(mine.data.id, {
+    const inverted = await client.reportConnectorRun({
       outcome: "succeeded",
       started_at: "2026-10-05T18:00:00Z",
       finished_at: "2026-10-05T19:00:00+02:00",
@@ -673,7 +658,7 @@ describe("heartbeats and runs", () => {
   it("refuses a run time that is not strict RFC 3339", async () => {
     const mine = await register(client, `${ctx.runId} strict times`);
     const report = (started_at: string, finished_at: string) =>
-      client.reportConnectorRun(mine.data.id, {
+      client.reportConnectorRun({
         outcome: "succeeded",
         started_at,
         finished_at,
@@ -721,14 +706,14 @@ describe("heartbeats and runs", () => {
     const mine = await register(client, `${ctx.runId} runs`);
     const startedAt = new Date(Date.now() - 5_000).toISOString();
     const finishedAt = new Date().toISOString();
-    const run = await client.reportConnectorRun(mine.data.id, {
+    const run = await client.reportConnectorRun({
       outcome: "succeeded",
       started_at: startedAt,
       finished_at: finishedAt,
       summary: "12 messages",
     });
     expect(run.status).toBe(201);
-    await expectMatchesSchema("POST", "/connectors/{id}/runs", 201, run.data);
+    await expectMatchesSchema("POST", "/connectors/runs", 201, run.data);
     expect(run.data).toMatchObject({
       connector_id: mine.data.id,
       outcome: "succeeded",
@@ -737,22 +722,17 @@ describe("heartbeats and runs", () => {
       summary: "12 messages",
       error: null,
     });
-    const failed = await client.reportConnectorRun(mine.data.id, {
+    const failed = await client.reportConnectorRun({
       outcome: "failed",
       started_at: startedAt,
       finished_at: finishedAt,
       error: "the mailbox refused the token",
     });
     expect(failed.status).toBe(201);
-    await expectMatchesSchema(
-      "POST",
-      "/connectors/{id}/runs",
-      201,
-      failed.data,
-    );
+    await expectMatchesSchema("POST", "/connectors/runs", 201, failed.data);
     expect(failed.data.summary).toBeNull();
     // An instant run, and a summary and an error at their caps, are fine.
-    const capped = await client.reportConnectorRun(mine.data.id, {
+    const capped = await client.reportConnectorRun({
       outcome: "succeeded",
       started_at: finishedAt,
       finished_at: finishedAt,
@@ -782,14 +762,15 @@ describe("heartbeats and runs", () => {
       ["a summary over its cap", { ...good, summary: "s".repeat(2001) }],
       ["an error over its cap", { ...good, error: "e".repeat(2001) }],
     ] as const) {
-      const refused = await client.reportConnectorRun(mine.data.id, body);
+      const refused = await client.reportConnectorRun(body);
       expect(refused.status, what).toBe(400);
       expect(refused.error?.error.code, what).toBe("validation_error");
     }
-    for (const c of [other, getManagementClient()]) {
-      const theirs = await c.reportConnectorRun(mine.data.id, good);
-      expect(theirs.status).toBe(403);
-      expect(theirs.error?.error.code).toBe("forbidden");
+    const unregistered = await createSecondClient(ctx, "unregistered-reporter");
+    for (const c of [unregistered, getManagementClient()]) {
+      const theirs = await c.reportConnectorRun(good);
+      expect(theirs.status).toBe(404);
+      expect(theirs.error?.error.code).toBe("connector_not_found");
     }
     expect(
       (await client.listConnectorRuns(mine.data.id)).data.data,
@@ -801,24 +782,24 @@ describe("heartbeats and runs", () => {
     const mine = await register(client, `${ctx.runId} run outcome`);
     const at = new Date().toISOString();
     const times = { started_at: at, finished_at: at };
-    const missing = await client.rawRequest<unknown>(
-      `/connectors/${mine.data.id}/runs`,
-      { method: "POST", body: times },
-    );
+    const missing = await client.rawRequest<unknown>("/connectors/runs", {
+      method: "POST",
+      body: times,
+    });
     expect(missing.status).toBe(400);
     expect(missing.error?.error.code).toBe("missing_required_field");
     expect(missing.error?.error.details?.["field"]).toBe("outcome");
 
     // The witnesses: a wrong outcome is told otherwise, and a right one is taken.
-    const wrong = await client.rawRequest<unknown>(
-      `/connectors/${mine.data.id}/runs`,
-      { method: "POST", body: { ...times, outcome: "skipped" } },
-    );
+    const wrong = await client.rawRequest<unknown>("/connectors/runs", {
+      method: "POST",
+      body: { ...times, outcome: "skipped" },
+    });
     expect(wrong.status).toBe(400);
     expect(wrong.error?.error.code).toBe("validation_error");
     expect(
       (
-        await client.reportConnectorRun(mine.data.id, {
+        await client.reportConnectorRun({
           ...times,
           outcome: "succeeded",
         })
@@ -833,7 +814,7 @@ describe("heartbeats and runs", () => {
   it("names a missing started_at or finished_at as missing_required_field", async () => {
     const mine = await register(client, `${ctx.runId} run times missing`);
     const at = new Date().toISOString();
-    const runs = `/connectors/${mine.data.id}/runs`;
+    const runs = "/connectors/runs";
     const times = { started_at: at, finished_at: at };
     for (const missing of ["started_at", "finished_at"] as const) {
       const { [missing]: _left, ...rest } = times;
@@ -851,7 +832,7 @@ describe("heartbeats and runs", () => {
     // The witness: with both named, the run is taken.
     expect(
       (
-        await client.reportConnectorRun(mine.data.id, {
+        await client.reportConnectorRun({
           outcome: "succeeded",
           ...times,
         })
@@ -863,7 +844,7 @@ describe("heartbeats and runs", () => {
   it("refuses a run time whose UTC year is outside 0000 to 9999, and takes the first and last instants", async () => {
     const mine = await register(client, `${ctx.runId} run years`);
     const report = (started_at: string, finished_at: string) =>
-      client.reportConnectorRun(mine.data.id, {
+      client.reportConnectorRun({
         outcome: "succeeded",
         started_at,
         finished_at,
@@ -908,7 +889,7 @@ describe("heartbeats and runs", () => {
       [2, "failed"],
       [1, "succeeded"],
     ] as const) {
-      const res = await client.reportConnectorRun(mine.data.id, {
+      const res = await client.reportConnectorRun({
         outcome,
         started_at: at(n * 2_000),
         finished_at: at(n * 1_000),
@@ -920,7 +901,7 @@ describe("heartbeats and runs", () => {
     // stamped by the server's clock rather than by when the run says it
     // started.
     await new Promise((resolve) => setTimeout(resolve, 5));
-    const late = await client.reportConnectorRun(mine.data.id, {
+    const late = await client.reportConnectorRun({
       outcome: "succeeded",
       started_at: at(90_000),
       finished_at: at(80_000),
@@ -969,7 +950,7 @@ describe("heartbeats and runs", () => {
     // Each connector's runs are its own: another's listing and `last_run`
     // see none of these.
     const theirs = await register(other, `${ctx.runId} theirs`);
-    const theirRun = await other.reportConnectorRun(theirs.data.id, {
+    const theirRun = await other.reportConnectorRun({
       outcome: "failed",
       started_at: at(2_000),
       finished_at: at(1_000),
@@ -1021,7 +1002,7 @@ describe("heartbeats and runs", () => {
     const mine = await register(client, `${ctx.runId} hundred`);
     const at = new Date().toISOString();
     for (let i = 1; i <= 101; i++) {
-      const res = await client.reportConnectorRun(mine.data.id, {
+      const res = await client.reportConnectorRun({
         outcome: "succeeded",
         started_at: at,
         finished_at: at,
@@ -1054,11 +1035,9 @@ describe("heartbeats and runs", () => {
     expect(mine.status).toBe(201);
     const again = await register(client, `${ctx.runId} audited, renamed`);
     expect(again.status).toBe(200);
-    expect((await client.sendConnectorHeartbeat(mine.data.id)).status).toBe(
-      200,
-    );
+    expect((await client.sendConnectorHeartbeat()).status).toBe(200);
     const at = new Date().toISOString();
-    const run = await client.reportConnectorRun(mine.data.id, {
+    const run = await client.reportConnectorRun({
       outcome: "succeeded",
       started_at: at,
       finished_at: at,

@@ -175,3 +175,25 @@ fn a_cursor_opens_only_under_the_scope_it_was_issued_for() {
     assert!(secret.open("scope", "").is_err());
     assert!(Position::from_payload(&opened, 2).is_err());
 }
+
+#[test]
+fn a_cursor_for_a_page_ending_at_an_item_is_short_and_opens_to_the_same_place() {
+    let secret = Secret(vec![7; 32]);
+    let place = Position {
+        keys: vec![Value::Text("2026-11-13T00:58:34.340Z".to_string())],
+        id: "01a1d269-d7e5-7436-a092-ad0f735fe5f9".to_string(),
+    };
+    let cursor = secret.issue("listing", &place.payload()).unwrap();
+    assert!(cursor.len() <= 80, "{} characters: {cursor}", cursor.len());
+    assert!(
+        cursor
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_'),
+        "{cursor}"
+    );
+    let back = Position::from_payload(&secret.open("listing", &cursor).unwrap(), 1).unwrap();
+    assert_eq!((&back.keys, &back.id), (&place.keys, &place.id));
+    // Witness: the hex of the JSON payload is not a cursor.
+    let old = hex::encode([&[0u8; 16][..], place.payload().to_string().as_bytes()].concat());
+    assert!(secret.open("listing", &old).is_err());
+}

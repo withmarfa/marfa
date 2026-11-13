@@ -113,6 +113,18 @@ beforeAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 
 describe("a cursor", () => {
+  it("is short and made only of characters a URL carries as they are", async () => {
+    for (const listing of listings) {
+      const page = await send(listing.key(), listing.path);
+      const cursor = page.body.next_cursor as string;
+      expect(cursor, listing.name).toEqual(expect.any(String));
+      expect(cursor, listing.name).toMatch(/^[A-Za-z0-9_-]+$/);
+      expect(cursor.length, `${listing.name}: ${cursor}`).toBeLessThanOrEqual(
+        100,
+      );
+    }
+  });
+
   it("is refused at every listing but the one that issued it, naming cursor", async () => {
     const issued: { from: string; cursor: string }[] = [];
     for (const listing of listings) {

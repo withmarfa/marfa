@@ -60,15 +60,24 @@ interface Door {
   method: string;
   path: string;
   body?: Record<string, unknown>;
+  /** The door names no connector: the key is the connector. */
+  own?: boolean;
+}
+
+function urlOf(door: Door, connectorId: string): string {
+  return door.own
+    ? `/connectors${door.path}`
+    : `/connectors/${connectorId}${door.path}`;
 }
 
 function doors(): Door[] {
   const at = "2026-10-05T18:00:00Z";
   return [
-    { method: "POST", path: "/heartbeat" },
+    { method: "POST", path: "/heartbeat", own: true },
     {
       method: "POST",
       path: "/runs",
+      own: true,
       body: { outcome: "succeeded", started_at: at, finished_at: at },
     },
     { method: "POST", path: "/hold", body: { process: holder } },
@@ -102,7 +111,7 @@ function doors(): Door[] {
 
 async function refusesPrivateSocket(): Promise<void> {
   for (const door of doors()) {
-    const path = `/connectors/${id}${door.path}`;
+    const path = urlOf(door, id);
     const response = await controlRequest(server.controlSocket, path, door);
     expect(response.status, `private socket: ${door.method} ${door.path}`).toBe(
       403,
@@ -138,7 +147,7 @@ describe("direct authority on own-key connector operations", () => {
       for (const connectorId of [id, "01a0c000-0000-7000-8000-000000000000"]) {
         for (const door of doors()) {
           const res = await fetch(
-            `${server.apiUrl}/connectors/${connectorId}${door.path}`,
+            `${server.apiUrl}${urlOf(door, connectorId)}`,
             {
               method: door.method,
               headers: {
@@ -153,8 +162,14 @@ describe("direct authority on own-key connector operations", () => {
                 door.body === undefined ? undefined : JSON.stringify(door.body),
             },
           );
+          // Another key is no connector's own, so an own-key door finds it no
+          // registration where a door that names one refuses it.
           const expected =
-            key === undefined ? 401 : connectorId === id ? 403 : 404;
+            key === undefined
+              ? 401
+              : connectorId === id && !door.own
+                ? 403
+                : 404;
           expect(
             res.status,
             `${key === undefined ? "anonymous" : "another key"}: ${door.method} ${door.path}`,
@@ -176,7 +191,7 @@ describe("direct authority on own-key connector operations", () => {
 
   it("admits the connector's own key on the same reads and writes", async () => {
     for (const door of doors()) {
-      const res = await fetch(`${server.apiUrl}/connectors/${id}${door.path}`, {
+      const res = await fetch(`${server.apiUrl}${urlOf(door, id)}`, {
         method: door.method,
         headers: {
           Authorization: `Bearer ${server.workingKey}`,

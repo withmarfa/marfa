@@ -108,14 +108,14 @@ describe("an app's session token on the connector doors", () => {
       {
         label: "heartbeat",
         method: "POST",
-        path: `/connectors/${id}/heartbeat`,
-        template: "/connectors/{id}/heartbeat",
+        path: "/connectors/heartbeat",
+        template: "/connectors/heartbeat",
       },
       {
         label: "runs",
         method: "POST",
-        path: `/connectors/${id}/runs`,
-        template: "/connectors/{id}/runs",
+        path: "/connectors/runs",
+        template: "/connectors/runs",
         body: {
           outcome: "succeeded",
           started_at: startedAt,

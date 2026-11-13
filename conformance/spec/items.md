@@ -2670,9 +2670,17 @@ When the private local command posts to `/trash/empty`, the server MUST attempt 
 
 ### `items/owner-trash-cli`
 
-When a caller runs `marfa --socket PATH items trash list`, `move`, `restore`, `purge` or `empty`, the CLI MUST use the corresponding owner summary operation through private local authority.
+When a caller runs `marfa --socket PATH items bin list`, `move`, `restore`, `purge` or `empty`, the CLI MUST use the corresponding owner summary operation through private local authority.
 
-**Tests:** `cli/item-summaries.test.ts › manages trash through local authority with summary responses`, `device/contract.test.ts › holds every trash command to the contract through its private socket`.
+**Tests:** `cli/item-summaries.test.ts › manages trash through local authority with summary responses`, `device/contract.test.ts › holds every bin command to the contract through its private socket`.
+
+### `items/owner-empty-bin-cli`
+
+When a caller runs `marfa --socket PATH items bin empty --confirm PURGE`, the CLI MUST send each batch's `next_cursor` back to `POST /trash/empty` until the server names none, print how many items have been deleted so far after each batch and the total at the end, and exit `0` when no deletion was left unconfirmed.
+
+**Reason:** the server deletes at most 200 items at a time, so a person with a bigger bin would otherwise copy a cursor between runs.
+
+**Tests:** `cli/item-summaries.test.ts › pages the bin and empties it by itself, saying how many have gone`.
 
 ### `items/owner-trash-eligibility`
 
@@ -2688,7 +2696,7 @@ If an owner trash write has an unresolved transaction outcome, then the server M
 
 **Reason:** An unavailable commit witness cannot prove rollback. A single-item action answers 500; an empty-trash batch includes the uncertain failure, stops processing and returns no continuation cursor. The caller reads current state before a manual retry.
 
-**Tests:** `cli/item-summaries.test.ts › stops an uncertain trash batch and exposes its outcome through the real socket CLI`.
+**Tests:** `cli/item-summaries.test.ts › stops an uncertain bin emptying and exposes its outcome through the real socket CLI`.
 
 ## Private local authority
 
