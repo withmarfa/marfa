@@ -3,6 +3,7 @@
 //! and details instead, so a hint is never part of it.
 
 use std::ffi::OsString;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::Value;
 
@@ -11,6 +12,13 @@ use marfa_core::CoreError;
 use crate::error::CliError;
 use crate::remote::{Named, Remote};
 use crate::server::PrivateCommand;
+
+static PROPS_AS_TEXT: AtomicBool = AtomicBool::new(false);
+
+/// Notes that `--prop` values went out as text, for the `--properties` hint.
+pub fn props_sent_as_text() {
+    PROPS_AS_TEXT.store(true, Ordering::Relaxed);
+}
 
 /// What the command that failed was aimed at.
 pub struct Aim {
@@ -52,6 +60,12 @@ pub fn for_error(error: &CliError, aim: &Aim) -> Option<String> {
         } if code == "sign_in_address_change_unconfirmed" => {
             Some(confirm_address(aim, details.as_deref()))
         }
+        CliError::Refused {
+            status: 400, code, ..
+        } if code == "invalid_properties" && PROPS_AS_TEXT.load(Ordering::Relaxed) => Some(
+            "--prop sends text where the type's fields cannot be read. For a number, a boolean, an object or a list, use --properties '{\"field\": value}'."
+                .into(),
+        ),
         _ => None,
     }
 }
@@ -176,14 +190,14 @@ mod tests {
             "http://localhost:8600",
             "items",
             "--profile=work",
-            "trash",
+            "bin",
             "list",
             "--query",
             "it's here",
         ]);
         assert_eq!(
             same_command(&line),
-            "items trash list --query 'it'\\''s here'"
+            "items bin list --query 'it'\\''s here'"
         );
     }
 

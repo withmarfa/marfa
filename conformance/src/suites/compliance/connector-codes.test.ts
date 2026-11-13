@@ -79,14 +79,14 @@ describe("a revoked key", () => {
   it("answers 401 unauthorized to a revoked key on every door, and leaves its runs to the manager", async () => {
     const own = await owner("revoked");
     const when = at();
-    const failed = await own.client.reportConnectorRun(own.id, {
+    const failed = await own.client.reportConnectorRun({
       outcome: "failed",
       started_at: when,
       finished_at: when,
       error: "vendor failure",
     });
     expect(failed.status).toBe(201);
-    const succeeded = await own.client.reportConnectorRun(own.id, {
+    const succeeded = await own.client.reportConnectorRun({
       outcome: "succeeded",
       started_at: when,
       finished_at: when,
@@ -125,7 +125,7 @@ describe("a revoked key", () => {
     ).toBe(200);
     const made = await address(own);
     const delivery = idOf(await send(apiUrl, made.path, "kept"));
-    const beat = await own.client.sendConnectorHeartbeat(own.id);
+    const beat = await own.client.sendConnectorHeartbeat();
     expect(beat.status).toBe(200);
 
     expect((await client.revokeKey(own.keyId)).status).toBe(200);
@@ -136,11 +136,11 @@ describe("a revoked key", () => {
       ["GET", "/connectors", "/connectors"],
       ["GET", "/connectors/{id}", base],
       ["DELETE", "/connectors/{id}", base],
-      ["POST", "/connectors/{id}/heartbeat", `${base}/heartbeat`],
+      ["POST", "/connectors/heartbeat", "/connectors/heartbeat"],
       [
         "POST",
-        "/connectors/{id}/runs",
-        `${base}/runs`,
+        "/connectors/runs",
+        "/connectors/runs",
         { outcome: "succeeded", started_at: when, finished_at: when },
       ],
       ["GET", "/connectors/{id}/runs", `${base}/runs`],
@@ -398,12 +398,12 @@ describe("what the server stamps", () => {
     };
 
     let before = Date.now();
-    const beat = await own.client.sendConnectorHeartbeat(own.id);
+    const beat = await own.client.sendConnectorHeartbeat();
     within(beat.data.last_heartbeat_at, before, Date.now());
 
     // A run's own times say nothing of when it was reported.
     before = Date.now();
-    const run = await own.client.reportConnectorRun(own.id, {
+    const run = await own.client.reportConnectorRun({
       outcome: "succeeded",
       started_at: "2020-01-01T00:00:00Z",
       finished_at: "2020-01-01T00:00:01Z",
@@ -527,7 +527,7 @@ describe("a body field no operation declares", () => {
       {
         label: "POST runs",
         method: "POST",
-        path: `/connectors/${own.id}/runs`,
+        path: "/connectors/runs",
         body: { outcome: "succeeded", started_at: when, finished_at: when },
         stray: "sumary",
         first: 201,

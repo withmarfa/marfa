@@ -63,27 +63,21 @@ pub async fn remove(
     Ok(ok())
 }
 
-pub async fn heartbeat(
-    State(app): State<Arc<App>>,
-    caller: Caller,
-    Path(id): Path<String>,
-    uri: Uri,
-) -> Answer {
+pub async fn heartbeat(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     query::only(&uri, &[])?;
-    let beat = connectors::heartbeat(&app, &caller, id).await?;
+    let beat = connectors::heartbeat(&app, &caller).await?;
     Ok(json_answer(StatusCode::OK, &beat))
 }
 
 pub async fn report_run(
     State(app): State<Arc<App>>,
     caller: Caller,
-    Path(id): Path<String>,
     uri: Uri,
     body: JsonBody,
 ) -> Answer {
     query::only(&uri, &[])?;
     let run = Run::parse(&body.open_object().await?)?;
-    let reported = connectors::report_run(&app, &caller, id, run).await?;
+    let reported = connectors::report_run(&app, &caller, run).await?;
     Ok(json_answer(StatusCode::CREATED, &reported))
 }
 

@@ -88,6 +88,13 @@ pub enum ServerCommand {
     Start(StartArgs),
     /// Stop the server, keeping the service, its data and its settings.
     Stop(DirArgs),
+    /// Stop the server and start it again, so that it reads `marfa.env`
+    /// anew.
+    ///
+    /// It does what `stop` and then `start` do, and prints what each prints.
+    /// It exits as `start` does, so a server that did not come back healthy
+    /// is an error here too.
+    Restart(StartArgs),
     /// Run the server in the foreground. This is what the service runs.
     ///
     /// It starts the `marfa-server` of the same release as this `marfa`, with
@@ -269,6 +276,7 @@ pub fn run(command: ServerCommand, out: &Printer) -> Result<(), CliError> {
         ServerCommand::Upgrade(args) => lifecycle::upgrade(args, out),
         ServerCommand::Start(args) => lifecycle::start(args, out),
         ServerCommand::Stop(args) => lifecycle::stop(args, out),
+        ServerCommand::Restart(args) => lifecycle::restart(args, out),
         ServerCommand::Status(args) => lifecycle::status(args, out),
         ServerCommand::Uninstall(args) => lifecycle::uninstall(args, out),
         ServerCommand::Run(args) => run::run(&args.dir),

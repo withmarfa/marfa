@@ -23,6 +23,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 hex.workspace = true
+base64.workspace = true
 thiserror.workspace = true
 unicode-normalization = "0.1"
 ureq.workspace = true
@@ -39,7 +40,6 @@ sha2.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
-base64.workspace = true
 rusqlite = { workspace = true, features = ["hooks"] }
 tempfile = "3"
 flate2 = "1"

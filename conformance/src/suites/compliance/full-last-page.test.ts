@@ -401,7 +401,7 @@ const seeds: Record<string, () => Promise<Read>> = {
     const now = Date.now();
     for (let i = 0; i < LIMIT; i++) {
       answered(
-        await client.reportConnectorRun(connector.id, {
+        await client.reportConnectorRun({
           outcome: "succeeded",
           started_at: new Date(now - 2_000).toISOString(),
           finished_at: new Date(now - 1_000).toISOString(),

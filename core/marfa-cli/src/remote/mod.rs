@@ -708,6 +708,42 @@ impl Remote {
         self.read_json(self.call(request)?, request)
     }
 
+    /// A listing; with `all`, every page's `data` joined into the first page's answer.
+    pub fn pages(&self, request: &Request, all: bool) -> Result<Value, CliError> {
+        let mut joined = self.json(request)?;
+        if !all {
+            return Ok(joined);
+        }
+        let mut seen: Vec<String> = Vec::new();
+        while let Some(next) = joined
+            .get("next_cursor")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+        {
+            if seen.contains(&next) {
+                return Err(CliError::Invalid(
+                    "the server named a cursor it had named before, so paging stopped rather than go round again".into(),
+                ));
+            }
+            seen.push(next.clone());
+            let mut following = request.clone();
+            following.query.retain(|(name, _)| name != "cursor");
+            let page = self.json(&following.query("cursor", next))?;
+            let (Some(Value::Array(rows)), Some(map)) =
+                (joined.get_mut("data"), page.as_object().cloned())
+            else {
+                return Err(CliError::Invalid(
+                    "this listing has no `data` to join, so --all cannot page it".into(),
+                ));
+            };
+            if let Some(Value::Array(more)) = map.get("data") {
+                rows.extend(more.iter().cloned());
+            }
+            joined["next_cursor"] = map.get("next_cursor").cloned().unwrap_or(Value::Null);
+        }
+        Ok(joined)
+    }
+
     /// `contract` is taken from the header, never the body: a body claiming
     /// the built-for contract must not let a command or a mint go on.
     pub fn root(&self) -> Result<Value, CliError> {
@@ -757,7 +793,7 @@ impl Remote {
         {
             *message = "this operation needs a key or a token, which --socket does not carry; run it without --socket. \
                         Item properties, edges, tags, search, counts, events and exports need a key. \
-                        `items summaries`, `items trash`, the `blobs` commands, and `items bulk-action job` \
+                        `items summaries`, `items bin`, the `blobs` commands, and `items bulk-action job` \
                         and `items bulk-action cancel` work through --socket without one"
                 .into();
         }

@@ -209,13 +209,10 @@ const REFUSES_LOCAL: &[(&str, &str)] = &[
     ),
     ("POST /connectors", "a connector registers under a key"),
     (
-        "POST /connectors/{id}/heartbeat",
+        "POST /connectors/heartbeat",
         "the connector's own key alone",
     ),
-    (
-        "POST /connectors/{id}/runs",
-        "the connector's own key alone",
-    ),
+    ("POST /connectors/runs", "the connector's own key alone"),
     (
         "POST /connectors/{id}/hold",
         "the connector's own key alone",

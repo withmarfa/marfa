@@ -602,7 +602,7 @@ describe("a body without a field the door requires", () => {
     const doors: [string, string, string][] = [
       ["POST", "/keys", "/keys"],
       ["POST", "/connectors", "/connectors"],
-      ["POST", "/connectors/{id}/runs", `/connectors/${UNKNOWN}/runs`],
+      ["POST", "/connectors/runs", "/connectors/runs"],
       [
         "POST",
         "/connectors/{id}/deliveries/handled",

@@ -18,7 +18,7 @@ pub enum ViewsCommand {
     Create(CreateArgs),
     /// Change a view's settings, each named one replaced whole.
     Change(ChangeArgs),
-    /// Delete a view at once, with no trash.
+    /// Delete a view at once, with no bin.
     Delete {
         /// The view's `system.view` id.
         id: String,
@@ -172,11 +172,21 @@ pub fn run(command: ViewsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         ViewsCommand::Items { id, page } => items_request(id, page),
         ViewsCommand::Get { id } => get_request(id),
     };
-    let answer = remote.json(&request)?;
+    let all = matches!(&command, ViewsCommand::Items { page, .. } if page.all);
+    let answer = remote.pages(&request, all)?;
     if let ViewsCommand::Get { id } = &command
         && answer.pointer("/item/type").and_then(Value::as_str) != Some("system.view")
     {
         return Err(CliError::Invalid(format!("{id} is not a view")));
     }
-    out.value(&answer)
+    match &command {
+        ViewsCommand::Create(_) => {
+            out.report(&answer, || super::said::item("created view", &answer))
+        }
+        ViewsCommand::Change(_) => {
+            out.report(&answer, || super::said::item("changed view", &answer))
+        }
+        ViewsCommand::Delete { id, .. } => out.report(&answer, || format!("removed view {id}")),
+        _ => out.value(&answer),
+    }
 }

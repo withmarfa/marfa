@@ -1153,20 +1153,21 @@ export class MarfaClient {
     });
   }
 
-  async sendConnectorHeartbeat(
-    id: string,
-  ): Promise<ApiResponse<{ last_heartbeat_at: string }>> {
+  /** `POST /connectors/heartbeat`: the key's own registration is the connector. */
+  async sendConnectorHeartbeat(): Promise<
+    ApiResponse<{ last_heartbeat_at: string }>
+  > {
     return this.request<{ last_heartbeat_at: string }>(
-      `/connectors/${id}/heartbeat`,
+      "/connectors/heartbeat",
       { method: "POST" },
     );
   }
 
+  /** `POST /connectors/runs`: the key's own registration is the connector. */
   async reportConnectorRun(
-    id: string,
     input: ConnectorRunInput,
   ): Promise<ApiResponse<ConnectorRun>> {
-    return this.request<ConnectorRun>(`/connectors/${id}/runs`, {
+    return this.request<ConnectorRun>("/connectors/runs", {
       method: "POST",
       body: input as unknown as Record<string, unknown>,
     });

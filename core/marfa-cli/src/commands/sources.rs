@@ -86,8 +86,30 @@ pub fn request(command: &SourcesCommand) -> Request {
     }
 }
 
+/// What the source is now shown as.
+fn described(answer: &Value) -> String {
+    let text = |name: &str| answer.get(name).and_then(Value::as_str).unwrap_or("");
+    match (text("name"), text("mark")) {
+        (name, "") => format!("named \"{}\"", crate::output::printable(name)),
+        (name, mark) => format!(
+            "named \"{}\", marked {}",
+            crate::output::printable(name),
+            crate::output::printable(mark)
+        ),
+    }
+}
+
 pub fn run(command: SourcesCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    out.value(&remote.json(&request(&command))?)
+    let answer = remote.json(&request(&command))?;
+    match &command {
+        SourcesCommand::Set { source, .. } => out.report(&answer, || {
+            format!("updated the source {source}: {}", described(&answer))
+        }),
+        SourcesCommand::Clear { source, .. } => out.report(&answer, || {
+            format!("updated the source {source}: {}", described(&answer))
+        }),
+        _ => out.value(&answer),
+    }
 }
 
 #[cfg(test)]

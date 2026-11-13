@@ -419,7 +419,7 @@ fn tag_of(cursors: &Secret, scope: &str, key: &Bound) -> Result<String> {
         Bound::Real(number) => format!("r{}", number.to_bits()),
         Bound::Text(text) => format!("t{text}"),
     };
-    cursors.keyed(scope, &text)
+    cursors.key_tag(scope, &text)
 }
 
 /// A cursor holds the last row's id and its sort key, or for a long text key the key's tag.

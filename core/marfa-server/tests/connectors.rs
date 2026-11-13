@@ -123,7 +123,7 @@ impl Instance {
             "started_at": "2026-01-01T00:00:00Z",
             "finished_at": "2026-01-01T00:00:01Z",
         });
-        self.landed(&connector, Method::POST, "/connectors/{id}/runs", run)
+        self.landed(&connector, Method::POST, "/connectors/runs", run)
             .await;
         let state = json!({ "process": PROCESS, "state": { "cursor": 1 } });
         self.landed(&connector, Method::PUT, "/connectors/{id}/state", state)
@@ -139,13 +139,8 @@ impl Instance {
             agreement,
         )
         .await;
-        self.landed(
-            &connector,
-            Method::POST,
-            "/connectors/{id}/heartbeat",
-            json!({}),
-        )
-        .await;
+        self.landed(&connector, Method::POST, "/connectors/heartbeat", json!({}))
+            .await;
         connector
     }
 
@@ -411,7 +406,7 @@ async fn a_run_time_is_strict_rfc_3339() {
     ] {
         let run = json!({ "outcome": "failed", "started_at": started, "finished_at": finished });
         let refused = instance
-            .call(&connector, Method::POST, "/connectors/{id}/runs", Some(run))
+            .call(&connector, Method::POST, "/connectors/runs", Some(run))
             .await;
         assert_eq!(
             refused.status,
@@ -427,7 +422,7 @@ async fn a_run_time_is_strict_rfc_3339() {
         "finished_at": "2026-01-01T00:00:00.5Z",
     });
     let kept = instance
-        .call(&connector, Method::POST, "/connectors/{id}/runs", Some(run))
+        .call(&connector, Method::POST, "/connectors/runs", Some(run))
         .await;
     assert_eq!(kept.status, StatusCode::CREATED, "{}", kept.body);
     assert_eq!(kept.body["started_at"], "2026-01-01T00:00:00.000Z");

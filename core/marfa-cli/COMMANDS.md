@@ -15,7 +15,7 @@ Every command accepts these.
 | `--key <KEY>` | A key or a token for that server. Prefer MARFA_API_KEY or the keychain: a command line is readable by other users of the machine and stays in shell history. Falls back to MARFA_API_KEY, then to the keychain: the file MARFA_KEYCHAIN names, where it names one, unless the keychain is off. MARFA_PROFILE is not read beside it. |
 | `--no-keychain` | Treat the keychain as absent: read nothing from it and write nothing to it, so the server and the key must come from --url, --key, MARFA_API_URL or MARFA_API_KEY, or a profile with a key_command. A command that needs to keep something refuses. MARFA_NO_KEYCHAIN=1 does the same. |
 | `--allow-http` | Send a credential over plain http to a host that is not this machine without the warning, for a network that is private. MARFA_ALLOW_HTTP=1 does the same. |
-| `--socket <PATH>` | Use private local process authority through this Unix socket, without a keychain. Item properties, edges, tags, search, counts, events and exports still need a key. `items summaries`, `items trash`, the `blobs` commands and bulk-action job status and cancel do not. |
+| `--socket <PATH>` | Use private local process authority through this Unix socket, without a keychain. Item properties, edges, tags, search, counts, events and exports still need a key. `items summaries`, `items bin`, the `blobs` commands and bulk-action job status and cancel do not. |
 | `--json` | Print the answer as JSON. A refusal is the last line of stderr, one JSON object, after any plain lines such as a warning or the write line. |
 
 `marfa` itself also accepts these.
@@ -102,7 +102,7 @@ The instance draws no owner console, so each task an owner has is a command. Mos
 | Read the audit log | `marfa audit` |
 | List and run the housekeeping jobs | `marfa housekeeping list`, `marfa housekeeping run` |
 | Manage blob stores and copies | `marfa blobs stores`, `marfa blobs copies`, `marfa blobs delete-copy`, `marfa blobs orphans` |
-| Empty and restore the trash | `marfa items trash list`, `marfa items trash restore`, `marfa items trash purge`, `marfa items trash empty` |
+| Empty and restore the bin | `marfa items bin list`, `marfa items bin restore`, `marfa items bin purge`, `marfa items bin empty` |
 | Export and restore the instance | `marfa export`, `marfa restore` |
 
 ## status
@@ -518,6 +518,7 @@ marfa items list [OPTIONS]
 | `--include <NAME>` | Extra to hydrate onto each item: `edges`, `metadata`. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ### marfa items summaries
 
@@ -533,21 +534,22 @@ marfa items summaries [OPTIONS]
 | `--q <Q>` | Text to find in item names, ignoring case. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
-### marfa items trash
+### marfa items bin
 
-Manage item trash through direct local authority. Use `--socket`.
+Manage the bin through direct local authority. Use `--socket`.
 
 ```text
-marfa items trash [OPTIONS] <COMMAND>
+marfa items bin [OPTIONS] <COMMAND>
 ```
 
-### marfa items trash list
+### marfa items bin list
 
-List trash summaries, automatic deletion eligibility, and retention, one page at a time.
+List what the bin holds, when each item is eligible for automatic deletion, and the retention, one page at a time.
 
 ```text
-marfa items trash list [OPTIONS]
+marfa items bin list [OPTIONS]
 ```
 
 | Option | Description |
@@ -556,13 +558,14 @@ marfa items trash list [OPTIONS]
 | `--q <Q>` | Match item names, ignoring case. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
-### marfa items trash move
+### marfa items bin move
 
-Move the item and its cascading children into the trash.
+Move the item and its cascading children into the bin.
 
 ```text
-marfa items trash move [OPTIONS] --version <VERSION> <ID>
+marfa items bin move [OPTIONS] --version <VERSION> <ID>
 ```
 
 | Argument | Description |
@@ -573,12 +576,12 @@ marfa items trash move [OPTIONS] --version <VERSION> <ID>
 | --- | --- |
 | `--version <VERSION>` | The item version from the summary listing. |
 
-### marfa items trash restore
+### marfa items bin restore
 
-Restore the item and the children its trash took.
+Take the item and the children its move to the bin took out of it.
 
 ```text
-marfa items trash restore [OPTIONS] --version <VERSION> <ID>
+marfa items bin restore [OPTIONS] --version <VERSION> <ID>
 ```
 
 | Argument | Description |
@@ -589,12 +592,12 @@ marfa items trash restore [OPTIONS] --version <VERSION> <ID>
 | --- | --- |
 | `--version <VERSION>` | The item version from the summary listing. |
 
-### marfa items trash purge
+### marfa items bin purge
 
-Permanently delete one item that is still in the trash.
+Permanently delete one item that is still in the bin.
 
 ```text
-marfa items trash purge [OPTIONS] --version <VERSION> <ID>
+marfa items bin purge [OPTIONS] --version <VERSION> <ID>
 ```
 
 | Argument | Description |
@@ -605,17 +608,16 @@ marfa items trash purge [OPTIONS] --version <VERSION> <ID>
 | --- | --- |
 | `--version <VERSION>` | The item version from the summary listing. |
 
-### marfa items trash empty
+### marfa items bin empty
 
-Permanently delete up to 200 trash items. Continue with the returned cursor unless an outcome is unknown; read the trash again before retrying.
+Permanently delete everything in the bin, 200 at a time, and say how many have gone as it does. It stops where a deletion could not be confirmed; run it again to carry on, as an interrupted run is safe to repeat. Items that changed meanwhile stay in the bin, and it says how many. If a batch fails, the error says how many had gone, and with --json carries the count as "purged".
 
 ```text
-marfa items trash empty [OPTIONS] --confirm <CONFIRM>
+marfa items bin empty [OPTIONS] --confirm <CONFIRM>
 ```
 
 | Option | Description |
 | --- | --- |
-| `--cursor <CURSOR>` | A cursor from the previous batch. Absent starts with the first batch. |
 | `--confirm <CONFIRM>` | Confirm permanent deletion with `PURGE`. One of `PURGE`. |
 
 ### marfa items get
@@ -646,7 +648,7 @@ marfa items create [OPTIONS] --type <TYPE>
 | --- | --- |
 | `--type <TYPE>` | The type the item is. |
 | `--properties <JSON>` | The properties, as a JSON object. |
-| `--prop <KEY=VALUE>` | One property as key=value, repeatable. The value is a string. |
+| `--prop <KEY=VALUE>` | One property as key=value, repeatable. The value is read as the field's kind, which the CLI looks up on the server: a whole number, a number, true or false, or JSON for an object or a list. A field the type does not name is sent as text. |
 | `--tag <TAG>` | A tag, repeatable. |
 | `--tier <TIER>` | The tier to write it at; the server's default is the library. One of `library`, `feed`. |
 | `--state <STATE>` | The state to create it in. One of `active`, `archived`, `trashed`, `revoked`. |
@@ -675,7 +677,7 @@ marfa items update [OPTIONS] --version <VERSION> <ID>
 | --- | --- |
 | `--version <VERSION>` | The version the edit was based on. Required: the server refuses an update that names no version. |
 | `--properties <JSON>` | The properties, as a JSON object. |
-| `--prop <KEY=VALUE>` | One property as key=value, repeatable. The value is a string. |
+| `--prop <KEY=VALUE>` | One property as key=value, repeatable. The value is read as the field's kind, which the CLI looks up on the server: a whole number, a number, true or false, or JSON for an object or a list. A field the type does not name is sent as text. |
 | `--replace` | Replace the properties whole instead of merging the ones given. |
 | `--clear-property <NAME>` | A property to remove from the item, leaving every other as it is. Repeat it to remove more than one. |
 | `--type <TYPE>` | Move the item to this type. |
@@ -740,7 +742,7 @@ marfa items transition [OPTIONS] --state <STATE> <ID>
 
 ### marfa items purge
 
-Destroy a trashed item irrecoverably. Needs `items.purge`.
+Destroy an item in the bin irrecoverably. Needs `items.purge`.
 
 ```text
 marfa items purge [OPTIONS] <ID>
@@ -770,6 +772,7 @@ marfa items versions [OPTIONS] <ID>
 | --- | --- |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ### marfa items tag
 
@@ -824,6 +827,7 @@ marfa items edges [OPTIONS] <ID>
 | `--type <TYPE>` | Only edges of this type. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ### marfa items backrefs
 
@@ -842,6 +846,7 @@ marfa items backrefs [OPTIONS] <ID>
 | `--type <TYPE>` | Only edges of this type. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ### marfa items add
 
@@ -1018,7 +1023,7 @@ marfa items bulk-action transition [OPTIONS] --to <STATE>
 
 ### marfa items bulk-action purge
 
-Destroy every matching item that is in the trash when the job reaches it; any other match is left as it is and reported. Match the bin with `--state trashed`. Needs `items.purge` and `--confirm PURGE`.
+Destroy every matching item that is in the bin when the job reaches it; any other match is left as it is and reported. Match the bin with `--state trashed`. Needs `items.purge` and `--confirm PURGE`.
 
 ```text
 marfa items bulk-action purge [OPTIONS]
@@ -1181,6 +1186,7 @@ marfa edges list [OPTIONS]
 | `--updated-before <TIME>` | Exclusive upper bound on the modification time. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ### marfa edges get
 
@@ -1199,13 +1205,13 @@ marfa edges get [OPTIONS] <ID>
 Link two items with an edge.
 
 ```text
-marfa edges create [OPTIONS] --source <ID> --target <ID> --type <TYPE>
+marfa edges create [OPTIONS] --from <ID> --to <ID> --type <TYPE>
 ```
 
 | Option | Description |
 | --- | --- |
-| `--source <ID>` | The item the edge leaves. |
-| `--target <ID>` | The item the edge arrives at. |
+| `--from <ID>` | The item the edge leaves. |
+| `--to <ID>` | The item the edge arrives at. |
 | `--type <TYPE>` | The edge type. |
 | `--properties <JSON>` | The edge's properties, as a JSON object. |
 | `--id <ID>` | The id to mint it under. Omitted, the server mints one. |
@@ -1226,8 +1232,8 @@ marfa edges update [OPTIONS] --version <VERSION> <ID>
 | Option | Description |
 | --- | --- |
 | `--properties <JSON>` | The properties, as a JSON object. Whole values. |
-| `--source <ID>` | Move the edge to this source, where each target holds one of its type. |
-| `--target <ID>` | Move the edge to this target, where each source holds one of its type. |
+| `--from <ID>` | Move the edge to this source, where each target holds one of its type. |
+| `--to <ID>` | Move the edge to this target, where each source holds one of its type. |
 | `--version <VERSION>` | The version the edit was based on. |
 | `--idempotency-key <KEY>` | Sent as `Idempotency-Key`, so a repeat is answered from the record rather than written twice. |
 
@@ -1497,6 +1503,7 @@ marfa search [OPTIONS] <QUERY>
 | `--include <NAME>` | Extra to include: `system` also returns `system.*` items, which are left out by default. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ## metadata
 
@@ -1668,6 +1675,7 @@ marfa rows list [OPTIONS] <ITEM> <TABLE>
 | `--direction <DIRECTION>` | `asc` or `desc`; the server's default is `asc`. One of `asc`, `desc`. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ### marfa rows get
 
@@ -1792,6 +1800,7 @@ marfa rows batches [OPTIONS] <ITEM> <TABLE>
 | --- | --- |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ### marfa rows undo
 
@@ -2195,7 +2204,7 @@ Restore an archive with local authority.
 
 Preserves item and edge IDs, created_at and updated_at dates, current versions, tags, extensions, and the item's earlier versions carried in the archive. Existing items and their history remain unchanged.
 
-The archive contains only data the exporting credential could read, including history allowed by each snapshot's type permissions and blobs that credential could read. It holds no sign-in, keys, apps, or webhooks, so set those up again after a restore; the command says so. Settings, type icons, source names, and connector state come back only where this instance has none. Trashed items are absent unless explicitly exported, for example with `export --format archive --state any`.
+The archive contains only data the exporting credential could read, including history allowed by each snapshot's type permissions and blobs that credential could read. It holds no sign-in, keys, apps, or webhooks, so set those up again after a restore; the command says so. Settings, type icons, source names, and connector state come back only where this instance has none. Items in the bin are absent unless explicitly exported, for example with `export --format archive --state any`.
 
 Until the first public release, restore only with the server build that wrote the archive. Archive format 0 does not promise compatibility between builds.
 
@@ -2211,7 +2220,7 @@ marfa restore [OPTIONS] <FILE>
 
 ## backups
 
-Backups the server puts in its backup folder or object store on a schedule, and takes and restores when asked. Each holds every item, edge and setting, the trash included, and no file, which the folder or object store already holds a copy of.
+Backups the server puts in its backup folder or object store on a schedule, and takes and restores when asked. Each holds every item, edge and setting, the bin included, and no file, which the folder or object store already holds a copy of.
 
 ### marfa backups
 
@@ -2317,7 +2326,7 @@ marfa views change [OPTIONS] --version <VERSION> <ID>
 
 ### marfa views delete
 
-Delete a view at once, with no trash.
+Delete a view at once, with no bin.
 
 ```text
 marfa views delete [OPTIONS] <ID>
@@ -2359,6 +2368,7 @@ marfa views items [OPTIONS] <ID>
 | --- | --- |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ## webhooks
 
@@ -2489,6 +2499,7 @@ marfa audit [OPTIONS]
 | `--created-before <TIME>` | Exclusive upper bound on the entry's time, RFC 3339. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ## events
 
@@ -2604,27 +2615,19 @@ marfa connectors delete [OPTIONS] <ID>
 
 ### marfa connectors heartbeat
 
-Say the connector is alive. Its own key only.
+Say the connector is alive. The key this runs under is the connector, so no id is given.
 
 ```text
-marfa connectors heartbeat [OPTIONS] <ID>
+marfa connectors heartbeat [OPTIONS]
 ```
-
-| Argument | Description |
-| --- | --- |
-| `<ID>` | The connector id. |
 
 ### marfa connectors report
 
-Report one run of the connector. Its own key only.
+Report one run of the connector the key this runs under registered, so no id is given.
 
 ```text
-marfa connectors report [OPTIONS] --outcome <OUTCOME> --started-at <TIME> --finished-at <TIME> <ID>
+marfa connectors report [OPTIONS] --outcome <OUTCOME> --started-at <TIME> --finished-at <TIME>
 ```
-
-| Argument | Description |
-| --- | --- |
-| `<ID>` | The connector id. |
 
 | Option | Description |
 | --- | --- |
@@ -2649,6 +2652,8 @@ marfa connectors runs [OPTIONS] <ID>
 | Option | Description |
 | --- | --- |
 | `--limit <LIMIT>` | How many at most. |
+| `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ### marfa connectors endpoints
 
@@ -2726,6 +2731,7 @@ marfa connectors deliveries list [OPTIONS] <ID>
 | `--endpoint <ENDPOINT>` | Only what this endpoint received. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ### marfa connectors deliveries body
 
@@ -2900,6 +2906,7 @@ marfa connectors agreements list [OPTIONS] <ID>
 | `--waiting <WAITING>` | Only the ones waiting to be carried to the vendor, or only the others. One of `true`, `false`. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 ## operations
 
@@ -3647,6 +3654,7 @@ marfa device rows list [OPTIONS] <ITEM> <TABLE>
 | `--direction <DIRECTION>` | `asc` or `desc`; the server's default is `asc`. One of `asc`, `desc`. |
 | `--limit <LIMIT>` | How many at most. |
 | `--cursor <CURSOR>` | The cursor the previous page answered with. |
+| `--all` | Read every page, one after another, and print them as one answer. `--limit` is then the size of each page. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -4045,13 +4053,13 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 Link two items, and queue the edge.
 
 ```text
-marfa device edges create [OPTIONS] --source <ID> --target <ID> --type <TYPE>
+marfa device edges create [OPTIONS] --from <ID> --to <ID> --type <TYPE>
 ```
 
 | Option | Description |
 | --- | --- |
-| `--source <ID>` | The item the edge starts from. |
-| `--target <ID>` | The item the edge points at. |
+| `--from <ID>` | The item the edge starts from. |
+| `--to <ID>` | The item the edge points at. |
 | `--type <TYPE>` | The edge type. |
 | `--properties <JSON>` | The edge's properties, as a JSON object. Default: `{}`. |
 | `--id <ID>` | The id to mint it under. Omitted, the device mints one. |
@@ -4063,13 +4071,13 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 Say whether `edges create` would refuse an edge now, from what the copy holds, and queue nothing. The server still judges an edge the copy finds nothing against.
 
 ```text
-marfa device edges check [OPTIONS] --source <ID> --target <ID> --type <TYPE>
+marfa device edges check [OPTIONS] --from <ID> --to <ID> --type <TYPE>
 ```
 
 | Option | Description |
 | --- | --- |
-| `--source <ID>` | The item the edge starts from. |
-| `--target <ID>` | The item the edge points at. |
+| `--from <ID>` | The item the edge starts from. |
+| `--to <ID>` | The item the edge points at. |
 | `--type <TYPE>` | The edge type. |
 | `--properties <JSON>` | The edge's properties, as a JSON object. Default: `{}`. |
 | `--id <ID>` | The id it would be minted under. |
@@ -4081,7 +4089,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 Say whether `edges update` would refuse moving one end of an edge now, from what the copy holds, and queue nothing. A move onto the end the edge holds already changes nothing. The server still judges a move the copy finds nothing against.
 
 ```text
-marfa device edges check-move [OPTIONS] <--source <ID>|--target <ID>> <ID>
+marfa device edges check-move [OPTIONS] <--from <ID>|--to <ID>> <ID>
 ```
 
 | Argument | Description |
@@ -4090,8 +4098,8 @@ marfa device edges check-move [OPTIONS] <--source <ID>|--target <ID>> <ID>
 
 | Option | Description |
 | --- | --- |
-| `--source <ID>` | Move the edge to this source. |
-| `--target <ID>` | Move the edge to this target. |
+| `--from <ID>` | Move the edge to this source. |
+| `--to <ID>` | Move the edge to this target. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -4111,8 +4119,8 @@ marfa device edges update [OPTIONS] <ID>
 | --- | --- |
 | `--properties <JSON>` | The properties to write, as a JSON object. Whole values. Default: `{}`. |
 | `--version <VERSION>` | The version the edit was based on. Required, as on an item. |
-| `--source <ID>` | Move the edge to this source, where each target holds one of its type. |
-| `--target <ID>` | Move the edge to this target, where each source holds one of its type. |
+| `--from <ID>` | Move the edge to this source, where each target holds one of its type. |
+| `--to <ID>` | Move the edge to this target, where each source holds one of its type. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
@@ -4778,6 +4786,21 @@ marfa server stop [OPTIONS]
 | Option | Description |
 | --- | --- |
 | `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
+
+### marfa server restart
+
+Stop the server and start it again, so that it reads `marfa.env` anew.
+
+It does what `stop` and then `start` do, and prints what each prints. It exits as `start` does, so a server that did not come back healthy is an error here too.
+
+```text
+marfa server restart [OPTIONS]
+```
+
+| Option | Description |
+| --- | --- |
+| `--dir <PATH>` | The folder the install lives in. The default is `marfa-server` in your home directory, and `/var/lib/marfa-server` for root on Linux. |
+| `--wait <SECONDS>` | How long to wait for Docker's engine and then the server, in seconds. Default: `120`. |
 
 ### marfa server run
 

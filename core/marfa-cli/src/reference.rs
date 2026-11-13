@@ -149,12 +149,12 @@ const OWNER_TASKS: &[(&str, &[&str])] = &[
         ],
     ),
     (
-        "Empty and restore the trash",
+        "Empty and restore the bin",
         &[
-            "items trash list",
-            "items trash restore",
-            "items trash purge",
-            "items trash empty",
+            "items bin list",
+            "items bin restore",
+            "items bin purge",
+            "items bin empty",
         ],
     ),
     ("Export and restore the instance", &["export", "restore"]),

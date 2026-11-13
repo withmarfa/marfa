@@ -510,9 +510,9 @@ If a write leaves out a property its type requires, or names one the type declar
 
 ### `items/property-number-exact`
 
-If a write to `POST /items`, `PATCH /items/{id}`, the `patch` of `POST /items/bulk-actions`, the `defaults.properties` of `POST /folders` or `PATCH /folders/{id}`, the `properties` of `POST /edges` or `PATCH /edges/{id}`, or the data of `PUT /items/{id}/extensions/{namespace}` names a value, at any depth, that is a whole number written with digits other than the shortest decimal that reads back as the same IEEE 754 double (`items/property-number-kept`), then the server MUST answer `400 invalid_properties` with `details.errors` naming the first such value in `field`, as `list.1`, and no other, with the message `Must be a whole number that Marfa serves back with the same digits, not <digits>, which it serves as <served>. Send it as a string.`, leaving out `, which it serves as <served>` where the float is infinite.
+If a write to `POST /items`, `PATCH /items/{id}`, the `patch` of `POST /items/bulk-actions`, the `defaults.properties` of `POST /folders` or `PATCH /folders/{id}`, the `properties` of `POST /edges` or `PATCH /edges/{id}`, or the data of `PUT /items/{id}/extensions/{namespace}` names a value, at any depth, that is a whole number written with digits other than the shortest decimal that reads back as the same IEEE 754 double (`items/property-number-kept`), then the server MUST answer `400 invalid_properties` with `details.errors` naming the first such value in `field`, as `list.1`, and no other, with the message `Must be a whole number that Marfa serves back with the same digits, not <digits>, which it serves as <served>. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string.`, leaving out `, which it serves as <served>` where the float is infinite.
 
-**Reason:** the server holds a number as an IEEE 754 double, the number a JSON client in Swift or JavaScript holds, and serves it in those shortest digits, so `1500000000000000001` would be stored and served back as `1500000000000000000`, and `1152921504606846976` (2^60) as `1152921504606847000`, with nothing said. The same holds for `-0`, which the float keeps as negative zero and the server serves as `0`. An app that compares 64-bit integers reads either as a different number. A caller who needs the digits sends a string. A device refuses the same numbers with the same message (`device/number-exact`).
+**Reason:** the server holds a number as an IEEE 754 double, the number a JSON client in Swift or JavaScript holds, and serves it in those shortest digits, so `1500000000000000001` would be stored and served back as `1500000000000000000`, and `1152921504606846976` (2^60) as `1152921504606847000`, with nothing said. The same holds for `-0`, which the float keeps as negative zero and the server serves as `0`. An app that compares 64-bit integers reads either as a different number. A caller who needs the digits sends a string to a property that takes text; an integer field holds only whole numbers up to 2^53 - 1 and refuses a string, and a number field holds a float. A device refuses the same numbers with the same message (`device/number-exact`).
 
 **Tests:** `compliance/exact-integers.test.ts › refuses %s in a property of a create, nested at any depth, and stores nothing`, `› refuses %s in an update, a bulk entry, a bulk action's patch and a folder's defaults`, `› refuses %s in the properties of an edge, a bulk entry of edges and the data of an extension`, `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`.
 
@@ -2670,9 +2670,17 @@ When the private local command posts to `/trash/empty`, the server MUST attempt 
 
 ### `items/owner-trash-cli`
 
-When a caller runs `marfa --socket PATH items trash list`, `move`, `restore`, `purge` or `empty`, the CLI MUST use the corresponding owner summary operation through private local authority.
+When a caller runs `marfa --socket PATH items bin list`, `move`, `restore`, `purge` or `empty`, the CLI MUST use the corresponding owner summary operation through private local authority.
 
-**Tests:** `cli/item-summaries.test.ts › manages trash through local authority with summary responses`, `device/contract.test.ts › holds every trash command to the contract through its private socket`.
+**Tests:** `cli/item-summaries.test.ts › manages trash through local authority with summary responses`, `device/contract.test.ts › holds every bin command to the contract through its private socket`.
+
+### `items/owner-empty-bin-cli`
+
+When a caller runs `marfa --socket PATH items bin empty --confirm PURGE`, the CLI MUST send each batch's `next_cursor` back to `POST /trash/empty` until the server names none, print how many items have been deleted so far after each batch and the total at the end, and exit `0` when no deletion was left unconfirmed.
+
+**Reason:** the server deletes at most 200 items at a time, so a person with a bigger bin would otherwise copy a cursor between runs.
+
+**Tests:** `cli/item-summaries.test.ts › pages the bin and empties it by itself, saying how many have gone`.
 
 ### `items/owner-trash-eligibility`
 
@@ -2688,7 +2696,7 @@ If an owner trash write has an unresolved transaction outcome, then the server M
 
 **Reason:** An unavailable commit witness cannot prove rollback. A single-item action answers 500; an empty-trash batch includes the uncertain failure, stops processing and returns no continuation cursor. The caller reads current state before a manual retry.
 
-**Tests:** `cli/item-summaries.test.ts › stops an uncertain trash batch and exposes its outcome through the real socket CLI`.
+**Tests:** `cli/item-summaries.test.ts › stops an uncertain bin emptying and exposes its outcome through the real socket CLI`.
 
 ## Private local authority
 

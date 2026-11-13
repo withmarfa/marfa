@@ -42,6 +42,10 @@ pub fn run(command: EdgeTypesCommand, remote: &Remote, out: &Printer) -> Result<
         EdgeTypesCommand::Delete { id, .. } => {
             out.report(&answer, || format!("removed edge type {id}"))
         }
+        EdgeTypesCommand::Register(_) => out.report(&answer, || {
+            let definition = answer.get("edge_type").unwrap_or(&answer);
+            format!("registered edge type {}", super::said::called(definition))
+        }),
         _ => out.value(&answer),
     }
 }

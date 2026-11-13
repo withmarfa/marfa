@@ -47,5 +47,5 @@ pub fn request(args: &AuditArgs) -> Request {
 }
 
 pub fn run(args: AuditArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    out.value(&remote.json(&request(&args))?)
+    out.value(&remote.pages(&request(&args), args.page.all)?)
 }

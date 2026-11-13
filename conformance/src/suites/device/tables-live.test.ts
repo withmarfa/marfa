@@ -1225,6 +1225,11 @@ describe("reading a table on a device", () => {
         expect(page.held).toBe(true);
         walked.push(...page.data);
         cursor = page.next_cursor;
+        if (cursor !== null) {
+          expect(cursor, JSON.stringify(query)).toMatch(
+            /^[A-Za-z][A-Za-z0-9_-]{0,99}$/,
+          );
+        }
         pages += 1;
       } while (cursor !== null && pages < 50);
       const expected: Page["data"] = [];

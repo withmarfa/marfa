@@ -1163,7 +1163,7 @@ mod tests {
             assert_eq!(
                 document.unreadable.as_deref(),
                 Some(
-                    "n: Must be a whole number that Marfa serves back with the same digits, not -0, which it serves as 0. Send it as a string."
+                    "n: Must be a whole number that Marfa serves back with the same digits, not -0, which it serves as 0. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string."
                 ),
                 "{spelling} was kept in a file's frontmatter"
             );

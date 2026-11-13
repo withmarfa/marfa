@@ -706,7 +706,7 @@ describe("a working copy checks the fields its catalog holds", () => {
             expect.objectContaining({
               path: "digits.md",
               reason: expect.stringContaining(
-                `big: Must be a whole number that Marfa serves back with the same digits, not ${digits}, which it serves as ${served}. Send it as a string.`,
+                `big: Must be a whole number that Marfa serves back with the same digits, not ${digits}, which it serves as ${served}. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string.`,
               ),
             }),
           ]),

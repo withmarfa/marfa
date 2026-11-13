@@ -188,7 +188,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("a.b.0: Must be a whole number that Marfa serves back with the same digits, not -0, which it serves as 0. Send it as a string."),
+                .contains("a.b.0: Must be a whole number that Marfa serves back with the same digits, not -0, which it serves as 0. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string."),
             "{error}"
         );
         assert!(item_properties(r#"{"a": 0, "b": -0.0, "c": -1}"#).is_ok());

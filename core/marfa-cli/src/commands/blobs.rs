@@ -106,7 +106,24 @@ pub fn run(command: BlobsCommand, remote: &Remote, out: &Printer) -> Result<(), 
     match command {
         BlobsCommand::Upload { file, mime_type } => {
             let mime_type = mime_type_for(&file, mime_type.as_deref());
-            out.value(&remote.json(&upload_request(&file, &mime_type))?)
+            let answer = remote.json(&upload_request(&file, &mime_type))?;
+            out.report(&answer, || {
+                let text = |name: &str| {
+                    answer
+                        .get(name)
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("")
+                };
+                format!(
+                    "stored {} ({} bytes, {})",
+                    text("hash"),
+                    answer
+                        .get("size_bytes")
+                        .and_then(serde_json::Value::as_u64)
+                        .unwrap_or(0),
+                    text("mime_type")
+                )
+            })
         }
         BlobsCommand::Download { hash, output } => {
             let (content_type, mut reader) = remote.stream(&download_request(&hash))?;
@@ -124,7 +141,10 @@ pub fn run(command: BlobsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         BlobsCommand::Stores => out.value(&remote.json(&stores_request())?),
         BlobsCommand::Copies { hash } => out.value(&remote.json(&copies_request(&hash))?),
         BlobsCommand::DeleteCopy { hash, store } => {
-            out.value(&remote.json(&delete_copy_request(&hash, &store))?)
+            let answer = remote.json(&delete_copy_request(&hash, &store))?;
+            out.report(&answer, || {
+                format!("deleted the copy of {hash} in the store {store}")
+            })
         }
         BlobsCommand::Orphans => out.value(&remote.json(&orphans_request())?),
     }

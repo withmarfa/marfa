@@ -193,7 +193,6 @@ it("shares private-socket attention, keeps known concerns, and refuses every oth
   await failing.as.json([
     "connectors",
     "report",
-    failing.id,
     "--started-at",
     new Date(Date.now() - 60_000).toISOString(),
     "--finished-at",

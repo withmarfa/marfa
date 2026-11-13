@@ -4,6 +4,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::AtomicBool;
 use std::time::{Duration, Instant};
 
+use base64::Engine;
+use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use marfa_rules::catalog::Catalog;
 use marfa_rules::filter::{Expression, Term, parse_rows};
 use marfa_rules::query::property_sort_expression;
@@ -12,6 +14,7 @@ use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::Serialize;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
+use uuid::Uuid;
 
 use crate::error::CoreError;
 use crate::http::Http;
@@ -1403,7 +1406,15 @@ impl Key {
     }
 }
 
-fn scope(item: &str, table: &str, asked: &RowsAsked, key: &Key, descending: bool) -> String {
+const SCOPE_BYTES: usize = 8;
+
+fn scope(
+    item: &str,
+    table: &str,
+    asked: &RowsAsked,
+    key: &Key,
+    descending: bool,
+) -> [u8; SCOPE_BYTES] {
     let named = json!([
         item,
         table,
@@ -1412,25 +1423,65 @@ fn scope(item: &str, table: &str, asked: &RowsAsked, key: &Key, descending: bool
         descending,
         key.kind()
     ]);
-    hex::encode(&Sha256::digest(named.to_string().as_bytes())[..16])
+    let mut scope = [0; SCOPE_BYTES];
+    scope.copy_from_slice(&Sha256::digest(named.to_string().as_bytes())[..SCOPE_BYTES]);
+    scope
 }
 
-fn cursor_of(scope: &str, key: &Value, id: &str) -> String {
-    hex::encode(json!([scope, key, id]).to_string())
-}
-
-fn opened(scope: &str, cursor: &str) -> Result<(Value, String)> {
-    let refused = || refused("cursor", "the cursor does not belong to this listing");
-    let bytes = hex::decode(cursor).map_err(|_| refused())?;
-    let Ok(Value::Array(parts)) = serde_json::from_slice::<Value>(&bytes) else {
-        return Err(refused());
-    };
-    match parts.as_slice() {
-        [Value::String(held), key, Value::String(id)] if held == scope => {
-            Ok((key.clone(), id.clone()))
+/// The scope, the row id (a UUID as 16 bytes) and the sort key as JSON, in URL-safe base64.
+fn cursor_of(scope: &[u8; SCOPE_BYTES], key: &Value, id: &str) -> String {
+    let mut bytes = scope.to_vec();
+    match Uuid::parse_str(id) {
+        Ok(uuid) if uuid.hyphenated().to_string() == id => {
+            bytes.push(UUID_ID);
+            bytes.extend_from_slice(uuid.as_bytes());
         }
-        _ => Err(refused()),
+        _ => {
+            bytes.push(TEXT_ID);
+            bytes.extend_from_slice(&(id.len() as u32).to_be_bytes());
+            bytes.extend_from_slice(id.as_bytes());
+        }
     }
+    bytes.extend_from_slice(key.to_string().as_bytes());
+    format!("{CURSOR_LEAD}{}", BASE64_URL_SAFE_NO_PAD.encode(bytes))
+}
+
+/// Every cursor starts with this letter, so a command line never reads one as a flag.
+const CURSOR_LEAD: &str = "c";
+
+const UUID_ID: u8 = 0;
+const TEXT_ID: u8 = 1;
+
+fn opened(scope: &[u8; SCOPE_BYTES], cursor: &str) -> Result<(Value, String)> {
+    let refused = || refused("cursor", "the cursor does not belong to this listing");
+    let bytes = cursor
+        .strip_prefix(CURSOR_LEAD)
+        .ok_or_else(refused)
+        .and_then(|body| BASE64_URL_SAFE_NO_PAD.decode(body).map_err(|_| refused()))?;
+    let rest = bytes
+        .strip_prefix(scope.as_slice())
+        .and_then(|rest| rest.split_first())
+        .ok_or_else(refused)?;
+    let (id, key) = match rest {
+        (&UUID_ID, rest) => {
+            let (id, key) = rest.split_at_checked(16).ok_or_else(refused)?;
+            (
+                Uuid::from_slice(id).map_err(|_| refused())?.to_string(),
+                key,
+            )
+        }
+        (&TEXT_ID, rest) => {
+            let (length, rest) = rest.split_at_checked(4).ok_or_else(refused)?;
+            let length = u32::from_be_bytes(length.try_into().map_err(|_| refused())?);
+            let (id, key) = rest
+                .split_at_checked(usize::try_from(length).map_err(|_| refused())?)
+                .ok_or_else(refused)?;
+            (String::from_utf8(id.to_vec()).map_err(|_| refused())?, key)
+        }
+        _ => return Err(refused()),
+    };
+    let key = serde_json::from_slice::<Value>(key).map_err(|_| refused())?;
+    Ok((key, id))
 }
 
 fn shown(id: String, body: &str, withheld: Option<String>, updated_at: String) -> Result<Value> {
@@ -1735,8 +1786,47 @@ pub(crate) fn totals(core: &Core, item: &str, table: &str, filter: Option<&str>)
 
 #[cfg(test)]
 mod tests {
-    use super::{OR_TERMS, Read, RowsAsked, SPAN_GAP, filter_of, page_from_copy, plan};
+    use super::{
+        OR_TERMS, Read, RowsAsked, SPAN_GAP, cursor_of, filter_of, opened, page_from_copy, plan,
+    };
     use serde_json::{Map, Value, json};
+    use sha2::Digest;
+
+    #[test]
+    fn a_row_cursor_is_short_and_comes_back_only_to_its_own_listing() {
+        let here = [1u8; 8];
+        let uuid = "01a1d293-bf77-7182-a4e4-208fb2fb741f";
+        let cursor = cursor_of(&here, &json!(null), uuid);
+        assert!(cursor.len() < 60, "{cursor}");
+        assert_eq!(opened(&here, &cursor).unwrap(), (json!(null), uuid.into()));
+        let key = json!("Coffee, \u{e9}");
+        let other_id = cursor_of(&here, &key, "row 7");
+        assert_eq!(opened(&here, &other_id).unwrap(), (key, "row 7".into()));
+        let number = cursor_of(&here, &json!(12.5), "r");
+        assert_eq!(opened(&here, &number).unwrap(), (json!(12.5), "r".into()));
+        assert!(opened(&[2u8; 8], &cursor).is_err());
+        for bad in ["", "abc", "!!!!", &cursor[..cursor.len() - 3], &cursor[1..]] {
+            assert!(opened(&here, bad).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_row_cursor_never_starts_with_a_hyphen() {
+        let mut bare_hyphens = 0;
+        for at in 0..2000u32 {
+            let scope: [u8; 8] = sha2::Sha256::digest(at.to_be_bytes())[..8]
+                .try_into()
+                .unwrap();
+            let cursor = cursor_of(&scope, &json!(at), "row");
+            assert!(cursor.starts_with('c'), "{cursor}");
+            assert!(opened(&scope, &cursor).is_ok());
+            bare_hyphens += usize::from(cursor[1..].starts_with('-'));
+        }
+        assert!(
+            bare_hyphens > 0,
+            "without the lead letter some would start with a hyphen"
+        );
+    }
 
     fn ids(count: usize) -> Vec<String> {
         (0..count).map(|at| format!("{at:04}")).collect()

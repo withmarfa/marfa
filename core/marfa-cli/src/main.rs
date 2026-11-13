@@ -116,7 +116,7 @@ struct Cli {
 
     /// Use private local process authority through this Unix socket, without a keychain.
     /// Item properties, edges, tags, search, counts, events and exports still need a key.
-    /// `items summaries`, `items trash`, the `blobs` commands and bulk-action job status and
+    /// `items summaries`, `items bin`, the `blobs` commands and bulk-action job status and
     /// cancel do not.
     #[arg(long, global = true, value_name = "PATH", conflicts_with_all = ["url", "key", "profile"], help_heading = "Server")]
     socket: Option<std::path::PathBuf>,
@@ -278,7 +278,7 @@ enum Command {
     /// that credential could read. It holds no sign-in, keys, apps, or webhooks,
     /// so set those up again after a restore; the command says so. Settings,
     /// type icons, source names, and connector state come back only where this
-    /// instance has none. Trashed items are absent unless explicitly exported,
+    /// instance has none. Items in the bin are absent unless explicitly exported,
     /// for example with `export --format archive --state any`.
     ///
     /// Until the first public release, restore only with the server build that
@@ -292,7 +292,7 @@ enum Command {
     Restore(restore::RestoreArgs),
     /// Backups the server puts in its backup folder or object store on a
     /// schedule, and takes and restores when asked. Each holds every item,
-    /// edge and setting, the trash included, and no file, which the folder or
+    /// edge and setting, the bin included, and no file, which the folder or
     /// object store already holds a copy of.
     Backups {
         #[command(subcommand)]

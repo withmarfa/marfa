@@ -70,10 +70,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
         match (&stats, remote.credential()) {
             (Some(stats), Some(source)) => {
                 lines.push(format!("credential from {}", source.as_str()));
-                lines.push(format!(
-                    "items {}",
-                    serde_json::to_string(stats).unwrap_or_default()
-                ));
+                lines.push(items_line(stats));
             }
             (None, Some(source)) if stats_refused.is_some() => {
                 lines.push(format!("credential from {}", source.as_str()));
@@ -83,6 +80,27 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
         }
         lines.join("\n")
     })
+}
+
+/// How many items there are in each state, or that there are none.
+pub fn items_line(stats: &Value) -> String {
+    let counted: Vec<String> = stats
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(state, count)| {
+            let count = count.as_u64().filter(|count| *count > 0)?;
+            Some(match state.as_str() {
+                "trashed" => format!("{count} in the bin"),
+                state => format!("{count} {state}"),
+            })
+        })
+        .collect();
+    if counted.is_empty() {
+        "no items".to_string()
+    } else {
+        format!("items {}", counted.join(", "))
+    }
 }
 
 /// The instance as a line: its id, its name and the release it runs, or the
@@ -131,6 +149,16 @@ pub fn contract_line(instance: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_empty_instance_says_it_has_no_items_and_a_busy_one_counts_by_state() {
+        assert_eq!(items_line(&json!({})), "no items");
+        assert_eq!(items_line(&json!({"active": 0})), "no items");
+        assert_eq!(
+            items_line(&json!({"active": 2, "archived": 1, "trashed": 3})),
+            "items 2 active, 1 archived, 3 in the bin"
+        );
+    }
 
     #[test]
     fn names_the_release_beside_the_build() {

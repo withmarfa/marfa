@@ -35,20 +35,18 @@ pub enum ConnectorsCommand {
         /// The connector id.
         id: String,
     },
-    /// Say the connector is alive. Its own key only.
-    Heartbeat {
-        /// The connector id.
-        id: String,
-    },
-    /// Report one run of the connector. Its own key only.
+    /// Say the connector is alive. The key this runs under is the connector,
+    /// so no id is given.
+    Heartbeat,
+    /// Report one run of the connector the key this runs under registered, so
+    /// no id is given.
     Report(ReportArgs),
     /// The runs a connector has reported, newest first.
     Runs {
         /// The connector id.
         id: String,
-        /// How many at most.
-        #[arg(long)]
-        limit: Option<u32>,
+        #[command(flatten)]
+        page: PageArgs,
     },
     /// The addresses a sender posts inbound webhooks to.
     Endpoints {
@@ -270,8 +268,6 @@ impl Outcome {
 
 #[derive(Debug, Args)]
 pub struct ReportArgs {
-    /// The connector id.
-    pub id: String,
     /// How the run ended.
     #[arg(long)]
     pub outcome: Outcome,
@@ -303,12 +299,13 @@ pub fn report_request(args: &ReportArgs) -> Request {
     body.insert("finished_at".into(), json!(args.finished_at));
     insert_opt(&mut body, "summary", args.summary.clone());
     insert_opt(&mut body, "error", args.error.clone());
-    Request::post(&["connectors", &args.id, "runs"]).json(Value::Object(body))
+    Request::post(&["connectors", "runs"]).json(Value::Object(body))
 }
 
-pub fn runs_request(id: &str, limit: Option<u32>) -> Request {
+pub fn runs_request(id: &str, page: &PageArgs) -> Request {
     Request::get(&["connectors", id, "runs"])
-        .query_opt("limit", limit.map(|limit| limit.to_string()))
+        .query_opt("limit", page.limit.map(|limit| limit.to_string()))
+        .query_opt("cursor", page.cursor.clone())
 }
 
 pub fn endpoint_create_request(
@@ -417,6 +414,11 @@ pub fn agreements_list_request(id: &str, waiting: Option<bool>, page: &PageArgs)
 }
 
 fn state(command: StateCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    let sentence = match &command {
+        StateCommand::Put { id, .. } => Some(format!("wrote the state of connector {id}")),
+        StateCommand::Delete { id } => Some(format!("removed the state of connector {id}")),
+        StateCommand::Get { .. } => None,
+    };
     let request = match command {
         StateCommand::Get { id } => Request::get(&["connectors", &id, "state"]),
         StateCommand::Put {
@@ -427,10 +429,15 @@ fn state(command: StateCommand, remote: &Remote, out: &Printer) -> Result<(), Cl
         } => state_put_request(&id, &process, body.read()?, problems.as_deref())?,
         StateCommand::Delete { id } => Request::delete(&["connectors", &id, "state"]),
     };
-    out.value(&remote.json(&request)?)
+    let answer = remote.json(&request)?;
+    match &sentence {
+        Some(sentence) => out.report(&answer, || sentence.clone()),
+        None => out.value(&answer),
+    }
 }
 
 fn agreements(command: AgreementsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
+    let all = matches!(&command, AgreementsCommand::List { page, .. } if page.all);
     let request = match command {
         AgreementsCommand::Write { id, process, body } => {
             agreements_write_request(&id, &process, body.read()?)?
@@ -440,7 +447,7 @@ fn agreements(command: AgreementsCommand, remote: &Remote, out: &Printer) -> Res
             agreements_list_request(&id, waiting, &page)
         }
     };
-    out.value(&remote.json(&request)?)
+    out.value(&remote.pages(&request, all)?)
 }
 
 fn endpoints(command: EndpointsCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
@@ -467,12 +474,15 @@ fn endpoints(command: EndpointsCommand, remote: &Remote, out: &Printer) -> Resul
             out.value(&remote.json(&Request::get(&["connectors", &id, "endpoints"]))?)
         }
         EndpointsCommand::Retire { id, endpoint } => {
-            out.value(&remote.json(&Request::delete(&[
+            let answer = remote.json(&Request::delete(&[
                 "connectors",
                 &id,
                 "endpoints",
                 &endpoint,
-            ]))?)
+            ]))?;
+            out.report(&answer, || {
+                format!("retired endpoint {endpoint} of connector {id}")
+            })
         }
     }
 }
@@ -484,9 +494,10 @@ fn deliveries(command: DeliveriesCommand, remote: &Remote, out: &Printer) -> Res
             state,
             endpoint,
             page,
-        } => {
-            out.value(&remote.json(&deliveries_request(&id, state, endpoint.as_deref(), &page))?)
-        }
+        } => out.value(&remote.pages(
+            &deliveries_request(&id, state, endpoint.as_deref(), &page),
+            page.all,
+        )?),
         DeliveriesCommand::Body {
             id,
             delivery,
@@ -529,6 +540,14 @@ pub fn run(command: ConnectorsCommand, remote: &Remote, out: &Printer) -> Result
         ConnectorsCommand::Delete { id } => Some(format!("removed connector {id}")),
         _ => None,
     };
+    let wrote = match &command {
+        ConnectorsCommand::Register { .. } => Wrote::Registered,
+        ConnectorsCommand::Heartbeat => Wrote::Heartbeat,
+        ConnectorsCommand::Report(_) => Wrote::Report,
+        ConnectorsCommand::Hold { id, .. } => Wrote::Hold(id.clone()),
+        ConnectorsCommand::Release { id, .. } => Wrote::Release(id.clone()),
+        _ => Wrote::Nothing,
+    };
     let request = match command {
         ConnectorsCommand::Endpoints { command } => return endpoints(command, remote, out),
         ConnectorsCommand::Deliveries { command } => return deliveries(command, remote, out),
@@ -540,15 +559,59 @@ pub fn run(command: ConnectorsCommand, remote: &Remote, out: &Printer) -> Result
         ConnectorsCommand::List => Request::get(&["connectors"]),
         ConnectorsCommand::Get { id } => Request::get(&["connectors", &id]),
         ConnectorsCommand::Delete { id } => Request::delete(&["connectors", &id]),
-        ConnectorsCommand::Heartbeat { id } => Request::post(&["connectors", &id, "heartbeat"]),
+        ConnectorsCommand::Heartbeat => Request::post(&["connectors", "heartbeat"]),
         ConnectorsCommand::Report(args) => report_request(&args),
-        ConnectorsCommand::Runs { id, limit } => runs_request(&id, limit),
+        ConnectorsCommand::Runs { id, page } => runs_request(&id, &page),
         ConnectorsCommand::Hold { id, process } => hold_request(&id, &process),
         ConnectorsCommand::Release { id, process } => release_request(&id, &process),
     };
     let answer = remote.json(&request)?;
-    match done {
+    let text = |name: &str| {
+        answer
+            .get(name)
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string()
+    };
+    let sentence = match (done, &wrote) {
+        (Some(sentence), _) => Some(sentence),
+        (None, Wrote::Registered) => Some(format!(
+            "registered connector {}",
+            super::said::called(&answer)
+        )),
+        (None, Wrote::Heartbeat) => Some(format!(
+            "heartbeat recorded at {}",
+            text("last_heartbeat_at")
+        )),
+        (None, Wrote::Report) => Some(format!(
+            "reported a {} run as {}",
+            text("outcome"),
+            text("id")
+        )),
+        (None, Wrote::Hold(id)) => Some(format!(
+            "{} {id} until {}",
+            if answer.get("renewed") == Some(&Value::Bool(true)) {
+                "renewed the hold on"
+            } else {
+                "took the hold on"
+            },
+            text("expires_at")
+        )),
+        (None, Wrote::Release(id)) => Some(format!("released the hold on {id}")),
+        (None, Wrote::Nothing) => None,
+    };
+    match sentence {
         Some(sentence) => out.report(&answer, || sentence),
         None => out.value(&answer),
     }
+}
+
+/// What the command did, for the line that says so.
+enum Wrote {
+    Registered,
+    Heartbeat,
+    Report,
+    Hold(String),
+    Release(String),
+    Nothing,
 }

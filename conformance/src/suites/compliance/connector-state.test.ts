@@ -148,7 +148,7 @@ describe("the hold", () => {
       (await mine.client.getConnector(mine.id)).data.hold_expires_at,
     ).toBeNull();
     // A heartbeat takes no hold.
-    const beat = await mine.client.sendConnectorHeartbeat(mine.id);
+    const beat = await mine.client.sendConnectorHeartbeat();
     expect(beat.status).toBe(200);
     expect(
       (await mine.client.getConnector(mine.id)).data.hold_expires_at,

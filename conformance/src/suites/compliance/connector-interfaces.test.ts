@@ -258,12 +258,12 @@ describe("connector interfaces", () => {
         (await call(`/connectors/${id}/state`, "PUT", { process: "p", state }))
           .status,
       ).toBe(200);
-      expect(
-        (await call(`/connectors/${id}/heartbeat`, "POST", {})).status,
-      ).toBe(200);
+      expect((await call("/connectors/heartbeat", "POST", {})).status).toBe(
+        200,
+      );
       expect(
         (
-          await call(`/connectors/${id}/runs`, "POST", {
+          await call("/connectors/runs", "POST", {
             outcome: "succeeded",
             started_at: "2026-10-03T09:30:00.000Z",
             finished_at: "2026-10-03T09:31:00.000Z",

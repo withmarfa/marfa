@@ -210,7 +210,7 @@ fn install_serving(home: &Path, port: &str) -> std::path::PathBuf {
 fn a_refusal_only_the_local_command_can_mend_names_the_command_to_run() {
     let home = scratch("local");
     let door = Door::open(vec![local_only()]);
-    let ran = run(&home, &door.url, &["items", "trash", "list"]);
+    let ran = run(&home, &door.url, &["items", "bin", "list"]);
     assert_eq!(ran.code, 1, "{}", ran.stderr);
     assert!(
         ran.stderr.contains("server's own machine") && !ran.stderr.contains("marfa --socket /"),
@@ -229,7 +229,7 @@ fn a_refusal_only_the_local_command_can_mend_names_the_command_to_run() {
             "--key",
             "marfa_k1_fixture",
             "items",
-            "trash",
+            "bin",
             "list",
             "--q",
             "a b",
@@ -238,7 +238,7 @@ fn a_refusal_only_the_local_command_can_mend_names_the_command_to_run() {
     assert_eq!(ran.code, 1, "{}", ran.stderr);
     assert!(
         ran.stderr.contains(&format!(
-            "marfa --socket {} items trash list --q 'a b'",
+            "marfa --socket {} items bin list --q 'a b'",
             socket.display()
         )),
         "{}",

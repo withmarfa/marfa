@@ -309,8 +309,24 @@ pub fn run(command: RowsCommand, remote: &Remote, out: &Printer) -> Result<(), C
             idempotency,
         } => idempotency.apply(undo_request(item, table, batch)),
     };
+    let all = match &command {
+        RowsCommand::List(args) => args.page.all,
+        RowsCommand::Batches { page, .. } => page.all,
+        _ => false,
+    };
     let answer = remote
-        .json(&request)
+        .pages(&request, all)
         .map_err(|error| if one_row { for_one_row(error) } else { error })?;
-    out.value(&answer)
+    let table = match &command {
+        RowsCommand::Write { table, .. }
+        | RowsCommand::Put { table, .. }
+        | RowsCommand::Patch { table, .. }
+        | RowsCommand::Delete { table, .. }
+        | RowsCommand::Undo { table, .. } => Some(table),
+        _ => None,
+    };
+    match table {
+        Some(table) => out.report(&answer, || super::said::rows(table, &answer)),
+        None => out.value(&answer),
+    }
 }
