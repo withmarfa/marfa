@@ -1,6 +1,6 @@
 # Create a personal Marfa instance on Railway
 
-Deploy Marfa on Railway to keep your instance running without a device hosting it. The template creates one server and a persistent data volume in your Railway project. The server runs a released build: the published image `ghcr.io/withmarfa/marfa-server`, pinned to one version. Railway pulls that image and builds nothing from source. Railway provides the HTTPS address, because the server doesn't terminate TLS itself. Backups to a bucket are not covered here yet.
+Deploy Marfa on Railway to keep your instance running without a device hosting it. The template creates one server and a persistent data volume in your Railway project. The server runs a released build: the published image `ghcr.io/withmarfa/marfa-server`, pinned to one version. Railway pulls that image and builds nothing from source. Railway provides the HTTPS address, because the server doesn't terminate TLS itself. This page does not cover backups to a bucket.
 
 ## Deploy the template
 
@@ -82,11 +82,11 @@ To move to a newer release:
 
 1. Note the running release from `version` in `GET /`, and take a volume backup as [Railway volume backups](https://docs.railway.com/volumes/backups) describes.
 2. In the Marfa server's settings, change the source image's tag to the new release, such as `ghcr.io/withmarfa/marfa-server:<release>`, then review and deploy the staged change.
-3. Read `GET /health`. If the release changed the database schema, the deployment's logs name the update and its backup copy. A release with the same schema makes no copy.
+3. Read `GET /health`. If the release changed the database schema, the deployment's logs record the copy the server made, `/data/marfa.db.before-upgrade`. A release with the same schema makes no copy.
 
-If the new build refuses the database, the server exits with status 78 and changes nothing. Its supervisor keeps the container running but unhealthy: set the tag back to the previous release and deploy. Railway's rollback changes the deployment, not the database contents, so once the new build has updated the database, setting the tag back alone runs the previous release on a database it refuses. To go back after an update, restore the volume backup from step 1 as [Restore a volume backup](#restore-a-volume-backup) says, with the tag set back to the previous release in the same deployment.
+If the new build refuses a database that a newer build wrote, or one whose schema matches none it knows, the server exits with status 78 and changes nothing. Its supervisor keeps the container running but unhealthy: set the tag back to the previous release and deploy. If the volume lacks the free space for the copy, the server exits with status 1 and changes nothing, and Railway restarts it to the same refusal until there's room. Railway's rollback changes the deployment, not the database contents, so once the new build has updated the database, setting the tag back alone runs the previous release on a database it refuses. To go back after an update, restore the volume backup from step 1 as [Restore a volume backup](#restore-a-volume-backup) says, with the tag set back to the previous release in the same deployment.
 
-The copy the server made stays on the volume, as large as the database. Delete it once you won't go back; [Upgrade](README.md#upgrade) names it.
+The copy the server made stays on the volume, as large as the data in the database, until the next upgrade replaces it. Delete it once you won't go back; [Upgrade](README.md#upgrade) says more.
 
 ## Remove your instance
 
