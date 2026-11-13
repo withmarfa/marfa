@@ -268,6 +268,11 @@ fn refused_update_note(target: &str, from: &str, dir: &Path) -> String {
 // ---- start and stop -----------------------------------------------------
 
 pub fn start(args: StartArgs, out: &Printer) -> Result<(), CliError> {
+    let (json, text) = started(args, out)?;
+    out.report(&json, || text)
+}
+
+fn started(args: StartArgs, out: &Printer) -> Result<(Value, String), CliError> {
     let steps = Steps { quiet: out.json };
     let folder = Folder::new(&args.dir)?;
     let (state, mut dotenv) = folder.require_state()?;
@@ -322,13 +327,18 @@ pub fn start(args: StartArgs, out: &Printer) -> Result<(), CliError> {
             )?;
         }
     }
-    out.report(
-        &json!({ "name": state.name, "release": state.release, "running": true }),
-        || format!("{} {} is running.", state.name, state.release),
-    )
+    Ok((
+        json!({ "name": state.name, "release": state.release, "running": true }),
+        format!("{} {} is running.", state.name, state.release),
+    ))
 }
 
 pub fn stop(args: DirArgs, out: &Printer) -> Result<(), CliError> {
+    let (json, text) = stopped(args, out)?;
+    out.report(&json, || text)
+}
+
+fn stopped(args: DirArgs, out: &Printer) -> Result<(Value, String), CliError> {
     let steps = Steps { quiet: out.json };
     let folder = Folder::new(&args)?;
     let (state, _) = folder.require_state()?;
@@ -350,29 +360,33 @@ pub fn stop(args: DirArgs, out: &Printer) -> Result<(), CliError> {
             was
         }
     };
-    out.report(
-        &json!({ "name": state.name, "stopped": true, "was_running": was_running }),
-        || {
-            if was_running {
-                format!(
-                    "Stopped {}. `marfa server start` starts it again; its data and settings stay.",
-                    state.name
-                )
-            } else {
-                format!("{} was not running.", state.name)
-            }
-        },
-    )
+    let text = if was_running {
+        format!(
+            "Stopped {}. `marfa server start` starts it again; its data and settings stay.",
+            state.name
+        )
+    } else {
+        format!("{} was not running.", state.name)
+    };
+    Ok((
+        json!({ "name": state.name, "stopped": true, "was_running": was_running }),
+        text,
+    ))
 }
 
+/// One document in JSON, `stopped` and `started`, so a strict parser reads it.
 pub fn restart(args: StartArgs, out: &Printer) -> Result<(), CliError> {
-    stop(
+    let (stopped, said) = stopped(
         DirArgs {
             dir: args.dir.dir.clone(),
         },
         out,
     )?;
-    start(args, out)
+    if !out.json {
+        out.line(&said)?;
+    }
+    let (started, text) = started(args, out)?;
+    out.report(&json!({ "stopped": stopped, "started": started }), || text)
 }
 
 // ---- status -------------------------------------------------------------

@@ -2561,10 +2561,9 @@ fn restart_stops_and_starts_the_service_and_says_when_the_server_did_not_come_ba
 
     let (code, stdout, _) = rig.marfa(&["--json", "restart", "--wait", "5"]);
     assert_eq!(code, 0);
-    assert!(
-        stdout.contains("\"stopped\": true") && stdout.contains("\"running\": true"),
-        "{stdout}"
-    );
+    let said: serde_json::Value = serde_json::from_str(&stdout).expect(&stdout);
+    assert_eq!(said["stopped"]["stopped"], true, "{stdout}");
+    assert_eq!(said["started"]["running"], true, "{stdout}");
 
     fs::write(rig.state.join("refuse"), "").unwrap();
     let (code, _, stderr) = rig.marfa(&["restart", "--wait", "5"]);
