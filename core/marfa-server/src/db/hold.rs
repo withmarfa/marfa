@@ -17,15 +17,13 @@ impl Hold {
     }
 }
 
-/// Lifts the refusal it set, and only that one, when it is dropped: after the job's commit, and
-/// on a refusal, an error or a panic alike.
+/// Clears only its own refusal on drop; keep it alive until the transaction ends.
 pub struct Holding {
     hold: Arc<Hold>,
     mine: Arc<OnceLock<Arc<Refusal>>>,
 }
 
-/// Starts the refusal from the writer's thread, once the job holds the writer, so that the
-/// job's own write is not the first thing refused.
+/// Arms on the writer thread so the job does not refuse its own submission.
 pub struct Begin {
     hold: Arc<Hold>,
     mine: Arc<OnceLock<Arc<Refusal>>>,
