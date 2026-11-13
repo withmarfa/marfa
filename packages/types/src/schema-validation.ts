@@ -198,7 +198,7 @@ export interface SchemaValidationIssue {
   hint: string;
 }
 
-export type TypeSchemaValidationResult =
+type TypeSchemaValidationResult =
   | { success: true; data: TypeSchema }
   | { success: false; errors: SchemaValidationIssue[] };
 
@@ -976,7 +976,7 @@ function describeShapeConflict(
 }
 
 /** A field a type declares in a shape the chain above it declares differently. */
-export interface InheritedShapeConflict {
+interface InheritedShapeConflict {
   field: string;
   /** The part of the shape that differs, such as `items_type`. */
   attribute: string;
@@ -1540,7 +1540,7 @@ function validateThumbnails(
  * `display_hints.icon` in a type's definition, `icon` where the owner sets
  * one directly.
  */
-export function iconNameIssue(
+function iconNameIssue(
   value: unknown,
   field: string,
 ): SchemaValidationIssue | undefined {
@@ -2563,7 +2563,7 @@ export const FIELD_DEFINITION_KEYS: ReadonlySet<string> = new Set(
 );
 
 /** Every key of a member of `items_fields`, held the same way. */
-export const ENTRY_MEMBER_KEYS: ReadonlySet<string> = new Set(
+const ENTRY_MEMBER_KEYS: ReadonlySet<string> = new Set(
   Object.keys({
     type: true,
     label: true,
