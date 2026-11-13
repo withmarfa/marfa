@@ -88,8 +88,41 @@ describe("what a change runs", () => {
     ],
     [
       "top-level documentation, the README's images and the licence",
-      ["GLOSSARY.md", "LICENSE", "assets/architecture-light.svg"],
+      ["README.md", "LICENSE", "assets/architecture-light.svg"],
       ["quick-checks"],
+    ],
+    [
+      "the glossary, whose access words a workspace test holds to the CLI's and the server's",
+      ["GLOSSARY.md"],
+      ["quick-checks", "workspace"],
+    ],
+    [
+      "the server's access words, which the same test reads",
+      ["core/marfa-server/src/http/pages/words.rs"],
+      [
+        "quick-checks",
+        "workspace",
+        "core-checks-linux",
+        "rust-contract",
+        "mcp-conformance",
+        "restore-drill",
+      ],
+    ],
+    [
+      "the contract version, which the version check reads",
+      ["core/marfa-core/src/contract.rs"],
+      [
+        "quick-checks",
+        "core-checks-linux",
+        "conformance-offline",
+        "rust-contract",
+        "mcp-conformance",
+        "restore-drill",
+        "core",
+        "clients-freshness",
+        "workspace",
+        "version-fields",
+      ],
     ],
     ["the licence alone", ["LICENSE"], ["quick-checks"]],
     [
@@ -735,6 +768,8 @@ describe("what a change runs", () => {
         );
       } else if (path === "core/marfa-cli/COMMANDS.md") {
         expect(beyond(path), path).toEqual(["core-checks-linux"]);
+      } else if (path === "GLOSSARY.md") {
+        expect(beyond(path), path).toEqual(["workspace"]);
       } else if (docs?.test(path)) {
         expect(beyond(path), path).toEqual(
           /^(packages|core)\/.+\/README[^/]*$/.test(path)

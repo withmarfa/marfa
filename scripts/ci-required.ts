@@ -221,6 +221,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // a unit test in `marfa-cli` holds the committed file to it. Only the core
   // checks run the Rust tests.
   [/^core\/marfa-cli\/COMMANDS\.md$/, ["core-checks-linux"]],
+  // `ci/access-words.test.ts` holds the glossary's access words to the CLI's
+  // and the server's.
+  [/^GLOSSARY\.md$/, ["workspace"]],
   // Markdown anywhere else is read only by Prettier and the contract's
   // reference check, which `Quick checks` runs for every change, and a
   // package's README by the version check. A fixture is test input and a
@@ -431,6 +434,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^core\/marfa-server\/src\/settings\//,
     ["core-checks-linux", ...RUST_SERVER, "image"],
   ],
+  // The approval pages' access words, which `ci/access-words.test.ts` holds
+  // to the glossary.
+  [
+    /^core\/marfa-server\/src\/http\/pages\/words\.rs$/,
+    ["workspace", "core-checks-linux", ...RUST_SERVER],
+  ],
   // The rest of the server is built and tested on Linux, and its contract is
   // run by the Rust contract jobs, with the real `marfa` binary, and by MCP
   // conformance and the restore drill; the live
@@ -443,6 +452,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // Every crate's manifest: a dependency bump or a macOS-only dependency
   // (`core-foundation`, `xattr`) can break an Apple build.
   [/^core\/[^/]+\/Cargo\.toml$/, RUST],
+  // The CLI's access words, which `ci/access-words.test.ts` holds to the
+  // glossary.
+  [/^core\/marfa-cli\/src\/access\.rs$/, [...RUST, "workspace"]],
   // The parts of the core with a macOS-only side, which only a Mac runs: the
   // command line, with its login keychain, key files by path and launchd
   // autostart, and the core's folder watching and what it reads and writes,
@@ -520,6 +532,7 @@ function versioned(path: string): boolean {
   return (
     ["package.json", "Cargo.toml", "Cargo.lock"].includes(basename(path)) ||
     /^(packages|core)\/.+\/README[^/]*$/i.test(path) ||
+    path === "core/marfa-core/src/contract.rs" ||
     path === "ci/version-fields.test.ts"
   );
 }
