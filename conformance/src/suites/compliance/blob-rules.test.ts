@@ -115,7 +115,7 @@ async function checkUntil(
 
 interface CopyRow {
   store_id: string;
-  kind: "disk" | "s3";
+  kind: "disk" | "folder" | "s3";
   verified_at: string | null;
 }
 
