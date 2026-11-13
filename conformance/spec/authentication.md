@@ -12,7 +12,7 @@ When the owner submits a valid WebAuthn registration with user verification from
 
 The server MUST serve passkey options only to `POST /auth/passkeys/registration/options` and `POST /auth/passkeys/sign-in/options`.
 
-**Reason:** Asking for options stores a challenge, so it is not a read.
+**Reason:** Asking for options replaces the browser's challenge cookie.
 
 **Tests:** `compliance/passkeys.test.ts › gives passkey options only to a POST, answers a registration 201 with the passkey, and a passkey sign-in with only ok and its session cookie`.
 
