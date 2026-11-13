@@ -743,7 +743,15 @@ async fn a_restore_that_lacks_a_copy_refuses_before_it_reads_any_file() {
     );
     let blobs = fresh.data.path().join("blobs");
     assert!(!copy_of(&blobs, "", &other).exists());
-    assert!(names_in(&blobs.join("tmp")).is_empty());
+    // The refused archive's spool is removed after the answer.
+    let tmp = blobs.join("tmp");
+    for _ in 0..250 {
+        if names_in(&tmp).is_empty() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    assert_eq!(names_in(&tmp), Vec::<String>::new());
 }
 
 #[tokio::test]
