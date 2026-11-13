@@ -1237,7 +1237,10 @@ fn files_listed(tar: &[u8]) -> Vec<Value> {
     let mut at = 0;
     loop {
         let block = &tar[at..at + 512];
-        let end = block[..100].iter().position(|byte| *byte == 0).unwrap_or(100);
+        let end = block[..100]
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(100);
         let octal = String::from_utf8_lossy(&block[124..136]);
         let size =
             usize::from_str_radix(octal.trim_matches(|c: char| c == '\0' || c == ' '), 8).unwrap();
@@ -1246,7 +1249,10 @@ fn files_listed(tar: &[u8]) -> Vec<Value> {
             flate2::read::GzDecoder::new(&tar[at + 512..at + 512 + size])
                 .read_to_string(&mut text)
                 .unwrap();
-            return text.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
+            return text
+                .lines()
+                .map(|line| serde_json::from_str(line).unwrap())
+                .collect();
         }
         at += 512 + size.div_ceil(512) * 512;
     }

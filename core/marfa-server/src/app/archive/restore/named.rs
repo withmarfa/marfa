@@ -208,8 +208,7 @@ mod tests {
     }
 
     fn gzip(text: &str) -> Vec<u8> {
-        let mut encoder =
-            flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(text.as_bytes()).unwrap();
         encoder.finish().unwrap()
     }
@@ -249,15 +248,30 @@ mod tests {
     #[tokio::test]
     async fn names_nothing_for_bytes_that_do_not_begin_with_a_manifest_this_build_reads() {
         let files = gzip(&files_line('a', "carried"));
-        let witness = archive(&[("manifest.json", MANIFEST_V1.as_bytes()), ("files.ndjson.gz", &files)]);
+        let witness = archive(&[
+            ("manifest.json", MANIFEST_V1.as_bytes()),
+            ("files.ndjson.gz", &files),
+        ]);
         assert!(files_named(chunked(witness)).await.unwrap().is_some());
         let other = archive(&[("items.ndjson.gz", b"x"), ("manifest.json", b"{}")]);
         assert!(files_named(chunked(other)).await.unwrap().is_none());
-        for manifest in [r#"{"version":1,"blobs":{}}"#, r#"{"format":"marfa-archive","version":2}"#] {
-            let old = archive(&[("manifest.json", manifest.as_bytes()), ("files.ndjson.gz", &files)]);
-            assert!(files_named(chunked(old)).await.unwrap().is_none(), "{manifest}");
+        for manifest in [
+            r#"{"version":1,"blobs":{}}"#,
+            r#"{"format":"marfa-archive","version":2}"#,
+        ] {
+            let old = archive(&[
+                ("manifest.json", manifest.as_bytes()),
+                ("files.ndjson.gz", &files),
+            ]);
+            assert!(
+                files_named(chunked(old)).await.unwrap().is_none(),
+                "{manifest}"
+            );
         }
-        let no_files = archive(&[("manifest.json", MANIFEST_V1.as_bytes()), ("instance.ndjson.gz", &files)]);
+        let no_files = archive(&[
+            ("manifest.json", MANIFEST_V1.as_bytes()),
+            ("instance.ndjson.gz", &files),
+        ]);
         assert!(files_named(chunked(no_files)).await.unwrap().is_none());
         assert!(
             files_named(chunked(b"not a tar".repeat(100)))

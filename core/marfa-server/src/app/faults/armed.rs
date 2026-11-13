@@ -8,7 +8,9 @@ use tokio::sync::watch;
 
 use super::super::blobs::Hash;
 use super::super::{attention, housekeeping};
-use super::{ARCHIVE_LINE_LANE, DEVICE_OWNER_INSTANCE_LANE, Lie, Resolved, TYPE_DEFINITION, Volume};
+use super::{
+    ARCHIVE_LINE_LANE, DEVICE_OWNER_INSTANCE_LANE, Lie, Resolved, TYPE_DEFINITION, Volume,
+};
 use crate::db::Pulse;
 
 const MAX_NTH: u32 = 1_000_000;

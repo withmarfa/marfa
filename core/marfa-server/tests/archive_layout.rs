@@ -129,7 +129,14 @@ impl Instance {
         let key = Some(self.writer.as_str());
         let body = Body::from(bytes.to_vec());
         let stored = self
-            .call(&self.public, key, Method::POST, "/blobs", body, "text/plain")
+            .call(
+                &self.public,
+                key,
+                Method::POST,
+                "/blobs",
+                body,
+                "text/plain",
+            )
             .await;
         assert_eq!(stored.status, StatusCode::CREATED, "{}", stored.body);
         stored.body["hash"].as_str().unwrap().to_string()
@@ -238,7 +245,10 @@ fn entries(tar: &[u8]) -> Vec<(String, Vec<u8>)> {
     let mut at = 0;
     while at + BLOCK <= tar.len() && tar[at..at + BLOCK].iter().any(|byte| *byte != 0) {
         let block = &tar[at..at + BLOCK];
-        let name_end = block[..100].iter().position(|byte| *byte == 0).unwrap_or(100);
+        let name_end = block[..100]
+            .iter()
+            .position(|byte| *byte == 0)
+            .unwrap_or(100);
         let name = String::from_utf8(block[..name_end].to_vec()).unwrap();
         let octal = String::from_utf8_lossy(&block[124..136]);
         let size =
@@ -324,7 +334,10 @@ async fn an_item_whose_history_is_larger_than_a_line_backs_up_and_restores_whole
 
     let backed_up = origin.back_up().await;
     assert_eq!(backed_up.status, StatusCode::OK, "{}", backed_up.body);
-    let name = backed_up.body["backup"]["name"].as_str().unwrap().to_string();
+    let name = backed_up.body["backup"]["name"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let fresh = Instance::start(folder.path(), &[]).await;
     let restored = fresh.restore_backup(&origin.app.instance_id, &name).await;
     assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
@@ -333,7 +346,10 @@ async fn an_item_whose_history_is_larger_than_a_line_backs_up_and_restores_whole
         .keyed(Method::GET, &format!("/items/{id}"), json!({}))
         .await;
     assert_eq!(read.body["item"]["version"], 71, "{}", read.body);
-    assert_eq!(read.body["item"]["properties"]["body"], text_of(70, MEGABYTE));
+    assert_eq!(
+        read.body["item"]["properties"]["body"],
+        text_of(70, MEGABYTE)
+    );
     assert_eq!(fresh.versions(&id).await, history);
 
     let again = Instance::start(folder.path(), &[]).await;
@@ -376,7 +392,10 @@ async fn an_item_whose_versions_are_each_as_large_as_a_write_takes_backs_up_and_
 
     let backed_up = origin.back_up().await;
     assert_eq!(backed_up.status, StatusCode::OK, "{}", backed_up.body);
-    let name = backed_up.body["backup"]["name"].as_str().unwrap().to_string();
+    let name = backed_up.body["backup"]["name"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let fresh = Instance::start(folder.path(), &settings).await;
     let restored = fresh.restore_backup(&origin.app.instance_id, &name).await;
     assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
@@ -423,7 +442,10 @@ async fn the_layout_is_pinned_to_its_version() {
             json!({ "type": "core.conversation", "properties": {} }),
         )
         .await;
-    let conversation = conversation.body["item"]["id"].as_str().unwrap().to_string();
+    let conversation = conversation.body["item"]["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
     let row = json!({ "operations": [{ "op": "put", "id": uuid::Uuid::now_v7().to_string(),
         "values": { "author": "ada", "sent_at": "2026-01-01T10:00:00Z" } }] });
     let rows = origin
@@ -449,7 +471,12 @@ async fn the_layout_is_pinned_to_its_version() {
             json!({ "id": "user.pinned", "fields": { "title": { "type": "string" } } }),
         )
         .await;
-    assert_eq!(registered.status, StatusCode::CREATED, "{}", registered.body);
+    assert_eq!(
+        registered.status,
+        StatusCode::CREATED,
+        "{}",
+        registered.body
+    );
 
     let held = entries(&origin.archive().await);
     assert_eq!(
@@ -516,7 +543,10 @@ async fn the_layout_is_pinned_to_its_version() {
     for held in &instance {
         let mut keys = sorted_keys(held);
         keys.retain(|key| key != "provenance");
-        assert!(keys.len() == 1 && kinds.contains(&keys[0].as_str()), "{held}");
+        assert!(
+            keys.len() == 1 && kinds.contains(&keys[0].as_str()),
+            "{held}"
+        );
     }
     assert_eq!(
         sorted_keys(&line("items.ndjson.gz")[0]),
@@ -710,5 +740,8 @@ async fn a_version_whose_item_the_archive_does_not_hold_is_refused() {
     let refused = fresh.restore(tar(&held)).await;
     assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
     assert_eq!(refused.body["error"]["details"]["item_id"], other.as_str());
-    assert_eq!(refused.body["error"]["details"]["entry"], "versions.ndjson.gz");
+    assert_eq!(
+        refused.body["error"]["details"]["entry"],
+        "versions.ndjson.gz"
+    );
 }
