@@ -141,19 +141,19 @@ pub struct Backup {
     pub body: Body,
     pub created_at: Stamp,
     pub changes: i64,
-    /// How long the object store has to take it, which also bounds how long its sender waits.
+    /// How long the destination has to take it, which also bounds how long its sender waits.
     pub limit: std::time::Duration,
     /// Each file its rows name that the registry held in its snapshot.
     pub files: Vec<String>,
-    /// The files the bucket held a recorded copy of.
-    pub in_bucket: Vec<String>,
+    /// The files the backup store held a recorded copy of.
+    pub in_store: Vec<String>,
 }
 
 /// What a backup's snapshot gave beside its lines.
 struct Snapshot {
     changes: i64,
-    /// The files the bucket held a recorded copy of.
-    in_bucket: Vec<String>,
+    /// The files the backup store held a recorded copy of.
+    in_store: Vec<String>,
     /// The files the registry held.
     files: Vec<String>,
 }
@@ -234,7 +234,7 @@ impl App {
     /// Builds a row-only backup from one snapshot.
     pub async fn backup_archive(
         self: &Arc<App>,
-        bucket: &str,
+        backup_store: &str,
         check: std::time::Duration,
     ) -> Result<Backup> {
         let ask = Ask {
@@ -242,12 +242,12 @@ impl App {
             ..Ask::default()
         };
         let (prepared, snapshot) = self
-            .prepare_archive(&Caller::Server, ask, false, Some(bucket.to_string()))
+            .prepare_archive(&Caller::Server, ask, false, Some(backup_store.to_string()))
             .await?;
         let Some(Snapshot {
             changes,
             files,
-            in_bucket,
+            in_store,
         }) = snapshot
         else {
             return Err(Refusal::internal("a backup's snapshot was not kept"));
@@ -272,7 +272,7 @@ impl App {
             changes,
             limit,
             files,
-            in_bucket,
+            in_store,
         })
     }
 
@@ -288,7 +288,7 @@ impl App {
         caller: &Caller,
         ask: Ask,
         files: bool,
-        bucket: Option<String>,
+        backup_store: Option<String>,
     ) -> Result<(Prepared, Option<Snapshot>)> {
         let created_at = self.clock.instant();
         let scratch = [
@@ -299,16 +299,16 @@ impl App {
         ];
         let room = self.room();
         let cap = self.bulk_cap();
-        let selected = match bucket {
+        let selected = match backup_store {
             None => {
                 reading(self, caller, move |read| {
                     select(read, &ask, scratch, room, cap, None)
                 })
                 .await?
             }
-            Some(bucket) => {
+            Some(backup_store) => {
                 reading_background(self, caller, move |read| {
-                    select(read, &ask, scratch, room, cap, Some(&bucket))
+                    select(read, &ask, scratch, room, cap, Some(&backup_store))
                 })
                 .await?
             }
@@ -374,7 +374,7 @@ fn select(
     [instance, items, edges, rows]: [crate::app::blobs::Scratch; 4],
     room: Room,
     cap: usize,
-    bucket: Option<&str>,
+    backup_store: Option<&str>,
 ) -> Result<Selected> {
     let mut items: Lines<ItemNeed> = Lines::new(items, room.clone())?;
     let mut edges: Lines<EdgeNeed> = Lines::new(edges, room.clone())?;
@@ -641,22 +641,22 @@ fn select(
         })
         .collect::<Result<_>>()?;
     count("connector_agreement_count", &mut instance, kept)?;
-    let backup = match bucket {
+    let backup = match backup_store {
         None => None,
-        Some(bucket) => {
+        Some(backup_store) => {
             let named = listed
                 .iter()
                 .map(|carried| carried.blob.hash.as_str().to_string())
                 .chain(missing.keys().cloned());
-            let mut in_bucket = crate::app::blobs::held_in(read.tx, bucket, named)?;
-            in_bucket.sort();
+            let mut in_store = crate::app::blobs::held_in(read.tx, backup_store, named)?;
+            in_store.sort();
             let files = listed
                 .iter()
                 .map(|carried| carried.blob.hash.as_str().to_string())
                 .collect();
             Some(Snapshot {
                 changes: backups::changes(read.tx)?,
-                in_bucket,
+                in_store,
                 files,
             })
         }

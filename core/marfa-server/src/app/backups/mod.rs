@@ -136,8 +136,8 @@ fn begin(tx: &Transaction<'_>, store: &str, name: &str) -> Result<i64> {
         return Err(Refusal::new(
             Code::Conflict,
             format!(
-                "The object store already keeps a backup named {name}; the next run takes \
-                 another name."
+                "A backup named {name} is already recorded where backups go; the next run \
+                 takes another name."
             ),
         ));
     }
@@ -152,7 +152,7 @@ fn open(
     store: &str,
     seq: i64,
     hashes: &[String],
-    in_bucket: &HashSet<String>,
+    in_store: &HashSet<String>,
 ) -> Result<()> {
     for hash in hashes {
         if !super::blobs::registered(tx, hash)? {
@@ -164,13 +164,12 @@ fn open(
                 ),
             ));
         }
-        if in_bucket.contains(hash) && super::blobs::held_in(tx, store, [hash.clone()])?.is_empty()
-        {
+        if in_store.contains(hash) && super::blobs::held_in(tx, store, [hash.clone()])?.is_empty() {
             return Err(Refusal::new(
                 Code::Conflict,
                 format!(
-                    "The object store's copy of the file {hash} the backup names was dropped \
-                     while the backup was read; the next run takes the file again."
+                    "The copy of the file {hash} where backups go was dropped while the backup \
+                     was read; the next run takes the file again."
                 ),
             ));
         }
@@ -217,7 +216,7 @@ async fn hold(
     store: &str,
     name: &str,
     files: Vec<String>,
-    in_bucket: Vec<String>,
+    in_store: Vec<String>,
 ) -> Result<()> {
     let looked = store.to_string();
     let (mut opening, closing) = app
@@ -236,13 +235,13 @@ async fn hold(
             .write(Write::own(), move |tx| close(tx, &held, seq, &page))
             .await?;
     }
-    let in_bucket: Arc<HashSet<String>> = Arc::new(in_bucket.into_iter().collect());
+    let in_store: Arc<HashSet<String>> = Arc::new(in_store.into_iter().collect());
     while !opening.is_empty() {
         let page = opening.split_off(opening.len().saturating_sub(HOLD_PAGE));
-        let (held, in_bucket) = (store.to_string(), in_bucket.clone());
+        let (held, in_store) = (store.to_string(), in_store.clone());
         app.db
             .write(Write::own(), move |tx| {
-                open(tx, &held, seq, &page, &in_bucket)
+                open(tx, &held, seq, &page, &in_store)
             })
             .await?;
     }
@@ -893,17 +892,17 @@ async fn put(app: &Arc<App>, destination: &Destination) -> Result<(Stamp, String
     let read_ms = began.elapsed().as_millis() as u64;
     let (taken, changes, limit) = (backup.created_at, backup.changes, backup.limit);
     let name = name_of(taken);
-    let (files, in_bucket) = (
+    let (files, in_store) = (
         std::mem::take(&mut backup.files),
-        std::mem::take(&mut backup.in_bucket),
+        std::mem::take(&mut backup.in_store),
     );
-    let held: HashSet<&String> = in_bucket.iter().collect();
+    let held: HashSet<&String> = in_store.iter().collect();
     let uncopied: Vec<String> = files
         .iter()
         .filter(|hash| !held.contains(hash))
         .cloned()
         .collect();
-    hold(app, destination.id(), &name, files, in_bucket).await?;
+    hold(app, destination.id(), &name, files, in_store).await?;
     let bytes = put_stream(app, backup);
     let (size, copied) = match destination {
         Destination::Bucket(bucket) => {
@@ -1130,13 +1129,13 @@ mod tests {
             .collect()
     }
 
-    /// What `hold` writes against the snapshot `in_bucket`, stopping before the opens if told.
+    /// What `hold` writes against the snapshot `in_store`, stopping before the opens if told.
     fn attempt(
         tx: &Transaction<'_>,
         store: &str,
         name: &str,
         named: &[String],
-        in_bucket: &[String],
+        in_store: &[String],
         interrupted: bool,
     ) -> Result<()> {
         let (opening, closing) = plan(&open_files(tx, store)?, named.to_vec());
@@ -1150,14 +1149,14 @@ mod tests {
             store,
             seq,
             &opening,
-            &in_bucket.iter().cloned().collect(),
+            &in_store.iter().cloned().collect(),
         )
     }
 
     /// What `hold` writes, the copies of the snapshot being those in `BUCKET` now.
     fn hold(tx: &Transaction<'_>, store: &str, name: &str, named: &[String]) -> Result<()> {
-        let in_bucket = super::super::blobs::held_in(tx, store, named.iter().cloned())?;
-        attempt(tx, store, name, named, &in_bucket, false)
+        let in_store = super::super::blobs::held_in(tx, store, named.iter().cloned())?;
+        attempt(tx, store, name, named, &in_store, false)
     }
 
     fn names(listed: &[&str]) -> HashSet<String> {
