@@ -258,10 +258,18 @@ impl Instance {
         panic!("nothing was held");
     }
 
-    /// Moves the instance's clock past the time thinning keeps any backup but the newest.
-    fn past_retention(&self) {
+    /// Takes a backup on each of the next 32 days, so thinning drops every older one, and
+    /// answers how many backups those runs deleted.
+    async fn past_retention(&self) -> u64 {
         self.app.clock.pause(true);
-        self.app.clock.advance(40 * DAY_MS).unwrap();
+        let mut removed = 0;
+        for _ in 0..32 {
+            self.app.clock.advance(DAY_MS).unwrap();
+            let (status, body) = self.back_up().await;
+            assert_eq!(status, StatusCode::OK, "{body}");
+            removed += body["removed"].as_u64().unwrap();
+        }
+        removed
     }
 }
 
@@ -348,7 +356,7 @@ async fn with_no_backup_destination_health_says_backups_are_off_and_the_doors_re
         (Method::POST, "/backups/folder/adopt"),
         (
             Method::POST,
-            "/backups/0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b/2026-11-09T10:15:30.250Z.tar/restore",
+            "/backups/0190a1b2-c3d4-7e5f-8a9b-0c1d2e3f4a5b/20261109T101530.250Z.tar/restore",
         ),
     ] {
         let (status, body) = instance.local(method, path, None).await;
@@ -542,16 +550,12 @@ async fn failed_attempts_stay_recorded_until_listings_omit_them_past_retention_a
 
     store.set_mode(Mode::Normal);
     store.allow_writes();
-    instance.past_retention();
     let (status, body) = instance.back_up().await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["removed"], 1, "{body}");
-    assert_eq!(recorded().await, 3);
+    assert_eq!(recorded().await, 6);
 
-    instance.past_retention();
-    let (status, body) = instance.back_up().await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(recorded().await, 1);
+    assert_eq!(instance.past_retention().await, 2);
+    assert_eq!(recorded().await, 32);
 }
 
 #[tokio::test]
@@ -567,7 +571,8 @@ async fn the_only_good_backup_keeps_its_files_when_one_listing_omits_it_after_a_
     let (status, body) = instance.back_up().await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
 
-    instance.past_retention();
+    instance.app.clock.pause(true);
+    instance.app.clock.advance(40 * DAY_MS).unwrap();
     store.omit_from_listings(BACKUPS, 1);
     let (status, body) = instance.back_up().await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{body}");
@@ -608,10 +613,7 @@ async fn an_attempt_whose_put_lands_after_it_failed_keeps_its_files_until_a_list
     let (status, body) = instance.drop_copy(&file).await;
     assert_eq!(status, StatusCode::CONFLICT, "{body}");
 
-    instance.past_retention();
-    let (status, body) = instance.back_up().await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["removed"], 3, "{body}");
+    assert_eq!(instance.past_retention().await, 3);
     assert!(!instance.held(&file).await);
 }
 
@@ -635,10 +637,7 @@ async fn a_kept_backup_one_listing_leaves_out_keeps_its_files() {
     assert_eq!(status, StatusCode::OK, "{body}");
     assert!(instance.held(&file).await);
 
-    instance.past_retention();
-    let (status, body) = instance.back_up().await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["removed"], 3, "{body}");
+    assert_eq!(instance.past_retention().await, 3);
     assert!(!instance.held(&file).await);
     assert_eq!(instance.count("SELECT count(*) FROM backup_files").await, 0);
 }
@@ -753,5 +752,15 @@ async fn a_file_no_store_can_give_is_recorded_lost_and_the_backup_to_the_object_
     let (status, body) = instance.back_up().await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["blobs_lost"], json!([]), "{body}");
-    assert_eq!(instance.backups_health().await["status"], "ok");
+    assert_eq!(body["blobs_waiting"], 1, "{body}");
+    let health = instance.backups_health().await;
+    assert_eq!(health["status"], "incomplete", "{health}");
+    assert_eq!(health["last_backup_files_waiting"], 1, "{health}");
+    let (status, run) = instance
+        .local(Method::POST, "/housekeeping/blob-replicate/run", None)
+        .await;
+    assert_eq!(status, StatusCode::OK, "{run}");
+    let health = instance.backups_health().await;
+    assert_eq!(health["status"], "ok", "{health}");
+    assert_eq!(health["last_backup_files_waiting"], 0, "{health}");
 }
