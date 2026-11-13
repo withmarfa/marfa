@@ -1222,9 +1222,7 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
     }
 }
 
-/// The field definitions of the type the `--prop` values are for, read in one
-/// request and only when a `--prop` was given. A type that cannot be read leaves
-/// the values as text, and a refusal then says to use `--properties`.
+/// The type's field definitions, read only when a `--prop` was given.
 fn field_definitions(
     remote: &Remote,
     properties: &PropertyArgs,
@@ -1253,9 +1251,7 @@ fn type_of_item(remote: &Remote, id: &str) -> Option<String> {
         .map(str::to_string)
 }
 
-/// Empties the bin a batch at a time until the server names no more, saying
-/// how many have gone after each batch. A batch whose outcome is unknown stops
-/// the run, because the bin has to be read again before anything is repeated.
+/// Empties the bin batch by batch; a batch of unknown outcome stops the run.
 fn empty_bin(confirm: &str, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     bin_request(&BinCommand::Empty {
         confirm: confirm.to_string(),

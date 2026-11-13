@@ -15,8 +15,7 @@ use crate::server::PrivateCommand;
 
 static PROPS_AS_TEXT: AtomicBool = AtomicBool::new(false);
 
-/// Says that `--prop` values went out as text because the type's fields could
-/// not be read, so a refusal of the properties can name `--properties`.
+/// Notes that `--prop` values went out as text, for the `--properties` hint.
 pub fn props_sent_as_text() {
     PROPS_AS_TEXT.store(true, Ordering::Relaxed);
 }

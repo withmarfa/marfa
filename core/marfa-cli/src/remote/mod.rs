@@ -708,9 +708,7 @@ impl Remote {
         self.read_json(self.call(request)?, request)
     }
 
-    /// A listing, and with `all` every page of it joined into one answer that
-    /// names no next cursor: each page's `data` after the first is added to the
-    /// first page's, which keeps the rest of its fields.
+    /// A listing; with `all`, every page's `data` joined into the first page's answer.
     pub fn pages(&self, request: &Request, all: bool) -> Result<Value, CliError> {
         let mut joined = self.json(request)?;
         if !all {

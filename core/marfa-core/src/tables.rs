@@ -1428,8 +1428,7 @@ fn scope(
     scope
 }
 
-/// The listing's scope, then the row's id (a UUID as its 16 bytes, any other id
-/// with its length), then the sort key as JSON, in URL-safe base64.
+/// The scope, the row id (a UUID as 16 bytes) and the sort key as JSON, in URL-safe base64.
 fn cursor_of(scope: &[u8; SCOPE_BYTES], key: &Value, id: &str) -> String {
     let mut bytes = scope.to_vec();
     match Uuid::parse_str(id) {
