@@ -1768,7 +1768,7 @@ When the items of a page fill it exactly and it holds the last item, the server 
 
 `GET /export` admits a credential and answers the items that caller may read and the edges between them, as NDJSON or as an archive that `POST /restore` reads. Management permissions alone grant no content access (`blobs/export-operator-refused`).
 
-The statements on archives describe archive version 1 (`instance/archive-version`). An archive that holds a new entry, a new line file or a new field that a restore must read is a later version, because a restore skips an entry it does not know (`search-and-filters/restore-unread-entry`) and an older build would restore such an archive without it.
+The statements on archives describe archive version 1 (`instance/archive-version`). An archive that holds a new entry, a new line file or a new field that a restore must read is a later version, because a restore skips an entry, a field or a line kind it does not know (`search-and-filters/restore-unread-entry`, `search-and-filters/restore-unknown-field`, `search-and-filters/restore-unknown-line-kind`) and an older build would restore such an archive without it.
 
 ### `search-and-filters/export-lines`
 
@@ -2668,6 +2668,14 @@ If the `manifest.json` of an archive names a `version` greater than the archive 
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an archive written before Marfa 0.1 or at a later version, naming the build that wrote it`.
 
+### `search-and-filters/archive-version-additions`
+
+When a restore reads an archive that lacks a field or a line kind added to the archive's version after the first build that wrote that version, the server MUST restore the archive without it.
+
+**Reason:** a field or a line kind added within a version is optional to a reader of that version. An older build of the same version skips what it does not know (`search-and-filters/restore-unknown-field`, `search-and-filters/restore-unknown-line-kind`), and a newer build restores an archive written before the addition. What a restore must read comes only with a later version (`instance/archive-version`).
+
+**Tests:** waiting on #2978.
+
 ### `search-and-filters/restore-manifest`
 
 If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `connector_state_count` or `connector_agreement_count`, or mistypes them, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
@@ -3036,7 +3044,7 @@ When an entry of an archive holds bytes that do not hash to its name, the server
 
 ### `search-and-filters/restore-unread-entry`
 
-When an archive carries an entry under a name that the restore does not read, or a `blobs/` entry for a file that its `files.ndjson.gz` does not name as `carried`, the server MUST restore the rest of the archive and leave the entry unread.
+When an archive carries an entry under a name that the restore does not read, or a `blobs/` entry after its line files for a file that its `files.ndjson.gz` does not name as `carried`, the server MUST restore the rest of the archive and leave the entry unread.
 
 **Reason:** an archive is a file that anyone can hand an operator, and a small compressed entry can expand to more memory than the server has. A tar tool adds entries of its own, such as `._` files on a Mac. An entry that a restore must read comes only with a later archive version, which a restore refuses (`search-and-filters/restore-version`), so an entry this build does not know is one it may skip.
 
@@ -3049,6 +3057,30 @@ When a restore leaves an entry of an archive unread under `search-and-filters/re
 **Reason:** an operator who restores an archive learns from the answer that the archive held something this build did not read, such as the entry of a later Marfa, rather than finding it missing later.
 
 **Tests:** `compliance/restore-archive.test.ts › skips an entry it does not know, names it in entries_skipped, and restores the rest`, `› refuses a tar that is no archive, naming every member it lacks`.
+
+### `search-and-filters/restore-unknown-line-kind`
+
+When a line of the `instance.ndjson.gz` of an archive is an object holding none of `type`, `edge_type`, `type_icon`, `source`, `setting`, `connector_state` and `connector_agreement`, and some key other than `provenance`, the server MUST skip the line and restore the rest of the archive.
+
+**Reason:** a later build of the same archive version may add a kind of line, which is optional to a reader of that version (`search-and-filters/archive-version-additions`). The manifest's counts name only the seven kinds, so such a line is in none of them (`search-and-filters/restore-line-counts`).
+
+**Tests:** `compliance/restore-archive.test.ts › skips an instance line of a kind it does not know, names the kind in line_kinds_skipped, and restores the rest`.
+
+### `search-and-filters/restore-line-kinds-skipped`
+
+When a restore skips a line under `search-and-filters/restore-unknown-line-kind`, the server MUST name each key of the line other than `provenance` in the `line_kinds_skipped` list of its `200` answer, each name once, in the order the archive first holds it.
+
+**Reason:** an operator learns from the answer that the archive held something this build did not read, as `entries_skipped` tells them of an entry (`search-and-filters/restore-entries-skipped`).
+
+**Tests:** `compliance/restore-archive.test.ts › skips an instance line of a kind it does not know, names the kind in line_kinds_skipped, and restores the rest`.
+
+### `search-and-filters/restore-unknown-field`
+
+When the manifest or a line of an archive carries a field that no statement on archives names, outside an item's `properties` and a type's or edge type's definition, the server MUST restore the archive as it restores the same archive without that field.
+
+**Reason:** a later build of the same archive version may add a field, which is optional to a reader of that version (`search-and-filters/archive-version-additions`). A type's or edge type's definition is a registration and is held to the registration rules (`search-and-filters/restore-type-unknown-key`).
+
+**Tests:** `compliance/restore-archive.test.ts › restores an archive whose manifest and lines carry fields it does not read as it restores one without them`.
 
 ### `search-and-filters/restore-text-cap`
 
@@ -3065,6 +3097,22 @@ If an archive carries `manifest.json`, `files.ndjson.gz`, `instance.ndjson.gz`, 
 **Reason:** a repeated entry has no single meaning, and reading both would let a later copy add lines that the first never listed.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an archive carrying an entry twice, and writes nothing`.
+
+### `search-and-filters/restore-entry-order`
+
+If an archive carries `manifest.json`, `files.ndjson.gz`, `instance.ndjson.gz`, `items.ndjson.gz`, `versions.ndjson.gz`, `edges.ndjson.gz`, `rows.ndjson.gz` and its `blobs/` entries in an order other than that one, then the server MUST answer `400 validation_error` naming the first entry out of order in `details.entry`.
+
+**Reason:** a restore checks each line against the lines before it, and each blob against the `files.ndjson.gz` line that names it, so an entry out of order cannot be checked. A blob read before the file list would otherwise be left out with no word of why.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive whose entries are out of order, naming the first, and writes nothing`.
+
+### `search-and-filters/restore-item-once`
+
+If two lines of the `items.ndjson.gz` of an archive hold the same item `id`, then the server MUST answer `400 validation_error` naming the ID in `details.item_id`.
+
+**Reason:** a restore judges each version line against the item it belongs to (`search-and-filters/restore-history-version`), so an item held twice has no one version to judge its history by.
+
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive that carries an item on two lines, naming the item, and writes nothing`.
 
 ### `search-and-filters/restore-registration-twice`
 
