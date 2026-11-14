@@ -829,7 +829,26 @@ it(
       version_max_versions: 50,
       heartbeat_enabled: false,
     });
-    expect((await current.updateConfig({})).status).toBe(200);
+    // Clearing the stored offs would turn reporting on, with no receiver set.
+    const clearedAll = await current.updateConfig({});
+    expect(clearedAll.status).toBe(400);
+    expect(clearedAll.error?.error.code).toBe("validation_error");
+    expect((await current.getConfig()).data).toMatchObject({
+      version_max_versions: 50,
+      heartbeat_enabled: false,
+      error_reporting_enabled: false,
+    });
+    expect(
+      (
+        await current.updateConfig({
+          heartbeat_enabled: false,
+          error_reporting_enabled: false,
+        })
+      ).status,
+    ).toBe(200);
+    expect((await current.getConfig()).data).not.toHaveProperty(
+      "version_max_versions",
+    );
   },
   3 * FRESH_SERVER_TIMEOUT_MS,
 );

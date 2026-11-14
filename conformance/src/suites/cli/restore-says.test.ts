@@ -24,7 +24,7 @@ beforeAll(async () => {
   dir = mkdtempSync(join(tmpdir(), "marfa-cli-restore-says-"));
   target = await bootFreshServer("cli-restore-says-target", {
     ...DISK_ONLY,
-    MARFA_BACKUP_PATH: join(dir, "backups"),
+    MARFA_BACKUP_PATH: dir,
     MARFA_BACKUP_INTERVAL_SECONDS: "0",
   });
   cli = new Cli(requireBinary(), target.apiUrl, target.workingKey);
