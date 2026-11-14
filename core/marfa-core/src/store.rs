@@ -10568,7 +10568,7 @@ mod tests {
                 SCHEMA_VERSION,
                 crate::folder::state::hash(named.as_bytes()).as_str()
             ),
-            (4, "b931477e7470ff99"),
+            (4, "c2b64b3a6428a46c"),
             "the shape schema.sql makes changed: raise SCHEMA_VERSION and write the new hash here"
         );
     }

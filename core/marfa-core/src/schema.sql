@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS rows_seen (
   item_id TEXT NOT NULL,
   name TEXT NOT NULL
 ) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS rows_seen_table ON rows_seen (item_id, name);
 
 -- Before-event rows for judging a write whose event precedes its answer.
 CREATE TABLE IF NOT EXISTS rows_seen_beneath (
@@ -220,8 +221,11 @@ CREATE TABLE IF NOT EXISTS rows_seen_beneath (
   body TEXT,
   withheld TEXT,
   updated_at TEXT,
+  -- Counts up per row, so the oldest goes first past the bound.
+  seq INTEGER NOT NULL,
   PRIMARY KEY (batch, id)
 ) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS rows_seen_beneath_row ON rows_seen_beneath (item_id, name, id, seq);
 
 -- Keyed by rowid = items.seq: an FTS5 column cannot be indexed for a lookup,
 -- so deleting by an item_id column would scan the whole index per write.
@@ -367,6 +371,37 @@ CREATE TRIGGER IF NOT EXISTS queue_rows_answered AFTER UPDATE ON queue
 BEGIN
   INSERT OR IGNORE INTO rows_dirty (item_id, name, id)
     SELECT item_id, name, id FROM rows_laid WHERE write_id = NEW.id;
+END;
+-- `rows_seen` and `rows_seen_beneath` go once no sent, unanswered write needs them.
+CREATE TRIGGER IF NOT EXISTS queue_rows_seen_answered AFTER UPDATE OF verdict, sent ON queue
+  WHEN NEW.kind = 'write_rows' AND (OLD.verdict IS NOT NEW.verdict OR OLD.sent IS NOT NEW.sent)
+BEGIN
+  DELETE FROM rows_seen WHERE item_id = NEW.item_id AND name = NEW.row_table
+    AND NOT EXISTS (
+      SELECT 1 FROM queue q
+       WHERE q.kind = 'write_rows' AND q.item_id = NEW.item_id AND q.row_table = NEW.row_table
+         AND q.sent = 1 AND (q.verdict IS NULL OR q.verdict IN ('blocked', 'dead')));
+  DELETE FROM rows_seen_beneath WHERE item_id = NEW.item_id AND name = NEW.row_table
+    AND NOT EXISTS (
+      SELECT 1 FROM rows_laid l JOIN queue q ON q.id = l.write_id
+       WHERE l.item_id = rows_seen_beneath.item_id AND l.name = rows_seen_beneath.name
+         AND l.id = rows_seen_beneath.id AND l.batch IS NULL
+         AND q.sent = 1 AND (q.verdict IS NULL OR q.verdict IN ('blocked', 'dead')));
+END;
+CREATE TRIGGER IF NOT EXISTS queue_rows_seen_gone AFTER DELETE ON queue
+  WHEN OLD.kind = 'write_rows'
+BEGIN
+  DELETE FROM rows_seen WHERE item_id = OLD.item_id AND name = OLD.row_table
+    AND NOT EXISTS (
+      SELECT 1 FROM queue q
+       WHERE q.kind = 'write_rows' AND q.item_id = OLD.item_id AND q.row_table = OLD.row_table
+         AND q.sent = 1 AND (q.verdict IS NULL OR q.verdict IN ('blocked', 'dead')));
+  DELETE FROM rows_seen_beneath WHERE item_id = OLD.item_id AND name = OLD.row_table
+    AND NOT EXISTS (
+      SELECT 1 FROM rows_laid l JOIN queue q ON q.id = l.write_id
+       WHERE l.item_id = rows_seen_beneath.item_id AND l.name = rows_seen_beneath.name
+         AND l.id = rows_seen_beneath.id AND l.batch IS NULL
+         AND q.sent = 1 AND (q.verdict IS NULL OR q.verdict IN ('blocked', 'dead')));
 END;
 CREATE TRIGGER IF NOT EXISTS queue_rows_gone AFTER DELETE ON queue
   WHEN OLD.kind = 'write_rows'

@@ -738,6 +738,12 @@ pub(crate) fn forget_all(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Sent, with no answer recorded; the `queue_rows_seen_*` triggers test the same.
+const UNANSWERED: &str = "q.sent = 1 AND (q.verdict IS NULL OR q.verdict IN ('blocked', 'dead'))";
+
+/// Each up to `MAX_ROW_BYTES`; past it a row's oldest state goes, unjudged.
+pub(crate) const ROW_STATES_KEPT: i64 = 8;
+
 /// The answer may identify this event as the write's own batch.
 pub(crate) fn before_batch<'a>(
     conn: &Connection,
@@ -756,12 +762,12 @@ pub(crate) fn before_batch<'a>(
     }
     for id in ids {
         let sent = conn
-            .prepare_cached(
+            .prepare_cached(&format!(
                 "SELECT 1 FROM rows_laid l JOIN queue q ON q.id = l.write_id
                   WHERE l.item_id = ?1 AND l.name = ?2 AND l.id = ?3 AND l.batch IS NULL
-                    AND q.kind = ?4 AND q.sent = 1 AND q.verdict IS NULL
-                  LIMIT 1",
-            )?
+                    AND q.kind = ?4 AND {UNANSWERED}
+                  LIMIT 1"
+            ))?
             .query_row(
                 params![item, table, id, WriteKind::WriteRows.as_str()],
                 |_| Ok(()),
@@ -776,12 +782,24 @@ pub(crate) fn before_batch<'a>(
             None => held_row(conn, item, table, id)?,
         };
         let (body, withheld, updated_at) = stored(under.as_ref())?;
-        conn.prepare_cached(
-            "INSERT OR IGNORE INTO rows_seen_beneath
-               (batch, id, item_id, name, body, withheld, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        )?
-        .execute(params![batch, id, item, table, body, withheld, updated_at])?;
+        let kept = conn
+            .prepare_cached(
+                "INSERT OR IGNORE INTO rows_seen_beneath
+                   (batch, id, item_id, name, body, withheld, updated_at, seq)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
+                   (SELECT COALESCE(MAX(seq), 0) + 1 FROM rows_seen_beneath
+                     WHERE item_id = ?3 AND name = ?4 AND id = ?2))",
+            )?
+            .execute(params![batch, id, item, table, body, withheld, updated_at])?;
+        if kept > 0 {
+            conn.prepare_cached(
+                "DELETE FROM rows_seen_beneath
+                  WHERE item_id = ?1 AND name = ?2 AND id = ?3
+                    AND seq <= (SELECT MAX(seq) FROM rows_seen_beneath
+                                 WHERE item_id = ?1 AND name = ?2 AND id = ?3) - ?4",
+            )?
+            .execute(params![item, table, id, ROW_STATES_KEPT])?;
+        }
     }
     Ok(())
 }
@@ -816,10 +834,10 @@ pub(crate) fn applied_batch(conn: &Connection, item: &str, table: &str, batch: &
     };
     if released.is_empty() {
         let waiting = conn
-            .prepare_cached(
-                "SELECT 1 FROM queue WHERE kind = ?1 AND item_id = ?2 AND row_table = ?3
-                   AND sent = 1 AND verdict IS NULL LIMIT 1",
-            )?
+            .prepare_cached(&format!(
+                "SELECT 1 FROM queue q WHERE q.kind = ?1 AND q.item_id = ?2 AND q.row_table = ?3
+                   AND {UNANSWERED} LIMIT 1"
+            ))?
             .query_row(params![WriteKind::WriteRows.as_str(), item, table], |_| {
                 Ok(())
             })
@@ -904,14 +922,15 @@ pub(crate) fn unjudge(conn: &Connection, item: &str, table: &str, row: Option<&s
         let mut query = conn.prepare_cached(
             "SELECT id, read FROM queue
               WHERE item_id = ?1 AND row_table = ?2 AND kind = ?3 AND read IS NOT NULL
-                AND last_sent_seq IS NOT NULL AND (verdict IS NULL OR verdict = ?4)",
+                AND last_sent_seq IS NOT NULL AND (verdict IS NULL OR verdict IN (?4, ?5))",
         )?;
         let rows = query.query_map(
             params![
                 item,
                 table,
                 WriteKind::WriteRows.as_str(),
-                Verdict::Blocked.as_str()
+                Verdict::Blocked.as_str(),
+                Verdict::Dead.as_str()
             ],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
@@ -1330,5 +1349,99 @@ mod tests {
         )
         .unwrap_err();
         assert!(grown.to_string().contains("operations.1.values"), "{grown}");
+    }
+
+    fn kept(conn: &Connection) -> (Vec<String>, Vec<(String, String, i64)>) {
+        let batches = conn
+            .prepare("SELECT batch FROM rows_seen ORDER BY batch")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let states = conn
+            .prepare("SELECT id, batch, seq FROM rows_seen_beneath ORDER BY id, seq")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        (batches, states)
+    }
+
+    fn sent_over(conn: &Connection, write: &str, seq: i64, row: &str) {
+        conn.execute(
+            "INSERT INTO queue (seq, id, kind, item_id, row_table, idempotency_key, payload, sent, queued_at)
+             VALUES (?1, ?2, 'write_rows', 'item', 'steps', ?2, '{}', 1, 'at')",
+            params![seq, write],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO rows_laid (write_id, seq, item_id, name, id, ops, at)
+             VALUES (?1, ?2, 'item', 'steps', ?3, '[]', 'at')",
+            params![write, seq, row],
+        )
+        .unwrap();
+    }
+
+    fn seen(conn: &Connection, batch: &str, row: &str) {
+        before_batch(conn, "item", "steps", batch, [row]).unwrap();
+        applied_batch(conn, "item", "steps", batch).unwrap();
+    }
+
+    #[test]
+    fn a_rows_kept_states_are_bounded_and_go_once_no_sent_write_waits_for_its_answer() {
+        let conn = store::open_in_memory().unwrap();
+        conn.execute(
+            "INSERT INTO item_tables (item_id, name, state) VALUES ('item', 'steps', 'whole')",
+            [],
+        )
+        .unwrap();
+        sent_over(&conn, "first", 1, "a");
+        sent_over(&conn, "second", 2, "b");
+        for batch in 0..=ROW_STATES_KEPT {
+            seen(&conn, &format!("a{batch:02}"), "a");
+        }
+        seen(&conn, "b", "b");
+        let (batches, states) = kept(&conn);
+        assert_eq!(batches.len(), ROW_STATES_KEPT as usize + 2);
+        let of_a: Vec<i64> = states
+            .iter()
+            .filter(|(row, _, _)| row == "a")
+            .map(|(_, _, seq)| *seq)
+            .collect();
+        assert_eq!(of_a, (2..=ROW_STATES_KEPT + 1).collect::<Vec<_>>());
+
+        for verdict in ["dead", "blocked"] {
+            conn.execute(
+                "UPDATE queue SET verdict = ?1 WHERE id = 'first'",
+                [verdict],
+            )
+            .unwrap();
+            assert_eq!(kept(&conn), (batches.clone(), states.clone()), "{verdict}");
+        }
+        conn.execute("UPDATE queue SET verdict = NULL WHERE id = 'first'", [])
+            .unwrap();
+        assert_eq!(kept(&conn), (batches.clone(), states.clone()));
+
+        conn.execute(
+            "UPDATE queue SET verdict = 'accepted' WHERE id = 'first'",
+            [],
+        )
+        .unwrap();
+        let (left, states) = kept(&conn);
+        assert_eq!(left, batches, "the second write still waits on the table");
+        assert_eq!(states, vec![("b".into(), "b".into(), 1)]);
+
+        conn.execute("DELETE FROM queue WHERE id = 'second'", [])
+            .unwrap();
+        assert_eq!(kept(&conn), (Vec::new(), Vec::new()));
+
+        sent_over(&conn, "third", 3, "c");
+        seen(&conn, "c", "c");
+        assert_eq!(kept(&conn).0, vec!["c".to_string()]);
+        conn.execute("UPDATE queue SET sent = 0 WHERE id = 'third'", [])
+            .unwrap();
+        assert_eq!(kept(&conn), (Vec::new(), Vec::new()));
     }
 }

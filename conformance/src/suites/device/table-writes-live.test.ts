@@ -1420,12 +1420,18 @@ describe("a drain catches up before it sends row writes", () => {
     label: string,
     later: number,
     whileHeld: (path: string, row: string) => void = () => {},
-  ): Promise<{ path: string; row: string; told: DrainReport["verdicts"][number] | undefined }> {
+  ): Promise<{
+    path: string;
+    row: string;
+    told: { verdict: string | undefined; conflicts: unknown };
+  }> {
     const proxy = await proxied();
     const type = await tableType();
     const item = await itemOf(type);
     const row = uuidv7();
-    await write(item, [{ op: "put", id: row, values: { count: 1, note: "a" } }]);
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
     counter += 1;
     const path = newStore(`table-writes-${label}-${String(counter)}`);
     const device = await BindingDevice.start({
@@ -1454,7 +1460,10 @@ describe("a drain catches up before it sends row writes", () => {
     try {
       await until(() => applied() === 1, "the follow applying the overlap");
       proxy.holdAnswer = async () => {
-        await until(() => applied() === 2, "the follow applying the batch first");
+        await until(
+          () => applied() === 2,
+          "the follow applying the batch first",
+        );
         for (let made = 1; made <= later; made++) {
           await write(item, [
             { op: "patch", id: row, values: { note: `later ${String(made)}` } },
@@ -1463,17 +1472,30 @@ describe("a drain catches up before it sends row writes", () => {
         }
         whileHeld(path, row);
       };
-      const told = value(await device.call<DrainReport>("drain")).verdicts.find(
-        (entry) => entry.id === mine.id,
-      );
-      return { path, row, told };
+      const entry = value(
+        await device.call<{
+          verdicts: {
+            id: string;
+            verdict: { verdict: string } | null;
+            conflicts: { row: string; column: string }[];
+          }[];
+        }>("drain"),
+      ).verdicts.find((one) => one.id === mine.id);
+      return {
+        path,
+        row,
+        told: { verdict: entry?.verdict?.verdict, conflicts: entry?.conflicts },
+      };
     } finally {
       proxy.holdAnswer = null;
       expect(await follow.stop()).toBeNull();
     }
   }
 
-  function kept(path: string, row: string): { states: number; batches: number } {
+  function kept(
+    path: string,
+    row: string,
+  ): { states: number; batches: number } {
     const db = new DatabaseSync(path, { readOnly: true });
     try {
       const states = db
@@ -1491,12 +1513,12 @@ describe("a drain catches up before it sends row writes", () => {
   it("judges a write whose own rows.changed came first by the row its batch replaced while 7 later batches changed the row, and judges no conflict after 8", async () => {
     // The witness: one batch fewer, and the row the batch replaced is still kept.
     const seven = await judgedLate("late-seven", 7);
-    expect([seven.told?.verdict, seven.told?.conflicts]).toEqual([
+    expect([seven.told.verdict, seven.told.conflicts]).toEqual([
       "conflicted",
       [{ row: seven.row, column: "count" }],
     ]);
     const eight = await judgedLate("late-eight", 8);
-    expect([eight.told?.verdict, eight.told?.conflicts]).toEqual([
+    expect([eight.told.verdict, eight.told.conflicts]).toEqual([
       "accepted",
       [],
     ]);
@@ -1507,7 +1529,7 @@ describe("a drain catches up before it sends row writes", () => {
     const late = await judgedLate("late-kept", 12, (path, row) => {
       held = kept(path, row);
     });
-    expect(late.told?.verdict).toBe("accepted");
+    expect(late.told.verdict).toBe("accepted");
     // The witness: what is let go was kept while the answer was held.
     expect(held).toEqual({ states: 8, batches: 13 });
     expect(kept(late.path, late.row)).toEqual({ states: 0, batches: 0 });
@@ -1519,7 +1541,12 @@ describe("a drain catches up before it sends row writes", () => {
     const item = await itemOf(type);
     const row = uuidv7();
     await write(item, [{ op: "put", id: row, values: { count: 1 } }]);
-    const device = await holding(type, "dead-replayed", server.workingKey, proxy.url);
+    const device = await holding(
+      type,
+      "dead-replayed",
+      server.workingKey,
+      proxy.url,
+    );
     const mine = value(
       await device.writeRows(item, "steps", [
         { op: "patch", id: row, values: { count: 3 } },
