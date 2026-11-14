@@ -408,17 +408,11 @@ fn open(http: &Http, cursor: &str, bound: Duration) -> Result<Receiver<io::Resul
 struct Taken {
     change: Option<Change>,
     rows: Vec<Change>,
-    /// The event was skipped and the cursor was left where it was: the caller
-    /// commits it, as the cursor of the last such event, before it relies on
-    /// the store holding it.
+    /// Defers the cursor until the caller commits the skipped batch.
     behind: bool,
 }
 
-/// The connection is released before this returns, so a caller told of the
-/// change can read the row it names. A transaction another program's commit
-/// refuses is made again from its first read, without reading from the server
-/// again. Where `leave_skipped` is set, an event the copy does not take leaves
-/// the cursor where it was: a crash replays it, and it is skipped again.
+/// Retries the whole transaction without repeating server reads.
 #[allow(clippy::too_many_arguments)]
 fn take(
     core: &Core,
@@ -491,9 +485,6 @@ fn take(
         if ITEM_CHANGES.contains(&kind) || kind == "item.purged" {
             payload.listed.ok_or_else(reach::invalid)?;
             let item = payload.item.as_ref().ok_or_else(reach::invalid)?;
-            // A row the copy does not take keeps no mark, so the marks grow
-            // with the rows held, not with the events. A change is marked
-            // where `apply` keeps the row, which it lets go of otherwise.
             if outside {
                 reach::forget_listed(&tx, &item.id)?;
             } else if kind == "item.purged" {
@@ -537,9 +528,6 @@ fn take(
     })
 }
 
-/// A change to a row of a type the slice does not take, that the copy holds
-/// nothing of, changes nothing: no read, no transaction. A row that left the
-/// slice by a retype is still held, and is not this.
 fn untouched(
     core: &Core,
     catalog: &Catalog,
@@ -834,20 +822,15 @@ pub(crate) fn replay_build(
     Ok(report)
 }
 
-/// A run of skipped events is committed at least this often, so a crash
-/// replays at most this many events, each skipped again at the cost of one
-/// read from the stream, while a commit for each would cost more than the
-/// event.
+/// Bounds crash replay without committing every skipped event.
 const SKIPPED_PER_COMMIT: usize = 1_000;
 
-/// The skipped events of a replay whose cursor is not yet committed.
 #[derive(Default)]
 struct Behind {
     last: Option<String>,
     count: usize,
 }
 
-/// Commits the cursor of the last skipped event, where one is waiting.
 fn commit_cursor(
     core: &Core,
     context: &Context,

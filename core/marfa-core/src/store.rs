@@ -5025,9 +5025,7 @@ pub fn removal_read(conn: &Connection, subject: Subject, id: &str) -> Result<(),
     meta_delete(conn, &removal_key(subject, id))
 }
 
-/// Whether the copy holds nothing of the row `id`: not the row, a pin on it,
-/// the server's answer for it or the record of its removal. Evicting such a
-/// row changes nothing.
+/// Whether the row has no held item, pin, answer mark or removal record.
 pub fn holds_nothing_of(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     Ok(conn
         .prepare_cached(

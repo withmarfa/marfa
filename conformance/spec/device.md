@@ -1116,7 +1116,7 @@ When a catch-up's stream carries an event, a device MUST take it by the rules of
 
 When a device applies an event, or a catch-up reaches its stream's live marker, a device MUST set its cursor to the id of the last event it took, never to the highest id it has seen.
 
-**Reason:** the server delivers ids in order (`events/ids-ascending`), so the two agree while every event is taken, and a mark set from what merely arrived would step over an event it did not take for good. A run of skipped events moves the cursor once rather than once each, so a catch-up through events the copy does not hold commits no more often than it applies, and a crash in the run reads again only events that are skipped again.
+**Reason:** the server delivers ids in order (`events/ids-ascending`), so the two agree while every event is taken, and a mark set from what merely arrived would step over an event it did not take for good. A run of skipped events commits its cursor at the next applied event, after a bounded count, or at the live marker; a crash replays its uncommitted tail.
 
 **Tests:** `device/catch-up.test.ts › keeps the last id applied rather than the highest, so a late lower id is not stepped over`.
 
