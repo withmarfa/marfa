@@ -169,8 +169,7 @@ pub fn put_client(
     keep_unoffered_within_bound(tx, id)
 }
 
-/// Registrations and metadata documents need no credential, so the clients no approval page
-/// has offered are held to this number for the whole instance.
+/// Registering takes no credential, so this bounds the whole instance.
 pub const MOST_UNOFFERED_CLIENTS: i64 = 1_000;
 
 /// Removes the oldest unoffered clients past the bound; `kept`, just stored, is never one.
@@ -635,8 +634,7 @@ pub fn insert_device_code(tx: &Connection, code: &DeviceCode) -> Result<()> {
     Ok(())
 }
 
-/// A device code request needs no credential, so the codes no one has entered on the
-/// verification page are held to this number for the whole instance.
+/// Requesting a code takes no credential, so this bounds the whole instance.
 pub const MOST_UNENTERED_DEVICE_CODES: i64 = 1_000;
 
 /// The owner who entered the code on the verification page, before deciding on it.
