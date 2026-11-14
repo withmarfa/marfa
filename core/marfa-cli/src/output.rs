@@ -2015,8 +2015,7 @@ pub fn printable(text: &str) -> String {
         .collect()
 }
 
-/// An object's name as [`printable_value`] shows it: as [`printable`] shows
-/// text, and with the backslash escaped too, so no two names show alike.
+/// Escape backslashes too so distinct object keys remain distinct.
 fn printable_key(name: &str) -> String {
     printable(&name.replace('\\', "\\\\"))
 }
