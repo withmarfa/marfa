@@ -50,9 +50,29 @@ jobs:
           fi
           echo "ci.yml is green for $GITHUB_SHA ($query)"
 
+  require-green-core:
+    name: Require green Core
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/release/require-core-run.sh
+          sparse-checkout-cone-mode: false
+      # `core.yml` has a path filter, so a commit often has no run of its own;
+      # the script says which run vouches for it.
+      - name: Require a green Core run for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash scripts/release/require-core-run.sh
+
   version:
     name: Read the version
-    needs: require-green-ci
+    needs: [require-green-ci, require-green-core]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -80,69 +100,88 @@ jobs:
             fi
             version="${ref#v}"
           fi
-          if ! [[ "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
-            echo "::error::The tag names no major.minor.patch version."
+          if ! [[ "$version" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]]; then
+            echo "::error::The tag names no major.minor.patch version of up to six digits each."
             exit 1
           fi
-          # Each version is the previous plus 0.0.1. The remote is read without
-          # a pipe, whose empty answer would fail the step unexplained.
+          # A release is the previous one's patch plus one, or the next minor
+          # at patch 0 (a new minor is for a breaking change). It never goes
+          # back, never skips, and stays at major 0: a 1.x needs this gate
+          # changed on purpose.
           IFS=. read -r major minor patch <<< "$version"
-          if [ "$major.$minor" != "0.0" ]; then
-            echo "::error::$version is not 0.0.N; every version steps by 0.0.1."
-            exit 1
-          fi
-          first_rust=70
-          if [ "$patch" -lt "$first_rust" ]; then
-            echo "::error::$version is below 0.0.$first_rust, the first Rust release; this workflow releases only the Rust server."
+          if [ "$major" != 0 ]; then
+            echo "::error::$version has a major above 0; this gate releases only 0.minor.patch versions."
             exit 1
           fi
           # A lookup that errs fails the step; it is never read as true or false.
           released() {
             local answer
-            if answer=$(gh release view "v0.0.$1" --json isDraft --jq .isDraft 2>&1); then
+            if answer=$(gh release view "v$1" --json isDraft --jq .isDraft 2>&1); then
               [ "$answer" = "false" ] && echo true || echo false
             elif grep -q "release not found" <<< "$answer"; then
               echo false
             else
-              echo "::error::Could not ask whether 0.0.$1 is released: $answer" >&2
+              echo "::error::Could not ask whether $1 is released: $answer" >&2
               return 1
             fi
           }
-          remote_tags=$(git ls-remote --tags --refs origin 'refs/tags/v0.0.*')
-          previous=-1
+          key() { echo $(($1 * 1000000000000 + $2 * 1000000 + $3)); }
+          want=$(key "$major" "$minor" "$patch")
+          # Every v* tag counts; one that is not a plain version is not a release.
+          # The remote is read without a pipe, whose empty answer would fail the
+          # step unexplained.
+          remote_tags=$(git ls-remote --tags --refs origin 'refs/tags/v*')
+          previous=""
+          previous_key=-1
           above=()
-          while read -r _ tag; do
-            [ -n "$tag" ] || continue
-            n="${tag#refs/tags/v0.0.}"
-            [[ "$n" =~ ^(0|[1-9][0-9]*)$ ]] || continue
-            if [ "$n" -lt "$patch" ] && [ "$n" -gt "$previous" ]; then previous="$n"; fi
-            if [ "$n" -gt "$patch" ]; then above+=("$n"); fi
+          while read -r _ ref; do
+            [ -n "$ref" ] || continue
+            tag="${ref#refs/tags/v}"
+            [[ "$tag" =~ ^(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})\.(0|[1-9][0-9]{0,5})$ ]] || continue
+            tag_key=$(key "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" "${BASH_REMATCH[3]}")
+            if [ "$tag_key" -lt "$want" ] && [ "$tag_key" -gt "$previous_key" ]; then
+              previous="$tag"
+              previous_key="$tag_key"
+            fi
+            if [ "$tag_key" -gt "$want" ]; then above+=("$tag"); fi
           done <<< "$remote_tags"
           # A higher version that is only tagged is waiting on this one.
-          for n in "${above[@]}"; do
-            state=$(released "$n")
+          for tag in "${above[@]}"; do
+            state=$(released "$tag")
             if [ "$state" = "true" ]; then
-              echo "::error::0.0.$n is already released, so $version is not the next version."
+              echo "::error::$tag is already released, so $version is not the next version."
               exit 1
             fi
           done
-          expected=$((previous < 0 ? 1 : previous + 1))
-          if [ "$patch" = "$first_rust" ] && [ "$previous" -ge 0 ]; then
-            echo "$version is the first Rust release, so it may follow any released version below it."
-          elif [ "$patch" != "$expected" ]; then
-            echo "::error::$version does not follow the tags before it; the next version is 0.0.$expected."
+          state=$(released "$version")
+          if [ "$state" = "true" ]; then
+            echo "::error::$version is already released."
+            exit 1
+          fi
+          if [ -z "$previous" ]; then
+            allowed="0.0.1"
+            ok=$([ "$version" = "$allowed" ] && echo true || echo false)
+          else
+            IFS=. read -r _ previous_minor previous_patch <<< "$previous"
+            next_patch="0.$previous_minor.$((previous_patch + 1))"
+            next_minor="0.$((previous_minor + 1)).0"
+            allowed="$next_patch, or $next_minor for a breaking change"
+            ok=$([ "$version" = "$next_patch" ] || [ "$version" = "$next_minor" ] && echo true || echo false)
+          fi
+          if [ "$ok" != "true" ]; then
+            echo "::error::$version does not follow ${previous:-the tags before it}; the next version is $allowed."
             exit 1
           fi
           # The API answers where this shallow checkout has no history.
-          if [ "$previous" -ge 0 ]; then
+          if [ -n "$previous" ]; then
             state=$(released "$previous")
             if [ "$state" != "true" ]; then
-              echo "::error::0.0.$previous is tagged but not released; release it before $version."
+              echo "::error::$previous is tagged but not released; release it before $version."
               exit 1
             fi
-            relation=$(gh api "repos/$GITHUB_REPOSITORY/compare/v0.0.$previous...$GITHUB_SHA" --jq .status)
+            relation=$(gh api "repos/$GITHUB_REPOSITORY/compare/v$previous...$GITHUB_SHA" --jq .status)
             if [ "$relation" != "ahead" ]; then
-              echo "::error::$GITHUB_SHA is $relation of v0.0.$previous; a release's commit comes after the one before it."
+              echo "::error::$GITHUB_SHA is $relation of v$previous; a release's commit comes after the one before it."
               exit 1
             fi
           fi
