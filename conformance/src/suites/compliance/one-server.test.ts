@@ -1,4 +1,4 @@
-import { mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import { link, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -20,9 +20,9 @@ import { inspectStores } from "../../utils/store-faults.js";
 
 /**
  * A database and a blob folder belong to one running server at a time. A
- * second server is started on the first's files with a control socket of its
- * own, which `bootRefused` gives every boot, and from a state folder of its
- * own, which is its working directory.
+ * second server is started on the first's files from a state folder of its
+ * own, which is its working directory, and with a control socket of its own,
+ * which `bootRefused` gives every boot that names none.
  */
 const MiB = 1024 * 1024;
 /** Large enough that the time a write is allowed for its size outlasts the refused starts. */
@@ -96,6 +96,59 @@ describe("a second server on a running server's files", () => {
       expect(await health()).toBe(200);
     }
   }, 180_000);
+
+  it(
+    "is refused on the database, not the control socket, when both have the socket beside the database",
+    async () => {
+      const dir = await mkdtemp(
+        join(await realpath(tmpdir()), "marfa-default-socket-"),
+      );
+      removals.push(dir);
+      const database = join(dir, "marfa.db");
+      // Where the server puts its control socket when it is given none.
+      const beside = {
+        MARFA_DATABASE_PATH: database,
+        MARFA_CONTROL_SOCKET: join(dir, "control", "marfa.sock"),
+      };
+      const running = await bootFreshServer("one-server-beside", {
+        ...DISK_ONLY,
+        ...beside,
+      });
+      try {
+        const second = await refused(beside);
+        expect(second.code, second.output).toBe(1);
+        expect(second.output).toContain(
+          `${database} is open in another Marfa server`,
+        );
+        expect(second.output).not.toContain("Control socket");
+        expect(
+          (await controlRequest(running.controlSocket, "/health")).status,
+        ).toBe(200);
+      } finally {
+        await running.stop();
+      }
+    },
+    180_000,
+  );
+
+  it(
+    "is refused on a second hard link to the database, and says why",
+    async () => {
+      const dir = await mkdtemp(join(await realpath(tmpdir()), "marfa-hard-"));
+      removals.push(dir);
+      const other = join(dir, "marfa.db");
+      await link(first.sqlitePath, other);
+      try {
+        const second = await refused({ MARFA_DATABASE_PATH: other });
+        expect(second.code, second.output).toBe(1);
+        expect(second.output).toContain(`${other} has 2 hard links`);
+        expect(await health()).toBe(200);
+      } finally {
+        await rm(other);
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
 
   it(
     "is refused on the blob folder though it has a database of its own, and names the folder",

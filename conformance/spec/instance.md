@@ -1416,7 +1416,7 @@ When the server refuses to start on a database under `instance/upgrade-refuses-s
 
 ### `instance/upgrade-exit-78`
 
-If the server refuses to start on a database under `instance/upgrade-refuses-schema` or `instance/upgrade-refuses-newer`, then the server MUST exit with status 78.
+If the server refuses to start on a database under `instance/upgrade-refuses-schema`, `instance/upgrade-refuses-newer` or `instance/upgrade-keeps-references`, then the server MUST exit with status 78.
 
 **Reason:** what supervises the process tells a stop that starting again will not mend from one that it may.
 
@@ -1424,7 +1424,7 @@ If the server refuses to start on a database under `instance/upgrade-refuses-sch
 
 ### `instance/upgrade-exit-1`
 
-If the server stops for a failure to start that is not a refusal under `instance/upgrade-refuses-schema` or `instance/upgrade-refuses-newer`, then the server MUST exit with status 1.
+If the server stops for a failure to start that is not a refusal under `instance/upgrade-refuses-schema`, `instance/upgrade-refuses-newer` or `instance/upgrade-keeps-references`, then the server MUST exit with status 1.
 
 **Reason:** a failed start that starting again may mend, such as a port in use, is not told apart from a refused database by anything but the status.
 
@@ -1802,9 +1802,9 @@ A database and a blob folder belong to one running server at a time. A second se
 
 If the server starts on a database file that another running server has open, then the server MUST refuse to start, whatever control socket, working directory and path to that file it was given.
 
-**Reason:** each server would take the database's blob folder and background work as its own, and the second would empty the uploads the first is receiving. A control socket of its own, a relative path and a path through a symbolic link do not make the file another one.
+**Reason:** each server would take the database's blob folder and background work as its own, and the second would empty the uploads the first is receiving. A control socket of its own, a relative path and a path through a symbolic link do not make the file another one, and a control socket both servers share does not make the refusal one about the socket.
 
-**Tests:** `compliance/one-server.test.ts › is refused on the database however its path is written, though it has a control socket of its own, and names the database`, `› is not refused once the running server is killed, and empties the spool it left`.
+**Tests:** `compliance/one-server.test.ts › is refused on the database however its path is written, though it has a control socket of its own, and names the database`, `› is refused on the database, not the control socket, when both have the socket beside the database`, `› is not refused once the running server is killed, and empties the spool it left`.
 
 ### `instance/open-blobs-held`
 
@@ -1820,7 +1820,15 @@ When the server refuses to start under `instance/open-database-held` or `instanc
 
 **Reason:** the owner stops the other server or gives this one files of its own, and needs to know which.
 
-**Tests:** `compliance/one-server.test.ts › is refused on the database however its path is written, though it has a control socket of its own, and names the database`, `› is refused on the blob folder though it has a database of its own, and names the folder`.
+**Tests:** `compliance/one-server.test.ts › is refused on the database however its path is written, though it has a control socket of its own, and names the database`, `› is refused on the database, not the control socket, when both have the socket beside the database`, `› is refused on the blob folder though it has a database of its own, and names the folder`.
+
+### `instance/open-database-one-link`
+
+If the server's database file has more than one hard link, then the server MUST refuse to start and say in its log message how many hard links the file has.
+
+**Reason:** a second hard link is a second name for the same file, and SQLite keeps a write-ahead log beside each name it opens a file by. A server started on the other name would write the file through a log of its own while the first writes through its log, and damage it.
+
+**Tests:** `compliance/one-server.test.ts › is refused on a second hard link to the database, and says why`.
 
 ### `instance/open-held-leaves-files`
 
