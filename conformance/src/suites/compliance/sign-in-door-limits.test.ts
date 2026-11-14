@@ -90,22 +90,50 @@ async function untilRefused(
 }
 
 describe("the limits one address is held to", () => {
-  it("counts password sign-ins at every email but the owner's together, and still judges the owner's password", async () => {
+  it("answers password sign-ins at any email alike, the owner's among them, until the address's limit refuses them all", async () => {
     const address = nextAddress();
-    const { answered, refused } = await untilRefused(11, (n) =>
+    // The witness: the owner's right password from this address signs in,
+    // and spends nothing.
+    expect(
+      (await signIn(limited, TEST_OWNER.email, TEST_OWNER.password, address))
+        .status,
+    ).toBe(200);
+    const atOwner = await untilRefused(10, () =>
+      signIn(limited, TEST_OWNER.email, "wrong", address),
+    );
+    expect(atOwner.answered).toEqual(Array<number>(10).fill(401));
+    const elsewhere = await untilRefused(20, (n) =>
       signIn(limited, `stranger-${String(n)}@example.test`, "wrong", address),
     );
-    expect(answered).toEqual(Array<number>(10).fill(401));
-    expect(Number(refused?.headers.get("retry-after"))).toBeGreaterThan(0);
-    // The witness: the owner's own email, from the same address, is still
-    // answered on the password.
+    expect(elsewhere.answered).toEqual(Array<number>(20).fill(401));
     const owner = await signIn(
       limited,
       TEST_OWNER.email,
       TEST_OWNER.password,
       address,
     );
-    expect(owner.status).toBe(200);
+    const stranger = await signIn(
+      limited,
+      "stranger-new@example.test",
+      "wrong",
+      address,
+    );
+    expect([owner.status, stranger.status]).toEqual([429, 429]);
+    expect(owner.headers.get("x-error-code")).toBe(
+      stranger.headers.get("x-error-code"),
+    );
+    const waits = [owner, stranger].map((response) =>
+      Number(response.headers.get("retry-after")),
+    );
+    expect(waits[0]).toBeGreaterThan(0);
+    expect(Math.abs(waits[0]! - waits[1]!)).toBeLessThanOrEqual(1);
+    const said = async (response: Response) => {
+      const { error } = (await response.json()) as {
+        error: { code: string; message: string };
+      };
+      return [error.code, error.message];
+    };
+    expect(await said(owner)).toEqual(await said(stranger));
   });
 
   it("answers the eleventh client registration from one address in a minute 429", async () => {

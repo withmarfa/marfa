@@ -12,7 +12,7 @@ When the owner submits a valid WebAuthn registration with user verification from
 
 The server MUST serve passkey options only to `POST /auth/passkeys/registration/options` and `POST /auth/passkeys/sign-in/options`.
 
-**Reason:** Asking for options stores a challenge, so it is not a read.
+**Reason:** Asking for options replaces the browser's challenge cookie.
 
 **Tests:** `compliance/passkeys.test.ts › gives passkey options only to a POST, answers a registration 201 with the passkey, and a passkey sign-in with only ok and its session cookie`.
 
@@ -62,13 +62,21 @@ When a passkey assertion has an invalid signature or names an unregistered crede
 
 When a passkey authentication challenge has already been consumed by an accepted or refused assertion, the server MUST refuse another assertion using that challenge.
 
-**Tests:** `compliance/passkeys.test.ts › refuses wrong credentials and keeps password attempts independent`.
+**Tests:** `compliance/passkeys.test.ts › refuses wrong credentials and keeps password attempts independent`, `compliance/passkeys.test.ts › signs in on an unanswered challenge however many others are asked for, and only once`.
+
+### `authentication/passkey-challenge-kept`
+
+While a passkey challenge is unanswered and has not expired, the server MUST accept a valid assertion on it, however many challenges other callers have asked for since.
+
+**Reason:** The challenge door takes no credential, so no caller may end a ceremony another caller has under way.
+
+**Tests:** `compliance/passkeys.test.ts › signs in on an unanswered challenge however many others are asked for, and only once`.
 
 ### `authentication/passkey-challenge-limit`
 
 Where `rate_limit_enabled` is `true`, if one address has sent thirty `POST /auth/passkeys/sign-in/options` requests in a minute, then the server MUST answer its next one `429` with `Retry-After`.
 
-**Reason:** A challenge needs no credential, and each one is stored until it is used or ends.
+**Reason:** A challenge needs no credential, and each one answered is recorded for a challenge's life after it would have ended.
 
 **Tests:** `compliance/sign-in-door-limits.test.ts › answers the thirty-first passkey sign-in challenge from one address in a minute 429`.
 
@@ -162,9 +170,9 @@ A change that needs a sign-in from the last five minutes is refused to an older 
 
 ### `authentication/recent-refusal`
 
-If a change that needs a sign-in from the last five minutes comes from an owner browser session created more than five minutes ago, then the server MUST answer `403 forbidden` with the message `Sign in again to perform this operation`.
+If a change that needs a sign-in from the last five minutes comes from an owner browser session created more than five minutes ago, then the server MUST answer `403 forbidden` with `needs` set to `recent_sign_in` in the `error` object's `details`.
 
-**Reason:** A page recognises this refusal to open the dialog, so every door that needs a recent sign-in refuses in the same words.
+**Reason:** A page recognizes this refusal by its detail to open the dialog, so every door that needs a recent sign-in refuses alike, and its message is free to change.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › replaces a stale session with a new one, so the change that was refused runs`, `› refuses a passkey registration from a stale session`.
 
