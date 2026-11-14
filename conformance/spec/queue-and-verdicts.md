@@ -802,9 +802,9 @@ When a drain ends, a device MUST report in the queue the same verdict for each w
 
 ### `queue-and-verdicts/count-answered`
 
-A device MUST count in a drain's `answered` each write the drain sent that had an answer the device did not take as an environmental failure, whatever the answer, and each write the drain set aside as `failing_alone`.
+A device MUST count in a drain's `answered` each write the drain sent that had an answer the device did not take as an environmental failure, whatever the answer, and each write the drain sent and set aside as `failing_alone`.
 
-**Reason:** a write that went out and met no answer is never counted as answered: a report that counted it would read the same whether the server took it or could not be reached, so an app could not tell offline from saved. A write set aside has a verdict the drain reports, and a pass that set one aside has carried on (`queue-and-verdicts/stuck-write-carries-on`), so it is not left undelivered.
+**Reason:** a write that went out and met no answer is never counted as answered: a report that counted it would read the same whether the server took it or could not be reached, so an app could not tell offline from saved. A write set aside after it was sent has a verdict the drain reports, and a pass that set one aside has carried on (`queue-and-verdicts/stuck-write-carries-on`), so it is not left undelivered. An upload set aside because its bytes could not be opened was never sent, so it is counted `undelivered` (`queue-and-verdicts/count-undelivered`) and not here.
 
 **Tests:** `device/classification.test.ts › counts only the writes the server answered, and says why the rest were not delivered`, `› ends the pass at a read the server cannot answer, sending nothing after it`, `device/queue.test.ts › reports a verdict for every write it sent`, `device/stuck-write.test.ts › sets the write aside as failing_alone only five minutes on, once the server takes the write behind it and it fails again`.
 
@@ -816,13 +816,13 @@ A device MUST count in a drain's `held` each write the drain held for a write it
 
 ### `queue-and-verdicts/count-undelivered`
 
-A device MUST count in a drain's `undelivered` the write an environmental failure met without a verdict, each write the pass came to after a write or a read met an environmental failure, each write from the one at which the drain failed to confirm the server's instance, and an upload whose bytes could not be opened, but a write it held.
+A device MUST count in a drain's `undelivered` the write an environmental failure met without a verdict, each write the pass came to after a write or a read met an environmental failure, each write from the one at which the drain failed to confirm the server's instance, and each upload whose held bytes could not be opened, whether or not the drain set it aside as `failing_alone`, but not a write it held.
 
 **Tests:** `device/classification.test.ts › ends the pass at the first write the server cannot take, leaving the rest untried and uncounted`, `› counts only the writes the server answered, and says why the rest were not delivered`, `device/queue.test.ts › sends nothing while the server cannot say which instance it is`, `› leaves an upload whose held bytes cannot be opened unanswered, and says why`.
 
 ### `queue-and-verdicts/count-unsent`
 
-A device MUST count in a drain's `unsent` each write the drain gave a verdict without sending it, other than a write it held or a refused credential parked.
+A device MUST count in a drain's `unsent` each write the drain gave a verdict without sending it, other than a write it held, a refused credential parked or an upload set aside because its held bytes could not be opened.
 
 **Tests:** `device/classification.test.ts › counts the writes it settled without sending apart from those the server answered`, `device/queue.test.ts › refuses an upload whose bytes are no longer held`, `device/folders-placement.test.ts › folder rebase accounts for writes refused in its later pass`.
 
@@ -836,7 +836,7 @@ A device MUST count in a drain's `unmade` each write whose request the device co
 
 A device MUST count each write a drain comes to in exactly one of `answered`, `held`, `undelivered`, `unsent` and `unmade`, but a write that a refused credential parks.
 
-**Reason:** the writes a refused credential parks are counted in the sentence `stopped` gives (`queue-and-verdicts/credential-stop-said`).
+**Reason:** the writes a refused credential parks are counted in the sentence `stopped` gives (`queue-and-verdicts/credential-stop-said`). An upload whose bytes could not be opened is counted `undelivered` only, though the drain may give it a verdict: the count says what the pass did with the write, and the pass sent nothing.
 
 **Tests:** `device/classification.test.ts › counts the writes it settled without sending apart from those the server answered`, `› ends the pass at the first write the server cannot take, leaving the rest untried and uncounted`.
 
@@ -1308,9 +1308,9 @@ If a drain sends a write that meets an environmental failure other than a `429` 
 
 ### `queue-and-verdicts/stuck-write-sent-only`
 
-A device MUST NOT give a write the reason `failing_alone` in a drain unless that drain sent it, and it met an environmental failure before its test and again after it, in that drain.
+A device MUST NOT give a write the reason `failing_alone` in a drain unless that drain sent it, and it met an environmental failure before its test and again after it, in that drain, other than an upload whose held bytes cannot be opened (`queue-and-verdicts/stuck-upload-unopened`).
 
-**Reason:** a write the drain did not send was not shown to fail. Set aside unsent, a write the server would take, such as one that failed only while the server was down, would be kept from it until a person released it.
+**Reason:** a write the drain did not send was not shown to fail. Set aside unsent, a write the server would take, such as one that failed only while the server was down, would be kept from it until a person released it. When a drain cannot open an upload's held bytes, it cannot test that upload by sending it. The repeated local failure instead supplies the evidence to set it aside.
 
 **Tests:** `device/stuck-write.test.ts › sets the write aside only when the write sent to test it was not itself met by a failure`, `› sends two requests a drain in an outage once every queued write has met the failure in three drains, and still sets nothing aside`, `› sets the first of 6 stuck uploads aside in the 9th drain, when the note behind them lands`.
 
@@ -1337,6 +1337,22 @@ If a drain holds a suspect and no write after it is both ready and independent o
 **Reason:** nothing can show the failure is the suspect's own. The suspect stays queued with its streak counted, and a write queued later is the test.
 
 **Tests:** `device/stuck-write.test.ts › leaves the write queued, and the pass ending as before, where no other write could go`, `› leaves the uploads behind the first queued, two requests a drain, and sets one more aside for each note that lands behind them`, `› never sends a write that waits on the second stuck upload to test it, and holds it once the second upload is set aside`.
+
+### `queue-and-verdicts/stuck-upload-unopened`
+
+If the bytes an upload holds fail to open, for a reason other than that they are no longer held, in three drains in a row for the same reason, the first five minutes ago, then a device MUST give the upload the verdict `blocked` with the reason `failing_alone`.
+
+**Reason:** a file locked for a moment opens in a later drain, so no one drain's failure is counted against the write. A cause that stays, such as a permission, would otherwise leave the upload with no verdict at every drain, with nothing a person can do to the queue but wait. No other write is sent to test it, because no answer from the server is involved. Set aside, the upload is withdrawn (`queue-and-verdicts/withdraw-takes-out`) or, once the cause is fixed, released.
+
+**Tests:** `device/queue.test.ts › sets an upload aside as failing_alone when its held bytes fail to open alike in three drains over five minutes, and withdraws it`.
+
+### `queue-and-verdicts/stuck-upload-unopened-shows`
+
+When a device gives an upload the verdict `blocked` with the reason `failing_alone` because its bytes failed to open, a device MUST report in the queue, as the write's last failure, no status and the text naming the bytes and the cause.
+
+**Reason:** the cause is one a person can usually fix, and the queue is where they look.
+
+**Tests:** `device/queue.test.ts › sets an upload aside as failing_alone when its held bytes fail to open alike in three drains over five minutes, and withdraws it`.
 
 ### `queue-and-verdicts/failing-alone-holds-dependants`
 
@@ -1762,11 +1778,19 @@ When a caller releases writes, a device MUST lay each of them back over the copy
 
 ### `queue-and-verdicts/withdraw-two-reasons`
 
-When a caller withdraws a write that is not `blocked` `ancestor_unavailable`, `conflict_unresolved`, `failing_alone` or `instance_changed`, a device MUST answer that nothing was withdrawn, changing nothing.
+When a caller withdraws a write that is not `dead` and not `blocked` `ancestor_unavailable`, `conflict_unresolved`, `failing_alone` or `instance_changed`, a device MUST answer that it withdrew no write, changing nothing.
 
-**Reason:** an unanswered write may yet land, a write blocked for another reason clears on its own or is released, a `dead` write is released, and an answered write has been written.
+**Reason:** an unanswered write may yet land, a write blocked for another reason clears on its own or is released, and an answered write has been written.
 
-**Tests:** `device/classification.test.ts › will not withdraw a write that may yet land or be released`.
+**Tests:** `device/classification.test.ts › will not withdraw a write that may yet land or be released`, `› withdraws a dead write, and puts the item back as the server holds it`.
+
+### `queue-and-verdicts/withdraw-names-writes`
+
+When a caller withdraws a write, a device MUST answer the id of every write it took out of the queue.
+
+**Reason:** a write of a batch leaves with the others (`queue-and-verdicts/rows-withdrawn-whole`), and each carries values a person typed, so a caller not told which writes went would not know which values have gone.
+
+**Tests:** `device/classification.test.ts › withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the item back as the server holds it`, `› withdraws a dead write, and puts the item back as the server holds it`, `device/table-writes-live.test.ts › withdraws every write of a batch set aside whole when a caller withdraws one of them`.
 
 ### `queue-and-verdicts/withdraw-unknown`
 
@@ -1776,11 +1800,11 @@ If a caller withdraws an id the queue does not hold, then a device MUST refuse i
 
 ### `queue-and-verdicts/withdraw-takes-out`
 
-When a caller withdraws a write blocked `ancestor_unavailable`, `conflict_unresolved`, `failing_alone` or `instance_changed`, a device MUST take it out of the queue.
+When a caller withdraws a write that is `dead` or blocked `ancestor_unavailable`, `conflict_unresolved`, `failing_alone` or `instance_changed`, a device MUST take it out of the queue.
 
-**Reason:** a release sends a write again on the version it already names. The server refuses a `conflict_unresolved` write the same way every time, because versions only advance, and an `ancestor_unavailable` write the same way unless the credential it is sent with has come to read the snapshot it names. Meanwhile the write stays laid over its item and the copy goes on showing what the server will never take. A write that fails alone is one a person has judged will never go, and a write made against another instance is one a person has judged does not belong on this one.
+**Reason:** a release sends a write again on the version it already names. The server refuses a `conflict_unresolved` write the same way every time, because versions only advance, and an `ancestor_unavailable` write the same way unless the credential it is sent with has come to read the snapshot it names. Meanwhile the write stays laid over its item and the copy goes on showing what the server will never take. A write that fails alone is one a person has judged will never go, and a write made against another instance is one a person has judged does not belong on this one. A `dead` write has met a failure that counts five times, and where the cause stays it is `dead` again five drains after a release, so only a withdraw ends it for a person who gives up on it.
 
-**Tests:** `device/classification.test.ts › withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the item back as the server holds it`, `device/stuck-write.test.ts › withdraws a write set aside, and sends nothing for it after`, `device/queue.test.ts › holds the writes queued against another instance once hydrated from the one now there, sending none until released`.
+**Tests:** `device/classification.test.ts › withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the item back as the server holds it`, `› withdraws a dead write, and puts the item back as the server holds it`, `› withdraws a dead create, which a later edit of its item waited for, and keeps that edit refused`, `device/stuck-write.test.ts › withdraws a write set aside, and sends nothing for it after`, `device/queue.test.ts › holds the writes queued against another instance once hydrated from the one now there, sending none until released`.
 
 ### `queue-and-verdicts/withdraw-puts-back`
 
@@ -1800,7 +1824,7 @@ If a withdraw cannot read the server, then a device MUST refuse the withdraw and
 
 When a caller withdraws a create, a device MUST refuse without sending every write that has no verdict or is `blocked` and waits for it, and every such write that waits for one of those in turn, with the reason `the <kind> it waits for was withdrawn`.
 
-**Reason:** the item each names will never exist on the server.
+**Reason:** the dependent writes cannot rely on a create the caller has withdrawn.
 
 **Tests:** `device/classification.test.ts › refuses unsent the writes held for a withdrawn create, and never releases them`, `› settles a transitive edge dependency with its item create %s`.
 

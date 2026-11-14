@@ -158,9 +158,11 @@ Every surface names a core error by `CoreError::code`: the `code` in the binary'
 
 ## The Node module
 
-- `withdraw(id)` and `discard(id)` return `Promise<boolean>`: await them to read the result or catch a refusal. `withdraw` reads rows from the server, and `discard` can wait for a running drain. Both run off the JavaScript thread.
+- `withdraw(id)` returns `Promise<string[]>` containing every withdrawn write ID, including the other writes in a table batch. It returns an empty list when the queued write is ineligible; an unknown ID raises an error. `discard(id)` returns `Promise<boolean>`. Await either call to read the result or catch an error. Both run off the JavaScript thread: `withdraw` reads rows from the server, and `discard` can wait for a running drain.
 - Build and test it as `core/AGENTS.md` says. `core/scripts/binding-proof.sh` drives the built module through an offline write and its verdict against a real server.
 
 ## The Swift package
+
+`withdraw(id:)` returns `[String]` containing every withdrawn write ID, including the other writes in a table batch. It returns an empty list when the queued write is ineligible; an unknown ID raises an error.
 
 `bindings/swift/build.sh` builds the XCFramework and its glue for macOS, iOS and the simulator. `withmarfa/marfa-swift` runs it at the commit it pins.

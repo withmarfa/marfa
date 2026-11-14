@@ -550,8 +550,8 @@ export class CliDevice implements DeviceUnderTest {
     return this.json<number>(args);
   }
 
-  async withdraw(id: string): Promise<Outcome<boolean>> {
-    return this.json<boolean>(["withdraw", id, ...this.server()]);
+  async withdraw(id: string): Promise<Outcome<string[]>> {
+    return this.json<string[]>(["withdraw", id, ...this.server()]);
   }
 
   async forget(ids?: string[]): Promise<Outcome<number>> {

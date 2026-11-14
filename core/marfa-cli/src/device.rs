@@ -307,15 +307,20 @@ pub enum DeviceCommand {
         #[arg(long, value_name = "REASON", value_parser = blocked_reason())]
         reason: Option<marfa_core::BlockedReason>,
     },
-    /// Take a write blocked `ancestor_unavailable`, `conflict_unresolved`,
-    /// `failing_alone` or `instance_changed` out of the queue, and put the
-    /// copy back to what the server holds.
+    /// Take a write that is `dead`, or blocked `ancestor_unavailable`,
+    /// `conflict_unresolved`, `failing_alone` or `instance_changed`, out of the
+    /// queue, and put the copy back to what the server holds.
     ///
     /// A release sends a write again on the version it already names. A write
     /// blocked `conflict_unresolved` is refused the same way each time, and
     /// one blocked `ancestor_unavailable` too, unless the credential it is
-    /// sent with has come to read the snapshot it names. The writes held for the withdrawn write are refused
-    /// unsent. A row write goes with every write sent in its batch.
+    /// sent with has come to read the snapshot it names. A `dead` write has
+    /// failed five times in a way that counts. The writes held for the
+    /// withdrawn write are refused unsent. A row write goes with every write
+    /// sent in its batch.
+    ///
+    /// Prints the id of every write withdrawn. With `--json` it answers the
+    /// list of those ids, which is empty where nothing was withdrawn.
     Withdraw {
         /// The queued write to withdraw.
         #[arg(value_name = "ID")]
@@ -2025,11 +2030,14 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         DeviceCommand::Withdraw { id } => {
             let withdrawn = store.open_with_server(named)?.withdraw(&id)?;
             output::report(&withdrawn, json, || {
-                if withdrawn {
-                    format!("withdrew {id}; the copy holds what the server holds")
+                if withdrawn.is_empty() {
+                    format!(
+                        "nothing to withdraw: {id} is not dead or blocked ancestor_unavailable, conflict_unresolved, failing_alone or instance_changed"
+                    )
                 } else {
                     format!(
-                        "nothing to withdraw: {id} is not blocked ancestor_unavailable, conflict_unresolved, failing_alone or instance_changed"
+                        "withdrew {}; the copy holds what the server holds",
+                        withdrawn.join(", ")
                     )
                 }
             })

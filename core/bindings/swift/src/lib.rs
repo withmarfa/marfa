@@ -3096,11 +3096,8 @@ impl Core {
         Ok(self.inner.release_reason(reason.into())? as u64)
     }
 
-    /// Takes a write blocked `ancestor_unavailable`, `conflict_unresolved`,
-    /// `failing_alone` or `instance_changed` out of the queue, and puts the copy back to what the server holds;
-    /// each write held for it is refused unsent. Answers whether the row was
-    /// one a withdraw takes.
-    pub fn withdraw(&self, id: String) -> Result<bool, MarfaError> {
+    /// Returns every withdrawn ID, including the other writes in a table batch.
+    pub fn withdraw(&self, id: String) -> Result<Vec<String>, MarfaError> {
         Ok(self.inner.withdraw(&id)?)
     }
 

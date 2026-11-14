@@ -3288,12 +3288,8 @@ impl MarfaCore {
         Ok(count(released as u64))
     }
 
-    /// Takes a write blocked `ancestor_unavailable`, `conflict_unresolved`,
-    /// `failing_alone` or `instance_changed` out of the queue, and puts the copy back to what the server holds;
-    /// each write held for it is refused unsent. Answers whether the row was
-    /// one a withdraw takes. Off the JavaScript thread, because it reads each
-    /// row it puts back from the server.
-    #[napi(ts_return_type = "Promise<boolean>")]
+    /// Reads rows back off the JavaScript thread; returns every withdrawn ID.
+    #[napi(ts_return_type = "Promise<string[]>")]
     pub fn withdraw(&self, id: String) -> AsyncTask<Withdraw> {
         AsyncTask::new(Withdraw {
             core: Arc::clone(&self.inner),
@@ -3363,8 +3359,8 @@ pub struct Withdraw {
 
 #[napi]
 impl Task for Withdraw {
-    type Output = bool;
-    type JsValue = bool;
+    type Output = Vec<String>;
+    type JsValue = Vec<String>;
 
     fn reject(&mut self, env: Env, error: Error) -> Result<Self::JsValue> {
         Err(rethrown(env, self.failed.take(), error))

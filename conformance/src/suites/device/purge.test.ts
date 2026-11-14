@@ -3,10 +3,11 @@ import {
   SCRIPTED_INSTANCE,
   answers,
   refusal,
+  wireItem,
 } from "../../device/marfa-answers.js";
 import type { DeviceUnderTest } from "../../device/protocol.js";
 import { BUILT_FOR, type Answer } from "../../device/scripted-server.js";
-import { scriptHydration, startHarness } from "./harness.js";
+import { scriptHydration, scriptWrites, startHarness } from "./harness.js";
 import type { Harness } from "./harness.js";
 
 /**
@@ -145,6 +146,11 @@ describe("a device sends a purge only for an item it holds in the bin", () => {
     if (!refused.ok) {
       expect(refused.refusal.code).toBe("invalid");
       expect(refused.refusal.raw).toContain("waiting");
+      expect(
+        refused.refusal.raw,
+        "the refusal names a command that does not take a write with no answer out of its wait",
+      ).not.toMatch(/withdraw|discard|release/);
+      expect(refused.refusal.raw).toContain("drain");
     }
     expect(purges(harness)).toEqual([]);
     expect(await queued(harness.device)).toEqual([deleted.value.id]);
@@ -177,8 +183,122 @@ describe("a device purges no item a blocked write still names", () => {
     if (!refused.ok) {
       expect(refused.refusal.code).toBe("invalid");
       expect(refused.refusal.raw).toContain("waiting");
+      expect(
+        refused.refusal.raw,
+        "the refusal names a command that cannot take a write blocked for a spent key",
+      ).not.toMatch(/withdraw|discard/);
+      expect(refused.refusal.raw).toContain("release");
     }
     expect(purges(harness)).toEqual([]);
+  });
+});
+
+describe("a purge refusal names the exits a waiting write has", () => {
+  it("names, for a write held behind another, the write that holds it and that write's commands", async () => {
+    harness = await holding("purge-held");
+    const created = await harness.device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "kept.md",
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    const deleted = await harness.device.deleteItem(local);
+    expect(deleted.ok, JSON.stringify(deleted)).toBe(true);
+    if (!deleted.ok) return;
+    scriptWrites(harness.server, {
+      create: [
+        refusal(
+          403,
+          "forbidden",
+          'This credential may not write under the source "notes".',
+          { source: "notes" },
+        ),
+      ],
+    });
+    const drained = await harness.device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    const queue = await harness.device.queue();
+    expect(
+      queue.ok && queue.value.map((row) => [row.id, row.verdict, row.reason]),
+    ).toEqual([
+      [created.value.id, "blocked", "credential_refused"],
+      [deleted.value.id, "blocked", "awaiting_dependency"],
+    ]);
+    expect(await trashed(harness.device)).toContain(local);
+
+    const refused = await harness.device.purgeItem(local);
+    expect(refused.ok, "a purge went out over a held write").toBe(false);
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("invalid");
+      expect(
+        refused.refusal.raw,
+        "the refusal does not name the write the held delete waits on",
+      ).toContain(`waits on ${created.value.id}`);
+      expect(
+        refused.refusal.raw,
+        "the refusal names a drain for a write a drain cannot move",
+      ).not.toContain("drain");
+      expect(refused.refusal.raw).toContain("release");
+    }
+    expect(purges(harness)).toEqual([]);
+  });
+
+  it("refuses an item a dead write names with the commands that clear it, and no longer once it is withdrawn", async () => {
+    harness = await holding("purge-dead");
+    const deleted = await harness.device.deleteItem(ACTIVE);
+    expect(deleted.ok, JSON.stringify(deleted)).toBe(true);
+    if (!deleted.ok) return;
+    // A key the server reports in flight counts at every drain, and the
+    // fifth makes the write dead.
+    harness.server.answer(
+      "DELETE",
+      `/items/${ACTIVE}`,
+      refusal(409, "idempotency_key_in_flight", "The key is in flight"),
+    );
+    for (let pass = 0; pass < 5; pass += 1)
+      expect((await harness.device.drain()).ok).toBe(true);
+    const queue = await harness.device.queue();
+    expect(queue.ok && queue.value.map((row) => [row.id, row.verdict])).toEqual(
+      [[deleted.value.id, "dead"]],
+    );
+    expect(await trashed(harness.device)).toContain(ACTIVE);
+
+    const refused = await harness.device.purgeItem(ACTIVE);
+    expect(refused.ok, "a purge went out over a dead write").toBe(false);
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("invalid");
+      expect(
+        refused.refusal.raw,
+        "the refusal does not name a command that clears a dead write",
+      ).toContain("withdraw");
+      expect(
+        refused.refusal.raw,
+        "the refusal names a command that cannot take a dead write",
+      ).not.toContain("discard");
+    }
+    expect(purges(harness)).toEqual([]);
+
+    // The witness: the command the refusal names takes the write out, and
+    // the purge is no longer refused for it.
+    harness.server.copyAnswer(
+      "GET",
+      /^\/items\/[^/]+$/,
+      answers.updated(wireItem({ id: ACTIVE, version: 2 })),
+    );
+    const withdrawn = await harness.device.withdraw(deleted.value.id);
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual([
+      deleted.value.id,
+    ]);
+    expect(await queued(harness.device)).toEqual([]);
+    const after = await harness.device.purgeItem(ACTIVE);
+    expect(after.ok).toBe(false);
+    if (!after.ok) {
+      expect(after.refusal.code).toBe("validation");
+      expect(after.refusal.raw).toContain("invalid_transition");
+    }
   });
 });
 

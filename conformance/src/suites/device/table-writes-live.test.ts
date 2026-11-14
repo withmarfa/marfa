@@ -1251,7 +1251,10 @@ describe("a batch the drain cannot settle at once", () => {
       [first, second].map((one) => told(stuck, one.id)[0]?.reason),
     ).toEqual(["failing_alone", "failing_alone"]);
 
-    expect(value(await device.withdraw(first.id))).toBe(true);
+    expect(value(await device.withdraw(first.id))).toEqual([
+      first.id,
+      second.id,
+    ]);
     const left = value(await device.queue()).map((one) => one.id);
     expect(left).not.toContain(first.id);
     expect(left).not.toContain(second.id);

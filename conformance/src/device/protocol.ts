@@ -488,7 +488,8 @@ export interface DrainReport {
    *  ahead of them to the same item or edge, has no answer yet
    *  (`queue-and-verdicts/count-held`). */
   held: number;
-  /** Writes it could not deliver, each waiting for the next drain
+  /** Writes it could not deliver, each waiting for the next drain or, for an
+   *  upload whose bytes cannot be opened, for a person
    *  (`queue-and-verdicts/count-undelivered`). */
   undelivered: number;
   /** Writes it gave a verdict without sending: refused for a write they
@@ -761,10 +762,11 @@ export interface DeviceUnderTest {
   ): Promise<Outcome<number>>;
   /**
    * Take a write that can never be sent out of the queue, and put the copy
-   * back to what the server holds. Answers whether the write was one a
-   * withdraw takes.
+   * back to what the server holds. Answers the id of every write taken out
+   * of the queue, those of a row write's batch included, or an empty list
+   * where the write was not one a withdraw takes.
    */
-  withdraw(id: string): Promise<Outcome<boolean>>;
+  withdraw(id: string): Promise<Outcome<string[]>>;
   /**
    * Clear the writes the server has answered, and say how many went. With
    * `ids`, only those named, and none for an empty list.

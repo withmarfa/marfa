@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fmt;
 use std::str::FromStr;
 
@@ -1485,15 +1485,27 @@ impl QueuedWrite {
     }
 
     pub fn withdrawable(&self) -> bool {
-        matches!(
-            self.blocked_reason(),
-            Some(
-                BlockedReason::AncestorUnavailable
-                    | BlockedReason::ConflictUnresolved
-                    | BlockedReason::FailingAlone
-                    | BlockedReason::InstanceChanged
+        self.verdict == Some(Verdict::Dead)
+            || matches!(
+                self.blocked_reason(),
+                Some(
+                    BlockedReason::AncestorUnavailable
+                        | BlockedReason::ConflictUnresolved
+                        | BlockedReason::FailingAlone
+                        | BlockedReason::InstanceChanged
+                )
             )
-        )
+    }
+
+    /// A held write uses its blocker's exits.
+    pub fn exits(&self) -> &'static str {
+        if self.withdrawable() {
+            "withdraw or release"
+        } else if self.blocked_reason().is_some() {
+            "release"
+        } else {
+            "drain"
+        }
     }
 
     fn resolved_fields(&self) -> Vec<String> {
@@ -1516,6 +1528,64 @@ impl QueuedWrite {
                     })
             })
             .unwrap_or_default()
+    }
+}
+
+/// Finds, for writes of one queue read, the write each ultimately waits on.
+/// The queue is indexed once and each chain is walked once, so any number of
+/// lookups costs about one pass over the queue.
+pub struct Blockers<'a> {
+    by_id: HashMap<&'a str, &'a QueuedWrite>,
+    ends: HashMap<&'a str, &'a QueuedWrite>,
+}
+
+impl<'a> Blockers<'a> {
+    pub fn new(queue: &'a [QueuedWrite]) -> Self {
+        let mut by_id = HashMap::with_capacity(queue.len());
+        for write in queue {
+            by_id.entry(write.id.as_str()).or_insert(write);
+        }
+        Self {
+            by_id,
+            ends: HashMap::new(),
+        }
+    }
+
+    fn holding(&self, write: &QueuedWrite) -> Option<&'a QueuedWrite> {
+        write
+            .follows
+            .iter()
+            .chain(&write.depends_on)
+            .filter_map(|ahead| self.by_id.get(ahead.as_str()).copied())
+            .find(|ahead| matches!(ahead.verdict, None | Some(Verdict::Blocked)))
+    }
+
+    /// The last unanswered write in the chain `write` waits behind, or `None`
+    /// where it waits on nothing. Where the chain loops, the last write before
+    /// it comes back round.
+    pub fn of(&mut self, write: &QueuedWrite) -> Option<&'a QueuedWrite> {
+        let mut at = self.holding(write)?;
+        let mut seen: HashMap<&str, usize> = HashMap::from([(write.id.as_str(), usize::MAX)]);
+        let mut path: Vec<&'a QueuedWrite> = Vec::new();
+        let (end, settled) = loop {
+            if let Some(end) = self.ends.get(at.id.as_str()) {
+                break (*end, path.len());
+            }
+            if let Some(&index) = seen.get(at.id.as_str()) {
+                let end = path.last().copied().unwrap_or(at);
+                break (end, if index == usize::MAX { 0 } else { index });
+            }
+            seen.insert(at.id.as_str(), path.len());
+            path.push(at);
+            match self.holding(at) {
+                Some(next) => at = next,
+                None => break (at, path.len()),
+            }
+        };
+        for passed in &path[..settled] {
+            self.ends.insert(passed.id.as_str(), end);
+        }
+        Some(end)
     }
 }
 
@@ -1782,6 +1852,58 @@ mod tests {
             last_failure: None,
             queued_at: "2026-01-01T00:00:00Z".into(),
             answered_at: None,
+        }
+    }
+
+    fn waiting_on(id: &str, ahead: Option<&str>) -> QueuedWrite {
+        let mut write = row(None, None, None);
+        write.id = id.into();
+        write.follows = ahead.map(str::to_string);
+        write
+    }
+
+    #[test]
+    fn a_write_waits_on_the_last_unanswered_write_of_a_chain_however_long() {
+        let length = 20_000;
+        let mut queue = vec![waiting_on("w0", None)];
+        queue.extend(
+            (1..length).map(|n| waiting_on(&format!("w{n}"), Some(&format!("w{}", n - 1)))),
+        );
+        queue.reverse();
+        let mut blockers = Blockers::new(&queue);
+        for write in &queue {
+            let expected = (write.id != "w0").then_some("w0");
+            assert_eq!(blockers.of(write).map(|end| end.id.as_str()), expected);
+        }
+    }
+
+    #[test]
+    fn a_write_waits_past_an_answered_write_only_to_one_still_open() {
+        let mut answered = waiting_on("b", None);
+        answered.verdict = Some(Verdict::Accepted);
+        let queue = vec![
+            waiting_on("a", Some("b")),
+            answered,
+            waiting_on("c", Some("a")),
+        ];
+        let mut blockers = Blockers::new(&queue);
+        assert!(blockers.of(&queue[0]).is_none());
+        assert_eq!(blockers.of(&queue[2]).map(|end| end.id.as_str()), Some("a"));
+    }
+
+    #[test]
+    fn a_chain_that_loops_ends_at_a_write_other_than_the_one_asked_about() {
+        let queue = vec![
+            waiting_on("tail", Some("a")),
+            waiting_on("a", Some("b")),
+            waiting_on("b", Some("c")),
+            waiting_on("c", Some("a")),
+        ];
+        let mut blockers = Blockers::new(&queue);
+        for write in &queue {
+            let end = blockers.of(write).expect("every write waits on another");
+            assert_ne!(end.id, write.id, "{}", write.id);
+            assert!(["a", "b", "c"].contains(&end.id.as_str()), "{}", write.id);
         }
     }
 

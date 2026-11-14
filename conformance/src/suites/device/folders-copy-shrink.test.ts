@@ -940,7 +940,9 @@ describe("a narrowed copy kept by catch-up", () => {
     // The witness: while it waits, blocked, the write keeps the target.
     expect(await heldIds(harness!)).toEqual([id(1), id(2)]);
 
-    expect(value(await device.withdraw(String(drawn.id)))).toBe(true);
+    expect(value(await device.withdraw(String(drawn.id)))).toEqual([
+      String(drawn.id),
+    ]);
     expect(await heldIds(harness!)).toEqual([id(1)]);
   });
 

@@ -2008,7 +2008,7 @@ describe("withdrawing a write that can never be sent", () => {
         expect(
           withdrawn.value,
           `a write blocked ${reason} was not withdrawn, so an app shows text the server will never take for as long as it runs`,
-        ).toBe(true);
+        ).toEqual([blocked.id]);
         expect(
           await queueOf(own),
           "the withdrawn write is still queued, so a release or a reason clearing sends it again to be refused the same way",
@@ -2066,9 +2066,9 @@ describe("withdrawing a write that can never be sent", () => {
     ).toBeNull();
 
     const withdrawn = await device.withdraw(blocked.id);
-    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toBe(
-      true,
-    );
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual([
+      blocked.id,
+    ]);
     const after = await device.get(HELD.id);
     expect(after.ok).toBe(true);
     if (!after.ok) return;
@@ -2103,7 +2103,7 @@ describe("withdrawing a write that can never be sent", () => {
     expect(
       unanswered.ok && unanswered.value,
       "a write that has not been answered was withdrawn, and it may yet land",
-    ).toBe(false);
+    ).toEqual([]);
 
     expect((await device.drain()).ok).toBe(true);
     expect((await queueOf(harness))[0]?.reason).toBe("key_spent");
@@ -2111,7 +2111,7 @@ describe("withdrawing a write that can never be sent", () => {
     expect(
       spent.ok && spent.value,
       "a write blocked for a spent key was withdrawn, and a release sends it under a fresh one",
-    ).toBe(false);
+    ).toEqual([]);
     expect((await queueOf(harness))[0]?.reason).toBe("key_spent");
 
     const unknown = await device.withdraw("not-a-queued-write");
@@ -2125,7 +2125,9 @@ describe("withdrawing a write that can never be sent", () => {
     expect((await device.drain()).ok).toBe(true);
     expect((await queueOf(harness))[0]?.reason).toBe("ancestor_unavailable");
     const taken = await device.withdraw(edit.value.id);
-    expect(taken.ok && taken.value, JSON.stringify(taken)).toBe(true);
+    expect(taken.ok && taken.value, JSON.stringify(taken)).toEqual([
+      edit.value.id,
+    ]);
   });
 
   it("changes nothing when it cannot read the item back", async () => {
@@ -2160,9 +2162,112 @@ describe("withdrawing a write that can never be sent", () => {
 
     // The witness: the same withdraw, once the server answers, goes.
     const withdrawn = await device.withdraw(blocked.id);
-    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toBe(
-      true,
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual([
+      blocked.id,
+    ]);
+  });
+
+  it("withdraws a dead write, and puts the item back as the server holds it", async () => {
+    harness = await hydratedHarness("class-withdraw-dead", { items: held() });
+    const { device } = harness;
+    const unreadable = { kind: "json", status: 200, body: "not an answer" };
+    const reports = await drainAgainst(
+      harness,
+      {
+        update: [unreadable as Answer],
+        read: [{ kind: "drop" }, ...(movedOn() ?? [])],
+      },
+      5,
     );
+    expect(
+      reports[4]?.verdicts[0]?.verdict,
+      "the write did not reach the ceiling, so the withdraw below is about some other write",
+    ).toBe("dead");
+    const dead = (await queueOf(harness))[0];
+    if (dead === undefined) throw new Error("the queue lost the write");
+    // The witness: a dead write is laid over the item, so the copy shows
+    // the edit until something takes it away.
+    const before = await device.get(HELD.id);
+    expect(before.ok && before.value.properties.title).toBe("edited");
+
+    const unread = await device.withdraw(dead.id);
+    expect(
+      unread.ok,
+      "a withdraw that could not read the item back answered as though it had",
+    ).toBe(false);
+    expect(
+      (await queueOf(harness)).map((row) => [row.id, row.verdict]),
+      "a withdraw that could not read the item back took the dead write out of the queue anyway",
+    ).toEqual([[dead.id, "dead"]]);
+
+    const withdrawn = await device.withdraw(dead.id);
+    expect(
+      withdrawn.ok && withdrawn.value,
+      "a dead write was not withdrawn, so nothing a person does takes it from the queue",
+    ).toEqual([dead.id]);
+    expect(await queueOf(harness)).toEqual([]);
+    const after = await device.get(HELD.id);
+    expect(after.ok).toBe(true);
+    if (!after.ok) return;
+    expect(
+      [after.value.properties.title, after.value.version],
+      "the copy still shows the dead edit rather than the item the server holds",
+    ).toEqual(["theirs", HELD.version + 2]);
+
+    const again = await device.withdraw(dead.id);
+    expect(again.ok).toBe(false);
+    if (!again.ok) expect(again.refusal.code).toBe("not_found");
+  });
+
+  it("withdraws a dead create, which a later edit of its item waited for, and keeps that edit refused", async () => {
+    harness = await hydratedHarness("class-withdraw-dead-create", {
+      items: held(),
+    });
+    const { device } = harness;
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      version: 0,
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    const edit = await device.update(local, {
+      properties: { title: "mine, edited" },
+      version: 0,
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    if (!edit.ok) return;
+    scriptWrites(harness.server, {
+      create: [{ kind: "json", status: 200, body: "not an answer" } as Answer],
+      read: [refusal(404, "item_not_found", "Item not found")],
+    });
+    for (let pass = 0; pass < 5; pass += 1)
+      expect((await device.drain()).ok).toBe(true);
+    expect(
+      (await queueOf(harness)).map((row) => [row.id, row.verdict]),
+      "the create did not reach the ceiling with the edit refused behind it, so nothing below is about a dead create",
+    ).toEqual([
+      [created.value.id, "dead"],
+      [edit.value.id, "refused"],
+    ]);
+
+    const withdrawn = await device.withdraw(created.value.id);
+    expect(
+      withdrawn.ok && withdrawn.value,
+      "a dead create was not withdrawn",
+    ).toEqual([created.value.id]);
+    expect(
+      (await queueOf(harness)).map((row) => [row.id, row.verdict]),
+      "the edit that waited for the withdrawn create was taken out of the queue, or left able to be sent",
+    ).toEqual([[edit.value.id, "refused"]]);
+    const released = await device.release({ id: edit.value.id });
+    expect(
+      released.ok && released.value,
+      "an edit that waited for a withdrawn create was released, and would go to an item that was never made",
+    ).toBe(0);
+    expect((await device.get(local)).ok).toBe(false);
   });
 
   /**
@@ -2233,9 +2338,9 @@ describe("withdrawing a write that can never be sent", () => {
     expect((await device.get(setup.local)).ok).toBe(true);
 
     const withdrawn = await device.withdraw(setup.create.id);
-    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toBe(
-      true,
-    );
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual([
+      setup.create.id,
+    ]);
     const queue = await queueOf(harness);
     expect(
       queue.map((row) => [row.id, row.verdict]),
@@ -2408,9 +2513,10 @@ describe("withdrawing a write that can never be sent", () => {
       expect(sentBefore).toHaveLength(1);
       expect(JSON.parse(sentBefore[0]!.body).id).toBe(local);
       const withdrawn = await device.withdraw(created.value.id);
-      expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toBe(
-        true,
-      );
+      expect(
+        withdrawn.ok && withdrawn.value,
+        JSON.stringify(withdrawn),
+      ).toEqual([created.value.id]);
       const refused = await queueOf(harness);
       expect(
         refused.map((row) => [row.id, row.verdict, row.reason, row.depends_on]),
