@@ -8,7 +8,10 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
-import { RUST_JUDGED } from "../conformance/src/utils/rust-judged.js";
+import {
+  CONTRACT_PROJECTS,
+  contractFiles,
+} from "../conformance/src/utils/rust-score.js";
 
 interface Step {
   name?: string;
@@ -85,10 +88,14 @@ describe("the nightly benchmarks", () => {
     expect(report?.if).toContain("failure()");
     expect(report?.if).toContain("schedule");
     // Their only verdict is the job's exit status, so none of their files may
-    // sit in the list the gate's shards judge.
-    expect(RUST_JUDGED.length).toBeGreaterThan(0);
+    // be among the fixtures the gate's score judges.
+    expect(CONTRACT_PROJECTS).not.toContain("performance");
+    expect(CONTRACT_PROJECTS).not.toContain("load");
+    expect(CONTRACT_PROJECTS).not.toContain("hydration");
+    const files = contractFiles(resolve(import.meta.dirname, "../conformance"));
+    expect(files.length).toBeGreaterThan(0);
     expect(
-      RUST_JUDGED.filter((file) =>
+      files.filter((file) =>
         /^src\/suites\/(performance|load|hydration)\//.test(file),
       ),
     ).toEqual([]);

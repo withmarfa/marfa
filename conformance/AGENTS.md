@@ -25,9 +25,9 @@ These hold for every fixture that asserts an absence or waits on a stream, in an
 - **No hand-rolled deadline.** A `while (cond && Date.now() < deadline)` loop followed by an assertion on `cond` turns the runner's timeout into a logic failure. Use the runner's budget, and pass `context.signal` to the stream helpers so an abort names what it waited for.
 - **No other skips.** CI runs every shard with `--retry=0`, and the score counts every skip and todo as not passing except a test marked `ON_MACOS` (`src/utils/platform.ts`) off a Mac and a skip that sets `meta.unobservable` to its reason.
 
-## The judged list
+## What the score judges
 
-`RUST_JUDGED` in `src/utils/rust-judged.ts` lists every fixture file of the five server projects (`correctness`, `compliance`, `sync`, `device`, `cli`). `rust-judged.test.ts` fails the offline lane unless the list equals those files, so add a new fixture file to it in the same change. `Rust contract score` fails when a listed file does not pass whole. The `performance`, `load` and `hydration` files are not listed.
+`Rust contract score` judges every `*.test.ts` file under `src/suites/` in the five server projects (`correctness`, `compliance`, `sync`, `device`, `cli`), except `*.decision.test.ts`, and fails when one does not pass whole. A new fixture file is judged with no further step. The `performance`, `load` and `hydration` files are not judged; the nightly benchmarks judge them.
 
 ## Projects and lanes
 
@@ -43,6 +43,6 @@ These hold for every fixture that asserts an absence or waits on a stream, in an
 ## Code Review Rules
 
 - A test or fixture weakened, skipped, retried or removed so that something passes is a finding.
-- A fixture file of the five server projects missing from `src/utils/rust-judged.ts`, or listed there without passing whole, is a finding.
+- A fixture file of the five server projects that does not pass whole on the Rust server is a finding.
 - A stand-in in server code that exists only to make a fixture pass is a finding.
 - A fixture that reaches past the target interface without its entry and reason in `TARGET-INTERFACE.md` is a finding.

@@ -24,7 +24,7 @@ For changes to a workflow, to `scripts/ci-required.ts` or to the tests in `ci/`.
 
 ## The Rust contract jobs
 
-`Rust server (release build)` builds the server once for the static musl target, with the file readers linked in. Twenty shards boot that build through `MARFA_SERVER_BIN` and run the contract's fixtures against it. A shard passes when a test fails, so that every shard reports: `Rust contract score` is the verdict, and it fails when a file listed in `conformance/src/utils/rust-judged.ts` did not pass whole or a shard wrote no report. It counts a skipped test as not passing, apart from tests that run only on macOS, which `Rust contract score on macOS` judges at night. `MCP conformance` and the `Restore drill` boot the same build.
+`Rust server (release build)` builds the server once for the static musl target, with the file readers linked in. Twenty shards boot that build through `MARFA_SERVER_BIN` and run the contract's fixtures against it. A shard passes when a test fails, so that every shard reports: `Rust contract score` is the verdict, and it fails when a fixture file of the five server projects did not pass whole, when a file no shard reported, or when a shard wrote no report. It counts a skipped test as not passing, apart from tests that run only on macOS, which `Rust contract score on macOS` judges at night. `MCP conformance` and the `Restore drill` boot the same build.
 
 ## Traps
 

@@ -9,11 +9,9 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 import {
-  collectionNotes,
+  CONTRACT_PROJECTS,
   contractFiles,
-  countCollected,
   excuse,
-  filesNamedIn,
   fixturePath,
   renderScore,
   scoreRun,
@@ -49,7 +47,6 @@ describe("the score of a run", () => {
         { testResults: [result(C, "passed", ["passed"])] },
       ],
       [A, B, C],
-      [],
       LINUX,
     );
     expect([score.passed, score.total, score.filesPassing]).toEqual([5, 6, 2]);
@@ -61,7 +58,7 @@ describe("the score of a run", () => {
       ["compliance", 1, 2, 4, 5],
       ["sync", 1, 1, 1, 1],
     ]);
-    expect(score.failures).toEqual([]);
+    expect(score.failures).toEqual([`${B}: 2 of 3 tests passed`]);
   });
 
   it("does not count a skipped or todo test as passing", () => {
@@ -72,15 +69,14 @@ describe("the score of a run", () => {
         },
       ],
       [A],
-      [],
       LINUX,
     );
     expect([score.passed, score.total, score.filesPassing]).toEqual([1, 3, 0]);
   });
 
-  describe("for a file the Rust server judges", () => {
-    const failures = (testResults: VitestReport["testResults"], judged = [A]) =>
-      scoreRun([{ testResults }], [A, B], judged, LINUX).failures;
+  describe("for a file the run owes", () => {
+    const failures = (testResults: VitestReport["testResults"], owed = [A]) =>
+      scoreRun([{ testResults }], owed, LINUX).failures;
 
     it("passes when every test in it passed", () => {
       expect(
@@ -106,71 +102,61 @@ describe("the score of a run", () => {
         `${A}: no report names it`,
       ]);
     });
+
+    it("fails a file that did not load, with no test listed, and a file no shard reported", () => {
+      const score = scoreRun(
+        [
+          {
+            testResults: [
+              result(A, "failed", []),
+              result(B, "passed", ["passed", "passed"]),
+            ],
+          },
+        ],
+        [A, B, C],
+        LINUX,
+      );
+      expect(score.failures).toEqual([
+        `${A}: the file failed around its tests`,
+        `${C}: no report names it`,
+      ]);
+      expect(renderScore(score)).toContain(`| ${C} | not reported | yes |`);
+    });
+
+    it("passes a complete set, and fails the missing file and the failed test of an incomplete one", () => {
+      const complete = [
+        result(A, "passed", ["passed", "passed"]),
+        result(B, "passed", ["passed"]),
+        result(C, "passed", ["passed"]),
+      ];
+      const owed = [A, B, C];
+      expect(failures(complete, owed)).toEqual([]);
+      expect(
+        failures(
+          complete.filter((file) => !file.name.endsWith(B)),
+          owed,
+        ),
+      ).toEqual([`${B}: no report names it`]);
+      expect(
+        failures(
+          [result(A, "failed", ["passed", "failed"]), ...complete.slice(1)],
+          owed,
+        ),
+      ).toEqual([`${A}: 1 of 2 tests passed`]);
+    });
   });
 
-  it("counts a file no report names as not passing, and leaves a file the Rust server does not judge unable to fail the run", () => {
-    const score = scoreRun([{ testResults: [] }], [A, B], [], LINUX);
-    expect([score.passed, score.filesPassing, score.failures]).toEqual([
-      0,
-      0,
-      [],
-    ]);
-    expect(renderScore(score)).toContain(`| ${A} | not reported | no |`);
-  });
-
-  it("counts every collected test of a file that did not load as not passing", () => {
-    const collected = new Map([
-      [A, 5],
-      [B, 2],
-    ]);
-    const score = scoreRun(
-      [
-        {
-          testResults: [
-            result(A, "failed", []),
-            result(B, "passed", ["passed", "passed"]),
-          ],
-        },
-      ],
-      [A, B, C],
-      [A, B, C],
-      { collected: new Map([...collected, [C, 3]]), platform: "linux" },
-    );
-    expect(score.passed).toBe(2);
-    expect(score.total).toBe(10);
-    expect(score.files.map((f) => [f.file, f.passed, f.total])).toEqual([
-      [A, 0, 5],
-      [B, 2, 2],
-      [C, 0, 3],
-    ]);
-    expect(score.failures).toEqual([
-      `${A}: the file failed around its tests`,
-      `${C}: no report names it`,
-    ]);
-    expect(renderScore(score)).toContain(`| ${C} | not reported, 3 tests |`);
-  });
-
-  it("takes the reported count when it is the larger, and the collected count when a report lists fewer", () => {
-    const score = scoreRun(
-      [{ testResults: [result(A, "passed", ["passed", "passed", "skipped"])] }],
-      [A, B],
-      [],
-      {
-        collected: new Map([
-          [A, 2],
-          [B, 0],
-        ]),
-        platform: "linux",
-      },
-    );
-    expect(score.files.map((f) => f.total)).toEqual([3, 0]);
-    const fewer = scoreRun(
-      [{ testResults: [result(A, "passed", ["passed"])] }],
+  it("counts a file no report names as not passing, and a reported file the run does not owe cannot fail it", () => {
+    const missing = scoreRun([{ testResults: [] }], [A, B], LINUX);
+    expect([missing.passed, missing.filesPassing]).toEqual([0, 0]);
+    expect(renderScore(missing)).toContain(`| ${A} | not reported | yes |`);
+    const unowed = scoreRun(
+      [{ testResults: [result(B, "failed", ["failed"])] }],
       [A],
-      [A],
-      { collected: new Map([[A, 4]]), platform: "linux" },
+      LINUX,
     );
-    expect(fewer.failures).toEqual([`${A}: 1 of 4 tests passed`]);
+    expect(unowed.failures).toEqual([`${A}: no report names it`]);
+    expect(renderScore(unowed)).toContain(`| ${B} | 0 of 1 | no |`);
   });
 
   it("ignores a report of a file outside the five server projects", () => {
@@ -185,7 +171,6 @@ describe("the score of a run", () => {
         },
       ],
       [A],
-      [],
       LINUX,
     );
     expect([score.passed, score.total, score.files.length]).toEqual([1, 1, 1]);
@@ -199,7 +184,6 @@ describe("the score of a run", () => {
           { testResults: [result(A, "passed", ["passed"])] },
         ],
         [A],
-        [],
         LINUX,
       ),
     ).toThrow(`two reports name ${A}`);
@@ -229,10 +213,7 @@ describe("a test skipped for the machine alone", () => {
     assertionResults: [{ status: "passed" }, ...tests],
   });
   const score = (platform: string, ...tests: ReportedTest[]) =>
-    scoreRun([{ testResults: [file(...tests)] }], [A], [A], {
-      collected: new Map([[A, 1 + tests.length]]),
-      platform,
-    });
+    scoreRun([{ testResults: [file(...tests)] }], [A], { platform });
 
   it("is left out of the count on another platform and listed, so its file passes whole", () => {
     const linux = score("linux", macOnly);
@@ -292,8 +273,7 @@ describe("a test skipped for the machine alone", () => {
         },
       ],
       [A],
-      [A],
-      { collected: new Map([[A, 1]]), platform: "linux" },
+      LINUX,
     );
     expect(only.failures).toEqual([]);
     expect(only.filesPassing).toBe(1);
@@ -329,36 +309,8 @@ describe("the excuses the contract makes", () => {
   });
 });
 
-describe("the count of collected tests", () => {
-  it("counts the tests listed for each file by its path from conformance", () => {
-    const counts = countCollected([
-      { file: `/checkout/conformance/${A}` },
-      { file: `/checkout/conformance/${A}` },
-      { file: `/checkout/conformance/${C}` },
-    ]);
-    expect([...counts]).toEqual([
-      [A, 2],
-      [C, 1],
-    ]);
-  });
-
-  it("finds the contract files an error names, once each", () => {
-    expect(
-      filesNamedIn(`Error in ${A}\n at /x/conformance/${A}:2:1\n and ${C}`),
-    ).toEqual([A, C]);
-    expect(filesNamedIn("nothing here")).toEqual([]);
-  });
-
-  it("says by name which files were read, not run, and the count used", () => {
-    const some = collectionNotes(new Map([[A, 4]]), [A, B]).join("\n");
-    expect(some).toContain(`${A}: 4 tests counted`);
-    expect(some).toContain(`${B}: 0 tests counted`);
-    expect(collectionNotes(new Map(), [])[1]).toContain("named no file");
-    expect(collectionNotes(new Map([[A, 1]]), [])).toHaveLength(1);
-  });
-});
-
 describe("the files of the contract", () => {
+  const ROOT = join(import.meta.dirname, "..", "..");
   const directory = mkdtempSync(join(tmpdir(), "marfa-rust-score-"));
   afterAll(() => rmSync(directory, { recursive: true, force: true }));
   for (const path of [
@@ -374,6 +326,19 @@ describe("the files of the contract", () => {
   for (const project of ["correctness", "sync", "cli"]) {
     mkdirSync(join(directory, "src/suites", project), { recursive: true });
   }
+
+  it("are, in the checkout, the fixtures of every server project", () => {
+    const files = contractFiles(ROOT);
+    for (const project of CONTRACT_PROJECTS) {
+      expect(
+        files.some((file) => file.startsWith(`src/suites/${project}/`)),
+        project,
+      ).toBe(true);
+    }
+    expect(files.filter((file) => /\.decision\.test\.ts$/.test(file))).toEqual(
+      [],
+    );
+  });
 
   it("are the test files of the five server projects, without a decision test, a helper or another project", () => {
     expect(contractFiles(directory)).toEqual([

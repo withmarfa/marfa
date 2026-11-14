@@ -84,7 +84,7 @@ It holds every status the server logged to the one `openapi.json` declares for t
 pnpm rust:score --reports reports/run --projects compliance
 ```
 
-It reads every `vitest.json` under `--reports` and prints tests passing out of all, by file and by project. It counts every skip and todo as not passing except a test that runs only on another platform (`ON_MACOS`) and one that sets `meta.unobservable`. It fails when a file in `src/utils/rust-judged.ts` did not pass whole or no report names it, so score a whole project's run, not one file's. `TARGET-INTERFACE.md`, "How the score is counted", has the rules.
+It reads every `vitest.json` under `--reports` and prints tests passing out of all, by file and by project. It counts every skip and todo as not passing except a test that runs only on another platform (`ON_MACOS`) and one that sets `meta.unobservable`. It fails when a fixture file of the five server projects did not pass whole or no report names it, so score a whole project's run, not one file's. `TARGET-INTERFACE.md`, "How the score is counted", has the rules.
 
 For a report by contract chapter, run `pnpm chapter-report --report reports/run/vitest.json` before `marfa:down`. With `--state <dir> --windows <file>` (the windows come from `--reporter=./src/utils/file-windows.ts` with `MARFA_FILE_WINDOWS` set), it also sorts each failed file by whether it called an operation the server has no route for.
 
