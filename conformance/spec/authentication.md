@@ -220,7 +220,15 @@ When the server refuses `POST /auth/confirm` because the password is wrong, the 
 
 ### `authentication/confirm-locked-audit`
 
-When the server refuses `POST /auth/confirm` because the attempt windows `authentication/confirm-lanes` names are spent, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `resource_type` `owner`, `details.method` `password` and `details.reason` `too_many_attempts`, readable at `GET /audit`.
+When the server refuses `POST /auth/confirm` because the attempt windows `authentication/confirm-lanes` names are spent, and is not writing the record of another such refusal, has not finished a write of the record of a confirmation it answered `429` in the fifteen minutes before that committed or whose outcome it could not tell, and has not had such a write fail in the minute before, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `resource_type` `owner`, `details.method` `password` and `details.reason` `too_many_attempts`, readable at `GET /audit`.
+
+**Tests:** `compliance/confirm-sign-in.test.ts › records a refused confirmation in the audit log as a refused password sign-in, with its reason`.
+
+### `authentication/confirm-locked-audit-once`
+
+While fewer than fifteen minutes have passed since the server, in its current run, finished a write of the record of a `POST /auth/confirm` it answered `429`, and that write committed or its outcome could not be told, the server MUST NOT write an audit record of another confirmation it answers `429`.
+
+**Reason:** A refusal by a limit judges no password, so one record in fifteen minutes tells the owner the limit is refusing, and a wrong password is still recorded each time by `authentication/confirm-wrong-password-audit`.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › records a refused confirmation in the audit log as a refused password sign-in, with its reason`.
 
@@ -362,7 +370,15 @@ If the attempt windows `authentication/password-change-lanes` names are spent, t
 
 ### `authentication/password-change-locked-audit`
 
-When the server refuses `POST /auth/owner/password` because the attempt windows `authentication/password-change-lanes` names are spent, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `resource_type` `owner`, `details.method` `password` and `details.reason` `too_many_attempts`, readable at `GET /audit`.
+When the server refuses `POST /auth/owner/password` because the attempt windows `authentication/password-change-lanes` names are spent, and is not writing the record of another such refusal, has not finished a write of the record of a password change it answered `429` in the fifteen minutes before that committed or whose outcome it could not tell, and has not had such a write fail in the minute before, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `resource_type` `owner`, `details.method` `password` and `details.reason` `too_many_attempts`, readable at `GET /audit`.
+
+**Tests:** `compliance/owner-pages.test.ts › records a refused change in the audit log as a refused password sign-in, with its reason`.
+
+### `authentication/password-change-locked-audit-once`
+
+While fewer than fifteen minutes have passed since the server, in its current run, finished a write of the record of a `POST /auth/owner/password` it answered `429`, and that write committed or its outcome could not be told, the server MUST NOT write an audit record of another password change it answers `429`.
+
+**Reason:** A refusal by a limit judges no password, so one record in fifteen minutes tells the owner the limit is refusing, and a wrong current password is still recorded each time by `authentication/password-change-wrong-audit`.
 
 **Tests:** `compliance/owner-pages.test.ts › records a refused change in the audit log as a refused password sign-in, with its reason`.
 

@@ -1,3 +1,5 @@
+import http from "node:http";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
@@ -18,38 +20,72 @@ import { TEST_OWNER } from "../../utils/target.js";
 
 /**
  * The limits each door that opens a sign-in or a client holds one address
- * to, the refusal a caller from elsewhere meets before the instance has a
- * sign-in address, and what the device page and the loopback redirect take
- * from the request, and how long an access token lasts. Each case talks from
- * an address of its own, which the
- * server believes from a header, so no case holds another back.
+ * to, what every address together leaves in the audit log, the refusal a
+ * caller from elsewhere meets before the instance has a sign-in address,
+ * and what the device page and the loopback redirect take from the request,
+ * and how long an access token lasts. Each case talks from an address of its
+ * own, which the server believes from a header, so no case holds another
+ * back, and each count of audit records has a server of its own.
  */
 let limited: FreshServer;
 let unset: FreshServer;
+let registrations: FreshServer;
+let codes: FreshServer;
+let windowed: FreshServer;
+let abandoned: FreshServer;
 let origin: string;
 let addresses = 0;
 
 const CLIENT_HEADER = "x-conformance-client";
 
 beforeAll(async () => {
-  [limited, unset] = await Promise.all([
-    bootFreshServer("sign-in-door-limits", {
-      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-      MARFA_RATE_LIMIT_ENABLED: "true",
-    }),
-    bootFreshServer("sign-in-address-unset", {
-      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-      MARFA_SIGN_IN_ADDRESS: "",
-    }),
-  ]);
+  [limited, unset, registrations, codes, windowed, abandoned] =
+    await Promise.all([
+      bootFreshServer("sign-in-door-limits", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+        MARFA_RATE_LIMIT_ENABLED: "true",
+      }),
+      bootFreshServer("sign-in-address-unset", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+        MARFA_SIGN_IN_ADDRESS: "",
+      }),
+      bootFreshServer("register-audit-allowance", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+        MARFA_RATE_LIMIT_ENABLED: "true",
+      }),
+      bootFreshServer("device-code-audit-allowance", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+        MARFA_RATE_LIMIT_ENABLED: "true",
+      }),
+      bootFreshServer("register-audit-window", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+        MARFA_RATE_LIMIT_ENABLED: "true",
+      }),
+      bootFreshServer("register-audit-abandoned", {
+        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+        MARFA_RATE_LIMIT_ENABLED: "true",
+        MARFA_TEST_TUNING: "write_wait_ms=10000",
+      }),
+    ]);
   origin = await issuerOrigin(limited);
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+}, 6 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
-  await Promise.allSettled([limited.stop(), unset.stop()]);
-}, 2 * FRESH_SERVER_TIMEOUT_MS);
+  await Promise.allSettled([
+    limited.stop(),
+    unset.stop(),
+    registrations.stop(),
+    codes.stop(),
+    windowed.stop(),
+    abandoned.stop(),
+  ]);
+}, 6 * FRESH_SERVER_TIMEOUT_MS);
 
 function nextAddress(): string {
   addresses += 1;
@@ -191,6 +227,185 @@ describe("the limits one address is held to", () => {
     const { answered, refused } = await untilRefused(31, challenge);
     expect(answered).toEqual(Array<number>(30).fill(200));
     expect(Number(refused?.headers.get("retry-after"))).toBeGreaterThan(0);
+  });
+});
+
+/** The audit records of `action`, newest first. */
+async function audited(
+  server: FreshServer,
+  action: string,
+): Promise<{ details?: { unrecorded_after?: number; source?: string } }[]> {
+  const response = await fetch(
+    `${server.apiUrl}/audit?${new URLSearchParams({ action, limit: "200" })}`,
+    { headers: { authorization: `Bearer ${server.managementKey}` } },
+  );
+  expect(response.status).toBe(200);
+  const { data } = (await response.json()) as {
+    data: { details?: { unrecorded_after?: number; source?: string } }[];
+  };
+  return data;
+}
+
+const METADATA = JSON.stringify({
+  client_name: "audit allowance fixture",
+  application_type: "native",
+  redirect_uris: ["http://127.0.0.1/callback"],
+  token_endpoint_auth_method: "none",
+});
+
+function register(server: FreshServer, address: string): Promise<Response> {
+  return fetch(`${server.apiUrl}/auth/oauth2/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json", [CLIENT_HEADER]: address },
+    body: METADATA,
+  });
+}
+
+describe("what every address together leaves in the audit log", () => {
+  it("registers every client from every address, records ten in fifteen minutes, and counts the rest on the newest record", async () => {
+    for (let a = 1; a <= 7; a++) {
+      const { answered } = await untilRefused(10, () =>
+        register(registrations, `192.0.2.${String(a)}`),
+      );
+      expect(answered).toEqual(Array<number>(10).fill(201));
+    }
+    const full = await audited(registrations, "auth.client.created");
+    expect(full).toHaveLength(10);
+    expect(full[0]?.details?.source).toBe("registration");
+    expect(full[0]?.details?.unrecorded_after).toBe(60);
+    expect(full[1]?.details?.unrecorded_after).toBeUndefined();
+    await registrations.advanceClock(15 * 60 * 1000);
+    expect((await register(registrations, "203.0.113.9")).status).toBe(201);
+    const held = await audited(registrations, "auth.client.created");
+    expect(held).toHaveLength(11);
+    expect(held[0]?.details?.unrecorded_after).toBeUndefined();
+    expect(held[1]?.details?.unrecorded_after).toBe(60);
+  });
+
+  it("measures the fifteen minutes from when a registration's record is written", async () => {
+    await windowed.pauseClock(true);
+    try {
+      await windowed.setFault("hold:write=auth.client.created");
+      const first = register(windowed, "192.0.2.1");
+      await windowed.waitForHold("hold:write");
+      await windowed.advanceClock(1_000);
+      await windowed.clearFault("hold:write");
+      expect((await first).status).toBe(201);
+      for (let n = 2; n <= 10; n++) {
+        expect((await register(windowed, `192.0.2.${String(n)}`)).status).toBe(
+          201,
+        );
+      }
+      await windowed.advanceClock(15 * 60 * 1000 - 1);
+      expect((await register(windowed, "192.0.2.11")).status).toBe(201);
+      const inside = await audited(windowed, "auth.client.created");
+      expect(inside).toHaveLength(10);
+      expect(inside[0]?.details?.unrecorded_after).toBe(1);
+      await windowed.advanceClock(1);
+      expect((await register(windowed, "192.0.2.12")).status).toBe(201);
+      expect(await audited(windowed, "auth.client.created")).toHaveLength(11);
+    } finally {
+      await windowed.pauseClock(false);
+    }
+  });
+
+  it("writes no more than ten registration records when the callers leave before their writes", async () => {
+    // Hold the writer until the registration callers disconnect.
+    await abandoned.setFault("hold:bulk-page=1");
+    const page = fetch(`${abandoned.apiUrl}/items/bulk`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${abandoned.workingKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        mode: "upsert",
+        items: [
+          {
+            type: "core.note",
+            source_id: "held-page",
+            properties: { title: "held page" },
+          },
+        ],
+      }),
+    });
+    await abandoned.waitForHold("hold:bulk-page");
+    const left = await Promise.all(
+      Array.from({ length: 10 }, (_, n) => {
+        const request = http.request(
+          `${abandoned.apiUrl}/auth/oauth2/register`,
+          {
+            method: "POST",
+            agent: false,
+            headers: {
+              "content-type": "application/json",
+              [CLIENT_HEADER]: `198.51.100.${String(n + 1)}`,
+            },
+          },
+          (response) => response.resume(),
+        );
+        request.on("error", () => undefined);
+        return new Promise<http.ClientRequest>((sent) => {
+          request.end(METADATA, () => {
+            sent(request);
+          });
+        });
+      }),
+    );
+    // No signal says a request has reached the writer's queue.
+    await delay(500);
+    for (const request of left) request.destroy();
+    await abandoned.clearFault("hold:bulk-page");
+    expect((await page).status).toBe(200);
+
+    // A registration that answers was queued behind every one that left.
+    expect((await register(abandoned, "203.0.113.1")).status).toBe(201);
+    const first = await audited(abandoned, "auth.client.created");
+    expect(first).toHaveLength(10);
+    expect(first[0]?.details?.unrecorded_after).toBe(1);
+
+    await abandoned.advanceClock(60_001);
+    for (let n = 2; n <= 11; n++) {
+      expect((await register(abandoned, `203.0.113.${String(n)}`)).status).toBe(
+        201,
+      );
+    }
+    const held = await audited(abandoned, "auth.client.created");
+    expect(held).toHaveLength(10);
+    expect(held[0]?.details?.unrecorded_after).toBe(11);
+  });
+
+  it("issues every device code from every address, records ten in fifteen minutes, and counts the rest on the newest record", async () => {
+    const app = await registerApp(codes, "core.note:read", {
+      grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
+    });
+    const code = (address: string) =>
+      fetch(`${codes.apiUrl}/auth/device/code`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          [CLIENT_HEADER]: address,
+        },
+        body: new URLSearchParams({
+          client_id: app.clientId,
+          scope: "core.note:read",
+        }),
+      });
+    for (let a = 1; a <= 3; a++) {
+      const { answered } = await untilRefused(30, () =>
+        code(`192.0.2.${String(a)}`),
+      );
+      expect(answered).toEqual(Array<number>(30).fill(200));
+    }
+    const issued = "auth.device_code.issued";
+    const full = await audited(codes, issued);
+    expect(full).toHaveLength(10);
+    expect(full[0]?.details?.unrecorded_after).toBe(80);
+    await codes.advanceClock(15 * 60 * 1000);
+    expect((await code("203.0.113.9")).status).toBe(200);
+    const held = await audited(codes, issued);
+    expect(held).toHaveLength(11);
+    expect(held[0]?.details?.unrecorded_after).toBeUndefined();
   });
 });
 

@@ -9,6 +9,7 @@ use super::store;
 use crate::app::App;
 use crate::app::audit::{self, Entry};
 use crate::app::auth::Visit;
+use crate::app::auth::allowance::{self, CLIENT_REGISTERED};
 use crate::app::auth::limits::{hold_to, register_lanes};
 use crate::app::refusal::Result;
 use crate::db::Write;
@@ -34,7 +35,7 @@ pub async fn register(
     }
     let id = Uuid::now_v7().to_string();
     let now = app.clock.instant();
-    let at = now.text();
+    let clock = app.clock.clone();
     let ip = visit.client_ip();
     let mut answer = registration.to_json();
     answer.insert("client_id".to_string(), Value::from(id.clone()));
@@ -45,22 +46,26 @@ pub async fn register(
     app.db
         .write(Write::caller(CLIENT_CREATED), move |tx| {
             store::put_client(tx, &id, &registration, now)?;
-            audit::record_from(
-                tx,
-                &at,
-                None,
-                ip.as_deref(),
-                Entry {
-                    action: CLIENT_CREATED,
-                    resource_type: "oauth_client",
-                    resource_id: Some(&id),
-                    details: Some(json!({
-                        "client_id": id,
-                        "client_name": registration.client_name,
-                        "application_type": registration.application_type.word(),
-                    })),
-                },
-            )
+            let at = clock.instant();
+            allowance::record_or_count(tx, CLIENT_REGISTERED, at, || {
+                audit::record_from(
+                    tx,
+                    &at.text(),
+                    None,
+                    ip.as_deref(),
+                    Entry {
+                        action: CLIENT_REGISTERED.action(),
+                        resource_type: "oauth_client",
+                        resource_id: Some(&id),
+                        details: Some(json!({
+                            "client_id": id,
+                            "client_name": registration.client_name,
+                            "application_type": registration.application_type.word(),
+                            "source": CLIENT_REGISTERED.source(),
+                        })),
+                    },
+                )
+            })
         })
         .await?;
     Ok(Ok(answer))
