@@ -2635,7 +2635,7 @@ describe("offline, reconnect and re-hydration", () => {
     // A held write can be withdrawn instead of sent.
     expect(await device.withdraw(edited.value.id)).toEqual({
       ok: true,
-      value: true,
+      value: [edited.value.id],
     });
 
     // The witness: released, the held write left is sent to the instance
@@ -5659,6 +5659,60 @@ describe("an upload is a queued write", () => {
     expect(again.ok).toBe(true);
     if (!again.ok) return;
     expect(again.value.verdicts[0]?.verdict).toBe("accepted");
+  });
+
+  it("sets an upload aside as failing_alone when its held bytes fail to open alike in three drains over five minutes, and withdraws it", async () => {
+    harness = await hydratedHarness("upload-unopened-aside", {
+      items: held(),
+    });
+    const { device, server } = harness;
+    const bytes = Buffer.from("held and locked for good\n");
+    expect((await device.putBlob(fileOf("locked.txt", bytes))).ok).toBe(true);
+    const heldAt = `${device.store}.blobs/${hashOf(bytes).slice("sha256:".length)}`;
+    chmodSync(heldAt, 0o000);
+    try {
+      const upload = async () => (await queueOf(device))[0];
+      for (let pass = 0; pass < 3; pass += 1) {
+        const drained = await device.drain();
+        expect(drained.ok, JSON.stringify(drained)).toBe(true);
+        expect(
+          drained.ok && drained.value.undelivered,
+          "bytes that could not be opened were not left for the next drain",
+        ).toBe(1);
+      }
+      expect(
+        [(await upload())?.verdict, (await upload())?.environmental_streak],
+        "an upload was set aside before five minutes had passed, so a file locked for a moment is given up on",
+      ).toEqual([null, 3]);
+
+      process.env.MARFA_TEST_FAULT = `clock-offset=${6 * 60_000}`;
+      let aside: Awaited<ReturnType<DeviceUnderTest["drain"]>>;
+      try {
+        aside = await device.drain();
+      } finally {
+        delete process.env.MARFA_TEST_FAULT;
+      }
+      expect(aside.ok, JSON.stringify(aside)).toBe(true);
+      const row = await upload();
+      expect(
+        [row?.verdict, row?.reason],
+        "an upload whose bytes could not be opened in three drains over five minutes was left with no verdict, so nothing a person does can take it from the queue",
+      ).toEqual(["blocked", "failing_alone"]);
+      expect(row?.last_failure?.text).toContain("could not be opened");
+
+      const withdrawn = await device.withdraw(row?.id ?? "");
+      expect(
+        withdrawn.ok && withdrawn.value,
+        "an upload set aside because its bytes cannot be opened was not withdrawn",
+      ).toEqual([row?.id]);
+      expect(await queueOf(device)).toEqual([]);
+      expect(
+        server.requests.filter((request) => request.pathname === "/blobs"),
+        "the upload was sent though its bytes could not be opened",
+      ).toEqual([]);
+    } finally {
+      chmodSync(heldAt, 0o644);
+    }
   });
 
   it("refuses an attachment whose upload the server refuses, and what waits on it", async () => {

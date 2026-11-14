@@ -761,10 +761,11 @@ export interface DeviceUnderTest {
   ): Promise<Outcome<number>>;
   /**
    * Take a write that can never be sent out of the queue, and put the copy
-   * back to what the server holds. Answers whether the write was one a
-   * withdraw takes.
+   * back to what the server holds. Answers the id of every write taken out
+   * of the queue, those of a row write's batch included, or an empty list
+   * where the write was not one a withdraw takes.
    */
-  withdraw(id: string): Promise<Outcome<boolean>>;
+  withdraw(id: string): Promise<Outcome<string[]>>;
   /**
    * Clear the writes the server has answered, and say how many went. With
    * `ids`, only those named, and none for an empty list.

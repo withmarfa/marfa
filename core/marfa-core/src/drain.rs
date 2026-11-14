@@ -29,7 +29,7 @@ pub struct DrainReport {
     pub held: usize,
     /// Writes this pass could not deliver: the one the server could not take
     /// and every write left behind it, and one whose bytes could not be
-    /// opened. Each waits, uncounted, for the next drain.
+    /// opened. Each waits for the next drain.
     pub undelivered: usize,
     /// Writes this pass gave a verdict without sending them: refused for a
     /// write they waited on or for bytes no longer held, or settled by
@@ -402,14 +402,49 @@ fn set_aside(
     report: &mut DrainReport,
     answers: &mut HashMap<String, Option<Verdict>>,
 ) -> Result<()> {
+    let set_aside = block_failing_alone(core, &stuck.id, &stuck.key, failure)?;
+    let told = |write: &QueuedWrite| {
+        verdict_of(
+            write,
+            &Settled::plain(
+                Some(Verdict::Blocked),
+                Some(BlockedReason::FailingAlone.as_str().into()),
+                write.refusals,
+            ),
+            None,
+        )
+    };
+    for (at, write) in set_aside.iter().enumerate() {
+        answers.insert(write.id.clone(), Some(Verdict::Blocked));
+        report.answered += 1;
+        if at == 0 {
+            if let Some(entry) = report.verdicts.get_mut(stuck.verdict_at) {
+                *entry = told(write);
+            }
+        } else if !tell(report, told(write)) {
+            // Told undelivered when the batch first met the failure this pass.
+            report.undelivered = report.undelivered.saturating_sub(1);
+        }
+    }
+    Ok(())
+}
+
+/// Blocks `id`, and every write of its batch, `failing_alone`, and answers
+/// the writes it blocked. None where `id` was released, withdrawn or answered
+/// since it went under `key`: not the same attempt any more, and the verdict
+/// would be about another write.
+fn block_failing_alone(
+    core: &Core,
+    id: &str,
+    key: &str,
+    failure: &LastFailure,
+) -> Result<Vec<QueuedWrite>> {
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
-    // Released, withdrawn or answered while the test was out: not the same
-    // attempt any more, and the verdict would be about another write.
-    let Some(row) = store::queued_write(&tx, &stuck.id)?
-        .filter(|row| row.verdict.is_none() && row.idempotency_key == stuck.key)
+    let Some(row) = store::queued_write(&tx, id)?
+        .filter(|row| row.verdict.is_none() && row.idempotency_key == key)
     else {
-        return Ok(());
+        return Ok(Vec::new());
     };
     // The server may hold the batch under its key, so its writes stay together.
     let members = if row.kind == WriteKind::WriteRows {
@@ -439,30 +474,7 @@ fn set_aside(
         set_aside.push(store::queued_write(&tx, &write.id)?.unwrap_or_else(|| write.clone()));
     }
     tx.commit()?;
-    let told = |write: &QueuedWrite| {
-        verdict_of(
-            write,
-            &Settled::plain(
-                Some(Verdict::Blocked),
-                Some(BlockedReason::FailingAlone.as_str().into()),
-                write.refusals,
-            ),
-            None,
-        )
-    };
-    for (at, write) in set_aside.iter().enumerate() {
-        answers.insert(write.id.clone(), Some(Verdict::Blocked));
-        report.answered += 1;
-        if at == 0 {
-            if let Some(entry) = report.verdicts.get_mut(stuck.verdict_at) {
-                *entry = told(write);
-            }
-        } else if !tell(report, told(write)) {
-            // Told undelivered when the batch first met the failure this pass.
-            report.undelivered = report.undelivered.saturating_sub(1);
-        }
-    }
-    Ok(())
+    Ok(set_aside)
 }
 
 /// Reads a create's answer again: a key that landed on a held row, an
@@ -1593,21 +1605,57 @@ fn send_queue(
                         continue;
                     }
                     // A locked file or a process out of handles is not the
-                    // write's fault: unanswered and uncounted.
+                    // write's fault, so it is not counted as a refusal. The
+                    // same failure in three drains over five minutes is no
+                    // longer a passing one: the upload is set aside, which a
+                    // person can withdraw or release once the cause is fixed.
                     Err(error) => {
+                        let reason = format!("the bytes of {hash} could not be opened: {error}");
+                        let failure = LastFailure::of(None, reason.as_bytes());
+                        let streak = {
+                            let conn = core.conn()?;
+                            let met = store::queued_write(&conn, &row.id)?
+                                .and_then(|queued| queued.last_failure);
+                            if met.is_some_and(|met| met != failure) {
+                                store::clear_environmental(&conn, &row.id)?;
+                            }
+                            store::count_environmental(&conn, &row.id, &failure)?
+                        };
+                        if streak.count >= ENVIRONMENTAL_STREAK
+                            && store::now_millis() - streak.began_ms >= STREAK_FLOOR_MILLIS
+                        {
+                            for write in block_failing_alone(
+                                core,
+                                &row.id,
+                                &row.idempotency_key,
+                                &failure,
+                            )? {
+                                answers.insert(write.id.clone(), Some(Verdict::Blocked));
+                                waiting.insert(write.id.clone());
+                                report.answered += 1;
+                                put_verdict(
+                                    report,
+                                    replacing,
+                                    verdict_of(
+                                        &write,
+                                        &Settled::plain(
+                                            Some(Verdict::Blocked),
+                                            Some(BlockedReason::FailingAlone.as_str().into()),
+                                            write.refusals,
+                                        ),
+                                        None,
+                                    ),
+                                );
+                            }
+                            continue;
+                        }
                         report.undelivered += 1;
                         put_verdict(
                             report,
                             replacing,
                             verdict_of(
                                 row,
-                                &Settled::plain(
-                                    None,
-                                    Some(format!(
-                                        "the bytes of {hash} could not be opened: {error}"
-                                    )),
-                                    row.refusals,
-                                ),
+                                &Settled::plain(None, Some(reason), row.refusals),
                                 None,
                             ),
                         );
@@ -6687,6 +6735,120 @@ mod tests {
         );
     }
 
+    fn dead_update(core: &Core) -> QueuedWrite {
+        let conn = core.conn().unwrap();
+        let item = store::testing::note("local", "Local", "", "2026-01-01T00:00:00Z");
+        store::upsert_item(&conn, &item, None, &Default::default()).unwrap();
+        let dead = store::enqueue(
+            &conn,
+            &write(WriteKind::UpdateItem, "local", None, Some(1), &[]),
+        )
+        .unwrap();
+        store::mark_sent(&conn, &dead.id).unwrap();
+        store::record_verdict(
+            &conn,
+            &dead.id,
+            &store::Answered {
+                verdict: Verdict::Dead,
+                reason: None,
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )
+        .unwrap();
+        dead
+    }
+
+    #[test]
+    fn a_dead_write_is_withdrawn_and_the_copy_holds_what_the_server_does() {
+        use crate::scripted::{certified, json};
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &[]);
+        let dead = dead_update(&core);
+        let mut theirs: serde_json::Value = serde_json::from_str(&crate::scripted::item_payload(
+            "item.updated",
+            "local",
+            "core.note",
+            2,
+        ))
+        .unwrap();
+        theirs["listed"] = true.into();
+        server.on(
+            "/items/local",
+            vec![certified(json(200, &theirs.to_string()))],
+        );
+        assert_eq!(core.withdraw(&dead.id).unwrap(), vec![dead.id.clone()]);
+        let conn = core.conn().unwrap();
+        assert_eq!(store::queued_write(&conn, &dead.id).unwrap(), None);
+        assert_eq!(
+            store::item_by_id(&conn, "local").unwrap().unwrap().version,
+            2,
+            "the copy kept the dead write's value over what the server holds"
+        );
+        drop(conn);
+        assert_eq!(
+            core.withdraw(&dead.id).unwrap_err().code(),
+            "not_found",
+            "the same write was withdrawn twice"
+        );
+    }
+
+    #[test]
+    fn a_purge_refusal_names_only_the_exits_each_waiting_write_has() {
+        let server = crate::scripted::Scripted::start();
+        let (_dir, core) = deleting(&server, &["a"]);
+        let delete = core.queue().unwrap().remove(0);
+        let refusal = |core: &Core| match core.purge_item("a", Some(1)).unwrap_err() {
+            CoreError::Invalid(message) => message,
+            other => panic!("{other:?}"),
+        };
+        let waiting = refusal(&core);
+        assert!(
+            waiting.contains("drain") && !waiting.contains("withdraw") && !waiting.contains("discard"),
+            "{waiting}"
+        );
+        {
+            let conn = core.conn().unwrap();
+            store::mark_sent(&conn, &delete.id).unwrap();
+            store::record_verdict(
+                &conn,
+                &delete.id,
+                &store::Answered {
+                    verdict: Verdict::Dead,
+                    reason: None,
+                    answer: None,
+                    conflicted_copy_id: None,
+                },
+            )
+            .unwrap();
+        }
+        let dead = refusal(&core);
+        assert!(
+            dead.contains("withdraw") && dead.contains("release") && !dead.contains("discard"),
+            "{dead}"
+        );
+        {
+            let conn = core.conn().unwrap();
+            store::release(&conn, &delete.id).unwrap();
+            store::record_verdict(
+                &conn,
+                &delete.id,
+                &store::Answered {
+                    verdict: Verdict::Blocked,
+                    reason: Some(BlockedReason::KeySpent.as_str()),
+                    answer: None,
+                    conflicted_copy_id: None,
+                },
+            )
+            .unwrap();
+        }
+        let spent = refusal(&core);
+        assert!(
+            spent.contains("release") && !spent.contains("withdraw") && !spent.contains("discard"),
+            "{spent}"
+        );
+    }
+
     #[test]
     fn a_drain_keeps_a_refusal_a_withdraw_recorded_while_it_ran() {
         use crate::scripted::{Answer, certified, json, refusal};
@@ -6759,7 +6921,7 @@ mod tests {
         std::thread::scope(|scope| {
             let drained = scope.spawn(|| core.drain());
             server.wait_for("/items/u", 1, Duration::from_secs(5));
-            assert!(core.withdraw(&create.id).unwrap());
+            assert_eq!(core.withdraw(&create.id).unwrap(), vec![create.id.clone()]);
             ready.store(true, Ordering::Relaxed);
             drained.join().unwrap().unwrap();
         });

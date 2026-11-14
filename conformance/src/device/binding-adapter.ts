@@ -710,7 +710,7 @@ export class BindingDevice {
     return this.call("release", id);
   }
 
-  withdraw(id: string): Call<boolean> {
+  withdraw(id: string): Call<string[]> {
     return this.call("withdraw", id);
   }
 

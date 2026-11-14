@@ -1911,12 +1911,13 @@ impl Core {
         Ok(released)
     }
 
-    /// Answers `false` for any row not blocked `ancestor_unavailable`,
-    /// `conflict_unresolved`, `failing_alone` or `instance_changed`. Everything it puts back is read from the server
-    /// before anything changes, so a withdraw that cannot read leaves the
-    /// queue and the copy as they were. A row write goes with every write of
-    /// its batch, or none does.
-    pub fn withdraw(&self, id: &str) -> Result<bool> {
+    /// Answers the ids of every write it took out of the queue, and none for
+    /// any row not `dead` or blocked `ancestor_unavailable`,
+    /// `conflict_unresolved`, `failing_alone` or `instance_changed`. Everything
+    /// it puts back is read from the server before anything changes, so a
+    /// withdraw that cannot read leaves the queue and the copy as they were. A
+    /// row write goes with every write of its batch, or none does.
+    pub fn withdraw(&self, id: &str) -> Result<Vec<String>> {
         self.lock.refuse_unless_writer()?;
         if store::queued_write(&*self.conn()?, id)?.is_none() {
             return Err(CoreError::NotFound {
@@ -1928,10 +1929,10 @@ impl Core {
         let mut taken = Vec::with_capacity(batch.len());
         for write in &batch {
             let Some(row) = store::queued_write(&*self.conn()?, write)? else {
-                return Ok(false);
+                return Ok(Vec::new());
             };
             if !row.withdrawable() {
-                return Ok(false);
+                return Ok(Vec::new());
             }
             let held = store::held_for(&*self.conn()?, write)?;
             let mut reads = vec![drain::read_back(self, &row)?];
@@ -1945,13 +1946,13 @@ impl Core {
         // Another thread may have released or answered a row while the
         // reads were out.
         if row_writes::batch_of(&tx, id)? != batch {
-            return Ok(false);
+            return Ok(Vec::new());
         }
         for (row, held, _) in &taken {
             if store::queued_write(&tx, &row.id)?.as_ref() != Some(row)
                 || store::held_for(&tx, &row.id)? != *held
             {
-                return Ok(false);
+                return Ok(Vec::new());
             }
         }
         for (row, held, reads) in taken.iter().rev() {
@@ -1959,7 +1960,7 @@ impl Core {
         }
         row_writes::flush(&tx)?;
         tx.commit()?;
-        Ok(true)
+        Ok(batch)
     }
 
     /// `withdraw` for a write the device made on its own, which no one is
@@ -2125,8 +2126,13 @@ impl Core {
             });
         }
         if !waiting.is_empty() {
+            let exits = waiting
+                .iter()
+                .map(|write| format!("{} ({}): {}", write.id, write.kind, write.exits()))
+                .collect::<Vec<_>>()
+                .join("; ");
             return Err(CoreError::Invalid(format!(
-                "{id} has {} write(s) still waiting to be sent, which would go to a row that is gone; drain, withdraw or discard them before purging it",
+                "{id} has {} write(s) still waiting to be sent, which would go to a row that is gone; clear each before purging it, by the command named for it: {exits}",
                 waiting.len()
             )));
         }

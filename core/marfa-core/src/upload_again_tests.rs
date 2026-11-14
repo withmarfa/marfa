@@ -344,7 +344,7 @@ fn withdrawing_bytes_sent_again_refuses_the_file_sent_before_and_keeps_it() {
     );
 
     set_aside(&core, &upload.id);
-    assert!(core.withdraw(&upload.id).unwrap());
+    assert_eq!(core.withdraw(&upload.id).unwrap(), vec![upload.id.clone()]);
 
     let after = core.queue().unwrap();
     assert_eq!(
@@ -371,4 +371,72 @@ fn withdrawing_bytes_sent_again_refuses_the_file_sent_before_and_keeps_it() {
         "a write refused behind a withdrawn upload went again"
     );
     assert!(!core.release(&file.id).unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn sets_aside_an_upload_whose_bytes_fail_to_open_alike_in_successive_drains() {
+    use crate::model::BlockedReason;
+    use std::os::unix::fs::PermissionsExt;
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = copy_in_keyed(&server, dir.path(), "k");
+    holding_a_catalog(&core);
+    let file = dir.path().join("photo.txt");
+    std::fs::write(&file, b"the bytes of a photo").unwrap();
+    let added = core
+        .add_file(&file, &crate::Attachment::default(), &[])
+        .unwrap();
+    let hash = added.upload.blob.clone().unwrap();
+    let held = dir
+        .path()
+        .join("core.sqlite.blobs")
+        .join(hash.trim_start_matches("sha256:"));
+    std::fs::set_permissions(&held, std::fs::Permissions::from_mode(0o000)).unwrap();
+    assert!(
+        std::fs::File::open(&held).is_err(),
+        "the bytes can still be opened, so nothing here is about bytes that cannot"
+    );
+    let upload = |core: &crate::Core| {
+        core.queue()
+            .unwrap()
+            .into_iter()
+            .find(|queued| queued.kind == WriteKind::UploadBlob)
+            .unwrap()
+    };
+    for _ in 0..2 {
+        let report = core.drain().unwrap();
+        assert_eq!(report.undelivered, 1, "{report:?}");
+        assert_eq!(upload(&core).verdict, None);
+    }
+    // Five minutes on, in the third drain.
+    {
+        let conn = core.conn().unwrap();
+        conn.execute(
+            "UPDATE queue SET environmental_since = environmental_since - 360000 WHERE kind = 'upload_blob'",
+            [],
+        )
+        .unwrap();
+    }
+    let report = core.drain().unwrap();
+    let set_aside = upload(&core);
+    assert_eq!(
+        (set_aside.verdict, set_aside.blocked_reason()),
+        (Some(Verdict::Blocked), Some(BlockedReason::FailingAlone)),
+        "{report:?}"
+    );
+    assert!(set_aside
+            .last_failure
+            .as_ref()
+            .and_then(|failure| failure.text.as_deref())
+            .is_some_and(|text| text.contains("could not be opened")));
+    assert!(set_aside.withdrawable());
+    assert!(uploads_sent(&server) == 0);
+    // The cause is fixed and the write released: the bytes go.
+    std::fs::set_permissions(&held, std::fs::Permissions::from_mode(0o644)).unwrap();
+    server.on("/blobs", vec![taken(&hash)]);
+    server.on("/items", vec![scripted::refusal(429, "rate_limited")]);
+    assert!(core.release(&set_aside.id).unwrap());
+    core.drain().unwrap();
+    assert_eq!(uploads_sent(&server), 1);
 }

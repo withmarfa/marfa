@@ -1485,15 +1485,30 @@ impl QueuedWrite {
     }
 
     pub fn withdrawable(&self) -> bool {
-        matches!(
-            self.blocked_reason(),
-            Some(
-                BlockedReason::AncestorUnavailable
-                    | BlockedReason::ConflictUnresolved
-                    | BlockedReason::FailingAlone
-                    | BlockedReason::InstanceChanged
+        self.verdict == Some(Verdict::Dead)
+            || matches!(
+                self.blocked_reason(),
+                Some(
+                    BlockedReason::AncestorUnavailable
+                        | BlockedReason::ConflictUnresolved
+                        | BlockedReason::FailingAlone
+                        | BlockedReason::InstanceChanged
+                )
             )
-        )
+    }
+
+    /// The commands that take a write still waiting out of its wait: the next
+    /// drain for one that has no verdict or is held behind another write, a
+    /// release for one blocked until something outside the queue changes, and
+    /// a withdraw or a release for one a person may give up on.
+    pub fn exits(&self) -> &'static str {
+        if self.withdrawable() {
+            "withdraw or release"
+        } else if self.blocked_reason().is_some() {
+            "release"
+        } else {
+            "drain"
+        }
     }
 
     fn resolved_fields(&self) -> Vec<String> {

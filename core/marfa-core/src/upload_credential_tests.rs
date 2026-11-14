@@ -467,7 +467,7 @@ fn withdrawing_bytes_sent_again_under_a_new_key_refuses_the_file_sent_before() {
     );
 
     crate::upload_again_tests::set_aside(&core, &upload.id);
-    assert!(core.withdraw(&upload.id).unwrap());
+    assert_eq!(core.withdraw(&upload.id).unwrap(), vec![upload.id.clone()]);
 
     let after = core.queue().unwrap();
     assert_eq!(

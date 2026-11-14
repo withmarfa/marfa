@@ -431,7 +431,7 @@ describe("a write that keeps meeting an environmental failure", () => {
     expect(
       withdrawn.ok && withdrawn.value,
       "a write set aside as failing_alone was not withdrawn, so only a release could take it from the queue",
-    ).toBe(true);
+    ).toEqual([upload.id]);
     expect(
       (await queueOf(own)).map((write) => write.id),
       "the withdrawn write is still queued",
@@ -829,8 +829,9 @@ describe("the write sent to test a write that fails", () => {
       refusal(404, "edge_not_found", "Edge not found"),
     );
     const withdrawn = await own.device.withdraw(queue[0]?.id ?? "");
-    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toBe(
-      true,
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual([
+      queue[0]?.id,
+    ]
     );
     expect(
       (await queueOf(own)).map((row) => [row.kind, row.verdict]),
@@ -900,8 +901,9 @@ describe("the write sent to test a write that fails", () => {
       refusal(404, "edge_not_found", "Edge not found"),
     );
     const withdrawn = await own.device.withdraw(queue[0]?.id ?? "");
-    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toBe(
-      true,
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual([
+      queue[0]?.id,
+    ]
     );
     const after = await queueOf(own);
     expect(
