@@ -29,6 +29,7 @@ import {
   countCollected,
   filesNamedIn,
   renderScore,
+  scopeToProjects,
   scoreRun,
   type VitestReport,
 } from "../src/utils/rust-score.js";
@@ -140,15 +141,17 @@ if (paths.length === 0) {
 const reports = paths.map(
   (path) => JSON.parse(readFileSync(path, "utf8")) as VitestReport,
 );
-const inProjects = (file: string) =>
-  args.projects.some((project) => file.startsWith(`src/suites/${project}/`));
-const collected = collect(args.projects);
-const score = scoreRun(
+const scope = scopeToProjects(
   reports,
-  contractFiles(ROOT).filter(inProjects),
-  RUST_JUDGED.filter(inProjects),
-  { collected: collected.counts, platform: args.platform },
+  contractFiles(ROOT),
+  RUST_JUDGED,
+  args.projects,
 );
+const collected = collect(args.projects);
+const score = scoreRun(reports, scope.files, scope.judged, {
+  collected: collected.counts,
+  platform: args.platform,
+});
 const markdown = renderScore(score, collected.notes);
 console.log(markdown);
 if (args.markdown !== undefined) appendFileSync(args.markdown, markdown);

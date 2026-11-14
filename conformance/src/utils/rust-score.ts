@@ -122,6 +122,47 @@ export function contractFiles(root: string): string[] {
   return found.sort();
 }
 
+/** Whether a contract file is in one of the projects. */
+export function inProjects(
+  file: string,
+  projects: readonly ContractProject[],
+): boolean {
+  return projects.some((project) => file.startsWith(`src/suites/${project}/`));
+}
+
+/**
+ * The contract files and the Rust-judged files of a run of some of the
+ * projects, for the score to judge: only theirs. The reports must name
+ * nothing else. A report of another project's file is a shard that ran and
+ * would go unjudged, so the projects asked for and the shards that ran
+ * disagree, and the score cannot say which is right.
+ */
+export function scopeToProjects(
+  reports: readonly VitestReport[],
+  files: readonly string[],
+  judged: readonly string[],
+  projects: readonly ContractProject[],
+): { files: string[]; judged: string[] } {
+  const stray = reports
+    .flatMap((report) =>
+      report.testResults.map((result) => fixturePath(result.name)),
+    )
+    .filter(
+      (file) =>
+        inProjects(file, CONTRACT_PROJECTS) && !inProjects(file, projects),
+    )
+    .sort();
+  if (stray.length > 0) {
+    throw new Error(
+      `--projects names ${projects.join(",")}, but the reports name files of other projects, which would go unjudged: ${stray.slice(0, 5).join(", ")}`,
+    );
+  }
+  return {
+    files: files.filter((file) => inProjects(file, projects)),
+    judged: judged.filter((file) => inProjects(file, projects)),
+  };
+}
+
 /** Test counts by file, from the JSON of `vitest list --json`. */
 export function countCollected(
   tests: readonly { file: string }[],
