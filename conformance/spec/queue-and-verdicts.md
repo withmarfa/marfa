@@ -1348,11 +1348,11 @@ While a write is blocked `failing_alone`, a device MUST keep each write that dep
 
 ### `queue-and-verdicts/failing-alone-withdraw-dependants`
 
-When a caller withdraws a write blocked `failing_alone`, a device MUST refuse without sending each write that waits for it.
+When a caller withdraws a write blocked `failing_alone`, a device MUST refuse without sending each write that waits for it, one sent before included, with the reason `the <kind> it waits for was withdrawn`.
 
-**Reason:** the write the others wait for is gone, so they could never be sent.
+**Reason:** the write the others wait for is gone, so they could never be sent. A write sent before waits on an upload only once the device sends that upload again (`queue-and-verdicts/upload-again-bytes-absent`, `queue-and-verdicts/upload-sent-as-writer`), and without the upload no drain can send it again. Its content stays in the queue until it is discarded.
 
-**Tests:** `device/stuck-write.test.ts › never depends on that write, so the writes waiting on an upload stay waiting`.
+**Tests:** `device/stuck-write.test.ts › never depends on that write, so the writes waiting on an upload stay waiting`, `› refuses the file sent before when its bytes sent again are set aside and withdrawn, and sends nothing for it after`.
 
 ### `queue-and-verdicts/queue-shows-last-failure`
 

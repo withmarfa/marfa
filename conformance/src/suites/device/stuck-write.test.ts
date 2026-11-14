@@ -842,6 +842,92 @@ describe("the write sent to test a write that fails", () => {
     ]);
   });
 
+  it("refuses the file sent before when its bytes sent again are set aside and withdrawn, and sends nothing for it after", async () => {
+    harness = await hydratedHarness("stuck-reupload-withdraw", {
+      items: held(),
+    });
+    const own = harness;
+    const attached = await own.device.attach(
+      HELD.id,
+      fileOf("photo.bin", "bytes the server purged\n"),
+      { mimeType: "application/octet-stream" },
+    );
+    expect(attached.ok, JSON.stringify(attached)).toBe(true);
+    const chain = await queueOf(own);
+    const file = chain[1];
+    expect(file?.kind).toBe("create_item");
+    let uploads = 0;
+    own.server.answer("POST", "/blobs", (request) =>
+      (uploads += 1) === 1 ? takeUpload(request) : gateway(413, HTML_413),
+    );
+    scripted(own.server, {
+      create: [refusal(404, "blob_not_found", "Blob not found"), createdAs],
+      read: [
+        (request) => {
+          const id = request.pathname.split("/")[2];
+          return id === file?.item_id
+            ? refusal(404, "item_not_found", "Item not found")
+            : answers.updated(wireItem({ id, properties: {} }));
+        },
+      ],
+      edges: [refusal(500, "internal_error", "an edge must not be sent")],
+    });
+    await drainOnce(own);
+    expect(
+      requestsTo(own, "POST", "/blobs"),
+      "the bytes were not sent again after the server answered blob_not_found",
+    ).toHaveLength(2);
+    await note(own, "independent");
+    await reachSuspect(own);
+    const queue = await queueOf(own);
+    expect(
+      queue.map((row) => [row.kind, row.verdict, row.reason]),
+      "the bytes sent again were not set aside with the file held behind them",
+    ).toEqual([
+      ["upload_blob", "blocked", "failing_alone"],
+      ["create_item", "blocked", "awaiting_dependency"],
+      ["create_edge", "blocked", "awaiting_dependency"],
+      ["create_item", "accepted", null],
+    ]);
+    expect(
+      requestsTo(own, "POST", "/items"),
+      "the file item was not sent before its bytes went again",
+    ).toHaveLength(2);
+
+    own.server.copyAnswer(
+      "GET",
+      /^\/edges\/[^/]+$/,
+      refusal(404, "edge_not_found", "Edge not found"),
+    );
+    const withdrawn = await own.device.withdraw(queue[0]?.id ?? "");
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toBe(
+      true,
+    );
+    const after = await queueOf(own);
+    expect(
+      after.map((row) => [row.kind, row.verdict, row.reason]),
+      "the file sent before was left waiting for an upload that is gone",
+    ).toEqual([
+      ["create_item", "refused", "the upload_blob it waits for was withdrawn"],
+      ["create_edge", "refused", "the upload_blob it waits for was withdrawn"],
+      ["create_item", "accepted", null],
+    ]);
+    expect(after[0]?.body, "the refused file lost its content").toEqual(
+      file?.body,
+    );
+    const sent = own.server.requests.length;
+    await drainOnce(own);
+    expect(
+      own.server.requests
+        .slice(sent)
+        .filter((request) => request.method !== "GET")
+        .map((request) => `${request.method} ${request.pathname}`),
+      "a write refused behind a withdrawn upload went again",
+    ).toEqual([]);
+    const released = await own.device.release({ id: file?.id ?? "" });
+    expect(released.ok && released.value, JSON.stringify(released)).toBe(0);
+  });
+
   it("leaves the write queued, and the pass ending as before, where no other write could go", async () => {
     harness = await hydratedHarness("stuck-alone-in-queue", { items: held() });
     const own = harness;

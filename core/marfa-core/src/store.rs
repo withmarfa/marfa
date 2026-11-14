@@ -6004,7 +6004,8 @@ fn waits_for_withdrawn(conn: &Connection, id: &str) -> Result<bool, CoreError> {
 
 /// Transitive: a write two steps behind a withdrawn one can land no more than
 /// the one between, and left unanswered it would wait on a row clearing may
-/// take.
+/// take. A write sent before is held only behind an upload, without which
+/// it can never be sent again.
 pub fn held_for(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
     read_writes(
         conn,
@@ -6014,11 +6015,18 @@ pub fn held_for(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreErr
              UNION
              SELECT waiting.id FROM queue AS waiting, held, json_each(waiting.depends_on) AS named
               WHERE named.value = held.id
-                AND waiting.sent = 0 AND (waiting.verdict IS NULL OR waiting.verdict = ?2)
+                AND (waiting.verdict IS NULL OR waiting.verdict = ?2)
+                AND (waiting.sent = 0
+                     OR EXISTS (SELECT 1 FROM queue AS upload
+                                 WHERE upload.id = held.id AND upload.kind = ?3))
            )
            SELECT id FROM held WHERE id <> ?1
          )",
-        [id, Verdict::Blocked.as_str()],
+        [
+            id,
+            Verdict::Blocked.as_str(),
+            WriteKind::UploadBlob.as_str(),
+        ],
     )
 }
 
@@ -6045,8 +6053,8 @@ pub fn stop_waiting_on(conn: &Connection, id: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// Also refuses each of `held`, unsent, and puts the copy back as it was
-/// beneath each. The caller has read their rows back already.
+/// Also refuses each of `held` and puts the copy back as it was beneath
+/// each. The caller has read their rows back already.
 pub fn withdraw(
     conn: &Connection,
     row: &QueuedWrite,
@@ -6055,8 +6063,8 @@ pub fn withdraw(
     take_out(conn, row, held, "withdrawn")
 }
 
-/// `row` leaves the queue, with each of `held` refused unsent for it and the
-/// copy put back as it was beneath every one of them.
+/// `row` leaves the queue, with each of `held` refused for it and the copy
+/// put back as it was beneath every one of them.
 fn take_out(
     conn: &Connection,
     row: &QueuedWrite,
