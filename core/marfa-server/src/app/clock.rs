@@ -1,4 +1,4 @@
-//! The one place code asks the time, kept from stamping below the trusted time or judging age far ahead of it.
+//! The one place code asks the time: the wall clock, kept from judging age far ahead of the trusted time.
 
 #[cfg(feature = "test-hooks")]
 use std::sync::MutexGuard;
@@ -31,20 +31,17 @@ const JUMP_MS: i64 = 60_000;
 
 /// The trusted time, and how long the clock has held clean-up.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct Guard {
+struct Guard {
     trusted: Option<i64>,
     /// The wall and steady readings at the last look.
     last: Option<(i64, i64)>,
-    /// The steady reading the count toward a hold's end started from.
-    steady_since: Option<i64>,
-    /// The wall clock fell behind the trusted time, and time runs on from it by the steady clock.
-    running_on: bool,
+    /// The running time counted toward a hold's end, while clean-up holds.
+    held_ms: Option<i64>,
 }
 
 impl Guard {
     /// Brings the guard up to these readings, and answers whether clean-up holds.
     fn look(&mut self, wall: i64, steady: i64) -> bool {
-        let was_held = self.steady_since.is_some();
         let (jumped, passed) = self.last.map_or((false, 0), |(last_wall, last_steady)| {
             let passed = steady - last_steady;
             (((wall - last_wall) - passed).abs() > JUMP_MS, passed.max(0))
@@ -52,43 +49,35 @@ impl Guard {
         self.last = Some((wall, steady));
         let trusted = *self.trusted.get_or_insert(wall);
         if wall - trusted <= AHEAD_MS {
-            self.steady_since = None;
-            let run = if self.running_on || wall < trusted {
-                trusted.saturating_add(if was_held { 0 } else { passed })
-            } else {
-                wall
-            };
-            self.running_on = wall < run;
-            self.trusted = Some(run.max(wall));
+            self.held_ms = None;
+            self.trusted = Some(trusted.max(wall));
             return false;
         }
-        self.running_on = false;
-        let since = match self.steady_since {
-            Some(since) if !jumped => since,
-            _ => steady,
+        let held = match self.held_ms {
+            Some(held) if !jumped => held.saturating_add(passed),
+            _ => 0,
         };
-        if steady - since >= STEADY_MS {
+        if held >= STEADY_MS {
             self.confirm(wall);
             return false;
         }
-        self.steady_since = Some(since);
+        self.held_ms = Some(held);
         true
     }
 
     fn confirm(&mut self, wall: i64) {
         self.trusted = Some(wall);
-        self.steady_since = None;
-        self.running_on = false;
+        self.held_ms = None;
     }
 
     fn standing(&mut self, wall: i64, steady: i64) -> Standing {
         let held = self.look(wall, steady);
         let trusted = self.trusted.unwrap_or(wall);
-        match (held, self.steady_since) {
-            (true, Some(since)) => Standing::Ahead {
+        match (held, self.held_ms) {
+            (true, Some(held_ms)) => Standing::Ahead {
                 trusted: Stamp::clamped(trusted),
                 wall: Stamp::clamped(wall),
-                ends: Stamp::clamped(wall.saturating_add(STEADY_MS - (steady - since))),
+                ends: Stamp::clamped(wall.saturating_add(STEADY_MS - held_ms)),
             },
             _ if trusted - wall > BEHIND_MS => Standing::Behind {
                 trusted: Stamp::clamped(trusted),
@@ -109,7 +98,6 @@ pub enum Standing {
         wall: Stamp,
         ends: Stamp,
     },
-    /// The server's time runs on ahead of the clock.
     Behind {
         trusted: Stamp,
         wall: Stamp,
@@ -120,10 +108,18 @@ pub enum Standing {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Kept {
     pub trusted_at: Stamp,
-    /// The wall clock at the last look before the write.
-    pub clock_at: Stamp,
-    /// The wall-clock time the count toward a hold's end began, while clean-up holds.
-    pub steady_from: Option<Stamp>,
+    /// The running time counted toward a hold's end, while clean-up holds.
+    pub held_ms: Option<i64>,
+}
+
+/// The wall clock read for a confirmation, which changes nothing until [`Clock::confirmed`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Confirmation(i64);
+
+impl Confirmation {
+    pub fn at(self) -> Stamp {
+        Stamp::clamped(self.0)
+    }
 }
 
 #[cfg(feature = "test-hooks")]
@@ -140,6 +136,8 @@ struct State {
 #[cfg_attr(not(feature = "test-hooks"), derive(Default))]
 pub struct Clock {
     guard: Mutex<Guard>,
+    /// A confirmation the current write keeps in place of the guard.
+    staged: Mutex<Option<Confirmation>>,
     #[cfg(feature = "test-hooks")]
     state: Mutex<State>,
     moved: watch::Sender<u64>,
@@ -177,11 +175,16 @@ fn steady_ms() -> i64 {
         .saturating_add(at.tv_nsec / 1_000_000)
 }
 
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 impl Clock {
     #[cfg(feature = "test-hooks")]
     pub fn new(offset_ms: u64) -> Clock {
         Clock {
             guard: Mutex::default(),
+            staged: Mutex::default(),
             state: Mutex::new(State {
                 offset_ms,
                 jump_ms: 0,
@@ -191,28 +194,22 @@ impl Clock {
         }
     }
 
-    /// Starts from what the database keeps, before anything asks the time.
-    ///
-    /// A hold's count carries on across the restart, the time stopped included, unless the
-    /// clock now reads earlier than it did at the last write, which only a clock set back does.
+    /// Starts from what the database keeps, before anything asks the time; the time stopped
+    /// counts toward no hold.
     pub fn resume_from(&self, kept: Option<Kept>) {
         let mut guard = self.guard();
-        let (wall, steady) = self.readings();
         guard.trusted = kept.map(|kept| kept.trusted_at.ms());
-        guard.steady_since = kept
-            .filter(|kept| wall >= kept.clock_at.ms())
-            .and_then(|kept| kept.steady_from)
-            .map(|from| steady.saturating_sub(wall.saturating_sub(from.ms()).max(0)));
-        guard.last = Some((wall, steady));
+        guard.held_ms = kept.and_then(|kept| kept.held_ms);
+        guard.last = Some(self.readings());
     }
 
     fn guard(&self) -> std::sync::MutexGuard<'_, Guard> {
-        self.guard.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.guard)
     }
 
     #[cfg(feature = "test-hooks")]
     fn state(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+        lock(&self.state)
     }
 
     #[cfg(feature = "test-hooks")]
@@ -230,23 +227,19 @@ impl Clock {
         (system_ms(), steady_ms())
     }
 
-    /// The trusted time, which runs on by the steady clock while the wall clock is behind it, or
-    /// the wall clock alone while clean-up holds.
+    /// The wall clock, after the guard has looked at it.
     pub fn now_ms(&self) -> i64 {
         let mut guard = self.guard();
         let (wall, steady) = self.readings();
-        if guard.look(wall, steady) {
-            wall
-        } else {
-            guard.trusted.unwrap_or(wall)
-        }
+        guard.look(wall, steady);
+        wall
     }
 
     /// The time a clean-up judges age by, or `None` while it holds and must keep everything.
     pub fn judging(&self) -> Option<Stamp> {
         let mut guard = self.guard();
         let (wall, steady) = self.readings();
-        (!guard.look(wall, steady)).then(|| Stamp::clamped(guard.trusted.unwrap_or(wall)))
+        (!guard.look(wall, steady)).then(|| Stamp::clamped(wall))
     }
 
     pub fn standing(&self) -> Standing {
@@ -254,46 +247,43 @@ impl Clock {
         guard.standing(wall, steady)
     }
 
-    /// Takes the wall clock as right; answers the guard it replaced, for [`Clock::undo`].
-    pub fn confirm(&self) -> (Stamp, Guard) {
-        let mut guard = self.guard();
-        let before = *guard;
-        let (wall, steady) = self.readings();
-        guard.last = Some((wall, steady));
-        guard.confirm(wall);
-        (Stamp::clamped(wall), before)
+    /// Reads the wall clock to take as right.
+    pub fn confirmation(&self) -> Confirmation {
+        Confirmation(self.readings().0)
     }
 
-    /// Puts back the guard a confirmation replaced, keeping the latest readings.
-    pub fn undo(&self, before: Guard) {
-        let mut guard = self.guard();
-        *guard = Guard {
-            last: guard.last,
-            ..before
-        };
+    /// Has the current write keep `confirmation` in place of the guard; call it last in the write.
+    pub fn stage(&self, confirmation: Confirmation) {
+        *lock(&self.staged) = Some(confirmation);
+    }
+
+    /// Takes a confirmation as the trusted time, once the write that kept it has committed.
+    pub fn confirmed(&self, confirmation: Confirmation) {
+        self.guard().confirm(confirmation.0);
     }
 
     /// Reads no clock, so a write that asked no time leaves the row as it is.
     pub fn keep(&self, tx: &rusqlite::Transaction<'_>) -> refusal::Result<()> {
+        let staged = lock(&self.staged).take();
         let guard = *self.guard();
-        let (Some(trusted), Some((wall, steady))) = (guard.trusted, guard.last) else {
-            return Ok(());
-        };
-        let kept = Kept {
-            trusted_at: Stamp::clamped(trusted),
-            clock_at: Stamp::clamped(wall),
-            steady_from: guard
-                .steady_since
-                .map(|since| Stamp::clamped(wall.saturating_sub(steady - since))),
+        let kept = match (staged, guard.trusted) {
+            (Some(confirmation), _) => Kept {
+                trusted_at: confirmation.at(),
+                held_ms: None,
+            },
+            (None, Some(trusted)) => Kept {
+                trusted_at: Stamp::clamped(trusted),
+                held_ms: guard.held_ms,
+            },
+            (None, None) => return Ok(()),
         };
         tx.prepare_cached(
-            "INSERT INTO clock_trust (id, trusted_at, clock_at, steady_from) VALUES (1, ?1, ?2, ?3) \
+            "INSERT INTO clock_trust (id, trusted_at, held_ms) VALUES (1, ?1, ?2) \
              ON CONFLICT (id) DO UPDATE SET trusted_at = excluded.trusted_at, \
-             clock_at = excluded.clock_at, steady_from = excluded.steady_from \
-             WHERE (trusted_at, clock_at, steady_from) IS NOT \
-             (excluded.trusted_at, excluded.clock_at, excluded.steady_from)",
+             held_ms = excluded.held_ms \
+             WHERE (trusted_at, held_ms) IS NOT (excluded.trusted_at, excluded.held_ms)",
         )?
-        .execute(rusqlite::params![kept.trusted_at, kept.clock_at, kept.steady_from])?;
+        .execute(rusqlite::params![kept.trusted_at, kept.held_ms])?;
         Ok(())
     }
 
@@ -340,13 +330,12 @@ impl Clock {
         self.moved.send_modify(|count| *count += 1);
     }
 
-    /// Time passing while the server runs: both clocks move, and the trusted time moves with them
-    /// unless clean-up holds.
+    /// Time passing while the server runs: both clocks move, and the guard counts it.
     #[cfg(feature = "test-hooks")]
     pub fn advance(&self, ms: u64) -> Result<u64, Refused> {
         let mut guard = self.guard();
         let (wall, steady) = self.readings();
-        let held = guard.look(wall, steady);
+        guard.look(wall, steady);
         let mut state = self.state();
         let offset = state
             .offset_ms
@@ -358,12 +347,8 @@ impl Clock {
         }
         state.offset_ms = offset;
         drop(state);
-        guard.last = Some(self.readings());
-        if !held {
-            guard.trusted = guard
-                .trusted
-                .map(|trusted| trusted.saturating_add(ms as i64));
-        }
+        let (wall, steady) = self.readings();
+        guard.look(wall, steady);
         drop(guard);
         self.tell_moved();
         Ok(offset)
@@ -410,19 +395,21 @@ impl Clock {
 
 /// What the database keeps of the clock; `None` before the first write.
 pub fn kept(tx: &rusqlite::Transaction<'_>) -> refusal::Result<Option<Kept>> {
-    let stored: Option<(String, String, Option<String>)> = tx
+    let stored: Option<(String, Option<i64>)> = tx
         .query_row(
-            "SELECT trusted_at, clock_at, steady_from FROM clock_trust WHERE id = 1",
+            "SELECT trusted_at, held_ms FROM clock_trust WHERE id = 1",
             [],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            |row| Ok((row.get(0)?, row.get(1)?)),
         )
         .optional()?;
     stored
-        .map(|(trusted_at, clock_at, steady_from)| {
+        .map(|(trusted_at, held_ms)| {
+            if held_ms.is_some_and(|held| held < 0) {
+                return Err(Refusal::unread("a stored hold's running time did not read"));
+            }
             Ok(Kept {
                 trusted_at: Stamp::read(&trusted_at)?,
-                clock_at: Stamp::read(&clock_at)?,
-                steady_from: steady_from.as_deref().map(Stamp::read).transpose()?,
+                held_ms,
             })
         })
         .transpose()
@@ -587,16 +574,15 @@ mod tests {
         }
     }
 
-    fn kept(trusted_at: i64, clock_at: i64, steady_from: Option<i64>) -> Option<Kept> {
+    fn kept(trusted_at: i64, held_ms: Option<i64>) -> Option<Kept> {
         Some(Kept {
             trusted_at: Stamp::from_ms(trusted_at).unwrap(),
-            clock_at: Stamp::from_ms(clock_at).unwrap(),
-            steady_from: steady_from.map(|from| Stamp::from_ms(from).unwrap()),
+            held_ms,
         })
     }
 
     const TABLE: &str = "CREATE TABLE clock_trust (id INTEGER PRIMARY KEY CHECK (id = 1), \
-        trusted_at TEXT NOT NULL, clock_at TEXT NOT NULL, steady_from TEXT) STRICT";
+        trusted_at TEXT NOT NULL, held_ms INTEGER) STRICT";
 
     fn paused() -> (Clock, i64) {
         let clock = Clock::new(0);
@@ -620,33 +606,29 @@ mod tests {
     }
 
     #[test]
-    fn a_clock_behind_the_trusted_time_runs_on_from_it_and_holds_nothing() {
+    fn a_clock_behind_the_trusted_time_is_the_server_s_time_and_holds_nothing() {
         let (clock, now) = paused();
-        let ahead = now + DAY_MS;
-        clock.resume_from(kept(ahead, now, None));
-        assert_eq!(clock.now_ms(), ahead);
+        clock.resume_from(kept(now + DAY_MS, None));
+        assert_eq!(clock.now_ms(), now);
         assert!(matches!(clock.standing(), Standing::Behind { .. }));
+        assert_eq!(clock.judging().map(Stamp::ms), Some(now));
         clock.advance(1_000).unwrap();
-        assert_eq!(clock.now_ms(), ahead + 1_000);
-        assert_eq!(clock.judging().map(Stamp::ms), Some(ahead + 1_000));
+        assert_eq!(clock.now_ms(), now + 1_000);
     }
 
     #[test]
-    fn a_clock_set_back_runs_on_by_the_steady_clock_until_it_catches_up() {
+    fn a_clock_set_back_leaves_the_trusted_time_until_it_catches_up() {
         let mut guard = started_at(T0);
         assert!(!guard.look(T0, 0));
         assert!(!guard.look(T0 - DAY_MS, 1_000));
-        assert_eq!(guard.trusted, Some(T0 + 1_000));
-        assert!(!guard.look(T0 - DAY_MS + 5_000, 6_000));
-        assert_eq!(guard.trusted, Some(T0 + 6_000));
-        // Set forward, still short of the server's time.
-        assert!(!guard.look(T0 + 3_000, 7_000));
-        assert_eq!(guard.trusted, Some(T0 + 7_000));
-        // Set forward past it: the server keeps time by the clock again.
-        assert!(!guard.look(T0 + 10_000, 8_000));
+        assert_eq!(guard.trusted, Some(T0));
+        assert!(matches!(
+            guard.standing(T0 - DAY_MS + 5_000, 6_000),
+            Standing::Behind { .. }
+        ));
+        assert!(!guard.look(T0 + 10_000, DAY_MS + 11_000));
         assert_eq!(guard.trusted, Some(T0 + 10_000));
-        assert!(!guard.look(T0 + 10_500, 8_500));
-        assert_eq!(guard.trusted, Some(T0 + 10_500));
+        assert_eq!(guard.standing(T0 + 10_500, DAY_MS + 11_500), Standing::Agrees);
     }
 
     #[test]
@@ -674,18 +656,19 @@ mod tests {
     }
 
     #[test]
-    fn a_clock_set_right_after_a_hold_leaves_no_stamp_pinned() {
+    fn a_clock_set_right_after_a_hold_ends_it_and_leaves_the_trusted_time_unmoved_by_it() {
         let mut guard = started_at(T0);
         assert!(guard.look(T0 + 400 * DAY_MS, 0));
         assert!(!guard.look(T0 + 1_000, 1_000));
         assert_eq!(guard.trusted, Some(T0 + 1_000));
+        assert_eq!(guard.held_ms, None);
     }
 
     #[test]
-    fn a_restart_carries_the_day_on_with_the_time_stopped() {
+    fn a_restart_carries_on_the_running_time_it_kept() {
         let (clock, now) = paused();
         let half = STEADY_MS / 2;
-        clock.resume_from(kept(now - 31 * DAY_MS, now - 60_000, Some(now - half)));
+        clock.resume_from(kept(now - 31 * DAY_MS, Some(half)));
         assert_eq!(
             clock.standing(),
             Standing::Ahead {
@@ -701,46 +684,75 @@ mod tests {
     }
 
     #[test]
-    fn a_restart_with_the_clock_earlier_than_at_the_last_write_starts_the_day_again() {
-        let (clock, now) = paused();
-        clock.resume_from(kept(
-            now - 31 * DAY_MS,
-            now + 60_000,
-            Some(now - STEADY_MS / 2),
-        ));
-        assert!(matches!(
-            clock.standing(),
-            Standing::Ahead { ends, .. } if ends.ms() == now + STEADY_MS
-        ));
-    }
-
-    #[test]
-    fn confirming_takes_the_wall_clock_either_way() {
-        let clock = Clock::new(0);
-        let now = clock.instant().ms();
-        clock.resume_from(kept(now - 180 * DAY_MS, now, None));
+    fn a_restarted_server_restarted_daily_still_adds_up_a_day_of_running() {
+        let mut db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(TABLE).unwrap();
+        let (_, now) = paused();
+        let tx = db.transaction().unwrap();
+        tx.execute(
+            "INSERT INTO clock_trust (id, trusted_at, held_ms) VALUES (1, ?1, NULL)",
+            [Stamp::from_ms(now - 31 * DAY_MS).unwrap()],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+        for day in 0..4 {
+            let clock = Clock::new(day * DAY_MS as u64);
+            clock.pause(true);
+            let tx = db.transaction().unwrap();
+            clock.resume_from(super::kept(&tx).unwrap());
+            assert_eq!(clock.judging(), None, "day {day}");
+            clock.advance(STEADY_MS as u64 / 4 - 1).unwrap();
+            assert_eq!(clock.judging(), None, "day {day}");
+            clock.keep(&tx).unwrap();
+            tx.commit().unwrap();
+        }
+        let clock = Clock::new(4 * DAY_MS as u64);
+        clock.pause(true);
+        let tx = db.transaction().unwrap();
+        clock.resume_from(super::kept(&tx).unwrap());
+        clock.advance(3).unwrap();
         assert_eq!(clock.judging(), None);
-        assert!(matches!(clock.standing(), Standing::Ahead { .. }));
-        assert!(clock.confirm().0.ms() >= now);
+        clock.advance(1).unwrap();
         assert!(clock.judging().is_some());
-        assert_eq!(clock.standing(), Standing::Agrees);
-
-        let clock = Clock::new(0);
-        clock.resume_from(kept(now + 30 * DAY_MS, now, None));
-        let confirmed = clock.confirm().0.ms();
-        assert!(confirmed < now + DAY_MS);
-        assert!(clock.now_ms() < now + DAY_MS);
     }
 
     #[test]
-    fn undoing_a_confirmation_puts_the_hold_back() {
+    fn confirming_takes_the_wall_clock_either_way_once_it_is_applied() {
         let (clock, now) = paused();
-        clock.resume_from(kept(now - 180 * DAY_MS, now, None));
-        let ends = clock.standing();
-        let (_, before) = clock.confirm();
+        clock.resume_from(kept(now - 180 * DAY_MS, None));
+        assert_eq!(clock.judging(), None);
+        let confirmation = clock.confirmation();
+        assert_eq!(confirmation.at().ms(), now);
+        assert_eq!(clock.judging(), None, "read, not yet applied");
+        clock.confirmed(confirmation);
+        assert_eq!(clock.judging().map(Stamp::ms), Some(now));
         assert_eq!(clock.standing(), Standing::Agrees);
-        clock.undo(before);
-        assert_eq!(clock.standing(), ends);
+
+        let (clock, now) = paused();
+        clock.resume_from(kept(now + 30 * DAY_MS, None));
+        assert!(matches!(clock.standing(), Standing::Behind { .. }));
+        clock.confirmed(clock.confirmation());
+        assert_eq!(clock.standing(), Standing::Agrees);
+    }
+
+    #[test]
+    fn a_write_keeps_a_staged_confirmation_and_only_that_write() {
+        let mut db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(TABLE).unwrap();
+        let (clock, now) = paused();
+        clock.resume_from(kept(now - 180 * DAY_MS, None));
+        clock.now_ms();
+        let tx = db.transaction().unwrap();
+        clock.stage(clock.confirmation());
+        clock.keep(&tx).unwrap();
+        assert_eq!(super::kept(&tx).unwrap(), kept(now, None));
+        assert_eq!(clock.judging(), None, "kept, not yet applied");
+        clock.keep(&tx).unwrap();
+        assert_eq!(
+            super::kept(&tx).unwrap(),
+            kept(now - 180 * DAY_MS, Some(0)),
+            "the next write keeps the guard"
+        );
     }
 
     #[test]
@@ -763,14 +775,14 @@ mod tests {
     }
 
     #[test]
-    fn a_clock_stepped_back_stamps_nothing_earlier_and_time_runs_on() {
+    fn a_clock_stepped_back_is_the_server_s_time_at_once() {
         let clock = Clock::new(0);
         clock.pause(true);
         let before = clock.now_ms();
         clock.jump(-DAY_MS).unwrap();
-        assert_eq!(clock.now_ms(), before);
-        clock.advance(DAY_MS as u64 + 1).unwrap();
-        assert_eq!(clock.now_ms(), before + DAY_MS + 1);
+        assert_eq!(clock.now_ms(), before - DAY_MS);
+        clock.advance(1_000).unwrap();
+        assert_eq!(clock.now_ms(), before - DAY_MS + 1_000);
     }
 
     #[test]
@@ -788,20 +800,21 @@ mod tests {
         );
         clock.now_ms();
         clock.keep(&tx).unwrap();
-        assert_eq!(super::kept(&tx).unwrap(), kept(now, now, None));
+        assert_eq!(super::kept(&tx).unwrap(), kept(now, None));
 
-        clock.resume_from(kept(now - 31 * DAY_MS, now, None));
+        clock.resume_from(kept(now - 31 * DAY_MS, None));
+        clock.now_ms();
         clock.advance(1_000).unwrap();
         clock.keep(&tx).unwrap();
         assert_eq!(
             super::kept(&tx).unwrap(),
-            kept(now - 31 * DAY_MS, now + 1_000, Some(now)),
-            "the count toward the hold's end began at the first look"
+            kept(now - 31 * DAY_MS, Some(1_000)),
+            "the running time since the hold began"
         );
         tx.commit().unwrap();
-        for column in ["trusted_at", "clock_at", "steady_from"] {
+        for (column, value) in [("trusted_at", "'soon'"), ("held_ms", "-1")] {
             let tx = db.transaction().unwrap();
-            tx.execute(&format!("UPDATE clock_trust SET {column} = 'soon'"), [])
+            tx.execute(&format!("UPDATE clock_trust SET {column} = {value}"), [])
                 .unwrap();
             assert!(super::kept(&tx).is_err(), "{column}");
         }

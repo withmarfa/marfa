@@ -231,10 +231,10 @@ fn clocked(standing: Standing) -> Option<Concern> {
             reference: "clock_behind".to_string(),
             title: "The server's clock is behind".to_string(),
             description: format!(
-                "The server's clock reads {wall}, {} earlier than the server's time, {trusted}. \
-                 The server keeps its own time, and stamps records by it, until the clock \
-                 catches up. If the clock is right, run {CONFIRM} on the server to use the \
-                 clock again.",
+                "The server's clock reads {wall}, {} earlier than the last time the server \
+                 trusted, {trusted}. The server stamps records by its clock, so records written \
+                 now can carry earlier times than records written before. If the clock is right, \
+                 run {CONFIRM} on the server. If it is wrong, set it right.",
                 span(trusted.ms() - wall.ms())
             ),
         }),

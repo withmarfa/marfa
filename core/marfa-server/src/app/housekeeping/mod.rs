@@ -16,7 +16,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::{Notify, watch};
 
-use super::clock::{Clock, Stamp, Standing};
+use super::clock::{Clock, Confirmation, Stamp, Standing};
 use super::refusal::{Code, Refusal, Result};
 use super::{App, config, provenance, stored};
 use crate::db::{Db, Write};
@@ -496,41 +496,24 @@ pub async fn confirm_clock(app: &App) -> Result<Stamp> {
     Ok(confirmed)
 }
 
-/// A confirmation whose write does not commit leaves the clock as it was.
+/// A deleting job reads the guard inside its own write, so the confirmation reaches the guard only
+/// once its write has committed.
 async fn confirm_on(db: &Db, clock: &Arc<Clock>) -> Result<Stamp> {
-    let replaced = Arc::new(std::sync::Mutex::new(None));
-    let written = {
-        let (clock, replaced) = (clock.clone(), replaced.clone());
-        db.write(Write::own(), move |tx| {
-            let (at, before) = confirming(tx, &clock)?;
-            *replaced
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(before);
-            Ok(at)
-        })
-        .await
-    };
-    if written.is_err() {
-        let before = replaced
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        if let Some(before) = before {
-            clock.undo(before);
-        }
-    }
-    written
+    let inside = clock.clone();
+    let confirmation = db
+        .write(Write::own(), move |tx| confirming(tx, &inside))
+        .await?;
+    clock.confirmed(confirmation);
+    Ok(confirmation.at())
 }
 
-fn confirming(
-    tx: &rusqlite::Transaction<'_>,
-    clock: &Clock,
-) -> Result<(Stamp, crate::app::clock::Guard)> {
-    let (at, before) = clock.confirm();
+fn confirming(tx: &rusqlite::Transaction<'_>, clock: &Clock) -> Result<Confirmation> {
+    let confirmation = clock.confirmation();
     for job in JOBS.iter().filter(|job| job.deletes) {
-        schedule::bring_forward_held(tx, job.name, &at.text())?;
+        schedule::bring_forward_held(tx, job.name, &confirmation.at().text())?;
     }
-    Ok((at, before))
+    clock.stage(confirmation);
+    Ok(confirmation)
 }
 
 #[cfg(test)]
@@ -567,8 +550,7 @@ mod tests {
         let now = clock.instant().ms();
         clock.resume_from(Some(crate::app::clock::Kept {
             trusted_at: Stamp::from_ms(now - 180 * DAY_MS).unwrap(),
-            clock_at: Stamp::from_ms(now - 180 * DAY_MS).unwrap(),
-            steady_from: None,
+            held_ms: None,
         }));
         assert_eq!(
             clock.judging(),
