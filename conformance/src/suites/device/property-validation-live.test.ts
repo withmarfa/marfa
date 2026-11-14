@@ -650,8 +650,8 @@ it.each([
   ["http://xn--a.münchen.de/"],
   ["http://xn--a.1/"],
   ["http://xn--a.0x1/"],
-  ["http://Ⴍ𿣍ꡨ֮.Ⴞ/"],
-  ["https://𾢬.ܩ.쯙5/"],
+  ["http://Ⴍ\u{5F8CD}ꡨ֮.Ⴞ/"],
+  ["https://\u{5E8AC}.ܩ.쯙5/"],
   ["   "],
 ])("refuses the url %j on both paths", async (written) => {
   const properties = { title: "t", url: written };
