@@ -649,9 +649,8 @@ jobs:
   # A shard does not fail because a test failed: it fails when it has no
   # report to give, and the score counts the tests. Every fixture file of the
   # five server projects must pass whole; the score job fails if one does not,
-  # and `Full CI` waits for it. An object store
-  # sits beside the server, so the stores chapter and the backups are
-  # asserted.
+  # and `Full CI` waits for it. An object store sits beside the server, so the
+  # stores chapter and the backups are asserted.
   rust-contract:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false' || needs.changes.outputs.mcp-conformance != 'false' || needs.changes.outputs.restore-drill != 'false') }}

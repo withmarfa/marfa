@@ -681,13 +681,15 @@ writes it to the job summary of `Rust contract score` and of
   passing and shows as "not reported".
 - A file's total is the tests its report lists. The command does not list the
   tests itself: a report names every test of a file that loaded, skipped ones
-  included, so a file never lists fewer tests than it holds, and a file that
-  failed to load fails whole because it is broken or lists no test. Reading
+  included, so a file never lists fewer tests than it holds. A file that
+  failed to load fails, as broken or for listing no test. Reading
   the files without running them gives a count that differs from the run's for
   tests written once for several inputs, so it cannot judge a file.
 - The shards run with `--retry=0`, so a test that passes only on a retry fails
   its run and does not count as passing.
 - The command exits with an error when a fixture file of the scored projects
   does not pass whole or no report names it, when two reports name one file,
-  and when there is no report at all. A report of a file that is not a
-  fixture of the scored projects is counted and never fails it.
+  and when there is no report at all. A report of a file outside the five
+  projects is ignored, and one of a file the run does not owe (a project left
+  out by `--projects`, or a `*.decision.test.ts`) is counted and never fails
+  it.

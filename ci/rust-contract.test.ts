@@ -1,7 +1,8 @@
 /**
  * The contract judged with the Rust server: a release build, shards that boot
  * it through the meter and run the server projects, and a score that fails
- * when a file the Rust server judges did not pass or a shard wrote no report.
+ * when a fixture file did not pass whole, no shard reported one, or a shard
+ * wrote no report.
  * `Full CI` waits for the score. MCP conformance and the restore drill boot
  * the same build, and the nightly runs the device and CLI fixtures against a
  * build of its own on macOS, scored the same way.

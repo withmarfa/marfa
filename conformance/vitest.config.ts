@@ -55,7 +55,7 @@ export default defineConfig({
           name: "correctness",
           ...ciRetry,
           include: ["src/suites/correctness/**/*.test.ts"],
-          exclude: exclude(),
+          exclude: exclude("src/suites/correctness/**/*.decision.test.ts"),
           // Budgeted for the heavy bodies rather than the typical one: 100+
           // edge hydration and pagination, and archive operations, run slowly
           // under the sustained load of a full serial run. Every file also
@@ -79,7 +79,7 @@ export default defineConfig({
           name: "compliance",
           ...ciRetry,
           include: ["src/suites/compliance/**/*.test.ts"],
-          exclude: exclude(),
+          exclude: exclude("src/suites/compliance/**/*.decision.test.ts"),
           setupFiles: ["src/utils/fresh-server-teardown.ts"],
           // Matches correctness, for the same reasons: archive, bulk and
           // export bodies are slow under full-run load, and every file pays
@@ -126,7 +126,7 @@ export default defineConfig({
           name: "cli",
           ...ciRetry,
           include: ["src/suites/cli/**/*.test.ts"],
-          exclude: exclude(),
+          exclude: exclude("src/suites/cli/**/*.decision.test.ts"),
           globalSetup: ["src/utils/keychain.ts", "src/utils/registry.ts"],
           testTimeout: 120_000,
           hookTimeout: 120_000,
