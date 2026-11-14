@@ -869,6 +869,7 @@ pub(super) struct Restoring<'a> {
     pub updated_at: &'a str,
     pub last_activity_at: &'a str,
     pub restored_at: Option<&'a str>,
+    pub mark: Option<&'a Mark>,
 }
 
 pub(super) fn insert_restored(
@@ -880,9 +881,10 @@ pub(super) fn insert_restored(
         "INSERT INTO items (id, type, state, tier, source, source_id, properties, title_key, \
          version, schema_version, occurred_at, created_at, updated_at, trashed_at, \
          capture_latitude, capture_longitude, writer_kind, writer_id, writer_name, link, \
-         trashed_by_kind, trashed_by_id, trashed_by_name, restored_at, last_activity_at) \
+         trashed_by_kind, trashed_by_id, trashed_by_name, restored_at, last_activity_at, \
+         trashed_with, trashed_with_type) \
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, jsonb(?7), ?8, ?22, ?9, ?10, ?11, ?23, ?12, ?13, ?14, \
-         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?24, ?25)",
+         ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?24, ?25, ?26, ?27)",
     )?;
     statement.execute(params![
         row.id,
@@ -910,6 +912,8 @@ pub(super) fn insert_restored(
         kept.updated_at,
         kept.restored_at,
         kept.last_activity_at,
+        kept.mark.map(|mark| &mark.with),
+        kept.mark.map(|mark| &mark.with_type),
     ])?;
     clear_tombstones(tx, row.type_id, row.link, row.source, row.source_id)?;
     stored(tx, row.id)

@@ -2840,6 +2840,14 @@ If an archive records an item in a state that its type's lifecycle cannot produc
 
 **Tests:** `compliance/restore-archive.test.ts › refuses an archive recording a state the type's lifecycle cannot produce, and writes nothing`.
 
+### `search-and-filters/restore-cascade-marks`
+
+If an item line of an archive records `trashed_by_cascade` as other than `true`, records it on an item that is not in the bin, records `trashed_with` as other than the ID of another item, records `trashed_with` without `trashed_by_cascade`, or names in `trashed_with` an item the archive does not hold, then the server MUST answer `400 validation_error` naming the line in `details.line`, the item in `details.item_id` and the field in `details.field`, and write nothing.
+
+**Reason:** an export writes the two marks only together, on an item a cascade took into the bin, and the item they name is in the same archive.
+
+**Tests:** `compliance/restore-cascade-marks.test.ts › refuses an item line whose %s is %j, %s, naming the line and the field, and writes nothing`.
+
 ### `search-and-filters/restore-state-kept`
 
 When `POST /restore` takes a canonical item in a state that its lifecycle contains, the server MUST write the item in the state recorded.

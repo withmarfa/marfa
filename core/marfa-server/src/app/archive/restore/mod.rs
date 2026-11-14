@@ -289,6 +289,7 @@ impl App {
                 registrations,
                 spools,
                 snapshots,
+                mark_types,
                 carried,
                 skipped,
                 unknown_kinds,
@@ -388,7 +389,7 @@ impl App {
                             let line = line?;
                             checks::item(&catalog, cap, &line, row + 1).map_err(|refused| refused.refusal)?;
                             faults.hold_writing(HOLD_RESTORE_ITEM);
-                            match restored::restore(unit, &catalog, &line)? {
+                            match restored::restore(unit, &catalog, &line, &mark_types)? {
                                 Restored::Written(seq) => {
                                     imported += 1;
                                     if let Some(id) = line.pointer("/item/id").and_then(Value::as_str).and_then(bits) {

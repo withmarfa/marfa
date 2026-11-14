@@ -1071,3 +1071,250 @@ async fn a_restore_from_another_instance_names_its_backup_folders_and_calls_none
     assert!(message.contains("no longer runs"), "{message}");
     assert!(message.contains(&format!("backups/{id}")), "{message}");
 }
+
+impl Instance {
+    async fn edge(&self, source: &str, target: &str) {
+        let made = self
+            .keyed(
+                Method::POST,
+                "/edges",
+                json!({ "source_id": source, "target_id": target, "edge_type": "parent-of" }),
+            )
+            .await;
+        assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+    }
+
+    async fn archive_all(&self) -> Vec<u8> {
+        let key = Some(self.writer.as_str());
+        let exported = self
+            .call(
+                &self.public,
+                key,
+                Method::GET,
+                "/export?format=archive&state=any",
+                Body::empty(),
+                "application/json",
+            )
+            .await;
+        assert_eq!(exported.status, StatusCode::OK, "{}", exported.body);
+        exported.bytes
+    }
+
+    async fn trash(&self, id: &str) {
+        let trashed = self
+            .keyed(Method::DELETE, &format!("/items/{id}"), json!({}))
+            .await;
+        assert_eq!(trashed.status, StatusCode::OK, "{}", trashed.body);
+    }
+
+    async fn bring_back(&self, id: &str) {
+        let back = self
+            .keyed(Method::POST, &format!("/items/{id}/restore"), json!({}))
+            .await;
+        assert_eq!(back.status, StatusCode::OK, "{}", back.body);
+    }
+
+    async fn item(&self, id: &str) -> Value {
+        let read = self
+            .keyed(Method::GET, &format!("/items/{id}?state=any"), json!({}))
+            .await;
+        assert_eq!(read.status, StatusCode::OK, "{}", read.body);
+        read.body["item"].clone()
+    }
+}
+
+/// A parent trashed with a child and a grandchild, and a note trashed on its own.
+struct Bin {
+    parent: String,
+    child: String,
+    grandchild: String,
+    alone: String,
+}
+
+impl Instance {
+    async fn bin(&self) -> Bin {
+        let parent = self.note("parent").await;
+        let child = self.note("child").await;
+        let grandchild = self.note("grandchild").await;
+        let alone = self.note("alone").await;
+        self.edge(&parent, &child).await;
+        self.edge(&child, &grandchild).await;
+        self.trash(&alone).await;
+        self.trash(&parent).await;
+        Bin {
+            parent,
+            child,
+            grandchild,
+            alone,
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_restore_keeps_what_a_cascade_trashed_so_the_parent_brings_its_children_back() {
+    let folder = TempDir::new().unwrap();
+    let origin = Instance::start(folder.path(), &[]).await;
+    let bin = origin.bin().await;
+    let child = origin.item(&bin.child).await;
+    assert_eq!(child["trashed_with"], bin.parent.as_str(), "{child}");
+
+    let fresh = Instance::start(folder.path(), &[]).await;
+    let restored = fresh.restore(origin.archive_all().await).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+    assert_eq!(restored.body["imported"], 4, "{}", restored.body);
+
+    for (id, state) in [(&bin.child, "trashed"), (&bin.grandchild, "trashed")] {
+        let held = fresh.item(id).await;
+        assert_eq!(held["state"], state, "{held}");
+        assert_eq!(held["trashed_by_cascade"], true, "{held}");
+        assert_eq!(held["trashed_with"], bin.parent.as_str(), "{held}");
+    }
+    let alone = fresh.item(&bin.alone).await;
+    assert!(alone.get("trashed_with").is_none(), "{alone}");
+    assert!(alone.get("trashed_by_cascade").is_none(), "{alone}");
+
+    fresh.bring_back(&bin.parent).await;
+    for id in [&bin.parent, &bin.child, &bin.grandchild] {
+        assert_eq!(fresh.item(id).await["state"], "active", "{id}");
+    }
+    let alone = fresh.item(&bin.alone).await;
+    assert_eq!(alone["state"], "trashed", "{alone}");
+    let back = fresh.item(&bin.child).await;
+    assert!(back.get("trashed_with").is_none(), "{back}");
+    assert!(back.get("trashed_by_cascade").is_none(), "{back}");
+}
+
+#[tokio::test]
+async fn a_restore_skips_a_live_item_and_leaves_it_unmarked() {
+    let folder = TempDir::new().unwrap();
+    let origin = Instance::start(folder.path(), &[]).await;
+    let parent = origin.note("parent").await;
+    let child = origin.note("child").await;
+    origin.edge(&parent, &child).await;
+    let whole = origin.archive_all().await;
+    origin.trash(&parent).await;
+    let binned = origin.archive_all().await;
+
+    let fresh = Instance::start(folder.path(), &[]).await;
+    assert_eq!(fresh.restore(whole).await.status, StatusCode::OK);
+    let skipped = fresh.restore(binned).await;
+    assert_eq!(skipped.status, StatusCode::OK, "{}", skipped.body);
+    assert_eq!(skipped.body["imported"], 0, "{}", skipped.body);
+    assert_eq!(skipped.body["duplicates"], 2, "{}", skipped.body);
+    for id in [&parent, &child] {
+        let held = fresh.item(id).await;
+        assert_eq!(held["state"], "active", "{held}");
+        assert!(held.get("trashed_with").is_none(), "{held}");
+    }
+}
+
+async fn marked_archive(origin: &Instance, change: impl Fn(&mut Value)) -> Vec<u8> {
+    let mut held = entries(&origin.archive_all().await);
+    let items = at(&held, "items.ndjson.gz");
+    let mut lines_held = lines(&held[items].1);
+    for line in &mut lines_held {
+        change(line);
+    }
+    held[items].1 = gzip(&lines_held);
+    tar(&held)
+}
+
+#[tokio::test]
+async fn an_archive_whose_cascade_marks_do_not_read_or_name_a_missing_item_is_refused() {
+    let folder = TempDir::new().unwrap();
+    let origin = Instance::start(folder.path(), &[]).await;
+    let bin = origin.bin().await;
+    let child = bin.child.as_str();
+    let ghost = uuid::Uuid::now_v7().to_string();
+    let marked = |line: &Value| line["item"]["id"] == child;
+
+    // The witness: the archive as written restores.
+    let plain = Instance::start(folder.path(), &[]).await;
+    assert_eq!(
+        plain.restore(origin.archive_all().await).await.status,
+        StatusCode::OK
+    );
+
+    let cases: [(&str, Value, &str); 5] = [
+        ("trashed_with", json!("not an id"), "trashed_with"),
+        ("trashed_with", json!(7), "trashed_with"),
+        ("trashed_with", json!(ghost), "trashed_with"),
+        ("trashed_by_cascade", json!("yes"), "trashed_by_cascade"),
+        ("trashed_by_cascade", json!(false), "trashed_by_cascade"),
+    ];
+    for (key, value, field) in cases {
+        let archive = marked_archive(&origin, |line| {
+            if marked(line) {
+                line["item"][key] = value.clone();
+            }
+        })
+        .await;
+        let fresh = Instance::start(folder.path(), &[]).await;
+        let refused = fresh.restore(archive).await;
+        assert_eq!(
+            refused.status,
+            StatusCode::BAD_REQUEST,
+            "{key} {value}: {}",
+            refused.body
+        );
+        let details = &refused.body["error"]["details"];
+        assert_eq!(details["field"], field, "{key} {value}: {details}");
+        assert_eq!(details["item_id"], child, "{key} {value}: {details}");
+        let read = fresh
+            .keyed(Method::GET, &format!("/items/{child}"), json!({}))
+            .await;
+        assert_eq!(read.status, StatusCode::NOT_FOUND, "{key} {value}");
+    }
+
+    // A mark on an item outside the bin, or one that names itself, cannot be real.
+    let archive = marked_archive(&origin, |line| {
+        if line["item"]["id"] == bin.parent.as_str() {
+            line["item"]["trashed_by_cascade"] = json!(true);
+            line["item"]["trashed_with"] = json!(bin.child);
+            line["item"]["state"] = json!("active");
+            line["item"]["trashed_at"] = Value::Null;
+        }
+    })
+    .await;
+    let fresh = Instance::start(folder.path(), &[]).await;
+    let refused = fresh.restore(archive).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+    assert_eq!(
+        refused.body["error"]["details"]["field"],
+        "trashed_by_cascade"
+    );
+    let archive = marked_archive(&origin, |line| {
+        if marked(line) {
+            line["item"]["trashed_with"] = json!(bin.child);
+        }
+    })
+    .await;
+    let fresh = Instance::start(folder.path(), &[]).await;
+    let refused = fresh.restore(archive).await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{}", refused.body);
+    assert_eq!(refused.body["error"]["details"]["field"], "trashed_with");
+}
+
+#[tokio::test]
+async fn a_cascade_mark_names_an_item_whose_line_comes_later_in_the_archive() {
+    let folder = TempDir::new().unwrap();
+    let origin = Instance::start(folder.path(), &[]).await;
+    let bin = origin.bin().await;
+    let mut held = entries(&origin.archive_all().await);
+    let items = at(&held, "items.ndjson.gz");
+    let mut reversed = lines(&held[items].1);
+    reversed.reverse();
+    let position = |id: &str| reversed.iter().position(|line| line["item"]["id"] == id);
+    // The witness: the child's line now comes before the parent's.
+    assert!(position(&bin.child) < position(&bin.parent));
+    held[items].1 = gzip(&reversed);
+
+    let fresh = Instance::start(folder.path(), &[]).await;
+    let restored = fresh.restore(tar(&held)).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+    let child = fresh.item(&bin.child).await;
+    assert_eq!(child["trashed_with"], bin.parent.as_str(), "{child}");
+    fresh.bring_back(&bin.parent).await;
+    assert_eq!(fresh.item(&bin.child).await["state"], "active");
+    assert_eq!(fresh.item(&bin.grandchild).await["state"], "active");
+}

@@ -1,13 +1,13 @@
 //! An item written as its archive line holds it; a digest lends only where the line says.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use marfa_rules::{number, time, validation};
 use rusqlite::Transaction;
 use serde_json::{Map, Value};
 
 use super::rows::{self, NewRow, Restoring};
-use super::{Writer, index, link_in, title_key};
+use super::{Mark, Writer, index, link_in, title_key};
 use crate::app::blobs::references::{self, Row};
 use crate::app::catalog::Catalog;
 use crate::app::refusal::{Code, Refusal, Result};
@@ -85,9 +85,39 @@ pub fn held_snapshots(
     rows::snapshot_ids(tx, ids)
 }
 
+/// The cascade mark a line holds: the item its trash was keyed to, with that item's type, which
+/// the instance's own row gives where it holds one and `archived_types` gives otherwise.
+fn mark_of(
+    tx: &Transaction<'_>,
+    item: &Map<String, Value>,
+    archived_types: &HashMap<String, String>,
+) -> Result<Option<Mark>> {
+    let Some(with) = text(item, "trashed_with") else {
+        return Ok(None);
+    };
+    let with_type = match rows::by_id(tx, with)? {
+        Some(held) => held.type_id,
+        None => archived_types
+            .get(with)
+            .cloned()
+            .ok_or_else(|| Refusal::internal("a checked mark names an item the archive lacks"))?,
+    };
+    Ok(Some(Mark {
+        with: with.to_string(),
+        with_type,
+        hosts: false,
+    }))
+}
+
 /// Writes the item an archive line holds, already judged by the archive's row checks, unless
-/// the instance holds its id, natural key or link.
-pub fn restore(unit: &Unit<'_, '_>, catalog: &Catalog, line: &Value) -> Result<Restored> {
+/// the instance holds its id, natural key or link. `archived_types` holds the type of each item
+/// a cascade mark in the archive names.
+pub fn restore(
+    unit: &Unit<'_, '_>,
+    catalog: &Catalog,
+    line: &Value,
+    archived_types: &HashMap<String, String>,
+) -> Result<Restored> {
     let tx = unit.tx();
     let item = line
         .get("item")
@@ -157,6 +187,7 @@ pub fn restore(unit: &Unit<'_, '_>, catalog: &Catalog, line: &Value) -> Result<R
         });
     let writer = writer_of(line.get("writer"));
     let trashed_by = writer_of(line.get("trashed_by"));
+    let mark = mark_of(tx, item, archived_types)?;
     let key = title_key(&catalog.rules, type_id, &properties);
     let row = rows::insert_restored(
         tx,
@@ -187,6 +218,7 @@ pub fn restore(unit: &Unit<'_, '_>, catalog: &Catalog, line: &Value) -> Result<R
             updated_at: &updated_at,
             last_activity_at: &last_activity_at,
             restored_at: restored_at.as_deref(),
+            mark: mark.as_ref(),
         },
     )?;
     references::archived(&properties, &lent).apply(tx, Row::Item(row.seq))?;

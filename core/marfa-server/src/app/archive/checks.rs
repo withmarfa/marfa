@@ -292,6 +292,7 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
             return Err(at.invalid("trashed_at", "null outside the bin and the revoked state"));
         }
     }
+    cascade_marks(&at, item, id)?;
     if item
         .get("tier")
         .is_some_and(|tier| !tier.as_str().is_some_and(|tier| TIERS.contains(&tier)))
@@ -340,6 +341,41 @@ pub fn item(catalog: &Catalog, cap: usize, line: &Value, row: usize) -> Result<(
         return Err(refused);
     }
     shape(catalog, &at, type_id, properties)
+}
+
+/// An item's `trashed_by_cascade` and `trashed_with`, as an export writes them: only on an item in
+/// the bin that a cascade took, the second naming another item.
+fn cascade_marks(
+    at: &At<'_>,
+    item: &Map<String, Value>,
+    id: Option<&str>,
+) -> Result<(), Box<Refused>> {
+    let cascade = item.get("trashed_by_cascade");
+    let named = item.get("trashed_with");
+    if let Some(cascade) = cascade {
+        if *cascade != Value::Bool(true) {
+            return Err(at.invalid("trashed_by_cascade", "true, or left out"));
+        }
+        if item.get("state").and_then(Value::as_str) != Some("trashed") {
+            return Err(at.invalid(
+                "trashed_by_cascade",
+                "left out of an item that is not in the bin",
+            ));
+        }
+    }
+    let Some(named) = named else {
+        return Ok(());
+    };
+    let reads = named
+        .as_str()
+        .is_some_and(|named| marfa_rules::validation::id("trashed_with", named).is_ok());
+    if !reads || named.as_str() == id {
+        return Err(at.invalid("trashed_with", "the ID of another item"));
+    }
+    if cascade.is_none() {
+        return Err(at.invalid("trashed_with", "left out where trashed_by_cascade is"));
+    }
+    Ok(())
 }
 
 /// A shipped type holds its items to it; any type's schedule, recurrence and kept columns must still read.

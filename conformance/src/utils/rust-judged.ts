@@ -301,6 +301,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/refusal-headers.test.ts",
   "src/suites/compliance/request-limit.test.ts",
   "src/suites/compliance/restore-archive.test.ts",
+  "src/suites/compliance/restore-cascade-marks.test.ts",
   "src/suites/compliance/restore-compatible-types.test.ts",
   "src/suites/compliance/restore-concurrent.test.ts",
   "src/suites/compliance/restore-edges-constraint-types.test.ts",

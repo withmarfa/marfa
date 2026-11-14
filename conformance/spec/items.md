@@ -1456,7 +1456,7 @@ While an item a cascade moved into the bin stays there, the server MUST answer i
 
 **Reason:** a connector must know a trash was a cascade, or it carries to the vendor a trash the person never made.
 
-**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `› answers the marks on POST /items/lookup, to each reader as it may be told`, `› marks an item a cascade trashed on the acknowledgement of a create naming its source and source id, and names the item trashed only to a key that may read its type`, `› marks an item a cascade trashed on the answer to a create repeated under its id, and names the item trashed only to a key that may read its type`, `› delivers the item.deleted of an item a cascade trashed with its mark, and the item trashed's own without one`, `› restores an item a cascade trashed as its own trash, which its parent's restore leaves in the bin`.
+**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `› answers the marks on POST /items/lookup, to each reader as it may be told`, `› marks an item a cascade trashed on the acknowledgement of a create naming its source and source id, and names the item trashed only to a key that may read its type`, `› marks an item a cascade trashed on the answer to a create repeated under its id, and names the item trashed only to a key that may read its type`, `› delivers the item.deleted of an item a cascade trashed with its mark, and the item trashed's own without one`.
 
 ### `items/cascade-mark-names`
 
@@ -1538,13 +1538,13 @@ The server MUST NOT carry `restored_with` on the `item.restored` of the item a r
 
 **Tests:** `compliance/cascade-marks.test.ts › names the item restored on each item its restore brings back, and not on the item itself`, `› names the item moved on each item a transition out of the bin brings back, only to a key that may read its type`, `› names the item moved on each item a bulk transition out of the bin brings back, only to a key that may read its type`.
 
-### `items/restore-archive-alone`
+### `items/restore-archive-marks`
 
-When an archive restore writes an item into the bin, the server MUST hold it as its own trash, with no cascade marks, whatever the archive recorded.
+When an archive restore writes an item into the bin, the server MUST keep the `trashed_by_cascade` and `trashed_with` that the archive records for it, so that restoring the item named from the bin brings the item back with it.
 
-**Reason:** what a trash took is the instance's record, and an archive does not carry it.
+**Reason:** a restore that dropped the marks would leave each item a cascade trashed in the bin when its parent comes back, which the instance that was backed up would not.
 
-**Tests:** `compliance/cascade-marks.test.ts › restores an item a cascade trashed as its own trash, which its parent's restore leaves in the bin`.
+**Tests:** `compliance/restore-cascade-marks.test.ts › brings the children back with their parent after a restore into a fresh server, as on the instance that was backed up`, `› skips an item the instance already holds and leaves it as it is`.
 
 ### `items/purge`
 
