@@ -888,7 +888,6 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
-      - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm
       - uses: actions/setup-node@v7
@@ -956,7 +955,7 @@ jobs:
       - name: Build the device under test
         if: ${{ matrix.binary && steps.device.outputs.cache-hit != 'true' }}
         working-directory: core
-        run: cargo build -p marfa-cli
+        run: cargo build --locked -p marfa-cli
       - if: ${{ matrix.binary && steps.device.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v6
         with:
@@ -1097,7 +1096,6 @@ jobs:
             exit 1
           fi
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
       - uses: pnpm/action-setup@v6
         with:
           dest: ${{ runner.temp }}/setup-pnpm

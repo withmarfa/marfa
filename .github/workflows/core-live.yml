@@ -113,5 +113,5 @@ jobs:
       - name: Prove the Node binding against a booted server
         working-directory: core
         run: |
-          cargo build -p marfa-cli
+          cargo build --locked -p marfa-cli
           scripts/binding-proof.sh
