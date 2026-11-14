@@ -92,7 +92,7 @@ pub const EDGE_CHANGES_KEPT: usize = 10_000;
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 /// The version of the shape `schema.sql` makes, held in SQLite's
 /// `user_version`. A change to that shape raises it.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at, read_only";
 const EDGE_COLUMNS: &str =
@@ -10568,7 +10568,7 @@ mod tests {
                 SCHEMA_VERSION,
                 crate::folder::state::hash(named.as_bytes()).as_str()
             ),
-            (3, "2d4e4e1e76ec61dc"),
+            (4, "b931477e7470ff99"),
             "the shape schema.sql makes changed: raise SCHEMA_VERSION and write the new hash here"
         );
     }

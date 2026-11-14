@@ -517,7 +517,7 @@ fn apply(row: Option<Held>, ops: &[Op], id: &str, at: &str) -> Option<Held> {
 }
 
 fn beneath(conn: &Connection, item: &str, table: &str, id: &str) -> Result<Option<Option<Held>>> {
-    let row: Option<(Option<String>, Option<String>, Option<String>)> = conn
+    let row: Option<Stored> = conn
         .prepare_cached(
             "SELECT body, withheld, updated_at FROM rows_beneath
               WHERE item_id = ?1 AND name = ?2 AND id = ?3",
@@ -526,13 +526,33 @@ fn beneath(conn: &Connection, item: &str, table: &str, id: &str) -> Result<Optio
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
         .optional()?;
-    row.map(|(body, withheld, updated_at)| match body {
-        Some(body) => {
-            read_held(&body, withheld.as_deref(), updated_at.unwrap_or_default()).map(Some)
-        }
-        None => Ok(None),
+    row.map(|(body, withheld, updated_at)| unstored(body, withheld, updated_at))
+        .transpose()
+}
+
+/// A body of `None` is a row that is not there.
+type Stored = (Option<String>, Option<String>, Option<String>);
+
+fn stored(row: Option<&Held>) -> Result<Stored> {
+    Ok(match row {
+        Some(row) => (
+            Some(Value::Object(row.values.clone()).to_string()),
+            (!row.withheld.is_empty())
+                .then(|| serde_json::to_string(&row.withheld))
+                .transpose()?,
+            Some(row.updated_at.clone()),
+        ),
+        None => (None, None, None),
     })
-    .transpose()
+}
+
+fn unstored(
+    body: Option<String>,
+    withheld: Option<String>,
+    updated_at: Option<String>,
+) -> Result<Option<Held>> {
+    body.map(|body| read_held(&body, withheld.as_deref(), updated_at.unwrap_or_default()))
+        .transpose()
 }
 
 fn set_beneath(
@@ -542,16 +562,7 @@ fn set_beneath(
     id: &str,
     row: Option<&Held>,
 ) -> Result<()> {
-    let (body, withheld, updated_at) = match row {
-        Some(row) => (
-            Some(Value::Object(row.values.clone()).to_string()),
-            (!row.withheld.is_empty())
-                .then(|| serde_json::to_string(&row.withheld))
-                .transpose()?,
-            Some(row.updated_at.clone()),
-        ),
-        None => (None, None, None),
-    };
+    let (body, withheld, updated_at) = stored(row)?;
     conn.prepare_cached(
         "INSERT INTO rows_beneath (item_id, name, id, body, withheld, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -701,6 +712,10 @@ pub(crate) fn forget_table(conn: &Connection, item: &str, table: &str) -> Result
         "DELETE FROM rows_seen WHERE item_id = ?1 AND name = ?2",
         params![item, table],
     )?;
+    conn.execute(
+        "DELETE FROM rows_seen_beneath WHERE item_id = ?1 AND name = ?2",
+        params![item, table],
+    )?;
     Ok(())
 }
 
@@ -711,15 +726,84 @@ pub(crate) fn forget_item(conn: &Connection, item: &str) -> Result<()> {
         [item],
     )?;
     conn.execute("DELETE FROM rows_seen WHERE item_id = ?1", [item])?;
+    conn.execute("DELETE FROM rows_seen_beneath WHERE item_id = ?1", [item])?;
     Ok(())
 }
 
 pub(crate) fn forget_all(conn: &Connection) -> Result<()> {
     conn.execute_batch(
-        "DELETE FROM rows_beneath; DELETE FROM rows_seen;
+        "DELETE FROM rows_beneath; DELETE FROM rows_seen; DELETE FROM rows_seen_beneath;
          DELETE FROM rows_laid WHERE batch IS NOT NULL;",
     )?;
     Ok(())
+}
+
+/// Keeps the row beneath each of `ids` a sent write lays, before `batch`'s
+/// `rows.changed` is applied, since the write's answer may name `batch`.
+pub(crate) fn before_batch<'a>(
+    conn: &Connection,
+    item: &str,
+    table: &str,
+    batch: &str,
+    ids: impl IntoIterator<Item = &'a str>,
+) -> Result<()> {
+    let known = conn
+        .prepare_cached("SELECT 1 FROM rows_laid WHERE batch = ?1 LIMIT 1")?
+        .query_row([batch], |_| Ok(()))
+        .optional()?
+        .is_some();
+    if known || !whole(conn, item, table)? {
+        return Ok(());
+    }
+    for id in ids {
+        let sent = conn
+            .prepare_cached(
+                "SELECT 1 FROM rows_laid l JOIN queue q ON q.id = l.write_id
+                  WHERE l.item_id = ?1 AND l.name = ?2 AND l.id = ?3 AND l.batch IS NULL
+                    AND q.kind = ?4 AND q.sent = 1 AND q.verdict IS NULL
+                  LIMIT 1",
+            )?
+            .query_row(
+                params![item, table, id, WriteKind::WriteRows.as_str()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !sent {
+            continue;
+        }
+        let under = match beneath(conn, item, table, id)? {
+            Some(under) => under,
+            None => held_row(conn, item, table, id)?,
+        };
+        let (body, withheld, updated_at) = stored(under.as_ref())?;
+        conn.prepare_cached(
+            "INSERT OR IGNORE INTO rows_seen_beneath
+               (batch, id, item_id, name, body, withheld, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?
+        .execute(params![batch, id, item, table, body, withheld, updated_at])?;
+    }
+    Ok(())
+}
+
+fn take_seen_beneath(conn: &Connection, batch: &str) -> Result<BTreeMap<String, Option<Held>>> {
+    let mut query = conn.prepare_cached(
+        "DELETE FROM rows_seen_beneath WHERE batch = ?1
+         RETURNING id, body, withheld, updated_at",
+    )?;
+    let rows = query.query_map([batch], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            (row.get(1)?, row.get(2)?, row.get(3)?),
+        ))
+    })?;
+    let mut kept = BTreeMap::new();
+    for row in rows {
+        let (id, (body, withheld, updated_at)) = row?;
+        kept.insert(id, unstored(body, withheld, updated_at)?);
+    }
+    Ok(kept)
 }
 
 /// A batch no laid write names is kept while a sent write awaits its answer.
@@ -870,18 +954,22 @@ pub(crate) fn taken(
     batch: Option<&str>,
     writes: &[Taken<'_>],
 ) -> Result<Vec<Vec<RowConflict>>> {
-    // Applied first, the batch's own event left nothing beneath to judge by.
     let seen = match batch {
         Some(batch) => conn.execute("DELETE FROM rows_seen WHERE batch = ?1", [batch])? > 0,
         None => false,
+    };
+    // Applied first, the batch's own event left beneath what the batch made.
+    let replaced = match batch {
+        Some(batch) if seen => Some(take_seen_beneath(conn, batch)?),
+        _ => None,
     };
     let laid = whole(conn, item, table)?;
     let mut written = Vec::with_capacity(writes.len());
     let mut conflicts = Vec::with_capacity(writes.len());
     for taken in writes {
         let ops = queued_ops(&taken.write.body)?;
-        conflicts.push(if laid && !seen {
-            clashes(conn, item, table, taken.write, &ops)?
+        conflicts.push(if laid {
+            clashes(conn, item, table, taken.write, &ops, replaced.as_ref())?
         } else {
             Vec::new()
         });
@@ -947,13 +1035,15 @@ fn sets<'a>(ops: &'a [Op], id: &str, column: &str) -> Option<Option<&'a Value>> 
         })
 }
 
-/// Setting the value another writer already set is not a clash.
+/// Setting the value another writer already set is not a clash. `replaced`
+/// holds the rows as they were before the batch's own event, where it came first.
 fn clashes(
     conn: &Connection,
     item: &str,
     table: &str,
     write: &QueuedWrite,
     ops: &[Op],
+    replaced: Option<&BTreeMap<String, Option<Held>>>,
 ) -> Result<Vec<RowConflict>> {
     let Some(read) = store::read_of(conn, &write.id)?
         .and_then(|read| serde_json::from_str::<Value>(&read).ok())
@@ -973,7 +1063,13 @@ fn clashes(
         }
         let Some(shown) = read.get(id) else { continue };
         let shown = shown.as_object().cloned();
-        let under = beneath(conn, item, table, id)?.flatten();
+        let under = match replaced {
+            None => beneath(conn, item, table, id)?.flatten(),
+            Some(replaced) => match replaced.get(id) {
+                Some(row) => row.clone(),
+                None => continue,
+            },
+        };
         let before = laid_over(conn, item, table, id)?
             .into_iter()
             .filter(|(at, _, _)| *at < seq)

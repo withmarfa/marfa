@@ -290,11 +290,11 @@ When the server answers a batch `200`, a device MUST record with each of its wri
 
 ### `queue-and-verdicts/rows-conflicted`
 
-When the server answers a batch `200` before the device has applied the batch's `rows.changed`, a device MUST give the verdict `conflicted` to each write of a table it holds whole that set a column, or deleted a row, whose value the copy last took from the server differs both from the value the copy showed when the write was made and from the value the write sets.
+When the server answers a batch `200`, a device MUST give the verdict `conflicted` to each write of a table it holds whole that set a column, or deleted a row, whose value the copy last took from the server before the batch's own `rows.changed` differs both from the value the copy showed when the write was made and from the value the write sets.
 
-**Reason:** the later write takes a column (`tables/rows-patch`), and the value it replaced stays in the batch's change log, where an undo of the batch puts it back (`tables/undo`), together with every other write the device sent in that batch. A write that sets the value another writer already set replaced nothing. Once the batch's own event is applied, the copy no longer holds the value the batch replaced, so it claims no clash it cannot show.
+**Reason:** the later write takes a column (`tables/rows-patch`), and the value it replaced stays in the batch's change log, where an undo of the batch puts it back (`tables/undo`), together with every other write the device sent in that batch. A write that sets the value another writer already set replaced nothing. A copy that holds a stream can apply the batch's own event before the answer arrives, so it keeps the value the batch replaced until then, and the verdict does not depend on which arrives first.
 
-**Tests:** `device/table-writes-live.test.ts › records a write conflicted where it replaced a value the copy had not shown, and the value it replaced stays in the batch's change log`, `› names only the column whose value it replaced, where another writer set the other column to the value the write sets`, `› holds a row an accepted write left unchanged as the write left it`.
+**Tests:** `device/table-writes-live.test.ts › records a write conflicted where it replaced a value the copy had not shown, and the value it replaced stays in the batch's change log`, `› names only the column whose value it replaced, where another writer set the other column to the value the write sets`, `› holds a row an accepted write left unchanged as the write left it`, `› reports a write conflicted where a following copy applies the write's own rows.changed before the server's answer`.
 
 ### `queue-and-verdicts/rows-caught-up-first`
 
