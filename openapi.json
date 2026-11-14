@@ -1704,15 +1704,15 @@
                     "enum": [
                       "clock_ahead"
                     ],
-                    "description": "Why the jobs that delete are held. `clock_ahead`: the server's clock is more than 7 days later than the newest time Marfa has stored."
+                    "description": "Why the jobs that delete are held. `clock_ahead`: the server's clock is more than 7 days later than the trusted time."
                   },
                   "clock_at": {
                     "type": "string",
                     "description": "What the server's clock reads, in UTC."
                   },
-                  "newest_committed_at": {
+                  "trusted_at": {
                     "type": "string",
-                    "description": "The newest time Marfa has stored, in UTC."
+                    "description": "The trusted time, in UTC: the newest time Marfa used while clean-up was not held, or the time last confirmed."
                   },
                   "ends_at": {
                     "type": "string",
@@ -1722,7 +1722,7 @@
                 "required": [
                   "reason",
                   "clock_at",
-                  "newest_committed_at",
+                  "trusted_at",
                   "ends_at"
                 ],
                 "description": "Why the jobs that delete old records do nothing, or `null` if they run."

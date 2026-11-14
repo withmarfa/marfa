@@ -210,27 +210,32 @@ const CONFIRM: &str = "`marfa housekeeping confirm-clock --socket PATH`";
 fn clocked(standing: Standing) -> Option<Concern> {
     match standing {
         Standing::Agrees => None,
-        Standing::Ahead { mark, wall, ends } => Some(Concern {
+        Standing::Ahead {
+            trusted,
+            wall,
+            ends,
+        } => Some(Concern {
             kind: "clock",
             reference: "clock_ahead".to_string(),
             title: "Clean-up is held because the clock is ahead".to_string(),
             description: format!(
-                "The server's clock reads {wall}, {} later than the newest time it has stored, \
-                 {mark}. Jobs that delete old records do nothing until {ends}, once the clock \
+                "The server's clock reads {wall}, {} later than the last time the server trusted, \
+                 {trusted}. Jobs that delete old records do nothing until {ends}, once the clock \
                  has run a day without jumping. If the clock is right, run {CONFIRM} on the \
                  server to let them run now. If it is wrong, set it right.",
-                span(wall.ms() - mark.ms())
+                span(wall.ms() - trusted.ms())
             ),
         }),
-        Standing::Behind { mark, wall } => Some(Concern {
+        Standing::Behind { trusted, wall } => Some(Concern {
             kind: "clock",
             reference: "clock_behind".to_string(),
             title: "The server's clock is behind".to_string(),
             description: format!(
-                "The server's clock reads {wall}, {} earlier than the newest time it has stored, \
-                 {mark}. New records are stamped {mark} until the clock catches up. If the clock \
-                 is right, run {CONFIRM} on the server to stamp by it again.",
-                span(mark.ms() - wall.ms())
+                "The server's clock reads {wall}, {} earlier than the server's time, {trusted}. \
+                 The server keeps its own time, and stamps records by it, until the clock \
+                 catches up. If the clock is right, run {CONFIRM} on the server to use the \
+                 clock again.",
+                span(trusted.ms() - wall.ms())
             ),
         }),
     }

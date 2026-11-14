@@ -1034,10 +1034,13 @@ CREATE INDEX IF NOT EXISTS connector_agreements_order
     ON connector_agreements (source, updated_at, item_id);
 CREATE INDEX IF NOT EXISTS connector_agreements_item ON connector_agreements (item_id);
 
--- One row: the newest time the server has committed, kept by every write that commits.
-CREATE TABLE IF NOT EXISTS clock_mark (
+-- One row, written by every write that commits: the trusted time, the wall clock at that
+-- write, and while clean-up holds, the wall-clock time the count toward the hold's end began.
+CREATE TABLE IF NOT EXISTS clock_trust (
     id INTEGER PRIMARY KEY CHECK (id = 1),
-    committed_at TEXT NOT NULL
+    trusted_at TEXT NOT NULL,
+    clock_at TEXT NOT NULL,
+    steady_from TEXT
 ) STRICT;
 
 -- One row, and an integer by construction: a stored generation always reads.

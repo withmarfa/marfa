@@ -186,8 +186,8 @@ impl App {
         let clock = Arc::new(Clock::new(start.clock_offset_ms));
         #[cfg(not(feature = "test-hooks"))]
         let clock = Arc::new(Clock::default());
-        clock.resume_from(db.read(clock::stored_mark).await.map_err(unreadable)?);
-        db.keep_marks(clock.clone());
+        clock.resume_from(db.read(clock::kept).await.map_err(unreadable)?);
+        db.keep_clock(clock.clone());
         let at = clock.stamp();
         if let Some(folder) = &start.backup_path {
             let data = start.database.file().map(|_| start.database.folder());

@@ -120,8 +120,8 @@ impl Db {
         })
     }
 
-    /// From now on every write keeps `clock`'s mark in its own transaction.
-    pub fn keep_marks(&self, clock: Arc<Clock>) {
+    /// From now on every write keeps what `clock` keeps in its own transaction.
+    pub fn keep_clock(&self, clock: Arc<Clock>) {
         let _ = self.clock.set(clock);
     }
 
@@ -252,7 +252,7 @@ impl Db {
         let job = move |tx: &Transaction<'_>| {
             let done = job(tx)?;
             if let Some(clock) = &clock {
-                clock.keep_mark(tx)?;
+                clock.keep(tx)?;
             }
             Ok(done)
         };

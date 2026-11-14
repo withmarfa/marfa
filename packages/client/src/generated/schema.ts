@@ -3191,14 +3191,14 @@ export interface components {
                 /** @description Why the jobs that delete old records do nothing, or `null` if they run. */
                 held: {
                     /**
-                     * @description Why the jobs that delete are held. `clock_ahead`: the server's clock is more than 7 days later than the newest time Marfa has stored.
+                     * @description Why the jobs that delete are held. `clock_ahead`: the server's clock is more than 7 days later than the trusted time.
                      * @enum {string}
                      */
                     reason: "clock_ahead";
                     /** @description What the server's clock reads, in UTC. */
                     clock_at: string;
-                    /** @description The newest time Marfa has stored, in UTC. */
-                    newest_committed_at: string;
+                    /** @description The trusted time, in UTC: the newest time Marfa used while clean-up was not held, or the time last confirmed. */
+                    trusted_at: string;
                     /** @description When the hold ends if the clock runs without jumping until then, in UTC. `marfa housekeeping confirm-clock` on the server ends it at once. */
                     ends_at: string;
                 } | null;

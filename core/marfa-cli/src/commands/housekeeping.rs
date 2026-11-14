@@ -17,9 +17,10 @@ pub enum HousekeepingCommand {
         name: String,
     },
     /// Take the server's clock as right (private socket required). While the
-    /// clock reads more than 7 days later than the newest time the server has
-    /// stored, the jobs that delete old records do nothing; this lets them run
-    /// now. A clock behind that time stamps new records by the clock again.
+    /// clock reads more than 7 days later than the server's trusted time, the
+    /// jobs that delete old records do nothing; this lets them run now. While
+    /// the clock is behind that time, the server keeps its own time; this makes
+    /// it use the clock again.
     ConfirmClock,
 }
 

@@ -16,10 +16,10 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::{Notify, watch};
 
-use super::clock::{Stamp, Standing};
+use super::clock::{Clock, Stamp, Standing};
 use super::refusal::{Code, Refusal, Result};
 use super::{App, config, provenance, stored};
-use crate::db::Write;
+use crate::db::{Db, Write};
 use crate::settings::registry::Setting;
 
 pub use cleanups::{drain, report_kept};
@@ -65,7 +65,7 @@ pub struct Job {
     switch: Option<fn(&App) -> bool>,
     /// Whether a run reaches the database, which `fail:housekeeping:<job>` needs.
     statements: bool,
-    /// Whether a run deletes by age, so that a clock far ahead of the mark holds it.
+    /// Whether a run deletes by age, so that a clock far ahead of the trusted time holds it.
     deletes: bool,
     run: Body,
 }
@@ -475,10 +475,14 @@ pub async fn attention(app: &App) -> Value {
 /// Why the jobs that delete are held, or `null` while they are not.
 pub fn held(standing: Standing) -> Value {
     match standing {
-        Standing::Ahead { mark, wall, ends } => json!({
+        Standing::Ahead {
+            trusted,
+            wall,
+            ends,
+        } => json!({
             "reason": "clock_ahead",
             "clock_at": wall,
-            "newest_committed_at": mark,
+            "trusted_at": trusted,
             "ends_at": ends,
         }),
         Standing::Agrees | Standing::Behind { .. } => Value::Null,
@@ -487,17 +491,87 @@ pub fn held(standing: Standing) -> Value {
 
 /// Takes the server's clock as right and lets the jobs a clock ahead held run now.
 pub async fn confirm_clock(app: &App) -> Result<Stamp> {
-    let clock = app.clock.clone();
-    let confirmed = app
-        .db
-        .write(Write::own(), move |tx| {
-            let at = clock.confirm();
+    let confirmed = confirm_on(&app.db, &app.clock).await?;
+    tracing::info!(at = %confirmed, "The owner confirmed the server's clock");
+    Ok(confirmed)
+}
+
+/// A confirmation whose write does not commit leaves the clock as it was.
+async fn confirm_on(db: &Db, clock: &Arc<Clock>) -> Result<Stamp> {
+    let replaced = Arc::new(std::sync::Mutex::new(None));
+    let written = {
+        let (clock, replaced) = (clock.clone(), replaced.clone());
+        db.write(Write::own(), move |tx| {
+            let (at, before) = clock.confirm();
+            *replaced
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(before);
             for job in JOBS.iter().filter(|job| job.deletes) {
                 schedule::bring_forward_held(tx, job.name, &at.text())?;
             }
             Ok(at)
         })
-        .await?;
-    tracing::info!(at = %confirmed, "The owner confirmed the server's clock");
-    Ok(confirmed)
+        .await
+    };
+    if written.is_err() {
+        let before = replaced
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        if let Some(before) = before {
+            clock.undo(before);
+        }
+    }
+    written
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::db::Options;
+    use crate::db::migrate::Migration;
+    use crate::settings::DatabasePath;
+
+    /// A database with the jobs table and no table for what the clock keeps, so every write fails
+    /// as it commits.
+    const NO_CLOCK_TABLE: &[Migration] = &[Migration {
+        version: 1,
+        sql: "CREATE TABLE housekeeping_jobs (name TEXT PRIMARY KEY, next_run_at TEXT, last_outcome TEXT) STRICT;",
+    }];
+
+    #[tokio::test]
+    async fn a_confirmation_whose_write_fails_leaves_the_clock_as_it_was() {
+        let db = Db::open(
+            &Options {
+                path: DatabasePath::Memory,
+                write_wait: Duration::from_secs(5),
+                readers: 1,
+                migrations: NO_CLOCK_TABLE,
+                reserve: 0,
+            },
+            Arc::default(),
+        )
+        .map_err(|failure| failure.message)
+        .unwrap();
+        let clock = Arc::new(Clock::new(0));
+        clock.pause(true);
+        let now = clock.instant().ms();
+        clock.resume_from(Some(crate::app::clock::Kept {
+            trusted_at: Stamp::from_ms(now - 180 * DAY_MS).unwrap(),
+            clock_at: Stamp::from_ms(now - 180 * DAY_MS).unwrap(),
+            steady_from: None,
+        }));
+        assert_eq!(
+            clock.judging(),
+            None,
+            "the witness: a clock this far ahead holds"
+        );
+        db.keep_clock(clock.clone());
+
+        assert!(confirm_on(&db, &clock).await.is_err());
+        assert_eq!(clock.judging(), None);
+        assert!(matches!(clock.standing(), Standing::Ahead { .. }));
+    }
 }
