@@ -4768,7 +4768,7 @@ When a device sets aside a store, a device MUST answer the name it set the store
 
 ### `device/set-aside-unread`
 
-When a device sets aside a store, a device MUST answer how many writes it found in the old queue that it could not read, the id of each whose id it could read, and whether it found every write the queue holds and read every record that decides how a carried write is sent.
+When a device sets aside a store, a device MUST answer how many writes it found in the old queue that it could not read, the id of each whose id it could read, and whether it found every write the queue holds and read every record that decides how a carried write is sent and every record of the bytes an earlier set-aside keeps.
 
 **Reason:** a write or a record that does not read stays in the store set aside, so a person knows what to look for there.
 
@@ -4808,7 +4808,7 @@ If a device sets aside a store and cannot read a record the old store kept that 
 
 ### `device/set-aside-keeps-bytes`
 
-If a device sets aside a store and cannot read every write its queue holds, or every record that decides how a carried write is sent, then a device MUST keep every byte the cache beside the store held as it set the store aside, whatever the file budget, until the store set aside is removed.
+If a device sets aside a store and cannot read every write its queue holds, every record that decides how a carried write is sent, or every record of the bytes an earlier set-aside keeps, then a device MUST keep every byte the cache beside the store held as it set the store aside, whatever the file budget, until the store set aside is removed or moved from where the set-aside put it.
 
 **Reason:** a write the new store lacks, such as an upload whose row did not read, may name bytes that nothing else holds. The new store's queue cannot say which, so the bytes stay for as long as the store set aside can still give that write back.
 

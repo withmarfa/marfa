@@ -529,10 +529,11 @@ impl Core {
     /// idempotency key, with its body, base version and verdict. The new
     /// store keeps the server and instance the old one was built from, and
     /// the fetched and uploaded bytes beside the path, which are addressed by
-    /// content. Where it cannot read every write, or every record that decides
-    /// how a carried write is sent, every byte held beside the path as it
-    /// sets the store aside stays, whatever the file budget, until the store
-    /// set aside is gone. It holds no copy: a drain sends nothing until it is
+    /// content. Where it cannot read every write, every record that decides
+    /// how a carried write is sent, or every record of the bytes an earlier
+    /// set-aside keeps, every byte held beside the path as it sets the store
+    /// aside stays, whatever the file budget, until the store set aside is
+    /// removed or moved from where the set-aside put it. It holds no copy: a drain sends nothing until it is
     /// hydrated, and a hydration from another instance holds the carried
     /// writes, as for any store. Refuses with `Invalid` a store that opens
     /// as it is and a folder's store, with `WrongSchema` a store another

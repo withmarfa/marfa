@@ -375,8 +375,10 @@ pub enum DeviceCommand {
     /// the writes carried that the server has not taken and the writes it
     /// could not read, names each of those by id where it can, and says
     /// whether the whole queue was found. Where it could not read every
-    /// write, or every record of how one is sent, every byte kept beside the
-    /// store as it was set aside stays until the store set aside is removed.
+    /// write, every record of how one is sent, or every record of the bytes
+    /// an earlier set-aside keeps, every byte kept beside the store as it was
+    /// set aside stays until the store set aside is removed or moved from
+    /// where the set-aside put it.
     ///
     /// The new store holds no copy: hydrate it, and then drain, to send what
     /// it carries; a drain before then sends nothing. Where the old store

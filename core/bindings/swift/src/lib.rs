@@ -3325,10 +3325,11 @@ pub struct SetAside {
     /// The id of each unread write whose id could be read.
     pub unread_ids: Vec<String>,
     /// Whether every write the old queue holds was found, and every record
-    /// that decides how a carried write is sent was read; where not, or
-    /// where a write did not read, the store set aside may hold more, and
-    /// every byte the cache held as it was set aside stays until that store
-    /// is gone.
+    /// that decides how a carried write is sent, and of the bytes an earlier
+    /// set-aside keeps, was read; where not, or where a write did not read,
+    /// the store set aside may hold more, and every byte the cache held as
+    /// it was set aside stays until that store is removed or moved from
+    /// where the set-aside put it.
     pub whole: bool,
     /// The carried writes held blocked `instanceChanged`, because the old
     /// store did not say which instance it was built from; release one to
