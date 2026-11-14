@@ -252,6 +252,10 @@ class RowsProxy {
   events: "refuse" | "end" | "silent" | null = null;
   /** Each request for the event stream that reached the proxy. */
   eventRequests = 0;
+  /** The request for the event stream, counted as `eventRequests` counts, that the proxy holds 8 seconds before it passes it on. */
+  slowEventRequest = 0;
+  /** Holds each read of a table's rows 8 seconds before it passes it on, while set. */
+  slowRowReads = false;
   /** The method and path of each request that reached the proxy, in order. */
   readonly asked: string[] = [];
   /** Each row write that reached the proxy, in order. */
@@ -293,8 +297,16 @@ class RowsProxy {
     }
     const path = request.url ?? "/";
     this.asked.push(`${request.method ?? ""} ${path}`);
+    if (
+      this.slowRowReads &&
+      request.method === "GET" &&
+      /^\/items\/[^/]+\/tables\/[^/]+\/rows/.test(path)
+    )
+      await new Promise((resolve) => setTimeout(resolve, 8_000));
     if (path.startsWith("/events")) {
       this.eventRequests += 1;
+      if (this.eventRequests === this.slowEventRequest)
+        await new Promise((resolve) => setTimeout(resolve, 8_000));
       if (this.events === "refuse") {
         response.writeHead(503, { "content-type": "application/json" });
         response.end(
@@ -1381,6 +1393,148 @@ describe("a drain catches up before it sends row writes", () => {
     expect(created, asked.join("\n")).toBeGreaterThanOrEqual(0);
     expect(stream, asked.join("\n")).toBeGreaterThan(created);
     expect(rows, asked.join("\n")).toBeGreaterThan(stream);
+    expect(took).toBeGreaterThanOrEqual(5_000);
+    expect(took).toBeLessThan(10_000);
+  });
+
+  it("ends the wait 5 seconds after it began where the stream is slow to answer, whether it reads the head or catches up to it", async () => {
+    const proxy = await proxied();
+    for (const request of [1, 2]) {
+      const { item, row, device, mine } = await overlapped(
+        `caught-up-slow-${String(request)}`,
+        proxy.url,
+      );
+      proxy.slowEventRequest = proxy.eventRequests + request;
+      const started = Date.now();
+      const report = value(await device.drain());
+      const took = Date.now() - started;
+      expect(proxy.eventRequests, String(request)).toBeGreaterThanOrEqual(
+        proxy.slowEventRequest,
+      );
+      expect(took, String(request)).toBeLessThan(6_500);
+      expect(verdictOf(report, mine.id), String(request)).toBe("accepted");
+      expect((await serverRows(item))[row], String(request)).toEqual({
+        count: 1,
+        note: "offline",
+      });
+    }
+  });
+
+  it("ends the wait 5 seconds after it began where a read of a table's rows the catch-up makes is slow", async () => {
+    const proxy = await proxied();
+    const { item, row, device, mine } = await overlapped(
+      "caught-up-slow-rows",
+      proxy.url,
+    );
+    // Rows too large for the event to carry, so catching up reads them.
+    await write(
+      item,
+      Array.from({ length: 100 }, () => ({
+        op: "put",
+        id: uuidv7(),
+        values: { note: "x".repeat(1000) },
+      })),
+    );
+    proxy.slowRowReads = true;
+    const from = proxy.asked.length;
+    const started = Date.now();
+    const report = value(await device.drain());
+    const took = Date.now() - started;
+    proxy.slowRowReads = false;
+    const asked = proxy.asked.slice(from);
+    expect(
+      asked.some((one) => /^GET \/items\/[^/]+\/tables\/steps\/rows/.test(one)),
+      asked.join("\n"),
+    ).toBe(true);
+    expect(took).toBeLessThan(6_500);
+    expect(verdictOf(report, mine.id)).toBe("accepted");
+    expect((await serverRows(item))[row]).toEqual({
+      count: 1,
+      note: "offline",
+    });
+  });
+
+  /** Two items of one type, each with a row a device holding the table whole patches, and another writer then patches. */
+  async function overlappedTwice(label: string, url: string) {
+    const type = await tableType();
+    const items = [await itemOf(type), await itemOf(type)];
+    const rows = [uuidv7(), uuidv7()];
+    for (const [at, item] of items.entries())
+      await write(item, [
+        { op: "put", id: rows[at], values: { count: 1, note: "a" } },
+      ]);
+    const device = await holding(type, label, server.workingKey, url);
+    const mine: QueuedWrite[] = [];
+    for (const [at, item] of items.entries())
+      mine.push(
+        value(
+          await device.writeRows(item, "steps", [
+            { op: "patch", id: rows[at], values: { note: "offline" } },
+          ]),
+        ),
+      );
+    for (const [at, item] of items.entries())
+      await write(item, [
+        { op: "patch", id: rows[at], values: { note: "other" } },
+      ]);
+    return { rows, device, mine };
+  }
+
+  it("waits once in a drain, before its first row write, and judges each row write by the value the copy showed when it was made", async () => {
+    const proxy = await proxied();
+    const { rows, device, mine } = await overlappedTwice(
+      "caught-up-once",
+      proxy.url,
+    );
+    const from = proxy.asked.length;
+    const report = value(await device.drain());
+    const asked = proxy.asked.slice(from);
+    const sent = asked.flatMap((one, at) =>
+      /^POST \/items\/[^/]+\/tables\/steps\/rows$/.test(one) ? [at] : [],
+    );
+    const streams = asked.flatMap((one, at) =>
+      one.startsWith("GET /events") ? [at] : [],
+    );
+    expect(sent, asked.join("\n")).toHaveLength(2);
+    expect(streams.length, asked.join("\n")).toBeGreaterThan(0);
+    expect(
+      streams.every((at) => at < sent[0]),
+      asked.join("\n"),
+    ).toBe(true);
+    for (const [at, write] of mine.entries()) {
+      const told = report.verdicts.find((entry) => entry.id === write.id);
+      expect(told?.verdict, String(at)).toBe("conflicted");
+      expect(told?.conflicts, String(at)).toEqual([
+        { row: rows[at], column: "note" },
+      ]);
+    }
+  });
+
+  it("waits once in a drain whose stream's head cannot be had, however many row writes it sends", async () => {
+    const proxy = await proxied();
+    const { device, mine } = await overlappedTwice(
+      "caught-up-once-silent",
+      proxy.url,
+    );
+    proxy.events = "silent";
+    const from = proxy.asked.length;
+    const started = Date.now();
+    const report = value(await device.drain());
+    const took = Date.now() - started;
+    proxy.events = null;
+    const asked = proxy.asked.slice(from);
+    expect(
+      asked.filter((one) => one.startsWith("GET /events")),
+      asked.join("\n"),
+    ).toHaveLength(1);
+    expect(
+      asked.filter((one) =>
+        /^POST \/items\/[^/]+\/tables\/steps\/rows$/.test(one),
+      ),
+      asked.join("\n"),
+    ).toHaveLength(2);
+    for (const write of mine)
+      expect(verdictOf(report, write.id)).toBe("accepted");
     expect(took).toBeGreaterThanOrEqual(5_000);
     expect(took).toBeLessThan(10_000);
   });

@@ -298,11 +298,27 @@ When the server answers a batch `200` before the device has applied the batch's 
 
 ### `queue-and-verdicts/rows-caught-up-first`
 
-When a drain comes to send a `write_rows` write for a table a device holds whole, a device MUST first apply every event its copy stream carries up to the head of the server's event log as the device reads that head then.
+When a drain comes to send its first `write_rows` write for a table a device holds whole, a device MUST first apply every event its copy stream carries up to the head of the server's event log as the device reads that head then.
 
 **Reason:** a device judges a clash by the value the copy last took from the server, so a write sent before the copy applied another writer's batch is reported `accepted` or `conflicted` by timing alone. The head is read when the write is reached, not when a stream went live, so a batch that reached the log after a held stream went live is waited for too. The device waits for a held stream to apply the events or catches up itself, in a drain the CLI runs, in a drain a held stream starts (`device/follow-drains-reachable`) and in a folder's sync. A queue with no such write is sent with the stream not asked.
 
 **Tests:** `device/table-writes-live.test.ts › reports a write conflicted where a drain with no catch-up before it replaced another writer's value`, `› reports a write conflicted where a held stream drains it once its server is back`, `› reports a write conflicted where another writer's batch reaches a following copy after its stream went live`, `› asks the stream for nothing where no row write waits for a table the copy holds whole`.
+
+### `queue-and-verdicts/rows-caught-up-once`
+
+When a drain sends a `write_rows` write for a table a device holds whole after the drain's first such write, a device MUST judge it by the events the copy has applied by then, without reading the head of the server's event log again.
+
+**Reason:** one wait holds a drain back by at most 5 seconds however many tables it writes to (`queue-and-verdicts/rows-caught-up-unreached`). A batch another writer adds after the head was read is judged by whether the copy has applied it, and an unreported clash loses nothing: the value the write replaced stays in the batch's change log (`tables/undo`).
+
+**Tests:** `device/table-writes-live.test.ts › waits once in a drain, before its first row write, and judges each row write by the value the copy showed when it was made`, `› waits once in a drain whose stream's head cannot be had, however many row writes it sends`.
+
+### `queue-and-verdicts/rows-caught-up-keeps-read`
+
+When a device applies the stream's events before a `write_rows` write, a device MUST keep, as the value the copy showed when the write was made, the value the copy showed before it applied them.
+
+**Reason:** the copy lays a waiting write over each `rows.changed` it applies (`device/table-write-over-server`), so it shows the write's own value afterwards, and a write judged by that would never be `conflicted`.
+
+**Tests:** `device/table-writes-live.test.ts › reports a write conflicted where a drain with no catch-up before it replaced another writer's value`, `› waits once in a drain, before its first row write, and judges each row write by the value the copy showed when it was made`.
 
 ### `queue-and-verdicts/rows-caught-up-ahead`
 
@@ -318,7 +334,7 @@ If a device cannot read the head of the server's event log, or has not applied t
 
 **Reason:** holding a person's edit until a slow or unreadable stream catches up would leave it, and every write queued behind it, unsent for as long as the stream stays so, and an unreported clash loses nothing: the value the write replaced stays in the batch's change log (`tables/undo`).
 
-**Tests:** `device/table-writes-live.test.ts › sends the write and judges it by what the copy has applied where the stream cannot be had or ends before it is live`, `› sends the writes queued ahead of a row write before it waits, and sends the row write once 5 seconds pass without the stream's head`, `› keeps an accepted write over a rows.changed the server sent before it and applied after its answer`.
+**Tests:** `device/table-writes-live.test.ts › sends the write and judges it by what the copy has applied where the stream cannot be had or ends before it is live`, `› sends the writes queued ahead of a row write before it waits, and sends the row write once 5 seconds pass without the stream's head`, `› ends the wait 5 seconds after it began where the stream is slow to answer, whether it reads the head or catches up to it`, `› ends the wait 5 seconds after it began where a read of a table's rows the catch-up makes is slow`, `› keeps an accepted write over a rows.changed the server sent before it and applied after its answer`.
 
 ### `queue-and-verdicts/rows-conflict-unjudged`
 
