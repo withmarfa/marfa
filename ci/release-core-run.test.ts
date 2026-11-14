@@ -48,7 +48,10 @@ interface World {
   /** What the list of runs for the release commit answers. */
   own?: Run[];
   /** How the release commit stands to a run's commit, and what changed since. */
-  compare: Record<string, { status: string; files: string[] }>;
+  compare: Record<
+    string,
+    { status: string; files: (string | { from: string; to: string })[] }
+  >;
 }
 
 function require(world: World) {
@@ -62,7 +65,11 @@ function require(world: World) {
     for (const [base, comparison] of Object.entries(world.compare)) {
       write(`compare-${base}.json`, {
         status: comparison.status,
-        files: comparison.files.map((filename) => ({ filename })),
+        files: comparison.files.map((file) =>
+          typeof file === "string"
+            ? { filename: file }
+            : { filename: file.to, previous_filename: file.from },
+        ),
       });
     }
     const bin = join(directory, "bin");
@@ -201,6 +208,56 @@ describe("a release waits for the core's live checks", () => {
       expect(result.said).toContain("changed what the core's live checks read");
     },
   );
+
+  it("refuses an earlier green run when a core file was renamed out of the core since", () => {
+    const result = require({
+      main: [run(5, sha("a"), "completed", "success")],
+      compare: {
+        [sha("a")]: {
+          status: "ahead",
+          files: [
+            { from: "core/marfa-server/src/main.rs", to: "docs/main.md" },
+          ],
+        },
+      },
+    });
+    expect(result.status).toBe(1);
+    expect(result.said).toContain("changed what the core's live checks read");
+  });
+
+  it("lets an earlier green run vouch for a rename between paths the core does not read", () => {
+    const result = require({
+      main: [run(5, sha("a"), "completed", "success")],
+      compare: {
+        [sha("a")]: {
+          status: "ahead",
+          files: [{ from: "docs/old.md", to: "docs/new.md" }],
+        },
+      },
+    });
+    expect(result.status, result.said).toBe(0);
+  });
+
+  it("passes over a run whose commit cannot be compared and uses the next one", () => {
+    const result = require({
+      main: [
+        run(9, sha("c"), "completed", "failure"),
+        run(5, sha("a"), "completed", "success"),
+      ],
+      compare: { [sha("a")]: { status: "ahead", files: ["README.md"] } },
+    });
+    expect(result.status, result.said).toBe(0);
+    expect(result.said).toContain(`green for ${sha("a")}`);
+  });
+
+  it("refuses when no run's commit can be compared", () => {
+    const result = require({
+      main: [run(9, sha("c"), "completed", "success")],
+      compare: {},
+    });
+    expect(result.status).toBe(1);
+    expect(result.said).toContain("No core.yml run at or before");
+  });
 
   it("refuses when the nearest earlier run is red, even if an older one is green", () => {
     const result = require({

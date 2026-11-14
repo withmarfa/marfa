@@ -847,16 +847,12 @@ jobs:
       # already have: a full re-run rebuilds them. A draft is given only the
       # files it lacks, and only when it was made for this commit: its
       # `target_commitish` is the commit it was created with (the API keeps it
-      # for a tag that exists). A public one is left alone.
+      # for a tag that exists). `Read the version` has refused a public release.
       - name: Draft the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if draft=$(gh release view "v$VERSION" --json isDraft --jq .isDraft 2> "$RUNNER_TEMP/release-view.err"); then
-            if [ "$draft" = "false" ]; then
-              echo "v$VERSION is already released"
-              exit 0
-            fi
+          if gh release view "v$VERSION" --json isDraft --jq .isDraft 2> "$RUNNER_TEMP/release-view.err" > /dev/null; then
             made_for=$(gh release view "v$VERSION" --json targetCommitish --jq .targetCommitish)
             if [ "$made_for" != "$GITHUB_SHA" ]; then
               echo "::error::The draft v$VERSION was made for $made_for, and this run builds $GITHUB_SHA, so its files come from another build. Nothing was uploaded or published. Delete the draft (gh release delete v$VERSION, which keeps the tag), then re-run this workflow run."

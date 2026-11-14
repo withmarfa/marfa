@@ -45,11 +45,14 @@ changed=""
 truncated=false
 while read -r candidate; do
   [ -n "$candidate" ] || continue
-  comparison=$(gh api "repos/$repo/compare/$candidate...$sha?per_page=100")
+  # A commit the API cannot compare, such as one on a branch since deleted, is
+  # passed over like a run for a later commit.
+  comparison=$(gh api "repos/$repo/compare/$candidate...$sha?per_page=100") || continue
   case "$(jq -r .status <<< "$comparison")" in
     identical | ahead)
       nearest="$candidate"
-      changed=$(jq -r '.files[].filename' <<< "$comparison")
+      # A renamed file counts under its old path too.
+      changed=$(jq -r '.files[] | .filename, (.previous_filename // empty)' <<< "$comparison")
       # A comparison that fills its page may hold more files than it lists.
       [ "$(jq '.files | length' <<< "$comparison")" -lt 100 ] || truncated=true
       break
