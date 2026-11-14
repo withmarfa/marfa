@@ -199,8 +199,9 @@ impl Reader<'_> {
             (Some(_), None) if !named => {
                 self.refuse(
                     "MARFA_TRUSTED_PROXY_HEADER is believed only from the proxies that write it; \
-                     set MARFA_TRUSTED_PROXY_CIDRS to the ranges they connect from, such as \
-                     127.0.0.0/8,::1/128 for a tunnel to a native server on this machine"
+                     set MARFA_TRUSTED_PROXY_CIDRS to the ranges they connect from, which \
+                     `marfa server install` writes, such as 127.0.0.0/8,::1/128 for a tunnel \
+                     to a native server on this machine"
                         .to_string(),
                 );
                 Trust::Nothing
