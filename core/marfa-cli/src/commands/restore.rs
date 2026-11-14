@@ -25,13 +25,18 @@ pub fn run(args: RestoreArgs, remote: &Remote, out: &Printer) -> Result<(), CliE
     answered(&remote.json(&request(&args))?, out)
 }
 
+/// What a restore says is set up again, as one safe line of text.
+fn set_up_again_note(answer: &serde_json::Value) -> Option<String> {
+    answer
+        .get("set_up_again")
+        .and_then(serde_json::Value::as_str)
+        .map(crate::output::printable)
+}
+
 /// Prints a restore's answer, says what is set up again, and fails on blobs it lacks.
 pub fn answered(answer: &serde_json::Value, out: &Printer) -> Result<(), CliError> {
     out.value(answer)?;
-    if let Some(note) = answer
-        .get("set_up_again")
-        .and_then(serde_json::Value::as_str)
-    {
+    if let Some(note) = set_up_again_note(answer) {
         crate::errln!("{note}");
     }
     let missing: Vec<String> = answer
@@ -48,5 +53,24 @@ pub fn answered(answer: &serde_json::Value, out: &Printer) -> Result<(), CliErro
         Ok(())
     } else {
         Err(CliError::RestoreLacksBlobs(missing))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::set_up_again_note;
+    use serde_json::json;
+
+    #[test]
+    fn the_note_cannot_start_a_line_or_move_the_cursor() {
+        let answer = json!({"set_up_again": "keys\nrestored 0 items\u{1b}[2K"});
+        let note = set_up_again_note(&answer).expect("a note");
+        assert!(!note.contains('\n') && !note.contains('\u{1b}'), "{note:?}");
+        assert_eq!(note, "keys\\u{a}restored 0 items\\u{1b}[2K");
+    }
+
+    #[test]
+    fn no_note_is_none() {
+        assert_eq!(set_up_again_note(&json!({})), None);
     }
 }

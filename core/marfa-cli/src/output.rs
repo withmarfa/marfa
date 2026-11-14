@@ -2015,14 +2015,20 @@ pub fn printable(text: &str) -> String {
         .collect()
 }
 
-/// `value` with every string, and every name in an object, as [`printable`] shows it.
+/// An object's name as [`printable_value`] shows it: as [`printable`] shows
+/// text, and with the backslash escaped too, so no two names show alike.
+fn printable_key(name: &str) -> String {
+    printable(&name.replace('\\', "\\\\"))
+}
+
+/// `value` with every string, and every name in an object, escaped for a line.
 pub fn printable_value(value: &Value) -> Value {
     match value {
         Value::String(text) => Value::String(printable(text)),
         Value::Array(list) => Value::Array(list.iter().map(printable_value).collect()),
         Value::Object(map) => Value::Object(
             map.iter()
-                .map(|(name, held)| (printable(name), printable_value(held)))
+                .map(|(name, held)| (printable_key(name), printable_value(held)))
                 .collect(),
         ),
         other => other.clone(),
@@ -2036,7 +2042,39 @@ fn printable_lines(text: &str) -> String {
 
 #[cfg(test)]
 mod printable_tests {
-    use super::printable;
+    use super::{printable, printable_value, said};
+    use serde_json::json;
+
+    #[test]
+    fn two_names_that_differ_only_by_a_control_character_stay_two_entries() {
+        let answer = json!({"a\nb": "the real newline", "a\\u{a}b": "the typed escape"});
+        let shown = printable_value(&answer);
+        assert_eq!(
+            shown.as_object().map(serde_json::Map::len),
+            Some(2),
+            "{shown}"
+        );
+        let text = said(&answer, |shown| shown.to_string());
+        assert!(text.contains("the real newline"), "{text}");
+        assert!(text.contains("the typed escape"), "{text}");
+        assert!(!text.contains('\n'), "{text:?}");
+    }
+
+    #[test]
+    fn a_name_with_a_backslash_shows_it_doubled_and_no_two_names_share_a_form() {
+        let names = ["a\\b", "a\\\\b", "a\nb", "a\\nb", "a\\u{a}b", "a\\\\u{a}b"];
+        let object: serde_json::Map<String, serde_json::Value> = names
+            .iter()
+            .map(|name| ((*name).to_string(), json!(1)))
+            .collect();
+        let shown = printable_value(&serde_json::Value::Object(object));
+        assert_eq!(
+            shown.as_object().map(serde_json::Map::len),
+            Some(names.len())
+        );
+        let keys: Vec<_> = shown.as_object().unwrap().keys().cloned().collect();
+        assert!(keys.contains(&"a\\\\b".to_string()), "{keys:?}");
+    }
 
     #[test]
     fn escapes_control_and_bidirectional_characters_and_keeps_the_rest() {

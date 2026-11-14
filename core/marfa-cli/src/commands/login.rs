@@ -193,7 +193,10 @@ fn approval_sentence(page: &str, user_code: &str, stream: crate::style::Stream) 
         code
     };
     let shown = crate::style::bold(stream, &shown);
-    format!("Open {page} and enter the code {shown}\nWaiting for the approval...")
+    format!(
+        "Open {} and enter the code {shown}\nWaiting for the approval...",
+        crate::output::printable(page)
+    )
 }
 
 fn print_set(token: &auth::TokenSet, client_id: &str, out: &Printer) -> Result<(), CliError> {

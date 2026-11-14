@@ -1413,7 +1413,7 @@ pub fn held_outside_line(count: usize) -> String {
 
 fn describe_scan(report: &marfa_core::ScanReport) -> String {
     if let Some(gone) = &report.root_gone {
-        return format!("nothing scanned: {gone}");
+        return format!("nothing scanned: {}", printable(gone));
     }
     let mut line = format!(
         "{} created, {} updated, {} renamed, {} unchanged, {} missing, {} deleted, {} skipped{}",
@@ -1548,7 +1548,7 @@ pub fn unsure_lines(report: &marfa_core::ScanReport) -> Vec<String> {
 /// A watch says it when it changes, apart from the other standing lines, so a
 /// held file or an excluded secret does not say it again.
 pub fn lookup_line(report: &marfa_core::ScanReport) -> Option<String> {
-    report.lookup_refused.clone()
+    report.lookup_refused.as_deref().map(printable)
 }
 
 /// Says each conflicted edit once, with the file it was for and the file its
@@ -1616,6 +1616,29 @@ mod tests {
     use super::*;
     use marfa_core::{DrainReport, DrainVerdict, Verdict, WriteKind};
     use std::collections::HashMap;
+
+    #[test]
+    fn a_message_the_server_or_the_root_check_gives_stays_on_its_own_line() {
+        let forged = "refused\nwould create 0 items\u{1b}[2K";
+        let refused = marfa_core::ScanReport {
+            lookup_refused: Some(forged.into()),
+            ..Default::default()
+        };
+        let line = lookup_line(&refused).expect("a standing line");
+        assert!(!line.contains('\n') && !line.contains('\u{1b}'), "{line:?}");
+        assert_eq!(lookup_line(&marfa_core::ScanReport::default()), None);
+        let gone = marfa_core::ScanReport {
+            root_gone: Some(forged.into()),
+            ..Default::default()
+        };
+        let text = describe_scan(&gone);
+        assert!(!text.contains('\n') && !text.contains('\u{1b}'), "{text:?}");
+        assert!(
+            describe_scan(&refused).lines().count() <= 3,
+            "{:?}",
+            describe_scan(&refused)
+        );
+    }
 
     #[test]
     fn a_reason_the_settings_file_gives_stays_on_its_own_line() {

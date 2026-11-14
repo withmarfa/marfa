@@ -433,6 +433,42 @@ describe("stored text that is layout or colour", () => {
   });
 });
 
+describe("stored names that differ only by a control character", () => {
+  it("shows each as its own entry, with no control character on the terminal", async () => {
+    const created = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--prop",
+      "title=extension names",
+    ]);
+    trackItem(c.ctx, created.item.id);
+    const body = {
+      "a\nb": "the name with a real newline",
+      "a\\u{a}b": "the name that spells the escape",
+    };
+    await c.cli.json([
+      "extensions",
+      "write",
+      created.item.id,
+      "app.review",
+      "--body",
+      JSON.stringify(body),
+    ]);
+    const got = await c.cli.run([
+      "extensions",
+      "get",
+      created.item.id,
+      "app.review",
+    ]);
+    expect(got.code, got.stderr).toBe(0);
+    expect(got.stdout).not.toMatch(CONTROLS);
+    expect(got.stdout).toContain("the name with a real newline");
+    expect(got.stdout).toContain("the name that spells the escape");
+  });
+});
+
 describe("a type move that is only asked what it would do", () => {
   it("says a key's label on the line of that key, however the label is written", async () => {
     const stem = unique("clilabel").replace(/-/g, "");
