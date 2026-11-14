@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use marfa_rules::rows;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
@@ -9,10 +10,6 @@ use uuid::Uuid;
 use crate::error::CoreError;
 use crate::model::{QueuedWrite, RowConflict, Verdict, WriteKind};
 use crate::{Result, store, tables};
-
-/// The server's own bound (`tables/rows-batch-limit`).
-pub(crate) const MAX_OPERATIONS: usize = 1000;
-const OP_MEMBERS: [&str; 3] = ["op", "id", "values"];
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum Op {
@@ -60,97 +57,33 @@ impl Op {
     }
 }
 
-fn refused_at(index: usize, path: &str, message: &str) -> CoreError {
-    let path = if path.is_empty() {
-        format!("operations.{index}")
-    } else {
-        format!("operations.{index}.{path}")
-    };
-    refused(format!("{path}: {message}"))
-}
-
-fn refused(message: String) -> CoreError {
+fn refused(refused: rows::Refused) -> CoreError {
     CoreError::Validation {
         server: None,
         code: "validation_error".into(),
-        message,
+        message: refused.sentence(),
         details: None,
     }
 }
 
-fn row_id(index: usize, value: Option<&Value>) -> Result<Option<String>> {
-    match value {
-        None => Ok(None),
-        Some(Value::String(id)) if marfa_rules::validation::id("id", id).is_ok() => {
-            Ok(Some(id.clone()))
-        }
-        Some(_) => Err(refused_at(
-            index,
-            "id",
-            "A row id is a UUIDv7 in lowercase.",
-        )),
-    }
-}
-
-fn values_of(index: usize, value: Option<&Value>) -> Result<Map<String, Value>> {
-    match value {
-        Some(Value::Object(values)) => Ok(values.clone()),
-        _ => Err(refused_at(
-            index,
-            "values",
-            "values is an object keyed by column.",
-        )),
-    }
+fn refused_at(index: usize, path: &str, message: &str) -> CoreError {
+    refused(rows::Refused::at(index, path, message))
 }
 
 /// An id-less `put` is given one here, so every send is the same batch.
 fn operations(sent: &[Value]) -> Result<Vec<Op>> {
-    if sent.is_empty() {
-        return Err(refused(
-            "operations: operations names at least one operation.".into(),
-        ));
-    }
-    if sent.len() > MAX_OPERATIONS {
-        return Err(refused(format!(
-            "operations: A batch holds at most {MAX_OPERATIONS} operations; this holds {}.",
-            sent.len()
-        )));
-    }
-    sent.iter()
-        .enumerate()
-        .map(|(index, entry)| {
-            let Value::Object(entry) = entry else {
-                return Err(refused("operations: Each operation is an object.".into()));
-            };
-            if let Some(unknown) = entry.keys().find(|key| !OP_MEMBERS.contains(&key.as_str())) {
-                return Err(refused_at(
-                    index,
-                    unknown,
-                    "An operation names op, id and values.",
-                ));
-            }
-            let named = || {
-                row_id(index, entry.get("id"))?
-                    .ok_or_else(|| refused_at(index, "id", "This operation names the row by id."))
-            };
-            match entry.get("op").and_then(Value::as_str) {
-                Some("put") => Ok(Op::Put {
-                    id: row_id(index, entry.get("id"))?
-                        .unwrap_or_else(|| Uuid::now_v7().to_string()),
-                    values: values_of(index, entry.get("values"))?,
-                }),
-                Some("patch") => Ok(Op::Patch {
-                    id: named()?,
-                    values: values_of(index, entry.get("values"))?,
-                }),
-                Some("delete") if entry.contains_key("values") => {
-                    Err(refused_at(index, "values", "A delete sends no values."))
-                }
-                Some("delete") => Ok(Op::Delete { id: named()? }),
-                _ => Err(refused_at(index, "op", "op is put, patch or delete.")),
-            }
+    Ok(rows::batch(sent, rows::MAX_OPERATIONS)
+        .map_err(refused)?
+        .into_iter()
+        .map(|op| match op {
+            rows::Op::Put { id, values } => Op::Put {
+                id: id.unwrap_or_else(|| Uuid::now_v7().to_string()),
+                values,
+            },
+            rows::Op::Patch { id, values } => Op::Patch { id, values },
+            rows::Op::Delete { id } => Op::Delete { id },
         })
-        .collect()
+        .collect())
 }
 
 pub(crate) fn queued_ops(body: &Value) -> Result<Vec<Op>> {
@@ -169,13 +102,121 @@ fn judge_values(
     index: usize,
     columns: &Map<String, Value>,
     values: &Map<String, Value>,
+    complete: bool,
+    kept: &[String],
 ) -> Result<()> {
-    marfa_rules::validation::row_values(columns, values, false, &[]).map_err(|error| {
-        match error.fields.first() {
+    marfa_rules::validation::row_values(columns, values, complete, kept).map_err(
+        |error| match error.fields.first() {
             Some(field) => refused_at(index, &format!("values.{}", field.path), &field.message),
             None => refused_at(index, "values", &error.message),
-        }
+        },
+    )
+}
+
+/// What the copy knows of one row as the batch's operations leave it.
+struct Known {
+    /// `None` where the copy cannot tell.
+    exists: Option<bool>,
+    /// What the copy holds of the row's values: where a column's value is
+    /// withheld from the key, the size is a lower bound, which only refuses
+    /// what the server would refuse too. `None` where the copy cannot tell.
+    values: Option<Map<String, Value>>,
+    /// The columns the server keeps a `put` from replacing, where the copy knows them.
+    withheld: Option<Vec<String>>,
+}
+
+fn known_row(conn: &Connection, item: &str, table: &str, id: &str, laid: bool) -> Result<Known> {
+    if !laid {
+        return Ok(Known {
+            exists: None,
+            values: None,
+            withheld: None,
+        });
+    }
+    Ok(match held_row(conn, item, table, id)? {
+        Some(held) => Known {
+            exists: Some(true),
+            values: Some(held.values),
+            withheld: Some(held.withheld),
+        },
+        None => Known {
+            exists: Some(false),
+            values: Some(Map::new()),
+            withheld: Some(Vec::new()),
+        },
     })
+}
+
+/// The refusals a device can give before it queues, that need the row as the
+/// copy holds it: a `put` that leaves out a required column the server would not
+/// keep, and a row that would hold more than the server takes. Where the copy
+/// cannot tell, the write is queued for the server to judge.
+fn judge_rows(
+    conn: &Connection,
+    item: &str,
+    table: &str,
+    columns: &Map<String, Value>,
+    ops: &[Op],
+    sent: &[Value],
+    laid: bool,
+) -> Result<()> {
+    let item_columns: Vec<String> = columns
+        .iter()
+        .filter(|(_, column)| {
+            column.get("type").and_then(Value::as_str) == Some(marfa_rules::schema::ITEM_KIND)
+        })
+        .map(|(name, _)| name.clone())
+        .collect();
+    let mut rows: BTreeMap<String, Known> = BTreeMap::new();
+    for (index, op) in ops.iter().enumerate() {
+        if !rows.contains_key(op.id()) {
+            rows.insert(
+                op.id().to_string(),
+                known_row(conn, item, table, op.id(), laid)?,
+            );
+        }
+        let row = rows.get_mut(op.id()).expect("the row was just noted");
+        match op {
+            Op::Put { values, .. } => {
+                let fresh = sent[index].get("id").is_none();
+                // A value in an item column may be one the row keeps from the key's sight.
+                let kept = match (&row.withheld, fresh) {
+                    (_, true) => Vec::new(),
+                    (Some(withheld), false) => withheld.clone(),
+                    (None, false) => item_columns.clone(),
+                };
+                judge_values(index, columns, values, true, &kept)?;
+                let next: Map<String, Value> = values
+                    .iter()
+                    .filter(|(_, value)| !value.is_null())
+                    .map(|(column, value)| (column.clone(), value.clone()))
+                    .collect();
+                rows::refuse_wide(index, &next).map_err(refused)?;
+                row.exists = Some(true);
+                row.values = Some(next);
+                row.withheld.get_or_insert_with(Vec::new);
+            }
+            Op::Patch { values, .. } => match row.values.as_mut() {
+                Some(held) if row.exists == Some(true) => {
+                    for (column, value) in values {
+                        if value.is_null() {
+                            held.remove(column);
+                        } else {
+                            held.insert(column.clone(), value.clone());
+                        }
+                    }
+                    rows::refuse_wide(index, held).map_err(refused)?;
+                }
+                _ => row.values = None,
+            },
+            Op::Delete { .. } => {
+                row.exists = Some(false);
+                row.values = None;
+                row.withheld = Some(Vec::new());
+            }
+        }
+    }
+    Ok(())
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -319,7 +360,7 @@ pub(crate) fn write(
     let ops = operations(sent)?;
     for (index, op) in ops.iter().enumerate() {
         if let Some(values) = op.values() {
-            judge_values(index, &columns, values)?;
+            judge_values(index, &columns, values, false, &[])?;
         }
     }
     let tx = conn.transaction()?;
@@ -350,6 +391,7 @@ pub(crate) fn write(
             }
         }
     }
+    judge_rows(&tx, item, table, &columns, &ops, sent, laid)?;
     let payload = json!({ "operations": ops.iter().map(Op::printed).collect::<Vec<_>>() });
     let read = laid.then(|| json!({ "rows": read }));
     let queued = enqueue(
@@ -1033,7 +1075,7 @@ mod tests {
     fn a_batch_the_server_would_refuse_is_a_validation_naming_the_operation() {
         let id = "01a1b75e-2d9d-775a-930a-6b3d1207edae";
         let columns = values(json!({ "count": { "type": "integer" } }));
-        let too_many = vec![json!({ "op": "put", "values": {} }); MAX_OPERATIONS + 1];
+        let too_many = vec![json!({ "op": "put", "values": {} }); rows::MAX_OPERATIONS + 1];
         for (sent, named) in [
             (vec![], "operations"),
             (too_many, "operations"),
@@ -1071,5 +1113,78 @@ mod tests {
             );
             assert!(refused.to_string().contains(named), "{refused}");
         }
+    }
+
+
+    fn judged(columns: &Value, sent: Vec<Value>) -> Result<()> {
+        let conn = Connection::open_in_memory().unwrap();
+        let columns = values(columns.clone());
+        let ops = operations(&sent).unwrap();
+        judge_rows(&conn, "item", "table", &columns, &ops, &sent, false)
+    }
+
+    #[test]
+    fn a_copy_that_cannot_see_the_row_refuses_what_the_server_would_whatever_the_row_holds() {
+        let columns = json!({
+            "count": { "type": "integer", "required": true },
+            "ref": { "type": "item", "required": true },
+            "note": { "type": "string" },
+        });
+        let id = "01a1b75e-2d9d-775a-930a-6b3d1207edae";
+        let missing = judged(
+            &columns,
+            vec![json!({ "op": "put", "id": id, "values": { "ref": id } })],
+        )
+        .unwrap_err();
+        assert!(
+            missing.to_string().contains("operations.0.values.count"),
+            "{missing}"
+        );
+        assert!(matches!(
+            &missing,
+            CoreError::Validation { code, .. } if code == "validation_error"
+        ));
+        // A required item column may be one the row keeps, so only the server can say.
+        judged(
+            &columns,
+            vec![json!({ "op": "put", "id": id, "values": { "count": 1 } })],
+        )
+        .unwrap();
+        // A new row keeps nothing.
+        let fresh = judged(
+            &columns,
+            vec![json!({ "op": "put", "values": { "count": 1 } })],
+        )
+        .unwrap_err();
+        assert!(
+            fresh.to_string().contains("operations.0.values.ref"),
+            "{fresh}"
+        );
+        let wide = "x".repeat(rows::MAX_ROW_BYTES);
+        let long = judged(
+            &columns,
+            vec![
+                json!({ "op": "put", "id": id, "values": { "count": 1, "ref": id } }),
+                json!({ "op": "put", "id": id, "values": { "count": 1, "ref": id, "note": wide } }),
+            ],
+        )
+        .unwrap_err();
+        assert!(long.to_string().contains("operations.1.values"), "{long}");
+        // A patch of a row the copy does not hold is the server's to judge.
+        judged(
+            &columns,
+            vec![json!({ "op": "patch", "id": id, "values": { "note": wide } })],
+        )
+        .unwrap();
+        // A patch of a row this batch put is judged by what the put left.
+        let grown = judged(
+            &columns,
+            vec![
+                json!({ "op": "put", "id": id, "values": { "count": 1, "ref": id, "note": "x".repeat(rows::MAX_ROW_BYTES - 120) } }),
+                json!({ "op": "patch", "id": id, "values": { "note": wide } }),
+            ],
+        )
+        .unwrap_err();
+        assert!(grown.to_string().contains("operations.1.values"), "{grown}");
     }
 }

@@ -6458,11 +6458,19 @@ If an app writes rows to a table that the item does not have, by its type in the
 
 ### `device/table-write-judged`
 
-If the server would refuse an operation of a batch under `tables/rows-operations-required`, `tables/rows-batch-limit`, `tables/rows-op-refused`, `tables/rows-id-refused`, `tables/rows-op-member-refused`, `tables/rows-values-refused`, `tables/rows-unknown-column` or `tables/rows-value-rules`, then a device MUST refuse the write `validation` with the code `validation_error`, naming the operation.
+If the server would refuse an operation of a batch under `tables/rows-operations-required`, `tables/rows-batch-limit`, `tables/rows-op-refused`, `tables/rows-id-refused`, `tables/rows-op-member-refused`, `tables/rows-values-refused`, `tables/rows-unknown-column`, `tables/rows-value-rules`, `tables/rows-row-limit` or `tables/rows-required`, and the device can tell, then a device MUST refuse the write `validation` with the code `validation_error`, naming the operation.
 
-**Reason:** the device holds the table's columns, so a write the server cannot take is refused while the person who made it is still there.
+**Reason:** the device holds the table's columns and the rows it holds, so a write the server cannot take is refused while the person who made it is still there. The rules of a batch and the size of a row are the server's own (`marfa-rules`), so the two never differ.
 
-**Tests:** `device/table-writes-live.test.ts › refuses a write whose operations the server would refuse, naming the operation`.
+**Tests:** `device/table-writes-live.test.ts › refuses a write whose operations the server would refuse, naming the operation`, `› refuses a row over the size limit and a put without a required column, as the server does, queueing nothing`.
+
+### `device/table-write-size-unjudged`
+
+If a device cannot tell the size of the row a `patch` leaves, because it does not hold the row, then a device MUST queue the write for the server to judge.
+
+**Reason:** a device never refuses what the server might take.
+
+**Tests:** `device/table-writes-live.test.ts › queues a patch of a row the copy does not hold for the server to judge its size`.
 
 ### `device/table-write-withheld`
 

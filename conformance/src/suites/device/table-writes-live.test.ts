@@ -390,6 +390,38 @@ async function until(
   }
 }
 
+/** A type whose `steps` table has a required column, an item holding one row, and a device holding the table whole. */
+async function sized(label: string): Promise<{
+  type: string;
+  item: string;
+  row: string;
+  device: CliDevice;
+}> {
+  counter += 1;
+  const type = `user.table-sized-${String(counter)}`;
+  const made = await working.registerType({
+    id: type,
+    fields: { title: { type: "string" } },
+    tables: {
+      steps: {
+        columns: {
+          title: { type: "string", required: true },
+          note: { type: "string" },
+          other: { type: "string" },
+        },
+      },
+    },
+  } as never);
+  expect(made.status, JSON.stringify(made.error)).toBe(201);
+  const item = await itemOf(type);
+  const row = uuidv7();
+  await write(item, [
+    { op: "put", id: row, values: { title: "t", note: "x".repeat(60_000) } },
+  ]);
+  const device = await holding(type, label);
+  return { type, item, row, device };
+}
+
 describe("a write the copy shows at once", () => {
   it("queues a write to a table it holds whole and answers it from the copy at once, before any drain", async () => {
     const type = await tableType();
@@ -528,6 +560,91 @@ describe("a write the copy shows at once", () => {
       expect(judged.raw).toContain(named);
     }
     await unchanged(device, item);
+  });
+
+  it("refuses a row over the size limit and a put without a required column, as the server does, queueing nothing", async () => {
+    const { item, row, device } = await sized("sized");
+    const big = (length: number): string => "x".repeat(length);
+    const sentToServer = await working.writeRows(item, "steps", {
+      operations: [
+        { op: "put", id: row, values: { title: "t", note: big(70_000) } },
+      ],
+    });
+    expect(sentToServer.status).toBe(400);
+    for (const [operations, named] of [
+      [
+        [{ op: "put", id: row, values: { note: "x" } }],
+        "operations.0.values.title",
+      ],
+      [[{ op: "put", values: { note: "x" } }], "operations.0.values.title"],
+      [
+        [{ op: "put", id: row, values: { title: null } }],
+        "operations.0.values.title",
+      ],
+      [
+        [{ op: "patch", id: row, values: { title: null } }],
+        "operations.0.values.title",
+      ],
+      [
+        [{ op: "put", values: { title: "t", note: big(70_000) } }],
+        "operations.0.values",
+      ],
+      [
+        [{ op: "patch", id: row, values: { other: big(10_000) } }],
+        "operations.0.values",
+      ],
+    ] as [Operation[], string][]) {
+      const judged = refused(await device.writeRows(item, "steps", operations));
+      expect(judged.code, JSON.stringify(operations).slice(0, 80)).toBe(
+        "validation",
+      );
+      expect(judged.raw).toContain(named);
+    }
+    const server = sentToServer.error?.error.message ?? "";
+    expect(server).toContain("operations.0.values");
+    const over = refused(
+      await device.writeRows(item, "steps", [
+        { op: "put", id: row, values: { title: "t", note: big(70_000) } },
+      ]),
+    );
+    expect(over.raw).toContain(server);
+    const grown = refused(
+      await device.writeRows(item, "steps", [
+        { op: "put", id: uuidv7(), values: { title: "t", note: big(40_000) } },
+        {
+          op: "put",
+          id: row,
+          values: { title: "t", note: big(40_000), other: big(30_000) },
+        },
+      ]),
+    );
+    expect(grown.raw).toContain("operations.1.values");
+    expect(value(await device.queue())).toEqual([]);
+    // The witness: the limit, not the shape, is what refused them.
+    value(
+      await device.writeRows(item, "steps", [
+        {
+          op: "put",
+          id: row,
+          values: { title: "t", note: big(40_000), other: big(20_000) },
+        },
+      ]),
+    );
+  });
+
+  it("queues a patch of a row the copy does not hold for the server to judge its size", async () => {
+    const { type, item, row } = await sized("sized-unheld");
+    const loose = deviceFor("sized-unheld-copy");
+    value(await loose.hydrate([type], "library"));
+    const queuedPatch = value(
+      await loose.writeRows(item, "steps", [
+        { op: "patch", id: row, values: { note: "x".repeat(70_000) } },
+      ]),
+    );
+    expect(queuedPatch.kind).toBe("write_rows");
+    expect(verdictOf(value(await loose.drain()), queuedPatch.id)).toBe(
+      "refused",
+    );
   });
 
   it("refuses a write naming a column the row it holds withholds", async () => {

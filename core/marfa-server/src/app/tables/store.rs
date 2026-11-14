@@ -27,7 +27,7 @@ pub(super) struct Held {
 }
 
 pub(super) fn printed_len(values: &Map<String, Value>) -> i64 {
-    serde_json::to_string(values).map_or(0, |text| text.len() as i64)
+    marfa_rules::rows::printed_len(values) as i64
 }
 
 fn object_of(text: &str) -> Result<Map<String, Value>> {

@@ -528,13 +528,13 @@ pub fn row(line: &Value, row: usize) -> Result<RowKey, Box<Refused>> {
             }
         }
     }
-    let bytes = serde_json::to_string(values).map_or(usize::MAX, |text| text.len());
-    if bytes > crate::app::tables::MAX_ROW_BYTES {
+    let bytes = marfa_rules::rows::printed_len(values);
+    if bytes > marfa_rules::rows::MAX_ROW_BYTES {
         return Err(refused(
             "values",
             &format!(
                 "at most {} bytes as JSON, and holds {bytes}",
-                crate::app::tables::MAX_ROW_BYTES
+                marfa_rules::rows::MAX_ROW_BYTES
             ),
         ));
     }
