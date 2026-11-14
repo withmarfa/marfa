@@ -7,7 +7,7 @@ import { gunzipSync, gzipSync } from "node:zlib";
  * An archive is a plain tar: `manifest.json`, then `files.ndjson.gz`,
  * `instance.ndjson.gz`, `items.ndjson.gz`, `versions.ndjson.gz`,
  * `edges.ndjson.gz` and `rows.ndjson.gz`, each a gzip-compressed line file,
- * then a raw `blobs/<hash>` entry for each file it carries.
+ * then a raw `blobs/<hex>` entry for each file it carries.
  *
  * Most archive fixtures post back what `GET /export?format=archive` produced,
  * which keeps the round trip honest. A few preconditions cannot be arranged

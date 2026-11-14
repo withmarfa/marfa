@@ -1976,7 +1976,7 @@ If a store fails, or does not answer within 15 seconds, while the server checks 
 
 The server MUST hold nothing in an archive but `manifest.json`, `files.ndjson.gz`, `instance.ndjson.gz`, `items.ndjson.gz`, `versions.ndjson.gz`, `edges.ndjson.gz`, `rows.ndjson.gz` and the `blobs/` entries.
 
-**Reason:** an archive carries no credential, so no key, session, grant, passkey, connector registration, webhook subscription or `marfa.secrets`, and no tombstone or runtime record, such as a run, a hold, a delivery, a folder report or a bulk job, though an instance holds them. A restore means setting up sign-in again.
+**Reason:** an archive carries no credential, so no key, session, grant, passkey, connector registration, webhook subscription, inbound endpoint or `marfa.secrets`, no audit log or event log, and no tombstone or runtime record, such as a run, a hold, a delivery, a folder report or a bulk job, though an instance holds them. A restore means setting up sign-in again.
 
 **Tests:** `compliance/export.test.ts › holds nothing in an archive but its manifest, line files and blobs, and carries no webhook`.
 

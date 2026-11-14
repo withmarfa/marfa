@@ -452,7 +452,7 @@ async function main(): Promise<void> {
     );
     check("files the restore could not find", answer.blobs_missing, []);
     say(
-      `Restored \`${backup.name}\` into a fresh server: ${JSON.stringify({ ...answer, set_up_again: undefined })}.`,
+      `Restored \`${backup.name}\` into a fresh server: ${JSON.stringify({ ...answer, not_restored: undefined })}.`,
     );
 
     // 5. What the restored server holds, every file read from the bucket or

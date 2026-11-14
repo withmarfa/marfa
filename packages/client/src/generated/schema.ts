@@ -29222,7 +29222,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: a lever lacks `types` or `sources`.
-             *     - `validation_error`: the body names a setting Marfa doesn't know, a value is out of range, the effective version windows are out of order, reporting is enabled without a configured receiver, the name is invalid, or `instance_id` names a different instance.
+             *     - `validation_error`: the body names a setting Marfa doesn't know, a value is out of range, the effective version windows are out of order, reporting is turned from off to on without a configured receiver, the name is invalid, or `instance_id` names a different instance.
              */
             400: {
                 headers: {
@@ -29428,7 +29428,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: a lever lacks `types` or `sources`.
-             *     - `validation_error`: the body names a setting Marfa doesn't know, a value is out of range, the effective version windows are out of order, reporting is enabled without a configured receiver, the name is invalid, or `instance_id` names a different instance.
+             *     - `validation_error`: the body names a setting Marfa doesn't know, a value is out of range, the effective version windows are out of order, reporting is turned from off to on without a configured receiver, the name is invalid, or `instance_id` names a different instance.
              */
             400: {
                 headers: {
