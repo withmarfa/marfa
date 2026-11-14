@@ -19,7 +19,7 @@ export interface paths {
         put?: never;
         /**
          * Create an item
-         * @description Creates an item. If `source_id` matches an existing item under the same source, updates that item instead. Repeating an `id` you already created returns the stored item with `acknowledged: true` and writes nothing.
+         * @description Creates an item. If `source_id` matches an existing item under the same source, updates that item instead, or, when the update would leave the item as it is, returns it at its current version with `acknowledged: true` and writes nothing. Repeating an `id` you already created returns the stored item with `acknowledged: true` and writes nothing.
          */
         post: operations["createItem"];
         delete?: never;
@@ -51,7 +51,7 @@ export interface paths {
         head?: never;
         /**
          * Update an item
-         * @description Updates an item's properties, tier, own time, natural key or edges. Send the `version` you read; stale writes can merge unless `version_match` is `exact`. To change its type, send `type` with `retype: true`.
+         * @description Updates an item's properties, tier, own time, natural key or edges. Send the `version` you read; stale writes can merge unless `version_match` is `exact`. An update that would leave the item as it is returns it at its current version with `acknowledged: true` and writes no version. To change its type, send `type` with `retype: true`.
          */
         patch: operations["updateItem"];
         trace?: never;
@@ -3342,7 +3342,7 @@ export interface components {
         ItemWithMetadata: {
             item: components["schemas"]["Item"] & unknown;
             metadata: components["schemas"]["Metadata"] & unknown;
-            /** @description `true` when Marfa accepted a create and wrote nothing: it repeats an `id` you already created, or its natural key matches an item in the trash. Absent otherwise. */
+            /** @description `true` when Marfa accepted a write and stored nothing: a create repeats an `id` you already created, its natural key matches an item in the trash, or an update or upsert would leave the item as it is, in which case `item` is the item at the version it holds. Absent otherwise. */
             acknowledged?: boolean;
         };
         /** @description An error response. */
@@ -3841,10 +3841,10 @@ export interface components {
             /** @description The id of what the entry wrote or resolved. Absent where an item entry's natural key resolved an item of a type the credential may not read: the entry learns that its key is taken and nothing of the item. */
             id?: string;
             /**
-             * @description Why a `skipped` entry wrote nothing. Under `create_only`, a match exists: `duplicate_source` by natural key, `duplicate_id` by `id`, `duplicate_edge` by source, target and edge type. Under `upsert`, `trashed`: the natural key matches a trashed item.
+             * @description Why a `skipped` entry wrote nothing. Under `create_only`, a match exists: `duplicate_source` by natural key, `duplicate_id` by `id`, `duplicate_edge` by source, target and edge type. Under `upsert`, `trashed`: the natural key matches a trashed item. Under `upsert`, `unchanged`: the entry would leave the item it matches as it is.
              * @enum {string}
              */
-            reason?: "duplicate_edge" | "duplicate_id" | "duplicate_source" | "trashed";
+            reason?: "duplicate_edge" | "duplicate_id" | "duplicate_source" | "trashed" | "unchanged";
             error?: components["schemas"]["BulkEntryError"] & unknown;
         };
         /** @description An error response. */
@@ -10077,7 +10077,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Returns `counts` and a `results` entry for each item, in order: `created`, `updated`, `skipped` or `errored`. Under `upsert`, an entry that matches a trashed item isn't written and is `skipped` with reason `trashed`. Under `create_only`, a matching entry is `skipped` with reason `duplicate_source` or `duplicate_id`. */
+            /** @description Returns `counts` and a `results` entry for each item, in order: `created`, `updated`, `skipped` or `errored`. Under `upsert`, an entry that matches a trashed item isn't written and is `skipped` with reason `trashed`, and an entry that would leave the item it matches as it is isn't written and is `skipped` with reason `unchanged`. Under `create_only`, a matching entry is `skipped` with reason `duplicate_source` or `duplicate_id`. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
