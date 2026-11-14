@@ -100,9 +100,13 @@ const EDGE_COLUMNS: &str =
 
 pub fn open(path: &Path) -> Result<Connection, CoreError> {
     let conn = Connection::open(path)?;
+    let seen = crate::damage::seen();
     // The store may have been named by an environment variable rather than
     // typed, so the refusal names its path.
-    prepare(&conn).map_err(|error| crate::damage::at_path(at_path(error, path), path))?;
+    prepare(&conn).map_err(|error| {
+        crate::damage::keep_log_if_met(&conn, seen);
+        crate::damage::at_path(at_path(error, path), path)
+    })?;
     Ok(conn)
 }
 
@@ -277,46 +281,81 @@ pub(crate) fn refused_file_budget(path: &Path) -> Option<crate::FileBudget> {
 /// The writes the store at `path` holds that the server has not taken, as
 /// `wrong_schema` counts them, read whatever the store's shape for the caller
 /// that holds its writer lock. A store with no table holds none. `None` where
-/// they cannot be counted, as in a file that is not a store. Refuses a
-/// folder's store, which only its folder's removal may take.
-pub(crate) fn removal_count(path: &Path) -> Result<Option<u64>, CoreError> {
+/// they cannot be counted, as in a file that is not a store. The caller
+/// refuses a folder's store first (`refuse_folders`).
+pub(crate) fn removal_count(path: &Path) -> Option<u64> {
     let Ok(conn) = open_refused(path) else {
-        return Ok(None);
+        return None;
     };
     let Ok(tables) = conn.query_row("SELECT COUNT(*) FROM sqlite_schema", [], |row| {
         row.get::<_, i64>(0)
     }) else {
-        return Ok(None);
+        return None;
     };
     if tables == 0 {
-        return Ok(Some(0));
+        return Some(0);
     }
-    if kept_by_folder(path) {
-        return Err(CoreError::Invalid(format!(
-            "{} is a folder's store: remove the folder instead (`marfa folders remove`), which keeps its registry and its files in step",
-            path.display()
-        )));
-    }
-    Ok(untaken_count(&conn))
+    untaken_count(&conn)
 }
 
-/// Whether the store at `path` is a folder's. A folder's store is bound to
-/// the folder, and is also known by where the folder keeps it, so one a
-/// crash left before it was bound, or one whose meta does not read, is still
-/// the folder's.
-pub(crate) fn kept_by_folder(path: &Path) -> bool {
-    #[cfg(unix)]
-    if path.file_name() == Some(FOLDER_STORE.as_ref())
-        && path.parent().and_then(Path::file_name) == Some(crate::folder::STATE_DIR.as_ref())
+/// Refuses `Invalid` a folder's store: one in a folder's state, judged by
+/// `path` and the folder registry before the store is read, since it may not
+/// read, or one whose meta names a folder.
+pub(crate) fn refuse_folders(path: &Path) -> Result<(), CoreError> {
+    let bound = || {
+        open_refused(path).is_ok_and(|conn| {
+            meta_get(&conn, crate::folder::settings_file::META_FOLDER)
+                .ok()
+                .flatten()
+                .is_some()
+        })
+    };
+    if kept_by_folder(path) || bound() {
+        return Err(folders(path));
+    }
+    Ok(())
+}
+
+fn folders(path: &Path) -> CoreError {
+    CoreError::Invalid(format!(
+        "{} is a folder's store: remove the folder instead (`marfa folders remove`), which keeps its registry and its files in step, and add it again",
+        path.display()
+    ))
+}
+
+/// Whether `path` is in a folder's state directory: one named as a folder
+/// names it, or one a folder the registry lists keeps. A store a crash left
+/// before it was bound, or one whose meta does not read, is still the
+/// folder's.
+fn kept_by_folder(path: &Path) -> bool {
+    let Some(state) = path.parent().filter(|state| !state.as_os_str().is_empty()) else {
+        return false;
+    };
+    if state
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case(crate::folder::STATE_DIR))
     {
         return true;
     }
-    open_refused(path).is_ok_and(|conn| {
-        meta_get(&conn, crate::folder::settings_file::META_FOLDER)
-            .ok()
-            .flatten()
-            .is_some()
+    let Ok(here) = std::fs::metadata(state) else {
+        return false;
+    };
+    crate::folder::registry::listing().iter().any(|entry| {
+        std::fs::metadata(entry.dir.join(crate::folder::STATE_DIR))
+            .is_ok_and(|listed| same_file(&listed, &here))
     })
+}
+
+#[cfg(unix)]
+fn same_file(one: &std::fs::Metadata, other: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    (one.dev(), one.ino()) == (other.dev(), other.ino())
+}
+
+#[cfg(not(unix))]
+fn same_file(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
+    false
 }
 
 /// Removes the store at `path` and the logs beside it, logs first, so a log
@@ -5858,6 +5897,48 @@ pub fn block_for_another_instance(conn: &Connection) -> Result<usize, CoreError>
             Verdict::Blocked.as_str(),
             BlockedReason::InstanceChanged.as_str(),
             now_iso()
+        ],
+    )?)
+}
+
+/// `block_for_another_instance`, leaving each write blocked `kept` as it is.
+pub(crate) fn block_for_another_instance_but(
+    conn: &Connection,
+    kept: BlockedReason,
+) -> Result<usize, CoreError> {
+    Ok(conn.execute(
+        &format!(
+            "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
+              WHERE {WAITING} AND (verdict IS NOT ?1 OR reason IS NOT ?4)"
+        ),
+        params![
+            Verdict::Blocked.as_str(),
+            BlockedReason::InstanceChanged.as_str(),
+            now_iso(),
+            kept.as_str()
+        ],
+    )?)
+}
+
+/// Holds `reason` each write `ids` names that a drain would send: one
+/// unanswered or blocked for a reason that clears itself.
+pub(crate) fn hold(
+    conn: &Connection,
+    ids: &[String],
+    reason: BlockedReason,
+) -> Result<usize, CoreError> {
+    let [credential_refused, awaiting] = SELF_CLEARING;
+    Ok(conn.execute(
+        "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
+          WHERE id IN (SELECT value FROM json_each(?4))
+            AND (verdict IS NULL OR verdict = ?1 AND reason IN (?5, ?6))",
+        params![
+            Verdict::Blocked.as_str(),
+            reason.as_str(),
+            now_iso(),
+            serde_json::to_string(ids)?,
+            credential_refused,
+            awaiting
         ],
     )?)
 }

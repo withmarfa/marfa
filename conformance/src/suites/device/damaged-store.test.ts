@@ -1,14 +1,11 @@
 import { createHash } from "node:crypto";
 import {
-  closeSync,
   copyFileSync,
   existsSync,
-  openSync,
   readFileSync,
   renameSync,
   rmSync,
   writeFileSync,
-  writeSync,
 } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
@@ -20,6 +17,7 @@ import {
 import type { QueuedWrite } from "../../device/protocol.js";
 import { BUILT_FOR } from "../../device/scripted-server.js";
 import {
+  damageTable,
   hydratedHarness,
   scriptHydration,
   scriptWrites,
@@ -40,30 +38,20 @@ afterEach(async () => {
   harness = undefined;
 });
 
-/** Overwrites the page that holds `table`'s rows. */
-function damage(store: string, table: string): void {
-  const db = new DatabaseSync(store, { readOnly: true });
-  let size: number;
-  let root: number;
-  try {
-    size = (db.prepare("PRAGMA page_size").get() as { page_size: number })
-      .page_size;
-    root = (
-      db
-        .prepare(
-          "SELECT rootpage FROM sqlite_master WHERE type = 'table' AND name = ?",
-        )
-        .get(table) as { rootpage: number }
-    ).rootpage;
-  } finally {
-    db.close();
-  }
-  const file = openSync(store, "r+");
-  try {
-    writeSync(file, Buffer.alloc(size, 0xa5), 0, size, (root - 1) * size);
-  } finally {
-    closeSync(file);
-  }
+/**
+ * Runs `sql` on the store so that what it wrote is in the store's log alone,
+ * as a process that ended without closing the store leaves it.
+ */
+function inLogOnly(store: string, sql: string): void {
+  const db = new DatabaseSync(store);
+  db.exec("PRAGMA wal_autocheckpoint = 0");
+  db.exec(sql);
+  copyFileSync(store, `${store}.kept`);
+  copyFileSync(`${store}-wal`, `${store}.kept-wal`);
+  db.close();
+  renameSync(`${store}.kept`, store);
+  renameSync(`${store}.kept-wal`, `${store}-wal`);
+  rmSync(`${store}-shm`, { force: true });
 }
 
 function digest(name: string): string {
@@ -126,8 +114,10 @@ describe("a store that cannot be read", () => {
     const whole = await device.check();
     expect(whole.ok && whole.value.whole, JSON.stringify(whole)).toBe(true);
 
-    damage(device.store, "items");
+    damageTable(device.store, "items");
+    inLogOnly(device.store, "INSERT INTO meta (key, value) VALUES ('logged', 'x')");
     const before = digest(device.store);
+    const log = digest(`${device.store}-wal`);
     for (const [named, refused] of [
       ["status", await device.status()],
       ["check", await device.check()],
@@ -142,12 +132,13 @@ describe("a store that cannot be read", () => {
       expect(refused.refusal.raw).not.toMatch(/delete/i);
     }
     expect(digest(device.store), "refusing the store changed it").toBe(before);
+    expect(digest(`${device.store}-wal`), "refusing the store changed its log").toBe(log);
     expect(existsSync(`${device.store}.damaged-1`)).toBe(false);
   });
 
   it("says a damaged store's queue cannot be read whole where its rows do not read", async () => {
     const { harness } = await storeWith("damaged-queue", 1);
-    damage(harness.device.store, "queue");
+    damageTable(harness.device.store, "queue");
     const refused = await harness.device.check();
     expect(refused.ok).toBe(false);
     if (refused.ok) return;
@@ -162,7 +153,7 @@ describe("setting a damaged store aside", () => {
     const { device } = harness;
     const before = bodies(device.store);
     writeFileSync(`${device.store}.damaged-1`, "taken");
-    damage(device.store, "items");
+    damageTable(device.store, "items");
     const damaged = digest(device.store);
 
     const done = await device.setAside();
@@ -195,21 +186,12 @@ describe("setting a damaged store aside", () => {
   it("carries a write only the log a crash left holds, and moves the log with the store", async () => {
     const { harness } = await storeWith("set-aside-log", 1);
     const { store } = harness.device;
-    damage(store, "items");
-    // What a process that ended without closing the store leaves: the last
-    // write in the log alone.
-    const db = new DatabaseSync(store);
-    db.exec("PRAGMA wal_autocheckpoint = 0");
-    db.exec(
+    damageTable(store, "items");
+    inLogOnly(
+      store,
       `INSERT INTO queue (id, kind, item_id, idempotency_key, payload, queued_at)
        VALUES ('logged', 'add_tag', 'n1', 'key-logged', '{"tag":"a"}', '2026-01-01T00:00:00Z')`,
     );
-    copyFileSync(store, `${store}.kept`);
-    copyFileSync(`${store}-wal`, `${store}.kept-wal`);
-    db.close();
-    renameSync(`${store}.kept`, store);
-    renameSync(`${store}.kept-wal`, `${store}-wal`);
-    rmSync(`${store}-shm`, { force: true });
     const log = digest(`${store}-wal`);
 
     const done = await harness.device.setAside();
@@ -226,7 +208,7 @@ describe("setting a damaged store aside", () => {
 
   it("counts the writes whose rows do not read, naming each by id", async () => {
     const { harness, queued } = await storeWith("set-aside-unread", 2);
-    damage(harness.device.store, "queue");
+    damageTable(harness.device.store, "queue");
     const done = await harness.device.setAside();
     expect(done.ok, JSON.stringify(done)).toBe(true);
     if (!done.ok) return;
@@ -243,7 +225,7 @@ describe("setting a damaged store aside", () => {
   it("sends nothing from the new store until it is hydrated, then sends each carried write under its key", async () => {
     const { harness, queued } = await storeWith("set-aside-sends", 1);
     const { device, server } = harness;
-    damage(device.store, "items");
+    damageTable(device.store, "items");
     const done = await device.setAside();
     expect(done.ok && done.value.held, JSON.stringify(done)).toBe(0);
 
@@ -277,7 +259,7 @@ describe("setting a damaged store aside", () => {
       properties: { title: "typed", body: "offline" },
     });
     expect(created.ok).toBe(true);
-    damage(device.store, "items");
+    damageTable(device.store, "items");
     expect((await device.setAside()).ok).toBe(true);
     // The witness: carried, the write waits.
     const waiting = await device.queue();
@@ -296,7 +278,7 @@ describe("setting a damaged store aside", () => {
 
   it("holds the carried writes when the damaged store does not say which instance it was built from", async () => {
     const { harness, queued } = await storeWith("set-aside-meta", 1);
-    damage(harness.device.store, "meta");
+    damageTable(harness.device.store, "meta");
     const done = await harness.device.setAside();
     expect(done.ok, JSON.stringify(done)).toBe(true);
     if (!done.ok) return;
@@ -309,6 +291,60 @@ describe("setting a damaged store aside", () => {
       "blocked",
       "instance_changed",
     ]);
+  });
+
+  it("holds a carried write whose record of how it is sent does not read, until a person releases or withdraws it", async () => {
+    const { harness, queued } = await storeWith("set-aside-record", 1);
+    const { device } = harness;
+    // The record an edit's body is read against once it is answered.
+    damageTable(device.store, "body_checks");
+    const done = await device.setAside();
+    expect(done.ok, JSON.stringify(done)).toBe(true);
+    if (!done.ok) return;
+    expect([
+      done.value.carried,
+      done.value.record_unread,
+      done.value.held,
+      done.value.whole,
+    ]).toEqual([1, 1, 0, false]);
+    const id = queued[0]?.id ?? "a";
+    const held = await device.queue();
+    expect(held.ok && held.value.map(sent)).toEqual(queued.map(sent));
+    expect(
+      held.ok && [held.value[0]?.verdict, held.value[0]?.reason],
+    ).toEqual(["blocked", "record_unread"]);
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    expect(writes(harness), "a drain sent a write held record_unread").toEqual(
+      [],
+    );
+    scriptWrites(harness.server, { read: [answers.itemNotFound()] });
+    const withdrawn = await device.withdraw(id);
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toBe(
+      true,
+    );
+    const left = await device.queue();
+    expect(left.ok && left.value).toEqual([]);
+  });
+
+  it("refuses to set aside a store beside a file no set-aside made, leaving both as they were", async () => {
+    const { harness } = await storeWith("set-aside-not-made", 1);
+    const { store } = harness.device;
+    damageTable(store, "items");
+    const made = `${store}.carrying`;
+    writeFileSync(made, "a person's file");
+    const before = digest(store);
+    const refused = await harness.device.setAside();
+    expect(refused.ok).toBe(false);
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("store");
+      expect(refused.refusal.raw).toContain(made);
+    }
+    expect(readFileSync(made, "utf8")).toBe("a person's file");
+    expect(digest(store)).toBe(before);
+    expect(existsSync(`${store}.damaged-1`)).toBe(false);
   });
 
   it("refuses to set aside a store that opens, leaving it as it was", async () => {
@@ -329,7 +365,7 @@ describe("setting a damaged store aside", () => {
     } finally {
       db.close();
     }
-    damage(harness.device.store, "items");
+    damageTable(harness.device.store, "items");
     const refused = await harness.device.setAside();
     expect(refused.ok).toBe(false);
     if (!refused.ok) expect(refused.refusal.code).toBe("invalid");
@@ -339,7 +375,7 @@ describe("setting a damaged store aside", () => {
   it("refuses a store whose set-aside stopped part way, and finishes it when asked again", async () => {
     const { harness, queued } = await storeWith("set-aside-stopped", 1);
     const { device } = harness;
-    damage(device.store, "items");
+    damageTable(device.store, "items");
     const crashed = device.hold(["set-aside"], "device", {
       MARFA_TEST_FAULT: "set-aside-crash=store",
     });

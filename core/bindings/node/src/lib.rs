@@ -255,13 +255,18 @@ pub struct SetAside {
     pub unread: i64,
     /// The id of each unread write whose id could be read.
     pub unread_ids: Vec<String>,
-    /// Whether every write the old queue holds was found; where not, the
+    /// Whether every write the old queue holds was found, and every record
+    /// that decides how a carried write is sent was read; where not, the
     /// store set aside may hold more.
     pub whole: bool,
     /// The carried writes held blocked `instance_changed`, because the old
     /// store did not say which instance it was built from; release one to
     /// send it to the instance the new store is hydrated from.
     pub held: i64,
+    /// The carried writes held blocked `record_unread`, because a record that
+    /// decides how each is sent could not be read; release one to send it
+    /// without that record.
+    pub record_unread: i64,
 }
 
 /// What a pin or an unpin answers.
@@ -636,6 +641,10 @@ pub enum BlockedReason {
     /// The write was queued against an instance other than the one the copy
     /// has been built from since, and is sent only once released.
     InstanceChanged,
+    /// The write was carried from a store set aside where a record that
+    /// decides how it is sent could not be read, and is sent only once
+    /// released.
+    RecordUnread,
 }
 
 /// Which handle this process holds on the store.
@@ -1168,6 +1177,7 @@ impl From<marfa_core::BlockedReason> for BlockedReason {
             R::ConflictUnresolved => BlockedReason::ConflictUnresolved,
             R::FailingAlone => BlockedReason::FailingAlone,
             R::InstanceChanged => BlockedReason::InstanceChanged,
+            R::RecordUnread => BlockedReason::RecordUnread,
         }
     }
 }
@@ -1182,6 +1192,7 @@ impl From<BlockedReason> for marfa_core::BlockedReason {
             BlockedReason::ConflictUnresolved => R::ConflictUnresolved,
             BlockedReason::FailingAlone => R::FailingAlone,
             BlockedReason::InstanceChanged => R::InstanceChanged,
+            BlockedReason::RecordUnread => R::RecordUnread,
         }
     }
 }
@@ -2537,6 +2548,7 @@ impl MarfaCore {
             unread_ids: done.unread_ids,
             whole: done.whole,
             held: done.held as i64,
+            record_unread: done.record_unread as i64,
         })
     }
 

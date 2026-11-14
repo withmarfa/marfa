@@ -362,7 +362,7 @@ When a device hydrates a copy from an instance other than the one the copy was l
 
 **Reason:** each write was made against items the other instance held, and the instance now at the address may never have held them. Held, nothing is sent to a server the person did not make it for; a caller releases a write to send it to the instance now there, or withdraws it.
 
-**Tests:** `device/queue.test.ts › holds the writes queued against another instance once hydrated from the one now there, sending none until released`, `device/classification.test.ts › reports one of the seven blocked reasons and no other`.
+**Tests:** `device/queue.test.ts › holds the writes queued against another instance once hydrated from the one now there, sending none until released`, `device/classification.test.ts › reports one of the eight blocked reasons and no other`.
 
 ### `device/late-answer`
 
@@ -4646,9 +4646,9 @@ When a device removes a store and finds a symbolic link at one of the store's na
 
 If a device is asked to remove the store of a folder it syncs, then a device MUST refuse `invalid`.
 
-**Reason:** removing a folder takes it off the folder registry and counts its unsent writes against the folder, which removing its store alone would not.
+**Reason:** removing a folder takes it off the folder registry and counts its unsent writes against the folder, which removing its store alone would not. A device knows a folder's store by where it is, so a store whose pages do not read is still known.
 
-**Tests:** `device/binding-remove-store.test.ts › refuses to remove a folder's store`.
+**Tests:** `device/binding-remove-store.test.ts › refuses to remove a folder's store`, `› refuses to remove a folder's store whose first page does not read`.
 
 ### `device/remove-store-kept`
 
@@ -4656,7 +4656,7 @@ When a device refuses to remove a store, a device MUST leave the store file, its
 
 **Reason:** the shared-memory index (`-shm`) is not covered, because SQLite may create it to read a write-ahead log.
 
-**Tests:** `device/binding-remove-store.test.ts › refuses to remove a store holding another number of unsent writes, with its own count`, `› refuses to remove a store whose unsent writes it cannot count`, `› refuses to remove a store while another process holds its writer role`, `› removes what a removal left at a path with no store only when nothing is agreed to be lost`, `› refuses to remove a folder's store`.
+**Tests:** `device/binding-remove-store.test.ts › refuses to remove a store holding another number of unsent writes, with its own count`, `› refuses to remove a store whose unsent writes it cannot count`, `› refuses to remove a store while another process holds its writer role`, `› removes what a removal left at a path with no store only when nothing is agreed to be lost`, `› refuses to remove a folder's store`, `› refuses to remove a folder's store whose first page does not read`, `› refuses to remove or replace a store whose set-aside stopped part way, until a set-aside finishes it`.
 
 ### `device/writer-per-file`
 
@@ -4752,11 +4752,11 @@ When a device sets aside a store, a device MUST answer the name it set the store
 
 ### `device/set-aside-unread`
 
-When a device sets aside a store, a device MUST answer how many writes it found in the old queue that it could not read, the id of each whose id it could read, and whether it found every write the queue holds.
+When a device sets aside a store, a device MUST answer how many writes it found in the old queue that it could not read, the id of each whose id it could read, and whether it found every write the queue holds and read every record that decides how a carried write is sent.
 
-**Reason:** a write that does not read stays in the store set aside, so a person knows what to look for there.
+**Reason:** a write or a record that does not read stays in the store set aside, so a person knows what to look for there.
 
-**Tests:** `device/damaged-store.test.ts › counts the writes whose rows do not read, naming each by id`.
+**Tests:** `device/damaged-store.test.ts › counts the writes whose rows do not read, naming each by id`, `› holds a carried write whose record of how it is sent does not read, until a person releases or withdraws it`.
 
 ### `device/set-aside-sends-after-hydration`
 
@@ -4782,6 +4782,20 @@ If a device sets aside a store and cannot read which instance it was built from,
 
 **Tests:** `device/damaged-store.test.ts › holds the carried writes when the damaged store does not say which instance it was built from`.
 
+### `device/set-aside-record-unread`
+
+If a device sets aside a store and cannot read a record the old store kept that decides how a carried write still waiting is sent, then a device MUST give that write the verdict `blocked` with the reason `record_unread`.
+
+**Reason:** such a record can be what stops a write from changing what a person did not mean it to, as for an edge a body made after the server kept another body on the item. Without it the device cannot know the write is safe to send, so it waits for a person to release or withdraw it.
+
+**Tests:** `device/damaged-store.test.ts › holds a carried write whose record of how it is sent does not read, until a person releases or withdraws it`.
+
+### `device/set-aside-record-unread-says`
+
+When a device sets aside a store, a device MUST answer how many carried writes it gave the reason `record_unread`.
+
+**Tests:** `device/damaged-store.test.ts › holds a carried write whose record of how it is sent does not read, until a person releases or withdraws it`.
+
 ### `device/set-aside-usable`
 
 If a device is asked to set aside a store it opens without refusing, then a device MUST refuse `invalid`.
@@ -4806,6 +4820,14 @@ If a device's set-aside of a store stopped after it made the new store, then a d
 
 **Tests:** `device/damaged-store.test.ts › refuses a store whose set-aside stopped part way, and finishes it when asked again`.
 
+### `device/set-aside-not-made`
+
+If a file that no set-aside made stands at `<store>.carrying` when a device is asked to set aside the store, then a device MUST refuse `store`, leaving that file and the store unchanged.
+
+**Reason:** a set-aside makes the new store at that name. A file it cannot show it made may hold what a person needs, so it is never removed, and the refusal names it so the person can move it.
+
+**Tests:** `device/damaged-store.test.ts › refuses to set aside a store beside a file no set-aside made, leaving both as they were`.
+
 ### `device/set-aside-finishes`
 
 When a device is asked to set aside a store whose set-aside stopped part way, a device MUST finish it, under the name the stopped set-aside chose.
@@ -4819,6 +4841,22 @@ When a device is asked to remove a store agreeing to lose every write it holds, 
 **Reason:** the writes of a store SQLite cannot read may not be countable, so a person who agrees to lose them all has no count to agree to.
 
 **Tests:** `device/binding-remove-store.test.ts › removes a store whose unsent writes it cannot count when every write is agreed lost`.
+
+### `device/remove-store-set-aside-stopped`
+
+If a device is asked to remove a store whose set-aside stopped part way, then a device MUST refuse `store_damaged`, however many writes are agreed to be lost.
+
+**Reason:** the new store a stopped set-aside made holds the carried writes and needs the bytes kept beside the path, and the path holds no store until the set-aside finishes. A removal there would take those bytes and leave the carried writes where no store reads them.
+
+**Tests:** `device/binding-remove-store.test.ts › refuses to remove or replace a store whose set-aside stopped part way, until a set-aside finishes it`.
+
+### `device/replace-set-aside-stopped`
+
+If a device is asked to replace a refused store whose set-aside stopped part way, then a device MUST refuse `store_damaged`.
+
+**Reason:** a store made at the path would hide the writes the stopped set-aside carried.
+
+**Tests:** `device/binding-remove-store.test.ts › refuses to remove or replace a store whose set-aside stopped part way, until a set-aside finishes it`.
 
 ## Where a store is made
 

@@ -418,3 +418,342 @@ fn a_store_another_core_writes_is_neither_checked_nor_set_aside() {
     drop(writer);
     Core::check_store(&path).unwrap();
 }
+
+#[test]
+fn a_writer_that_meets_damage_leaves_the_log_and_the_file_as_they_were() {
+    // The witness: a store that reads loses its log into the file at close.
+    let (_held, healthy, _) = store_with(1);
+    in_log(
+        &healthy,
+        "INSERT INTO meta (key, value) VALUES ('logged', 'x')",
+    );
+    drop(Core::open(&healthy, None).unwrap());
+    assert!(!beside(&healthy, "-wal").exists());
+
+    let (_dir, path) = damaged_with_log();
+    let before = bytes(&path);
+    let log = bytes(&beside(&path, "-wal"));
+    assert!(log.is_some());
+    let core = Core::open(&path, None).unwrap();
+    assert_eq!(core.status().unwrap_err().code(), "store_damaged");
+    drop(core);
+    assert!(
+        bytes(&beside(&path, "-wal")) == log,
+        "the refusal changed the log"
+    );
+    assert!(bytes(&path) == before, "the refusal changed the store");
+    let done = set_aside(&path);
+    assert_eq!((done.carried, done.unread), (2, 0));
+}
+
+#[test]
+fn a_folders_store_whose_header_is_damaged_is_not_removed_or_replaced() {
+    let dir = tempfile::tempdir().unwrap();
+    let state = dir.path().join(crate::folder::STATE_DIR);
+    std::fs::create_dir(&state).unwrap();
+    let path = state.join(store::FOLDER_STORE);
+    drop(Core::open(&path, None).unwrap());
+    overwrite(&path, 0, 100);
+    let before = bytes(&path);
+
+    // The witness: the same file anywhere else is removed.
+    let elsewhere = dir.path().join("copy.sqlite");
+    std::fs::copy(&path, &elsewhere).unwrap();
+    Core::remove_store_losing_all(&elsewhere).unwrap();
+    assert!(!elsewhere.exists());
+
+    assert!(matches!(
+        Core::remove_store_losing_all(&path),
+        Err(CoreError::Invalid(said)) if said.contains("folder's store")
+    ));
+    assert!(matches!(
+        Core::remove_store(&path, 0),
+        Err(CoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        Core::replace_refused(&path, None),
+        Err(CoreError::Invalid(_))
+    ));
+    assert!(matches!(
+        Core::set_aside_damaged(&path),
+        Err(CoreError::Invalid(_))
+    ));
+    assert_eq!(bytes(&path), before);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_listed_folders_store_reached_by_another_name_is_not_removed() {
+    let (registry, _own) = crate::folder::registry::tests::own_registry();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let root = dir.path().join("folder");
+    let state = root.join(crate::folder::STATE_DIR);
+    std::fs::create_dir_all(&state).unwrap();
+    let store_at = state.join(store::FOLDER_STORE);
+    drop(Core::open(&store_at, None).unwrap());
+    let link = dir.path().join("elsewhere");
+    std::os::unix::fs::symlink(&state, &link).unwrap();
+    let path = link.join(store::FOLDER_STORE);
+
+    // The witness: unlisted, the folder's state reached by another name is
+    // taken for a store of its own.
+    overwrite(&path, 0, 100);
+    let copy = bytes(&path);
+    Core::remove_store_losing_all(&path).unwrap();
+    assert!(!store_at.exists());
+    std::fs::write(&store_at, copy.as_deref().unwrap()).unwrap();
+
+    registry
+        .add(
+            &root,
+            &crate::directory::Directory::open(&root).unwrap(),
+            "f1",
+            None,
+        )
+        .unwrap();
+    assert!(matches!(
+        Core::remove_store_losing_all(&path),
+        Err(CoreError::Invalid(said)) if said.contains("folder's store")
+    ));
+    assert_eq!(bytes(&store_at), copy);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_store_whose_set_aside_stopped_is_not_removed_or_replaced_until_it_finishes() {
+    let (dir, path, _) = store_with(0);
+    let core = Core::open(&path, None).unwrap();
+    let source = dir.path().join("offline.txt");
+    std::fs::write(&source, b"only upload copy").unwrap();
+    core.add_file(&source, &crate::Attachment::default(), &[])
+        .unwrap();
+    let hash = core
+        .queue()
+        .unwrap()
+        .iter()
+        .find(|q| q.kind == crate::WriteKind::UploadBlob)
+        .unwrap()
+        .blob
+        .clone()
+        .unwrap();
+    drop(core);
+    std::fs::remove_file(&source).unwrap();
+    damage_table(&path, "items");
+    {
+        let _stopping = crate::fault::fail_on_this_thread("set-aside-stop:store");
+        assert!(Core::set_aside_damaged(&path).is_err());
+    }
+    assert!(!path.exists());
+    let made = beside(&path, ".carrying");
+    let carried = bytes(&made);
+    let held = || crate::blob::Cache::beside(&path).open_held(&hash).is_ok();
+    assert!(held());
+
+    for refused in [
+        Core::remove_store(&path, 0).err(),
+        Core::remove_store_losing_all(&path).err(),
+        Core::replace_refused(&path, None).err(),
+    ] {
+        let (named, _, said) = damaged(refused.expect("refused"));
+        assert_eq!(named, path.display().to_string());
+        assert!(said.contains("stopped part way"), "{said}");
+        assert!(said.contains("Set it aside"), "{said}");
+    }
+    assert_eq!(bytes(&made), carried);
+    assert!(
+        held(),
+        "a refused removal took the bytes the carried upload needs"
+    );
+
+    let done = set_aside(&path);
+    assert!(done.carried > 0);
+    assert!(held());
+    Core::remove_store_losing_all(&path).unwrap();
+    assert!(!path.exists() && !made.exists());
+    Core::open(&path, None).unwrap();
+}
+
+#[test]
+fn a_file_a_set_aside_did_not_make_is_left_where_it_makes_the_new_store() {
+    let (_dir, path, _) = store_with(1);
+    damage_table(&path, "items");
+    let damaged_bytes = bytes(&path);
+    let made = beside(&path, ".carrying");
+
+    // The witness: what a set-aside made before it carried anything is its
+    // own, and is made again.
+    {
+        let conn = store::open(&made).unwrap();
+        store::meta_set(&conn, "set_aside_making", "true").unwrap();
+        store::without_log(&conn).unwrap();
+    }
+    assert!(matches!(
+        Core::open(&path, None).err(),
+        Some(CoreError::StoreDamaged { .. })
+    ));
+    assert_eq!(set_aside(&path).carried, 1);
+    store::remove(&path).unwrap();
+    std::fs::rename(beside(&path, ".damaged-1"), &path).unwrap();
+
+    for other in [
+        b"unrelated bytes".to_vec(),
+        bytes(&path).unwrap()[..4096].to_vec(),
+    ] {
+        std::fs::write(&made, &other).unwrap();
+        let before = bytes(&path);
+        let said = Core::set_aside_damaged(&path).unwrap_err().to_string();
+        assert!(said.contains(&made.display().to_string()), "{said}");
+        assert!(said.contains("Move it elsewhere"), "{said}");
+        assert_eq!(bytes(&made), Some(other));
+        assert_eq!(bytes(&path), before);
+        assert!(!beside(&path, ".damaged-1").exists());
+        let (_, _, said) = damaged(Core::open(&path, None).err().unwrap());
+        assert!(said.contains("is not one a set-aside made"), "{said}");
+    }
+    assert_eq!(bytes(&path), damaged_bytes);
+}
+
+#[test]
+fn a_set_aside_carries_every_queue_column_and_keeps_upload_bytes() {
+    let (dir, path, _) = store_with(0);
+    let core = Core::open(&path, None).unwrap();
+    let source = dir.path().join("offline.txt");
+    std::fs::write(&source, b"offline upload bytes").unwrap();
+    core.add_file(&source, &crate::Attachment::default(), &[])
+        .unwrap();
+    let queued = core.queue().unwrap();
+    let hash = queued
+        .iter()
+        .find(|q| q.kind == crate::WriteKind::UploadBlob)
+        .unwrap()
+        .blob
+        .clone()
+        .unwrap();
+    core.set_file_budget(crate::FileBudget::Bytes(0)).unwrap();
+    let rows = |path: &Path| {
+        let conn = Connection::open(path).unwrap();
+        let mut statement = conn.prepare("SELECT * FROM queue ORDER BY seq").unwrap();
+        let count = statement.column_count();
+        statement
+            .query_map([], |row| {
+                (0..count)
+                    .map(|i| row.get::<_, rusqlite::types::Value>(i))
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap()
+    };
+    drop(core);
+    let before = rows(&path);
+    damage_table(&path, "items");
+    assert_eq!(set_aside(&path).carried, queued.len() as u64);
+    assert_eq!(rows(&path), before);
+    let core = Core::open(&path, None).unwrap();
+    core.trim_files().unwrap();
+    let mut contents = Vec::new();
+    std::io::Read::read_to_end(
+        &mut core.cache().unwrap().open_held(&hash).unwrap(),
+        &mut contents,
+    )
+    .unwrap();
+    assert_eq!(contents, b"offline upload bytes");
+}
+
+/// A store holding an edge write a body made, from a body write that came
+/// back conflicted on the body, so the edge must not be sent.
+fn store_with_a_lost_bodys_edge() -> (tempfile::TempDir, PathBuf, String) {
+    let (dir, path, queued) = store_with(1);
+    let write = &queued[0];
+    let item = write.item_id.as_ref().unwrap();
+    let core = Core::open(&path, None).unwrap();
+    let conn = core.conn().unwrap();
+    conn.execute(
+        "UPDATE queue SET kind = 'update_item', verdict = 'conflicted',
+                answer = '{\"conflict_resolution\":{\"fields\":[\"body\"]}}',
+                conflicted_copy_id = 'sibling'
+          WHERE id = ?1",
+        [&write.id],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO queue (id, kind, item_id, target_id, edge_id, idempotency_key, payload, depends_on, queued_at)
+         VALUES ('edge', 'create_edge', ?1, 'other', 'edge-id', 'edge-key', '{}', ?2, '2026-01-01T00:00:00Z')",
+        rusqlite::params![item, serde_json::to_string(&[&write.id]).unwrap()],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO body_edges (write_id, item_id, kind, other_id, body_write)
+         VALUES ('edge', ?1, 'link', 'other', ?2)",
+        rusqlite::params![item, write.id],
+    )
+    .unwrap();
+    let edge = store::queued_write(&conn, "edge").unwrap().unwrap();
+    assert!(
+        crate::body::rule::lost_body(&conn, &edge)
+            .unwrap()
+            .is_some()
+    );
+    drop(conn);
+    drop(core);
+    (dir, path, "edge".into())
+}
+
+fn verdict_of(path: &Path, id: &str) -> (Option<crate::Verdict>, Option<String>) {
+    let core = Core::open(path, None).unwrap();
+    let conn = core.conn().unwrap();
+    let write = store::queued_write(&conn, id).unwrap().unwrap();
+    (write.verdict, write.reason)
+}
+
+#[test]
+fn a_carried_write_whose_guarding_record_does_not_read_is_held() {
+    // The witness: with its record read, the edge is carried waiting, and
+    // the record goes with it.
+    let (_held, path, edge) = store_with_a_lost_bodys_edge();
+    damage_table(&path, "items");
+    let done = set_aside(&path);
+    assert_eq!((done.whole, done.record_unread), (true, 0));
+    assert_eq!(verdict_of(&path, &edge), (None, None));
+    let rows: i64 = Connection::open(&path)
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM body_edges", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rows, 1);
+
+    let (_dir, path, edge) = store_with_a_lost_bodys_edge();
+    damage_table(&path, "body_edges");
+    let done = set_aside(&path);
+    assert_eq!((done.whole, done.record_unread, done.held), (false, 1, 0));
+    assert_eq!(
+        verdict_of(&path, &edge),
+        (
+            Some(crate::Verdict::Blocked),
+            Some("record_unread".to_string())
+        )
+    );
+}
+
+#[test]
+fn a_create_whose_chosen_tier_does_not_read_is_held_and_the_rest_wait_for_the_instance() {
+    let (_dir, path, queued) = store_with(2);
+    {
+        let conn = Connection::open(&path).unwrap();
+        store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
+        store::choose_tier(&conn, &queued[0].id, crate::Tier::Feed).unwrap();
+    }
+    damage_table(&path, "meta");
+    let done = set_aside(&path);
+    assert_eq!(
+        (done.carried, done.whole, done.record_unread, done.held),
+        (2, false, 1, 1)
+    );
+    assert_eq!(
+        verdict_of(&path, &queued[0].id).1.as_deref(),
+        Some("record_unread")
+    );
+    assert_eq!(
+        verdict_of(&path, &queued[1].id).1.as_deref(),
+        Some("instance_changed")
+    );
+}

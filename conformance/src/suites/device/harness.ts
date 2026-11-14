@@ -1,14 +1,18 @@
 import { createHash } from "node:crypto";
 import {
+  closeSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   realpathSync,
   readdirSync,
   statSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
+import { DatabaseSync } from "node:sqlite";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { v7 as uuidv7 } from "uuid";
@@ -1193,4 +1197,34 @@ export function acceptUploads(server: ScriptedServer): void {
       request.raw.length,
     ),
   );
+}
+
+/**
+ * Overwrites the page of a device's store that holds `table`'s rows, as a
+ * failing disk or a copy taken while it was written leaves it. No door or
+ * fault damages a store.
+ */
+export function damageTable(store: string, table: string): void {
+  const db = new DatabaseSync(store, { readOnly: true });
+  let size: number;
+  let root: number;
+  try {
+    size = (db.prepare("PRAGMA page_size").get() as { page_size: number })
+      .page_size;
+    root = (
+      db
+        .prepare(
+          "SELECT rootpage FROM sqlite_master WHERE type = 'table' AND name = ?",
+        )
+        .get(table) as { rootpage: number }
+    ).rootpage;
+  } finally {
+    db.close();
+  }
+  const file = openSync(store, "r+");
+  try {
+    writeSync(file, Buffer.alloc(size, 0xa5), 0, size, (root - 1) * size);
+  } finally {
+    closeSync(file);
+  }
 }
