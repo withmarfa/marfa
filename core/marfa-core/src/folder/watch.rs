@@ -51,9 +51,7 @@ pub enum WatchEvent {
     WatcherFailed(String),
     /// A recoverable failure; the watch will retry after `wait`.
     Retrying { error: CoreError, wait: Duration },
-    /// The folder's settings changed to need items the copy does not hold,
-    /// and fetching them failed for `error`; the watch tries again after
-    /// `wait`, and the changed query waits until then.
+    /// A changed query waits for a failed fetch, retried after `wait`.
     QueryWaits { error: CoreError, wait: Duration },
     /// The server cannot be reached, for `Some` reason, or answers again,
     /// for `None`. Told only when it changes.
@@ -259,9 +257,7 @@ impl Folder {
         // Raised as the passes end, whatever ended them, so the follow and a
         // hydration it runs end with them.
         let ended = AtomicBool::new(false);
-        // Raised by a pass whose settings need another slice, and as the
-        // passes end, after `ended`: the follow stops at it and fills the
-        // copy again unless the watch has ended.
+        // Interrupt the follow for a refill, or after `ended` for shutdown.
         let refill = AtomicBool::new(false);
         let asked = AtomicBool::new(false);
         let (sender, wakes) = mpsc::channel::<Wake>();
@@ -277,9 +273,7 @@ impl Folder {
                 scope.spawn(inheriting(move || look(requests, ended, asked, wakes)))
             });
             let watched = {
-                // A guard, so a pass or a `tell` that panics still ends the
-                // follow: the scope waits for it before the panic goes on.
-                // Dropped in reverse, so `ended` is raised before `refill`.
+                // Reverse drop order ends the watch before interrupting the follow, even on panic.
                 let _cut = Raise(&refill);
                 let _ending = Raise(&ended);
                 self.watch_files(stop, &asked, &refill, sender, &wakes, &mut tell, &health)
@@ -559,8 +553,7 @@ impl Folder {
         if asking() {
             return Ok(None);
         }
-        // The follow fills the copy, as a push does, and its change wakes
-        // the pass that writes the files.
+        // The follow's completed refill wakes the pass that writes the files.
         if self.refill_due()? {
             refill.store(true, Ordering::SeqCst);
         }
@@ -881,8 +874,7 @@ fn follow(
     health: &Mutex<FollowHealth>,
 ) -> Result<(), CoreError> {
     let mut retry = RETRY_FIRST;
-    // Told once for each run of failures, as the reachability is, and again
-    // where a changed query starts to wait on it: whether that was told.
+    // Tell once per failure run, and again if a changed query starts waiting.
     let mut said: Option<bool> = None;
     // Carried into the next follow, which otherwise says nothing of a server
     // it has at once, and the watch would go on telling it unreachable.

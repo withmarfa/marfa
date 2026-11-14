@@ -41,9 +41,7 @@ impl Violation {
     }
 }
 
-/// One threshold: a count, a fraction and, for a removal, a ceiling, each as
-/// a number so that a value that is no whole count, or a count too large to
-/// hold exactly, is seen.
+/// Counts stay floating-point here so validation can reject fractional inputs.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Threshold {
     pub files: Option<f64>,

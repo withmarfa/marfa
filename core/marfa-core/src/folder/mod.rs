@@ -889,8 +889,7 @@ impl Folder {
         self.hydrate_until(stop).map(Some)
     }
 
-    /// Whether a hydrated copy no longer answers for the slice its readable
-    /// settings ask for, so a running watch fills it again.
+    /// Unreadable settings cannot request a watch refill.
     pub(super) fn refill_due(&self) -> Result<bool> {
         Ok(self.settings().is_ok()
             && crate::store::hydrated(&*self.core.conn()?)?
@@ -4082,9 +4081,7 @@ mod tests {
         (dir, folder, item_id)
     }
 
-    /// A note moved from `a.md` to `z/a.md`, bound at both paths as a move
-    /// cut off after its rename leaves it, the new path's record still
-    /// waiting on its landing where `landing` says.
+    /// The two bindings an interrupted move leaves, with an optional landing.
     fn cut_off_move(landing: bool) -> (ScannedDir, Folder, String) {
         let (dir, folder) = settled_notes(&["a.md"]);
         let item_id = landed(&folder, "a.md");

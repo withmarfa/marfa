@@ -1338,8 +1338,7 @@ impl Folder {
                 report.unreached += 1;
                 continue;
             }
-            // The item's file is here at another path, as a move cut off
-            // after its rename leaves it.
+            // An interrupted move can leave a binding at its missing source path.
             if present.contains(&row.item_id) {
                 let conn = self.core.conn()?;
                 state::unbind(&conn, &row.path)?;

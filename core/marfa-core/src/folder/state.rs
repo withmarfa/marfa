@@ -114,9 +114,7 @@ pub(crate) fn settled(row: &Bound, root: &crate::directory::Directory) -> Option
     Some(landing.before.as_deref().cloned())
 }
 
-/// Settles every write a crash cut off between its binding and its landing,
-/// so the file there is never read as the person's edit nor as deleted. A
-/// landed move's record at the path it left goes, where no file is there.
+/// Recover landed writes before a scan mistakes them for edits or deletions.
 pub(crate) fn settle_landings(
     conn: &Connection,
     root: &crate::directory::Directory,

@@ -123,9 +123,7 @@ impl RemovalThreshold {
     }
 }
 
-/// How many new files one drop may bring before the folder asks. It is
-/// shaped as `RemovalThreshold` is, and its default is higher: a removal
-/// loses things, and an addition only makes items.
+/// Additions have higher defaults because they create items rather than remove them.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AdditionThreshold {
