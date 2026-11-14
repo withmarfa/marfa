@@ -49,15 +49,12 @@ export function excuse(
 }
 
 export interface FileScore {
-  /** By path from `conformance/`, as `RUST_JUDGED` lists it. */
+  /** By path from `conformance/`. */
   file: string;
   project: string;
   /** Tests that passed. A skipped, todo or failed test is not one. */
   passed: number;
-  /**
-   * The larger of the tests collected from the file and those reported, less
-   * the tests skipped for the machine alone.
-   */
+  /** The tests its report lists, less the tests skipped for the machine alone. */
   total: number;
   /** The tests skipped for the machine alone, by name, with the reason. */
   excused: string[];
@@ -65,6 +62,7 @@ export interface FileScore {
   reported: boolean;
   /** Whether the file failed to load or a hook failed around its tests. */
   broken: boolean;
+  /** Whether the file is one the run owes: it is on disk in a scored project. */
   judged: boolean;
 }
 
@@ -82,15 +80,13 @@ export interface Score {
   passed: number;
   total: number;
   filesPassing: number;
-  /** The Rust-judged files that did not pass whole, with the reason. */
+  /** The files that did not pass whole, with the reason. */
   failures: string[];
   /** The platform whose tests the reports hold. */
   platform: string;
 }
 
 export interface ScoreOptions {
-  /** Test counts by file, from listing the contract's tests. */
-  collected?: ReadonlyMap<string, number>;
   /** The platform the reports were written on, as `process.platform` names it. */
   platform: string;
 }
@@ -122,49 +118,6 @@ export function contractFiles(root: string): string[] {
   return found.sort();
 }
 
-/** Test counts by file, from the JSON of `vitest list --json`. */
-export function countCollected(
-  tests: readonly { file: string }[],
-): Map<string, number> {
-  const counts = new Map<string, number>();
-  for (const test of tests) {
-    const file = fixturePath(test.file);
-    counts.set(file, (counts.get(file) ?? 0) + 1);
-  }
-  return counts;
-}
-
-/** The contract test files a Vitest error names. */
-export function filesNamedIn(output: string): string[] {
-  const found = output.match(/src\/suites\/[\w./-]+\.test\.ts/g) ?? [];
-  return [...new Set(found)].sort();
-}
-
-/**
- * The summary lines about how tests were counted. `unrun` are the files whose
- * count came from reading them without running them, because Vitest could not
- * list the contract's tests while they failed to load.
- */
-export function collectionNotes(
-  counts: ReadonlyMap<string, number>,
-  unrun: readonly string[],
-): string[] {
-  if (unrun.length === 0 && counts.size > 0) {
-    return [
-      "Every file was run to list its tests. A file's total is the larger of that count and its report's.",
-    ];
-  }
-  return [
-    "Vitest could not list the contract's tests, so only the files it named were counted, by reading them without running them (a test written once for several inputs counts as one). Every other file keeps the count its report lists.",
-    ...(unrun.length === 0
-      ? ["Vitest named no file, so no file was counted."]
-      : unrun.map(
-          (file) =>
-            `${file}: ${String(counts.get(file) ?? 0)} tests counted, or the reported count if larger.`,
-        )),
-  ];
-}
-
 const projectOf = (file: string): string => file.split("/")[2] ?? "";
 
 const whole = (file: FileScore): boolean =>
@@ -174,23 +127,23 @@ const whole = (file: FileScore): boolean =>
   file.passed === file.total;
 
 /**
- * The score of a run of the contract: tests passing out of all the contract's
- * tests, by test file. A test Vitest skipped, left todo or failed does not
- * pass, but for a test skipped for the machine alone ({@link excuse}), which
- * is left out of the count and listed. A file's total is the larger of the tests `collected` from it and
- * those a report lists, so a file that did not load, or that no report names,
- * counts every test it holds as not passing. A report of a file outside the
- * five projects is ignored. A Rust-judged file fails the score unless
- * a report names it and every test in it passed.
+ * The score of a run of the contract: tests passing out of all the tests the
+ * reports list, by test file. A test Vitest skipped, left todo or failed does
+ * not pass, but for a test skipped for the machine alone ({@link excuse}),
+ * which is left out of the count and listed. `files` are the fixture files the
+ * run owes (`contractFiles`): each fails the score unless a report names it
+ * and every test in it passed, so a file no shard reported fails, and a file
+ * that did not load fails. A report lists every test of a file that loaded,
+ * skipped ones included, so a file never lists fewer tests than it holds. A
+ * report of a file outside the five projects is ignored.
  */
 export function scoreRun(
   reports: readonly VitestReport[],
   files: readonly string[],
-  judged: readonly string[],
-  { collected = new Map(), platform }: ScoreOptions,
+  { platform }: ScoreOptions,
 ): Score {
   const byFile = new Map<string, FileScore>();
-  const judgedSet = new Set(judged);
+  const judgedSet = new Set(files);
   const blank = (file: string): FileScore => ({
     file,
     project: projectOf(file),
@@ -201,9 +154,7 @@ export function scoreRun(
     excused: [],
     judged: judgedSet.has(file),
   });
-  for (const file of [...files, ...judged]) {
-    if (!byFile.has(file)) byFile.set(file, blank(file));
-  }
+  for (const file of files) byFile.set(file, blank(file));
   for (const report of reports) {
     for (const result of report.testResults) {
       const file = fixturePath(result.name);
@@ -228,12 +179,6 @@ export function scoreRun(
       score.broken = result.status === "failed" && score.passed === score.total;
       byFile.set(file, score);
     }
-  }
-  for (const score of byFile.values()) {
-    score.total = Math.max(
-      score.total,
-      (collected.get(score.file) ?? 0) - score.excused.length,
-    );
   }
   const scores = [...byFile.values()].sort(
     (a, b) =>
@@ -277,10 +222,7 @@ const share = (part: number, whole: number): string =>
   whole === 0 ? "0%" : `${((100 * part) / whole).toFixed(1)}%`;
 
 /** The score as Markdown for the job summary. */
-export function renderScore(
-  score: Score,
-  notes: readonly string[] = [],
-): string {
+export function renderScore(score: Score): string {
   const lines = [
     `## Rust contract score (${score.platform})`,
     "",
@@ -288,10 +230,10 @@ export function renderScore(
     "",
   ];
   if (score.failures.length === 0) {
-    lines.push("Every Rust-judged file passes.", "");
+    lines.push("Every file passes.", "");
   } else {
     lines.push(
-      "Rust-judged files that do not pass:",
+      "Files that do not pass:",
       "",
       ...score.failures.map((failure) => `- ${failure}`),
       "",
@@ -308,9 +250,6 @@ export function renderScore(
       "",
     );
   }
-  if (notes.length > 0) {
-    lines.push(...notes.map((note) => `- ${note}`), "");
-  }
   lines.push(
     "| Project | Files passing | Tests passing |",
     "|---|---|---|",
@@ -323,7 +262,7 @@ export function renderScore(
     "|---|---|---|",
     ...score.files.map(
       (f) =>
-        `| ${f.file} | ${f.reported ? `${String(f.passed)} of ${String(f.total)}${f.broken ? " (file failed)" : ""}` : `not reported${f.total > 0 ? `, ${String(f.total)} tests` : ""}`} | ${f.judged ? "yes" : "no"} |`,
+        `| ${f.file} | ${f.reported ? `${String(f.passed)} of ${String(f.total)}${f.broken ? " (file failed)" : ""}` : "not reported"} | ${f.judged ? "yes" : "no"} |`,
     ),
     "",
   );

@@ -647,11 +647,10 @@ jobs:
   # before it can be released.
   #
   # A shard does not fail because a test failed: it fails when it has no
-  # report to give, and the score counts the tests. The files the Rust server
-  # judges (`conformance/src/utils/rust-judged.ts`) must pass whole; the score
-  # job fails if one does not, and `Full CI` waits for it. An object store
-  # sits beside the server, so the stores chapter and the backups are
-  # asserted.
+  # report to give, and the score counts the tests. Every fixture file of the
+  # five server projects must pass whole; the score job fails if one does not,
+  # and `Full CI` waits for it. An object store sits beside the server, so the
+  # stores chapter and the backups are asserted.
   rust-contract:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false' || needs.changes.outputs.mcp-conformance != 'false' || needs.changes.outputs.restore-drill != 'false') }}
@@ -1073,7 +1072,7 @@ jobs:
 
   # The score of the Rust server against the contract: tests passing out of
   # all, by file, in the job summary (`conformance/TARGET-INTERFACE.md` says how it is
-  # counted). It fails when a file the Rust server judges did not pass whole,
+  # counted). It fails when a fixture file did not pass whole,
   # when a shard wrote no report, and when the build or a shard failed. A
   # skipped job passes only when the classifier skipped it; this job runs
   # exactly when the classifier owes a run, so a build or shard skipped while
