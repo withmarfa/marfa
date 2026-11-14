@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use crate::drain::DrainReport;
 use crate::error::CoreError;
-use crate::http::Http;
+use crate::http::{EndsBy, Http};
 use crate::model::{CatchUpReport, SliceTier, Subject, Tier};
 use crate::priority::inheriting;
 use crate::reach::{self, Context};
@@ -948,7 +948,9 @@ impl<T: Send + 'static> Pending<T> {
         let http = http.to_let_go();
         let reading = http.clone();
         let (sender, answer) = mpsc::sync_channel::<Result<T>>(1);
+        let ends_by = EndsBy::here();
         thread::spawn(inheriting(move || {
+            let _ends_by = EndsBy::hold(ends_by);
             if sender.send(read(&reading)).is_err() {
                 #[cfg(debug_assertions)]
                 crate::fault::hold(|| "answer-dropped");
@@ -1845,7 +1847,9 @@ fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> O
     let asked = http.to_let_go();
     let http = asked.clone();
     let cursor = cursor.to_string();
+    let ends_by = EndsBy::here();
     thread::spawn(inheriting(move || {
+        let _ends_by = EndsBy::hold(ends_by);
         let reached = (|| {
             let instance = http.instance_id()?;
             let catalog = http.catalog()?;
