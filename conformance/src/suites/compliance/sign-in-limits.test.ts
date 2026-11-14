@@ -441,8 +441,8 @@ describe("counting only wrong passwords", () => {
     await recover(known);
     const address = "172.19.0.1";
     const stranger = "stranger@example.test";
-    for (const email of [OWNER.email, stranger]) {
-      for (let i = 0; i < 10; i++) {
+    for (let i = 0; i < 10; i++) {
+      for (const email of [OWNER.email, stranger]) {
         const response = await signIn(
           known,
           "wrong",
