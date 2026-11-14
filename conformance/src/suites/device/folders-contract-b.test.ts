@@ -247,7 +247,8 @@ it("pauses a pass that removes more than 100 files whatever their share, judging
   const deletes = () =>
     harness!.server.requests.filter(
       (request) =>
-        request.method === "DELETE" && /^\/items\/[^/]+$/.test(request.pathname),
+        request.method === "DELETE" &&
+        /^\/items\/[^/]+$/.test(request.pathname),
     ).length;
   const grace = () => new Promise((resolve) => setTimeout(resolve, 6_000));
   const remove = (from: number, count: number) => {

@@ -132,14 +132,11 @@ pub(crate) fn settle_landings(
                 if settled != landed {
                     continue;
                 }
-                for left in rows
-                    .iter()
-                    .filter(|left| {
-                        left.item_id == row.item_id
-                            && left.path != row.path
-                            && left.writes.landing.is_none()
-                    })
-                {
+                for left in rows.iter().filter(|left| {
+                    left.item_id == row.item_id
+                        && left.path != row.path
+                        && left.writes.landing.is_none()
+                }) {
                     if root
                         .read(std::path::Path::new(&left.path))
                         .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)

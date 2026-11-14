@@ -2991,7 +2991,10 @@ describe("where a file sits", () => {
       "keeps the item when %s cuts off another Mac's move after the rename",
       async (_how, fault) => {
         const { held } = await notePlaced(`placement-move-cut-${fault}`);
-        second = await anotherMac(harness!, `placement-move-cut-second-${fault}`);
+        second = await anotherMac(
+          harness!,
+          `placement-move-cut-second-${fault}`,
+        );
         expect((await second.folder.pull()).ok).toBe(true);
         // A path that sorts after the one it left.
         mkdirSync(join(second.dir, "Projects"));

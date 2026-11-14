@@ -635,15 +635,19 @@ describe("settings and folder reporting", () => {
     const folder = harness!;
     let gone: Promise<void> | undefined;
     // The server takes the change, and is gone before anything else reaches it.
-    folder.server.answer("PATCH", `/folders/${folder.settings.id}`, (request) => {
-      const { version: _version, ...settings } = JSON.parse(
-        request.body,
-      ) as Record<string, unknown>;
-      folder.settings.settings = { ...folder.settings.settings, ...settings };
-      folder.settings.version += 1;
-      gone = folder.server.offline();
-      return answers.updated(folderItem(folder.settings));
-    });
+    folder.server.answer(
+      "PATCH",
+      `/folders/${folder.settings.id}`,
+      (request) => {
+        const { version: _version, ...settings } = JSON.parse(
+          request.body,
+        ) as Record<string, unknown>;
+        folder.settings.settings = { ...folder.settings.settings, ...settings };
+        folder.settings.version += 1;
+        gone = folder.server.offline();
+        return answers.updated(folderItem(folder.settings));
+      },
+    );
     const watch = folder.folder.watch();
     try {
       await vi.waitFor(() => expect(watch.stderr).toContain("watching"));
