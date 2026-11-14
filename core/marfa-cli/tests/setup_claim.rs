@@ -3,10 +3,13 @@
 //! claimed, and only once the claim has what it needs.
 
 #[allow(dead_code)]
+#[path = "../src/door.rs"]
+mod door;
+#[allow(dead_code)]
 #[path = "support/quiet.rs"]
 mod quiet;
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
 use std::path::PathBuf;
@@ -44,10 +47,7 @@ impl Socket {
                         continue;
                     };
                     stream.set_nonblocking(false).unwrap();
-                    let mut data = [0u8; 8192];
-                    let n = stream.read(&mut data).unwrap_or(0);
-                    let request = String::from_utf8_lossy(&data[..n]).into_owned();
-                    let line = request.lines().next().unwrap_or("").to_string();
+                    let line = door::read_request(&mut stream).line;
                     let body = if line.contains("setup/status") {
                         format!("{{\"claimed\":{claimed}}}")
                     } else {

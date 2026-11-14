@@ -136,7 +136,7 @@ impl Door {
     }
 }
 
-pub fn read_request(stream: &mut std::net::TcpStream) -> Received {
+pub fn read_request(stream: &mut (impl Read + Write)) -> Received {
     let mut bytes = Vec::new();
     let mut chunk = [0u8; 4096];
     let head_end;

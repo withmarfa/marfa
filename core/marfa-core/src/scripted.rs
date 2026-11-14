@@ -468,6 +468,53 @@ fn read_chunked(reader: &mut impl BufRead) -> Vec<u8> {
     }
 }
 
+/// A request's head, read to its blank line however many segments it arrives in.
+/// A hand-rolled server that answers and closes after one `read` leaves the
+/// rest of a split head unread, and the close then resets the connection.
+pub(crate) fn read_head(stream: &mut impl Read) -> Vec<u8> {
+    let mut seen = Vec::new();
+    let mut chunk = [0u8; 4096];
+    while !seen.windows(4).any(|window| window == b"\r\n\r\n") {
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => seen.extend_from_slice(&chunk[..read]),
+        }
+    }
+    seen
+}
+
+/// A request's head and its body, as text: a `Content-Length` body to its
+/// length, a chunked one to its last chunk, which an empty `POST` carries too.
+pub(crate) fn read_request(stream: &mut impl Read) -> String {
+    let mut seen = read_head(stream);
+    let head_end = seen
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map_or(seen.len(), |at| at + 4);
+    let head = String::from_utf8_lossy(&seen[..head_end]).to_lowercase();
+    let header = |name: &str| {
+        head.lines()
+            .find_map(|line| line.strip_prefix(name)?.strip_prefix(':'))
+            .map(|value| value.trim().to_string())
+    };
+    let chunked = header("transfer-encoding").is_some_and(|value| value.contains("chunked"));
+    let length = header("content-length")
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(0);
+    let mut chunk = [0u8; 4096];
+    while if chunked {
+        !seen[head_end..].ends_with(b"0\r\n\r\n")
+    } else {
+        seen.len() < head_end + length
+    } {
+        match stream.read(&mut chunk) {
+            Ok(0) | Err(_) => break,
+            Ok(read) => seen.extend_from_slice(&chunk[..read]),
+        }
+    }
+    String::from_utf8_lossy(&seen).into_owned()
+}
+
 pub fn event(id: &str, name: &str, payload: &str) -> String {
     format!("id: {id}\nevent: {name}\ndata: {payload}\n\n")
 }

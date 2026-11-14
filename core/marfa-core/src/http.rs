@@ -2850,8 +2850,7 @@ mod tests {
         std::thread::spawn(move || {
             use std::io::Write;
             if let Ok((mut socket, _)) = listener.accept() {
-                let mut head = [0u8; 4096];
-                let _ = Read::read(&mut socket, &mut head);
+                crate::scripted::read_request(&mut socket);
                 let body = "0123456789";
                 let _ = write!(
                     socket,
@@ -2896,8 +2895,7 @@ mod tests {
             let serving = std::thread::spawn(move || {
                 use std::io::Write;
                 let (mut socket, _) = listener.accept().unwrap();
-                let mut head = [0u8; 4096];
-                Read::read(&mut socket, &mut head).unwrap();
+                crate::scripted::read_request(&mut socket);
                 write!(
                     socket,
                     "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nConnection: close\r\n{}\r\n",
@@ -2937,7 +2935,7 @@ mod tests {
         let serving = std::thread::spawn(move || {
             use std::io::Write;
             let (mut socket, _) = listener.accept().unwrap();
-            let _ = Read::read(&mut socket, &mut [0u8; 4096]);
+            crate::scripted::read_head(&mut socket);
             let body = r#"{"error":{"code":"request_too_large"}}"#;
             let _ = write!(
                 socket,
@@ -3491,8 +3489,7 @@ mod tests {
         let serving = std::thread::spawn(move || {
             use std::io::Write;
             let (mut socket, _) = listener.accept().unwrap();
-            let mut head = [0u8; 4096];
-            Read::read(&mut socket, &mut head).unwrap();
+            crate::scripted::read_request(&mut socket);
             std::thread::sleep(pause);
             if answer {
                 let body = "{}";
@@ -3582,8 +3579,7 @@ mod tests {
         let serving = std::thread::spawn(move || {
             use std::io::Write;
             let (mut socket, _) = listener.accept().unwrap();
-            let mut head = [0u8; 4096];
-            Read::read(&mut socket, &mut head).unwrap();
+            crate::scripted::read_request(&mut socket);
             write!(
                 socket,
                 "HTTP/1.1 401 Unauthorized\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nContent-Length: 100\r\n\r\n"
