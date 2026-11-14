@@ -40,7 +40,7 @@ sha2.workspace = true
 hex.workspace = true
 
 [dev-dependencies]
-rusqlite = { workspace = true, features = ["hooks"] }
+rusqlite = { workspace = true, features = ["hooks", "trace"] }
 tempfile = "3"
 flate2 = "1"
 

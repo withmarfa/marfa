@@ -1146,15 +1146,52 @@ pub fn set_drain_owed(conn: &Connection, owed: bool) -> Result<(), CoreError> {
     }
 }
 
+/// The first key after every key that starts with `prefix`, so that
+/// `key >= prefix AND key < prefix_end(prefix)` is a range the primary key
+/// answers, which `LIKE` and `substr` are not. Keys compare by their bytes.
+/// A prefix with nothing above it, or none, ends at a blob, which sorts after
+/// every text.
+pub(crate) fn prefix_end(prefix: &str) -> rusqlite::types::Value {
+    let mut end = prefix.to_string();
+    while let Some(last) = end.pop() {
+        if let Some(next) = (u32::from(last) + 1..=u32::from(char::MAX)).find_map(char::from_u32) {
+            end.push(next);
+            return end.into();
+        }
+    }
+    rusqlite::types::Value::Blob(Vec::new())
+}
+
 /// Every key that starts with `prefix`, in order.
 pub fn meta_keys(conn: &Connection, prefix: &str) -> Result<Vec<String>, CoreError> {
-    let mut keys = conn.prepare_cached(
-        "SELECT key FROM meta WHERE substr(key, 1, length(?1)) = ?1 ORDER BY key",
-    )?;
+    let mut keys =
+        conn.prepare_cached("SELECT key FROM meta WHERE key >= ?1 AND key < ?2 ORDER BY key")?;
     let found = keys
-        .query_map([prefix], |row| row.get(0))?
+        .query_map(params![prefix, prefix_end(prefix)], |row| row.get(0))?
         .collect::<Result<_, _>>()?;
     Ok(found)
+}
+
+/// Each key that starts with `prefix`, without the prefix, and its value, in
+/// key order.
+pub fn meta_under(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>, CoreError> {
+    let mut rows = conn.prepare_cached(
+        "SELECT substr(key, length(?1) + 1), value FROM meta
+          WHERE key >= ?1 AND key < ?2 ORDER BY key",
+    )?;
+    let found = rows
+        .query_map(params![prefix, prefix_end(prefix)], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?
+        .collect::<Result<_, _>>()?;
+    Ok(found)
+}
+
+/// Deletes every key that starts with `prefix`.
+pub fn meta_delete_under(conn: &Connection, prefix: &str) -> Result<(), CoreError> {
+    conn.prepare_cached("DELETE FROM meta WHERE key >= ?1 AND key < ?2")?
+        .execute(params![prefix, prefix_end(prefix)])?;
+    Ok(())
 }
 
 /// What the root last said this server takes in one request. Fresh in a
@@ -3285,7 +3322,7 @@ pub fn kept_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
 }
 
 fn upload_sent_as_key(id: &str) -> String {
-    format!("upload_sent_as/{id}")
+    format!("{UPLOAD_SENT_AS}{id}")
 }
 
 /// The credential, as `credential_digest` names it, that the upload `id`
@@ -3303,8 +3340,8 @@ pub fn record_upload_sent_as(
 /// carries.
 pub fn move_uploads_sent_as(conn: &Connection, from: &str, to: &str) -> Result<(), CoreError> {
     conn.execute(
-        "UPDATE meta SET value = ?2 WHERE key LIKE 'upload_sent_as/%' AND value = ?1",
-        params![from, to],
+        "UPDATE meta SET value = ?2 WHERE key >= ?3 AND key < ?4 AND value = ?1",
+        params![from, to, UPLOAD_SENT_AS, prefix_end(UPLOAD_SENT_AS)],
     )?;
     Ok(())
 }
@@ -4262,10 +4299,9 @@ pub fn clear_slice(conn: &Connection) -> Result<(), CoreError> {
          DELETE FROM beneath_reach;
          DELETE FROM table_rows;
          DELETE FROM item_tables;
-         DELETE FROM rows_reread;
-         DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%';",
+         DELETE FROM rows_reread;",
     )?;
-    Ok(())
+    forget_marks_of_the_walk(conn)
 }
 
 /// Counts the changes to the `parent-of` edges since the last settle of the
@@ -4346,18 +4382,27 @@ pub(crate) fn beneath_edges(conn: &Connection) -> Result<&'static str, CoreError
 }
 
 fn edge_brought(id: &str) -> String {
-    format!("edge_brought/{id}")
+    format!("{EDGE_BROUGHT}{id}")
+}
+
+const EDGE_BROUGHT: &str = "edge_brought/";
+const UPLOAD_SENT_AS: &str = "upload_sent_as/";
+
+/// The marks of which rows and edges a walk has listed, found early or
+/// brought, which a walk that starts again begins without.
+fn forget_marks_of_the_walk(conn: &Connection) -> Result<(), CoreError> {
+    for prefix in ["item_listed/", "item_early/", EDGE_BROUGHT] {
+        meta_delete_under(conn, prefix)?;
+    }
+    Ok(())
 }
 
 /// The start of a hydration that fills the copy again in place: nothing has
 /// been brought yet, so every row and edge the copy holds is one the sweep at
 /// its end takes out unless the walk or the replay brings it again.
 pub fn start_refill(conn: &Connection) -> Result<(), CoreError> {
-    conn.execute_batch(
-        "DELETE FROM rows_reread;
-         DELETE FROM meta WHERE key LIKE 'item_listed/%' OR key LIKE 'item_early/%' OR key LIKE 'edge_brought/%';",
-    )?;
-    Ok(())
+    conn.execute_batch("DELETE FROM rows_reread;")?;
+    forget_marks_of_the_walk(conn)
 }
 
 /// The ids a waiting write names: as its item or its target, or as an end
@@ -4474,7 +4519,7 @@ pub fn sweep_refill(conn: &Connection) -> Result<(u64, u64), CoreError> {
             edges += 1;
         }
     }
-    conn.execute_batch("DELETE FROM meta WHERE key LIKE 'edge_brought/%';")?;
+    meta_delete_under(conn, EDGE_BROUGHT)?;
     meta_delete(conn, META_REFILL)?;
     Ok((items, edges))
 }
@@ -5037,14 +5082,14 @@ pub fn forget_removals(conn: &Connection) -> Result<(), CoreError> {
     conn.execute(
         &format!(
             "DELETE FROM meta
-              WHERE substr(key, 1, ?1) = ?2
+              WHERE key >= ?1 AND key < ?2
                 AND NOT (value = ?3 AND key IN (
                   SELECT ?4 || edge_id FROM queue
                    WHERE kind = ?5 AND edge_id IS NOT NULL AND {WAITING}))"
         ),
         params![
-            REMOVAL.len() as i64,
             REMOVAL,
+            prefix_end(REMOVAL),
             REMOVAL_SENT,
             removal_key(Subject::Edge, ""),
             WriteKind::DeleteEdge.as_str(),
@@ -5665,27 +5710,22 @@ fn record_verdict_inner(
     Ok(())
 }
 
+const RECEIPT_PENDING: &str = "receipt_pending/";
+
 /// The id of the row the refused create `id` waits to land on, where it waits
 /// for a read that finds that row.
 pub fn pending_landing(conn: &Connection, id: &str) -> Result<Option<String>, CoreError> {
-    Ok(meta_get(conn, &format!("receipt_pending/{id}"))?
+    Ok(meta_get(conn, &format!("{RECEIPT_PENDING}{id}"))?
         .and_then(|shape| shape.strip_prefix("land:").map(str::to_owned)))
 }
 
 /// The refused creates whose move onto the row their natural key names waits
 /// for a read that finds the row, each with the id of that row.
 pub fn pending_landings(conn: &Connection) -> Result<HashMap<String, String>, CoreError> {
-    let mut statement = conn.prepare(
-        "SELECT substr(key, length('receipt_pending/') + 1), substr(value, length('land:') + 1)
-           FROM meta
-          WHERE key LIKE 'receipt_pending/%' AND value LIKE 'land:%'",
-    )?;
-    let landings = statement
-        .query_map([], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-        })?
-        .collect::<Result<HashMap<_, _>, _>>()?;
-    Ok(landings)
+    Ok(meta_under(conn, RECEIPT_PENDING)?
+        .into_iter()
+        .filter_map(|(id, shape)| Some((id, shape.strip_prefix("land:")?.to_string())))
+        .collect())
 }
 
 /// A write's run of environmental failures as a failure leaves it.
@@ -6285,17 +6325,17 @@ fn forget_answered_inner(
                 for prefix in [
                     "dead_effect/",
                     "chosen_tier/",
-                    "upload_sent_as/",
+                    UPLOAD_SENT_AS,
                     "cleared_time/",
                     "bytes_sent_again/",
                 ] {
                     conn.execute(
                         "DELETE FROM main.meta
-                          WHERE key LIKE :prefix || '%'
+                          WHERE key >= :prefix AND key < :end
                             AND substr(key, length(:prefix) + 1) NOT IN (SELECT id FROM main.queue)
                             AND (:only IS NULL
                                  OR substr(key, length(:prefix) + 1) IN (SELECT value FROM json_each(:only)))",
-                        named_params! { ":prefix": prefix, ":only": only },
+                        named_params! { ":prefix": prefix, ":end": prefix_end(prefix), ":only": only },
                     )?;
                 }
             }
@@ -6470,8 +6510,8 @@ fn read_of_row_owed_elsewhere(conn: &Connection, id: &str) -> Result<bool, CoreE
         || conn.query_row(
             "SELECT EXISTS (SELECT 1 FROM queue WHERE item_id = ?1 OR target_id = ?1)
                  OR EXISTS (SELECT 1 FROM meta
-                             WHERE key LIKE 'receipt_pending/%' AND value = 'land:' || ?1)",
-            [id],
+                             WHERE key >= ?2 AND key < ?3 AND value = 'land:' || ?1)",
+            params![id, RECEIPT_PENDING, prefix_end(RECEIPT_PENDING)],
             |row| row.get(0),
         )?)
 }
@@ -11336,5 +11376,124 @@ mod tests {
                 .as_deref(),
             Some("fixture must survive refusal")
         );
+    }
+}
+
+#[cfg(test)]
+mod meta_plan_tests {
+    use std::cell::RefCell;
+
+    use rusqlite::trace::{TraceEvent, TraceEventCodes};
+
+    use super::testing::conn;
+    use super::*;
+
+    thread_local! {
+        static SEEN: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    }
+
+    fn scans_meta(conn: &Connection, sql: &str) -> bool {
+        let mut plan = conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {sql}"))
+            .unwrap_or_else(|error| panic!("{sql}: {error}"));
+        let mut rows = plan.raw_query();
+        while let Some(row) = rows.next().unwrap() {
+            let detail: String = row.get(3).unwrap();
+            if detail.starts_with("SCAN") && detail.contains("meta") {
+                return true;
+            }
+        }
+        false
+    }
+
+    #[test]
+    fn a_prefix_range_holds_exactly_the_keys_that_start_with_it() {
+        use rusqlite::types::Value;
+        assert_eq!(
+            prefix_end("item_listed/"),
+            Value::Text("item_listed0".into())
+        );
+        assert_eq!(prefix_end("a\u{D7FF}"), Value::Text("a\u{E000}".into()));
+        assert_eq!(prefix_end("a\u{10FFFF}"), Value::Text("b".into()));
+        assert_eq!(prefix_end("\u{10FFFF}"), Value::Blob(Vec::new()));
+        assert_eq!(prefix_end(""), Value::Blob(Vec::new()));
+
+        let conn = conn();
+        let keys = [
+            "a%/1",
+            "a%/2",
+            "ax/3",
+            "a_/4",
+            "A%/5",
+            "a%",
+            "a%0",
+            "a\u{10FFFF}",
+            "a\u{10FFFF}z",
+            "b",
+            "\u{10FFFF}",
+            "\u{10FFFF}\u{10FFFF}x",
+        ];
+        for key in keys {
+            meta_set(&conn, key, "v").unwrap();
+        }
+        let asked = |prefix: &str| -> Vec<String> {
+            let mut found: Vec<String> = keys
+                .iter()
+                .filter(|key| key.starts_with(prefix))
+                .map(|key| key.to_string())
+                .collect();
+            found.sort();
+            assert_eq!(meta_keys(&conn, prefix).unwrap(), found, "{prefix:?}");
+            found
+        };
+        assert_eq!(asked("a%/").len(), 2);
+        assert_eq!(asked("a_/").len(), 1);
+        assert_eq!(asked("a\u{10FFFF}").len(), 2);
+        assert_eq!(asked("\u{10FFFF}").len(), 2);
+        let every = meta_keys(&conn, "").unwrap();
+        assert!(keys.iter().all(|key| every.iter().any(|held| held == key)));
+        let under = meta_under(&conn, "a%/").unwrap();
+        assert_eq!(under, [("1".into(), "v".into()), ("2".into(), "v".into())]);
+        meta_delete_under(&conn, "a%/").unwrap();
+        assert_eq!(meta_keys(&conn, "a%").unwrap(), ["a%", "a%0"]);
+    }
+
+    #[test]
+    fn a_prefix_lookup_on_meta_never_reads_the_whole_table() {
+        let witness = "SELECT key FROM meta WHERE substr(key, 1, length(?1)) = ?1";
+        assert!(
+            scans_meta(&conn(), witness),
+            "the plan check cannot see a scan"
+        );
+
+        let conn = conn();
+        SEEN.with(|seen| seen.borrow_mut().clear());
+        conn.trace_v2(
+            TraceEventCodes::SQLITE_TRACE_STMT,
+            Some(|event| {
+                if let TraceEvent::Stmt(_, sql) = event {
+                    SEEN.with(|seen| seen.borrow_mut().push(sql.to_string()));
+                }
+            }),
+        );
+        meta_keys(&conn, "dead_effect/").unwrap();
+        readmit_attempt(&conn, "attempt").unwrap();
+        pending_landings(&conn).unwrap();
+        forget_removals(&conn).unwrap();
+        forget_answered(&conn).unwrap();
+        move_uploads_sent_as(&conn, "a", "b").unwrap();
+        read_of_row_owed_elsewhere(&conn, "id").unwrap();
+        clear_slice(&conn).unwrap();
+        start_refill(&conn).unwrap();
+        sweep_refill(&conn).unwrap();
+        conn.trace_v2(TraceEventCodes::empty(), None);
+
+        let mut asked: Vec<String> = SEEN.with(|seen| seen.borrow().clone());
+        asked.retain(|sql| sql.contains("meta") && !sql.starts_with("--"));
+        asked.sort();
+        asked.dedup();
+        assert!(asked.len() >= 8, "only saw {asked:?}");
+        let scanning: Vec<&String> = asked.iter().filter(|sql| scans_meta(&conn, sql)).collect();
+        assert!(scanning.is_empty(), "these read all of meta: {scanning:#?}");
     }
 }

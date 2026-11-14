@@ -207,25 +207,16 @@ impl Folder {
     /// so every write behind it goes on (`folders/body-link-retitled-behind`),
     /// and worked out again against what the server holds.
     fn settle_relinks(&self, report: &mut PullReport) -> Result<bool> {
-        let queued: Vec<(String, String)> = {
-            let conn = self.core.conn()?;
-            let mut statement = conn.prepare(
-                "SELECT key, value FROM meta WHERE substr(key, 1, length(?1)) = ?1 ORDER BY key",
-            )?;
-            statement
-                .query_map([QUEUED], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .collect::<rusqlite::Result<_>>()?
-        };
+        let queued = store::meta_under(&*self.core.conn()?, QUEUED)?;
         let mut changed = false;
-        for (key, host) in queued {
-            changed |= contain(self.settle_relink(&key, &host), report)?.unwrap_or(false);
+        for (id, host) in queued {
+            changed |= contain(self.settle_relink(&id, &host), report)?.unwrap_or(false);
         }
         Ok(changed)
     }
 
-    /// Settles the rewrite `key` names, answering whether the copy changed.
-    fn settle_relink(&self, key: &str, host: &str) -> Result<bool> {
-        let id = &key[QUEUED.len()..];
+    /// Settles the rewrite whose write is `id`, answering whether the copy changed.
+    fn settle_relink(&self, id: &str, host: &str) -> Result<bool> {
         let refused = format!("{REFUSED}{host}");
         let row = store::queued_write(&*self.core.conn()?, id)?;
         let (settled, changed) = match row {
@@ -253,7 +244,7 @@ impl Folder {
             },
         };
         if settled {
-            store::meta_delete(&*self.core.conn()?, key)?;
+            store::meta_delete(&*self.core.conn()?, &format!("{QUEUED}{id}"))?;
         }
         Ok(changed)
     }
@@ -262,13 +253,10 @@ impl Folder {
 /// The writes of the rewrites this folder queued and has yet to settle, by
 /// id, each of which settles on its answer.
 pub(super) fn unsettled(conn: &Connection) -> Result<HashSet<String>> {
-    let mut statement = conn.prepare(
-        "SELECT substr(key, length(?1) + 1) FROM meta WHERE substr(key, 1, length(?1)) = ?1",
-    )?;
-    let ids = statement
-        .query_map([QUEUED], |row| row.get(0))?
-        .collect::<rusqlite::Result<_>>()?;
-    Ok(ids)
+    Ok(store::meta_under(conn, QUEUED)?
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect())
 }
 
 /// `result`, or none where it failed with an error that leaves the store
@@ -322,9 +310,9 @@ fn linking_hosts(conn: &Connection) -> Result<BTreeMap<String, Vec<(String, Stri
 fn forget_refusals_of_gone(conn: &Connection) -> Result<()> {
     conn.execute(
         "DELETE FROM meta
-          WHERE substr(key, 1, length(?1)) = ?1
+          WHERE key >= ?1 AND key < ?2
             AND substr(key, length(?1) + 1) NOT IN (SELECT id FROM items)",
-        [REFUSED],
+        rusqlite::params![REFUSED, store::prefix_end(REFUSED)],
     )?;
     Ok(())
 }
