@@ -5530,7 +5530,9 @@ When a hydration is stopped, a device MUST leave its queue as it was.
 
 ### `device/stop-catch-up-cursor`
 
-When a catch-up is stopped, a device MUST keep the cursor of the last event it took.
+When a catch-up is stopped, a device MUST keep the cursor of the last event it took, or, where another program holds the store through every attempt to record it, a cursor no earlier than the last event it applied.
+
+**Reason:** a stop is never turned into a failure by a busy store, and a cursor behind skipped events only makes the next catch-up read them again.
 
 **Tests:** `device/stop.test.ts › ends it while it waits on a stream, keeping the cursor it had`, `› reports canceled after a stopped stream opening is refused, keeping its cursor and queue`, `› commits the cursor of the skipped events it took when it is stopped among them`.
 
