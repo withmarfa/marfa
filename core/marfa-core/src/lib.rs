@@ -254,6 +254,8 @@ fn streaming_of(streaming: &Mutex<Streaming>) -> MutexGuard<'_, Streaming> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
+const ROWS_CAUGHT_UP_WAIT: Duration = Duration::from_secs(5);
+
 fn one_at_a_time() -> CoreError {
     CoreError::Invalid(
         "this working copy is already hydrating, catching up or following; one at a time moves \
@@ -1258,6 +1260,81 @@ impl Core {
         .map_err(|error| CatchUpFailed {
             error,
             catalog_changed,
+        })
+    }
+
+    /// An unreadable head does not prevent sending the write.
+    pub(crate) fn catch_up_before_rows(&self, stop: &AtomicBool) -> Result<()> {
+        let deadline = std::time::Instant::now() + ROWS_CAUGHT_UP_WAIT;
+        let _ends_by = http::EndsBy::hold(Some(deadline));
+        let target = match catch_up::last_carried(self, self.http()?, deadline, stop) {
+            Ok(target) => target,
+            Err(error) => {
+                catch_up::refuse_if_stopped(stop)?;
+                telemetry::degraded!(&error);
+                return Ok(());
+            }
+        };
+        let Some(target) = target else {
+            return Ok(());
+        };
+        while !self.applied_through(target)? {
+            catch_up::refuse_if_stopped(stop)?;
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Ok(());
+            }
+            if streaming_of(&self.streaming).holder.is_some() {
+                std::thread::sleep(left.min(Duration::from_millis(20)));
+                continue;
+            }
+            match self.catch_up_by(deadline, stop) {
+                Ok(_) => {}
+                Err(failed) if failed.error == one_at_a_time() => {}
+                Err(failed)
+                    if failed.error == CoreError::Canceled
+                        || failed.error.is_environmental()
+                        || matches!(failed.error, CoreError::StreamIncomplete { .. }) =>
+                {
+                    catch_up::refuse_if_stopped(stop)?;
+                    telemetry::degraded!(&failed.error);
+                    return Ok(());
+                }
+                Err(failed) => return Err(failed.error),
+            }
+        }
+        Ok(())
+    }
+
+    fn applied_through(&self, target: u64) -> Result<bool> {
+        let cursor = store::meta_get(&*self.conn()?, store::META_EVENT_CURSOR)?;
+        Ok(cursor
+            .as_deref()
+            .and_then(reach::cursor)
+            .is_some_and(|cursor| cursor >= target))
+    }
+
+    /// A catch-up pass that `deadline` stops as `stop` does.
+    fn catch_up_by(
+        &self,
+        deadline: std::time::Instant,
+        stop: &AtomicBool,
+    ) -> std::result::Result<CatchUpReport, CatchUpFailed> {
+        let cut = AtomicBool::new(false);
+        let done = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !done.load(Ordering::Relaxed) {
+                    if stop.load(Ordering::Relaxed) || std::time::Instant::now() >= deadline {
+                        cut.store(true, Ordering::Relaxed);
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            });
+            let result = self.catch_up_pass(&cut);
+            done.store(true, Ordering::Relaxed);
+            result
         })
     }
 

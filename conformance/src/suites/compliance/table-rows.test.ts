@@ -211,6 +211,29 @@ describe("writing rows", () => {
     });
   });
 
+  it("keeps the later of two batches' values for a column, answering the later batch as it answers any other", async () => {
+    const item = await itemOf(await ledgerType());
+    const id = rowId();
+    await client.writeRows(item, "lines", {
+      operations: [{ op: "put", id, values: { amount: 1, memo: "a" } }],
+    });
+    const first = await client.writeRows(item, "lines", {
+      operations: [{ op: "patch", id, values: { memo: "first" } }],
+    });
+    const second = await client.writeRows(item, "lines", {
+      operations: [{ op: "patch", id, values: { memo: "second" } }],
+    });
+    expect(second.status, JSON.stringify(second.error)).toBe(200);
+    expect(second.data.results).toEqual([{ id, outcome: "patched" }]);
+    expect(Object.keys(second.data).sort()).toEqual(
+      Object.keys(first.data).sort(),
+    );
+    expect((await client.getRow(item, "lines", id)).data.values).toEqual({
+      amount: 1,
+      memo: "second",
+    });
+  });
+
   it("leaves a row a patch would not change as it is, answering unchanged", async () => {
     const item = await itemOf(await ledgerType());
     const id = rowId();

@@ -517,7 +517,7 @@ fn apply(row: Option<Held>, ops: &[Op], id: &str, at: &str) -> Option<Held> {
 }
 
 fn beneath(conn: &Connection, item: &str, table: &str, id: &str) -> Result<Option<Option<Held>>> {
-    let row: Option<(Option<String>, Option<String>, Option<String>)> = conn
+    let row: Option<Stored> = conn
         .prepare_cached(
             "SELECT body, withheld, updated_at FROM rows_beneath
               WHERE item_id = ?1 AND name = ?2 AND id = ?3",
@@ -526,13 +526,33 @@ fn beneath(conn: &Connection, item: &str, table: &str, id: &str) -> Result<Optio
             Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })
         .optional()?;
-    row.map(|(body, withheld, updated_at)| match body {
-        Some(body) => {
-            read_held(&body, withheld.as_deref(), updated_at.unwrap_or_default()).map(Some)
-        }
-        None => Ok(None),
+    row.map(|(body, withheld, updated_at)| unstored(body, withheld, updated_at))
+        .transpose()
+}
+
+/// A body of `None` is a row that is not there.
+type Stored = (Option<String>, Option<String>, Option<String>);
+
+fn stored(row: Option<&Held>) -> Result<Stored> {
+    Ok(match row {
+        Some(row) => (
+            Some(Value::Object(row.values.clone()).to_string()),
+            (!row.withheld.is_empty())
+                .then(|| serde_json::to_string(&row.withheld))
+                .transpose()?,
+            Some(row.updated_at.clone()),
+        ),
+        None => (None, None, None),
     })
-    .transpose()
+}
+
+fn unstored(
+    body: Option<String>,
+    withheld: Option<String>,
+    updated_at: Option<String>,
+) -> Result<Option<Held>> {
+    body.map(|body| read_held(&body, withheld.as_deref(), updated_at.unwrap_or_default()))
+        .transpose()
 }
 
 fn set_beneath(
@@ -542,16 +562,7 @@ fn set_beneath(
     id: &str,
     row: Option<&Held>,
 ) -> Result<()> {
-    let (body, withheld, updated_at) = match row {
-        Some(row) => (
-            Some(Value::Object(row.values.clone()).to_string()),
-            (!row.withheld.is_empty())
-                .then(|| serde_json::to_string(&row.withheld))
-                .transpose()?,
-            Some(row.updated_at.clone()),
-        ),
-        None => (None, None, None),
-    };
+    let (body, withheld, updated_at) = stored(row)?;
     conn.prepare_cached(
         "INSERT INTO rows_beneath (item_id, name, id, body, withheld, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
@@ -701,6 +712,10 @@ pub(crate) fn forget_table(conn: &Connection, item: &str, table: &str) -> Result
         "DELETE FROM rows_seen WHERE item_id = ?1 AND name = ?2",
         params![item, table],
     )?;
+    conn.execute(
+        "DELETE FROM rows_seen_beneath WHERE item_id = ?1 AND name = ?2",
+        params![item, table],
+    )?;
     Ok(())
 }
 
@@ -711,15 +726,101 @@ pub(crate) fn forget_item(conn: &Connection, item: &str) -> Result<()> {
         [item],
     )?;
     conn.execute("DELETE FROM rows_seen WHERE item_id = ?1", [item])?;
+    conn.execute("DELETE FROM rows_seen_beneath WHERE item_id = ?1", [item])?;
     Ok(())
 }
 
 pub(crate) fn forget_all(conn: &Connection) -> Result<()> {
     conn.execute_batch(
-        "DELETE FROM rows_beneath; DELETE FROM rows_seen;
+        "DELETE FROM rows_beneath; DELETE FROM rows_seen; DELETE FROM rows_seen_beneath;
          DELETE FROM rows_laid WHERE batch IS NOT NULL;",
     )?;
     Ok(())
+}
+
+/// Sent, with no answer recorded; the `queue_rows_seen_*` triggers test the same.
+const UNANSWERED: &str = "q.sent = 1 AND (q.verdict IS NULL OR q.verdict IN ('blocked', 'dead'))";
+
+/// Each up to `MAX_ROW_BYTES`; past it a row's oldest state goes, unjudged.
+pub(crate) const ROW_STATES_KEPT: i64 = 8;
+
+/// The answer may identify this event as the write's own batch.
+pub(crate) fn before_batch<'a>(
+    conn: &Connection,
+    item: &str,
+    table: &str,
+    batch: &str,
+    ids: impl IntoIterator<Item = &'a str>,
+) -> Result<()> {
+    let known = conn
+        .prepare_cached("SELECT 1 FROM rows_laid WHERE batch = ?1 LIMIT 1")?
+        .query_row([batch], |_| Ok(()))
+        .optional()?
+        .is_some();
+    if known || !whole(conn, item, table)? {
+        return Ok(());
+    }
+    for id in ids {
+        let sent = conn
+            .prepare_cached(&format!(
+                "SELECT 1 FROM rows_laid l JOIN queue q ON q.id = l.write_id
+                  WHERE l.item_id = ?1 AND l.name = ?2 AND l.id = ?3 AND l.batch IS NULL
+                    AND q.kind = ?4 AND {UNANSWERED}
+                  LIMIT 1"
+            ))?
+            .query_row(
+                params![item, table, id, WriteKind::WriteRows.as_str()],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if !sent {
+            continue;
+        }
+        let under = match beneath(conn, item, table, id)? {
+            Some(under) => under,
+            None => held_row(conn, item, table, id)?,
+        };
+        let (body, withheld, updated_at) = stored(under.as_ref())?;
+        let kept = conn
+            .prepare_cached(
+                "INSERT OR IGNORE INTO rows_seen_beneath
+                   (batch, id, item_id, name, body, withheld, updated_at, seq)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7,
+                   (SELECT COALESCE(MAX(seq), 0) + 1 FROM rows_seen_beneath
+                     WHERE item_id = ?3 AND name = ?4 AND id = ?2))",
+            )?
+            .execute(params![batch, id, item, table, body, withheld, updated_at])?;
+        if kept > 0 {
+            conn.prepare_cached(
+                "DELETE FROM rows_seen_beneath
+                  WHERE item_id = ?1 AND name = ?2 AND id = ?3
+                    AND seq <= (SELECT MAX(seq) FROM rows_seen_beneath
+                                 WHERE item_id = ?1 AND name = ?2 AND id = ?3) - ?4",
+            )?
+            .execute(params![item, table, id, ROW_STATES_KEPT])?;
+        }
+    }
+    Ok(())
+}
+
+fn take_seen_beneath(conn: &Connection, batch: &str) -> Result<BTreeMap<String, Option<Held>>> {
+    let mut query = conn.prepare_cached(
+        "DELETE FROM rows_seen_beneath WHERE batch = ?1
+         RETURNING id, body, withheld, updated_at",
+    )?;
+    let rows = query.query_map([batch], |row| {
+        Ok((
+            row.get::<_, String>(0)?,
+            (row.get(1)?, row.get(2)?, row.get(3)?),
+        ))
+    })?;
+    let mut kept = BTreeMap::new();
+    for row in rows {
+        let (id, (body, withheld, updated_at)) = row?;
+        kept.insert(id, unstored(body, withheld, updated_at)?);
+    }
+    Ok(kept)
 }
 
 /// A batch no laid write names is kept while a sent write awaits its answer.
@@ -733,10 +834,10 @@ pub(crate) fn applied_batch(conn: &Connection, item: &str, table: &str, batch: &
     };
     if released.is_empty() {
         let waiting = conn
-            .prepare_cached(
-                "SELECT 1 FROM queue WHERE kind = ?1 AND item_id = ?2 AND row_table = ?3
-                   AND sent = 1 AND verdict IS NULL LIMIT 1",
-            )?
+            .prepare_cached(&format!(
+                "SELECT 1 FROM queue q WHERE q.kind = ?1 AND q.item_id = ?2 AND q.row_table = ?3
+                   AND {UNANSWERED} LIMIT 1"
+            ))?
             .query_row(params![WriteKind::WriteRows.as_str(), item, table], |_| {
                 Ok(())
             })
@@ -821,14 +922,15 @@ pub(crate) fn unjudge(conn: &Connection, item: &str, table: &str, row: Option<&s
         let mut query = conn.prepare_cached(
             "SELECT id, read FROM queue
               WHERE item_id = ?1 AND row_table = ?2 AND kind = ?3 AND read IS NOT NULL
-                AND last_sent_seq IS NOT NULL AND (verdict IS NULL OR verdict = ?4)",
+                AND last_sent_seq IS NOT NULL AND (verdict IS NULL OR verdict IN (?4, ?5))",
         )?;
         let rows = query.query_map(
             params![
                 item,
                 table,
                 WriteKind::WriteRows.as_str(),
-                Verdict::Blocked.as_str()
+                Verdict::Blocked.as_str(),
+                Verdict::Dead.as_str()
             ],
             |row| Ok((row.get(0)?, row.get(1)?)),
         )?;
@@ -870,18 +972,22 @@ pub(crate) fn taken(
     batch: Option<&str>,
     writes: &[Taken<'_>],
 ) -> Result<Vec<Vec<RowConflict>>> {
-    // Applied first, the batch's own event left nothing beneath to judge by.
     let seen = match batch {
         Some(batch) => conn.execute("DELETE FROM rows_seen WHERE batch = ?1", [batch])? > 0,
         None => false,
+    };
+    // Applied first, the batch's own event left beneath what the batch made.
+    let replaced = match batch {
+        Some(batch) if seen => Some(take_seen_beneath(conn, batch)?),
+        _ => None,
     };
     let laid = whole(conn, item, table)?;
     let mut written = Vec::with_capacity(writes.len());
     let mut conflicts = Vec::with_capacity(writes.len());
     for taken in writes {
         let ops = queued_ops(&taken.write.body)?;
-        conflicts.push(if laid && !seen {
-            clashes(conn, item, table, taken.write, &ops)?
+        conflicts.push(if laid {
+            clashes(conn, item, table, taken.write, &ops, replaced.as_ref())?
         } else {
             Vec::new()
         });
@@ -933,13 +1039,28 @@ pub(crate) fn taken(
     Ok(conflicts)
 }
 
-/// Where the server's value before `write` differs from what the copy showed it.
+/// Null means no value; outer `None` means no operation sets the column.
+fn sets<'a>(ops: &'a [Op], id: &str, column: &str) -> Option<Option<&'a Value>> {
+    ops.iter()
+        .rev()
+        .filter(|op| op.id() == id)
+        .find_map(|op| match op {
+            Op::Delete { .. } => Some(None),
+            Op::Put { values, .. } => Some(values.get(column).filter(|value| !value.is_null())),
+            Op::Patch { values, .. } => values
+                .get(column)
+                .map(|value| (!value.is_null()).then_some(value)),
+        })
+}
+
+/// Event-first answers are judged against the rows the batch replaced.
 fn clashes(
     conn: &Connection,
     item: &str,
     table: &str,
     write: &QueuedWrite,
     ops: &[Op],
+    replaced: Option<&BTreeMap<String, Option<Held>>>,
 ) -> Result<Vec<RowConflict>> {
     let Some(read) = store::read_of(conn, &write.id)?
         .and_then(|read| serde_json::from_str::<Value>(&read).ok())
@@ -959,7 +1080,13 @@ fn clashes(
         }
         let Some(shown) = read.get(id) else { continue };
         let shown = shown.as_object().cloned();
-        let under = beneath(conn, item, table, id)?.flatten();
+        let under = match replaced {
+            None => beneath(conn, item, table, id)?.flatten(),
+            Some(replaced) => match replaced.get(id) {
+                Some(row) => row.clone(),
+                None => continue,
+            },
+        };
         let before = laid_over(conn, item, table, id)?
             .into_iter()
             .filter(|(at, _, _)| *at < seq)
@@ -992,7 +1119,7 @@ fn clashes(
             }
             let was = server.and_then(|values| values.get(*column));
             let saw = shown.as_ref().and_then(|values| values.get(*column));
-            if was != saw {
+            if was != saw && sets(ops, id, column) != Some(was) {
                 clashed.push(RowConflict {
                     row: id.to_string(),
                     column: (*column).to_string(),
@@ -1222,5 +1349,99 @@ mod tests {
         )
         .unwrap_err();
         assert!(grown.to_string().contains("operations.1.values"), "{grown}");
+    }
+
+    fn kept(conn: &Connection) -> (Vec<String>, Vec<(String, String, i64)>) {
+        let batches = conn
+            .prepare("SELECT batch FROM rows_seen ORDER BY batch")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let states = conn
+            .prepare("SELECT id, batch, seq FROM rows_seen_beneath ORDER BY id, seq")
+            .unwrap()
+            .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        (batches, states)
+    }
+
+    fn sent_over(conn: &Connection, write: &str, seq: i64, row: &str) {
+        conn.execute(
+            "INSERT INTO queue (seq, id, kind, item_id, row_table, idempotency_key, payload, sent, queued_at)
+             VALUES (?1, ?2, 'write_rows', 'item', 'steps', ?2, '{}', 1, 'at')",
+            params![seq, write],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO rows_laid (write_id, seq, item_id, name, id, ops, at)
+             VALUES (?1, ?2, 'item', 'steps', ?3, '[]', 'at')",
+            params![write, seq, row],
+        )
+        .unwrap();
+    }
+
+    fn seen(conn: &Connection, batch: &str, row: &str) {
+        before_batch(conn, "item", "steps", batch, [row]).unwrap();
+        applied_batch(conn, "item", "steps", batch).unwrap();
+    }
+
+    #[test]
+    fn a_rows_kept_states_are_bounded_and_go_once_no_sent_write_waits_for_its_answer() {
+        let conn = store::open_in_memory().unwrap();
+        conn.execute(
+            "INSERT INTO item_tables (item_id, name, state) VALUES ('item', 'steps', 'whole')",
+            [],
+        )
+        .unwrap();
+        sent_over(&conn, "first", 1, "a");
+        sent_over(&conn, "second", 2, "b");
+        for batch in 0..=ROW_STATES_KEPT {
+            seen(&conn, &format!("a{batch:02}"), "a");
+        }
+        seen(&conn, "b", "b");
+        let (batches, states) = kept(&conn);
+        assert_eq!(batches.len(), ROW_STATES_KEPT as usize + 2);
+        let of_a: Vec<i64> = states
+            .iter()
+            .filter(|(row, _, _)| row == "a")
+            .map(|(_, _, seq)| *seq)
+            .collect();
+        assert_eq!(of_a, (2..=ROW_STATES_KEPT + 1).collect::<Vec<_>>());
+
+        for verdict in ["dead", "blocked"] {
+            conn.execute(
+                "UPDATE queue SET verdict = ?1 WHERE id = 'first'",
+                [verdict],
+            )
+            .unwrap();
+            assert_eq!(kept(&conn), (batches.clone(), states.clone()), "{verdict}");
+        }
+        conn.execute("UPDATE queue SET verdict = NULL WHERE id = 'first'", [])
+            .unwrap();
+        assert_eq!(kept(&conn), (batches.clone(), states.clone()));
+
+        conn.execute(
+            "UPDATE queue SET verdict = 'accepted' WHERE id = 'first'",
+            [],
+        )
+        .unwrap();
+        let (left, states) = kept(&conn);
+        assert_eq!(left, batches, "the second write still waits on the table");
+        assert_eq!(states, vec![("b".into(), "b".into(), 1)]);
+
+        conn.execute("DELETE FROM queue WHERE id = 'second'", [])
+            .unwrap();
+        assert_eq!(kept(&conn), (Vec::new(), Vec::new()));
+
+        sent_over(&conn, "third", 3, "c");
+        seen(&conn, "c", "c");
+        assert_eq!(kept(&conn).0, vec!["c".to_string()]);
+        conn.execute("UPDATE queue SET sent = 0 WHERE id = 'third'", [])
+            .unwrap();
+        assert_eq!(kept(&conn), (Vec::new(), Vec::new()));
     }
 }

@@ -11,7 +11,7 @@ use serde::Serialize;
 
 use crate::drain::DrainReport;
 use crate::error::CoreError;
-use crate::http::Http;
+use crate::http::{EndsBy, Http};
 use crate::model::{CatchUpReport, SliceTier, Subject, Tier};
 use crate::priority::inheriting;
 use crate::reach::{self, Context};
@@ -541,6 +541,62 @@ fn pass_withheld(
     Ok(Some(live.to_string()))
 }
 
+/// The head probe must not apply events or advance the copy's cursor.
+pub(crate) fn last_carried(
+    core: &Core,
+    http: &Http,
+    deadline: Instant,
+    stop: &AtomicBool,
+) -> Result<Option<u64>> {
+    let (context, cursor) = {
+        let conn = core.conn()?;
+        let context = Context::capture(&conn)?;
+        let cursor =
+            store::meta_get(&conn, store::META_EVENT_CURSOR)?.ok_or_else(reach::invalid)?;
+        (context, cursor)
+    };
+    let frames = open(
+        &context.http(http),
+        &cursor,
+        deadline.saturating_duration_since(Instant::now()),
+    )?;
+    let unended = |reason: &str| CoreError::StreamIncomplete {
+        reason: reason.into(),
+        server: None,
+    };
+    let mut head = None;
+    let mut last = None;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let frame = match next_frame(&frames, left, stop)? {
+            Ok(Ok(frame)) => frame,
+            Ok(Err(error)) => return Err(CoreError::Network(error.to_string())),
+            Err(_) => return Err(unended("read_failed")),
+        };
+        let Frame::Event { id, name, data } = frame else {
+            continue;
+        };
+        let payload = reach::event_payload(name.as_deref(), id.as_deref(), &data)?;
+        let kind = name.as_deref().unwrap_or(&payload.event_type);
+        match (kind, id, head) {
+            ("stream_cursor", None, None) => head = Some(context.marker(&payload, kind)?),
+            ("stream_live", None, Some(head)) => {
+                let live = context.marker(&payload, kind)?;
+                return if live < head || last.is_some_and(|last| last > live) {
+                    Err(reach::invalid())
+                } else {
+                    Ok(last)
+                };
+            }
+            ("stream_cursor" | "stream_live", _, _) => return Err(reach::invalid()),
+            (_, Some(id), Some(_)) => {
+                last = Some(reach::cursor(&id).ok_or_else(reach::invalid)?);
+            }
+            (kind, _, _) => return Err(unended(kind)),
+        }
+    }
+}
+
 pub(crate) fn refuse_if_stopped(stop: &AtomicBool) -> Result<()> {
     if stop.load(Ordering::Relaxed) {
         Err(CoreError::Canceled)
@@ -892,7 +948,9 @@ impl<T: Send + 'static> Pending<T> {
         let http = http.to_let_go();
         let reading = http.clone();
         let (sender, answer) = mpsc::sync_channel::<Result<T>>(1);
+        let ends_by = EndsBy::here();
         thread::spawn(inheriting(move || {
+            let _ends_by = EndsBy::hold(ends_by);
             if sender.send(read(&reading)).is_err() {
                 #[cfg(debug_assertions)]
                 crate::fault::hold(|| "answer-dropped");
@@ -1789,7 +1847,9 @@ fn reach(http: &Arc<Http>, cursor: &str, stop: &AtomicBool, poll: Duration) -> O
     let asked = http.to_let_go();
     let http = asked.clone();
     let cursor = cursor.to_string();
+    let ends_by = EndsBy::here();
     thread::spawn(inheriting(move || {
+        let _ends_by = EndsBy::hold(ends_by);
         let reached = (|| {
             let instance = http.instance_id()?;
             let catalog = http.catalog()?;

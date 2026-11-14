@@ -1,4 +1,5 @@
 import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import { DatabaseSync } from "node:sqlite";
 import {
   createServer,
   type IncomingMessage,
@@ -248,6 +249,18 @@ class RowsProxy {
   readonly replies: Reply[] = [];
   /** Answers every row write to `item` while set. */
   refusing: { item: string; gateway: number } | null = null;
+  /** What the proxy answers the event stream while set: a refusal, a stream that ends at once, or one that stays open and says nothing. */
+  events: "refuse" | "end" | "silent" | null = null;
+  /** Each request for the event stream that reached the proxy. */
+  eventRequests = 0;
+  /** The request for the event stream, counted as `eventRequests` counts, that the proxy holds 8 seconds before it passes it on. */
+  slowEventRequest = 0;
+  /** Holds each read of a table's rows 8 seconds before it passes it on, while set. */
+  slowRowReads = false;
+  /** Awaited before the server's answer to a row write is passed on, while set. */
+  holdAnswer: (() => Promise<void>) | null = null;
+  /** The method and path of each request that reached the proxy, in order. */
+  readonly asked: string[] = [];
   /** Each row write that reached the proxy, in order. */
   readonly sent: { key: string | undefined; body: unknown }[] = [];
   private contract = "";
@@ -286,6 +299,41 @@ class RowsProxy {
         headers.set(name, Array.isArray(sent) ? sent.join(", ") : sent);
     }
     const path = request.url ?? "/";
+    this.asked.push(`${request.method ?? ""} ${path}`);
+    if (
+      this.slowRowReads &&
+      request.method === "GET" &&
+      /^\/items\/[^/]+\/tables\/[^/]+\/rows/.test(path)
+    )
+      await new Promise((resolve) => setTimeout(resolve, 8_000));
+    if (path.startsWith("/events")) {
+      this.eventRequests += 1;
+      if (this.eventRequests === this.slowEventRequest)
+        await new Promise((resolve) => setTimeout(resolve, 8_000));
+      if (this.events === "refuse") {
+        response.writeHead(503, { "content-type": "application/json" });
+        response.end(
+          JSON.stringify({ error: { code: "unavailable", message: "down" } }),
+        );
+        return;
+      }
+      if (this.events === "end") {
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "x-marfa-contract": this.contract,
+        });
+        response.end(": connected\n\n");
+        return;
+      }
+      if (this.events === "silent") {
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "x-marfa-contract": this.contract,
+        });
+        response.write(": connected\n\n");
+        return;
+      }
+    }
     const rows =
       request.method === "POST" &&
       /^\/items\/[^/]+\/tables\/[^/]+\/(rows|batches\/[^/]+\/undo)$/.test(path);
@@ -319,6 +367,7 @@ class RowsProxy {
       ...(body.length === 0 ? {} : { body }),
       redirect: "manual",
     });
+    if (rows && this.holdAnswer !== null) await this.holdAnswer();
     this.contract = upstream.headers.get("x-marfa-contract") ?? this.contract;
     const returned: Record<string, string> = {};
     upstream.headers.forEach((kept, name) => {
@@ -974,9 +1023,7 @@ describe("what a verdict does to the rows a copy holds", () => {
     await write(item, [{ op: "delete", id: row }]);
 
     expect(verdictOf(value(await device.drain()), mine.id)).toBe("refused");
-    expect(await deviceRows(device, item)).toEqual({
-      [row]: { count: 1, note: "a" },
-    });
+    expect(await deviceRows(device, item)).toEqual({});
     const kept = await queued(device, mine.id);
     expect(kept.refusal).toMatchObject({ code: "row_not_found" });
     expect(JSON.parse(kept.answer!)).toMatchObject({
@@ -985,8 +1032,6 @@ describe("what a verdict does to the rows a copy holds", () => {
     expect(kept.body).toEqual({
       operations: [{ op: "patch", id: row, values: { note: "mine" } }],
     });
-    value(await device.catchUp());
-    expect(await deviceRows(device, item)).toEqual({});
   });
 
   it("records a write conflicted where it replaced a value the copy had not shown, and the value it replaced stays in the batch's change log", async () => {
@@ -1075,6 +1120,646 @@ describe("what a verdict does to the rows a copy holds", () => {
     expect(await serverRows(item)).toEqual({ [row]: { count: 1 } });
     value(await device.catchUp());
     expect(await deviceRows(device, item)).toEqual({ [row]: { count: 1 } });
+  });
+});
+
+describe("a drain catches up before it sends row writes", () => {
+  /** A row, a device holding its table whole, and a write of the device that another writer's change then overlaps. */
+  async function overlapped(label: string, url = server.apiUrl) {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
+    const device = await holding(type, label, server.workingKey, url);
+    const mine = value(
+      await device.writeRows(item, "steps", [
+        { op: "patch", id: row, values: { note: "offline" } },
+      ]),
+    );
+    await write(item, [{ op: "patch", id: row, values: { note: "other" } }]);
+    return { type, item, row, device, mine };
+  }
+
+  it("reports a write conflicted where a drain with no catch-up before it replaced another writer's value", async () => {
+    const { item, row, device, mine } = await overlapped("caught-up");
+    const report = value(await device.drain());
+    expect(verdictOf(report, mine.id)).toBe("conflicted");
+    expect(
+      report.verdicts.find((entry) => entry.id === mine.id)?.conflicts,
+    ).toEqual([{ row, column: "note" }]);
+    expect(await serverRows(item)).toEqual({
+      [row]: { count: 1, note: "offline" },
+    });
+    expect(await deviceRows(device, item)).toEqual({
+      [row]: { count: 1, note: "offline" },
+    });
+  });
+
+  it("reports a write conflicted where a held stream drains it once its server is back", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
+    counter += 1;
+    const device = await BindingDevice.start({
+      module: requireModule(),
+      store: newStore(`table-writes-followed-${String(counter)}`),
+      url: server.apiUrl,
+      key: server.workingKey,
+    });
+    bindings.push(device);
+    value(await device.hydrate([type], "library"));
+    value(await device.call("holdTable", type, "steps"));
+    const mine = value(
+      await device.call<QueuedWrite>("writeRows", item, "steps", [
+        { op: "patch", id: row, values: { note: "offline" } },
+      ]),
+    );
+    await write(item, [{ op: "patch", id: row, values: { note: "other" } }]);
+    const follow = await device.follow({ toldUnreachable: true });
+    try {
+      const answered = async (): Promise<string | undefined> => {
+        const held = value(
+          await device.call<{ id: string; verdict?: { verdict: string } }[]>(
+            "queue",
+          ),
+        );
+        return held.find((entry) => entry.id === mine.id)?.verdict?.verdict;
+      };
+      await until(
+        async () => (await answered()) !== undefined,
+        "the follow draining the write",
+      );
+      expect(await answered()).toBe("conflicted");
+    } finally {
+      expect(await follow.stop()).toBeNull();
+    }
+  });
+
+  it("asks the stream for nothing where no row write waits for a table the copy holds whole", async () => {
+    const proxy = await proxied();
+    const { device, mine } = await overlapped("caught-up-witness", proxy.url);
+    const setUp = proxy.eventRequests;
+    expect(verdictOf(value(await device.drain()), mine.id)).toBe("conflicted");
+    // The witness: the same drain asked for the stream.
+    expect(proxy.eventRequests).toBeGreaterThan(setUp);
+
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [{ op: "put", id: row, values: { count: 1 } }]);
+    const items = await holding(
+      type,
+      "caught-up-items",
+      server.workingKey,
+      proxy.url,
+    );
+    const before = proxy.eventRequests;
+    const made = value(
+      await items.create({ type, properties: { title: "Another" } }),
+    );
+    expect(verdictOf(value(await items.drain()), made.id)).toBe("accepted");
+    expect(proxy.eventRequests).toBe(before);
+
+    const unheld = deviceFor("caught-up-unheld", server.workingKey, proxy.url);
+    value(await unheld.hydrate([type], "library"));
+    const loose = value(
+      await unheld.writeRows(item, "steps", [
+        { op: "patch", id: row, values: { count: 2 } },
+      ]),
+    );
+    await write(item, [{ op: "patch", id: row, values: { count: 3 } }]);
+    const afterwards = proxy.eventRequests;
+    const report = value(await unheld.drain());
+    expect(verdictOf(report, loose.id)).toBe("accepted");
+    expect(
+      report.verdicts.find((entry) => entry.id === loose.id)?.conflicts ?? [],
+    ).toEqual([]);
+    expect(proxy.eventRequests).toBe(afterwards);
+  });
+
+  it("sends the write and judges it by what the copy has applied where the stream cannot be had or ends before it is live", async () => {
+    const proxy = await proxied();
+    for (const down of ["refuse", "end"] as const) {
+      const { item, row, device, mine } = await overlapped(
+        `caught-up-${down}`,
+        proxy.url,
+      );
+      proxy.events = down;
+      const before = proxy.eventRequests;
+      const report = value(await device.drain());
+      proxy.events = null;
+      expect(proxy.eventRequests, down).toBeGreaterThan(before);
+      expect(verdictOf(report, mine.id), down).toBe("accepted");
+      expect(
+        report.verdicts.find((entry) => entry.id === mine.id)?.conflicts ?? [],
+        down,
+      ).toEqual([]);
+      expect((await serverRows(item))[row], down).toEqual({
+        count: 1,
+        note: "offline",
+      });
+    }
+  });
+
+  it("names only the column whose value it replaced, where another writer set the other column to the value the write sets", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
+    const device = await holding(type, "caught-up-same");
+    const mine = value(
+      await device.writeRows(item, "steps", [
+        { op: "patch", id: row, values: { count: 2, note: "same" } },
+      ]),
+    );
+    await write(item, [
+      { op: "patch", id: row, values: { count: 3, note: "same" } },
+    ]);
+    const report = value(await device.drain());
+    expect(verdictOf(report, mine.id)).toBe("conflicted");
+    expect(
+      report.verdicts.find((entry) => entry.id === mine.id)?.conflicts,
+    ).toEqual([{ row, column: "count" }]);
+    expect(await serverRows(item)).toEqual({
+      [row]: { count: 2, note: "same" },
+    });
+  });
+
+  it("reports a write conflicted where another writer's batch reaches a following copy after its stream went live", async () => {
+    const proxy = await proxied();
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
+    counter += 1;
+    const store = newStore(`table-writes-live-later-${String(counter)}`);
+    const gate = new Gate(dirname(store), "gate-rows-event");
+    const device = await BindingDevice.start({
+      module: requireModule(),
+      store,
+      url: proxy.url,
+      key: server.workingKey,
+      env: gate.env,
+    });
+    bindings.push(device);
+    value(await device.hydrate([type], "library"));
+    value(await device.call("holdTable", type, "steps"));
+    const mine = value(
+      await device.call<QueuedWrite>("writeRows", item, "steps", [
+        { op: "patch", id: row, values: { note: "offline" } },
+      ]),
+    );
+    const follow = await device.follow();
+    try {
+      // An event the follow takes once its stream is open, so the next one comes after it went live.
+      await write(item, [{ op: "put", id: uuidv7(), values: { count: 0 } }]);
+      await until(
+        () => gate.reached() === 1,
+        "the follow reaching a first event",
+      );
+      gate.release(1);
+      await write(item, [{ op: "patch", id: row, values: { note: "other" } }]);
+      await until(
+        () => gate.reached() === 2,
+        "the follow reaching the overlap",
+      );
+      const before = proxy.eventRequests;
+      const draining = device.call<{
+        verdicts: {
+          id: string;
+          verdict: { verdict: string } | null;
+          conflicts: { row: string; column: string }[];
+        }[];
+      }>("drain");
+      await until(
+        () => proxy.eventRequests > before,
+        "the drain reading the head of the log",
+      );
+      // The batch's own event stays held, so the answer is judged before it.
+      gate.release(2);
+      const told = value(await draining).verdicts.find(
+        (entry) => entry.id === mine.id,
+      );
+      expect(told?.verdict?.verdict).toBe("conflicted");
+      expect(told?.conflicts).toEqual([{ row, column: "note" }]);
+    } finally {
+      gate.release("all");
+      expect(await follow.stop()).toBeNull();
+    }
+  });
+
+  it("reports a write conflicted where a following copy applies the write's own rows.changed before the server's answer", async () => {
+    const proxy = await proxied();
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
+    counter += 1;
+    const device = await BindingDevice.start({
+      module: requireModule(),
+      store: newStore(`table-writes-event-first-${String(counter)}`),
+      url: proxy.url,
+      key: server.workingKey,
+    });
+    bindings.push(device);
+    value(await device.hydrate([type], "library"));
+    value(await device.call("holdTable", type, "steps"));
+    const mine = value(
+      await device.call<QueuedWrite>("writeRows", item, "steps", [
+        { op: "patch", id: row, values: { note: "offline" } },
+      ]),
+    );
+    await write(item, [{ op: "patch", id: row, values: { note: "other" } }]);
+    const follow = await device.follow();
+    const applied = (): number =>
+      follow.changes.filter(
+        (change) =>
+          change.kind === "applied" &&
+          change.event === "rows.changed" &&
+          change.itemId === item,
+      ).length;
+    try {
+      await until(() => applied() === 1, "the follow applying the overlap");
+      // Only the batch's own event can be applied while its answer is held.
+      proxy.holdAnswer = () =>
+        until(() => applied() === 2, "the follow applying the batch first");
+      const told = value(
+        await device.call<{
+          verdicts: {
+            id: string;
+            verdict: { verdict: string } | null;
+            conflicts: { row: string; column: string }[];
+          }[];
+        }>("drain"),
+      ).verdicts.find((entry) => entry.id === mine.id);
+      expect(applied()).toBe(2);
+      expect(told?.verdict?.verdict).toBe("conflicted");
+      expect(told?.conflicts).toEqual([{ row, column: "note" }]);
+      expect(await serverRows(item)).toEqual({
+        [row]: { count: 1, note: "offline" },
+      });
+    } finally {
+      proxy.holdAnswer = null;
+      expect(await follow.stop()).toBeNull();
+    }
+  });
+
+  /** A held table whose write is sent with the overlap on `count` applied, and its answer held until its own event and `later` other batches are applied. */
+  async function judgedLate(
+    label: string,
+    later: number,
+    whileHeld: (path: string, row: string) => void = () => {},
+  ): Promise<{
+    path: string;
+    row: string;
+    told: { verdict: string | undefined; conflicts: unknown };
+  }> {
+    const proxy = await proxied();
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
+    counter += 1;
+    const path = newStore(`table-writes-${label}-${String(counter)}`);
+    const device = await BindingDevice.start({
+      module: requireModule(),
+      store: path,
+      url: proxy.url,
+      key: server.workingKey,
+    });
+    bindings.push(device);
+    value(await device.hydrate([type], "library"));
+    value(await device.call("holdTable", type, "steps"));
+    const mine = value(
+      await device.call<QueuedWrite>("writeRows", item, "steps", [
+        { op: "patch", id: row, values: { count: 3 } },
+      ]),
+    );
+    await write(item, [{ op: "patch", id: row, values: { count: 2 } }]);
+    const follow = await device.follow();
+    const applied = (): number =>
+      follow.changes.filter(
+        (change) =>
+          change.kind === "applied" &&
+          change.event === "rows.changed" &&
+          change.itemId === item,
+      ).length;
+    try {
+      await until(() => applied() === 1, "the follow applying the overlap");
+      proxy.holdAnswer = async () => {
+        await until(
+          () => applied() === 2,
+          "the follow applying the batch first",
+        );
+        for (let made = 1; made <= later; made++) {
+          await write(item, [
+            { op: "patch", id: row, values: { note: `later ${String(made)}` } },
+          ]);
+          await until(() => applied() === 2 + made, "a later batch");
+        }
+        whileHeld(path, row);
+      };
+      const entry = value(
+        await device.call<{
+          verdicts: {
+            id: string;
+            verdict: { verdict: string } | null;
+            conflicts: { row: string; column: string }[];
+          }[];
+        }>("drain"),
+      ).verdicts.find((one) => one.id === mine.id);
+      return {
+        path,
+        row,
+        told: { verdict: entry?.verdict?.verdict, conflicts: entry?.conflicts },
+      };
+    } finally {
+      proxy.holdAnswer = null;
+      expect(await follow.stop()).toBeNull();
+    }
+  }
+
+  function kept(
+    path: string,
+    row: string,
+  ): { states: number; batches: number } {
+    const db = new DatabaseSync(path, { readOnly: true });
+    try {
+      const states = db
+        .prepare("SELECT count(*) AS n FROM rows_seen_beneath WHERE id = ?")
+        .get(row) as { n: number };
+      const batches = db
+        .prepare("SELECT count(*) AS n FROM rows_seen")
+        .get() as { n: number };
+      return { states: states.n, batches: batches.n };
+    } finally {
+      db.close();
+    }
+  }
+
+  it("judges a write whose own rows.changed came first by the row its batch replaced while 7 later batches changed the row, and judges no conflict after 8", async () => {
+    // The witness: one batch fewer, and the row the batch replaced is still kept.
+    const seven = await judgedLate("late-seven", 7);
+    expect([seven.told.verdict, seven.told.conflicts]).toEqual([
+      "conflicted",
+      [{ row: seven.row, column: "count" }],
+    ]);
+    const eight = await judgedLate("late-eight", 8);
+    expect([eight.told.verdict, eight.told.conflicts]).toEqual([
+      "accepted",
+      [],
+    ]);
+  });
+
+  it("keeps at most 8 earlier states of a row while a write that changes it waits for its answer, and none once no sent write waits", async () => {
+    let held: { states: number; batches: number } | null = null;
+    const late = await judgedLate("late-kept", 12, (path, row) => {
+      held = kept(path, row);
+    });
+    expect(late.told.verdict).toBe("accepted");
+    // The witness: what is let go was kept while the answer was held.
+    expect(held).toEqual({ states: 8, batches: 13 });
+    expect(kept(late.path, late.row)).toEqual({ states: 0, batches: 0 });
+  });
+
+  it("reports a write conflicted where its own rows.changed came while it was dead, and its answer came after it was released", async () => {
+    const proxy = await proxied();
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [{ op: "put", id: row, values: { count: 1 } }]);
+    const device = await holding(
+      type,
+      "dead-replayed",
+      server.workingKey,
+      proxy.url,
+    );
+    const mine = value(
+      await device.writeRows(item, "steps", [
+        { op: "patch", id: row, values: { count: 3 } },
+      ]),
+    );
+    await write(item, [{ op: "patch", id: row, values: { count: 2 } }]);
+    value(await device.catchUp());
+    proxy.events = "refuse";
+    for (let sent = 0; sent < 5; sent++) {
+      proxy.replies.push({ forward: true, status: 200, body: "{}" });
+      value(await device.drain());
+    }
+    expect((await queued(device, mine.id)).verdict).toBe("dead");
+    expect(await serverRows(item)).toEqual({ [row]: { count: 3 } });
+    proxy.events = null;
+    value(await device.catchUp());
+    expect(value(await device.release({ id: mine.id }))).toBeTruthy();
+    const [entry] = told(value(await device.drain()), mine.id);
+    expect([entry?.verdict, entry?.replayed, entry?.conflicts]).toEqual([
+      "conflicted",
+      true,
+      [{ row, column: "count" }],
+    ]);
+  });
+
+  it("sends the writes queued ahead of a row write before it waits, and sends the row write once 5 seconds pass without the stream's head", async () => {
+    const proxy = await proxied();
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
+    const device = await holding(
+      type,
+      "caught-up-silent",
+      server.workingKey,
+      proxy.url,
+    );
+    const made = value(
+      await device.create({ type, properties: { title: "Ahead" } }),
+    );
+    const mine = value(
+      await device.writeRows(item, "steps", [
+        { op: "patch", id: row, values: { note: "offline" } },
+      ]),
+    );
+    await write(item, [{ op: "patch", id: row, values: { note: "other" } }]);
+    proxy.events = "silent";
+    const from = proxy.asked.length;
+    const started = Date.now();
+    const report = value(await device.drain());
+    const took = Date.now() - started;
+    proxy.events = null;
+    expect(verdictOf(report, made.id)).toBe("accepted");
+    expect(verdictOf(report, mine.id)).toBe("accepted");
+    const asked = proxy.asked.slice(from);
+    const created = asked.findIndex((one) => /^POST \/items(\?|$)/.test(one));
+    const stream = asked.findIndex((one) => one.startsWith("GET /events"));
+    const rows = asked.findIndex((one) =>
+      /^POST \/items\/[^/]+\/tables\/steps\/rows$/.test(one),
+    );
+    expect(created, asked.join("\n")).toBeGreaterThanOrEqual(0);
+    expect(stream, asked.join("\n")).toBeGreaterThan(created);
+    expect(rows, asked.join("\n")).toBeGreaterThan(stream);
+    expect(took).toBeGreaterThanOrEqual(5_000);
+    expect(took).toBeLessThan(10_000);
+  });
+
+  it("ends the wait 5 seconds after it began where the stream is slow to answer, whether it reads the head or catches up to it", async () => {
+    const proxy = await proxied();
+    for (const request of [1, 2]) {
+      const { item, row, device, mine } = await overlapped(
+        `caught-up-slow-${String(request)}`,
+        proxy.url,
+      );
+      proxy.slowEventRequest = proxy.eventRequests + request;
+      const started = Date.now();
+      const report = value(await device.drain());
+      const took = Date.now() - started;
+      expect(proxy.eventRequests, String(request)).toBeGreaterThanOrEqual(
+        proxy.slowEventRequest,
+      );
+      expect(took, String(request)).toBeLessThan(6_500);
+      expect(verdictOf(report, mine.id), String(request)).toBe("accepted");
+      expect((await serverRows(item))[row], String(request)).toEqual({
+        count: 1,
+        note: "offline",
+      });
+    }
+  });
+
+  it("ends the wait 5 seconds after it began where a read of a table's rows the catch-up makes is slow", async () => {
+    const proxy = await proxied();
+    const { item, row, device, mine } = await overlapped(
+      "caught-up-slow-rows",
+      proxy.url,
+    );
+    // Rows too large for the event to carry, so catching up reads them.
+    await write(
+      item,
+      Array.from({ length: 100 }, () => ({
+        op: "put",
+        id: uuidv7(),
+        values: { note: "x".repeat(1000) },
+      })),
+    );
+    proxy.slowRowReads = true;
+    const from = proxy.asked.length;
+    const started = Date.now();
+    const report = value(await device.drain());
+    const took = Date.now() - started;
+    proxy.slowRowReads = false;
+    const asked = proxy.asked.slice(from);
+    expect(
+      asked.some((one) => /^GET \/items\/[^/]+\/tables\/steps\/rows/.test(one)),
+      asked.join("\n"),
+    ).toBe(true);
+    expect(took).toBeLessThan(6_500);
+    // The other writer's patch came before the rows the catch-up could not read, so the copy applied it.
+    expect(verdictOf(report, mine.id)).toBe("conflicted");
+    expect(
+      report.verdicts.find((entry) => entry.id === mine.id)?.conflicts,
+    ).toEqual([{ row, column: "note" }]);
+    expect((await serverRows(item))[row]).toEqual({
+      count: 1,
+      note: "offline",
+    });
+  });
+
+  /** Two items of one type, each with a row a device holding the table whole patches, and another writer then patches. */
+  async function overlappedTwice(label: string, url: string) {
+    const type = await tableType();
+    const items = [await itemOf(type), await itemOf(type)];
+    const rows = [uuidv7(), uuidv7()];
+    for (const [at, item] of items.entries())
+      await write(item, [
+        { op: "put", id: rows[at], values: { count: 1, note: "a" } },
+      ]);
+    const device = await holding(type, label, server.workingKey, url);
+    const mine: QueuedWrite[] = [];
+    for (const [at, item] of items.entries())
+      mine.push(
+        value(
+          await device.writeRows(item, "steps", [
+            { op: "patch", id: rows[at], values: { note: "offline" } },
+          ]),
+        ),
+      );
+    for (const [at, item] of items.entries())
+      await write(item, [
+        { op: "patch", id: rows[at], values: { note: "other" } },
+      ]);
+    return { rows, device, mine };
+  }
+
+  it("waits once in a drain, before its first row write, and judges each row write by the value the copy showed when it was made", async () => {
+    const proxy = await proxied();
+    const { rows, device, mine } = await overlappedTwice(
+      "caught-up-once",
+      proxy.url,
+    );
+    const from = proxy.asked.length;
+    const report = value(await device.drain());
+    const asked = proxy.asked.slice(from);
+    const sent = asked.flatMap((one, at) =>
+      /^POST \/items\/[^/]+\/tables\/steps\/rows$/.test(one) ? [at] : [],
+    );
+    const streams = asked.flatMap((one, at) =>
+      one.startsWith("GET /events") ? [at] : [],
+    );
+    expect(sent, asked.join("\n")).toHaveLength(2);
+    expect(streams.length, asked.join("\n")).toBeGreaterThan(0);
+    expect(
+      streams.every((at) => at < sent[0]),
+      asked.join("\n"),
+    ).toBe(true);
+    for (const [at, write] of mine.entries()) {
+      const told = report.verdicts.find((entry) => entry.id === write.id);
+      expect(told?.verdict, String(at)).toBe("conflicted");
+      expect(told?.conflicts, String(at)).toEqual([
+        { row: rows[at], column: "note" },
+      ]);
+    }
+  });
+
+  it("waits once in a drain whose stream's head cannot be had, however many row writes it sends", async () => {
+    const proxy = await proxied();
+    const { device, mine } = await overlappedTwice(
+      "caught-up-once-silent",
+      proxy.url,
+    );
+    proxy.events = "silent";
+    const from = proxy.asked.length;
+    const started = Date.now();
+    const report = value(await device.drain());
+    const took = Date.now() - started;
+    proxy.events = null;
+    const asked = proxy.asked.slice(from);
+    expect(
+      asked.filter((one) => one.startsWith("GET /events")),
+      asked.join("\n"),
+    ).toHaveLength(1);
+    expect(
+      asked.filter((one) =>
+        /^POST \/items\/[^/]+\/tables\/steps\/rows$/.test(one),
+      ),
+      asked.join("\n"),
+    ).toHaveLength(2);
+    for (const write of mine)
+      expect(verdictOf(report, write.id)).toBe("accepted");
+    expect(took).toBeGreaterThanOrEqual(5_000);
+    expect(took).toBeLessThan(10_000);
   });
 });
 
