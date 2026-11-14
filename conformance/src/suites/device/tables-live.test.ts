@@ -585,12 +585,14 @@ describe("how a device fills a table", () => {
         failed: 1,
       });
 
+      // Written before the follow starts: a follow that lists the item's
+      // tables between its creation and its row holds the empty table whole.
+      const later = await itemOf(type);
+      await write(later, [{ op: "put", values: { count: 1 } }], "broken");
+      await filled(later, 3);
       const follow = device.holdFollow(60);
       const reader = device.reopen({ reader: true });
       try {
-        const later = await itemOf(type);
-        await write(later, [{ op: "put", values: { count: 1 } }], "broken");
-        await filled(later, 3);
         await until(async () => {
           const state = stateOf(
             value(await reader.heldTables()),
