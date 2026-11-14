@@ -121,6 +121,23 @@ function use(browser: Browser): Promise<Response> {
   });
 }
 
+/** Asks again until a request records the session's use: a busy writer may leave one unwritten, and only a recorded use sends the cookie again. */
+async function recordedUse(
+  browser: Browser,
+  send: () => Promise<Response> = () => use(browser),
+): Promise<Response> {
+  const id = await idOf(browser);
+  const tries = 5;
+  for (let attempt = 1; attempt <= tries; attempt += 1) {
+    const before = (await stored(id)).updated_at;
+    const response = await send();
+    if ((await stored(id)).updated_at > before) return response;
+  }
+  throw new Error(
+    `no request recorded the session's use in ${String(tries)} tries`,
+  );
+}
+
 function answered(
   method: string,
   path: string,
@@ -995,7 +1012,7 @@ describe("a browser session's idle week", () => {
     // a request 23 hours on would leave it alone.
     await pass(23 * HOUR);
     const before = Math.floor(serverNow());
-    const response = await use(browser);
+    const response = await recordedUse(browser);
     expect(response.status).toBe(200);
     const after = Math.ceil(serverNow());
     const row = await stored(id);
@@ -1018,17 +1035,19 @@ describe("a browser session's idle week", () => {
     const browser = await signIn();
     const id = await idOf(browser);
     await pass(2 * MINUTE);
-    const missing = await fetch(`${server.apiUrl}/owner/passkeys/absent`, {
-      method: "DELETE",
-      headers: { cookie: browser.cookie, origin },
-    });
+    const missing = await recordedUse(browser, () =>
+      fetch(`${server.apiUrl}/owner/passkeys/absent`, {
+        method: "DELETE",
+        headers: { cookie: browser.cookie, origin },
+      }),
+    );
     expect(missing.status).toBe(404);
     expect(cookieMaxAge(missing, browser.cookie)).toBe(COOKIE_SECONDS);
     expect((await stored(id)).updated_at).toBeGreaterThan(
       Math.floor(serverNow() - MINUTE),
     );
     await pass(2 * MINUTE);
-    const listed = await use(browser);
+    const listed = await recordedUse(browser);
     expect(listed.status).toBe(200);
     expect(cookieMaxAge(listed, browser.cookie)).toBe(COOKIE_SECONDS);
   });
@@ -1051,7 +1070,7 @@ describe("a browser session's idle week", () => {
       await server.clearFault();
     }
     expect((await stored(id)).updated_at).toBe(recorded);
-    const next = await use(browser);
+    const next = await recordedUse(browser);
     expect(next.status).toBe(200);
     expect(cookieMaxAge(next, browser.cookie)).toBe(COOKIE_SECONDS);
     expect((await stored(id)).updated_at).toBeGreaterThan(recorded);
@@ -1138,7 +1157,7 @@ describe("a restart", () => {
     expect((await refresh(endedApp)).status).toBe(400);
     expect(await itemsStatus(server, endedKey.key)).toBe(401);
     expect(await stored(liveId)).toEqual(before);
-    expect((await use(live)).status).toBe(200);
+    expect((await recordedUse(live)).status).toBe(200);
     const listed = (await signIns()).find((row) => row.id === liveId)!;
     // The session's use after the restart is recorded.
     expect(Date.parse(listed.last_used_at)).toBeGreaterThan(before.updated_at);
