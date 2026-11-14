@@ -136,7 +136,7 @@ fn write(path: &Path, held: &Held) -> Result<(), Failure> {
         .map_err(refused)
 }
 
-fn path_of(database: &DatabasePath) -> PathBuf {
+pub(crate) fn path_of(database: &DatabasePath) -> PathBuf {
     database.folder().join(FILE_NAME)
 }
 
