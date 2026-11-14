@@ -152,9 +152,7 @@ pub fn start(app: Arc<App>) {
     });
 }
 
-/// Runs the jobs that write nothing, such as the heartbeat, while a restore holds writes. It
-/// keeps their schedule in memory and records no run, since a record is a write; once the
-/// restore ends, the table's schedule takes them up again.
+/// Runs the jobs that write nothing while a restore holds writes, recording no run.
 async fn while_restoring(app: &Arc<App>) {
     let rows = app.db.read(schedule::rows).await.unwrap_or_else(|error| {
         tracing::warn!(%error, "The housekeeping schedule could not be read during a restore");

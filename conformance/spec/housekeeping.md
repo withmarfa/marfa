@@ -690,7 +690,7 @@ When a clock that was more than 7 days later than the trusted time is set right,
 
 While the server's clock is earlier than the trusted time, the server MUST move the server's time on from the trusted time at the rate time passes.
 
-**Reason:** a server time that stood still until the clock caught up would stop every schedule, retry wait, rate-limit window and expiry for that long. The server's time stays ahead of the clock by the step back until the clock is set forward or the owner confirms it (`housekeeping/clock-confirm`).
+**Reason:** a server time that stood still until the clock caught up would stop every schedule, retry wait, rate-limit window and expiry for that long. The server's time stays ahead of the clock by the step back until the clock is set forward or the owner confirms it (`housekeeping/clock-confirm`). A restart closes the gap by the time since the server's last write, because the server takes its time from that write.
 
 **Tests:** `compliance/clock-hold.test.ts › runs its jobs on schedule while the clock is a day behind`, `› ends a rate-limit window while the clock is a day behind`.
 

@@ -30,9 +30,6 @@ pub const BEHIND_MS: i64 = 3_600_000;
 const JUMP_MS: i64 = 60_000;
 
 /// The trusted time, and how long the clock has held clean-up.
-///
-/// The trusted time is the newest time the server used while clean-up was not held, or the
-/// time last confirmed: by the owner, or by a day of steady running.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Guard {
     trusted: Option<i64>,
@@ -112,8 +109,7 @@ pub enum Standing {
         wall: Stamp,
         ends: Stamp,
     },
-    /// The server's time runs on from the trusted time until the clock catches up or the owner
-    /// confirms the time.
+    /// The server's time runs on ahead of the clock.
     Behind {
         trusted: Stamp,
         wall: Stamp,
@@ -124,7 +120,7 @@ pub enum Standing {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Kept {
     pub trusted_at: Stamp,
-    /// The wall clock when the write committed.
+    /// The wall clock at the last look before the write.
     pub clock_at: Stamp,
     /// The wall-clock time the count toward a hold's end began, while clean-up holds.
     pub steady_from: Option<Stamp>,
@@ -258,8 +254,7 @@ impl Clock {
         guard.standing(wall, steady)
     }
 
-    /// Takes the wall clock as right, earlier or later, and ends a hold. Answers the time taken
-    /// and the guard as it was, for [`Clock::undo`] if the write that keeps it fails.
+    /// Takes the wall clock as right; answers the guard it replaced, for [`Clock::undo`].
     pub fn confirm(&self) -> (Stamp, Guard) {
         let mut guard = self.guard();
         let before = *guard;
@@ -278,9 +273,7 @@ impl Clock {
         };
     }
 
-    /// Writes what the clock knew at its last look in the transaction about to commit, so it
-    /// survives what that write does and a restart. It reads no clock itself, so a write that
-    /// asked no time changes nothing here.
+    /// Reads no clock, so a write that asked no time leaves the row as it is.
     pub fn keep(&self, tx: &rusqlite::Transaction<'_>) -> refusal::Result<()> {
         let guard = *self.guard();
         let (Some(trusted), Some((wall, steady))) = (guard.trusted, guard.last) else {

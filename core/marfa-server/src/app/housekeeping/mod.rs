@@ -534,8 +534,7 @@ mod tests {
     use crate::db::migrate::Migration;
     use crate::settings::DatabasePath;
 
-    /// A database with the jobs table and no table for what the clock keeps, so every write fails
-    /// as it commits.
+    /// No `clock_trust` table, so every write fails as it commits.
     const NO_CLOCK_TABLE: &[Migration] = &[Migration {
         version: 1,
         sql: "CREATE TABLE housekeeping_jobs (name TEXT PRIMARY KEY, next_run_at TEXT, last_outcome TEXT) STRICT;",
