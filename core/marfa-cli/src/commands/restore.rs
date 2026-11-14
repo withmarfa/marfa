@@ -32,7 +32,7 @@ pub fn answered(answer: &serde_json::Value, out: &Printer) -> Result<(), CliErro
         .get("set_up_again")
         .and_then(serde_json::Value::as_str)
     {
-        eprintln!("{note}");
+        crate::errln!("{note}");
     }
     let missing: Vec<String> = answer
         .get("blobs_missing")

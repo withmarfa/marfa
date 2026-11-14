@@ -37,7 +37,7 @@ impl Docker {
 
     fn show(&self, words: &str) {
         if self.trace {
-            eprintln!(
+            crate::errln!(
                 "{}",
                 crate::style::dim(crate::style::Stream::Err, &format!("  $ {words}"))
             );
@@ -201,7 +201,9 @@ impl Docker {
         let mut command = self.command(&all);
         command.current_dir(dir);
         if show {
-            command.stdout(Stdio::from(std::io::stderr().as_fd().try_clone_to_owned()?));
+            #[allow(clippy::disallowed_methods)]
+            let to_stderr = std::io::stderr().as_fd().try_clone_to_owned()?;
+            command.stdout(Stdio::from(to_stderr));
             command.stderr(Stdio::inherit());
             let status = command
                 .status()
@@ -300,7 +302,7 @@ pub fn ensure_engine(docker: &Docker, seconds: u64, trace: bool) -> Result<(), C
         ));
     };
     if trace {
-        eprintln!("  $ open -g -a {app}");
+        crate::errln!("  $ open -g -a {app}");
     }
     let _ = Command::new("open").args(["-g", "-a", app]).output();
     let deadline = Instant::now() + Duration::from_secs(seconds);

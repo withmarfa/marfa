@@ -148,7 +148,7 @@ fn said(output: &Output) -> String {
 
 fn ran(scope: Scope, arguments: &[&str], trace: bool) -> Result<Output, CliError> {
     if trace {
-        eprintln!("  $ {}", shown(scope, arguments));
+        crate::errln!("  $ {}", shown(scope, arguments));
     }
     systemctl(scope, arguments).output().map_err(|error| {
         if error.kind() == std::io::ErrorKind::NotFound {
@@ -303,7 +303,7 @@ pub fn linger(trace: bool) -> Result<Linger, CliError> {
         return Ok(Linger::Already);
     }
     if trace {
-        eprintln!("  $ loginctl enable-linger {user}");
+        crate::errln!("  $ loginctl enable-linger {user}");
     }
     let output = Command::new(tool("loginctl"))
         .args(["enable-linger", &user])

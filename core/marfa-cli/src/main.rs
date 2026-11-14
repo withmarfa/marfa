@@ -29,6 +29,7 @@ mod values;
 mod watch;
 mod writing;
 
+use std::io::Write as _;
 use std::process::ExitCode;
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
@@ -469,11 +470,11 @@ fn refused(error: &CliError, json: bool) -> ExitCode {
 
 fn print_refusal(error: &CliError, json: bool, aim: Option<&hint::Aim>) {
     if json {
-        eprintln!("{}", error.envelope());
+        let _ = writeln!(output::stderr_json(), "{}", error.envelope());
     } else {
-        eprintln!("{} {error}", style::bad(style::Stream::Err, "marfa:"));
+        crate::errln!("{} {error}", style::bad(style::Stream::Err, "marfa:"));
         if let Some(hint) = aim.and_then(|aim| hint::for_error(error, aim)) {
-            eprintln!("{hint}");
+            crate::errln!("{hint}");
         }
     }
 }

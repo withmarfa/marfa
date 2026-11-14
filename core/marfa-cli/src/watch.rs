@@ -75,7 +75,7 @@ pub fn watch_every(named: &Named, stop_after: Option<u64>, json: bool) -> Result
     })?;
     interrupt::stop_on_interrupt();
     let stop = interrupt::stop_after(stop_after);
-    eprintln!(
+    crate::errln!(
         "watching every folder {} lists (interrupt to stop)",
         registry.path().display()
     );
@@ -300,7 +300,7 @@ fn record_unwritten(json: bool, path: &Path, reason: &str) {
             String::new,
         );
     } else {
-        eprintln!("{reason}; the watch goes on without it");
+        crate::errln!("{reason}; the watch goes on without it");
     }
 }
 
@@ -349,8 +349,8 @@ impl Say<'_> {
     /// A line for a person on stderr, in either mode.
     fn note(&self, text: &str) {
         match self.dir {
-            None => eprintln!("{text}"),
-            Some(dir) => eprintln!("{}", prefixed(dir, text)),
+            None => crate::errln!("{text}"),
+            Some(dir) => crate::errln!("{}", prefixed(dir, text)),
         }
     }
 }

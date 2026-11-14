@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io::{self, Write};
 
 use marfa_core::{Completeness, DrainReport, Item, QueuedWrite, Rows, SearchHit, Shown};
@@ -6,12 +7,138 @@ use serde_json::Value;
 
 use crate::error::CliError;
 
+/// Where text for a person reaches a terminal: every control and
+/// bidirectional formatting character in it is shown as an escape sequence,
+/// except the line break, the tab and the colours `style` draws. `clippy.toml`
+/// forbids the print macros and the standard streams everywhere else.
+pub struct Terminal<W: Write> {
+    to: W,
+    text: bool,
+}
+
+/// Standard output for a person. `json` is the JSON document of a command
+/// given `--json`, which passes unchanged.
+pub fn stdout(json: bool) -> Terminal<io::StdoutLock<'static>> {
+    #[allow(clippy::disallowed_methods)]
+    let to = io::stdout().lock();
+    Terminal { to, text: !json }
+}
+
+pub fn stderr() -> Terminal<io::Stderr> {
+    #[allow(clippy::disallowed_methods)]
+    let to = io::stderr();
+    Terminal { to, text: true }
+}
+
+/// Standard error carrying a command's JSON error, which passes unchanged.
+pub fn stderr_json() -> Terminal<io::Stderr> {
+    #[allow(clippy::disallowed_methods)]
+    let to = io::stderr();
+    Terminal { to, text: false }
+}
+
+/// Standard output exactly as written, for the bytes of a file or a document
+/// a person asked for by name.
+pub fn stdout_bytes() -> io::StdoutLock<'static> {
+    #[allow(clippy::disallowed_methods)]
+    let lock = io::stdout().lock();
+    lock
+}
+
+pub fn stdout_is_terminal() -> bool {
+    use std::io::IsTerminal;
+    #[allow(clippy::disallowed_methods)]
+    io::stdout().is_terminal()
+}
+
+pub fn stderr_is_terminal() -> bool {
+    use std::io::IsTerminal;
+    #[allow(clippy::disallowed_methods)]
+    io::stderr().is_terminal()
+}
+
+/// One line of standard output for a person.
+pub fn say(text: std::fmt::Arguments<'_>) {
+    let _ = writeln!(stdout(false), "{text}");
+}
+
+/// `eprintln!` through [`stderr`].
+#[macro_export]
+macro_rules! errln {
+    ($($arg:tt)*) => {
+        $crate::output::error_line(format_args!($($arg)*))
+    };
+}
+
+pub fn error_line(line: std::fmt::Arguments<'_>) {
+    let _ = writeln!(stderr(), "{line}");
+}
+
+impl<W: Write> Write for Terminal<W> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.text {
+            self.to
+                .write_all(safe(&String::from_utf8_lossy(bytes)).as_bytes())?;
+        } else {
+            self.to.write_all(bytes)?;
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.to.flush()
+    }
+}
+
+/// The colour sequences `style` draws, the only escape sequences let through.
+const DRAWN: [&str; 5] = [
+    "\u{1b}[1m",
+    "\u{1b}[2m",
+    "\u{1b}[1;32m",
+    "\u{1b}[1;31m",
+    "\u{1b}[0m",
+];
+
+fn needs_escape(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{61C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+        )
+}
+
+/// `text` as a terminal may be given it: see [`Terminal`].
+fn safe(text: &str) -> Cow<'_, str> {
+    if !text
+        .chars()
+        .any(|c| needs_escape(c) && c != '\n' && c != '\t')
+    {
+        return Cow::Borrowed(text);
+    }
+    let mut shown = String::with_capacity(text.len() + 16);
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        if let Some(drawn) = DRAWN.iter().find(|drawn| rest.starts_with(**drawn)) {
+            shown.push_str(drawn);
+            rest = &rest[drawn.len()..];
+            continue;
+        }
+        if needs_escape(c) && c != '\n' && c != '\t' {
+            shown.extend(c.escape_unicode());
+        } else {
+            shown.push(c);
+        }
+        rest = &rest[c.len_utf8()..];
+    }
+    Cow::Owned(shown)
+}
+
 pub fn report<T: Serialize>(
     value: &T,
     json: bool,
     human: impl FnOnce() -> String,
 ) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(json);
     if json {
         writeln!(out, "{}", serde_json::to_string_pretty(value)?)?;
     } else {
@@ -25,7 +152,7 @@ pub fn line_of<T: Serialize>(
     json: bool,
     human: impl FnOnce() -> String,
 ) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(json);
     if json {
         writeln!(out, "{}", serde_json::to_string(value)?)?;
     } else {
@@ -53,12 +180,12 @@ pub fn listing(listed: Rows<(Item, Shown)>, json: bool) -> Result<(), CliError> 
 
 /// `shown` holds what each item shows, in the same order.
 pub fn item_lines(items: &[Item], shown: &[Shown]) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(false);
     for (item, shown) in items.iter().zip(shown) {
         writeln!(out, "{}", line(item, shown))?;
     }
     if items.is_empty() {
-        eprintln!("(no items)");
+        crate::errln!("(no items)");
     }
     Ok(())
 }
@@ -67,17 +194,17 @@ pub fn item_lines(items: &[Item], shown: &[Shown]) -> Result<(), CliError> {
 pub(crate) fn note_partial(completeness: Completeness) {
     match completeness {
         Completeness::Complete => {}
-        Completeness::Partial => eprintln!(
+        Completeness::Partial => crate::errln!(
             "(partial: a hydration is filling this copy, and items still arriving are not shown)"
         ),
-        Completeness::Stale => eprintln!(
+        Completeness::Stale => crate::errln!(
             "(stale: the server's event log no longer reaches this copy, so items may have changed or gone until a hydration fills it again)"
         ),
     }
 }
 
 pub fn item(item: &Item, shown: &Shown, json: bool) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(json);
     if json {
         writeln!(out, "{}", serde_json::to_string_pretty(item)?)?;
     } else {
@@ -97,7 +224,7 @@ pub fn item(item: &Item, shown: &Shown, json: bool) -> Result<(), CliError> {
 /// No verdict column: the write has not been sent, and "unanswered" here would
 /// read as an answer.
 pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(json);
     if json {
         writeln!(out, "{}", serde_json::to_string_pretty(write)?)?;
         return Ok(());
@@ -128,7 +255,7 @@ pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
 /// An edit that changed nothing queued no write: `null` in JSON, so a script
 /// reads it as no write and not as an error.
 pub fn nothing_queued(json: bool) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(json);
     if json {
         writeln!(out, "null")?;
     } else {
@@ -147,7 +274,7 @@ pub fn queued(
     landing: &std::collections::HashMap<String, String>,
     json: bool,
 ) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(json);
     if json {
         writeln!(out, "{}", serde_json::to_string_pretty(writes)?)?;
         return Ok(());
@@ -227,7 +354,7 @@ pub fn queued(
         )?;
     }
     if writes.is_empty() {
-        eprintln!("(nothing queued)");
+        crate::errln!("(nothing queued)");
     }
     Ok(())
 }
@@ -250,7 +377,7 @@ pub fn found(found: Rows<(SearchHit, Shown)>, json: bool) -> Result<(), CliError
 
 /// `shown` holds what each hit's item shows, in the same order.
 fn hit_lines(hits: &[SearchHit], shown: &[Shown]) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(false);
     for (hit, shown) in hits.iter().zip(shown) {
         writeln!(out, "{:>7.3}  {}", hit.score, line(&hit.item, shown))?;
         if !hit.snippet.is_empty() {
@@ -262,7 +389,7 @@ fn hit_lines(hits: &[SearchHit], shown: &[Shown]) -> Result<(), CliError> {
         }
     }
     if hits.is_empty() {
-        eprintln!("(no matches)");
+        crate::errln!("(no matches)");
     }
     Ok(())
 }
@@ -511,7 +638,7 @@ pub struct Printer {
 
 impl Printer {
     pub fn value(&self, value: &Value) -> Result<(), CliError> {
-        let mut out = io::stdout().lock();
+        let mut out = stdout(self.json);
         if self.json {
             writeln!(out, "{}", serde_json::to_string_pretty(value)?)?;
         } else {
@@ -521,14 +648,15 @@ impl Printer {
     }
 
     pub fn line(&self, text: &str) -> Result<(), CliError> {
-        let mut out = io::stdout().lock();
+        let mut out = stdout(false);
         writeln!(out, "{text}")?;
         Ok(())
     }
 
-    /// Text exactly as given, with nothing added after it.
+    /// Text exactly as given, with nothing added after it: a JSON document,
+    /// or a page already made safe for a terminal.
     pub fn raw(&self, text: &str) -> Result<(), CliError> {
-        let mut out = io::stdout().lock();
+        let mut out = stdout_bytes();
         out.write_all(text.as_bytes())?;
         out.flush()?;
         Ok(())
@@ -543,7 +671,7 @@ impl Printer {
     }
 
     pub fn record(&self, value: &Value, human: impl FnOnce() -> String) -> Result<(), CliError> {
-        let mut out = io::stdout().lock();
+        let mut out = stdout(self.json);
         if self.json {
             writeln!(out, "{}", serde_json::to_string(value)?)?;
         } else {
@@ -1857,7 +1985,7 @@ pub(crate) mod tests {
 pub fn printable(text: &str) -> String {
     text.chars()
         .map(|c| {
-            if c.is_control() || matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}') {
+            if needs_escape(c) {
                 c.escape_unicode().to_string()
             } else {
                 c.to_string()
@@ -1882,5 +2010,52 @@ mod printable_tests {
         assert_eq!(printable("evil\u{202e}txt.exe"), "evil\\u{202e}txt.exe");
         assert_eq!(printable("x\u{2068}y"), "x\\u{2068}y");
         assert_eq!(printable("Café naïve \u{1F600}"), "Café naïve \u{1F600}");
+    }
+}
+
+#[cfg(test)]
+mod terminal_tests {
+    use super::{Terminal, printable, safe};
+    use std::io::Write;
+
+    const HOSTILE: &str = "a\u{1b}]0;x\u{7}\u{1b}[2K\r\u{85}\u{9b}31m\u{202e}b\u{2066}c\u{200f}d";
+
+    fn through(text: bool, said: &str) -> String {
+        let mut sink = Terminal {
+            to: Vec::new(),
+            text,
+        };
+        write!(sink, "{said}").unwrap();
+        String::from_utf8(sink.to).unwrap()
+    }
+
+    fn bare(text: &str) -> bool {
+        !text.chars().any(|c| {
+            c != '\n' && c != '\t' && (c.is_control() || printable(&c.to_string()) != c.to_string())
+        })
+    }
+
+    #[test]
+    fn everything_written_for_a_person_shows_stored_text_without_its_controls() {
+        let shown = through(true, &format!("title {HOSTILE}\n\tnext"));
+        assert!(bare(&shown), "{shown:?}");
+        assert!(shown.contains("title a\\u{1b}]0;x\\u{7}"), "{shown}");
+        assert!(shown.ends_with("\n\tnext"), "{shown}");
+    }
+
+    #[test]
+    fn json_passes_unchanged() {
+        assert_eq!(through(false, HOSTILE), HOSTILE);
+    }
+
+    #[test]
+    fn only_the_colours_the_binary_draws_are_let_through() {
+        let drawn = "\u{1b}[1;31mbad\u{1b}[0m";
+        assert_eq!(safe(drawn), drawn);
+        let forged = "\u{1b}[8mhidden\u{1b}[1;3\u{1b}[1m";
+        let shown = safe(forged);
+        assert!(shown.starts_with("\\u{1b}[8mhidden"), "{shown}");
+        assert!(shown.ends_with("\\u{1b}[1;3\u{1b}[1m"), "{shown}");
+        assert_eq!(shown.matches('\u{1b}').count(), 1, "{shown}");
     }
 }

@@ -34,7 +34,7 @@ pub fn announce(origin: &str) {
         .get()
         .filter(|(chosen, _)| chosen == origin)
         .map(|(_, name)| name.as_str());
-    let _ = writeln!(std::io::stderr(), "{}", line(origin, profile));
+    let _ = writeln!(crate::output::stderr(), "{}", line(origin, profile));
 }
 
 fn line(origin: &str, profile: Option<&str>) -> String {

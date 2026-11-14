@@ -3532,13 +3532,13 @@ If a transfer to a file named by `--output` ends before the whole answer arrives
 
 **Tests:** `cli/key-and-files.test.ts › replaces the file at --output only when the download arrives whole and matches its digest`.
 
-### `device/command-listing-printable`
+### `device/command-text-printable`
 
-When a command prints a listing or a table without `--json`, the CLI MUST print each control character and bidirectional formatting character in text a server holds as an escape sequence.
+When a command prints text a server holds, without `--json`, the CLI MUST print each control character and bidirectional formatting character in it as an escape sequence.
 
-**Reason:** a title or a name is text on the line it was printed on, and must not move the cursor, erase a line or reorder what follows it.
+**Reason:** a title, a name or a message is text on the line it was printed on, and must not move the cursor, erase a line, retitle the window or reorder what follows it.
 
-**Tests:** `cli/key-and-files.test.ts › prints no control or bidirectional character from a title, and --json is unchanged`.
+**Tests:** `cli/key-and-files.test.ts › prints no control or bidirectional character from a title, and --json is unchanged`, `› print no control or bidirectional character from a view's title`.
 
 ### `device/command-cleartext-allow-flag`
 

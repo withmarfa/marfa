@@ -1,4 +1,4 @@
-use std::io::{self, IsTerminal, Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread::JoinHandle;
@@ -97,7 +97,7 @@ fn request_waiting(args: &ExportArgs, archive_wait: Duration) -> Result<Request,
 }
 
 pub fn run(args: ExportArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
-    refuse_terminal(&args, io::stdout().is_terminal())?;
+    refuse_terminal(&args, crate::output::stdout_is_terminal())?;
     run_waiting(args, remote, out, ARCHIVE_WAIT)
 }
 
@@ -124,7 +124,7 @@ fn run_waiting(
     let (content_type, reader) = {
         let _remarks = (args.format == ExportFormat::Archive).then(|| {
             Remarks::every(FIRST_REMARK, REMARK_EVERY, |waited| {
-                eprintln!(
+                crate::errln!(
                     "still preparing the archive ({}s): the server checks every item before it sends the first byte",
                     waited.as_secs()
                 );
@@ -148,7 +148,7 @@ fn run_waiting(
         }
         None => {
             // Raw even under `--json`: an archive is bytes to redirect.
-            let mut stdout = io::stdout().lock();
+            let mut stdout = crate::output::stdout_bytes();
             io::copy(&mut reader, &mut stdout)?;
             stdout.flush()?;
             reader.whole()

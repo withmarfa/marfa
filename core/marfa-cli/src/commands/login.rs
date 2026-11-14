@@ -124,7 +124,7 @@ pub fn run(
     let sentence = approval_sentence(&page, &code.user_code, stream);
     if args.print_token && !out.json {
         // The token set is the one document on stdout.
-        eprintln!("{sentence}");
+        crate::errln!("{sentence}");
     } else {
         out.record(
             &json!({
@@ -157,7 +157,7 @@ pub fn run(
         }
         // The person has approved, so the set is printed rather than lost.
         Err(CliError::NoKeychain(reason)) => {
-            eprintln!(
+            crate::errln!(
                 "marfa: the keychain did not take the token ({reason}); it is printed instead"
             );
             print_set(&token, &client_id, out)

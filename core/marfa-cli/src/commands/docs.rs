@@ -4,7 +4,6 @@
 //! `marfa_core::http::Http`: both send a credential and check the contract
 //! header, and the site has neither.
 
-use std::io::IsTerminal;
 use std::time::Duration;
 
 use clap::builder::NonEmptyStringValueParser;
@@ -649,7 +648,7 @@ pub fn run(args: DocsArgs, named: &Named, out: &Printer) -> Result<(), CliError>
                     shown["section"] = json!(heading);
                 }
                 out.value(&shown)
-            } else if std::io::stdout().is_terminal() {
+            } else if crate::output::stdout_is_terminal() {
                 out.raw(&for_terminal(&page.markdown))
             } else {
                 out.raw(&page.markdown)

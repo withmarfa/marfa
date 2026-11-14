@@ -37,7 +37,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         && !args.external_settings
         && !args.docker
     {
-        eprintln!("{OPTIONS_HINT}\n");
+        crate::errln!("{OPTIONS_HINT}\n");
     }
     let external = args.external_settings || existing.as_ref().is_some_and(|(s, _)| s.external);
 
@@ -293,7 +293,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         }),
         Access::Cloudflare | Access::Proxy => {
             if prompter.asking() && args.address.is_none() {
-                eprintln!(
+                crate::errln!(
                     "Point your {} at {} on this machine.",
                     if access == Access::Cloudflare {
                         "Cloudflare Tunnel"
@@ -590,7 +590,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     {
         steps.say("Taking the old address off your tailnet...");
         if let Err(error) = tailscale::unserve(*https, target, !out.json) {
-            eprintln!(
+            crate::errln!(
                 "The old address stays on your tailnet: {error}. Remove it with `tailscale serve --https={https} off`."
             );
         }
@@ -639,11 +639,11 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             Runtime::Docker => super::PrivateCommand::Container(name.to_string()),
         };
         if sign_in.is_none() {
-            eprintln!(
+            crate::errln!(
                 "The server signs in at {held}, and this run left it there. To clear it, run this again with --access local."
             );
         } else {
-            eprintln!(
+            crate::errln!(
                 "The server signs in at {held}, and this run left it there. To move it, run this again with --address (or --access), or run {}.",
                 private.run_text("config update --body '{\"sign_in_address\": \"<url>\", \"confirm_sign_in_address_change\": true}'")
             );

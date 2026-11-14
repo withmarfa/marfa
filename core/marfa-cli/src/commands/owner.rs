@@ -133,7 +133,7 @@ fn set_address(remote: &Remote, address: Option<&str>, out: &Printer) -> Result<
     if let Some(set) = crate::server::address::ensure(remote, address)?
         && !out.json
     {
-        eprintln!("Set the sign-in address to {set}.");
+        crate::errln!("Set the sign-in address to {set}.");
     }
     Ok(())
 }
@@ -234,7 +234,7 @@ pub fn setup(command: SetupCommand, remote: &Remote, out: &Printer) -> Result<()
                 };
                 let status = std::process::Command::new(command).arg(link).status();
                 if !status.is_ok_and(|status| status.success()) {
-                    eprintln!("Could not open a browser; use the setup link below.");
+                    crate::errln!("Could not open a browser; use the setup link below.");
                 }
             }
             out.value(&result)

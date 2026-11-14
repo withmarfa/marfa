@@ -765,12 +765,12 @@ pub fn resume_after_credential_kept(origin: &str) {
         marfa_core::folder::follows(&Registry::at(registry), origin)
     };
     match Place::here().and_then(|place| resume(&place, origin, follows).map(|ran| (place, ran))) {
-        Ok((place, true)) => eprintln!(
+        Ok((place, true)) => crate::errln!(
             "restarted {}, so the folder watch uses this credential",
             place.manager.name()
         ),
         Ok((_, false)) => {}
-        Err(error) => eprintln!(
+        Err(error) => crate::errln!(
             "the credential is kept, but the folder watch could not be restarted ({error}); `marfa folders autostart on` starts it"
         ),
     }

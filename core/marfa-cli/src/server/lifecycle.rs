@@ -664,12 +664,12 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
             ));
         }
         if state.external {
-            eprintln!(
+            crate::errln!(
                 "This deletes every item and file in {place}. {} is managed elsewhere and stays.",
                 folder.path(files::SETTINGS).display()
             );
         } else {
-            eprintln!(
+            crate::errln!(
                 "This deletes every item and file in {place}, and the secrets in {}.",
                 folder.path(files::SETTINGS).display()
             );
@@ -703,7 +703,7 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
             !out.json,
         ) {
             Ok(done) => unserved = done,
-            Err(error) => eprintln!(
+            Err(error) => crate::errln!(
                 "The address stays on your tailnet: {error}. Remove it with `tailscale serve --https={https} off`."
             ),
         }
@@ -716,7 +716,7 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
                 docker.remove_volume(&volume)?;
                 // A proxy of the person's may have joined the network.
                 if let Err(error) = docker.remove_network(&net) {
-                    eprintln!("The Docker network {net} stays: {error}");
+                    crate::errln!("The Docker network {net} stays: {error}");
                 }
             }
             Runtime::Native => {

@@ -1268,7 +1268,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     marfa_core::Hydration::Never | marfa_core::Hydration::InProgress
                 )
             {
-                eprintln!(
+                crate::errln!(
                     "this copy is not hydrated, so the follow waits for a hydration; this process holds the store until it ends, so run `device hydrate` first"
                 );
             }
@@ -1333,8 +1333,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     )
                 } else {
                     match r#for {
-                        Some(seconds) => eprintln!("watching for saves for {seconds}s"),
-                        None => eprintln!("watching for saves (interrupt to stop)"),
+                        Some(seconds) => crate::errln!("watching for saves for {seconds}s"),
+                        None => crate::errln!("watching for saves (interrupt to stop)"),
                     }
                     Ok(())
                 }
@@ -1353,7 +1353,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     marfa_core::Hydration::Never | marfa_core::Hydration::InProgress
                 )
             {
-                eprintln!(
+                crate::errln!(
                     "this copy is not hydrated, so the watch waits for a hydration; this process holds the store until it ends, so run `device hydrate` first"
                 );
             }
@@ -1556,7 +1556,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         json,
                     )?;
                     if let Some(embed) = &attached.embed {
-                        println!("embed it in the item's body with {embed}");
+                        crate::output::say(format_args!("embed it in the item's body with {embed}"));
                     }
                     Ok(())
                 }

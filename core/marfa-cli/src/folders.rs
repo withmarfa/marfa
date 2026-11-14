@@ -674,7 +674,8 @@ fn unmatched(dir: &Path, remove: bool, yes: bool, json: bool) -> Result<(), CliE
             describe_unmatched(&files)
         });
     }
-    let at_terminal = !json && std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+    let at_terminal =
+        !json && std::io::stdin().is_terminal() && crate::output::stderr_is_terminal();
     if !yes && !at_terminal {
         return Err(CliError::Usage(
             "`folders unmatched --remove` asks only at a terminal and without --json, and otherwise takes away nothing; pass --yes to confirm it".into(),
@@ -758,7 +759,7 @@ fn describe_unmatched(files: &[marfa_core::Unmatched]) -> String {
 /// Asks at a terminal; the caller has already made sure there is one.
 fn asks_to_remove(dir: &Path, going: &[String]) -> Result<bool, CliError> {
     use std::io::{BufRead, Write};
-    let mut question = std::io::stderr();
+    let mut question = crate::output::stderr();
     writeln!(
         question,
         "{} unmatched file(s) in {} would be removed; their items stay in Marfa as they are:",
@@ -908,7 +909,7 @@ fn asked(dir: &Path) -> impl FnOnce(CoreError) -> CliError + '_ {
 /// build of the core made (`folders/refused-store-replaced-told`).
 fn say_replaced(folder: &Folder) {
     if let Some(reason) = folder.replaced_store() {
-        eprintln!(
+        crate::errln!(
             "marfa: replaced the store of {}, which another build of the core made ({reason}); it held no write still to be sent and no answer the folder had yet to record, so the new store keeps the folder's record of each file and is filled again from the server; the replacement changes no file",
             folder.root().display()
         );
@@ -1314,10 +1315,10 @@ fn first_sync_json(
 /// `--yes` has not agreed.
 fn asks_to_go_ahead(dir: &Path, plan: &FirstSync) -> Result<bool, CliError> {
     use std::io::{BufRead, IsTerminal, Write};
-    if !std::io::stdin().is_terminal() || !std::io::stderr().is_terminal() {
+    if !std::io::stdin().is_terminal() || !crate::output::stderr_is_terminal() {
         return Ok(false);
     }
-    let mut question = std::io::stderr();
+    let mut question = crate::output::stderr();
     writeln!(
         question,
         "the first sync of {} will write and send nothing until you agree: {}",

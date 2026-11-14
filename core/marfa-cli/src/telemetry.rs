@@ -72,7 +72,7 @@ fn start_with(command: &str, json: bool, get: impl Fn(&str) -> Option<String>) -
         Reading::Off => None,
         Reading::Ignored(variable) => {
             if !json {
-                eprintln!(
+                crate::errln!(
                     "marfa: {variable} is not an http or https address, so this run sends no traces"
                 );
             }
@@ -98,7 +98,7 @@ fn exceptions(
         posthog::Reading::Off => None,
         posthog::Reading::Said(said) => {
             if !json {
-                eprintln!("marfa: {said}");
+                crate::errln!("marfa: {said}");
             }
             None
         }

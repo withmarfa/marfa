@@ -20,7 +20,7 @@ pub fn warn(folder: &Folder) {
         folder.root(),
         &|| folder.storage_cause(),
         &WARNED,
-        &mut std::io::stderr(),
+        &mut crate::output::stderr(),
     );
 }
 
@@ -29,7 +29,7 @@ pub fn warn(folder: &Folder) {
 /// there, and a watch would repeat advice that no longer changes anything.
 pub fn warn_git(folder: &Folder) {
     if folder.git_tracked() {
-        let _ = writeln!(std::io::stderr(), "{}", git_notice(folder.root()));
+        let _ = writeln!(crate::output::stderr(), "{}", git_notice(folder.root()));
     }
 }
 
@@ -47,7 +47,7 @@ pub fn warn_of(dir: &Path, cause: &StorageCause) {
         dir,
         &|| Some(cause.clone()),
         &WARNED,
-        &mut std::io::stderr(),
+        &mut crate::output::stderr(),
     );
 }
 

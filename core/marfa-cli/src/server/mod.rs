@@ -725,7 +725,7 @@ struct Steps {
 impl Steps {
     fn say(&self, text: &str) {
         if !self.quiet {
-            eprintln!("{}", style::bold(Stream::Err, text));
+            crate::errln!("{}", style::bold(Stream::Err, text));
         }
     }
 }

@@ -64,7 +64,7 @@ pub fn run(command: PasskeysCommand, remote: &Remote, out: &Printer) -> Result<(
                     .status()
                     .is_ok_and(|s| s.success())
                 {
-                    eprintln!("Could not open a browser; use the sign-in URL below.");
+                    crate::errln!("Could not open a browser; use the sign-in URL below.");
                 }
             }
             out.report(&answer, || link.to_string())

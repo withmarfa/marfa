@@ -122,7 +122,7 @@ pub(super) fn save(
             Ok(written)
         }
         None => {
-            let mut stdout = io::stdout().lock();
+            let mut stdout = crate::output::stdout_bytes();
             let written = io::copy(reader, &mut stdout)?;
             stdout.flush()?;
             Ok(written)

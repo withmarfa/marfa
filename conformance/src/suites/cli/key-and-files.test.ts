@@ -14,7 +14,7 @@ import {
 import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { cleanup, trackItem } from "../../utils/setup.js";
+import { cleanup, trackItem, trackView } from "../../utils/setup.js";
 import { cliContext } from "./harness.js";
 import type { CliContext, ItemEnvelope } from "./harness.js";
 
@@ -262,6 +262,9 @@ describe("a file the binary writes", () => {
 const HOSTILE =
   "\u001b]0;pwned\u0007\u001b]52;c;aGk=\u0007\u001b[2Kfake\u009b31m‮⁦⁩end";
 
+// eslint-disable-next-line no-control-regex
+const CONTROLS = /[\u0000-\u0009\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/;
+
 describe("a listing of items", () => {
   it("prints no control or bidirectional character from a title, and --json is unchanged", async () => {
     const created = await c.cli.json<ItemEnvelope>([
@@ -285,10 +288,7 @@ describe("a listing of items", () => {
     ]);
     expect(listed.code, listed.stderr).toBe(0);
     expect(listed.stdout).toContain(created.item.id);
-    // eslint-disable-next-line no-control-regex
-    expect(listed.stdout).not.toMatch(
-      /[\u0000-\u0009\u000b-\u001f\u007f-\u009f‪-‮⁦-⁩]/,
-    );
+    expect(listed.stdout).not.toMatch(CONTROLS);
     expect(listed.stdout).toContain("fake");
 
     const json = await c.cli.json([
@@ -301,5 +301,43 @@ describe("a listing of items", () => {
     expect(JSON.stringify(json)).toContain(
       JSON.stringify(HOSTILE).slice(1, -1),
     );
+  });
+});
+
+describe("the overview and a device's copy of the views", () => {
+  it("print no control or bidirectional character from a view's title", async () => {
+    const made = await c.cli.json<{ item: { id: string } }>([
+      "views",
+      "create",
+      "--title",
+      HOSTILE,
+      "--query",
+      JSON.stringify({ filter: `source eq "${c.ctx.source}"` }),
+    ]);
+    trackView(c.ctx, made.item.id);
+
+    const overview = await c.cli.run(["overview"]);
+    expect(overview.code, overview.stderr).toBe(0);
+    expect(overview.stdout).toContain(made.item.id);
+    expect(overview.stdout).not.toMatch(CONTROLS);
+    expect(overview.stdout).toContain("fake");
+
+    const db = join(dir, "copy.sqlite");
+    const hydrated = await c.cli.run([
+      "device",
+      "--db",
+      db,
+      "hydrate",
+      "--types",
+      "system.view",
+      "--tier",
+      "all",
+    ]);
+    expect(hydrated.code, hydrated.stderr).toBe(0);
+    const listed = await c.cli.run(["device", "--db", db, "views", "list"]);
+    expect(listed.code, listed.stderr).toBe(0);
+    expect(listed.stdout).toContain(made.item.id);
+    expect(listed.stdout).not.toMatch(CONTROLS);
+    expect(listed.stdout).toContain("fake");
   });
 });
