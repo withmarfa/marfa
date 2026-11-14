@@ -809,6 +809,41 @@ mod tests {
     }
 
     #[test]
+    fn a_document_leaves_out_an_optional_value_past_its_bound_and_still_registers() {
+        let long_uri = format!("https://app.example/{}", "a".repeat(600));
+        let mut body = document();
+        for name in ["client_uri", "logo_uri", "tos_uri", "policy_uri"] {
+            body = with(body, name, json!(long_uri));
+        }
+        let body = with(body, "software_id", json!("i".repeat(101)));
+        let body = with(body, "software_version", json!("v".repeat(101)));
+        let body = with(body, "scope", json!(vec!["core.note:read"; 80].join(" ")));
+        let body = with(body, "contacts", json!(vec!["ops@app.example"; 6]));
+        let registered = parse(&body).expect("registered");
+        assert_eq!(registered.client_name.as_deref(), Some("An app"));
+        assert_eq!(registered.client_uri, None);
+        assert_eq!(registered.logo_uri, None);
+        assert_eq!(registered.tos_uri, None);
+        assert_eq!(registered.policy_uri, None);
+        assert_eq!(registered.software_id, None);
+        assert_eq!(registered.software_version, None);
+        assert!(registered.contacts.is_empty());
+        assert_eq!(
+            registered.scope.to_text(),
+            "content:read content:write edge.*:read edge.*:write offline_access"
+        );
+
+        let at_bound = with(
+            document(),
+            "client_uri",
+            json!(format!("https://app.example/{}", "a".repeat(492))),
+        );
+        assert!(parse(&at_bound).expect("registered").client_uri.is_some());
+        let named_long = with(document(), "client_name", json!("n".repeat(101)));
+        assert!(parse(&named_long).is_err());
+    }
+
+    #[test]
     fn a_document_says_nothing_of_its_kind_and_its_redirects_decide() {
         for uri in ["http://127.0.0.1/callback", "com.example.app:/callback"] {
             let body = with(document(), "redirect_uris", json!([uri]));

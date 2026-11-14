@@ -9658,7 +9658,7 @@
             "items": {
               "type": "string",
               "format": "uri",
-              "maxLength": 2048
+              "maxLength": 256
             },
             "minItems": 1,
             "description": "The addresses Marfa may send a person back to after authorization. Required for `authorization_code`. At most 10. A `web` client's URIs must use `https` off the loopback; a `native` client may use `http` on `localhost`, `127.0.0.1` or `[::1]`.",
@@ -9667,22 +9667,22 @@
           "scope": {
             "type": "string",
             "description": "Space-separated scopes to register the client for. `offline_access` needs `refresh_token` or `authorization_code` in `grant_types`. Leave it out for your content and links: `content:read content:write edge.*:read edge.*:write offline_access`.",
-            "maxLength": 4096
+            "maxLength": 1024
           },
           "client_name": {
             "type": "string",
             "description": "The app's name, which Marfa shows a person asked to approve it.",
-            "maxLength": 200
+            "maxLength": 100
           },
           "client_uri": {
             "type": "string",
             "description": "The app's home page URL. Leave it out if the app has none.",
-            "maxLength": 2048
+            "maxLength": 512
           },
           "logo_uri": {
             "type": "string",
             "description": "The app's logo URL. Leave it out if the app has none.",
-            "maxLength": 2048
+            "maxLength": 512
           },
           "contacts": {
             "type": "array",
@@ -9693,27 +9693,27 @@
             },
             "minItems": 1,
             "description": "Contact addresses for the app. Leave it out if there are none.",
-            "maxItems": 10
+            "maxItems": 5
           },
           "tos_uri": {
             "type": "string",
             "description": "The app's terms of service URL. Leave it out if the app has none.",
-            "maxLength": 2048
+            "maxLength": 512
           },
           "policy_uri": {
             "type": "string",
             "description": "The app's privacy policy URL. Leave it out if the app has none.",
-            "maxLength": 2048
+            "maxLength": 512
           },
           "software_id": {
             "type": "string",
             "description": "The software's identifier. Leave it out if there is none.",
-            "maxLength": 200
+            "maxLength": 100
           },
           "software_version": {
             "type": "string",
             "description": "The software's version. Leave it out if there is none.",
-            "maxLength": 200
+            "maxLength": 100
           },
           "token_endpoint_auth_method": {
             "type": "string",

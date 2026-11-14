@@ -203,7 +203,8 @@ pub fn default_scope(discovery: &Discovery) -> Result<String, CliError> {
 /// from another's.
 pub fn client_name(machine: Option<&str>) -> String {
     match machine {
-        Some(machine) => format!("marfa on {machine}"),
+        // A server holds a registered name to 100 characters.
+        Some(machine) => format!("marfa on {}", machine.chars().take(91).collect::<String>()),
         None => "marfa".to_string(),
     }
 }
@@ -693,6 +694,8 @@ mod tests {
     fn a_registration_names_the_machine_where_it_has_a_name() {
         assert_eq!(client_name(Some("studio")), "marfa on studio");
         assert_eq!(client_name(None), "marfa");
+        let long = "m".repeat(255);
+        assert_eq!(client_name(Some(&long)).chars().count(), 100);
         let machine = machine_name();
         assert!(
             machine

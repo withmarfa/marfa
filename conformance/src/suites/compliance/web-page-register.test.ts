@@ -390,14 +390,14 @@ describe("the size of a registration", () => {
       body: text,
     });
 
-  it("refuses a registration over 32768 bytes, and takes one just under it", async () => {
-    const under = body(1, 32_000);
-    expect(Buffer.byteLength(under)).toBeLessThanOrEqual(32_768);
+  it("refuses a registration over 8192 bytes, and takes one just under it", async () => {
+    const under = body(1, 7_800);
+    expect(Buffer.byteLength(under)).toBeLessThanOrEqual(8_192);
     const taken = await register(under);
     await taken.body?.cancel();
     expect(taken.status).toBe(201);
-    const over = body(1, 33_000);
-    expect(Buffer.byteLength(over)).toBeGreaterThan(32_768);
+    const over = body(1, 8_000);
+    expect(Buffer.byteLength(over)).toBeGreaterThan(8_192);
     const refused = await register(over);
     expect(refused.status).toBe(413);
     expect(
@@ -444,14 +444,14 @@ describe("the size of a registration", () => {
       return { status: response.status, ...answer };
     };
     const bounds: [string, number, (length: number) => string][] = [
-      ["client_name", 200, text],
-      ["software_id", 200, text],
-      ["software_version", 200, text],
-      ["client_uri", 2048, uri],
-      ["logo_uri", 2048, uri],
-      ["tos_uri", 2048, uri],
-      ["policy_uri", 2048, uri],
-      ["scope", 4096, (length) => "s".repeat(length)],
+      ["client_name", 100, text],
+      ["software_id", 100, text],
+      ["software_version", 100, text],
+      ["client_uri", 512, uri],
+      ["logo_uri", 512, uri],
+      ["tos_uri", 512, uri],
+      ["policy_uri", 512, uri],
+      ["scope", 1024, (length) => "s".repeat(length)],
     ];
     for (const [member, most, value] of bounds) {
       expect((await sent({ [member]: value(most) })).status, member).toBe(201);
@@ -462,17 +462,17 @@ describe("the size of a registration", () => {
     }
 
     const contact = "c".repeat(254);
-    const tenContacts = Array<string>(10).fill(contact);
-    expect((await sent({ contacts: tenContacts })).status).toBe(201);
-    for (const contacts of [[...tenContacts, contact], ["c".repeat(255)]]) {
+    const fiveContacts = Array<string>(5).fill(contact);
+    expect((await sent({ contacts: fiveContacts })).status).toBe(201);
+    for (const contacts of [[...fiveContacts, contact], ["c".repeat(255)]]) {
       const over = await sent({ contacts });
       expect(over.status).toBe(400);
       expect(over.error).toBe("invalid_client_metadata");
       expect(over.error_description).toContain("contact");
     }
 
-    expect((await sent({ redirect_uris: [uri(2048)] })).status).toBe(201);
-    const long = await sent({ redirect_uris: [uri(2049)] });
+    expect((await sent({ redirect_uris: [uri(256)] })).status).toBe(201);
+    const long = await sent({ redirect_uris: [uri(257)] });
     expect(long.status).toBe(400);
     expect(long.error).toBe("invalid_redirect_uri");
     expect(long.error_description).toContain("redirect URI");

@@ -509,7 +509,7 @@ describe("who wrote each version", () => {
       ]);
     }
 
-    const app = await approveApp(browser, `app\u0001${"a".repeat(190)}`);
+    const app = await approveApp(browser, `app\u0001${"a".repeat(90)}`);
     const note = await createNote(app.accessToken);
     await changeNote(app.accessToken, note, 1, "second");
     const [byApp] = await versionsOf(app.accessToken, note);
