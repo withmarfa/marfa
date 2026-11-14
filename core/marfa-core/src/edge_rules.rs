@@ -23,7 +23,7 @@
 //! refuse, which is kept with its verdict. Once the read lands, the copy
 //! shows the server's row and counts it as it is.
 //!
-//! The rules themselves are `marfa_rules::edges`, read through [`Copy`], which
+//! The rules themselves are `marfa_rules::edges`, read through [`HeldEdges`], which
 //! leaves out the edges above that a check does not count.
 //!
 //! Each `edge_constraint_violation` and `edge_cycle` carries the `details`
@@ -156,7 +156,7 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
     }
     for (index, (edge, edge_type)) in judged.iter().enumerate() {
         let earlier = || judged[..index].iter().map(|(earlier, _)| *earlier);
-        let copy = Copy {
+        let copy = HeldEdges {
             conn,
             catalog: &catalog,
             refused: &unread,
@@ -317,14 +317,14 @@ fn held_edge_types(conn: &Connection) -> Result<HashMap<String, EdgeType>> {
 /// own waiting writes as they leave them, without those only a refused write
 /// shows and without the edges of `replaced.1` that a create replaces at
 /// `replaced.0`.
-struct Copy<'a> {
+struct HeldEdges<'a> {
     conn: &'a Connection,
     catalog: &'a HashMap<String, EdgeType>,
     refused: &'a HashSet<String>,
     replaced: Option<(&'a str, &'a str)>,
 }
 
-impl Copy<'_> {
+impl HeldEdges<'_> {
     fn standing(&self, found: Vec<Link>) -> Vec<Link> {
         found
             .into_iter()
@@ -351,7 +351,7 @@ impl Copy<'_> {
     }
 }
 
-impl Graph for Copy<'_> {
+impl Graph for HeldEdges<'_> {
     type Error = CoreError;
 
     fn outbound(&self, id: &str) -> Result<Vec<Link>> {
