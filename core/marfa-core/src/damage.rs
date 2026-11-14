@@ -216,7 +216,7 @@ fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
         }
         let _ = copy_rows(old, &tx, "declared_types", None);
     }
-    lay_rows(&tx, &carried)?;
+    lay_rows(&tx, &carried);
     let held = if instance.is_none() && !carried.is_empty() {
         store::block_for_another_instance(&tx)? as u64
     } else {
@@ -534,27 +534,31 @@ fn copy_rows(
 }
 
 /// Records the rows each carried row write that still waits lays over, read
-/// from its body.
-fn lay_rows(tx: &Connection, carried: &[String]) -> Result<(), CoreError> {
+/// from its body. A write whose body does not read is carried without them.
+fn lay_rows(tx: &Connection, carried: &[String]) {
     for id in carried {
-        let Some(write) = store::queued_write(tx, id)? else {
-            continue;
-        };
-        if write.kind != WriteKind::WriteRows
-            || !matches!(write.verdict, None | Some(Verdict::Blocked))
-        {
-            continue;
-        }
-        let (Some(item), Some(table)) = (&write.item_id, row_table(tx, id)?) else {
-            continue;
-        };
-        let seq: i64 = tx.query_row("SELECT seq FROM queue WHERE id = ?1", [id], |row| {
-            row.get(0)
-        })?;
-        let body: serde_json::Value = serde_json::from_str(&store::payload_of(tx, id)?)?;
-        let ops = crate::row_writes::queued_ops(&body)?;
-        crate::row_writes::record_laid(tx, id, seq, item, &table, &ops, &write.queued_at)?;
+        let _ = lay_one(tx, id);
     }
+}
+
+fn lay_one(tx: &Connection, id: &str) -> Result<(), CoreError> {
+    let Some(write) = store::queued_write(tx, id)? else {
+        return Ok(());
+    };
+    if write.kind != WriteKind::WriteRows
+        || !matches!(write.verdict, None | Some(Verdict::Blocked))
+    {
+        return Ok(());
+    }
+    let (Some(item), Some(table)) = (&write.item_id, row_table(tx, id)?) else {
+        return Ok(());
+    };
+    let seq: i64 = tx.query_row("SELECT seq FROM queue WHERE id = ?1", [id], |row| {
+        row.get(0)
+    })?;
+    let body: serde_json::Value = serde_json::from_str(&store::payload_of(tx, id)?)?;
+    let ops = crate::row_writes::queued_ops(&body)?;
+    crate::row_writes::record_laid(tx, id, seq, item, &table, &ops, &write.queued_at)?;
     Ok(())
 }
 
