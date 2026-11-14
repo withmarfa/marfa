@@ -530,6 +530,22 @@ When a `patch` names a row the table holds, the server MUST keep each column the
 
 **Tests:** `compliance/table-rows.test.ts › patches only the columns it names`.
 
+### `tables/rows-later-write-wins`
+
+When a batch sets a column of a row that an earlier batch set, the server MUST keep the value of the later batch.
+
+**Reason:** the server does not compare a write with what its writer last read, so the earlier value stays only in the batch's change log (`tables/undo`), and a device that wrote while it was offline judges the clash itself (`queue-and-verdicts/rows-conflicted`).
+
+**Tests:** `compliance/table-rows.test.ts › keeps the later of two batches' values for a column, answering the later batch as it answers any other`.
+
+### `tables/rows-overwrite-unflagged`
+
+When a batch replaces a value an earlier batch set, the server MUST answer the batch with the members and results it gives a batch that replaced nothing, and name no clash.
+
+**Reason:** nobody but the writing device is told that a write replaced another writer's value.
+
+**Tests:** `compliance/table-rows.test.ts › keeps the later of two batches' values for a column, answering the later batch as it answers any other`.
+
 ### `tables/rows-patch-patched`
 
 When a `patch` changes a row's values, the server MUST answer its outcome `patched`.

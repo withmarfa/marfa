@@ -1024,22 +1024,40 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
     Ok(answer)
 }
 
+fn sendable(row: &QueuedWrite) -> bool {
+    match row.verdict {
+        None => true,
+        Some(Verdict::Blocked) => {
+            row.blocked_reason() == Some(BlockedReason::CredentialRefused)
+                || row.reason.as_deref() == Some(crate::model::AWAITING_DEPENDENCY)
+        }
+        Some(_) => false,
+    }
+}
+
+/// Whether a write a drain would send is a row write whose table the copy
+/// holds whole, so its clash is judged by what the copy has applied.
+fn judges_row_writes(conn: &rusqlite::Connection) -> Result<bool> {
+    for row in store::waiting_writes(conn)?.iter().filter(|row| sendable(row)) {
+        if let (WriteKind::WriteRows, Some(item), Some(table)) =
+            (row.kind, row.item_id.as_deref(), row.table.as_deref())
+            && store::read_of(conn, &row.id)?.is_some()
+            && crate::tables::state(conn, item, table)?.as_deref()
+                == Some(crate::tables::WHOLE)
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Whether a drain now has work: a write with no verdict, one blocked for a
 /// reason a drain clears itself, a read-back owed, a body whose names wait,
 /// or a body's answers still to apply. A dead write, or one blocked until
 /// something outside the queue changes, is no reason to drain.
 pub(crate) fn would_send(core: &Core) -> Result<bool> {
     let conn = core.conn()?;
-    let sendable = store::waiting_writes(&conn)?
-        .iter()
-        .any(|row| match row.verdict {
-            None => true,
-            Some(Verdict::Blocked) => {
-                row.blocked_reason() == Some(BlockedReason::CredentialRefused)
-                    || row.reason.as_deref() == Some(crate::model::AWAITING_DEPENDENCY)
-            }
-            Some(_) => false,
-        });
+    let sendable = store::waiting_writes(&conn)?.iter().any(sendable);
     Ok(sendable
         || !store::owed_read_backs(&conn)?.is_empty()
         || crate::body::rule::waiting(&conn)?
@@ -1109,6 +1127,9 @@ fn drain_checked(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainRep
 
 fn drain_inner(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainReport, Cut> {
     crate::catch_up::refuse_if_stopped(stop)?;
+    if judges_row_writes(&*core.conn()?)? {
+        core.catch_up_before_rows(stop)?;
+    }
     // Queued writes and their natural-key lookups name the copy's instance
     // so a replacement refuses them even after the pass confirmed the origin.
     // Credential renewal uses the exempt authentication endpoints.

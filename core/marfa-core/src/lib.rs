@@ -222,6 +222,29 @@ struct Streaming {
     /// A follow is open, holding the stream or waiting for a hydration
     /// without it, so a second follow is refused at once.
     following: bool,
+    backlog: Backlog,
+}
+
+/// What the stream a follow holds has applied, for a drain that waits on it
+/// before it sends a row write.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum Backlog {
+    /// No stream is had.
+    #[default]
+    Idle,
+    /// A stream is had and has not yet said it is live.
+    Applying,
+    /// A stream has applied every event it held when it opened.
+    Applied,
+}
+
+/// Holds `Backlog::Applying` while a follow reads one stream.
+struct Reading<'a>(&'a Mutex<Streaming>);
+
+impl Drop for Reading<'_> {
+    fn drop(&mut self) {
+        streaming_of(self.0).backlog = Backlog::Idle;
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1259,6 +1282,50 @@ impl Core {
             error,
             catalog_changed,
         })
+    }
+
+    /// Applies every event the stream holds, before a drain sends a row write
+    /// judged against the copy (`device/rows-caught-up-first`). Where a follow
+    /// holds the stream, it waits for that stream to be live. Where the stream
+    /// cannot be had, or ends first, the drain goes on and the write is
+    /// judged by what the copy has applied.
+    pub(crate) fn catch_up_before_rows(&self, stop: &AtomicBool) -> Result<()> {
+        loop {
+            catch_up::refuse_if_stopped(stop)?;
+            let streaming = streaming_of(&self.streaming);
+            match (streaming.holder, streaming.backlog) {
+                (None, _) => break,
+                (Some(Mover::Follow), Backlog::Applying) => {}
+                (Some(Mover::Follow), _) => return Ok(()),
+                (Some(_), _) => {}
+            }
+            drop(streaming);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        match self.catch_up_pass(stop) {
+            Ok(_) => Ok(()),
+            Err(failed)
+                if failed.error.is_environmental()
+                    || matches!(failed.error, CoreError::StreamIncomplete { .. })
+                    || failed.error == one_at_a_time() =>
+            {
+                telemetry::degraded!(&failed.error);
+                Ok(())
+            }
+            Err(failed) => Err(failed.error),
+        }
+    }
+
+    fn reading(&self) -> Reading<'_> {
+        streaming_of(&self.streaming).backlog = Backlog::Applying;
+        Reading(&self.streaming)
+    }
+
+    fn backlog_applied(&self) {
+        let mut streaming = streaming_of(&self.streaming);
+        if streaming.backlog == Backlog::Applying {
+            streaming.backlog = Backlog::Applied;
+        }
     }
 
     /// `on_change` is called with no lock on the store held, so it may read

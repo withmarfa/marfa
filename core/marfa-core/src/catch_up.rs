@@ -1162,6 +1162,7 @@ fn follow_paced(
             })?;
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "follow-stream-had");
+            let _reading = core.reading();
             if !told.stalled {
                 if owes_drain && told.reachable != Some(false) {
                     recovery.reachable();
@@ -1647,6 +1648,9 @@ fn read_stream(
                     return Ok(ended);
                 }
                 live_confirmed = reach::cursor(&report.cursor).is_some_and(|cursor| cursor >= live);
+                if live_confirmed {
+                    core.backlog_applied();
+                }
                 told.unstalled(&report.cursor, recovery, on_change);
                 on_live(live_confirmed);
                 if live_confirmed {
