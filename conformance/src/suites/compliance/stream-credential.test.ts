@@ -13,6 +13,7 @@ import {
   collectUntil,
   MUTATION_EVENT_NAMES,
   withStream,
+  withStreamAtCursor,
 } from "../../utils/stream.js";
 import {
   approvedApp,
@@ -97,8 +98,7 @@ describe("a stream answers to its credential as it stands", () => {
     signal,
   }) => {
     const { id, key } = await viewer("stream-narrowed");
-    await withStream(apiUrl, key, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
+    await withStreamAtCursor(apiUrl, key, { signal }, async (stream) => {
       const before = await task("narrow-before");
       await collectUntil(
         stream,
@@ -131,8 +131,7 @@ describe("a stream answers to its credential as it stands", () => {
     signal,
   }) => {
     const { id, key } = await viewer("stream-revoked");
-    await withStream(apiUrl, key, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
+    await withStreamAtCursor(apiUrl, key, { signal }, async (stream) => {
       const before = await task("revoke-before");
       await collectUntil(
         stream,
@@ -165,33 +164,37 @@ describe("a stream answers to its credential as it stands", () => {
     signal,
   }) => {
     const { id, key } = await viewer("stream-reconnect");
-    const lastSent = await withStream(apiUrl, key, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
-      const sent = await task("reconnect-sent");
-      const { events } = await collectUntil(
-        stream,
-        (evts) => arrived(evts, sent),
-        `the task ${sent} before the key is revoked`,
-        signal,
-      );
-      const frame = events.find(
-        (e) => (e.data as { item?: { id?: string } }).item?.id === sent,
-      );
-      expect(frame?.id).toBeDefined();
+    const lastSent = await withStreamAtCursor(
+      apiUrl,
+      key,
+      { signal },
+      async (stream) => {
+        const sent = await task("reconnect-sent");
+        const { events } = await collectUntil(
+          stream,
+          (evts) => arrived(evts, sent),
+          `the task ${sent} before the key is revoked`,
+          signal,
+        );
+        const frame = events.find(
+          (e) => (e.data as { item?: { id?: string } }).item?.id === sent,
+        );
+        expect(frame?.id).toBeDefined();
 
-      expect((await client.revokeKey(id)).ok).toBe(true);
-      const ended = await collectUntil(
-        stream,
-        (evts) => evts.some((e) => e.event === "stream_incomplete"),
-        "the stream to say it ended",
-        signal,
-      );
-      const terminal = ended.events.find(
-        (e) => e.event === "stream_incomplete",
-      );
-      expect((terminal?.data as { cursor?: string }).cursor).toBe(frame!.id);
-      return frame!.id!;
-    });
+        expect((await client.revokeKey(id)).ok).toBe(true);
+        const ended = await collectUntil(
+          stream,
+          (evts) => evts.some((e) => e.event === "stream_incomplete"),
+          "the stream to say it ended",
+          signal,
+        );
+        const terminal = ended.events.find(
+          (e) => e.event === "stream_incomplete",
+        );
+        expect((terminal?.data as { cursor?: string }).cursor).toBe(frame!.id);
+        return frame!.id!;
+      },
+    );
 
     const refused = await fetch(`${apiUrl}/events`, {
       headers: { Authorization: `Bearer ${key}`, "Last-Event-ID": lastSent },

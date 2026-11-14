@@ -11,6 +11,7 @@ import {
   baselineEventId,
   collectUntil,
   withStream,
+  withStreamAtCursor,
 } from "../../utils/stream.js";
 
 /**
@@ -102,95 +103,95 @@ describe("post-commit emission", () => {
     ).toBe(true);
     trackEdge(ctx, hierarchy.data.edge.id);
 
-    const outcome = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      // Let the subscription settle, or the control write below is published
-      // to nobody and the test cannot tell a rolled-back write from a stream
-      // that was not listening yet.
-      await new Promise((r) => setTimeout(r, 250));
+    const outcome = await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal: context.signal },
+      async (stream) => {
+        // The control leg. A write that commits must reach the subscriber,
+        // otherwise "the rolled-back write announced nothing" is a statement
+        // about a dead stream rather than about the server's ordering.
+        const committed = await client.updateItem(id, {
+          properties: { body: "post-commit-committed" },
+          version: child.data.item.version,
+        });
+        expect(committed.ok).toBe(true);
+        const committedVersion = committed.data.item.version;
 
-      // The control leg. A write that commits must reach the subscriber,
-      // otherwise "the rolled-back write announced nothing" is a statement
-      // about a dead stream rather than about the server's ordering.
-      const committed = await client.updateItem(id, {
-        properties: { body: "post-commit-committed" },
-        version: child.data.item.version,
-      });
-      expect(committed.ok).toBe(true);
-      const committedVersion = committed.data.item.version;
+        const seen = await collectUntil(
+          stream,
+          (events) =>
+            events.some(
+              (e) =>
+                e.event === "item.updated" &&
+                (e.data as { item?: { id?: string } })?.item?.id === id,
+            ),
+          `item.updated for the committed write on ${id}`,
+          context.signal,
+        );
 
-      const seen = await collectUntil(
-        stream,
-        (events) =>
-          events.some(
-            (e) =>
-              e.event === "item.updated" &&
-              (e.data as { item?: { id?: string } })?.item?.id === id,
-          ),
-        `item.updated for the committed write on ${id}`,
-        context.signal,
-      );
+        // The ordering control, and the reason the phantom leg is worth
+        // anything. The same request with a version the item has already moved
+        // past is refused by the item write itself — which sits at the top of
+        // the transaction, ahead of the edge check — so a 409 here is how this
+        // test knows the item is written before the cycle refuses it. Were the
+        // order the other way round, the answer would be the cycle's 400 and
+        // the rolled-back leg below would be rolling back nothing.
+        const ordering = await client.updateItem(id, {
+          properties: { body: PHANTOM_BODY },
+          version: committedVersion - 1,
+          edges: { "parent-of": [parentId] },
+        });
+        expect(
+          ordering.status,
+          "a stale version lost to the edge check, so the item is not written before the refusal and this test is not measuring a rollback",
+        ).toBe(409);
 
-      // The ordering control, and the reason the phantom leg is worth
-      // anything. The same request with a version the item has already moved
-      // past is refused by the item write itself — which sits at the top of
-      // the transaction, ahead of the edge check — so a 409 here is how this
-      // test knows the item is written before the cycle refuses it. Were the
-      // order the other way round, the answer would be the cycle's 400 and
-      // the rolled-back leg below would be rolling back nothing.
-      const ordering = await client.updateItem(id, {
-        properties: { body: PHANTOM_BODY },
-        version: committedVersion - 1,
-        edges: { "parent-of": [parentId] },
-      });
-      expect(
-        ordering.status,
-        "a stale version lost to the edge check, so the item is not written before the refusal and this test is not measuring a rollback",
-      ).toBe(409);
+        // The rolled-back leg. The targets exist, so the up-front pass admits
+        // them and the write proceeds: the item lands, the item's existing
+        // `parent-of` edges are deleted, and only then does the cycle check
+        // refuse the set — inside the transaction, which unwinds all of it.
+        const rolledBack = await client.updateItem(id, {
+          properties: { body: PHANTOM_BODY },
+          // The current version, so this write reaches the in-transaction edge
+          // check that is the point of the leg. The stale leg above is the
+          // ordering control and is deliberately the only one that conflicts.
+          version: committedVersion,
+          edges: { "parent-of": [parentId] },
+        });
 
-      // The rolled-back leg. The targets exist, so the up-front pass admits
-      // them and the write proceeds: the item lands, the item's existing
-      // `parent-of` edges are deleted, and only then does the cycle check
-      // refuse the set — inside the transaction, which unwinds all of it.
-      const rolledBack = await client.updateItem(id, {
-        properties: { body: PHANTOM_BODY },
-        // The current version, so this write reaches the in-transaction edge
-        // check that is the point of the leg. The stale leg above is the
-        // ordering control and is deliberately the only one that conflicts.
-        version: committedVersion,
-        edges: { "parent-of": [parentId] },
-      });
+        // Written after the refusal, and what makes the phantom's absence a
+        // finding rather than a quiet moment. Item events reach a subscriber in
+        // publish order, so once this one has arrived a phantom published from
+        // inside the transaction has arrived too. Waiting out a fixed window
+        // instead would let a busy target hide the very frame under test.
+        const sentinel = await client.createItem({
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: `post-commit-sentinel-${ctx.runId}` },
+        });
+        expect(sentinel.ok).toBe(true);
+        trackItem(ctx, sentinel.data.item.id);
 
-      // Written after the refusal, and what makes the phantom's absence a
-      // finding rather than a quiet moment. Item events reach a subscriber in
-      // publish order, so once this one has arrived a phantom published from
-      // inside the transaction has arrived too. Waiting out a fixed window
-      // instead would let a busy target hide the very frame under test.
-      const sentinel = await client.createItem({
-        type: "core.note",
-        source: ctx.source,
-        properties: { body: `post-commit-sentinel-${ctx.runId}` },
-      });
-      expect(sentinel.ok).toBe(true);
-      trackItem(ctx, sentinel.data.item.id);
-
-      const rest = await collectUntil(
-        stream,
-        (events) =>
-          events.some(
-            (e) =>
-              (e.data as { item?: { id?: string } })?.item?.id ===
-              sentinel.data.item.id,
-          ),
-        `item.created for the sentinel written after the refusal (${sentinel.data.item.id})`,
-        context.signal,
-      );
-      return {
-        committedVersion,
-        rolledBackStatus: rolledBack.status,
-        rolledBackCode: rolledBack.error?.error.code,
-        events: [...seen.events, ...rest.events],
-      };
-    });
+        const rest = await collectUntil(
+          stream,
+          (events) =>
+            events.some(
+              (e) =>
+                (e.data as { item?: { id?: string } })?.item?.id ===
+                sentinel.data.item.id,
+            ),
+          `item.created for the sentinel written after the refusal (${sentinel.data.item.id})`,
+          context.signal,
+        );
+        return {
+          committedVersion,
+          rolledBackStatus: rolledBack.status,
+          rolledBackCode: rolledBack.error?.error.code,
+          events: [...seen.events, ...rest.events],
+        };
+      },
+    );
 
     // The write really did fail, and really did fail inside the transaction
     // rather than at the request validator. Nothing refused before the
@@ -243,21 +244,7 @@ describe("post-commit emission", () => {
     expect(hierarchy.ok).toBe(true);
     trackEdge(ctx, hierarchy.data.edge.id);
 
-    const marker = await baselineEventId(
-      apiUrl,
-      apiKey,
-      async () => {
-        const created = await client.createItem({
-          type: "core.note",
-          source: ctx.source,
-          properties: { body: "post-commit-log-marker" },
-        });
-        expect(created.ok).toBe(true);
-        trackItem(ctx, created.data.item.id);
-        return created.data.item.id;
-      },
-      context.signal,
-    );
+    const head = await baselineEventId(apiUrl, apiKey, context.signal);
 
     const committed = await client.updateItem(child.data.item.id, {
       properties: { body: "post-commit-log-committed" },
@@ -281,7 +268,7 @@ describe("post-commit emission", () => {
     const { events } = await withStream(
       apiUrl,
       apiKey,
-      { lastEventId: marker.eventId },
+      { lastEventId: head },
       (stream) =>
         collectUntil(
           stream,

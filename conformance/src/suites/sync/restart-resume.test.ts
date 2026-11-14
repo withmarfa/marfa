@@ -8,7 +8,11 @@ import {
   type StopSignal,
 } from "../../utils/fresh-server.js";
 import type { SseEvent } from "../../utils/sse.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import {
+  collectUntil,
+  withStream,
+  withStreamAtCursor,
+} from "../../utils/stream.js";
 
 /**
  * What the log keeps across a restart, and what a reader that resumes after
@@ -123,12 +127,11 @@ describe.each(["SIGTERM", "SIGKILL"] as const)(
       "delivers nothing twice to a stream that resumes from the last id it received before the restart",
       async ({ signal: aborted }) => {
         const received = await note(`resumed-received-${signal}`);
-        const lastReceived = await withStream(
+        const lastReceived = await withStreamAtCursor(
           server!.apiUrl,
           server!.workingKey,
-          {},
+          { signal: aborted },
           async (stream) => {
-            await new Promise((r) => setTimeout(r, 250));
             const live = await note(`resumed-live-${signal}`);
             const { events } = await collectUntil(
               stream,

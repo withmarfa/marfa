@@ -13,7 +13,7 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 
@@ -723,8 +723,7 @@ describe("the folder door", () => {
   it("publishes a folder's create, change and revoke as item events", async ({
     signal,
   }) => {
-    await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 200));
+    await withStreamAtCursor(apiUrl, apiKey, { signal }, async (stream) => {
       const { id } = await folder();
       expect(
         (await client.updateFolder(id, { version: 1, title: "b" })).ok,

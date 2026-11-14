@@ -200,21 +200,9 @@ async function expectAllOf(rows: Carried): Promise<void> {
   expect(new Uint8Array(read.data)).toEqual(rows.bytes);
 }
 
-/** The id of the newest event in the log, taken by writing one. */
+/** The id of the newest event in the log. */
 async function eventCursor(): Promise<string> {
-  const { eventId } = await baselineEventId(
-    server.apiUrl,
-    server.workingKey,
-    async () => {
-      const marker = await working.createItem({
-        type: "core.note",
-        properties: { body: "before the restore" },
-      });
-      expect(marker.status).toBe(201);
-      return marker.data.item.id;
-    },
-  );
-  return eventId;
+  return baselineEventId(server.apiUrl, server.workingKey);
 }
 
 function edgeIdOf(event: SseEvent): string | undefined {

@@ -14,7 +14,11 @@ import {
   createTask,
 } from "../../generators/items.js";
 import type { MarfaClient } from "../../client/api.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import {
+  collectUntil,
+  withStream,
+  withStreamAtCursor,
+} from "../../utils/stream.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -712,13 +716,12 @@ describe("a wildcard answers the types it matches that the key may read", () => 
   it("GET /events streams the readable types a wildcard matches and withholds the rest", async ({
     signal,
   }) => {
-    await withStream(
+    await withStreamAtCursor(
       apiUrl,
       key,
-      { query: [["type", "core.*"]] },
+      { query: [["type", "core.*"]], signal },
       async (stream) => {
         expect(stream.response.status).toBe(200);
-        await new Promise((r) => setTimeout(r, 250));
         // The note is written first and the task after it: the stream
         // delivers in order, so the task arriving settles that the note was
         // withheld rather than late.
@@ -791,13 +794,12 @@ describe("the event stream reads a type filter as the listings do", () => {
   it("GET /events streams the readable descendants of a type the key may not read and withholds the rest", async ({
     signal,
   }) => {
-    await withStream(
+    await withStreamAtCursor(
       apiUrl,
       personKey,
-      { query: [["type", "core.entity"]] },
+      { query: [["type", "core.entity"]], signal },
       async (stream) => {
         expect(stream.response.status).toBe(200);
-        await new Promise((r) => setTimeout(r, 250));
         // The place is written first and the person after it: the stream
         // delivers in order, so the person arriving settles that the place
         // was withheld rather than late.
@@ -831,13 +833,12 @@ describe("the event stream reads a type filter as the listings do", () => {
   }) => {
     // The witness: a key that may read the person is streamed it under the
     // same wildcard, so the person is a frame the stream can carry.
-    await withStream(
+    await withStreamAtCursor(
       apiUrl,
       apiKey,
-      { query: [["type", "core.entity.*"]] },
+      { query: [["type", "core.entity.*"]], signal },
       async (reader) => {
         expect(reader.response.status).toBe(200);
-        await new Promise((r) => setTimeout(r, 250));
         const person = await client.createItem({
           ...createPerson(),
           source: ctx.source,
@@ -857,13 +858,12 @@ describe("the event stream reads a type filter as the listings do", () => {
         );
       },
     );
-    await withStream(
+    await withStreamAtCursor(
       apiUrl,
       key,
-      { query: [["type", "core.entity.*,core.task"]] },
+      { query: [["type", "core.entity.*,core.task"]], signal },
       async (stream) => {
         expect(stream.response.status).toBe(200);
-        await new Promise((r) => setTimeout(r, 250));
         // The person matches the wildcard and the key may not read it; the
         // task is named outright and the key may. The task is written second
         // and the stream delivers in order, so its arrival settles that the

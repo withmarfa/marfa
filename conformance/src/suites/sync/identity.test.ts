@@ -8,7 +8,7 @@ import {
   trackEdge,
   cleanup,
 } from "../../utils/setup.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 
 /**
  * "A client names its own items": an id is minted by the client and the item
@@ -51,35 +51,39 @@ describe("client-minted ids", () => {
     // not kept — a defect message for what is only a collision.
     const marker = `identity-item-${ctx.runId}`;
 
-    const events = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
-      const created = await client.createItem({
-        id,
-        type: "core.note",
-        source: ctx.source,
-        properties: { body: marker },
-      });
-      expect(
-        created.ok,
-        `a client-minted id was refused: ${JSON.stringify(created.error)}`,
-      ).toBe(true);
-      trackItem(ctx, created.data.item.id);
-      expect(created.data.item.id).toBe(id);
+    const events = await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal: context.signal },
+      async (stream) => {
+        const created = await client.createItem({
+          id,
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: marker },
+        });
+        expect(
+          created.ok,
+          `a client-minted id was refused: ${JSON.stringify(created.error)}`,
+        ).toBe(true);
+        trackItem(ctx, created.data.item.id);
+        expect(created.data.item.id).toBe(id);
 
-      const seen = await collectUntil(
-        stream,
-        (evts) =>
-          evts.some(
-            (e) =>
-              e.event === "item.created" &&
-              (e.data as { item?: { properties?: { body?: string } } })?.item
-                ?.properties?.body === marker,
-          ),
-        `item.created for the client-minted item ${id}`,
-        context.signal,
-      );
-      return seen.events;
-    });
+        const seen = await collectUntil(
+          stream,
+          (evts) =>
+            evts.some(
+              (e) =>
+                e.event === "item.created" &&
+                (e.data as { item?: { properties?: { body?: string } } })?.item
+                  ?.properties?.body === marker,
+            ),
+          `item.created for the client-minted item ${id}`,
+          context.signal,
+        );
+        return seen.events;
+      },
+    );
 
     // Matched on the body rather than the id, so a server that stored its own
     // id still produces a frame this assertion can catch. Matching on the id
@@ -119,35 +123,39 @@ describe("client-minted ids", () => {
     trackItem(ctx, target.data.item.id);
 
     const id = uuidv7();
-    const events = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
-      const created = await client.createEdge({
-        id,
-        source_id: source.data.item.id,
-        target_id: target.data.item.id,
-        edge_type: "about",
-      });
-      expect(
-        created.ok,
-        `a client-minted edge id was refused: ${JSON.stringify(created.error)}`,
-      ).toBe(true);
-      trackEdge(ctx, created.data.edge.id);
-      expect(created.data.edge.id).toBe(id);
+    const events = await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal: context.signal },
+      async (stream) => {
+        const created = await client.createEdge({
+          id,
+          source_id: source.data.item.id,
+          target_id: target.data.item.id,
+          edge_type: "about",
+        });
+        expect(
+          created.ok,
+          `a client-minted edge id was refused: ${JSON.stringify(created.error)}`,
+        ).toBe(true);
+        trackEdge(ctx, created.data.edge.id);
+        expect(created.data.edge.id).toBe(id);
 
-      const seen = await collectUntil(
-        stream,
-        (evts) =>
-          evts.some(
-            (e) =>
-              e.event === "edge.created" &&
-              (e.data as { edge?: { source_id?: string } })?.edge?.source_id ===
-                source.data.item.id,
-          ),
-        `edge.created for the client-minted edge ${id}`,
-        context.signal,
-      );
-      return seen.events;
-    });
+        const seen = await collectUntil(
+          stream,
+          (evts) =>
+            evts.some(
+              (e) =>
+                e.event === "edge.created" &&
+                (e.data as { edge?: { source_id?: string } })?.edge
+                  ?.source_id === source.data.item.id,
+            ),
+          `edge.created for the client-minted edge ${id}`,
+          context.signal,
+        );
+        return seen.events;
+      },
+    );
 
     const announced = events.find(
       (e) =>

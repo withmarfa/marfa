@@ -6,7 +6,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { createNote } from "../../generators/items.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
 // A server of its own: the assertion is that the stream carries nothing but
@@ -42,13 +42,11 @@ it("sends nothing for a write to a type, an edge type, a key, the configuration 
   };
   const fields = { name: { type: "string" } };
 
-  const frames = await withStream(
+  const frames = await withStreamAtCursor(
     server.apiUrl,
     server.workingKey,
-    {},
+    { signal },
     async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
-
       ok(
         await working.registerType({ id: "silent.thing", fields } as never),
         201,

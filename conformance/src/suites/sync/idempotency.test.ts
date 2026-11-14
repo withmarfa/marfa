@@ -13,7 +13,7 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { detectSyncCapabilities, requireRule } from "./capabilities.js";
 import type { SyncCapabilities } from "./capabilities.js";
@@ -171,7 +171,9 @@ describe("idempotency keys", () => {
     ).toBeNull();
   });
 
-  it("announces nothing for a repeated request under a key, on the create, update, edge create and delete doors", async (context) => {
+  it("announces nothing for a repeated request under a key, on the create, update, edge create and delete doors", async ({
+    signal,
+  }) => {
     requireRule(caps, "idempotencyKeys");
     const frames = (events: SseEvent[], id: string): string[] =>
       events
@@ -197,78 +199,85 @@ describe("idempotency keys", () => {
     expect(peer.ok).toBe(true);
     trackItem(ctx, peer.data.item.id);
 
-    const run = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
+    const run = await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal },
+      async (stream) => {
+        const create = {
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "keyed-repeat" },
+        };
+        const createKey = `sync-announce-create-${randomUUID()}`;
+        const created = await keyed("/items", "POST", createKey, create);
+        expect(created.ok, JSON.stringify(created.error)).toBe(true);
+        const itemId = created.data.item.id;
+        trackItem(ctx, itemId);
+        const createRepeat = await keyed("/items", "POST", createKey, create);
+        expect(createRepeat.headers.get("Idempotency-Replayed")).toBe("true");
 
-      const create = {
-        type: "core.note",
-        source: ctx.source,
-        properties: { body: "keyed-repeat" },
-      };
-      const createKey = `sync-announce-create-${randomUUID()}`;
-      const created = await keyed("/items", "POST", createKey, create);
-      expect(created.ok, JSON.stringify(created.error)).toBe(true);
-      const itemId = created.data.item.id;
-      trackItem(ctx, itemId);
-      const createRepeat = await keyed("/items", "POST", createKey, create);
-      expect(createRepeat.headers.get("Idempotency-Replayed")).toBe("true");
+        const update = {
+          properties: { body: "keyed-repeat-updated" },
+          version: created.data.item.version,
+        };
+        const updateKey = `sync-announce-update-${randomUUID()}`;
+        const updated = await keyed(
+          `/items/${itemId}`,
+          "PATCH",
+          updateKey,
+          update,
+        );
+        expect(updated.ok, JSON.stringify(updated.error)).toBe(true);
+        const updateRepeat = await keyed(
+          `/items/${itemId}`,
+          "PATCH",
+          updateKey,
+          update,
+        );
+        expect(updateRepeat.headers.get("Idempotency-Replayed")).toBe("true");
 
-      const update = {
-        properties: { body: "keyed-repeat-updated" },
-        version: created.data.item.version,
-      };
-      const updateKey = `sync-announce-update-${randomUUID()}`;
-      const updated = await keyed(
-        `/items/${itemId}`,
-        "PATCH",
-        updateKey,
-        update,
-      );
-      expect(updated.ok, JSON.stringify(updated.error)).toBe(true);
-      const updateRepeat = await keyed(
-        `/items/${itemId}`,
-        "PATCH",
-        updateKey,
-        update,
-      );
-      expect(updateRepeat.headers.get("Idempotency-Replayed")).toBe("true");
+        const edge = {
+          source_id: itemId,
+          target_id: peer.data.item.id,
+          edge_type: "about",
+        };
+        const edgeKey = `sync-announce-edge-${randomUUID()}`;
+        const madeEdge = await keyed("/edges", "POST", edgeKey, edge);
+        expect(madeEdge.ok, JSON.stringify(madeEdge.error)).toBe(true);
+        const edgeId = madeEdge.data.edge.id;
+        trackEdge(ctx, edgeId);
+        const edgeRepeat = await keyed("/edges", "POST", edgeKey, edge);
+        expect(edgeRepeat.headers.get("Idempotency-Replayed")).toBe("true");
 
-      const edge = {
-        source_id: itemId,
-        target_id: peer.data.item.id,
-        edge_type: "about",
-      };
-      const edgeKey = `sync-announce-edge-${randomUUID()}`;
-      const madeEdge = await keyed("/edges", "POST", edgeKey, edge);
-      expect(madeEdge.ok, JSON.stringify(madeEdge.error)).toBe(true);
-      const edgeId = madeEdge.data.edge.id;
-      trackEdge(ctx, edgeId);
-      const edgeRepeat = await keyed("/edges", "POST", edgeKey, edge);
-      expect(edgeRepeat.headers.get("Idempotency-Replayed")).toBe("true");
+        const deleteKey = `sync-announce-delete-${randomUUID()}`;
+        const deleted = await keyed(`/items/${itemId}`, "DELETE", deleteKey);
+        expect(deleted.ok, JSON.stringify(deleted.error)).toBe(true);
+        const deleteRepeat = await keyed(
+          `/items/${itemId}`,
+          "DELETE",
+          deleteKey,
+        );
+        expect(deleteRepeat.headers.get("Idempotency-Replayed")).toBe("true");
 
-      const deleteKey = `sync-announce-delete-${randomUUID()}`;
-      const deleted = await keyed(`/items/${itemId}`, "DELETE", deleteKey);
-      expect(deleted.ok, JSON.stringify(deleted.error)).toBe(true);
-      const deleteRepeat = await keyed(`/items/${itemId}`, "DELETE", deleteKey);
-      expect(deleteRepeat.headers.get("Idempotency-Replayed")).toBe("true");
-
-      // Written after every repeat. The stream delivers in id order, so the
-      // sentinel arriving means any frame a repeat published has arrived.
-      const sentinel = await client.createItem({
-        type: "core.note",
-        source: ctx.source,
-        properties: { body: "keyed-repeat-sentinel" },
-      });
-      expect(sentinel.ok).toBe(true);
-      trackItem(ctx, sentinel.data.item.id);
-      const { events } = await collectUntil(
-        stream,
-        (seen) => frames(seen, sentinel.data.item.id).length > 0,
-        `the sentinel written after every repeat (${sentinel.data.item.id})`,
-        context.signal,
-      );
-      return { events, itemId, edgeId };
-    });
+        // Written after every repeat. The stream delivers in id order, so the
+        // sentinel arriving means any frame a repeat published has arrived.
+        const sentinel = await client.createItem({
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "keyed-repeat-sentinel" },
+        });
+        expect(sentinel.ok).toBe(true);
+        trackItem(ctx, sentinel.data.item.id);
+        const { events } = await collectUntil(
+          stream,
+          (seen) => frames(seen, sentinel.data.item.id).length > 0,
+          `the sentinel written after every repeat (${sentinel.data.item.id})`,
+          signal,
+        );
+        return { events, itemId, edgeId };
+      },
+    );
 
     // One frame for each write that happened, which is the witness that the
     // stream was live for all of them; a second for any of them would be a

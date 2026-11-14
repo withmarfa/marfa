@@ -7,7 +7,7 @@ import {
   trackEdge,
   cleanup,
 } from "../../utils/setup.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 import { detectSyncCapabilities, requireRule } from "./capabilities.js";
 import type { SyncCapabilities } from "./capabilities.js";
 
@@ -75,63 +75,67 @@ describe("deletions reach the stream", () => {
       "the edge under test is not attached to the item that is about to be purged",
     ).toContain(edgeId);
 
-    const outcome = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
-      // Nothing here touches `/edges`. The edge goes away because its
-      // endpoint does, which is a different code path from the delete route
-      // and the one no other suite exercises against the stream.
-      const deleted = await client.deleteItem(source);
-      expect(deleted.ok).toBe(true);
-      const purged = await client.purgeItem(source);
-      expect(
-        purged.ok,
-        `the purge that should cascade did not happen: ${JSON.stringify(purged.error)}`,
-      ).toBe(true);
+    const outcome = await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal: context.signal },
+      async (stream) => {
+        // Nothing here touches `/edges`. The edge goes away because its
+        // endpoint does, which is a different code path from the delete route
+        // and the one no other suite exercises against the stream.
+        const deleted = await client.deleteItem(source);
+        expect(deleted.ok).toBe(true);
+        const purged = await client.purgeItem(source);
+        expect(
+          purged.ok,
+          `the purge that should cascade did not happen: ${JSON.stringify(purged.error)}`,
+        ).toBe(true);
 
-      // Waits on the control, not on the rule. `item.deleted` for the
-      // endpoint is the frame a working subscription must deliver whatever
-      // the answer about the cascade is, so waiting on that turns "the edge
-      // was never announced" into a named assertion below. Waiting on
-      // `edge.deleted` itself would instead burn the runner's whole budget
-      // and report `Test timed out`, which says nothing about the rule and
-      // costs two minutes to say it.
-      const seen = await collectUntil(
-        stream,
-        (events) =>
-          events.some(
-            (e) =>
-              (e.data as { item?: { id?: string } })?.item?.id === source ||
-              (e.data as { edge?: { id?: string } })?.edge?.id === edgeId,
-          ),
-        `the endpoint's own removal to reach the stream (item ${source})`,
-        context.signal,
-      );
-      // A cascaded edge event can land a beat after the endpoint's, and this
-      // subscription is unfiltered, so an edge written now arrives whatever
-      // the answer about the cascade is. Waiting for it settles the question
-      // instead of guessing at how long a beat is: edges reach a subscriber
-      // in publish order, so once this one is here a cascaded `edge.deleted`
-      // that was going to come has come.
-      const sentinelEdge = await client.createEdge({
-        source_id: target,
-        target_id: await makeNote("cascade-sentinel-target"),
-        edge_type: "about",
-      });
-      expect(sentinelEdge.ok).toBe(true);
-      trackEdge(ctx, sentinelEdge.data.edge.id);
-      const rest = await collectUntil(
-        stream,
-        (events) =>
-          events.some(
-            (e) =>
-              (e.data as { edge?: { id?: string } })?.edge?.id ===
-              sentinelEdge.data.edge.id,
-          ),
-        `the sentinel edge written after the purge (${sentinelEdge.data.edge.id})`,
-        context.signal,
-      );
-      return [...seen.events, ...rest.events];
-    });
+        // Waits on the control, not on the rule. `item.deleted` for the
+        // endpoint is the frame a working subscription must deliver whatever
+        // the answer about the cascade is, so waiting on that turns "the edge
+        // was never announced" into a named assertion below. Waiting on
+        // `edge.deleted` itself would instead burn the runner's whole budget
+        // and report `Test timed out`, which says nothing about the rule and
+        // costs two minutes to say it.
+        const seen = await collectUntil(
+          stream,
+          (events) =>
+            events.some(
+              (e) =>
+                (e.data as { item?: { id?: string } })?.item?.id === source ||
+                (e.data as { edge?: { id?: string } })?.edge?.id === edgeId,
+            ),
+          `the endpoint's own removal to reach the stream (item ${source})`,
+          context.signal,
+        );
+        // A cascaded edge event can land a beat after the endpoint's, and this
+        // subscription is unfiltered, so an edge written now arrives whatever
+        // the answer about the cascade is. Waiting for it settles the question
+        // instead of guessing at how long a beat is: edges reach a subscriber
+        // in publish order, so once this one is here a cascaded `edge.deleted`
+        // that was going to come has come.
+        const sentinelEdge = await client.createEdge({
+          source_id: target,
+          target_id: await makeNote("cascade-sentinel-target"),
+          edge_type: "about",
+        });
+        expect(sentinelEdge.ok).toBe(true);
+        trackEdge(ctx, sentinelEdge.data.edge.id);
+        const rest = await collectUntil(
+          stream,
+          (events) =>
+            events.some(
+              (e) =>
+                (e.data as { edge?: { id?: string } })?.edge?.id ===
+                sentinelEdge.data.edge.id,
+            ),
+          `the sentinel edge written after the purge (${sentinelEdge.data.edge.id})`,
+          context.signal,
+        );
+        return [...seen.events, ...rest.events];
+      },
+    );
 
     // The control. A stream carrying nothing about the endpoint either was
     // not delivering, and the assertion below would then be a statement about
@@ -159,46 +163,50 @@ describe("deletions reach the stream", () => {
 
     const id = await makeNote("purge-announcement");
 
-    const outcome = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
-      const deleted = await client.deleteItem(id);
-      expect(deleted.ok).toBe(true);
-      const purged = await client.purgeItem(id);
-      expect(purged.ok).toBe(true);
+    const outcome = await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal: context.signal },
+      async (stream) => {
+        const deleted = await client.deleteItem(id);
+        expect(deleted.ok).toBe(true);
+        const purged = await client.purgeItem(id);
+        expect(purged.ok).toBe(true);
 
-      // Waits on the soft delete, which is this test's control and the frame
-      // a working subscription must deliver either way. Waiting on
-      // `item.purged` itself would report `Test timed out` two minutes later
-      // on a server that does not emit it, in place of the assertion below
-      // that names what is missing.
-      const seen = await collectUntil(
-        stream,
-        (events) =>
-          events.some(
-            (e) =>
-              (e.event === "item.deleted" || e.event === "item.purged") &&
-              (e.data as { item?: { id?: string } })?.item?.id === id,
-          ),
-        `the removal of ${id} to reach the stream`,
-        context.signal,
-      );
-      // A purge announcement can land a beat after the delete's, so the wait
-      // is on an item written after the purge rather than on a fixed window:
-      // items reach a subscriber in publish order, and this one arrives
-      // whether or not a purge is ever announced.
-      const sentinel = await makeNote("purge-announcement-sentinel");
-      const rest = await collectUntil(
-        stream,
-        (events) =>
-          events.some(
-            (e) =>
-              (e.data as { item?: { id?: string } })?.item?.id === sentinel,
-          ),
-        `the sentinel written after purging ${id} (${sentinel})`,
-        context.signal,
-      );
-      return [...seen.events, ...rest.events];
-    });
+        // Waits on the soft delete, which is this test's control and the frame
+        // a working subscription must deliver either way. Waiting on
+        // `item.purged` itself would report `Test timed out` two minutes later
+        // on a server that does not emit it, in place of the assertion below
+        // that names what is missing.
+        const seen = await collectUntil(
+          stream,
+          (events) =>
+            events.some(
+              (e) =>
+                (e.event === "item.deleted" || e.event === "item.purged") &&
+                (e.data as { item?: { id?: string } })?.item?.id === id,
+            ),
+          `the removal of ${id} to reach the stream`,
+          context.signal,
+        );
+        // A purge announcement can land a beat after the delete's, so the wait
+        // is on an item written after the purge rather than on a fixed window:
+        // items reach a subscriber in publish order, and this one arrives
+        // whether or not a purge is ever announced.
+        const sentinel = await makeNote("purge-announcement-sentinel");
+        const rest = await collectUntil(
+          stream,
+          (events) =>
+            events.some(
+              (e) =>
+                (e.data as { item?: { id?: string } })?.item?.id === sentinel,
+            ),
+          `the sentinel written after purging ${id} (${sentinel})`,
+          context.signal,
+        );
+        return [...seen.events, ...rest.events];
+      },
+    );
 
     const names = outcome
       .filter((e) => (e.data as { item?: { id?: string } })?.item?.id === id)

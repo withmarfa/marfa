@@ -16,7 +16,7 @@ import {
   sentTo,
   signIn,
 } from "../../utils/signed-in.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 import type { SseEvent } from "../../utils/sse.js";
 
 /**
@@ -228,69 +228,78 @@ async function sentinel(): Promise<string> {
 }
 
 describe("a consent", () => {
-  it("whose audit record cannot be committed grants nothing and publishes no event", async () => {
+  it("whose audit record cannot be committed grants nothing and publishes no event", async ({
+    signal,
+  }) => {
     const cookie = await signIn(server, origin);
-    await withStream(server.apiUrl, server.workingKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
-      // The witness: an accepted consent announces its grant on this stream.
-      const shown = await registerApp(server, NOTES);
-      const shownConsent = await sentTo(
-        server,
-        await authorize(
+    await withStreamAtCursor(
+      server.apiUrl,
+      server.workingKey,
+      { signal },
+      async (stream) => {
+        // The witness: an accepted consent announces its grant on this stream.
+        const shown = await registerApp(server, NOTES);
+        const shownConsent = await sentTo(
           server,
-          authorizeQuery(shown.clientId, NOTES, pkce()),
-          cookie,
-        ),
-      );
-      expect((await accept(cookie, shownConsent!)).status).toBe(302);
-      await collectUntil(
-        stream,
-        (events) => events.some((e) => announcesGrant(e, shown.clientId)),
-        "the accepted consent's grant",
-      );
-
-      const app = await registerApp(server, NOTES);
-      const consent = await sentTo(
-        server,
-        await authorize(
-          server,
-          authorizeQuery(app.clientId, NOTES, pkce()),
-          cookie,
-        ),
-      );
-      expect(consent?.pathname).toBe("/auth/authorize");
-      const refused = await failing("fail:audit", () =>
-        accept(cookie, consent!),
-      );
-      expect(refused.status).toBe(500);
-      const marker = await sentinel();
-      const { events } = await collectUntil(
-        stream,
-        (seen) =>
-          seen.some(
-            (e) => (e.data as { item?: { id?: string } })?.item?.id === marker,
+          await authorize(
+            server,
+            authorizeQuery(shown.clientId, NOTES, pkce()),
+            cookie,
           ),
-        "the sentinel note",
-      );
-      expect(events.some((e) => announcesGrant(e, app.clientId))).toBe(false);
-      expect(await grantFor(app.clientId)).toBeUndefined();
-      const again = await sentTo(
-        server,
-        await authorize(
+        );
+        expect((await accept(cookie, shownConsent!)).status).toBe(302);
+        await collectUntil(
+          stream,
+          (events) => events.some((e) => announcesGrant(e, shown.clientId)),
+          "the accepted consent's grant",
+        );
+
+        const app = await registerApp(server, NOTES);
+        const consent = await sentTo(
           server,
-          authorizeQuery(app.clientId, NOTES, pkce()),
-          cookie,
-        ),
-      );
-      expect(again?.pathname, "a refused consent stood").toBe(
-        "/auth/authorize",
-      );
-    });
+          await authorize(
+            server,
+            authorizeQuery(app.clientId, NOTES, pkce()),
+            cookie,
+          ),
+        );
+        expect(consent?.pathname).toBe("/auth/authorize");
+        const refused = await failing("fail:audit", () =>
+          accept(cookie, consent!),
+        );
+        expect(refused.status).toBe(500);
+        const marker = await sentinel();
+        const { events } = await collectUntil(
+          stream,
+          (seen) =>
+            seen.some(
+              (e) =>
+                (e.data as { item?: { id?: string } })?.item?.id === marker,
+            ),
+          "the sentinel note",
+        );
+        expect(events.some((e) => announcesGrant(e, app.clientId))).toBe(false);
+        expect(await grantFor(app.clientId)).toBeUndefined();
+        const again = await sentTo(
+          server,
+          await authorize(
+            server,
+            authorizeQuery(app.clientId, NOTES, pkce()),
+            cookie,
+          ),
+        );
+        expect(again?.pathname, "a refused consent stood").toBe(
+          "/auth/authorize",
+        );
+      },
+    );
   });
 });
 
 describe("a grant's withdrawal", () => {
-  it("whose audit record cannot be committed answers 500, leaves the grant and its tokens, and publishes no event", async () => {
+  it("whose audit record cannot be committed answers 500, leaves the grant and its tokens, and publishes no event", async ({
+    signal,
+  }) => {
     const cookie = await signIn(server, origin);
     const app = await registerApp(server, NOTES);
     const issued = await connect(server, origin, cookie, app, NOTES);
@@ -303,36 +312,41 @@ describe("a grant's withdrawal", () => {
       });
     const aboutGrant = (event: SseEvent) =>
       (event.data as { item?: { id?: string } })?.item?.id === grant;
-    await withStream(server.apiUrl, server.workingKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
-      const refused = await failing("fail:audit", withdraw);
-      expect(refused.status).toBe(500);
-      const marker = await sentinel();
-      const { events } = await collectUntil(
-        stream,
-        (seen) =>
-          seen.some(
-            (e) => (e.data as { item?: { id?: string } })?.item?.id === marker,
-          ),
-        "the sentinel note",
-      );
-      expect(
-        events.some(aboutGrant),
-        "a refused withdrawal was announced",
-      ).toBe(false);
-      expect(await grantFor(app.clientId)).toBe(grant);
-      expect(await itemsStatus(server, issued.access_token!)).toBe(200);
+    await withStreamAtCursor(
+      server.apiUrl,
+      server.workingKey,
+      { signal },
+      async (stream) => {
+        const refused = await failing("fail:audit", withdraw);
+        expect(refused.status).toBe(500);
+        const marker = await sentinel();
+        const { events } = await collectUntil(
+          stream,
+          (seen) =>
+            seen.some(
+              (e) =>
+                (e.data as { item?: { id?: string } })?.item?.id === marker,
+            ),
+          "the sentinel note",
+        );
+        expect(
+          events.some(aboutGrant),
+          "a refused withdrawal was announced",
+        ).toBe(false);
+        expect(await grantFor(app.clientId)).toBe(grant);
+        expect(await itemsStatus(server, issued.access_token!)).toBe(200);
 
-      // The witness: after the one-shot fault, the same withdrawal takes effect and
-      // is announced on this stream.
-      expect((await withdraw()).status).toBe(200);
-      await collectUntil(
-        stream,
-        (seen) => seen.some(aboutGrant),
-        "the withdrawal",
-      );
-      expect(await itemsStatus(server, issued.access_token!)).toBe(401);
-    });
+        // The witness: after the one-shot fault, the same withdrawal takes effect and
+        // is announced on this stream.
+        expect((await withdraw()).status).toBe(200);
+        await collectUntil(
+          stream,
+          (seen) => seen.some(aboutGrant),
+          "the withdrawal",
+        );
+        expect(await itemsStatus(server, issued.access_token!)).toBe(401);
+      },
+    );
   });
 });
 

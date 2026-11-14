@@ -11,7 +11,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import { HOLD, mark, seed } from "../../utils/bulk-jobs.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 import { waitFor } from "../../utils/wait.js";
 import { startReceiver } from "../../utils/webhook-receiver.js";
 
@@ -311,52 +311,58 @@ describe("a page under atomic: false that meets the write lock", () => {
 });
 
 describe("a write whose audit entry cannot be recorded", () => {
-  it("is rolled back with its events, answers 500, and leaves the write after it to land", async () => {
+  it("is rolled back with its events, answers 500, and leaves the write after it to land", async ({
+    signal,
+  }) => {
     const tag = tagged("audit-fails");
-    await withStream(server.apiUrl, server.workingKey, {}, async (stream) => {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      const audited = await auditCount("item.create");
-      await server.setFault("fail:audit=item.create");
-      const refused = await working.createItem({
-        type: "core.note",
-        properties: { body: tag },
-        tags: [tag],
-      });
-      expect(await fired("fail:audit")).toBe(1);
-      expect(refused.status).toBe(500);
-      expect(await stored(tag)).toHaveLength(0);
-      expect(await auditCount("item.create")).toBe(audited);
+    await withStreamAtCursor(
+      server.apiUrl,
+      server.workingKey,
+      { signal },
+      async (stream) => {
+        const audited = await auditCount("item.create");
+        await server.setFault("fail:audit=item.create");
+        const refused = await working.createItem({
+          type: "core.note",
+          properties: { body: tag },
+          tags: [tag],
+        });
+        expect(await fired("fail:audit")).toBe(1);
+        expect(refused.status).toBe(500);
+        expect(await stored(tag)).toHaveLength(0);
+        expect(await auditCount("item.create")).toBe(audited);
 
-      // The witness: the same write lands once the fault has acted, with its
-      // audit entry and its event.
-      const landed = await working.createItem({
-        type: "core.note",
-        properties: { body: tag },
-        tags: [tag],
-      });
-      expect(landed.status).toBe(201);
-      expect(await auditCount("item.create")).toBe(audited + 1);
-      const { events } = await collectUntil(
-        stream,
-        (seen) =>
-          seen.some(
+        // The witness: the same write lands once the fault has acted, with its
+        // audit entry and its event.
+        const landed = await working.createItem({
+          type: "core.note",
+          properties: { body: tag },
+          tags: [tag],
+        });
+        expect(landed.status).toBe(201);
+        expect(await auditCount("item.create")).toBe(audited + 1);
+        const { events } = await collectUntil(
+          stream,
+          (seen) =>
+            seen.some(
+              (event) =>
+                (event.data as { item?: { id?: string } })?.item?.id ===
+                landed.data.item.id,
+            ),
+          "the landed write's event",
+        );
+        // Everything before the landed write's frame has arrived or was
+        // withheld, so the refused write's event, which carries the same
+        // body, is absent: one event, the landed write's, names it.
+        expect(
+          events.filter(
             (event) =>
-              (event.data as { item?: { id?: string } })?.item?.id ===
-              landed.data.item.id,
+              (event.data as { item?: { properties?: { body?: string } } })
+                ?.item?.properties?.body === tag,
           ),
-        "the landed write's event",
-      );
-      // Everything before the landed write's frame has arrived or was
-      // withheld, so the refused write's event, which carries the same
-      // body, is absent: one event, the landed write's, names it.
-      expect(
-        events.filter(
-          (event) =>
-            (event.data as { item?: { properties?: { body?: string } } })?.item
-              ?.properties?.body === tag,
-        ),
-      ).toHaveLength(1);
-    });
+        ).toHaveLength(1);
+      },
+    );
   });
 
   it("rolls back an entry of a page under atomic: false and reports it errored, while the entries around it land", async () => {

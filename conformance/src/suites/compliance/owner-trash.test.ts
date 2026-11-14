@@ -6,7 +6,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import type { SseEvent } from "../../utils/sse.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 import { localFetch } from "../../utils/control-request.js";
 type RefusalBody = { error: { details?: unknown } };
 let server: FreshServer;
@@ -245,12 +245,11 @@ it("announces the owner's trash, restore, purge and emptying of the bin as the i
     (e.data as { item?: { id?: string } }).item?.id;
   const purged = await note("Purged");
   const emptied = await note("Emptied");
-  const frames = await withStream(
+  const frames = await withStreamAtCursor(
     server.apiUrl,
     server.workingKey,
-    {},
+    { signal },
     async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
       for (const action of ["trash", "restore", "trash", "purge"]) {
         const r = await act(purged.id, action);
         expect(r.status, action).toBe(200);

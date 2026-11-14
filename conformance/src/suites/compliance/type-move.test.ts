@@ -18,7 +18,7 @@ import {
 } from "../../utils/setup.js";
 import { generateId } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
 
 let client: MarfaClient;
@@ -339,17 +339,21 @@ describe("moving a type's items", () => {
     const isMoved = (e: { event: string; data: unknown }): boolean =>
       e.event === "item.updated" &&
       (e.data as { item?: { id?: string } }).item?.id === id;
-    const frame = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
-      await move(deal, { to: contract });
-      const { events } = await collectUntil(
-        stream,
-        (evts) => evts.some(isMoved),
-        `item.updated for ${id}`,
-        signal,
-      );
-      return events.find(isMoved);
-    });
+    const frame = await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal },
+      async (stream) => {
+        await move(deal, { to: contract });
+        const { events } = await collectUntil(
+          stream,
+          (evts) => evts.some(isMoved),
+          `item.updated for ${id}`,
+          signal,
+        );
+        return events.find(isMoved);
+      },
+    );
     expect((frame?.data as { item: { type: string } }).item.type).toBe(
       contract,
     );

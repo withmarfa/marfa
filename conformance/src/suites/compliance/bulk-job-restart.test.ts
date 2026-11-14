@@ -84,18 +84,7 @@ describe("a bulk-action job the server was killed on", () => {
       const tag = `killed-${String((counter += 1))}`;
       const rows = learned.rows;
       await seed(working(), tag, rows);
-      const head = await baselineEventId(
-        server.apiUrl,
-        server.workingKey,
-        async () => {
-          const marker = await working().createItem({
-            type: "core.note",
-            properties: { body: `before ${tag}` },
-          });
-          expect(marker.status).toBe(201);
-          return marker.data.item.id;
-        },
-      );
+      const head = await baselineEventId(server.apiUrl, server.workingKey);
 
       await server.setFault(point);
       const id = await queue(working(), {
@@ -138,7 +127,7 @@ describe("a bulk-action job the server was killed on", () => {
       } while (cursor !== undefined);
       expect(seen).toBe(rows);
 
-      const counts = await announced(head.eventId);
+      const counts = await announced(head);
       for (const item of ids) expect(counts.get(item), item).toBe(1);
     },
     5 * 60_000,

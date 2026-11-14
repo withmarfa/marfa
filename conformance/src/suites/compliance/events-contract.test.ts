@@ -15,9 +15,11 @@ import {
   type SseEvent,
 } from "../../utils/sse.js";
 import {
+  awaitStreamCursor,
   baselineEventId,
   collectUntil,
   withStream,
+  withStreamAtCursor,
 } from "../../utils/stream.js";
 
 let client: MarfaClient;
@@ -77,18 +79,18 @@ async function deliver(
   const stream: EventStream = await openEventStream(apiUrl, subscriber);
   expect(stream.response.status).toBe(200);
   try {
-    // Headers are in, which is not the same as the subscription being on the
-    // publisher's list. A write that lands in the gap is published to nobody
-    // and the wait below can then only end in the budget.
-    // `baselineEventId` settles for the same reason and by the same margin.
-    await new Promise((r) => setTimeout(r, 250));
+    const budget = AbortSignal.any([
+      signal,
+      AbortSignal.timeout(FRAME_BUDGET_MS),
+    ]);
+    await awaitStreamCursor(stream, budget);
     await act();
     try {
       const { events } = await collectUntil(
         stream,
         (events) => events.some(matches),
         `${name} for ${id}`,
-        AbortSignal.any([signal, AbortSignal.timeout(FRAME_BUDGET_MS)]),
+        budget,
       );
       return events.find(matches);
     } catch (err) {
@@ -115,8 +117,7 @@ async function announced(
   act: () => Promise<void>,
   signal: AbortSignal,
 ): Promise<SseEvent[]> {
-  return withStream(apiUrl, apiKey, {}, async (stream) => {
-    await new Promise((r) => setTimeout(r, 250));
+  return withStreamAtCursor(apiUrl, apiKey, { signal }, async (stream) => {
     await act();
     const witness = await seed("witness");
     const { events } = await collectUntil(
@@ -152,14 +153,26 @@ describe("event stream contract", () => {
   it("opens with a stream_cursor frame naming the log head", async ({
     signal,
   }) => {
-    // The head is only observable by causing an event and reading the id the
-    // server gave it, which is what this helper does; the cursor the next
-    // subscription announces is then a value with something to disagree with.
-    const head = await baselineEventId(
+    // The head is learned without the frame under test: write an item while
+    // a stream follows the log and read the id the server gave its event. The
+    // cursor the next subscription announces is then a value with something to
+    // disagree with.
+    const head = await withStreamAtCursor(
       apiUrl,
       apiKey,
-      () => seed("cursor-head"),
-      signal,
+      { signal },
+      async (stream) => {
+        const marker = await seed("cursor-head");
+        const { events } = await collectUntil(
+          stream,
+          (evts) => evts.some((e) => rowOf(e) === marker),
+          `the marker ${marker} to reach the stream`,
+          signal,
+        );
+        const id = events.find((e) => rowOf(e) === marker)?.id;
+        expect(id, "the marker's event carried no id").toBeDefined();
+        return id!;
+      },
     );
 
     const stream = await openEventStream(apiUrl, apiKey, {
@@ -179,10 +192,41 @@ describe("event stream contract", () => {
       expect(events[0].event).toBe("stream_cursor");
       const data = events[0].data as { event_type: string; cursor: string };
       expect(data.event_type).toBe("stream_cursor");
-      expect(data.cursor).toBe(head.eventId);
+      expect(data.cursor).toBe(head);
       expect(events[0].id).toBeUndefined();
     } finally {
       await stream.close();
+    }
+  });
+
+  it("sends an event written the moment stream_cursor arrives, on a stream that does not resume", async ({
+    signal,
+  }) => {
+    // One stream proves little: a server that drops what is written just
+    // after the head was read loses it only when the write lands in that
+    // gap. Many streams, each written to with nothing between the frame and
+    // the write, and half of them filtered, make the gap hard to miss.
+    for (let round = 0; round < 12; round += 1) {
+      const filtered = round % 2 === 1;
+      const written = await withStreamAtCursor(
+        apiUrl,
+        apiKey,
+        filtered ? { query: [["type", "core.note"]], signal } : { signal },
+        async (stream) => {
+          const id = await seed(`right-after-the-cursor-${String(round)}`);
+          const { events } = await collectUntil(
+            stream,
+            (evts) => evts.some((e) => rowOf(e) === id),
+            `the item ${id}, written straight after stream_cursor, on round ${String(round)}`,
+            signal,
+          );
+          return { id, events };
+        },
+      );
+      expect(
+        written.events.find((e) => rowOf(e) === written.id)?.event,
+        `round ${String(round)}${filtered ? " (filtered)" : ""} never carried the item written after the frame`,
+      ).toBe("item.created");
     }
   });
 
@@ -195,14 +239,11 @@ describe("event stream contract", () => {
     // than a repeat of an edge the first already made.
     const edgeAnnounced = async (mode: string): Promise<boolean> => {
       const b = await seed(`edges-filter-${mode}-target`);
-      return withStream(
+      return withStreamAtCursor(
         apiUrl,
         apiKey,
-        { query: [["edges", mode]] },
+        { query: [["edges", mode]], signal },
         async (stream) => {
-          // Let the subscription settle before the write, or the event it is
-          // meant to observe is published to nobody.
-          await new Promise((r) => setTimeout(r, 250));
           const edge = await client.createEdge({
             source_id: a,
             target_id: b,
@@ -358,7 +399,7 @@ describe("event stream contract", () => {
     let copy: string | undefined;
     const stream = await openEventStream(apiUrl, apiKey);
     try {
-      await new Promise((r) => setTimeout(r, 250));
+      await awaitStreamCursor(stream, signal);
       const resolved = await client.rawRequest<{
         conflict_resolution?: { conflicted_copy_id?: string };
       }>(`/items/${original}?conflict=auto`, {
@@ -412,7 +453,7 @@ describe("event stream contract", () => {
     ).toBe(true);
     const stream = await openEventStream(apiUrl, apiKey);
     try {
-      await new Promise((r) => setTimeout(r, 250));
+      await awaitStreamCursor(stream, signal);
       const resolved = await client.rawRequest<{
         conflict_resolution?: { conflicted_copy_id?: string };
       }>(`/items/${original}?conflict=auto`, {
@@ -485,7 +526,7 @@ describe("event stream contract", () => {
     ).toBe(true);
     const stream = await openEventStream(apiUrl, apiKey);
     try {
-      await new Promise((r) => setTimeout(r, 250));
+      await awaitStreamCursor(stream, signal);
       const resolved = await client.rawRequest<{
         conflict_resolution?: { conflicted_copy_id?: string };
       }>(`/items/${original}?conflict=auto`, {
@@ -851,15 +892,10 @@ describe("event stream contract", () => {
   it("refuses a cursor past the log's head with a terminal cursor_ahead frame", async ({
     signal,
   }) => {
-    const head = await baselineEventId(
-      apiUrl,
-      apiKey,
-      () => seed("cursor-ahead-head"),
-      signal,
-    );
+    const head = await baselineEventId(apiUrl, apiKey, signal);
     // Far enough past the head that no other file's writes reach it while
     // this one runs.
-    const ahead = String(BigInt(head.eventId) + 1_000_000_000_000n);
+    const ahead = String(BigInt(head) + 1_000_000_000_000n);
     await withStream(apiUrl, apiKey, { lastEventId: ahead }, async (stream) => {
       expect(stream.response.status).toBe(200);
       const { events } = await collectUntil(
@@ -876,7 +912,7 @@ describe("event stream contract", () => {
       };
       expect(data.event_type).toBe("cursor_ahead");
       expect(data.requested).toBe(ahead);
-      expect(BigInt(data.head) >= BigInt(head.eventId)).toBe(true);
+      expect(BigInt(data.head) >= BigInt(head)).toBe(true);
       expect(BigInt(data.head) < BigInt(ahead)).toBe(true);
       // No `id:`, so a reconnect without reading it is refused again
       // rather than resumed from somewhere else; and it is the last frame.

@@ -11,9 +11,11 @@ import {
 } from "../../utils/setup.js";
 import { openEventStream, type SseEvent } from "../../utils/sse.js";
 import {
+  awaitStreamCursor,
   baselineEventId,
   collectUntil,
   withStream,
+  withStreamAtCursor,
 } from "../../utils/stream.js";
 
 let client: MarfaClient;
@@ -193,8 +195,9 @@ describe("the source filter on the event stream", () => {
       connectTimeoutMs: 30_000,
     });
     try {
-      // Let both subscriptions settle before the writes they observe.
-      await new Promise((r) => setTimeout(r, 250));
+      await Promise.all(
+        [filtered, witness].map((stream) => awaitStreamCursor(stream, signal)),
+      );
       const written = await writeCase();
       const [seen, whole] = await Promise.all(
         [filtered, witness].map(async (stream) =>
@@ -220,13 +223,7 @@ describe("the source filter on the event stream", () => {
   it("leaves the same frames out of a replay from a cursor", async ({
     signal,
   }) => {
-    const { eventId, markerId } = await baselineEventId(
-      apiUrl,
-      witnessKey,
-      () => item(shownWriter, "core.note"),
-      signal,
-    );
-    expect(markerId).toBeTruthy();
+    const eventId = await baselineEventId(apiUrl, witnessKey, signal);
     const written = await writeCase();
     const replayed = async (key: string): Promise<string[]> =>
       withStream(apiUrl, key, { lastEventId: eventId }, async (stream) =>
@@ -252,36 +249,40 @@ describe("the source filter on the event stream", () => {
     signal,
   }) => {
     const narrowed = await mintKey("narrowed", `${ctx.source}-narrowed`);
-    await withStream(apiUrl, narrowed.key, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
-      // The witness: before the change the stream carries a hidden source.
-      const before = await item(hiddenWriter, "core.note");
-      const firstSentinel = await item(shownWriter, "core.note");
-      const first = await collectUntil(
-        stream,
-        carries(firstSentinel),
-        `the sentinel ${firstSentinel}`,
-        signal,
-      );
-      expect(idsOf(first.events)).toContain(before);
+    await withStreamAtCursor(
+      apiUrl,
+      narrowed.key,
+      { signal },
+      async (stream) => {
+        // The witness: before the change the stream carries a hidden source.
+        const before = await item(hiddenWriter, "core.note");
+        const firstSentinel = await item(shownWriter, "core.note");
+        const first = await collectUntil(
+          stream,
+          carries(firstSentinel),
+          `the sentinel ${firstSentinel}`,
+          signal,
+        );
+        expect(idsOf(first.events)).toContain(before);
 
-      const changed = await client.updateKey(narrowed.id, {
-        enforcement_override: { source_filter: FILTER() },
-      });
-      expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+        const changed = await client.updateKey(narrowed.id, {
+          enforcement_override: { source_filter: FILTER() },
+        });
+        expect(changed.status, JSON.stringify(changed.error)).toBe(200);
 
-      const after = await item(hiddenWriter, "core.note");
-      const shownAfter = await item(shownWriter, "core.note");
-      const secondSentinel = await item(shownWriter, "core.note");
-      const second = await collectUntil(
-        stream,
-        carries(secondSentinel),
-        `the sentinel ${secondSentinel}`,
-        signal,
-      );
-      expect(idsOf(second.events)).toContain(shownAfter);
-      expect(idsOf(second.events)).not.toContain(after);
-    });
+        const after = await item(hiddenWriter, "core.note");
+        const shownAfter = await item(shownWriter, "core.note");
+        const secondSentinel = await item(shownWriter, "core.note");
+        const second = await collectUntil(
+          stream,
+          carries(secondSentinel),
+          `the sentinel ${secondSentinel}`,
+          signal,
+        );
+        expect(idsOf(second.events)).toContain(shownAfter);
+        expect(idsOf(second.events)).not.toContain(after);
+      },
+    );
   });
 
   it("still sends an item the filter hides on a copy stream, with listed false", async ({

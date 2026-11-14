@@ -4,8 +4,9 @@ import type { TestContext } from "../../client/types.js";
 import { trackItem, trackEdge } from "../../utils/setup.js";
 import {
   collectUntil,
-  withStream,
   MUTATION_EVENT_NAMES,
+  withStream,
+  withStreamAtCursor,
 } from "../../utils/stream.js";
 import type { SseEvent } from "../../utils/sse.js";
 
@@ -756,8 +757,7 @@ async function probeItemPurgedEvent(args: {
   apiKey: string;
 }): Promise<RuleFinding> {
   const { client, ctx, apiUrl, apiKey } = args;
-  return withStream(apiUrl, apiKey, {}, async (stream) => {
-    await new Promise((r) => setTimeout(r, 250));
+  return withStreamAtCursor(apiUrl, apiKey, {}, async (stream) => {
     const created = await client.createItem({
       type: "core.note",
       source: ctx.source,
@@ -854,12 +854,11 @@ async function probeEdgeEventsUnderFilter(args: {
   apiKey: string;
 }): Promise<RuleFinding> {
   const { client, ctx, apiUrl, apiKey } = args;
-  return withStream(
+  return withStreamAtCursor(
     apiUrl,
     apiKey,
     { query: [["type", "core.note"]] },
     async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
       const source = await client.createItem({
         type: "core.note",
         source: ctx.source,

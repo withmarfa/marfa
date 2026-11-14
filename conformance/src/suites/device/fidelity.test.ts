@@ -8,7 +8,11 @@ import {
   trackKey,
   cleanup,
 } from "../../utils/setup.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import {
+  collectUntil,
+  withStream,
+  withStreamAtCursor,
+} from "../../utils/stream.js";
 import {
   answers,
   refusal,
@@ -2676,29 +2680,33 @@ describe("the scripted answers match the server's", () => {
 
   it("matches an item frame on the event stream", async (context) => {
     const marker = `fidelity-frame-${ctx.runId}`;
-    const frames = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      const created = await client.createItem({
-        type: "core.note",
-        source: ctx.source,
-        properties: { title: marker, body: marker },
-      });
-      expect(created.ok).toBe(true);
-      trackItem(ctx, created.data.item.id);
-      const seen = await collectUntil(
-        stream,
-        (events) =>
-          events.some(
-            (event) =>
-              event.event === "item.created" &&
-              (event.data as { item?: { properties?: { title?: string } } })
-                .item?.properties?.title === marker,
-          ),
-        `item.created for ${marker}`,
-        context.signal,
-      );
-      return seen.events;
-    });
+    const frames = await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal: context.signal },
+      async (stream) => {
+        const created = await client.createItem({
+          type: "core.note",
+          source: ctx.source,
+          properties: { title: marker, body: marker },
+        });
+        expect(created.ok).toBe(true);
+        trackItem(ctx, created.data.item.id);
+        const seen = await collectUntil(
+          stream,
+          (events) =>
+            events.some(
+              (event) =>
+                event.event === "item.created" &&
+                (event.data as { item?: { properties?: { title?: string } } })
+                  .item?.properties?.title === marker,
+            ),
+          `item.created for ${marker}`,
+          context.signal,
+        );
+        return seen.events;
+      },
+    );
 
     const announced = frames.find(
       (event) =>

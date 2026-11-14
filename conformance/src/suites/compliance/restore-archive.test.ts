@@ -1855,18 +1855,7 @@ describe("a restore refused after it began", () => {
       );
     };
 
-    const { eventId, markerId } = await baselineEventId(
-      apiUrl,
-      fileKey,
-      async () => {
-        const marker = await client.createItem(
-          createNote({ source: ctx.source }),
-        );
-        expect(marker.ok).toBe(true);
-        return marker.data.item.id;
-      },
-    );
-    trackItem(ctx, markerId);
+    const eventId = await baselineEventId(apiUrl, fileKey);
     const idsOf = (events: { data?: unknown }[]) =>
       events.map(
         (e) => (e.data as { item?: { id?: string } } | undefined)?.item?.id,
