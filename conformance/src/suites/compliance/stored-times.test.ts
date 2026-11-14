@@ -213,6 +213,61 @@ describe("a time the server keeps", () => {
   );
 
   it(
+    "answers 500 internal_error to an update that widens a key whose stored expiry does not read, and leaves the key as it was",
+    async () => {
+      const server = await bootFreshServer("stored-times-widen");
+      const target = await mintKey(server);
+      const minted = await send(server, "/keys", {
+        key: server.managementKey,
+        method: "POST",
+        body: {
+          label: "widener",
+          source: "widener",
+          permissions: ["keys.mint", "audit.read"],
+          expires_at: "2098-01-01T00:00:00.000Z",
+        },
+      });
+      expect(minted.status).toBe(201);
+      const { key: widener } = (await minted.json()) as { key: string };
+      const widen = () =>
+        send(server, `/keys/${target.id}`, {
+          key: widener,
+          method: "PATCH",
+          body: { permissions: ["audit.read"] },
+        });
+      const held = async () => {
+        const current = await send(server, "/keys/current", {
+          key: target.key,
+        });
+        expect(current.status).toBe(200);
+        return ((await current.json()) as { permissions: string[] })
+          .permissions;
+      };
+
+      // The witness: the target's stored expiry is read, and one later than the widener's refuses.
+      const outlives = await widen();
+      expect(outlives.status).toBe(403);
+      expect(
+        ((await outlives.json()) as { error: { details: unknown } }).error
+          .details,
+      ).toEqual({ expires_at: "2098-01-01T00:00:00.000Z" });
+
+      for (const damaged of ["0", "z", "soon", "2099-01-01T00:00:00Z"]) {
+        expiringAt(server, target.id, damaged);
+        const refused = await widen();
+        expect(refused.status, damaged).toBe(500);
+        expect(await refused.json()).toEqual(INTERNAL);
+      }
+
+      expiringAt(server, target.id, "2097-01-01T00:00:00.000Z");
+      expect(await held()).toEqual([]);
+      expect((await widen()).status).toBe(200);
+      expect(await held()).toEqual(["audit.read"]);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "answers 500 internal_error to GET /sources while a key's stored expiry does not read, and answers again once it reads",
     async () => {
       const server = await bootFreshServer("stored-times-sources");

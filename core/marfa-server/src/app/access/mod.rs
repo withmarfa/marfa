@@ -411,8 +411,14 @@ impl Caller {
         if !self.is_local() && !self.manages_keys() {
             self.require(Permission::KeysMint)?;
             self.check_ceiling(change.grants)?;
-            if let Some(wanted) = change.life {
-                self.check_life(wanted)?;
+            let widens = target
+                .grants
+                .first_beyond(&target.source, change.grants)
+                .is_some();
+            match change.life {
+                Some(wanted) => self.check_life(wanted)?,
+                None if widens => self.check_life(target.expires_at.as_deref())?,
+                None => {}
             }
         }
         Ok(())
@@ -780,6 +786,46 @@ mod tests {
             ..naming_levers
         };
         assert!(holder.check_update(&target, &narrow).is_err());
+    }
+
+    #[test]
+    fn a_widening_update_is_held_to_the_callers_life() {
+        use Permission::{AuditRead, KeysMint};
+        let expiring = |id: &str, end: Option<&str>| {
+            let mut key = key(id, id, &[KeysMint, AuditRead], &[]);
+            key.expires_at = end.map(Into::into);
+            key
+        };
+        let wider = key("t", "t", &[AuditRead, KeysMint], &[]).grants;
+        let narrower = Grants::default();
+        let change = |grants, life| Change {
+            grants,
+            life,
+            levers: None,
+            narrow_only: false,
+        };
+        let minter = Caller::Key(Box::new(expiring("w", Some("2030"))));
+        let lasting = Caller::Key(Box::new(expiring("l", None)));
+        let open = key("t", "t", &[AuditRead], &[]);
+        let mut shorter = open.clone();
+        shorter.expires_at = Some("2029".into());
+        for (caller, target, grants, life, allowed) in [
+            (&minter, &open, &wider, None, false),
+            (&minter, &open, &wider, Some(None), false),
+            (&minter, &open, &wider, Some(Some("2030")), true),
+            (&minter, &open, &narrower, None, true),
+            (&minter, &open, &open.grants, None, true),
+            (&minter, &shorter, &wider, None, true),
+            (&lasting, &open, &wider, None, true),
+        ] {
+            assert_eq!(
+                caller.check_update(target, &change(grants, life)).is_ok(),
+                allowed,
+                "{:?} {:?} {life:?}",
+                target.expires_at,
+                grants.permissions
+            );
+        }
     }
 
     #[test]

@@ -631,6 +631,14 @@ If a key that has an `expires_at` and does not hold `keys.manage` sends `PATCH /
 
 **Tests:** `compliance/key-expiry.test.ts › neither lengthens nor clears the expiry of a key, its own included, and leaves the key as it was`.
 
+### `keys-and-oauth/expiry-widen-ceiling`
+
+If a key that has an `expires_at` and does not hold `keys.manage` sends `PATCH /keys/{id}` naming no `expires_at`, to give a key whose `expires_at` is later than its own, or `null`, a permission, map entry or claimed source that key does not already hold, then the server MUST answer `403 forbidden` and leave the key as it was.
+
+**Reason:** What a key that expires gives another key ends when it does. An update that only narrows a key, or changes its label or tier, gives it nothing, and an update naming an `expires_at` is held by `keys-and-oauth/expiry-update-ceiling`. A change to `enforcement_override` is held to `config.manage` instead (`keys-and-oauth/levers-permission`), which already changes the instance's own levers for good.
+
+**Tests:** `compliance/key-expiry.test.ts › gives a key that outlives it nothing more, unless the update names an expires_at no later than its own, and still narrows or relabels it`, `› widens a key that expires no later than it, and a key that never expires widens any key it reaches`, `compliance/stored-times.test.ts › answers 500 internal_error to an update that widens a key whose stored expiry does not read, and leaves the key as it was`.
+
 ### `keys-and-oauth/expiry-manage-narrows`
 
 If a caller holding `keys.manage`, and not local authority, sends `PATCH /keys/{id}` for a key that has an `expires_at`, naming an `expires_at` later than it or `null`, then the server MUST answer `403 forbidden`.

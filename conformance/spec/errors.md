@@ -554,7 +554,7 @@ If the server needs a stored time as an instant to answer a request, such as to 
 
 **Reason:** the server stores every time in that one form (`instance/stored-time-form`), so a time in any other form was not written by it. Read as some other time, an expiry could keep a key or a sign-in open past its end, or end it early.
 
-**Tests:** `compliance/stored-times.test.ts › answers 500 internal_error to a key whose stored expiry does not read, and answers again once it reads`, `› answers 500 internal_error to a browser session whose stored end does not read, and answers again once it reads`.
+**Tests:** `compliance/stored-times.test.ts › answers 500 internal_error to a key whose stored expiry does not read, and answers again once it reads`, `› answers 500 internal_error to an update that widens a key whose stored expiry does not read, and leaves the key as it was`, `› answers 500 internal_error to a browser session whose stored end does not read, and answers again once it reads`.
 
 ### `errors/client-closed-request`
 
