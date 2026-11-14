@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 use crate::display::ItemDisplay;
 use crate::error::{Code, FieldError, RuleError, field_code};
 use crate::schema::{OWN_COLUMNS, OWN_TABLE_TYPE, judge_item_columns};
-use crate::wire::{WireEdgeType, WireType, label_from_id, label_from_name, plural_from_label};
+use crate::wire::{WireEdgeType, WireType, label_from_name};
 
 const TITLE_PROPERTY: &str = "title";
 const OWN_ORDER: &str = "order";
@@ -728,16 +728,7 @@ pub fn resolve_item_type(
         held.definition = with_labels(&held.name, &held.definition);
     }
     let label = text(own, "label");
-    let plural = text(own, "plural")
-        .filter(|plural| !plural.is_empty())
-        .unwrap_or_else(|| {
-            plural_from_label(
-                &label
-                    .clone()
-                    .filter(|label| !label.is_empty())
-                    .unwrap_or_else(|| label_from_id(id)),
-            )
-        });
+    let plural = crate::schema::plural_of(own);
     Ok(Some(ItemType {
         id: id.to_string(),
         label,
