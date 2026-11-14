@@ -548,3 +548,79 @@ describe("a repeated create is acknowledged", () => {
     ).not.toContain(c.data.item.id);
   });
 });
+
+describe("a write that changes nothing is acknowledged", () => {
+  it("answers an update, an upsert and a bulk entry that change nothing without announcing an event, and announces the same writes once they change something", async (context) => {
+    const sourceId = `unchanged-stream-${ctx.runId}`;
+    const sentinelBody = `unchanged-sentinel-${ctx.runId}`;
+    const created = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { body: "unchanged-first" },
+    });
+    expect(created.ok).toBe(true);
+    const id = created.data.item.id;
+    trackItem(ctx, id);
+    const same = {
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { body: "unchanged-first" },
+    };
+
+    const outcome = await withStream(apiUrl, apiKey, {}, async (stream) => {
+      await new Promise((r) => setTimeout(r, 250));
+
+      const patched = await client.updateItem(id, {
+        properties: { body: "unchanged-first" },
+        version: 1,
+      });
+      const upserted = await client.createItem(same);
+      const paged = await client.bulkItems({ items: [same] });
+
+      // The witness: the same update with one value changed, which is
+      // announced, so the silence above is about what they wrote.
+      const changed = await client.updateItem(id, {
+        properties: { body: "unchanged-second" },
+        version: 1,
+      });
+
+      const sentinel = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: sentinelBody },
+      });
+      expect(sentinel.ok).toBe(true);
+      trackItem(ctx, sentinel.data.item.id);
+
+      const seen = await collectUntil(
+        stream,
+        (events) =>
+          events.some(
+            (e) =>
+              (e.data as { item?: { id?: string } })?.item?.id ===
+              sentinel.data.item.id,
+          ),
+        `item.created for the sentinel written after the unchanged writes (${sentinel.data.item.id})`,
+        context.signal,
+      );
+      return { patched, upserted, paged, changed, events: seen.events };
+    });
+
+    expect(outcome.patched.data.acknowledged).toBe(true);
+    expect(outcome.patched.data.item.version).toBe(1);
+    expect(outcome.upserted.data.acknowledged).toBe(true);
+    expect(outcome.upserted.data.item.version).toBe(1);
+    expect(outcome.paged.data.results[0]).toMatchObject({
+      outcome: "skipped",
+      reason: "unchanged",
+      id,
+    });
+    expect(outcome.changed.data.item.version).toBe(2);
+    expect(
+      framesForItem(outcome.events, id),
+      "a write that changed nothing was announced, so every other device applies an event for a write that did not happen",
+    ).toEqual(["item.updated"]);
+  });
+});

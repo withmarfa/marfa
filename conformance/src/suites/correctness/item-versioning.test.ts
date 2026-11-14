@@ -1696,7 +1696,7 @@ describe("item versioning", () => {
     expect(moveErrors?.map((e) => e.field)).toContain("title");
   });
 
-  it("writes a version for an update whose properties are empty or equal to the item's", async () => {
+  it("answers an update whose properties are empty or equal to the item's as unchanged at the version held, and writes no version", async () => {
     const r = await client.createItem(
       createNote({
         source: ctx.source,
@@ -1705,21 +1705,190 @@ describe("item versioning", () => {
     );
     expect(r.ok).toBe(true);
     trackItem(ctx, r.data.item.id);
+    const held = await client.getItem(r.data.item.id);
 
     const empty = await client.updateItem(r.data.item.id, {
       properties: {},
       version: 1,
     });
     expect(empty.status, JSON.stringify(empty.error)).toBe(200);
-    expect(empty.data.item.version).toBe(2);
+    expect(empty.data.acknowledged).toBe(true);
+    expect(empty.data.item.version).toBe(1);
     const equal = await client.updateItem(r.data.item.id, {
       properties: { title: "Unchanged" },
-      version: 2,
+      version: 1,
     });
     expect(equal.status, JSON.stringify(equal.error)).toBe(200);
-    expect(equal.data.item.version).toBe(3);
+    expect(equal.data.acknowledged).toBe(true);
+    expect(equal.data.item.version).toBe(1);
+    expect(equal.data.item.updated_at).toBe(held.data.item.updated_at);
+
+    const read = await client.getItem(r.data.item.id);
+    expect(read.data.item.version).toBe(1);
+    expect(read.data.item.updated_at).toBe(held.data.item.updated_at);
     const history = await client.getVersions(r.data.item.id);
-    expect(history.data.data.map((v) => v.version)).toEqual([1, 2]);
+    expect(history.data.data).toEqual([]);
+
+    // The witness: the same update with one value changed is written.
+    const changed = await client.updateItem(r.data.item.id, {
+      properties: { title: "Changed" },
+      version: 1,
+    });
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+    expect(changed.data.acknowledged).toBeUndefined();
+    expect(changed.data.item.version).toBe(2);
+  });
+
+  it("answers an upsert of a natural key whose item would not change as unchanged at the version held, and writes no version", async () => {
+    const body = (title: string, tags: string[]) =>
+      createNote({
+        source: ctx.source,
+        source_id: `unchanged-upsert-${randomUUID()}`,
+        properties: { title, body: "Original" },
+        tags,
+      });
+    const first = body("Same", ["a", "b"]);
+    const made = await client.createItem(first);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    trackItem(ctx, made.data.item.id);
+
+    const repeat = await client.createItem(first);
+    expect(repeat.status, JSON.stringify(repeat.error)).toBe(200);
+    expect(repeat.data.acknowledged).toBe(true);
+    expect(repeat.data.item.id).toBe(made.data.item.id);
+    expect(repeat.data.item.version).toBe(1);
+    expect(repeat.data.item.updated_at).toBe(made.data.item.updated_at);
+    const history = await client.getVersions(made.data.item.id);
+    expect(history.data.data).toEqual([]);
+
+    // The witnesses: one tag, in a different order or gone, and one title.
+    for (const [at, changed] of [
+      { ...first, tags: ["b", "a"] },
+      { ...first, tags: ["a"] },
+      { ...first, properties: { ...first.properties, title: "Other" } },
+    ].entries()) {
+      const written = await client.createItem(changed);
+      expect(written.status, JSON.stringify(written.error)).toBe(200);
+      expect(written.data.acknowledged, `change ${at}`).toBeUndefined();
+      expect(written.data.item.version, `change ${at}`).toBe(at + 2);
+    }
+  });
+
+  it("judges an update unchanged on the item it would store, not on the body it was sent", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Stored", body: "Original" },
+        occurred_at: "2026-01-02T03:04:05.000Z",
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+
+    const equal = await client.updateItem(r.data.item.id, {
+      occurred_at: "2026-01-02T04:04:05.000+01:00",
+      version: 1,
+    });
+    expect(equal.status, JSON.stringify(equal.error)).toBe(200);
+    expect(equal.data.acknowledged).toBe(true);
+    expect(equal.data.item.version).toBe(1);
+    expect(equal.data.item.occurred_at).toBe("2026-01-02T03:04:05.000Z");
+
+    const moved = await client.updateItem(r.data.item.id, {
+      occurred_at: "2026-01-02T05:04:05.000+01:00",
+      version: 1,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.acknowledged).toBeUndefined();
+    expect(moved.data.item.version).toBe(2);
+  });
+
+  it("asks an update's version before it finds the update unchanged", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Stale", body: "Original" },
+      }),
+    );
+    expect(r.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    const moved = await client.updateItem(r.data.item.id, {
+      properties: { title: "Moved" },
+      version: 1,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+
+    for (const body of [
+      { properties: { title: "Moved" }, version: 1, version_match: "exact" },
+      { properties: { title: "Moved" }, version: 1 },
+      { edges: {}, version: 1, properties: { title: "Moved" } },
+    ]) {
+      const stale = await client.rawRequest(`/items/${r.data.item.id}`, {
+        method: "PATCH",
+        body,
+      });
+      expect(stale.status, JSON.stringify(body)).toBe(409);
+      expect(stale.error?.error.code, JSON.stringify(body)).toBe(
+        "version_conflict",
+      );
+    }
+    const read = await client.getItem(r.data.item.id);
+    expect(read.data.item.version).toBe(2);
+
+    // A stale write that only repeats what the writer read is merged into the
+    // item as it stands, which it leaves as it is.
+    const echo = await client.updateItem(r.data.item.id, {
+      properties: { body: "Original" },
+      version: 1,
+    });
+    expect(echo.status, JSON.stringify(echo.error)).toBe(200);
+    expect(echo.data.acknowledged).toBe(true);
+    expect(echo.data.item.version).toBe(2);
+  });
+
+  it("applies the edges an update names that the item does not hold, and leaves an update whose edges it holds unchanged", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Edged", body: "Original" },
+      }),
+    );
+    const target = await client.createItem(
+      createNote({ source: ctx.source, properties: { title: "Target" } }),
+    );
+    expect(r.ok && target.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    trackItem(ctx, target.data.item.id);
+    const edges = { about: [target.data.item.id] };
+
+    const added = await client.updateItem(r.data.item.id, {
+      properties: { title: "Edged" },
+      edges,
+      version: 1,
+    });
+    expect(added.status, JSON.stringify(added.error)).toBe(200);
+    expect(added.data.acknowledged).toBeUndefined();
+    expect(added.data.item.version).toBe(1);
+    const held = await client.listItemEdges(r.data.item.id, { edge_type: "about" });
+    expect(held.data.data.length).toBe(1);
+
+    const again = await client.updateItem(r.data.item.id, {
+      properties: { title: "Edged" },
+      edges,
+      version: 1,
+    });
+    expect(again.status, JSON.stringify(again.error)).toBe(200);
+    expect(again.data.acknowledged).toBe(true);
+
+    const removed = await client.updateItem(r.data.item.id, {
+      properties: { title: "Edged" },
+      edges: { about: [] },
+      version: 1,
+    });
+    expect(removed.status, JSON.stringify(removed.error)).toBe(200);
+    expect(removed.data.acknowledged).toBeUndefined();
+    const gone = await client.listItemEdges(r.data.item.id, { edge_type: "about" });
+    expect(gone.data.data.length).toBe(0);
   });
 
   it("refuses an update that names nothing to change, and one naming a version that is not a whole number of at least 0", async () => {

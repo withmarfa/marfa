@@ -286,6 +286,56 @@ describe("bulk", () => {
     expect((getRes.data.item.properties as { body: string }).body).toBe("v2");
   });
 
+  it("reports an upsert entry whose item would not change skipped as unchanged, and counts and writes only the entries that change", async () => {
+    for (const atomic of [true, false]) {
+      const entry = (name: string, body: string) => ({
+        type: "core.note",
+        properties: { title: name, body },
+        source_id: `unchanged-${atomic}-${name}-${ctx.runId}`,
+      });
+      const seeded = await client.bulkItems({
+        items: [entry("same", "a"), entry("other", "a")],
+      });
+      expect(seeded.ok, JSON.stringify(seeded.error)).toBe(true);
+      const [same, other] = seeded.data.results.map((r) => r.id!);
+      trackItem(ctx, same!);
+      trackItem(ctx, other!);
+
+      const page = await client.bulkItems({
+        items: [
+          entry("same", "a"),
+          entry("other", "b"),
+          entry("new", "a"),
+        ],
+        mode: "upsert",
+        atomic,
+      });
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      expect(
+        page.data.results.map((r) => r.outcome),
+        JSON.stringify(page.data),
+      ).toEqual(["skipped", "updated", "created"]);
+      expect(page.data.results[0]).toMatchObject({
+        index: 0,
+        reason: "unchanged",
+        id: same,
+      });
+      expect(page.data.results[1]!.reason).toBeUndefined();
+      expect(page.data.counts).toMatchObject({
+        created: 1,
+        updated: 1,
+        skipped: 1,
+        errored: 0,
+      });
+      trackItem(ctx, page.data.results[2]!.id!);
+
+      const versions = await Promise.all(
+        [same, other].map(async (id) => (await client.getItem(id!)).data.item),
+      );
+      expect(versions.map((item) => item.version)).toEqual([1, 2]);
+    }
+  });
+
   it("atomic rollback on invalid type returns 400 and leaves no items", async () => {
     const tag = `atomic-${ctx.runId}`;
     const res = await client.bulkItems({

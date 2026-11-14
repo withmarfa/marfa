@@ -695,3 +695,91 @@ async fn a_part_listed_with_a_binned_host_and_a_live_one_stays_whatever_the_orde
         assert_eq!(read.landed(StatusCode::OK)["item"]["state"], "active");
     }
 }
+
+async fn stale_note(instance: &Instance) -> (String, String) {
+    let note = instance.note().await;
+    let path = format!("/items/{note}");
+    let body = json!({ "version": 1, "properties": { "body": "moved on" } });
+    instance
+        .local(Method::PATCH, &path, Some(body))
+        .await
+        .landed(StatusCode::OK);
+    (note, path)
+}
+
+async fn register(instance: &Instance, kind: Value) {
+    instance
+        .local(Method::POST, "/edge-types", Some(kind))
+        .await
+        .landed(StatusCode::CREATED);
+}
+
+#[tokio::test]
+async fn an_item_write_names_an_edge_the_edge_checks_refuse_whatever_its_version() {
+    let instance = Instance::start().await;
+    register(
+        &instance,
+        json!({
+            "id": "user.rated",
+            "label": "Rated",
+            "cardinality": "many-to-many",
+            "property_schema": { "score": { "type": "number", "required": true } },
+        }),
+    )
+    .await;
+    register(
+        &instance,
+        json!({
+            "id": "user.tasks-only",
+            "label": "Tasks only",
+            "cardinality": "many-to-many",
+            "target_type_constraints": ["core.task"],
+        }),
+    )
+    .await;
+    let (note, path) = stale_note(&instance).await;
+    let other = instance.note().await;
+    let missing = "01a1b6a7-0000-7000-8000-000000000000";
+    let before: i64 = instance
+        .db()
+        .query_row("SELECT count(*) FROM edges", [], |row| row.get(0))
+        .unwrap();
+
+    let cases = [
+        ("user.nothing", json!([other]), StatusCode::NOT_FOUND, "edge_type_not_found"),
+        ("about", json!([note]), StatusCode::BAD_REQUEST, "edge_cycle"),
+        ("user.rated", json!([note]), StatusCode::BAD_REQUEST, "edge_cycle"),
+        ("user.rated", json!([missing]), StatusCode::BAD_REQUEST, "invalid_properties"),
+        ("user.rated", json!([other]), StatusCode::BAD_REQUEST, "invalid_properties"),
+        ("about", json!([missing]), StatusCode::NOT_FOUND, "item_not_found"),
+        ("user.tasks-only", json!([other]), StatusCode::BAD_REQUEST, "edge_constraint_violation"),
+    ];
+    for (kind, targets, status, code) in cases {
+        for version in [1, 2] {
+            let body = json!({ "version": version, "edges": { kind: targets } });
+            let answer = instance.local(Method::PATCH, &path, Some(body)).await;
+            answer.refused(status, code);
+        }
+    }
+    let after: i64 = instance
+        .db()
+        .query_row("SELECT count(*) FROM edges", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(after, before);
+}
+
+#[tokio::test]
+async fn an_item_write_asks_the_stale_version_before_the_checks_that_read_the_edges_held() {
+    let instance = Instance::start().await;
+    let (note, path) = stale_note(&instance).await;
+    let other = instance.note().await;
+    instance.edge(&other, &note, "supersedes").await;
+
+    let body = json!({ "version": 1, "edges": { "supersedes": [other] } });
+    let answer = instance.local(Method::PATCH, &path, Some(body)).await;
+    answer.refused(StatusCode::CONFLICT, "version_conflict");
+
+    let body = json!({ "version": 2, "edges": { "supersedes": [other] } });
+    let answer = instance.local(Method::PATCH, &path, Some(body)).await;
+    answer.refused(StatusCode::BAD_REQUEST, "edge_cycle");
+}
