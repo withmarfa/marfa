@@ -1615,3 +1615,77 @@ fn bytes_a_set_aside_could_not_read_every_write_for_stay_until_the_store_set_asi
     assert!(!cached(&path, FETCHED));
     assert_eq!(keeps(&path), 0);
 }
+
+fn keeps(path: &Path) -> Vec<String> {
+    store::meta_keys(&Connection::open(path).unwrap(), "set_aside_keeps/").unwrap()
+}
+
+/// Overwrites the page that holds `index`'s entries.
+fn damage_index(path: &Path, index: &str) {
+    let conn = Connection::open(path).unwrap();
+    let size: i64 = conn
+        .query_row("PRAGMA page_size", [], |row| row.get(0))
+        .unwrap();
+    let root: i64 = conn
+        .query_row(
+            "SELECT rootpage FROM sqlite_master WHERE type = 'index' AND name = ?1",
+            [index],
+            |row| row.get(0),
+        )
+        .unwrap();
+    drop(conn);
+    overwrite(path, (root as u64 - 1) * size as u64, size as usize);
+}
+
+/// A store set aside once without reading every write, so its cache's bytes
+/// are kept while `.damaged-1` stands, then damaged in its meta table.
+fn kept_then_meta_damaged() -> (tempfile::TempDir, PathBuf, String, SetAside) {
+    let (dir, path, hash) = store_with_bytes();
+    damage_table(&path, "queue");
+    let first = set_aside(&path);
+    assert!(first.unread > 0 || !first.whole, "{first:?}");
+    assert_eq!(keeps(&path).len(), 2);
+    damage_table(&path, "meta");
+    (dir, path, hash, first)
+}
+
+fn trim_at_nothing(path: &Path) {
+    let core = Core::open(path, None).unwrap();
+    core.set_file_budget(crate::FileBudget::Bytes(0)).unwrap();
+    core.trim_files().unwrap();
+}
+
+#[test]
+fn an_earlier_set_asides_kept_bytes_survive_a_later_set_aside_that_cannot_read_meta() {
+    // Its keys still read through the meta table's key index.
+    let (_dir, path, hash, first) = kept_then_meta_damaged();
+    let hex = blob::hex_of(&hash).unwrap().to_string();
+    set_aside(&path);
+    assert_eq!(keeps(&path).len(), 2);
+    trim_at_nothing(&path);
+    assert!(cached(&path, &hex));
+    assert!(cached(&path, FETCHED));
+    // The witness: once the earlier store set aside is gone, a trim takes them.
+    store::remove(Path::new(&first.set_aside)).unwrap();
+    trim_at_nothing(&path);
+    assert!(!cached(&path, FETCHED));
+    assert!(keeps(&path).is_empty());
+
+    // Where neither the table nor its keys read, the later set-aside keeps
+    // every byte itself, and says it may have missed something.
+    let (_dir, path, hash, first) = kept_then_meta_damaged();
+    let hex = blob::hex_of(&hash).unwrap().to_string();
+    damage_index(&path, "sqlite_autoindex_meta_1");
+    let second = set_aside(&path);
+    assert!(!second.whole, "{second:?}");
+    trim_at_nothing(&path);
+    assert!(cached(&path, &hex));
+    assert!(cached(&path, FETCHED));
+    store::remove(Path::new(&first.set_aside)).unwrap();
+    trim_at_nothing(&path);
+    assert!(cached(&path, FETCHED));
+    store::remove(Path::new(&second.set_aside)).unwrap();
+    trim_at_nothing(&path);
+    assert!(!cached(&path, FETCHED));
+    assert!(keeps(&path).is_empty());
+}

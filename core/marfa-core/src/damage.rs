@@ -25,10 +25,11 @@ pub struct SetAside {
     /// The id of each unread write whose id could be read.
     pub unread_ids: Vec<String>,
     /// Whether every write the old queue holds was found, and every record
-    /// that decides how a carried write is sent was read. Where not, or
-    /// where a write did not read, the store set aside may hold writes or
-    /// records the new store lacks, and every byte the cache held as it was
-    /// set aside stays until that store is gone.
+    /// that decides how a carried write is sent, and of the bytes an earlier
+    /// set-aside keeps, was read. Where not, or where a write did not read,
+    /// the store set aside may hold writes or records the new store lacks,
+    /// and every byte the cache held as it was set aside stays until that
+    /// store is removed or moved from where the set-aside put it.
     pub whole: bool,
     /// The carried writes held `blocked` with the reason `instance_changed`,
     /// because which instance the old store was built from could not be
@@ -567,16 +568,23 @@ fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
     if let Some(old) = old {
         let _ = copy_rows(old, &tx, "declared_types");
     }
-    for (key, value) in meta
-        .rows
-        .range(META_KEEPS.to_string()..META_KEEPS_END.to_string())
-    {
+    let keep_range = META_KEEPS.to_string()..META_KEEPS_END.to_string();
+    let kept = meta.rows.range(keep_range.clone()).map(|(key, _)| key);
+    let indexed = meta
+        .keys
+        .iter()
+        .flat_map(|keys| keys.range(keep_range.clone()));
+    for key in kept.chain(indexed).collect::<BTreeSet<_>>() {
         let aside = key[META_KEEPS.len()..]
             .rsplit_once('/')
             .map(|(aside, _)| aside);
         if aside.is_some_and(|aside| stands(&path.with_file_name(aside))) {
-            store::meta_set(&tx, key, value)?;
+            store::meta_set(&tx, key, "")?;
         }
+    }
+    // An earlier set-aside's keeps may be among the keys that did not read.
+    if !meta.whole && meta.keys.is_none() {
+        whole = false;
     }
     if unread > 0 || !whole {
         keep_bytes(&tx, path, aside)?;
