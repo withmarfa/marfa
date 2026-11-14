@@ -31,19 +31,12 @@ impl DatabasePath {
         }
     }
 
+    /// The file SQLite opens: `None` in memory, for SQLite's own temporary file, and for a
+    /// URI SQLite refuses.
     pub fn file(&self) -> Option<PathBuf> {
         match self {
             DatabasePath::File(path) => Some(path.clone()),
-            DatabasePath::Uri(uri) => {
-                let uri = uri.trim_start_matches("file:");
-                let (path, query) = uri.split_once('?').unwrap_or((uri, ""));
-                let in_memory = path.is_empty()
-                    || path == ":memory:"
-                    || query
-                        .split('&')
-                        .any(|option| option == "mode=memory" || option == "vfs=memdb");
-                (!in_memory).then(|| PathBuf::from(path))
-            }
+            DatabasePath::Uri(uri) => uri_file(uri),
             DatabasePath::Memory => None,
         }
     }
@@ -56,6 +49,63 @@ impl DatabasePath {
             .unwrap_or(Path::new("."))
             .to_path_buf()
     }
+}
+
+/// Read as SQLite's `sqlite3ParseUri` reads it, built without `SQLITE_ALLOW_URI_AUTHORITY`.
+fn uri_file(uri: &str) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    let rest = uri.strip_prefix("file:")?;
+    let rest = match rest.strip_prefix("//") {
+        Some(after) => {
+            let end = after.find('/').unwrap_or(after.len());
+            if !matches!(&after[..end], "" | "localhost") {
+                return None;
+            }
+            &after[end..]
+        }
+        None => rest,
+    };
+    let rest = rest.split('#').next().unwrap_or_default();
+    let (path, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let path = uri_decoded(path);
+    let (mut mode, mut vfs) = (Vec::new(), Vec::new());
+    for option in query.split('&') {
+        let (key, value) = option.split_once('=').unwrap_or((option, ""));
+        match uri_decoded(key).as_slice() {
+            b"mode" => mode = uri_decoded(value),
+            b"vfs" => vfs = uri_decoded(value),
+            _ => {}
+        }
+    }
+    let in_memory = path.is_empty() || path == b":memory:" || mode == b"memory" || vfs == b"memdb";
+    (!in_memory).then(|| PathBuf::from(std::ffi::OsStr::from_bytes(&path)))
+}
+
+/// `%00` ends the part, and a `%` without two hex digits stays as it is.
+fn uri_decoded(part: &str) -> Vec<u8> {
+    let bytes = part.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut at = 0;
+    while let Some(&byte) = bytes.get(at) {
+        let escaped = (byte == b'%')
+            .then(|| bytes.get(at + 1..at + 3))
+            .flatten()
+            .and_then(|hex| std::str::from_utf8(hex).ok())
+            .filter(|hex| hex.bytes().all(|digit| digit.is_ascii_hexdigit()))
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        match escaped {
+            Some(0) => break,
+            Some(octet) => {
+                decoded.push(octet);
+                at += 3;
+            }
+            None => {
+                decoded.push(byte);
+                at += 1;
+            }
+        }
+    }
+    decoded
 }
 
 pub struct Fixed {
@@ -416,5 +466,52 @@ impl Fixed {
                 problems.push(rule::line(name, "needs MARFA_TEST_HOOKS to be true", value));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use rusqlite::{Connection, OpenFlags};
+
+    use super::*;
+
+    #[test]
+    fn a_file_uri_names_the_file_sqlite_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_str().unwrap();
+        fs_folder(&dir, "uri data");
+        for (uri, name) in [
+            (format!("file:{root}/uri%20data/a.db"), "uri data/a.db"),
+            (
+                format!("file://localhost{root}/b%2Edb?cache=shared"),
+                "b.db",
+            ),
+            (format!("file://{root}/c.db%3Fx#y"), "c.db?x"),
+            (format!("file:{root}/d.db%00ignored?mode=rwc"), "d.db"),
+            (format!("file:{root}/e%zz.db"), "e%zz.db"),
+        ] {
+            let flags = OpenFlags::SQLITE_OPEN_URI
+                | OpenFlags::SQLITE_OPEN_READ_WRITE
+                | OpenFlags::SQLITE_OPEN_CREATE;
+            let conn = Connection::open_with_flags(&uri, flags).unwrap();
+            conn.execute_batch("CREATE TABLE t (x)").unwrap();
+            let expected = dir.path().join(name);
+            assert!(expected.is_file(), "{uri}");
+            assert_eq!(DatabasePath::read(&uri).file(), Some(expected), "{uri}");
+        }
+        for uri in [
+            "file::memory:",
+            "file:",
+            &format!("file:{root}/f.db?mode=memory"),
+            &format!("file:{root}/f.db?vfs=memdb"),
+            &format!("file:{root}/f.db?mod%65=memory"),
+            "file://elsewhere/g.db",
+        ] {
+            assert_eq!(DatabasePath::read(uri).file(), None, "{uri}");
+        }
+    }
+
+    fn fs_folder(dir: &tempfile::TempDir, name: &str) {
+        std::fs::create_dir(dir.path().join(name)).unwrap();
     }
 }
