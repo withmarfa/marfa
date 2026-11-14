@@ -640,8 +640,6 @@ pub fn unclaimed(drain: &DrainReport) -> Vec<String> {
         .collect()
 }
 
-/// The text `human` makes from `value`, which it is given with every string in
-/// it escaped.
 pub(crate) fn said(value: &Value, human: impl FnOnce(&Value) -> String) -> String {
     human(&printable_value(value))
 }
@@ -675,10 +673,7 @@ impl Printer {
         Ok(())
     }
 
-    /// `human` is given `value` with every string in it already escaped by
-    /// [`printable`], so the text it makes from the answer cannot carry a
-    /// stored control character into a line. Name its parameter as the answer
-    /// is named, so the raw answer is not in reach.
+    /// Use the closure's escaped answer instead of capturing the raw value.
     pub fn report(
         &self,
         value: &Value,

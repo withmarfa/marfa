@@ -303,7 +303,6 @@ const HANDED_OVER_LINE: &str =
 
 const TAKEN_BACK_LINE: &str = "taken back from the command it was let go to, and watched again";
 
-/// What the watch says when a folder is no longer watched.
 fn not_watched(reason: &Unwatched) -> String {
     let message = output::printable(&reason.message);
     if CREDENTIAL_ENDED.contains(&reason.code.as_str()) {

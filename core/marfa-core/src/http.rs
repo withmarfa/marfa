@@ -192,10 +192,7 @@ impl Agents {
         }
     }
 
-    /// Follows at most `limit` redirects. A header that names the caller goes
-    /// only to the origin the call began at: once a redirect changes the
-    /// scheme, the host or the port, every later request goes without it, even
-    /// if a later redirect returns. A redirect from https to http is refused.
+    /// Follows redirects without cross-origin credentials or HTTPS downgrades.
     pub fn get(
         &self,
         url: &str,
@@ -247,7 +244,6 @@ impl Agents {
     }
 }
 
-/// How a redirect's destination stands to the address it left.
 #[derive(Debug, PartialEq, Eq)]
 enum Hop {
     SameOrigin,
@@ -265,8 +261,6 @@ fn hop(from: &Url, to: &Url) -> Hop {
     }
 }
 
-/// A header that says who is asking: the key, a session or the instance a
-/// request is for.
 fn names_the_caller(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     matches!(
@@ -3782,8 +3776,6 @@ mod tests {
         assert_eq!(landed, vec!["GET /landed HTTP/1.1".to_string()]);
     }
 
-    /// Listens on loopback and records every request's head, one string each,
-    /// answering with what `reply` makes from the request line.
     fn heads_listener(
         reply: impl Fn(&str) -> String + Send + 'static,
     ) -> (u16, Arc<Mutex<Vec<String>>>) {
