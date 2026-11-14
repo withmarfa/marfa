@@ -6080,9 +6080,10 @@ fn take_out(
 /// one an unanswered or releasable row depends on: written as a list of
 /// verdicts instead, a release would leave a row waiting forever on a
 /// dependency that is gone. Nor a refused row carrying content, which goes
-/// only by `discard`. A row refused unsent behind a withdrawn write can never
-/// be released and is cleared; passes repeat until one clears nothing, since
-/// each can free what the last kept.
+/// only by `discard`. Nor an upload a write refused with `blob_not_found`
+/// names, whose bytes `kept_uploads` keeps. A row refused unsent behind a
+/// withdrawn write can never be released and is cleared; passes repeat until
+/// one clears nothing, since each can free what the last kept.
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
     forget_answered_inner(conn, None, None, true)
 }
@@ -6345,7 +6346,9 @@ fn forget_answered_once(
               SELECT 1 FROM queue AS waiting
                WHERE (waiting.verdict IS NULL
                       OR waiting.verdict IN (:blocked, :dead)
-                      OR (waiting.verdict = :refused AND waiting.sent = 0))
+                      OR (waiting.verdict = :refused AND waiting.sent = 0)
+                      OR (waiting.verdict = :refused AND waiting.reason = :bytes_absent
+                          AND queue.kind = :upload))
                  AND waiting.depends_on LIKE '%' || queue.id || '%'
             )"
             ),
@@ -6358,6 +6361,8 @@ fn forget_answered_once(
                 ":refused": Verdict::Refused.as_str(),
                 ":blocked": Verdict::Blocked.as_str(),
                 ":dead": Verdict::Dead.as_str(),
+                ":bytes_absent": BYTES_ABSENT,
+                ":upload": WriteKind::UploadBlob.as_str(),
             },
         )?)
 }

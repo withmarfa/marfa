@@ -136,6 +136,30 @@ fn refuses_the_file_when_the_bytes_sent_again_are_refused_too_and_keeps_them() {
 }
 
 #[test]
+fn clearing_answers_keeps_the_upload_of_a_file_refused_for_its_bytes_until_it_is_discarded() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let Waiting { core, hash, .. } = file_waiting_on_taken_bytes(&server, dir.path());
+    server.on("/items", vec![absent(), absent(), empty_bin()]);
+    core.drain().unwrap();
+    let file = core.queue().unwrap()[1].id.clone();
+
+    core.forget_answered().unwrap();
+    core.set_file_budget(crate::FileBudget::Bytes(0)).unwrap();
+    assert!(
+        core.blob_held(&hash).unwrap(),
+        "clearing answers let a trim take the only copy: {:?}",
+        verdicts(&core)
+    );
+
+    assert!(core.discard(&file).unwrap());
+    core.forget_answered().unwrap();
+    assert!(core.queue().unwrap().is_empty(), "{:?}", verdicts(&core));
+    core.set_file_budget(crate::FileBudget::Bytes(0)).unwrap();
+    assert!(!core.blob_held(&hash).unwrap());
+}
+
+#[test]
 fn a_restart_between_the_bytes_and_the_file_sends_the_bytes_no_third_time() {
     let server = Scripted::start();
     let dir = tempfile::tempdir().unwrap();
