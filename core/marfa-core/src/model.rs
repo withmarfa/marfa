@@ -1093,8 +1093,7 @@ pub enum Outcome {
     Merged {
         fields: Vec<String>,
     },
-    /// An item write has the sibling that holds what it replaced; a row write
-    /// has none, and names the rows and columns it replaced unseen.
+    /// Only item conflicts have a sibling; row conflicts name the replaced cells.
     Conflicted {
         sibling_id: Option<String>,
         fields: Vec<String>,

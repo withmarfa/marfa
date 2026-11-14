@@ -634,10 +634,7 @@ pub enum Verdict {
     Merged {
         fields: Vec<String>,
     },
-    /// The server kept its own value for an item write and wrote the losing one
-    /// to a sibling, named in `sibling_id`; it applied a row write over cells
-    /// changed since and replaced them unseen, with no sibling, and names them
-    /// in `conflicts`.
+    /// Only item conflicts have a sibling; row conflicts name the replaced cells.
     Conflicted {
         sibling_id: Option<String>,
         fields: Vec<String>,
@@ -1518,14 +1515,7 @@ fn server_of(url: Option<String>, key: Option<String>) -> Result<Option<marfa_co
     }
 }
 
-/// A core error as a JS error. The message starts with the error's code,
-/// `not_found: …`, `wrong_server: …`, and the error carries what the Swift
-/// binding's carries as properties: `code`, the core's own name for it, and
-/// whichever of `server`, `local`, `retryAfterSeconds`, `origin`, `location`,
-/// `path`, `reason`, `unsent`, `agreed`, `expected`, `got`, `served`,
-/// `writeSent` and `hash` it has. `server` is what a server sent (`status`,
-/// `code` and `details`), present only where one answered; `local` is the
-/// code and details the device named the refusal by itself.
+/// JS errors retain the device's classification beside the server's answer.
 fn failure(env: Env, error: marfa_core::CoreError) -> Error {
     match error_value(&env, &error) {
         Ok(thrown) => Error::from(thrown),

@@ -864,10 +864,7 @@ pub enum Verdict {
     Merged {
         fields: Vec<String>,
     },
-    /// The server kept its own value for an item write and wrote the losing one
-    /// to a sibling, named in `sibling_id`; it applied a row write over cells
-    /// changed since and replaced them unseen, with no sibling, and names them
-    /// in `conflicts`.
+    /// Only item conflicts have a sibling; row conflicts name the replaced cells.
     Conflicted {
         sibling_id: Option<String>,
         fields: Vec<String>,
@@ -1373,8 +1370,7 @@ pub struct DrainReport {
     pub retry_after_seconds: Option<u64>,
 }
 
-/// What a server sent: its status, and the code and details of its envelope
-/// where its body carried them.
+/// A server's answer, without the device's interpretation.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ServerAnswer {
     pub status: u16,
@@ -1415,10 +1411,7 @@ pub enum MarfaError {
     Validation {
         code: String,
         message: String,
-        /// The details of a refusal the copy gave itself, such as the
-        /// `constraint` of an `edge_constraint_violation`, shaped as a server
-        /// carries them under `error.details`; `nil` on every other refusal.
-        /// A server's own are in `server`.
+        /// The copy's own details; a server's details belong in `server`.
         details: Option<JsonValue>,
         server: Option<ServerAnswer>,
     },
@@ -1623,8 +1616,7 @@ impl MarfaError {
 
 #[uniffi::export]
 impl MarfaError {
-    /// The error classification used by the command line and Node binding.
-    /// A variant's `code` field carries the server's more specific error code.
+    /// The classification shared with the command line and Node binding.
     pub fn code(&self) -> String {
         let kind = match self {
             MarfaError::NotFound { .. } => marfa_core::CoreErrorKind::NotFound,

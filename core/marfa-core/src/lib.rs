@@ -2333,8 +2333,7 @@ impl Core {
         })
     }
 
-    /// `revoked` is refused as the server refuses it: only the server can
-    /// reach it.
+    /// Only the server can move an item to `revoked`.
     pub fn transition_item(&self, id: &str, state: ItemState) -> Result<QueuedWrite> {
         if state == ItemState::Revoked {
             return Err(CoreError::Validation {
