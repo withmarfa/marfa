@@ -11939,6 +11939,56 @@
           "last_activity_at",
           "results"
         ]
+      },
+      "NotRestored": {
+        "type": "object",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": [
+              "sign_in",
+              "keys",
+              "apps",
+              "webhooks",
+              "inbound_endpoints",
+              "connector_keys",
+              "addresses",
+              "name",
+              "logs"
+            ],
+            "description": "What an archive never holds."
+          },
+          "message": {
+            "type": "string",
+            "description": "A sentence saying that this kind is not restored and what to do about it."
+          }
+        },
+        "required": [
+          "kind",
+          "message"
+        ],
+        "description": "One kind of thing an archive never holds, with what to do about it."
+      },
+      "PreviousInstance": {
+        "type": "object",
+        "properties": {
+          "instance_id": {
+            "type": "string",
+            "description": "The ID of the instance that wrote the archive."
+          },
+          "safe_to_delete": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The folders that instance keeps its backups and file copies in, as paths inside a backup folder. Delete them once you are satisfied with this restore."
+          }
+        },
+        "required": [
+          "instance_id",
+          "safe_to_delete"
+        ],
+        "description": "The instance that wrote an archive, and the folders it keeps in a backup folder. Present when the archive was written by another instance than this one."
       }
     },
     "parameters": {},
@@ -55604,55 +55654,12 @@
                     "not_restored": {
                       "type": "array",
                       "items": {
-                        "type": "object",
-                        "properties": {
-                          "kind": {
-                            "type": "string",
-                            "enum": [
-                              "sign_in",
-                              "keys",
-                              "apps",
-                              "webhooks",
-                              "inbound_endpoints",
-                              "connector_keys",
-                              "addresses",
-                              "name",
-                              "logs"
-                            ],
-                            "description": "What an archive never holds."
-                          },
-                          "message": {
-                            "type": "string",
-                            "description": "A sentence saying that this kind is not restored and what to do about it."
-                          }
-                        },
-                        "required": [
-                          "kind",
-                          "message"
-                        ]
+                        "$ref": "#/components/schemas/NotRestored"
                       },
                       "description": "Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs."
                     },
                     "previous_instance": {
-                      "type": "object",
-                      "properties": {
-                        "instance_id": {
-                          "type": "string",
-                          "description": "The ID of the instance that wrote the archive."
-                        },
-                        "safe_to_delete": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          },
-                          "description": "The folders that instance keeps its backups and file copies in, as paths inside a backup folder. Delete them once you are satisfied with this restore."
-                        }
-                      },
-                      "required": [
-                        "instance_id",
-                        "safe_to_delete"
-                      ],
-                      "description": "Present when the archive was written by another instance than this one."
+                      "$ref": "#/components/schemas/PreviousInstance"
                     }
                   },
                   "required": [
@@ -56831,55 +56838,12 @@
                     "not_restored": {
                       "type": "array",
                       "items": {
-                        "type": "object",
-                        "properties": {
-                          "kind": {
-                            "type": "string",
-                            "enum": [
-                              "sign_in",
-                              "keys",
-                              "apps",
-                              "webhooks",
-                              "inbound_endpoints",
-                              "connector_keys",
-                              "addresses",
-                              "name",
-                              "logs"
-                            ],
-                            "description": "What an archive never holds."
-                          },
-                          "message": {
-                            "type": "string",
-                            "description": "A sentence saying that this kind is not restored and what to do about it."
-                          }
-                        },
-                        "required": [
-                          "kind",
-                          "message"
-                        ]
+                        "$ref": "#/components/schemas/NotRestored"
                       },
                       "description": "Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs."
                     },
                     "previous_instance": {
-                      "type": "object",
-                      "properties": {
-                        "instance_id": {
-                          "type": "string",
-                          "description": "The ID of the instance that wrote the archive."
-                        },
-                        "safe_to_delete": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          },
-                          "description": "The folders that instance keeps its backups and file copies in, as paths inside a backup folder. Delete them once you are satisfied with this restore."
-                        }
-                      },
-                      "required": [
-                        "instance_id",
-                        "safe_to_delete"
-                      ],
-                      "description": "Present when the archive was written by another instance than this one."
+                      "$ref": "#/components/schemas/PreviousInstance"
                     },
                     "backup": {
                       "type": "object",

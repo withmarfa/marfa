@@ -75,7 +75,7 @@ describe("what a restore says", () => {
   it("restores the enforcement settings onto an instance with none, skips them on one that has them, and does not carry the name", async () => {
     const { operator } = clientsFor(origin);
     const set = await operator.patchConfig({
-      name: "Origin library",
+      name: "Origin shelf",
       enforcement: ENFORCEMENT,
       heartbeat_enabled: true,
     });

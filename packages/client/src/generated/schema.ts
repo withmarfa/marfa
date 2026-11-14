@@ -7307,6 +7307,23 @@ export interface components {
                 outcome: "created" | "replaced" | "deleted" | "unchanged";
             }[];
         };
+        /** @description One kind of thing an archive never holds, with what to do about it. */
+        NotRestored: {
+            /**
+             * @description What an archive never holds.
+             * @enum {string}
+             */
+            kind: "sign_in" | "keys" | "apps" | "webhooks" | "inbound_endpoints" | "connector_keys" | "addresses" | "name" | "logs";
+            /** @description A sentence saying that this kind is not restored and what to do about it. */
+            message: string;
+        };
+        /** @description The instance that wrote an archive, and the folders it keeps in a backup folder. Present when the archive was written by another instance than this one. */
+        PreviousInstance: {
+            /** @description The ID of the instance that wrote the archive. */
+            instance_id: string;
+            /** @description The folders that instance keeps its backups and file copies in, as paths inside a backup folder. Delete them once you are satisfied with this restore. */
+            safe_to_delete: string[];
+        };
     };
     responses: never;
     parameters: never;
@@ -30732,22 +30749,8 @@ export interface operations {
                         /** @description How many table rows Marfa skipped because their item was counted as a duplicate. */
                         rows_skipped: number;
                         /** @description Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs. */
-                        not_restored: {
-                            /**
-                             * @description What an archive never holds.
-                             * @enum {string}
-                             */
-                            kind: "sign_in" | "keys" | "apps" | "webhooks" | "inbound_endpoints" | "connector_keys" | "addresses" | "name" | "logs";
-                            /** @description A sentence saying that this kind is not restored and what to do about it. */
-                            message: string;
-                        }[];
-                        /** @description Present when the archive was written by another instance than this one. */
-                        previous_instance?: {
-                            /** @description The ID of the instance that wrote the archive. */
-                            instance_id: string;
-                            /** @description The folders that instance keeps its backups and file copies in, as paths inside a backup folder. Delete them once you are satisfied with this restore. */
-                            safe_to_delete: string[];
-                        };
+                        not_restored: components["schemas"]["NotRestored"][];
+                        previous_instance?: components["schemas"]["PreviousInstance"];
                     };
                 };
             };
@@ -31381,22 +31384,8 @@ export interface operations {
                         /** @description How many table rows Marfa skipped because their item was counted as a duplicate. */
                         rows_skipped: number;
                         /** @description Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs. */
-                        not_restored: {
-                            /**
-                             * @description What an archive never holds.
-                             * @enum {string}
-                             */
-                            kind: "sign_in" | "keys" | "apps" | "webhooks" | "inbound_endpoints" | "connector_keys" | "addresses" | "name" | "logs";
-                            /** @description A sentence saying that this kind is not restored and what to do about it. */
-                            message: string;
-                        }[];
-                        /** @description Present when the archive was written by another instance than this one. */
-                        previous_instance?: {
-                            /** @description The ID of the instance that wrote the archive. */
-                            instance_id: string;
-                            /** @description The folders that instance keeps its backups and file copies in, as paths inside a backup folder. Delete them once you are satisfied with this restore. */
-                            safe_to_delete: string[];
-                        };
+                        not_restored: components["schemas"]["NotRestored"][];
+                        previous_instance?: components["schemas"]["PreviousInstance"];
                         /** @description The backup Marfa restored. */
                         backup: {
                             /** @description The backup's name. */
