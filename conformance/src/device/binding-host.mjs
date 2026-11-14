@@ -35,6 +35,8 @@
 //   { op: "remove-store", path, unsent }  removes the store, agreeing to lose
 //                                         `unsent` writes the server has not
 //                                         taken
+//   { op: "remove-store-all", path }      removes the store, agreeing to lose
+//                                         every write it holds
 //   { op: "hook", name, point, arg? }      the debug build's testHooks
 //   { op: "clock", name, arg? }           the debug build's testClock
 //   { op: "exit" }
@@ -217,6 +219,9 @@ async function handle(message) {
       return null;
     case "remove-store":
       binding.MarfaCore.removeStore(message.path, message.unsent);
+      return null;
+    case "remove-store-all":
+      binding.MarfaCore.removeStoreLosingAll(message.path);
       return null;
     case "reentry":
       if (message.action === "start") {

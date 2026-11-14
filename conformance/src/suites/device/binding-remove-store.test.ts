@@ -15,7 +15,15 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { startBindingHarness, type BindingHarness } from "./harness.js";
+import { BindingDevice } from "../../device/binding-adapter.js";
+import { CliDevice } from "../../device/cli-adapter.js";
+import {
+  damageTable,
+  requireBinary,
+  requireModule,
+  startBindingHarness,
+  type BindingHarness,
+} from "./harness.js";
 
 /**
  * Removing a store with the writes the person agreed to lose, through the
@@ -24,10 +32,13 @@ import { startBindingHarness, type BindingHarness } from "./harness.js";
  */
 
 let harness: BindingHarness | undefined;
+let other: BindingDevice | undefined;
 
 afterEach(async () => {
   await harness?.stop();
   harness = undefined;
+  await other?.close();
+  other = undefined;
 });
 
 /** The names a store is made of, beside the store file itself. */
@@ -209,6 +220,21 @@ describe("removing a store", () => {
     }
   });
 
+  it("removes a store whose unsent writes it cannot count when every write is agreed lost", async () => {
+    const { device } = await storeWithOneUnsent("remove-all");
+    edit(
+      device.store,
+      "ALTER TABLE queue RENAME COLUMN verdict TO answer_kind",
+    );
+    // The witness: no count removes it.
+    expect(refusalOf(await device.removeStore(1)).unsent).toBeNull();
+    expect(Object.keys(held(device.store))).toContain("");
+
+    const removed = await device.removeStoreLosingAll();
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    expect(held(device.store)).toEqual({});
+  });
+
   it("removes a store the writer refuses wrong_schema under its own count", async () => {
     const { device } = await storeWithOneUnsent("remove-schema");
     edit(device.store, "PRAGMA user_version = 0");
@@ -301,5 +327,64 @@ describe("removing a store", () => {
 
     expect(refusalOf(await device.removeStore(1)).code).toBe("invalid");
     expect(kept(device.store)).toEqual(before);
+  });
+
+  it("refuses to remove a folder's store whose first page does not read", async () => {
+    const root = mkdtempSync(join(realpathSync(tmpdir()), "marfa-folder-"));
+    mkdirSync(join(root, ".marfa"));
+    const store = join(root, ".marfa", "core.sqlite");
+    other = await BindingDevice.start({ module: requireModule(), store });
+    await other.forget();
+    const header = Buffer.alloc(100, 0xa5);
+    writeFileSync(
+      store,
+      Buffer.concat([header, readFileSync(store).subarray(100)]),
+    );
+    const before = kept(store);
+
+    expect(refusalOf(await other.removeStoreLosingAll()).code).toBe("invalid");
+    expect(refusalOf(await other.removeStore(0)).code).toBe("invalid");
+    expect(kept(store)).toEqual(before);
+  });
+
+  it("refuses to remove or replace a store whose set-aside stopped part way, until a set-aside finishes it", async () => {
+    const { device } = await storeWithOneUnsent("remove-stopped");
+    damageTable(device.store, "items");
+    const command = new CliDevice({
+      binary: requireBinary(),
+      store: device.store,
+    });
+    const crashed = command.hold(["set-aside"], "device", {
+      MARFA_TEST_FAULT: "set-aside-crash=store",
+    });
+    await crashed.exited();
+    expect(crashed.exitCode(), "the set-aside did not stop").not.toBe(0);
+    expect(existsSync(device.store), "the store was not moved").toBe(false);
+    const made = `${device.store}.carrying`;
+    const carried = digest(made);
+    // The witness: the fetched bytes the new store keeps are there.
+    const before = kept(device.store);
+    expect(Object.keys(before)).toContain(".blobs/fetched");
+
+    for (const refused of [
+      await device.removeStore(0),
+      await device.removeStoreLosingAll(),
+      await device.replaceRefused(),
+    ]) {
+      expect(refused.ok, "a store whose set-aside stopped was taken").toBe(
+        false,
+      );
+      if (refused.ok) continue;
+      expect(refused.refusal.code, refused.refusal.raw).toBe("store_damaged");
+      expect(refused.refusal.raw).toContain("stopped part way");
+    }
+    expect(kept(device.store)).toEqual(before);
+    expect(digest(made)).toBe(carried);
+
+    const done = await command.setAside();
+    expect(done.ok && done.value.carried, JSON.stringify(done)).toBe(1);
+    const removed = await device.removeStoreLosingAll();
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    expect(held(device.store)).toEqual({});
   });
 });

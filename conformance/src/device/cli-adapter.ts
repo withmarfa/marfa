@@ -39,6 +39,7 @@ import {
   type TableHold,
   type FileCache,
   type KeptFetch,
+  type SetAsideReport,
   type Status,
   type Tier,
 } from "./protocol.js";
@@ -590,6 +591,16 @@ export class CliDevice implements DeviceUnderTest {
 
   async status(): Promise<Outcome<Status>> {
     return this.json<Status>(["status"]);
+  }
+
+  /** Reads every page of the store (`device/store-damaged`). */
+  async check(): Promise<Outcome<{ path: string; whole: boolean }>> {
+    return this.json<{ path: string; whole: boolean }>(["check"]);
+  }
+
+  /** Sets a damaged store aside for a new one (`device/set-aside`). */
+  async setAside(): Promise<Outcome<SetAsideReport>> {
+    return this.json<SetAsideReport>(["set-aside"]);
   }
 
   async itemTypes(): Promise<Outcome<ItemType[]>> {
