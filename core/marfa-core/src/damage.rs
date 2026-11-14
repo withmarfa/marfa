@@ -1,5 +1,4 @@
-//! A store SQLite cannot read: what its queue still holds, and setting it
-//! aside for a new store that carries every write it can read.
+//! Recovery of readable writes from a damaged store.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -37,13 +36,10 @@ fn carrying(path: &Path) -> PathBuf {
     store::suffixed(path, ".carrying")
 }
 
-/// In the new store until it takes the old one's name: the name of the
-/// store set aside, beside it, and what the set-aside answers.
+// These markers let a later call resume interrupted renames.
 const META_SET_ASIDE_TO: &str = "set_aside_to";
 const META_SET_ASIDE: &str = "set_aside";
 
-/// The refusal of the store at `path`, which cannot be read for `reason`,
-/// with what its queue holds.
 pub(crate) fn refusal(path: &Path, reason: String) -> CoreError {
     CoreError::StoreDamaged {
         path: path.display().to_string(),
@@ -54,8 +50,6 @@ pub(crate) fn refusal(path: &Path, reason: String) -> CoreError {
     }
 }
 
-/// `error` with the path and count of the store at `path`, where it is
-/// damage that names neither.
 pub(crate) fn at_path(error: CoreError, path: &Path) -> CoreError {
     match error {
         CoreError::StoreDamaged {
@@ -67,9 +61,7 @@ pub(crate) fn at_path(error: CoreError, path: &Path) -> CoreError {
     }
 }
 
-/// Refuses a writer the store at `path` while a set-aside of it has stopped
-/// part way: the writes it carries are in the new store, which has not yet
-/// taken the path.
+// Opening the original path must not hide an unfinished recovery's writes.
 pub(crate) fn refuse_unfinished(path: &Path) -> Result<(), CoreError> {
     let made = carrying(path);
     if made.symlink_metadata().is_err() {
@@ -89,9 +81,7 @@ pub(crate) fn refuse_unfinished(path: &Path) -> Result<(), CoreError> {
     })
 }
 
-/// Reads every page of the store at `path` for the caller that holds its
-/// writer lock, and refuses one SQLite cannot read `store_damaged`, or one
-/// of another schema version `wrong_schema`.
+/// Requires the store's writer lock.
 pub(crate) fn check(path: &Path) -> Result<(), CoreError> {
     let damaged = |error: CoreError| match error {
         CoreError::StoreDamaged { reason, .. } => refusal(path, reason),
@@ -120,8 +110,7 @@ pub(crate) fn check(path: &Path) -> Result<(), CoreError> {
     }
 }
 
-/// Sets the damaged store at `path` aside, for the caller that holds its
-/// writer lock, or finishes a set-aside that stopped part way.
+/// Requires the store's writer lock.
 pub(crate) fn set_aside(path: &Path) -> Result<SetAside, CoreError> {
     if let Some(done) = finish(path)? {
         return Ok(done);
@@ -162,9 +151,6 @@ pub(crate) fn set_aside(path: &Path) -> Result<SetAside, CoreError> {
     })
 }
 
-/// Makes the new store at `made`, holding what the damaged store at `path`
-/// lets be read of its queue, and the name `aside` it is to be set aside
-/// under.
 fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
     let old = store::open_refused(path).ok();
     crate::owner_only(made)?;
@@ -241,11 +227,6 @@ fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// Ends a set-aside whose new store at `carrying(path)` says what it carries:
-/// moves what is left of the old store to the name it records, logs first,
-/// then gives the new store the path. A new store that says nothing is a
-/// set-aside's that stopped before it was made, and is removed. `None` where
-/// there is none.
 fn finish(path: &Path) -> Result<Option<SetAside>, CoreError> {
     let made = carrying(path);
     if made.symlink_metadata().is_err() {
@@ -322,9 +303,6 @@ fn finish(path: &Path) -> Result<Option<SetAside>, CoreError> {
     Ok(Some(done))
 }
 
-/// Where a debug fixture asks, ends the process, or for a unit test fails,
-/// once the store file or log `suffix` names has been set aside, as a crash
-/// there would.
 #[allow(unused_variables)]
 fn stop_if_asked(suffix: &str) -> Result<(), CoreError> {
     #[cfg(debug_assertions)]
@@ -365,9 +343,7 @@ fn columns(conn: &Connection, table: &str) -> rusqlite::Result<Vec<String>> {
     rows.collect()
 }
 
-/// The writes of `old`'s queue, found by walking the table and each of its
-/// indexes, since damage to one leaves the others to say which writes there
-/// are, then read one by one. Only a queue of this build's columns is read.
+// Intact indexes can identify rows that a damaged table scan misses.
 fn read_queue(old: &Connection, columns: &[String]) -> Read {
     let same = store::version(old).ok() == Some(SCHEMA_VERSION)
         && columns_of_queue(old).as_deref() == Some(columns);
@@ -414,8 +390,6 @@ fn columns_of_queue(old: &Connection) -> Option<Vec<String>> {
     columns(old, "queue").ok().filter(|held| !held.is_empty())
 }
 
-/// Each index of the queue: its name, whether it is partial, and whether it
-/// is the one on `id`, which can name a write whose row does not read.
 fn queue_indexes(old: &Connection) -> Vec<(String, bool, bool)> {
     let listed = (|| -> rusqlite::Result<Vec<(String, bool)>> {
         let mut query = old.prepare("SELECT name, partial FROM pragma_index_list('queue')")?;
@@ -440,8 +414,6 @@ fn columns_of_index(old: &Connection, index: &str) -> Option<Vec<String>> {
     rows.collect::<rusqlite::Result<_>>().ok()
 }
 
-/// Adds each `(seq, id)` that `sql` answers to `found`, and says whether it
-/// answered to the end.
 fn walk(old: &Connection, sql: &str, found: &mut BTreeMap<i64, Option<String>>) -> bool {
     let Ok(mut query) = old.prepare(sql) else {
         return false;
@@ -467,10 +439,6 @@ fn walk(old: &Connection, sql: &str, found: &mut BTreeMap<i64, Option<String>>) 
     }
 }
 
-/// The meta the new store needs to send the carried writes as the old store
-/// would: the server and instance it was built from, the file budget, and
-/// the credential each carried upload was sent with. What does not read is
-/// left, as in a store that never held it.
 fn carry_meta(old: &Connection, new: &Connection, carried: &[String]) {
     let mut keys = vec![
         store::META_SERVER_ORIGIN.to_string(),
@@ -485,16 +453,12 @@ fn carry_meta(old: &Connection, new: &Connection, carried: &[String]) {
     }
 }
 
-/// Copies the rows of `table` that name a carried write as `write_id`.
 fn carry_by_write(old: &Connection, new: &Connection, table: &str, carried: &[String]) {
     for id in carried {
         let _ = copy_rows(old, new, table, Some(id));
     }
 }
 
-/// Copies every row of `table`, or each whose `write_id` is `write`, from
-/// `old` to `new`, whose tables are of the same shape. A row that does not
-/// read or write is left.
 fn copy_rows(
     old: &Connection,
     new: &Connection,
@@ -533,8 +497,6 @@ fn copy_rows(
     Ok(())
 }
 
-/// Records the rows each carried row write that still waits lays over, read
-/// from its body. A write whose body does not read is carried without them.
 fn lay_rows(tx: &Connection, carried: &[String]) {
     for id in carried {
         let _ = lay_one(tx, id);
