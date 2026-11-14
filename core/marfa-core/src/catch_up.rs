@@ -646,6 +646,8 @@ fn mark_synced_if_same(core: &Core, context: &Context) -> Result<()> {
     Ok(())
 }
 
+/// However it ends, the cursor the replay deferred past skipped events is
+/// committed first, so only a crash leaves it behind the last event taken.
 pub(crate) fn replay_build(
     core: &Core,
     http: &Http,
@@ -653,6 +655,33 @@ pub(crate) fn replay_build(
     idle: Duration,
     stop: &AtomicBool,
     catalog_changed: &mut bool,
+) -> Result<CatchUpReport> {
+    let mut behind = Behind::default();
+    let result = replay(
+        core,
+        http,
+        context,
+        idle,
+        stop,
+        catalog_changed,
+        &mut behind,
+    );
+    // A stop must not keep the commit from being made.
+    let flushed = commit_cursor(core, context, &mut behind, &AtomicBool::new(false));
+    match result {
+        Ok(report) => flushed.map(|()| report),
+        Err(error) => Err(error),
+    }
+}
+
+fn replay(
+    core: &Core,
+    http: &Http,
+    context: &Context,
+    idle: Duration,
+    stop: &AtomicBool,
+    catalog_changed: &mut bool,
+    behind: &mut Behind,
 ) -> Result<CatchUpReport> {
     crate::busy::transaction(core, context, stop, crate::tables::forget_reread)?;
     let (slice, cursor) = start_build(&*core.conn()?)?;
@@ -679,7 +708,6 @@ pub(crate) fn replay_build(
     let mut connected = false;
     let mut prologue_seen = false;
     let mut unsettled = 0;
-    let mut behind = Behind::default();
     loop {
         let wait = if prologue_seen {
             idle
@@ -735,7 +763,7 @@ pub(crate) fn replay_build(
                         {
                             return Err(reach::invalid());
                         }
-                        commit_cursor(core, context, &mut behind, stop)?;
+                        commit_cursor(core, context, behind, stop)?;
                         if let Some(cursor) =
                             pass_withheld(core, context, &report.cursor, payload.cursor.as_deref())?
                         {
@@ -782,10 +810,10 @@ pub(crate) fn replay_build(
                             behind.last = Some(id.clone());
                             behind.count += 1;
                             if behind.count >= SKIPPED_PER_COMMIT {
-                                commit_cursor(core, context, &mut behind, stop)?;
+                                commit_cursor(core, context, behind, stop)?;
                             }
                         } else {
-                            behind = Behind::default();
+                            *behind = Behind::default();
                         }
                         if taken.change.is_some() {
                             report.applied += 1;
@@ -5668,15 +5696,18 @@ mod tests {
     }
 
     fn skipped_server(frames: Vec<Vec<String>>) -> Scripted {
-        let server = Scripted::start();
-        server.on("/types", vec![types(&[(NOTE, None), (SKIPPED_TYPE, None)])]);
-        server.on(
-            "/events",
+        skipped_server_answering(
             frames
                 .into_iter()
                 .map(|frames| stream(frames, held()))
                 .collect(),
-        );
+        )
+    }
+
+    fn skipped_server_answering(events: Vec<Answer>) -> Scripted {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None), (SKIPPED_TYPE, None)])]);
+        server.on("/events", events);
         server
     }
 
@@ -5698,6 +5729,45 @@ mod tests {
             "{writes} writes to meta for {} skipped events",
             last - 10
         );
+    }
+
+    #[test]
+    fn a_catch_up_stopped_among_skipped_events_keeps_the_cursor_of_the_last() {
+        let mut frames = vec![stream_cursor("30")];
+        frames.extend(skipped_events(11, 13));
+        let server = skipped_server(vec![frames]);
+        let (_dir, core) = hydrated(&server);
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ended, done) = mpsc::channel();
+        {
+            let (core, stop) = (Arc::clone(&core), Arc::clone(&stop));
+            thread::spawn(move || {
+                let _ = ended.send(core.catch_up_until(&stop));
+            });
+        }
+        server.wait_for("/events", 1, Duration::from_secs(5));
+        thread::sleep(MS(200));
+        stop.store(true, Ordering::Relaxed);
+        let failed = done
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the catch-up did not end")
+            .expect_err("the catch-up did not fail");
+        assert!(matches!(failed.error, CoreError::Canceled));
+        assert_eq!(stored_cursor(&core).as_deref(), Some("13"));
+    }
+
+    #[test]
+    fn a_catch_up_whose_stream_ends_among_skipped_events_keeps_the_cursor_of_the_last() {
+        let mut frames = vec![stream_cursor("30")];
+        frames.extend(skipped_events(11, 13));
+        let server = skipped_server_answering(vec![stream(frames, Then::End)]);
+        let (_dir, core) = hydrated(&server);
+        let error = core.catch_up().unwrap_err();
+        assert!(
+            matches!(error, CoreError::StreamIncomplete { .. }),
+            "{error}"
+        );
+        assert_eq!(stored_cursor(&core).as_deref(), Some("13"));
     }
 
     #[cfg(debug_assertions)]
@@ -5892,8 +5962,8 @@ mod tests {
         );
         assert_eq!(
             stored_cursor(&core).as_deref(),
-            Some("12"),
-            "a table event that moved a table was left behind the cursor"
+            Some("13"),
+            "the cursor was left behind the events the catch-up took, the table event that moved a table among them"
         );
     }
 

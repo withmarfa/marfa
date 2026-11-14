@@ -1136,11 +1136,11 @@ If an event carries the version of the item or edge the copy holds and an `updat
 
 ### `device/catch-up-skip-advances`
 
-When a catch-up skips events, a device MUST commit its cursor at the last of them no later than the next event it applies, its stream's live marker, or the 1,000th event it has skipped since its last commit.
+When a catch-up skips events, a device MUST commit its cursor at the last of them no later than the next event it applies, its stream's live marker, the end of the catch-up, or the 1,000th event it has skipped since its last commit.
 
-**Reason:** a cursor left behind would fetch the same stale event on every catch-up, and a commit for each skipped event makes a long run of them as costly as applying them. Between commits the stored cursor trails the last skipped event by fewer than 1,000 events, so a crash or a stream that ends early replays only events the device skips again.
+**Reason:** a cursor left behind would fetch the same stale event on every catch-up, and a commit for each skipped event makes a long run of them as costly as applying them. Between commits the stored cursor trails the last skipped event by fewer than 1,000 events, so a crash replays only events the device skips again; a catch-up that ends any other way, stopped or cut short, commits first.
 
-**Tests:** `device/catch-up.test.ts › skips an event older than the item it holds and still advances the cursor`, `› skips an event at the version it holds that was stamped before the item it holds`, `› never leaves its cursor before an applied event or past one it did not take when the stream ends among skipped events`, `› commits its cursor within a bound of the last skipped event, in a run that outlasts the bound, when the stream ends early`.
+**Tests:** `device/catch-up.test.ts › skips an event older than the item it holds and still advances the cursor`, `› skips an event at the version it holds that was stamped before the item it holds`, `› never leaves its cursor before an applied event or past one it did not take when the stream ends among skipped events`, `› commits its cursor at the last skipped event, in a run that outlasts the commit bound, when the stream ends early`, `device/stop.test.ts › commits the cursor of the skipped events it took when it is stopped among them`.
 
 ### `device/catch-up-same-stamp`
 
@@ -1430,11 +1430,11 @@ If a catch-up's stream ends before its live marker, then a device MUST end the c
 
 ### `device/catch-up-incomplete-cursor`
 
-If a catch-up's stream ends before its live marker, then a device MUST keep its copy complete and keep its cursor at or after the last event it applied, at or before the last event it took, and fewer than 1,000 events before that one.
+If a catch-up's stream ends before its live marker, then a device MUST keep its copy complete and keep its cursor at the last event it took.
 
-**Reason:** a cursor before an applied event replays it, one past an event not taken loses it, and one far behind a run of skipped events makes the next catch-up read them all again. The events between the cursor and the last event taken are ones the device skipped, so the next catch-up skips them again.
+**Reason:** a cursor before an applied event replays it, one past an event not taken loses it, and one behind a run of skipped events makes the next catch-up read them all again.
 
-**Tests:** `device/catch-up.test.ts › leaves the cursor at the last applied event when the stream ends early`, `device/reach.test.ts › requires the actual live marker even when the announced head is already held`, `device/catch-up.test.ts › never leaves its cursor before an applied event or past one it did not take when the stream ends among skipped events`, `› commits its cursor within a bound of the last skipped event, in a run that outlasts the bound, when the stream ends early`.
+**Tests:** `device/catch-up.test.ts › leaves the cursor at the last applied event when the stream ends early`, `device/reach.test.ts › requires the actual live marker even when the announced head is already held`, `device/catch-up.test.ts › never leaves its cursor before an applied event or past one it did not take when the stream ends among skipped events`, `› commits its cursor at the last skipped event, in a run that outlasts the commit bound, when the stream ends early`, `device/stop.test.ts › commits the cursor of the skipped events it took when it is stopped among them`.
 
 ### `device/catch-up-silence`
 
@@ -5532,7 +5532,7 @@ When a hydration is stopped, a device MUST leave its queue as it was.
 
 When a catch-up is stopped, a device MUST keep the cursor of the last event it took.
 
-**Tests:** `device/stop.test.ts › ends it while it waits on a stream, keeping the cursor it had`, `› reports canceled after a stopped stream opening is refused, keeping its cursor and queue`.
+**Tests:** `device/stop.test.ts › ends it while it waits on a stream, keeping the cursor it had`, `› reports canceled after a stopped stream opening is refused, keeping its cursor and queue`, `› commits the cursor of the skipped events it took when it is stopped among them`.
 
 ### `device/stop-drain-in-flight`
 

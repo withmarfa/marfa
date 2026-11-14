@@ -2004,9 +2004,8 @@ describe("catch-up replays from the cursor", () => {
     const stored = Number(status.ok ? status.value.event_cursor : Number.NaN);
     expect(
       stored,
-      "the cursor stayed before the applied event, so the next catch-up applies it again, or passed an event the device never took",
-    ).toBeGreaterThanOrEqual(12);
-    expect(stored).toBeLessThanOrEqual(14);
+      "the cursor stayed before the last event the device took, or passed an event it never took",
+    ).toBe(14);
 
     const resumed = await device.catchUp();
     expect(
@@ -2020,7 +2019,7 @@ describe("catch-up replays from the cursor", () => {
     expect((await device.get("applied")).ok).toBe(true);
   });
 
-  it("commits its cursor within a bound of the last skipped event, in a run that outlasts the bound, when the stream ends early", async () => {
+  it("commits its cursor at the last skipped event, in a run that outlasts the commit bound, when the stream ends early", async () => {
     harness = await startHarness("short-stream-long-skip");
     const { server, device } = harness;
     scriptHydration(server, { head: "10" });
@@ -2045,9 +2044,8 @@ describe("catch-up replays from the cursor", () => {
     const stored = Number(status.ok ? status.value.event_cursor : Number.NaN);
     expect(
       stored,
-      "the cursor stayed at the start of a long run of skipped events, so a crash or a stream that ends early reads them all again",
-    ).toBeGreaterThan(last - 1_000);
-    expect(stored).toBeLessThanOrEqual(last);
+      "the cursor stayed behind a long run of skipped events, so the next catch-up reads them all again",
+    ).toBe(last);
   });
 
   it("reports what a catch-up carried, and refuses one that stopped short", async () => {
