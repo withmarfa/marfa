@@ -916,8 +916,7 @@ describe("what a verdict does to the rows a copy holds", () => {
     };
     const follow = await device.follow();
     try {
-      // A first event, taken before the write below, so the follow is live
-      // and a drain does not wait for its backlog.
+      // Let the follow apply an event before gating a later one.
       const first = uuidv7();
       await write(item, [{ op: "put", id: first, values: { count: 0 } }]);
       await until(() => gate.reached() === 1, "the follow reaching a first event");
