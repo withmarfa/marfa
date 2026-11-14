@@ -1788,6 +1788,19 @@ fn send_queue(
             }
             continue;
         }
+        // Held as a write behind an unanswered one is, for the pass after
+        // its bytes have gone again.
+        if settled.bytes_again {
+            answers.insert(row.id.clone(), settled.verdict);
+            waiting.insert(row.id.clone());
+            report.held += 1;
+            if role == Role::Test
+                && let Some(stuck) = suspect.as_mut()
+            {
+                stuck.phase = Phase::Resending;
+            }
+            continue;
+        }
         // What the write met is kept for every answer it had from the server,
         // a rate limit included. A failure that came before the write was
         // answered says nothing of it.
@@ -2689,6 +2702,8 @@ struct Settled {
     joined: Vec<DrainVerdict>,
     /// Refused for another write's operation, so this one goes again at once.
     again: bool,
+    /// Blocked until the bytes it names go again (`waits_for_bytes_again`).
+    bytes_again: bool,
 }
 
 impl Settled {
@@ -2709,6 +2724,7 @@ impl Settled {
             conflicts: Vec::new(),
             joined: Vec::new(),
             again: false,
+            bytes_again: false,
         }
     }
 }
@@ -3086,6 +3102,35 @@ fn take_answered_edges(conn: &rusqlite::Connection, item: &WireItem) -> Result<(
     Ok(())
 }
 
+/// A write refused for bytes the server does not hold, or that this
+/// credential may not read, waits once for the uploads it names to go again
+/// where the copy still holds their bytes. The refusal writes nothing, and
+/// the server keeps no answer under the write's key for it
+/// (`items/idempotency-unproven-file-not-kept`).
+fn waits_for_bytes_again(
+    core: &Core,
+    row: &QueuedWrite,
+    answer: &std::result::Result<Answer, CoreError>,
+) -> Result<bool> {
+    let refused = answer
+        .as_ref()
+        .is_ok_and(|answer| answer.status == 404 && answer.code == store::BYTES_ABSENT);
+    if !refused || row.kind == WriteKind::UploadBlob {
+        return Ok(false);
+    }
+    let cache = core.cache().ok();
+    recorded(core, || {
+        let mut conn = core.conn()?;
+        let tx = conn.transaction()?;
+        same_attempt(&tx, row)?;
+        let waits = store::send_bytes_again(&tx, &row.id, |hash| {
+            cache.is_some_and(|cache| cache.held(hash).is_ok_and(|held| held.is_some()))
+        })?;
+        tx.commit()?;
+        Ok(waits)
+    })
+}
+
 fn settle(
     core: &Core,
     row: &QueuedWrite,
@@ -3095,6 +3140,17 @@ fn settle(
     pass: &mut ReachChange,
 ) -> Result<Settled> {
     let envelope = answer.as_ref().ok().map(|answer| answer.body.clone());
+    if class == Classified::Contract && waits_for_bytes_again(core, row, answer)? {
+        pass.follow_up = true;
+        return Ok(Settled {
+            bytes_again: true,
+            ..Settled::plain(
+                Some(Verdict::Blocked),
+                Some(crate::model::AWAITING_DEPENDENCY.into()),
+                row.refusals,
+            )
+        });
+    }
     match class {
         Classified::Success => settle_success(
             core,
@@ -3138,6 +3194,7 @@ fn settle(
                         conflicted_copy_id: None,
                     },
                 )?;
+                store::forget_bytes_sent_again(&tx, &row.id)?;
                 if let Some(owed) = store::owed_of(&tx, row)? {
                     store::owe_read_back(&tx, &owed)?;
                     store::meta_set(&tx, &receipt_key(&row.id), "refused")?;
