@@ -3758,6 +3758,12 @@ When a settings-file write crashes before landing, a device MUST retain the old 
 
 **Tests:** `device/folders-identity.test.ts › keeps its settings file its own when a crash cuts off writing it`.
 
+### `folders/write-crash-move-kept`
+
+When a pull's move of a file is cut off after the file is renamed and before the move is recorded, a device MUST NOT queue deletion of the item while its file is at the new path.
+
+**Tests:** `device/folders-placement.test.ts › keeps the item when %s cuts off another Mac's move after the rename`.
+
 ### `folders/write-editor-race`
 
 When a person changes a file before a pull's final check, a device MUST preserve that save instead of overwriting, removing, or letting go of the file.
@@ -4860,15 +4866,15 @@ When two folder queries both hold an item and each folder has its own bound file
 
 ### `folders/missing-file-trashed`
 
-When a missing folder file’s deletion grace expires, no other folder holds the moved file and `folders/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
+When a missing folder file’s deletion grace expires, no other folder holds the moved file, no other file present in the same folder is bound to its item and `folders/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
 
 **Reason:** the files of one sweep are decided before any of them is trashed, so files deleted together are all trashed, whichever the sweep reaches first and whether they link one another. A link line in a file shows the note it names by title, and a note already trashed by the same sweep would otherwise read as a change made elsewhere.
 
-**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`.
+**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`, `device/folders-placement.test.ts › keeps the item when %s cuts off another Mac's move after the rename`.
 
 ### `folders/missing-file-trashed-path-reported`
 
-When a missing folder file’s deletion grace expires, no other folder holds the moved file and `folders/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
+When a missing folder file’s deletion grace expires, no other folder holds the moved file, no other file present in the same folder is bound to its item and `folders/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
 
 **Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`.
 

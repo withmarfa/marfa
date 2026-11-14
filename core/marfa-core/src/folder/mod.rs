@@ -4074,6 +4074,42 @@ mod tests {
         (dir, folder, item_id)
     }
 
+    /// A note moved from `a.md` to `z/a.md`, bound at both paths as a move
+    /// cut off after its rename leaves it, the new path's record still
+    /// waiting on its landing where `landing` says.
+    fn cut_off_move(landing: bool) -> (ScannedDir, Folder, String) {
+        let (dir, folder) = settled_notes(&["a.md"]);
+        let item_id = landed(&folder, "a.md");
+        std::fs::create_dir(dir.path().join("z")).unwrap();
+        std::fs::rename(dir.path().join("a.md"), dir.path().join("z/a.md")).unwrap();
+        let conn = folder.core.conn().unwrap();
+        let mut moved = state::bound_at(&conn, "a.md").unwrap().unwrap();
+        moved.path = "z/a.md".into();
+        if landing {
+            moved.writes.landing = Some(state::Landing { before: None });
+        }
+        state::bind(&conn, &moved).unwrap();
+        drop(conn);
+        (dir, folder, item_id)
+    }
+
+    #[test]
+    fn a_missing_path_whose_item_has_its_file_here_is_let_go_without_a_delete() {
+        for landing in [false, true] {
+            let (_dir, folder, item_id) = cut_off_move(landing);
+            let report = folder.scan().unwrap();
+            assert_eq!((report.missing, report.deleted), (0, 0), "{report:?}");
+            let conn = folder.core.conn().unwrap();
+            assert!(state::journaled(&conn).unwrap().is_empty(), "{landing}");
+            let bound: Vec<_> = state::every_bound(&conn)
+                .unwrap()
+                .into_iter()
+                .map(|bound| (bound.path, bound.item_id, bound.writes.landing))
+                .collect();
+            assert_eq!(bound, [("z/a.md".to_string(), item_id, None)], "{landing}");
+        }
+    }
+
     fn flagged_waiting(report: &ScanReport) -> Vec<(&str, &str)> {
         report
             .flagged
