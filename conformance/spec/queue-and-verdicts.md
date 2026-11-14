@@ -756,6 +756,14 @@ Where the copy still holds an upload's bytes, when a device drains with a creden
 
 **Tests:** `device/upload-credential-live.test.ts › sends a taken upload again under the key that replaced its sender, before the file waiting on it`.
 
+### `queue-and-verdicts/upload-again-bytes-absent`
+
+Where the copy still holds the bytes of a taken upload that a write waits on, when the server answers that write `404 blob_not_found`, a device MUST send the upload again before it sends that write again, unless the uploads the write waits on already went again for an earlier such answer to it.
+
+**Reason:** the server answers so when it purged bytes nothing referenced yet (`stores/orphan-upload-kept`), as it does when a write stalls after its upload was taken, and when the writing credential neither sent the bytes nor may read them (`blobs/proof-file-refused`). Sending them again cures both, and the server keeps no answer under the write's key for the refusal (`items/idempotency-unproven-file-not-kept`). The write waits `blocked` for `awaiting_dependency` meanwhile, and the copy keeps the bytes while it waits or is refused so (`device/file-trim-keeps-queued`). A second such answer refuses the write (`queue-and-verdicts/refused-contract`), so bytes the server never takes do not loop.
+
+**Tests:** `device/upload-again-live.test.ts › sends a file's bytes again once the server has purged them, and the file item lands`.
+
 ## What a drain reports
 
 A drain is one pass over the queue. Its report says what became of each write the pass came to, in counts and in an entry for each write it settled or sent.
@@ -978,7 +986,7 @@ When the working copy holds a copy the server set aside, a device MUST hold its 
 
 ### `queue-and-verdicts/refused-contract`
 
-When the server answers a write with a `4xx` naming its contract, other than `408`, `425`, `429` and the answers `queue-and-verdicts/credential-blocks-queue`, `queue-and-verdicts/grant-blocks`, `queue-and-verdicts/unclaimed-source-blocks`, `queue-and-verdicts/key-spent-blocks`, `queue-and-verdicts/ancestor-blocks`, `queue-and-verdicts/conflict-blocks`, `queue-and-verdicts/in-flight-counted`, `queue-and-verdicts/not-retained-accepted`, `queue-and-verdicts/contract-changed-accepted` and `queue-and-verdicts/contract-changed-key-spent` name, a device MUST give it the verdict `refused` on the first such answer, with the server's code as its reason, or `unknown` where the answer names none.
+When the server answers a write with a `4xx` naming its contract, other than `408`, `425`, `429` and the answers `queue-and-verdicts/credential-blocks-queue`, `queue-and-verdicts/grant-blocks`, `queue-and-verdicts/unclaimed-source-blocks`, `queue-and-verdicts/key-spent-blocks`, `queue-and-verdicts/ancestor-blocks`, `queue-and-verdicts/conflict-blocks`, `queue-and-verdicts/in-flight-counted`, `queue-and-verdicts/not-retained-accepted`, `queue-and-verdicts/contract-changed-accepted`, `queue-and-verdicts/contract-changed-key-spent` and `queue-and-verdicts/upload-again-bytes-absent` name, a device MUST give it the verdict `refused` on the first such answer, with the server's code as its reason, or `unknown` where the answer names none.
 
 **Reason:** the same request sent again is the same request: a device that retried it would spend the ceiling on identical refusals.
 
