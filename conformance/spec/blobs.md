@@ -70,7 +70,7 @@ When a credential that may upload sends `POST /blobs` with bytes the server does
 
 When a credential that may upload sends `POST /blobs` with bytes the server already holds under another media type, the server MUST answer `201` with the `mime_type` recorded first.
 
-**Reason:** the type is the uploader's word, so the first upload fixes it and no later upload changes what the bytes are served as.
+**Reason:** the type is the uploader's word, so the first upload fixes it and no later upload changes what the bytes are served as. The answer therefore tells an uploader whether the instance already held those bytes (`blobs/read-unreadable`).
 
 **Tests:** `compliance/blob-served.test.ts › answers a second upload under another type with the type the first fixed, on every link`, `› answers a HEAD, a ranged read and a link with the type the first upload fixed`.
 
@@ -520,7 +520,7 @@ While no item references a blob, the server MUST answer `404 blob_not_found` to 
 
 If a working key or an access token lacking `blobs.manage` reads a blob that only items it may not read reference, then the server MUST answer `404 blob_not_found` with the message an unknown hash gets.
 
-**Reason:** the answer says nothing of whether the instance holds the bytes, as an item the credential may not read answers as a missing one (`keys-and-oauth/unreadable-as-missing`).
+**Reason:** the answer says nothing of whether the instance holds the bytes, as an item the credential may not read answers as a missing one (`keys-and-oauth/unreadable-as-missing`). A credential that may upload can still learn whether the instance holds bytes it supplies itself, because the bytes are stored once for the instance and an upload is answered with the type recorded first (`blobs/upload-type-fixed`). It learns no bytes it did not send, and this is accepted as the cost of storing each file once.
 
 **Tests:** `compliance/blob-reach.test.ts › answers a blob only an item of a type the key may not read references as an unknown one`, `compliance/blob-reach-app.test.ts › is held to its granted type scopes: it reads a note's blob, not a file's, and uploads nothing`.
 
