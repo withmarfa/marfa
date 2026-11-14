@@ -159,8 +159,7 @@ fn judge_differences(
 pub enum Unapplied {
     /// Nothing was committed.
     Failed(rusqlite::Error),
-    /// Nothing was committed. Each table left with rows that refer to a row its parent table
-    /// does not hold, with that parent and the number of rows.
+    /// Nothing was committed: each child table, its parent and its rows with no parent row.
     Dangling(Vec<(String, String, i64)>),
     /// SQLite did not take the foreign key setting asked for.
     KeysUnchanged { on: bool },
@@ -231,9 +230,8 @@ pub fn complete(conn: &mut Connection, migrations: &[Migration]) -> Result<(), U
     apply(conn, migrations.iter(), latest(migrations))
 }
 
-/// SQLite changes a table's definition only by making it anew, and dropping the old table
-/// would cascade to its children or be refused, so foreign keys are off around the
-/// transaction, where alone SQLite heeds that, and are checked before it commits.
+/// Foreign keys are off outside the transaction, so dropping a rebuilt table neither cascades
+/// nor fails.
 fn apply<'a>(
     conn: &mut Connection,
     steps: impl Iterator<Item = &'a Migration>,

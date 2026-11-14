@@ -21,8 +21,7 @@ const LOCK: &str = ".server-lock";
 pub struct Disk {
     id: String,
     root: PathBuf,
-    /// Keeps a second server from emptying `tmp` under this one, until `let_go` or the end of
-    /// the process.
+    /// Keeps a second server from emptying `tmp`, until `let_go` or the process ends.
     lock: Mutex<Option<File>>,
 }
 

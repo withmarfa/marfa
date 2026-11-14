@@ -1,5 +1,4 @@
-//! A lock file a running server holds beside what it alone may change. The kernel lets it go
-//! when the process ends, however it ends.
+//! A lock a running server holds on its files; the kernel lets it go when the process ends.
 
 use std::fs::{File, OpenOptions, TryLockError};
 use std::io;

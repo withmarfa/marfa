@@ -291,8 +291,7 @@ fn make_durable(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "checkpoint_fullfsync", true)
 }
 
-/// Readers run beside the writer only through the log, and SQLite answers with the mode it
-/// kept rather than failing where the file system gives it no shared memory.
+/// Where it cannot keep a log, SQLite answers with the mode it kept instead of failing.
 fn keep_log(conn: &Connection, label: &str, in_file: bool) -> Result<(), Failure> {
     let mode: String = conn
         .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
