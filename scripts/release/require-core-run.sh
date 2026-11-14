@@ -72,7 +72,10 @@ if grep -q ' completed success$' <<< "$states"; then
   echo "core.yml is green for $nearest, which covers $sha"
   exit 0
 fi
-if grep -qv ' completed ' <<< "$states"; then
-  fail "core.yml is still running for $nearest (run $(grep -v ' completed ' <<< "$states" | head -1 | cut -d' ' -f1)); this release needs it green. Re-run this job when it has finished."
+running=$(grep -v ' completed ' <<< "$states" || true)
+if [ -n "$running" ]; then
+  read -r id _ <<< "$running"
+  fail "core.yml is still running for $nearest (run $id); this release needs it green. Re-run this job when it has finished."
 fi
-fail "core.yml did not pass for $nearest: run $(head -1 <<< "$states" | cut -d' ' -f1) ended $(head -1 <<< "$states" | cut -d' ' -f3). A release refuses a commit whose live checks failed."
+read -r id _ conclusion <<< "$states"
+fail "core.yml did not pass for $nearest: run $id ended $conclusion. A release refuses a commit whose live checks failed."
