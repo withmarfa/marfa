@@ -5773,7 +5773,7 @@ mod tests {
     #[cfg(debug_assertions)]
     #[test]
     fn a_crash_in_a_run_of_skipped_events_replays_only_events_skipped_again() {
-        if let Some(dir) = std::env::var_os("MARFA_CATCH_UP_CHILD") {
+        if let Some(dir) = std::env::var_os("MARFA_TEST_CATCH_UP_CHILD") {
             let core = Core::open(
                 std::path::Path::new(&dir).join("core.sqlite"),
                 Some(Server {
@@ -5808,7 +5808,7 @@ mod tests {
                 "catch_up::tests::a_crash_in_a_run_of_skipped_events_replays_only_events_skipped_again",
                 "--nocapture",
             ])
-            .env("MARFA_CATCH_UP_CHILD", dir.path())
+            .env("MARFA_TEST_CATCH_UP_CHILD", dir.path())
             .env("MARFA_CATCH_UP_URL", server.url())
             .env("MARFA_TEST_FAULT", "crash-after-skipped=10")
             .output()
