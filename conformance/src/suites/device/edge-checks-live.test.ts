@@ -5,6 +5,7 @@ import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { EdgeDraft, Outcome } from "../../device/protocol.js";
+import { refusedCode, refusedDetails } from "../../device/refusal.js";
 import {
   cleanup,
   createTestContext,
@@ -115,7 +116,7 @@ async function edgeType(
   return id;
 }
 
-/** The class and the server's code a device refusal carries. */
+/** The class and the code a device refusal carries. */
 function refusedAs(
   outcome: Outcome<unknown>,
   refusal: [string, string],
@@ -123,22 +124,16 @@ function refusedAs(
 ): void {
   expect(outcome.ok, `${what} was taken`).toBe(false);
   if (outcome.ok) return;
-  const envelope = JSON.parse(outcome.refusal.raw) as {
-    error: { code: string; server: { code: string | null } | null };
-  };
   expect(
-    [envelope.error.code, envelope.error.server?.code],
+    [outcome.refusal.code, refusedCode(outcome.refusal)],
     `${what} was refused, but not as the server refuses it: ${outcome.refusal.raw}`,
   ).toEqual(refusal);
 }
 
-/** The server's `error.details` a device refusal carries, or null. */
+/** The `details` beside the code a device refusal carries, or null. */
 function detailsOf(outcome: Outcome<unknown>): unknown {
   if (outcome.ok) return undefined;
-  const envelope = JSON.parse(outcome.refusal.raw) as {
-    error: { server: { details?: unknown } | null };
-  };
-  return envelope.error.server?.details ?? null;
+  return refusedDetails(outcome.refusal);
 }
 
 interface Served {

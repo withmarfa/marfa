@@ -3,6 +3,7 @@ import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { refusal, typeCatalog } from "../../device/marfa-answers.js";
 import type { Outcome } from "../../device/protocol.js";
+import { refusedCode } from "../../device/refusal.js";
 import {
   folderHarness,
   scriptHydration,
@@ -83,12 +84,10 @@ function invalid(outcome: Outcome<unknown>, field: string) {
   expect(outcome.ok).toBe(false);
   if (outcome.ok) return;
   const error = (
-    JSON.parse(outcome.refusal.raw) as {
-      error: { code: string; message: string; server: { code: string } };
-    }
+    JSON.parse(outcome.refusal.raw) as { error: { message: string } }
   ).error;
-  expect(error.code).toBe("validation");
-  expect(error.server.code).toBe("invalid_properties");
+  expect(outcome.refusal.code).toBe("validation");
+  expect(refusedCode(outcome.refusal)).toBe("invalid_properties");
   expect(error.message).toContain(`${field}:`);
 }
 

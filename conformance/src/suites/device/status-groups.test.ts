@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { typeCatalog } from "../../device/marfa-answers.js";
 import type { Outcome } from "../../device/protocol.js";
+import { refusedCode } from "../../device/refusal.js";
 import { scriptHydration, startHarness, type Harness } from "./harness.js";
 
 const TASK = "fixture.task";
@@ -83,12 +84,10 @@ function undeclared(outcome: Outcome<unknown>, list: string) {
   expect(outcome.ok).toBe(false);
   if (outcome.ok) return;
   const error = (
-    JSON.parse(outcome.refusal.raw) as {
-      error: { code: string; message: string; server: { code: string } };
-    }
+    JSON.parse(outcome.refusal.raw) as { error: { message: string } }
   ).error;
-  expect(error.code).toBe("validation");
-  expect(error.server.code).toBe("invalid_properties");
+  expect(outcome.refusal.code).toBe("validation");
+  expect(refusedCode(outcome.refusal)).toBe("invalid_properties");
   expect(error.message).toContain(
     `stage: Must be a status word the type declares: ${list}`,
   );
@@ -213,15 +212,10 @@ describe("a working copy reads status words through the groups every type shares
       const refused = await device.list({ filter });
       expect(refused.ok, filter).toBe(false);
       if (refused.ok) continue;
-      const error = (
-        JSON.parse(refused.refusal.raw) as {
-          error: { code: string; server: { code: string | null } | null };
-        }
-      ).error;
-      expect([error.code, error.server?.code], filter).toEqual([
-        "validation",
-        "validation_error",
-      ]);
+      expect(
+        [refused.refusal.code, refusedCode(refused.refusal)],
+        filter,
+      ).toEqual(["validation", "validation_error"]);
     }
   });
 });
