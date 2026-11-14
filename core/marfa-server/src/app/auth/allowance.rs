@@ -95,8 +95,7 @@ impl RefusalRecords {
         Some(std::mem::take(&mut state.left_out))
     }
 
-    /// `now_ms` is read once the write answered. A write whose outcome is unknown counts as
-    /// written: a record that may exist is neither written again nor counted as left out.
+    /// An unknown write spends its window; `now_ms` must follow the write's answer.
     pub fn settle(&self, door: Door, carried: u64, written: &Result<()>, now_ms: i64) {
         let mut doors = self.doors.lock().unwrap_or_else(PoisonError::into_inner);
         let state = doors.entry(door).or_default();
