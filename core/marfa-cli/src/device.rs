@@ -1180,18 +1180,21 @@ pub enum DeviceFoldersCommand {
 pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError> {
     let db = args.db.clone();
     run_on(args, named, json).map_err(|error| match (error, db) {
-        (CliError::Core(marfa_core::CoreError::StoreDamaged { path, reason, unsent }), Some(db))
-            if path.is_empty() =>
-        {
-            match Core::check_store(&db) {
-                Err(named @ marfa_core::CoreError::StoreDamaged { .. }) => CliError::Core(named),
-                _ => CliError::Core(marfa_core::CoreError::StoreDamaged {
-                    path,
-                    reason,
-                    unsent,
-                }),
-            }
-        }
+        (
+            CliError::Core(marfa_core::CoreError::StoreDamaged {
+                path,
+                reason,
+                unsent,
+            }),
+            Some(db),
+        ) if path.is_empty() => match Core::check_store(&db) {
+            Err(named @ marfa_core::CoreError::StoreDamaged { .. }) => CliError::Core(named),
+            _ => CliError::Core(marfa_core::CoreError::StoreDamaged {
+                path,
+                reason,
+                unsent,
+            }),
+        },
         (error, _) => error,
     })
 }

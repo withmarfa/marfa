@@ -5,12 +5,12 @@ mod body;
 mod busy;
 mod catalog;
 mod catch_up;
-mod damage;
-#[cfg(test)]
-mod damage_tests;
 /// Public so a debug build's binding can move the clock it waits by.
 pub mod clock;
 pub mod contract;
+mod damage;
+#[cfg(test)]
+mod damage_tests;
 #[cfg(test)]
 mod deleted_stays_gone_tests;
 mod directory;

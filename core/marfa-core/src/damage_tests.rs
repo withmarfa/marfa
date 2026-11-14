@@ -105,7 +105,10 @@ fn a_store_damaged_outside_its_queue_is_refused_by_name_with_its_writes_counted(
     let (named, unsent, said) = damaged(Core::check_store(&path).unwrap_err());
     assert_eq!(named, path.display().to_string());
     assert_eq!(unsent, Some(2), "{said}");
-    assert!(said.contains("holds 2 writes the server has not taken"), "{said}");
+    assert!(
+        said.contains("holds 2 writes the server has not taken"),
+        "{said}"
+    );
     assert!(said.contains("Set it aside"), "{said}");
     assert!(!said.to_lowercase().contains("delete"), "{said}");
     assert_eq!(bytes(&path), before, "refusing the store changed it");
@@ -240,10 +243,18 @@ fn a_set_aside_reads_the_log_a_crash_left_and_moves_it_with_the_store() {
     let done = set_aside(&path);
     assert_eq!((done.carried, done.unread), (2, 0));
     let aside = PathBuf::from(&done.set_aside);
-    assert_eq!(bytes(&beside(&aside, "-wal")), log, "the log did not move with its store");
+    assert_eq!(
+        bytes(&beside(&aside, "-wal")),
+        log,
+        "the log did not move with its store"
+    );
     let core = Core::open(&path, None).unwrap();
-    assert!(core.queue().unwrap().iter().any(|write| write.id == "logged"
-        && write.idempotency_key == "k-logged"));
+    assert!(
+        core.queue()
+            .unwrap()
+            .iter()
+            .any(|write| write.id == "logged" && write.idempotency_key == "k-logged")
+    );
 }
 
 #[cfg(debug_assertions)]
@@ -263,7 +274,10 @@ fn a_set_aside_that_stops_part_way_loses_nothing_and_asking_again_finishes_it() 
         let done = set_aside(&path);
         assert_eq!((done.carried, done.unread), (2, 0), "{stop}");
         let aside = PathBuf::from(&done.set_aside);
-        assert!(aside.ends_with("core.sqlite.damaged-1"), "{stop}: {aside:?}");
+        assert!(
+            aside.ends_with("core.sqlite.damaged-1"),
+            "{stop}: {aside:?}"
+        );
         assert!(beside(&aside, "-wal").exists(), "{stop}");
         assert_eq!(Core::open(&path, None).unwrap().queue().unwrap().len(), 2);
     }
@@ -317,7 +331,10 @@ fn the_new_store_keeps_the_instance_and_a_drain_before_it_is_hydrated_sends_noth
     assert_eq!(core.drain(), Err(CoreError::NoCursor));
     assert_eq!(server.asked(), 0);
     let kept = core.queue().unwrap();
-    assert_eq!(kept.iter().map(sent).collect::<Vec<_>>(), queued.iter().map(sent).collect::<Vec<_>>());
+    assert_eq!(
+        kept.iter().map(sent).collect::<Vec<_>>(),
+        queued.iter().map(sent).collect::<Vec<_>>()
+    );
     assert!(kept.iter().all(|write| write.verdict.is_none()));
 }
 

@@ -747,8 +747,8 @@ fn read_checked(conn: &Connection, path: &Path) -> Result<(), CoreError> {
             path.display()
         ))
     };
-    let found = version(conn)
-        .map_err(|error| crate::damage::at_path(CoreError::from(error), path))?;
+    let found =
+        version(conn).map_err(|error| crate::damage::at_path(CoreError::from(error), path))?;
     if found != SCHEMA_VERSION {
         let has_meta: bool = conn
             .query_row(
