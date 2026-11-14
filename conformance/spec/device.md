@@ -3510,7 +3510,7 @@ When a command sends a request to `localhost`, an address in `127.0.0.0/8` or `:
 
 ### `device/command-redirect-no-credentials`
 
-When a command follows a redirect from the docs site or from a link to a blob, and the redirect changes the scheme, the host or the port, then the CLI MUST send no `Authorization`, `Proxy-Authorization` or `Cookie` header and no header whose name starts with `X-Marfa-` on that request or on any later request of the command, whatever `MARFA_API_KEY` holds.
+If a command follows a redirect from the docs site or from a link to a blob that changes the scheme, the host or the port, then the CLI MUST send no `Authorization`, `Proxy-Authorization` or `Cookie` header and no header whose name starts with `X-Marfa-` on that request or on any later request of the command, whatever `MARFA_API_KEY` holds.
 
 **Reason:** the headers that say who is asking belong to the origin the command began at. An address that redirect names is another party's, and a later redirect back to the first origin does not make it the first one again.
 
