@@ -416,7 +416,7 @@ describe("an array field", () => {
     ],
     [
       "a url array with a host holding code points the IDNA tables leave unassigned",
-      { sites: ["http://Ⴍ𿣍ꡨ֮.Ⴞ/", "https://𾢬.ܩ.쯙5/"] },
+      { sites: ["http://Ⴍ\u{5F8CD}ꡨ֮.Ⴞ/", "https://\u{5E8AC}.ܩ.쯙5/"] },
       "sites.0",
     ],
     ["an object array with a string", { things: [{}, "text"] }, "things.1"],

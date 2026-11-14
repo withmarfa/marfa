@@ -4974,6 +4974,10 @@ describe("what a folder takes", () => {
       ["01a00000-0000-7000-8000-000000017022", "plan"],
       ["01a00000-0000-7000-8000-000000017023", composed],
       ["01a00000-0000-7000-8000-000000017024", decomposed],
+      ["01a00000-0000-7000-8000-000000017026", "ΟΔΟΣ"],
+      ["01a00000-0000-7000-8000-000000017027", "οδος"],
+      ["01a00000-0000-7000-8000-000000017028", "Straße"],
+      ["01a00000-0000-7000-8000-000000017029", "STRASSE"],
     ];
     harness = await folderHarness("folder-one-name", {
       items: {
@@ -4996,7 +5000,7 @@ describe("what a folder takes", () => {
         `${title} has no file of its own: two names differing only in case or form were given as two paths, and one disk holds them as one file`,
       ).toHaveLength(1);
     }
-    expect([pulled.value.beside, pulled.value.unwritten]).toEqual([2, 0]);
+    expect([pulled.value.beside, pulled.value.unwritten]).toEqual([4, 0]);
 
     // A line and a link typed in another case and form name the item all
     // the same.

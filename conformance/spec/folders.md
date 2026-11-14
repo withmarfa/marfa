@@ -894,6 +894,8 @@ A device MUST NOT take or leave out a file at a folder's top level because an in
 
 When an include or ignore pattern holds a `?` or a bracket class, a device MUST match each against exactly one character of the path, whatever the character's length in bytes.
 
+**Reason:** a device compares a pattern with the path as it compares names. A literal character in the pattern matches a character of the path when the two have the same case fold, so `É` matches `é` and `S` matches `ſ`, and a `?` or a class takes one character of the path as written, so `É?.md` leaves out `éß.md`. A pattern also matches when its whole case-folded text matches the whole case-folded path, so `STRASSE.md` matches `Straße.md`.
+
 **Tests:** `device/folder-patterns.test.ts › matches a class or a ? against one character outside ASCII in %s patterns`.
 
 ### `folders/invalid-pattern-refused`
@@ -1108,7 +1110,9 @@ When a generated file name has more than 32 bytes from its last dot to its end, 
 
 ### `folders/name-comparison`
 
-When a device compares folder paths, file names or titles, a device MUST treat names differing only in case or Unicode normalization as the same name.
+When a device compares folder paths, file names or titles, a device MUST treat two names as the same name where they are equal after each is put in normalization form NFC, has Unicode full case folding applied with no locale rule, and is put in NFC again.
+
+**Reason:** a case-insensitive file system such as APFS compares names by full case folding, so two names the device kept apart could be one file on disk, and the second item would never be written.
 
 **Tests:** `device/folders.test.ts › treats names differing only in case or Unicode form as one`, `device/folders-contract-b.test.ts › matches include names in NFC regardless of case and asks the server for a name once, in the form typed`, `device/folders-contract-b.test.ts › matches Unicode %s patterns with the folder name equivalence`, `device/folder-patterns.test.ts › matches escaped brackets and Unicode literals without turning them into classes`, `device/folder-patterns.test.ts › folds Unicode literals with an escape on the $position`.
 

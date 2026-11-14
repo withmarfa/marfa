@@ -578,9 +578,9 @@ When a `url` value of a special scheme has a host that is ASCII once percent-dec
 
 ### `types/url-idna`
 
-If a `url` value of a special scheme has a host with a character that is not ASCII once percent-decoded, and the host is not valid IDNA, including a host with a code point that Unicode 17.0 leaves unassigned, then the server MUST refuse the value `invalid_properties`.
+If a `url` value of a special scheme has a host with a character that is not ASCII once percent-decoded, and the host is not valid IDNA, including a host with a code point that Unicode 18.0 leaves unassigned, then the server MUST refuse the value `invalid_properties`.
 
-**Reason:** the standard runs only such a host through IDNA, so `http://bücher.xn--` is refused, because its `xn--` label is not Punycode and its host is not ASCII, while `http://xn--mnchen-3ya.de/` is taken. A host with an unassigned code point is not valid IDNA either, so `http://Ⴍ𿣍ꡨ֮.Ⴞ/` and `https://𾢬.ܩ.쯙5/` are refused by the server and by a device alike, and a value one takes the other takes. A code point that Unicode assigns only after 17.0 is outside the rule, so a server whose tables are newer may take it.
+**Reason:** the standard runs only such a host through IDNA, so `http://bücher.xn--` is refused, because its `xn--` label is not Punycode and its host is not ASCII, while `http://xn--mnchen-3ya.de/` is taken. A host with an unassigned code point is not valid IDNA either, so a host holding U+5F8CD or U+5E8AC, which lie in a plane Unicode has assigned nothing in, is refused by the server and by a device alike, and a value one takes the other takes. A code point that Unicode assigns only after 18.0 is outside the rule, so a server whose tables are newer may take it.
 
 **Tests:** `compliance/field-types.test.ts › refuses %s on a create, naming the field`, `device/property-validation-live.test.ts › refuses the url %j on both paths`.
 

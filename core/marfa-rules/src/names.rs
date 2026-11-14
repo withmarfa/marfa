@@ -1,10 +1,13 @@
-//! Names compare in NFC, case-insensitively, as macOS and Obsidian do.
+//! Names compare in NFC under full Unicode case folding, as APFS does.
 
 use unicode_normalization::UnicodeNormalization;
 
 pub fn folded(name: &str) -> String {
-    // A lowercase mapping can leave a sequence that composes differently.
-    name.nfc().flat_map(char::to_lowercase).nfc().collect()
+    // A fold can leave a sequence that composes differently.
+    icu_casemap::CaseMapper::new()
+        .fold_string(&name.nfc().collect::<String>())
+        .nfc()
+        .collect()
 }
 
 /// Longest name, in characters, that has a title key.
@@ -45,5 +48,19 @@ mod tests {
         assert!(same("PLAN.md", "plan.md"));
         assert!(same("\u{c9}t\u{e9}", "e\u{301}te\u{301}"));
         assert!(!same("plan.md", "plans.md"));
+    }
+
+    #[test]
+    fn names_compare_by_full_case_folding() {
+        assert!(same("ΟΔΟΣ", "οδος"));
+        assert!(same("ΟΔΟΣ", "οδοσ"));
+        assert!(same("ſtar", "STAR"));
+        assert!(same("Straße", "STRASSE"));
+        assert!(same("Straẞe", "strasse"));
+        assert!(same("\u{212a}elvin", "kelvin"));
+        assert!(!same("I", "ı"));
+        for name in ["ΟΔΟΣ", "Straße", "ſ", "ǅ", "Cafe\u{301}", "ﬃ"] {
+            assert_eq!(folded(&folded(name)), folded(name));
+        }
     }
 }

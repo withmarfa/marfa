@@ -289,9 +289,10 @@ fn by_character(bytes: &str) -> String {
     case_free(&decoded)
 }
 
-/// The regex with each ASCII letter, alone or in a class, standing for both
-/// its cases, and each class holding every character the name comparison
-/// folds with one of its members.
+/// The regex with each literal character standing for every character the
+/// name comparison folds with it, and each class holding every character it
+/// folds with one of its members. A `?` or a class still takes one character
+/// of the name as written.
 fn case_free(source: &str) -> String {
     let mut out = String::with_capacity(source.len() * 2);
     let mut chars = source.chars().peekable();
@@ -369,13 +370,16 @@ fn case_free(source: &str) -> String {
                 }
                 out.push(']');
             }
-            ch if ch.is_ascii_alphabetic() => {
-                out.push('[');
-                out.push(ch.to_ascii_lowercase());
-                out.push(ch.to_ascii_uppercase());
-                out.push(']');
-            }
-            ch => out.push(ch),
+            ch => match folded_with(ch) {
+                [] => out.push(ch),
+                same => {
+                    out.push('[');
+                    for &member in same {
+                        class_member(&mut out, member);
+                    }
+                    out.push(']');
+                }
+            },
         }
     }
     out
