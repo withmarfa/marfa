@@ -1,6 +1,8 @@
 //! Recovery of readable writes from a damaged store.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::fs::File;
+use std::io::{Read as _, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -33,9 +35,9 @@ pub struct SetAside {
     pub held: u64,
     /// The carried writes held `blocked` with the reason `record_unread`,
     /// because a record that decides how each is sent could not be read. A
-    /// caller releases one to send it without that record. Where the store
-    /// is then built from another instance, a release holds it
-    /// `instance_changed` instead.
+    /// caller releases one to send it without that record. Where the store is built from
+    /// another instance than the one it was made against, or the set-aside
+    /// could not tell which, a release holds it `instance_changed` instead.
     pub record_unread: u64,
 }
 
@@ -55,13 +57,12 @@ const META_SET_ASIDE: &str = "set_aside";
 const META_SET_ASIDE_MAKING: &str = "set_aside_making";
 
 // Unread records block only the write kinds whose sending they govern.
-const BY_WRITE: [(&str, &[WriteKind]); 6] = [
+const BY_WRITE: [(&str, &[WriteKind]); 5] = [
     ("chosen_tier/", &[WriteKind::CreateItem]),
     ("cleared_time/", &[WriteKind::CreateItem]),
     ("dead_effect/", &[]),
     ("receipt_pending/", &[]),
     ("upload_sent_as/", &[]),
-    (store::INSTANCE_CHANGED_PREFIX, &[]),
 ];
 
 const TABLES_BY_WRITE: [(&str, &[WriteKind]); 2] = [
@@ -108,8 +109,13 @@ pub(crate) fn refuse_emptied_in(
     label: &Path,
 ) -> Result<(), CoreError> {
     let name = Path::new(store::FOLDER_STORE);
+    let log = store::suffixed(name, "-wal");
     if state.entry_metadata(name).is_ok_and(|held| held.len() == 0)
-        && commits(state.read(&store::suffixed(name, "-wal")))
+        && commits(state.open_file(
+            &log,
+            crate::directory::OFlags::RDONLY,
+            crate::directory::Mode::empty(),
+        ))
     {
         return Err(emptied_refusal(label));
     }
@@ -119,7 +125,7 @@ pub(crate) fn refuse_emptied_in(
 fn emptied(path: &Path) -> bool {
     path.metadata()
         .is_ok_and(|held| held.is_file() && held.len() == 0)
-        && commits(std::fs::read(store::suffixed(path, "-wal")))
+        && commits(File::open(store::suffixed(path, "-wal")))
 }
 
 fn emptied_refusal(path: &Path) -> CoreError {
@@ -326,49 +332,64 @@ fn left_part_made(making: &Path) -> bool {
         return false;
     }
     if held.len() == 0 {
-        return !commits(std::fs::read(&log));
+        return !commits(File::open(&log));
     }
     store::open_refused(making).is_ok_and(|conn| match store::holds_tables(&conn) {
-        Ok(false) => !commits(std::fs::read(&log)),
+        Ok(false) => !commits(File::open(&log)),
         Ok(true) => matches!(store::meta_get(&conn, META_SET_ASIDE_MAKING), Ok(Some(_))),
         Err(_) => false,
     })
 }
 
-/// Whether the write-ahead log `read` holds a committed frame, or cannot be
-/// shown not to. SQLite reads no log beside an empty file.
-fn commits(read: std::io::Result<Vec<u8>>) -> bool {
-    let bytes = match read {
-        Ok(bytes) => bytes,
+/// Whether the write-ahead log `log` holds a committed frame, or cannot be
+/// shown not to. SQLite reads no log beside an empty file. Only the headers
+/// are read, so a log of any size costs no more memory.
+fn commits(log: std::io::Result<File>) -> bool {
+    let mut log = match log {
+        Ok(log) => log,
         Err(error) => return error.kind() != std::io::ErrorKind::NotFound,
     };
-    if bytes.is_empty() {
-        return false;
-    }
-    let Some(page) = log_page(&bytes) else {
+    let Ok(length) = log.metadata().map(|held| held.len()) else {
         return true;
     };
-    (32..bytes.len())
-        .step_by(24 + page)
-        .any(|frame| word(&bytes, frame + 4) != Some(0))
+    if length == 0 {
+        return false;
+    }
+    let Some(page) = log_page(&mut log) else {
+        return true;
+    };
+    let mut frame = WAL_HEADER;
+    while frame < length {
+        // A frame's commit word is the database size after a commit, else 0.
+        let mut commit = [0; 4];
+        if log.seek(SeekFrom::Start(frame + 4)).is_err()
+            || log.read_exact(&mut commit).is_err()
+            || commit != [0; 4]
+        {
+            return true;
+        }
+        frame += FRAME_HEADER + page;
+    }
+    false
 }
 
-fn word(bytes: &[u8], at: usize) -> Option<u32> {
-    bytes
-        .get(at..at + 4)
-        .map(|four| u32::from_be_bytes([four[0], four[1], four[2], four[3]]))
-}
+const WAL_HEADER: u64 = 32;
+const FRAME_HEADER: u64 = 24;
 
-/// The page size a write-ahead log's header names, where it is one.
-fn log_page(log: &[u8]) -> Option<usize> {
-    if !matches!(word(log, 0), Some(0x377f_0682 | 0x377f_0683)) {
+/// The page size a write-ahead log's header names, where it is one. Unlike
+/// a database header, the log's states 65,536 as itself.
+fn log_page(log: &mut File) -> Option<u64> {
+    let mut header = [0; 12];
+    log.seek(SeekFrom::Start(0)).ok()?;
+    log.read_exact(&mut header).ok()?;
+    let word = |at: usize| {
+        u32::from_be_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
+    };
+    if !matches!(word(0), 0x377f_0682 | 0x377f_0683) {
         return None;
     }
-    match word(log, 8)? {
-        1 => Some(65_536),
-        size if (512..=32_768).contains(&size) && size.is_power_of_two() => Some(size as usize),
-        _ => None,
-    }
+    let page = word(8);
+    ((512..=65_536).contains(&page) && page.is_power_of_two()).then_some(u64::from(page))
 }
 
 /// The old store opened to read, and the copy it is read from where its
@@ -379,46 +400,51 @@ struct Old {
 }
 
 impl Old {
-    fn open(path: &Path) -> Old {
+    /// Fails only where the copy cannot be made, before anything is moved,
+    /// so asking again at the same path can still carry what the log holds.
+    fn open(path: &Path) -> Result<Old, CoreError> {
         if let Ok(conn) = store::open_refused(path) {
-            return Old {
+            return Ok(Old {
                 conn: Some(conn),
                 _copy: None,
-            };
+            });
         }
-        match emptied(path).then(|| read_emptied(path)).flatten() {
-            Some((conn, copy)) => Old {
-                conn: Some(conn),
-                _copy: Some(copy),
-            },
-            None => Old {
+        let log = store::suffixed(path, "-wal");
+        let page = emptied(path)
+            .then(|| File::open(&log).ok().and_then(|mut log| log_page(&mut log)))
+            .flatten();
+        let Some(page) = page else {
+            return Ok(Old {
                 conn: None,
                 _copy: None,
-            },
-        }
+            });
+        };
+        let failed = |error: std::io::Error| {
+            CoreError::Store(format!(
+                "{} cannot be set aside: its write-ahead log cannot be copied to be read: {error}",
+                path.display()
+            ))
+        };
+        let holder = path
+            .parent()
+            .filter(|holder| !holder.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
+        let copy = tempfile::Builder::new()
+            .prefix(".marfa-reading")
+            .tempdir_in(holder)
+            .map_err(failed)?;
+        let store = copy.path().join("store");
+        std::fs::write(&store, vec![0; page as usize]).map_err(failed)?;
+        std::fs::copy(&log, store::suffixed(&store, "-wal")).map_err(failed)?;
+        let conn = Connection::open_with_flags(
+            &store,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        Ok(Old {
+            conn: Some(conn),
+            _copy: Some(copy),
+        })
     }
-}
-
-fn read_emptied(path: &Path) -> Option<(Connection, tempfile::TempDir)> {
-    let log = std::fs::read(store::suffixed(path, "-wal")).ok()?;
-    let page = log_page(&log)?;
-    let holder = path
-        .parent()
-        .filter(|holder| !holder.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    let copy = tempfile::Builder::new()
-        .prefix(".marfa-reading")
-        .tempdir_in(holder)
-        .ok()?;
-    let store = copy.path().join("store");
-    std::fs::write(&store, vec![0; page]).ok()?;
-    std::fs::write(store::suffixed(&store, "-wal"), log).ok()?;
-    let conn = Connection::open_with_flags(
-        &store,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
-    )
-    .ok()?;
-    Some((conn, copy))
 }
 
 /// The first of `store`'s file and logs that stands.
@@ -447,7 +473,7 @@ fn sync_holder(path: &Path) {
 }
 
 fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
-    let opened = Old::open(path);
+    let opened = Old::open(path)?;
     let old = opened.conn.as_ref();
     let mut conn = store::open(made)?;
     let columns = columns(&conn, "queue")?;
@@ -536,6 +562,23 @@ fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
         Said::Unknown if !carried.is_empty() => store::block_for_another_instance(&tx)? as u64,
         _ => 0,
     };
+    // An earlier set-aside's writes may have been made for another instance
+    // than the old store's, so either unknown leaves the new one unknown.
+    let instance = match meta.get(old, store::META_INSTANCE_ID) {
+        Said::Known(instance) => Said::Known(instance.filter(|id| !id.is_empty())),
+        Said::Unknown => Said::Unknown,
+    };
+    let made_for = match (instance, meta.get(old, store::META_CARRIED_FOR)) {
+        (Said::Known(instance), Said::Known(None)) => instance,
+        (Said::Known(None), Said::Known(Some(earlier))) => Some(earlier),
+        (Said::Known(Some(instance)), Said::Known(Some(earlier))) if earlier == instance => {
+            Some(instance)
+        }
+        _ => Some(String::new()),
+    };
+    if let Some(made_for) = made_for {
+        store::meta_set(&tx, store::META_CARRIED_FOR, &made_for)?;
+    }
     let done = SetAside {
         set_aside: aside.display().to_string(),
         carried: 0,

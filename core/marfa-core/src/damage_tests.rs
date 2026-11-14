@@ -1011,23 +1011,136 @@ fn reason_of(core: &Core, id: &str) -> Option<String> {
         .reason
 }
 
+const ANOTHER_INSTANCE: &str = "another-instance";
+
+/// A store built from `scripted::INSTANCE` whose `count` creates are carried
+/// by a set-aside that cannot read their body checks, so each is held
+/// `record_unread`.
+fn carried_record_unread(count: usize) -> (tempfile::TempDir, PathBuf, Vec<QueuedWrite>) {
+    let (dir, path, queued) = store_with(count);
+    store::meta_set(
+        &Connection::open(&path).unwrap(),
+        store::META_INSTANCE_ID,
+        crate::scripted::INSTANCE,
+    )
+    .unwrap();
+    damage_table(&path, "body_checks");
+    assert_eq!(set_aside(&path).record_unread, count as u64);
+    (dir, path, queued)
+}
+
+/// What a hydration from another instance does to the store's meta and queue.
+fn built_from_another_instance(core: &Core) {
+    let conn = core.conn().unwrap();
+    store::block_for_another_instance(&conn).unwrap();
+    store::meta_set(&conn, store::META_INSTANCE_ID, ANOTHER_INSTANCE).unwrap();
+}
+
 #[test]
 fn a_write_held_record_unread_whose_instance_changed_needs_a_second_release() {
-    let (_dir, path, queued) = store_with(2);
-    damage_table(&path, "body_checks");
-    assert_eq!(set_aside(&path).record_unread, 2);
+    let (_dir, path, queued) = carried_record_unread(2);
     let core = Core::open(&path, None).unwrap();
     let (first, second) = (&queued[0].id, &queued[1].id);
     // The witness: with the instance unchanged, one release sends it.
     assert!(core.release(second).unwrap());
     assert_eq!(reason_of(&core, second), None);
 
-    store::block_for_another_instance(&core.conn().unwrap()).unwrap();
+    built_from_another_instance(&core);
     assert_eq!(reason_of(&core, first).as_deref(), Some("record_unread"));
     assert!(!core.release(first).unwrap());
     assert_eq!(reason_of(&core, first).as_deref(), Some("instance_changed"));
     assert!(core.release(first).unwrap());
     assert_eq!(reason_of(&core, first), None);
+}
+
+#[test]
+fn a_later_set_aside_keeps_record_unread_writes_held_for_the_instance() {
+    // The witness: with the instance unchanged, a later set-aside's store
+    // sends the write on one release.
+    for (damaged, moved, held) in [
+        ("items", false, false),
+        ("items", true, true),
+        ("meta", true, true),
+    ] {
+        let (_dir, path, queued) = carried_record_unread(1);
+        if moved {
+            built_from_another_instance(&Core::open(&path, None).unwrap());
+        }
+        damage_table(&path, damaged);
+        set_aside(&path);
+        let core = Core::open(&path, None).unwrap();
+        let id = &queued[0].id;
+        assert_eq!(
+            reason_of(&core, id).as_deref(),
+            Some("record_unread"),
+            "{damaged}"
+        );
+        assert_eq!(core.release(id).unwrap(), !held, "{damaged}, moved {moved}");
+        if held {
+            assert_eq!(reason_of(&core, id).as_deref(), Some("instance_changed"));
+            assert!(core.release(id).unwrap());
+        }
+        assert_eq!(reason_of(&core, id), None);
+    }
+}
+
+/// Makes the carried writes one row batch, led by the first.
+fn one_batch(core: &Core, queued: &[QueuedWrite]) {
+    let conn = core.conn().unwrap();
+    conn.execute("UPDATE queue SET kind = 'write_rows'", [])
+        .unwrap();
+    conn.execute(
+        "UPDATE queue SET batched_with = ?1 WHERE id = ?2",
+        rusqlite::params![queued[0].id, queued[1].id],
+    )
+    .unwrap();
+}
+
+#[test]
+fn a_row_batch_released_from_record_unread_is_held_for_the_instance_as_one() {
+    // The witness: with the instance unchanged, a release by reason sends
+    // the batch.
+    let (_dir, path, queued) = carried_record_unread(2);
+    let core = Core::open(&path, None).unwrap();
+    one_batch(&core, &queued);
+    assert_eq!(
+        core.release_reason(crate::BlockedReason::RecordUnread)
+            .unwrap(),
+        2
+    );
+
+    let (_dir, path, queued) = carried_record_unread(2);
+    let core = Core::open(&path, None).unwrap();
+    one_batch(&core, &queued);
+    built_from_another_instance(&core);
+    assert_eq!(
+        core.release_reason(crate::BlockedReason::RecordUnread)
+            .unwrap(),
+        0
+    );
+    for write in &queued {
+        assert_eq!(
+            reason_of(&core, &write.id).as_deref(),
+            Some("instance_changed")
+        );
+    }
+
+    let (_dir, path, queued) = carried_record_unread(2);
+    let core = Core::open(&path, None).unwrap();
+    one_batch(&core, &queued);
+    built_from_another_instance(&core);
+    assert!(!core.release(&queued[1].id).unwrap());
+    for write in &queued {
+        assert_eq!(
+            reason_of(&core, &write.id).as_deref(),
+            Some("instance_changed")
+        );
+    }
+    assert_eq!(
+        core.release_reason(crate::BlockedReason::InstanceChanged)
+            .unwrap(),
+        2
+    );
 }
 
 #[test]
@@ -1127,4 +1240,112 @@ fn a_folders_store_whose_file_is_empty_and_whose_log_holds_writes_is_refused_and
     assert_eq!(named, path.display().to_string());
     assert_eq!(bytes(&beside(&path, "-wal")), log);
     assert_eq!(bytes(&path), Some(Vec::new()));
+}
+
+#[test]
+fn a_log_of_64_kib_pages_beside_an_empty_file_is_refused_and_carried() {
+    let (_dir, path, queued) = store_with(2);
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute_batch(
+            "PRAGMA journal_mode = DELETE; PRAGMA page_size = 65536; VACUUM;
+             PRAGMA journal_mode = WAL;",
+        )
+        .unwrap();
+    }
+    in_log(&path, "VACUUM;");
+    std::fs::write(&path, b"").unwrap();
+    let log = bytes(&beside(&path, "-wal")).unwrap();
+    assert_eq!(log[8..12], 65_536u32.to_be_bytes());
+    damaged(Core::open(&path, None).err().unwrap());
+    assert_eq!(bytes(&beside(&path, "-wal")), Some(log.clone()));
+    let done = set_aside(&path);
+    assert_eq!((done.carried, done.unread), (2, 0), "{done:?}");
+    assert_eq!(
+        bytes(&beside(Path::new(&done.set_aside), "-wal")),
+        Some(log)
+    );
+    assert_eq!(
+        Core::open(&path, None)
+            .unwrap()
+            .queue()
+            .unwrap()
+            .iter()
+            .map(sent)
+            .collect::<Vec<_>>(),
+        queued.iter().map(sent).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn a_log_whose_tail_is_torn_or_foreign_still_gives_its_committed_writes() {
+    for tail in ["torn", "foreign"] {
+        let (_dir, path, _) = emptied_with_log(2);
+        let log_path = beside(&path, "-wal");
+        let mut log = bytes(&log_path).unwrap();
+        if tail == "torn" {
+            log.extend_from_slice(&[0, 0, 0, 1, 0, 0, 0, 0, 11]);
+        } else {
+            // A frame whose salt is not the log's, as a reused log leaves.
+            let mut frame = log[32..32 + 24 + 4096].to_vec();
+            frame[8] ^= 1;
+            log.extend_from_slice(&frame);
+        }
+        std::fs::write(&log_path, &log).unwrap();
+        let done = set_aside(&path);
+        assert_eq!(done.carried, 2, "{tail}, {done:?}");
+        assert_eq!(
+            bytes(&beside(Path::new(&done.set_aside), "-wal")),
+            Some(log)
+        );
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_log_that_cannot_be_copied_to_be_read_stops_the_set_aside_before_anything_moves() {
+    let (dir, path, _) = emptied_with_log(2);
+    let log = bytes(&beside(&path, "-wal"));
+    let acl = |args: &[&str]| {
+        assert!(
+            std::process::Command::new("chmod")
+                .args(args)
+                .arg(dir.path())
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    acl(&["+a", "everyone deny add_subdirectory"]);
+    let refused = Core::set_aside_damaged(&path);
+    acl(&["-N"]);
+    let said = refused.unwrap_err().to_string();
+    assert!(said.contains("cannot be copied to be read"), "{said}");
+    assert_eq!(bytes(&path), Some(Vec::new()));
+    assert_eq!(bytes(&beside(&path, "-wal")), log);
+    assert!(
+        present_beside(&path).is_empty(),
+        "{:?}",
+        present_beside(&path)
+    );
+    let done = set_aside(&path);
+    assert_eq!(
+        (done.carried, done.set_aside.ends_with(".damaged-1")),
+        (2, true)
+    );
+}
+
+/// What stands beside `path` other than its own file, log and writer lock.
+fn present_beside(path: &Path) -> Vec<std::ffi::OsString> {
+    let own = [
+        path.to_path_buf(),
+        beside(path, "-wal"),
+        beside(path, ".writer-lock"),
+    ];
+    std::fs::read_dir(path.parent().unwrap())
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|name| !own.contains(name))
+        .map(|name| name.file_name().unwrap().to_owned())
+        .collect()
 }

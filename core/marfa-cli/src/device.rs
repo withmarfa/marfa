@@ -295,8 +295,9 @@ pub enum DeviceCommand {
     /// goes under a fresh idempotency key. A row write instead goes again with
     /// every write sent in its batch, as they went, under the batch's key, and
     /// an undo under its own key, unless either was blocked `key_spent`. A
-    /// write blocked `record_unread` whose copy has since been built from
-    /// another instance is held `instance_changed` instead, and goes only when
+    /// write blocked `record_unread` whose copy is now built from another
+    /// instance than the one it was made against, or from one the set-aside
+    /// could not tell, is held `instance_changed` instead, and goes only when
     /// released again.
     Release {
         /// The queued write to release.

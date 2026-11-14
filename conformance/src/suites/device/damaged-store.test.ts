@@ -588,6 +588,48 @@ describe("setting a damaged store aside", () => {
     expect(writes(harness)).toEqual([{ key: created.value.idempotency_key }]);
   });
 
+  it("holds a write released from record_unread for the instance after a later set-aside of a store hydrated from another instance", async () => {
+    harness = await startHarness("set-aside-record-instance-later");
+    const { server, device } = harness;
+    let instance = SCRIPTED_INSTANCE;
+    server.copyAnswer("GET", "/", () =>
+      answers.root(Number(BUILT_FOR), instance),
+    );
+    scriptHydration(server, { head: "1", instance: () => instance });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "typed", body: "offline" },
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    damageTable(device.store, "body_checks");
+    const first = await device.setAside();
+    expect(first.ok && first.value.record_unread, JSON.stringify(first)).toBe(
+      1,
+    );
+    instance = "00000000-0000-7000-8000-0000000000ff";
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    damageTable(device.store, "items");
+    const later = await device.setAside();
+    expect(later.ok && later.value.carried, JSON.stringify(later)).toBe(1);
+    const held = async () => {
+      const queued = await device.queue();
+      return queued.ok
+        ? [queued.value[0]?.verdict, queued.value[0]?.reason]
+        : queued;
+    };
+    expect(await held()).toEqual(["blocked", "record_unread"]);
+    const released = await device.release({ id: created.value.id });
+    expect(released.ok && released.value, JSON.stringify(released)).toBe(0);
+    expect(await held()).toEqual(["blocked", "instance_changed"]);
+    // The witness: released again, the write waits to be sent.
+    const again = await device.release({ id: created.value.id });
+    expect(again.ok && again.value, JSON.stringify(again)).toBe(1);
+    expect(await held()).toEqual([null, null]);
+  });
+
   it("refuses every open of a store whose file is empty while its log holds committed writes, keeping the log, and a set-aside carries them", async () => {
     const { harness, queued } = await storeWith("emptied-log", 2);
     const { device } = harness;

@@ -360,7 +360,7 @@ While a folder's copy is expired, a device MUST send no status report for the fo
 
 When a device hydrates a copy from an instance other than the one the copy was last built from, a device MUST give every queued write still waiting, but one blocked `record_unread`, the verdict `blocked` with the reason `instance_changed`.
 
-**Reason:** each write was made against items the other instance held, and the instance now at the address may never have held them. Held, nothing is sent to a server the person did not make it for; a caller releases a write to send it to the instance now there, or withdraws it. A write blocked `record_unread` is already held until a person releases it, and keeps the reason that says what it would go without (`device/set-aside-record-unread-kept`); its release then holds it for the instance (`device/record-unread-instance-changed`).
+**Reason:** each write was made against items the other instance held, and the instance now at the address may never have held them. Held, nothing is sent to a server the person did not make it for; a caller releases a write to send it to the instance now there, or withdraws it. A write blocked `record_unread` is already held until a person releases it, and keeps the reason that says what it would go without (`device/set-aside-record-unread-kept`); its release holds it `instance_changed` first (`device/record-unread-instance-changed`).
 
 **Tests:** `device/queue.test.ts › holds the writes queued against another instance once hydrated from the one now there, sending none until released`, `device/classification.test.ts › reports one of the eight blocked reasons and no other`.
 
@@ -4802,23 +4802,23 @@ If a device sets aside a store and cannot read a record the old store kept that 
 
 When a device hydrates a store from an instance other than the one it was last built from, a device MUST leave each write blocked `record_unread` with that reason.
 
-**Reason:** a release of a write blocked `instance_changed` says only that the instance changed. Kept `record_unread`, the write's release still says it goes without the record that decides how it is sent, and that release holds it for the instance (`device/record-unread-instance-changed`).
+**Reason:** a release of a write blocked `instance_changed` says only that the instance changed. Kept `record_unread`, the write's release still says it goes without the record that decides how it is sent, and that release holds it `instance_changed` first (`device/record-unread-instance-changed`).
 
 **Tests:** `device/damaged-store.test.ts › keeps a carried write held record_unread when the new store is hydrated from another instance`.
 
 ### `device/record-unread-instance-changed`
 
-If a caller releases a write blocked `record_unread` that a device would have given the reason `instance_changed` (`device/queue-other-instance-held`, `device/set-aside-instance-unread`), then a device MUST give it the reason `instance_changed` instead of sending it.
+If a caller releases a write blocked `record_unread` while the store is built from an instance other than the one the set-aside that held it recorded its writes were made for, or the set-aside recorded that it could not tell, then a device MUST give the write, and every write blocked `record_unread` in its row batch, the reason `instance_changed` instead of sending it.
 
-**Reason:** the person who releases the write for the record it goes without has not been told that it was made against another instance. Held `instance_changed`, it goes to the instance now at the address only on a second release.
+**Reason:** the person who releases the write for the record it goes without has not been told that it was made against another instance. Held `instance_changed`, it goes to the instance now at the address only on a second release. A set-aside records one instance for every write it carries: the old store's, none where the old store was never built, as a hydration then holds none of them (`device/queue-other-instance-held`), and that it cannot tell where it cannot read the old store's instance, or a set-aside before it recorded another. A row batch is sent whole, so its writes are held together.
 
-**Tests:** `device/damaged-store.test.ts › holds a write released from record_unread for the instance when the new store was hydrated from another instance, and sends it on a second release`.
+**Tests:** `device/damaged-store.test.ts › holds a write released from record_unread for the instance when the new store was hydrated from another instance, and sends it on a second release`, `› holds a write released from record_unread for the instance after a later set-aside of a store hydrated from another instance`.
 
 ### `device/record-unread-instance-uncounted`
 
 When a device gives a write the reason `instance_changed` as a caller releases it (`device/record-unread-instance-changed`), a device MUST answer that the release released nothing.
 
-**Tests:** `device/damaged-store.test.ts › holds a write released from record_unread for the instance when the new store was hydrated from another instance, and sends it on a second release`.
+**Tests:** `device/damaged-store.test.ts › holds a write released from record_unread for the instance when the new store was hydrated from another instance, and sends it on a second release`, `› holds a write released from record_unread for the instance after a later set-aside of a store hydrated from another instance`.
 
 ### `device/set-aside-record-unread-says`
 

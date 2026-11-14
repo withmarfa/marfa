@@ -1950,9 +1950,10 @@ impl Core {
     /// unless blocked `key_spent`. Answers `false` for a row that is not
     /// blocked, dead or refused without being sent, for one held behind
     /// another write, and for one refused because what it waited for was
-    /// withdrawn. A write held `record_unread` whose instance changed while it
-    /// was, or a row write whose batch holds one, is held `instance_changed`
-    /// instead, answering `false`.
+    /// withdrawn. A write held `record_unread`, or a row write whose batch
+    /// holds one, where the copy is not built from the instance its set-aside
+    /// recorded, has each such write held `instance_changed` instead,
+    /// answering `false`.
     pub fn release(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -1982,9 +1983,13 @@ impl Core {
         drop(conn);
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
-        // A write released with its batch is released all the same.
+        // A write released or held with its batch is passed over, so no
+        // batch is both held for the instance and released by one call.
         for id in &ids {
-            store::release(&tx, id)?;
+            if store::queued_write(&tx, id)?.is_some_and(|row| row.blocked_reason() == Some(reason))
+            {
+                store::release(&tx, id)?;
+            }
         }
         let mut released = 0;
         for id in &ids {

@@ -5924,23 +5924,10 @@ pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usiz
 /// writes were queued against: every write a drain or a release could still
 /// send is held until a caller releases it, so none reaches rows the copy
 /// never held. A refused write stays refused, and one held `record_unread`
-/// keeps that reason, so its release still says what it goes without; its
-/// release holds it `instance_changed` instead of sending it
-/// (`device/record-unread-instance-changed`). Answers how many it held.
+/// keeps that reason, so its release still says what it goes without; that
+/// release compares the instance with the one its set-aside recorded
+/// (`release`). Answers how many it held.
 pub fn block_for_another_instance(conn: &Connection) -> Result<usize, CoreError> {
-    conn.execute(
-        &format!(
-            "INSERT INTO meta (key, value)
-             SELECT ?1 || id, 'true' FROM queue
-              WHERE {WAITING} AND verdict = ?2 AND reason = ?3
-             ON CONFLICT (key) DO NOTHING"
-        ),
-        params![
-            INSTANCE_CHANGED_PREFIX,
-            Verdict::Blocked.as_str(),
-            BlockedReason::RecordUnread.as_str()
-        ],
-    )?;
     Ok(conn.execute(
         &format!(
             "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
@@ -5955,32 +5942,32 @@ pub fn block_for_another_instance(conn: &Connection) -> Result<usize, CoreError>
     )?)
 }
 
-/// Marks a write held `record_unread` whose instance changed while it was.
-pub(crate) const INSTANCE_CHANGED_PREFIX: &str = "instance_changed/";
+/// The instance the writes a set-aside carried were made for: empty where it
+/// could not be read, and absent where they were made for none, which any
+/// instance a hydration builds the copy from takes without holding them.
+pub(crate) const META_CARRIED_FOR: &str = "carried_for_instance";
 
-/// Holds `instance_changed` each write of `batch` held `record_unread` whose
-/// instance changed while it was, answering whether any was.
+/// Holds `instance_changed` every write of `batch` held `record_unread`
+/// where the copy is built from another instance than the one its writes
+/// were carried for, or that one is unknown. Answers whether it held any.
 fn hold_for_instance(conn: &Connection, batch: &[String]) -> Result<bool, CoreError> {
-    let mut held = false;
-    for write in batch {
-        let key = format!("{INSTANCE_CHANGED_PREFIX}{write}");
-        if meta_get(conn, &key)?.is_none() {
-            continue;
-        }
-        held |= conn.execute(
-            "UPDATE queue SET reason = ?2, answered_at = ?3
-              WHERE id = ?1 AND verdict = ?4 AND reason = ?5",
-            params![
-                write,
-                BlockedReason::InstanceChanged.as_str(),
-                now_iso(),
-                Verdict::Blocked.as_str(),
-                BlockedReason::RecordUnread.as_str()
-            ],
-        )? > 0;
-        meta_delete(conn, &key)?;
+    let Some(made_for) = meta_get(conn, META_CARRIED_FOR)? else {
+        return Ok(false);
+    };
+    if !made_for.is_empty() && meta_get(conn, META_INSTANCE_ID)?.as_ref() == Some(&made_for) {
+        return Ok(false);
     }
-    Ok(held)
+    Ok(conn.execute(
+        "UPDATE queue SET reason = ?2, answered_at = ?3
+          WHERE id IN (SELECT value FROM json_each(?1)) AND verdict = ?4 AND reason = ?5",
+        params![
+            serde_json::to_string(batch)?,
+            BlockedReason::InstanceChanged.as_str(),
+            now_iso(),
+            Verdict::Blocked.as_str(),
+            BlockedReason::RecordUnread.as_str()
+        ],
+    )? > 0)
 }
 
 /// Holds each of `ids` the server has not taken `blocked` `record_unread`,
@@ -6474,7 +6461,6 @@ fn forget_answered_inner(
                     UPLOAD_SENT_AS,
                     "cleared_time/",
                     "bytes_sent_again/",
-                    INSTANCE_CHANGED_PREFIX,
                 ] {
                     conn.execute(
                         "DELETE FROM main.meta
@@ -9046,7 +9032,6 @@ mod tests {
             meta_set(&conn, &format!("chosen_tier/{id}"), "library").unwrap();
             meta_set(&conn, &format!("upload_sent_as/{id}"), "x").unwrap();
             meta_set(&conn, &format!("cleared_time/{id}"), "1").unwrap();
-            meta_set(&conn, &format!("{INSTANCE_CHANGED_PREFIX}{id}"), "true").unwrap();
         }
         assert_eq!(forget_answered_ids(&conn, &named(&["named"])).unwrap(), 1);
         for prefix in [
@@ -9054,7 +9039,6 @@ mod tests {
             "chosen_tier/",
             "upload_sent_as/",
             "cleared_time/",
-            INSTANCE_CHANGED_PREFIX,
         ] {
             assert!(
                 meta_get(&conn, &format!("{prefix}named"))
