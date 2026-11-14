@@ -864,10 +864,11 @@ pub enum Verdict {
     Merged {
         fields: Vec<String>,
     },
-    /// The server kept its own value and wrote the losing one to a sibling.
+    /// Only item conflicts have a sibling; row conflicts name the replaced cells.
     Conflicted {
-        sibling_id: String,
+        sibling_id: Option<String>,
         fields: Vec<String>,
+        conflicts: Vec<RowConflict>,
     },
     /// The refusal read into its parts.
     Refused {
@@ -900,6 +901,24 @@ pub struct Refusal {
     pub trashed: bool,
     /// The permission the credential's key lacks, where the refusal names one.
     pub grant: Option<MissingGrant>,
+    /// An unsent write exceeded the server's request limit.
+    pub request_limit: Option<RequestLimit>,
+}
+
+/// An unsent write's request size and the server's limit, in bytes.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RequestLimit {
+    /// The bytes of the write's request body.
+    pub size: u64,
+    /// The most bytes the server takes in one request.
+    pub limit: u64,
+}
+
+/// A cell of a row that a row write replaced without the copy having shown it.
+#[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
+pub struct RowConflict {
+    pub row: String,
+    pub column: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -1351,8 +1370,7 @@ pub struct DrainReport {
     pub retry_after_seconds: Option<u64>,
 }
 
-/// What a server sent: its status, and the code and details of its envelope
-/// where its body carried them.
+/// A server's answer, without the device's interpretation.
 #[derive(Debug, Clone, PartialEq, uniffi::Record)]
 pub struct ServerAnswer {
     pub status: u16,
@@ -1393,10 +1411,7 @@ pub enum MarfaError {
     Validation {
         code: String,
         message: String,
-        /// The details of a refusal the copy gave itself, such as the
-        /// `constraint` of an `edge_constraint_violation`, shaped as a server
-        /// carries them under `error.details`; `nil` on every other refusal.
-        /// A server's own are in `server`.
+        /// The copy's own details; a server's details belong in `server`.
         details: Option<JsonValue>,
         server: Option<ServerAnswer>,
     },
@@ -1601,8 +1616,7 @@ impl MarfaError {
 
 #[uniffi::export]
 impl MarfaError {
-    /// The error classification used by the command line and Node binding.
-    /// A variant's `code` field carries the server's more specific error code.
+    /// The classification shared with the command line and Node binding.
     pub fn code(&self) -> String {
         let kind = match self {
             MarfaError::NotFound { .. } => marfa_core::CoreErrorKind::NotFound,
@@ -2101,6 +2115,10 @@ impl From<marfa_core::Refusal> for Refusal {
                     marfa_core::GrantLevel::Write => GrantLevel::Write,
                 },
             }),
+            request_limit: refusal.request_limit.map(|limit| RequestLimit {
+                size: limit.size,
+                limit: limit.limit,
+            }),
         }
     }
 }
@@ -2113,7 +2131,21 @@ fn crossed(outcome: Option<marfa_core::Outcome>) -> (Option<Verdict>, bool) {
         Some(O::Waiting) => return (None, true),
         Some(O::Accepted) => Verdict::Accepted,
         Some(O::Merged { fields }) => Verdict::Merged { fields },
-        Some(O::Conflicted { sibling_id, fields }) => Verdict::Conflicted { sibling_id, fields },
+        Some(O::Conflicted {
+            sibling_id,
+            fields,
+            conflicts,
+        }) => Verdict::Conflicted {
+            sibling_id,
+            fields,
+            conflicts: conflicts
+                .into_iter()
+                .map(|conflict| RowConflict {
+                    row: conflict.row,
+                    column: conflict.column,
+                })
+                .collect(),
+        },
         Some(O::Refused(refusal)) => Verdict::Refused {
             refusal: refusal.into(),
         },
@@ -3496,13 +3528,15 @@ mod tests {
         );
         assert_eq!(
             crossed(Some(O::Conflicted {
-                sibling_id: "s".into(),
-                fields: fields.clone()
+                sibling_id: Some("s".into()),
+                fields: fields.clone(),
+                conflicts: Vec::new(),
             })),
             (
                 Some(Verdict::Conflicted {
-                    sibling_id: "s".into(),
-                    fields
+                    sibling_id: Some("s".into()),
+                    fields,
+                    conflicts: Vec::new(),
                 }),
                 false
             )
@@ -3531,7 +3565,50 @@ mod tests {
                             name: "acme".into(),
                             level: GrantLevel::Read,
                         }),
+                        request_limit: None,
                     }
+                }),
+                false
+            )
+        );
+        let sized = marfa_core::Refusal::read(
+            "This write is 5 bytes as a request.",
+            Some(r#"{"request_limit":{"size":5,"limit":4}}"#),
+        );
+        assert_eq!(
+            crossed(Some(O::Refused(sized))),
+            (
+                Some(Verdict::Refused {
+                    refusal: Refusal {
+                        reason: "This write is 5 bytes as a request.".into(),
+                        code: None,
+                        message: None,
+                        fields: Vec::new(),
+                        trashed: false,
+                        grant: None,
+                        request_limit: Some(RequestLimit { size: 5, limit: 4 }),
+                    }
+                }),
+                false
+            )
+        );
+        assert_eq!(
+            crossed(Some(O::Conflicted {
+                sibling_id: None,
+                fields: Vec::new(),
+                conflicts: vec![marfa_core::RowConflict {
+                    row: "r".into(),
+                    column: "c".into()
+                }]
+            })),
+            (
+                Some(Verdict::Conflicted {
+                    sibling_id: None,
+                    fields: Vec::new(),
+                    conflicts: vec![RowConflict {
+                        row: "r".into(),
+                        column: "c".into()
+                    }]
                 }),
                 false
             )
@@ -3572,6 +3649,7 @@ mod tests {
             Some("credential_refused"),
             None,
             Vec::new(),
+            &[],
             Some(&refusal),
         )
         .unwrap();

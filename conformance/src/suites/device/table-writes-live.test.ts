@@ -522,8 +522,9 @@ describe("a write the copy shows at once", () => {
     ] as [Operation[], string][]) {
       const judged = refused(await device.writeRows(item, "steps", operations));
       expect(judged.code, JSON.stringify(operations).slice(0, 80)).toBe(
-        "invalid",
+        "validation",
       );
+      expect(judged.raw).toContain("validation_error");
       expect(judged.raw).toContain(named);
     }
     await unchanged(device, item);
@@ -859,6 +860,14 @@ describe("what a verdict does to the rows a copy holds", () => {
     const kept = await queued(device, edits[0]!.id);
     expect(kept.verdict).toBe("conflicted");
     expect(kept.conflicts).toEqual([{ row: first, column: "note" }]);
+    expect(
+      [
+        kept.conflicted_copy_id,
+        report.verdicts.find((entry) => entry.id === edits[0]!.id)
+          ?.conflicted_copy_id,
+      ],
+      "a row write conflict was given a sibling item",
+    ).toEqual([null, null]);
     expect(await serverRows(item)).toEqual({
       [first]: { count: 10, note: "offline" },
       [second]: { count: 20 },
@@ -1782,7 +1791,7 @@ describe("the table an item of core.table keeps", () => {
         { op: "patch", id: first, values: { paid: true } },
       ]),
     );
-    expect(unknown.code).toBe("invalid");
+    expect(unknown.code).toBe("validation");
     expect(unknown.raw).toContain("operations.0.values.paid");
 
     const columns = { ...COLUMNS, paid: { type: "boolean" } };

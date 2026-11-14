@@ -58,7 +58,7 @@ const RUST: Job[] = [...RUST_LINUX, ...MACOS];
 /** The two jobs that read `marfa-enrichment`: its fault-injection tests and its native build. */
 const ENRICHMENT: Job[] = ["core-native", "core-fault-injection"];
 /** The chapters of the contract a server fixture reads while it runs. */
-const READ_AT_RUN_TIME = ["errors.md", "coverage.md"];
+const READ_AT_RUN_TIME = ["errors.md", "coverage.md", "device.md"];
 
 describe("what a change runs", () => {
   it.each<[string, string[], Job[]]>([
@@ -967,6 +967,7 @@ describe("the contract's chapters", () => {
     expect(reads).toEqual([
       "conformance/src/suites/compliance/error-codes.test.ts",
       "conformance/src/suites/compliance/instance.test.ts",
+      "conformance/src/suites/device/error-codes.test.ts",
     ]);
     for (const chapter of READ_AT_RUN_TIME) {
       expect([...affected(`conformance/spec/${chapter}`)], chapter).toContain(

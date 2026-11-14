@@ -310,6 +310,20 @@ When a device gives a `write_rows` write the verdict `conflicted`, a device MUST
 
 **Tests:** `device/table-writes-live.test.ts › records a write conflicted where it replaced a value the copy had not shown, and the value it replaced stays in the batch's change log`.
 
+### `queue-and-verdicts/rows-conflicts-no-sibling`
+
+When a device gives a `write_rows` write the verdict `conflicted`, a device MUST give the verdict no sibling item id.
+
+**Reason:** a row write conflicts over cells, which no sibling item holds, so the verdict stays one of the six and names the cells instead.
+
+**Tests:** `device/table-writes-live.test.ts › records a write conflicted where it replaced a value the copy had not shown, and the value it replaced stays in the batch's change log`.
+
+### `queue-and-verdicts/conflicted-item-sibling`
+
+When a device gives an item write the verdict `conflicted`, a device MUST give the verdict the id of the sibling item that holds the values the server replaced, and no rows under `conflicts`.
+
+**Tests:** `device/binding-queue.test.ts › names the sibling item an item write conflicted into and lists no rows`.
+
 ### `queue-and-verdicts/rows-refused-operation`
 
 If the server refuses a batch the device had not sent before, or answers a batch with a refusal from its record, naming in `details.operation` an operation of one of its writes, then a device MUST refuse that write with the server's code, naming in its refusal's `details.operation` the operation's place in that write.
@@ -1475,6 +1489,14 @@ If the JSON body of a write never sent is larger in bytes than the server's limi
 When a device does not send a write under `queue-and-verdicts/request-over-limit-unsent`, a device MUST refuse it unsent with a reason naming the size of its request and the server's limit.
 
 **Tests:** `device/pages.test.ts › refuses unsent a write one byte past the limit, and sends one at it`.
+
+### `queue-and-verdicts/request-over-limit-numbers`
+
+When a device refuses a write under `queue-and-verdicts/request-over-limit-said`, a device MUST give the refusal the size of the request and the server's limit as two numbers of bytes, and no `code` of a server's envelope.
+
+**Reason:** an app tells a person how much to remove from the numbers, and a code in the envelope's place would be one the server never sent.
+
+**Tests:** `device/binding-queue.test.ts › tells an app the size and the limit as numbers, and names no code the server did not send`.
 
 ### `queue-and-verdicts/request-over-limit-own-word`
 

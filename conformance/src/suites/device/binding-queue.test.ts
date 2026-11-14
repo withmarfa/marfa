@@ -145,6 +145,102 @@ describe("the queue as a binding shows it", () => {
   });
 });
 
+describe("a write refused unsent for its size, as a binding shows it", () => {
+  it("tells an app the size and the limit as numbers, and names no code the server did not send", async () => {
+    harness = await bindingHarness("binding-request-limit");
+    const { device, server } = harness;
+    server.copyAnswer("GET", "/", () =>
+      answers.root(server.contract, undefined, 100),
+    );
+    const created = await device.createItem({
+      type: "core.note",
+      properties: { title: "large", body: "x".repeat(2_000) },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    scriptWrites(server, {
+      read: [refusal(404, "item_not_found", "gone")],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    const refused = (await queueOf(device)).find(
+      (row) => row.id === created.value.id,
+    );
+    const verdict = refused?.verdict as
+      | {
+          verdict: string;
+          refusal?: {
+            reason: string;
+            code: string | null;
+            requestLimit: { size: number; limit: number } | null;
+          };
+        }
+      | undefined;
+    expect(verdict?.verdict).toBe("refused");
+    expect(verdict?.refusal?.requestLimit?.limit).toBe(100);
+    expect(verdict?.refusal?.requestLimit?.size).toBeGreaterThan(2_000);
+    expect(verdict?.refusal?.code ?? null).toBeNull();
+    expect(verdict?.refusal?.reason).not.toContain("over_request_limit");
+    expect(createsSent(server)).toEqual([]);
+  });
+});
+
+describe("a conflicted write, as a binding shows it", () => {
+  it("names the sibling item an item write conflicted into and lists no rows", async () => {
+    harness = await bindingHarness("binding-conflicted-item", {
+      items: held(),
+    });
+    const { device, server } = harness;
+    const sibling = "01a00000-0000-7000-8000-0000000000bb";
+    const edit = await device.updateItem(HELD.id, {
+      properties: { title: "edited", body: "edited" },
+      baseVersion: HELD.version,
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    if (!edit.ok) return;
+    const row = wireItem({
+      id: HELD.id,
+      version: 5,
+      properties: { title: "held", body: "the server's" },
+    });
+    scriptWrites(server, {
+      update: [answers.resolved(row, { body: "keep_both_copies" }, sibling)],
+      read: [answers.updated(row)],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    const settled = (await queueOf(device)).find((r) => r.id === edit.value.id);
+    expect(settled?.verdict).toEqual({
+      verdict: "conflicted",
+      siblingId: sibling,
+      fields: ["body"],
+      conflicts: [],
+    });
+  });
+});
+
+describe("a move to the revoked state, as a binding refuses it", () => {
+  it("refuses it as a value that breaks a rule, naming no server, and queues nothing", async () => {
+    harness = await bindingHarness("binding-transition-revoked", {
+      items: held(),
+    });
+    const { device } = harness;
+    const before = (await queueOf(device)).length;
+    const refused = await device.call("transitionItem", HELD.id, "revoked");
+    expect(refused.ok, "a move to the revoked state was queued").toBe(false);
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("validation");
+      expect(refused.refusal.local).toBe("validation_error");
+      expect(refused.refusal.server, refused.refusal.raw).toBeNull();
+    }
+    expect((await queueOf(device)).length).toBe(before);
+    // The witness: a state a device may name is queued.
+    const archived = await device.call("transitionItem", HELD.id, "archived");
+    expect(archived.ok, JSON.stringify(archived)).toBe(true);
+    expect((await queueOf(device)).length).toBe(before + 1);
+  });
+});
+
 describe("two drains in one process", () => {
   it("makes a drain asked for while another runs wait for it, and send only what is still unanswered", async () => {
     harness = await bindingHarness("binding-drains-one-process");

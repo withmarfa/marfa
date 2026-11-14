@@ -1263,7 +1263,12 @@ fn marked(mut answer: Value, held: bool) -> Value {
 }
 
 fn refused(field: &str, message: impl Into<String>) -> CoreError {
-    CoreError::Invalid(format!("{field}: {}", message.into()))
+    CoreError::Validation {
+        server: None,
+        code: "validation_error".into(),
+        message: format!("{field}: {}", message.into()),
+        details: None,
+    }
 }
 
 fn columns(definition: &Map<String, Value>) -> Map<String, Value> {
@@ -1790,6 +1795,7 @@ mod tests {
     use super::{
         OR_TERMS, Read, RowsAsked, SPAN_GAP, cursor_of, filter_of, opened, page_from_copy, plan,
     };
+    use crate::CoreError;
     use serde_json::{Map, Value, json};
     use sha2::Digest;
 
@@ -2018,6 +2024,32 @@ mod tests {
                 &asked(Some("values.at"), 10, None),
             );
             assert_eq!(ids_of(&page), ["d", "b", "a", "c", "e"], "{kind}");
+        }
+    }
+    #[test]
+    fn a_read_the_server_would_refuse_is_a_validation_naming_what_it_refuses() {
+        let (_dir, core) = copy_with(&mixed_offsets());
+        let definition = table(None, "datetime");
+        let conn = core.conn().unwrap();
+        let mut direction = asked(None, 10, None);
+        direction.direction = Some("sideways".into());
+        let mut filter = asked(None, 10, None);
+        filter.filter = Some("values.nothing eq 1".into());
+        for (what, named) in [
+            (asked(Some("values.nothing"), 10, None), "sort"),
+            (asked(None, 10, Some("nonsense".into())), "cursor"),
+            (asked(None, 1001, None), "limit"),
+            (asked(None, 0, None), "limit"),
+            (direction, "direction"),
+            (filter, "filter"),
+        ] {
+            let refused = page_from_copy(&conn, "i", "t", &definition, &what).unwrap_err();
+            assert!(
+                matches!(&refused, CoreError::Validation { code, server: None, .. }
+                    if code == "validation_error"),
+                "{named}: {refused:?}"
+            );
+            assert!(refused.to_string().contains(named), "{refused}");
         }
     }
 }

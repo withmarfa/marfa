@@ -1119,6 +1119,7 @@ describe("the server did not take the write", () => {
       fields: [{ field: "title", message: "Too long" }],
       trashed: false,
       grant: null,
+      request_limit: null,
     });
     expect(grant?.item_id).toBe("b");
     expect(
@@ -1335,6 +1336,7 @@ describe("a verdict is reported, not acted on", () => {
       fields: [],
       trashed: false,
       grant: null,
+      request_limit: null,
     });
     expect(
       harness.server.requests.some((request) => request.method === "PATCH"),

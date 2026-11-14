@@ -1356,7 +1356,8 @@ describe("reading a table on a device", () => {
       const local = await device.tableRead(["list", item, "steps", ...flags]);
       expect(local.ok, field).toBe(false);
       if (!local.ok) {
-        expect(local.refusal.code, local.refusal.raw).toBe("invalid");
+        expect(local.refusal.code, local.refusal.raw).toBe("validation");
+        expect(local.refusal.raw).toContain("validation_error");
         expect(local.refusal.raw).toContain(field);
       }
     }

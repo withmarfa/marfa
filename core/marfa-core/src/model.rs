@@ -1093,9 +1093,11 @@ pub enum Outcome {
     Merged {
         fields: Vec<String>,
     },
+    /// Only item conflicts have a sibling; row conflicts name the replaced cells.
     Conflicted {
-        sibling_id: String,
+        sibling_id: Option<String>,
         fields: Vec<String>,
+        conflicts: Vec<RowConflict>,
     },
     Refused(Refusal),
     Blocked {
@@ -1117,6 +1119,7 @@ impl Outcome {
         reason: Option<&str>,
         sibling_id: Option<&str>,
         fields: Vec<String>,
+        conflicts: &[RowConflict],
         refusal: Option<&Refusal>,
     ) -> Result<Option<Outcome>, CoreError> {
         Ok(Some(match verdict {
@@ -1124,8 +1127,9 @@ impl Outcome {
             Some(Verdict::Accepted) => Outcome::Accepted,
             Some(Verdict::Merged) => Outcome::Merged { fields },
             Some(Verdict::Conflicted) => Outcome::Conflicted {
-                sibling_id: sibling_id.unwrap_or_default().to_string(),
+                sibling_id: sibling_id.map(str::to_string),
                 fields,
+                conflicts: conflicts.to_vec(),
             },
             Some(Verdict::Refused) => Outcome::Refused(
                 refusal
@@ -1158,6 +1162,8 @@ pub struct Refusal {
     pub trashed: bool,
     /// `details.grant`: the permission the credential's key lacks.
     pub grant: Option<MissingGrant>,
+    /// An unsent write exceeded the server's request limit.
+    pub request_limit: Option<RequestLimit>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -1246,6 +1252,9 @@ impl Refusal {
             trashed: details.and_then(|details| details.get("trashed")) == Some(&Value::Bool(true))
                 || acknowledged_in_bin,
             grant,
+            request_limit: body
+                .get("request_limit")
+                .and_then(|limit| serde_json::from_value(limit.clone()).ok()),
         }
     }
 }
@@ -1280,18 +1289,36 @@ pub(crate) const OVER_REQUEST_LIMIT: &str = "over_request_limit";
 /// How the reason for such a write starts, ahead of `over_request_limit`'s words.
 pub(crate) const OVER_REQUEST_LIMIT_WRITE: &str = "This write is ";
 
-/// The reason a write refused unsent for its size carries in the queue.
-pub(crate) const OVER_REQUEST_LIMIT_REASON: &str = "over_request_limit: This write is ";
+/// An unsent write's request size and the server's limit, in bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RequestLimit {
+    pub size: u64,
+    pub limit: u64,
+}
 
-/// How a body of `size` bytes stands against `limit`, in words for a person,
-/// where it is larger. A limit not known holds nothing.
-pub(crate) fn over_request_limit(size: usize, limit: Option<usize>) -> Option<String> {
-    let limit = limit.filter(|limit| size > *limit)?;
-    Some(format!(
-        "{} bytes as a request, and this server takes {}. Make it smaller to send it.",
-        grouped(size),
-        grouped(limit)
-    ))
+impl RequestLimit {
+    /// An unknown limit cannot justify refusing a write.
+    pub(crate) fn over(size: usize, limit: Option<usize>) -> Option<RequestLimit> {
+        let limit = limit.filter(|limit| size > *limit)?;
+        Some(RequestLimit {
+            size: size as u64,
+            limit: limit as u64,
+        })
+    }
+
+    /// The words for a person, after `OVER_REQUEST_LIMIT_WRITE`.
+    pub(crate) fn words(self) -> String {
+        format!(
+            "{} bytes as a request, and this server takes {}. Make it smaller to send it.",
+            grouped(self.size as usize),
+            grouped(self.limit as usize)
+        )
+    }
+
+    /// What the queue stores as the answer to a write refused for its size.
+    pub(crate) fn stored(self) -> String {
+        serde_json::json!({ "request_limit": self }).to_string()
+    }
 }
 
 fn grouped(number: usize) -> String {
@@ -1470,6 +1497,7 @@ impl QueuedWrite {
             self.reason.as_deref(),
             self.conflicted_copy_id.as_deref(),
             self.resolved_fields(),
+            &self.conflicts,
             self.refusal.as_ref(),
         )
     }
@@ -2018,8 +2046,23 @@ mod tests {
                 .outcome()
                 .unwrap(),
             Some(Outcome::Conflicted {
-                sibling_id: "sibling".into(),
-                fields: vec!["title".into(), "body".into()]
+                sibling_id: Some("sibling".into()),
+                fields: vec!["title".into(), "body".into()],
+                conflicts: Vec::new(),
+            })
+        );
+        let mut rows = row(Some(Verdict::Conflicted), None, None);
+        rows.conflicted_copy_id = None;
+        rows.conflicts = vec![RowConflict {
+            row: "r".into(),
+            column: "c".into(),
+        }];
+        assert_eq!(
+            rows.outcome().unwrap(),
+            Some(Outcome::Conflicted {
+                sibling_id: None,
+                fields: Vec::new(),
+                conflicts: rows.conflicts.clone(),
             })
         );
         assert_eq!(
@@ -2033,6 +2076,7 @@ mod tests {
                 fields: Vec::new(),
                 trashed: false,
                 grant: None,
+                request_limit: None,
             }))
         );
         assert_eq!(
