@@ -65,7 +65,8 @@ jobs:
       core-fault-injection: ${{ steps.classify.outputs.core-fault-injection }}
       conformance-offline: ${{ steps.classify.outputs.conformance-offline }}
       mcp-conformance: ${{ steps.classify.outputs.mcp-conformance }}
-      rust-contract: ${{ steps.classify.outputs.rust-contract }}
+      rust-contract-server: ${{ steps.classify.outputs.rust-contract-server }}
+      rust-contract-device: ${{ steps.classify.outputs.rust-contract-device }}
       rust-contract-macos: ${{ steps.classify.outputs.rust-contract-macos }}
       restore-drill: ${{ steps.classify.outputs.restore-drill }}
       image: ${{ steps.classify.outputs.image }}
@@ -74,6 +75,8 @@ jobs:
       clients-freshness: ${{ steps.classify.outputs.clients-freshness }}
       core: ${{ steps.classify.outputs.core }}
       full: ${{ steps.classify.outputs.full }}
+      rust-shards: ${{ steps.classify.outputs.rust-shards }}
+      rust-projects: ${{ steps.classify.outputs.rust-projects }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -636,9 +639,18 @@ jobs:
           done
 
   # The contract, run against the Rust server (`core/marfa-server/`) and
-  # scored. Three jobs: the release build, the shards that boot it through
-  # the meter (`MARFA_SERVER_BIN`, `conformance/scripts/marfa-server.ts`),
+  # scored. Three jobs: the build of the server, the shards that boot it
+  # through the meter (`MARFA_SERVER_BIN`, `conformance/scripts/marfa-server.ts`),
   # and the score. MCP conformance and the restore drill boot the same build.
+  #
+  # The shards are two groups, which `scripts/ci-required.ts` runs apart. The
+  # server's own (compliance, correctness and sync) read what the server is
+  # built from. The device's (`cli` and `device`) drive the `marfa` binary and
+  # the Node module against the same server, so they run for a change to either
+  # and for a change to the server, but a change to the device alone leaves the
+  # server's out. The classifier hands the matrix to the shards job and the
+  # projects to the score, from one list, so the score judges exactly the
+  # shards that ran.
   #
   # No pinned server commit and no second checkout: the tree under test is
   # the tree the suite runs against, so a server change and the contract
@@ -652,47 +664,89 @@ jobs:
   # job fails if one does not, and `Full CI` waits for it. An object store
   # sits beside the server, so the stores chapter and the backups are
   # asserted.
+  #
+  # The servers are built on `main` and saved by a hash of everything they are
+  # built from, which a pull request restores instead of building them when it
+  # changed none of it, as a change to the device or to a fixture does. The
+  # `Key the servers` step lists what the hash reads, and
+  # `ci/ci-required.test.ts` holds that list to the server's crates.
   rust-contract:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false' || needs.changes.outputs.mcp-conformance != 'false' || needs.changes.outputs.restore-drill != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' || needs.changes.outputs.rust-contract-device != 'false' || needs.changes.outputs.mcp-conformance != 'false' || needs.changes.outputs.restore-drill != 'false') }}
     name: Rust server (release build)
     timeout-minutes: 60
     runs-on: ubuntu-latest
     env:
       TARGET: x86_64-unknown-linux-musl
+      # Whether the shards that run a release's program are owed.
+      RELEASE_OWED: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' }}
     steps:
       - uses: actions/checkout@v7
-      # The server is built with the file readers linked in, the way the
-      # native job builds them: in the pinned image, for the static musl
-      # target, from the sources `native/manifest.txt` pins. The first build
-      # of a target asks for 40 GB of free disk, and the runner starts with
-      # less. These are the toolchains it does not use.
+      - name: Key the servers on everything they are built from
+        id: key
+        run: echo "key=marfa-rust-servers-$RUNNER_OS-${{ hashFiles('core/Cargo.toml', 'core/Cargo.lock', 'core/.cargo/**', 'core/marfa-server/**', 'core/marfa-rules/**', 'core/marfa-enrichment/**', 'core/marfa-acl/**', 'core/marfa-allocator/**', 'core/marfa-telemetry/**', 'openapi.json', 'packages/types/generated/icon-set-*.json', '.github/actions/native-build-image/**', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+      # Saved by `main` only, and restored for a pull request only, by the
+      # exact key: a server a pull request gets was built from these files.
+      - name: Restore the servers
+        id: servers
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/marfa-servers
+          key: ${{ steps.key.outputs.key }}
+      # The first build of a target asks for 40 GB of free disk, and the
+      # runner starts with less. These are the toolchains it does not use.
       - name: Free disk space
+        if: ${{ steps.servers.outputs.cache-hit != 'true' }}
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
           df -h /
       - name: Choose the folder for downloads and results
         run: echo "MARFA_NATIVE_ROOT=$RUNNER_TEMP/marfa-native" >> "$GITHUB_ENV"
-      # The same key as the native job's, so that both restore what a push to
-      # `main` there saved: PDFium's finished library and the pinned downloads.
+      # The server is built with the file readers linked in, the way the
+      # native job builds them: in the pinned image, for the static musl
+      # target, from the sources `native/manifest.txt` pins. The same key as
+      # the native job's, so that both restore what a push to `main` there
+      # saved: PDFium's finished library and the pinned downloads.
       - name: Key the cache on the pins, the patches and the build scripts
-        id: key
+        id: native
+        if: ${{ steps.servers.outputs.cache-hit != 'true' }}
         run: echo "key=marfa-native-$RUNNER_OS-${{ hashFiles('core/marfa-enrichment/native/manifest.txt', 'core/marfa-enrichment/native/patches/**', 'core/marfa-enrichment/native/build.sh', 'core/marfa-enrichment/native/pdfium.sh', 'core/marfa-enrichment/native/tesseract.sh', 'core/marfa-enrichment/native/models.sh', 'core/marfa-enrichment/native/lib.sh', 'core/marfa-enrichment/native/linux/**') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the downloads and the PDFium library
+        if: ${{ steps.servers.outputs.cache-hit != 'true' }}
         uses: actions/cache/restore@v6
         with:
           path: |
             ${{ runner.temp }}/marfa-native/downloads
             ${{ runner.temp }}/marfa-native/archives
-          key: ${{ steps.key.outputs.key }}
+          key: ${{ steps.native.outputs.key }}
       # The image is restored from the cache, never built from the package
       # archive when the cache holds it; `main` saves it.
       - name: Make the build image
+        if: ${{ steps.servers.outputs.cache-hit != 'true' }}
         uses: ./.github/actions/native-build-image
       - name: Build the Rust server
+        if: ${{ steps.servers.outputs.cache-hit != 'true' }}
         env:
           MARFA_SERVER_FEATURES: test-hooks
         run: core/marfa-enrichment/native/release.sh "$TARGET" --server
+      - name: Set the server aside
+        if: ${{ steps.servers.outputs.cache-hit != 'true' }}
+        run: install -D "$RUNNER_TEMP/marfa-native/out/$TARGET/marfa-server" "$RUNNER_TEMP/marfa-servers/hooks/marfa-server"
+      # Release-only fixtures need a separate binary without test hooks, and
+      # only the server's shards run them. `main` builds it every time.
+      - name: Build the Rust server without test hooks
+        id: release
+        if: ${{ steps.servers.outputs.cache-hit != 'true' && env.RELEASE_OWED == 'true' }}
+        run: |
+          core/marfa-enrichment/native/release.sh "$TARGET" --server
+          install -D "$RUNNER_TEMP/marfa-native/out/$TARGET/marfa-server" "$RUNNER_TEMP/marfa-servers/release/marfa-server"
+      - name: Save the servers
+        if: ${{ steps.release.outcome == 'success' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/marfa-servers
+          key: ${{ steps.key.outputs.key }}
       # Every shard downloads it, and a re-run of one shard does too, so it
       # is kept as long as the shards' reports. It is an input, not a
       # diagnostic, so it is kept on success like the reports.
@@ -700,191 +754,31 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: rust-contract-server
-          path: ${{ runner.temp }}/marfa-native/out/${{ env.TARGET }}/marfa-server
+          path: ${{ runner.temp }}/marfa-servers/hooks/marfa-server
           if-no-files-found: error
           retention-days: 3
-      # Release-only fixtures need a separate binary without test hooks.
-      - name: Build the Rust server without test hooks
-        run: core/marfa-enrichment/native/release.sh "$TARGET" --server
       - name: Keep the server without test hooks
+        if: ${{ env.RELEASE_OWED == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: rust-contract-release-server
-          path: ${{ runner.temp }}/marfa-native/out/${{ env.TARGET }}/marfa-server
+          path: ${{ runner.temp }}/marfa-servers/release/marfa-server
           if-no-files-found: error
           retention-days: 3
 
   rust-contract-shards:
     needs: [changes, rust-contract]
-    if: ${{ !cancelled() && needs.rust-contract.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false') }}
+    # The matrix is the classifier's, so it cannot be read when the
+    # classifier did not run, and `Full CI` fails for that on its own.
+    if: ${{ !cancelled() && needs.rust-contract.result == 'success' && needs.changes.result == 'success' && (needs.changes.outputs.rust-contract-server != 'false' || needs.changes.outputs.rust-contract-device != 'false') }}
     name: Rust contract shard (${{ matrix.name }})
     timeout-minutes: 45
     runs-on: ubuntu-latest
     strategy:
       # Every shard reports, so one failure shows all the others there are.
       fail-fast: false
-      matrix:
-        include:
-          - {
-              name: "correctness and sync",
-              slug: correctness-sync,
-              args: "--project correctness --project sync",
-              binary: false,
-              module: false,
-              statuses: true,
-            }
-          - {
-              name: "cli",
-              slug: cli,
-              args: "--project cli",
-              binary: true,
-              module: false,
-              statuses: true,
-            }
-          - {
-              name: "compliance 1/12",
-              slug: compliance-1,
-              args: "--project compliance --shard=1/12",
-              binary: false,
-              module: false,
-              statuses: false,
-            }
-          - {
-              name: "compliance 2/12",
-              slug: compliance-2,
-              args: "--project compliance --shard=2/12",
-              binary: false,
-              module: false,
-              statuses: false,
-            }
-          - {
-              name: "compliance 3/12",
-              slug: compliance-3,
-              args: "--project compliance --shard=3/12",
-              binary: false,
-              module: false,
-              statuses: false,
-            }
-          - {
-              name: "compliance 4/12",
-              slug: compliance-4,
-              args: "--project compliance --shard=4/12",
-              binary: false,
-              module: false,
-              statuses: false,
-            }
-          - {
-              name: "compliance 5/12",
-              slug: compliance-5,
-              args: "--project compliance --shard=5/12",
-              binary: false,
-              module: false,
-              statuses: false,
-            }
-          - {
-              name: "compliance 6/12",
-              slug: compliance-6,
-              args: "--project compliance --shard=6/12",
-              binary: false,
-              module: false,
-              statuses: false,
-            }
-          - {
-              name: "compliance 7/12",
-              slug: compliance-7,
-              args: "--project compliance --shard=7/12",
-              binary: false,
-              module: false,
-              statuses: false,
-            }
-          - {
-              name: "compliance 8/12",
-              slug: compliance-8,
-              args: "--project compliance --shard=8/12",
-              binary: false,
-              module: false,
-              statuses: false,
-            }
-          - {
-              name: "compliance 9/12",
-              slug: compliance-9,
-              args: "--project compliance --shard=9/12",
-              binary: false,
-              module: false,
-              statuses: false,
-            }
-          - {
-              name: "compliance 10/12",
-              slug: compliance-10,
-              args: "--project compliance --shard=10/12",
-              binary: false,
-              module: false,
-              statuses: false,
-            }
-          - {
-              name: "compliance 11/12",
-              slug: compliance-11,
-              args: "--project compliance --shard=11/12",
-              binary: false,
-              module: false,
-              statuses: false,
-            }
-          - {
-              name: "compliance 12/12",
-              slug: compliance-12,
-              args: "--project compliance --shard=12/12",
-              binary: false,
-              module: false,
-              statuses: false,
-            }
-          - {
-              name: "device 1/6",
-              slug: device-1,
-              args: "--project device --shard=1/6",
-              binary: true,
-              module: true,
-              statuses: false,
-            }
-          - {
-              name: "device 2/6",
-              slug: device-2,
-              args: "--project device --shard=2/6",
-              binary: true,
-              module: true,
-              statuses: false,
-            }
-          - {
-              name: "device 3/6",
-              slug: device-3,
-              args: "--project device --shard=3/6",
-              binary: true,
-              module: true,
-              statuses: false,
-            }
-          - {
-              name: "device 4/6",
-              slug: device-4,
-              args: "--project device --shard=4/6",
-              binary: true,
-              module: true,
-              statuses: false,
-            }
-          - {
-              name: "device 5/6",
-              slug: device-5,
-              args: "--project device --shard=5/6",
-              binary: true,
-              module: true,
-              statuses: false,
-            }
-          - {
-              name: "device 6/6",
-              slug: device-6,
-              args: "--project device --shard=6/6",
-              binary: true,
-              module: true,
-              statuses: false,
-            }
+      # `SHARDS` in `scripts/ci-required.ts`, less the group a change leaves out.
+      matrix: ${{ fromJSON(needs.changes.outputs.rust-shards) }}
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -905,11 +799,13 @@ jobs:
         run: |
           chmod +x "$RUNNER_TEMP/rust-contract-server/marfa-server"
           echo "MARFA_SERVER_BIN=$RUNNER_TEMP/rust-contract-server/marfa-server" >> "$GITHUB_ENV"
-      - uses: actions/download-artifact@v8
+      - if: ${{ matrix.release }}
+        uses: actions/download-artifact@v8
         with:
           name: rust-contract-release-server
           path: ${{ runner.temp }}/rust-contract-release-server
       - name: Name the server a release ships
+        if: ${{ matrix.release }}
         run: |
           chmod +x "$RUNNER_TEMP/rust-contract-release-server/marfa-server"
           echo "MARFA_SERVER_RELEASE_BIN=$RUNNER_TEMP/rust-contract-release-server/marfa-server" >> "$GITHUB_ENV"
@@ -1081,7 +977,7 @@ jobs:
   # a run is owed fails here.
   rust-contract-score:
     needs: [changes, rust-contract, rust-contract-shards]
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' || needs.changes.outputs.rust-contract-device != 'false') }}
     name: Rust contract score
     timeout-minutes: 8
     runs-on: ubuntu-latest
@@ -1112,7 +1008,11 @@ jobs:
           path: ${{ runner.temp }}/rust-contract-reports
       - name: Score the run
         working-directory: conformance
-        run: pnpm rust:score --reports "$RUNNER_TEMP/rust-contract-reports" --markdown "$GITHUB_STEP_SUMMARY"
+        # The projects of the shards that ran, from the list that made the
+        # matrix. A project left out is not judged; one named and not run fails.
+        env:
+          PROJECTS: ${{ needs.changes.outputs.rust-projects }}
+        run: pnpm rust:score --reports "$RUNNER_TEMP/rust-contract-reports" --projects "$PROJECTS" --markdown "$GITHUB_STEP_SUMMARY"
 
   # The restore drill: a Rust server with an object store takes a backup,
   # its data directory is deleted, and a fresh server on the same bucket

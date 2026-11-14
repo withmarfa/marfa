@@ -27,7 +27,10 @@ import {
   forNightly,
   NIGHTLY_JOBS,
   JOBS,
+  projectsOf,
   RULES,
+  SHARDS,
+  shardsFor,
   type Job,
 } from "../scripts/ci-required.js";
 
@@ -40,25 +43,36 @@ function runs(paths: string[]): Job[] {
 
 /** The lane that needs no server. */
 const OFFLINE: Job[] = ["conformance-offline"];
-/** The fixtures: the offline lane holds the citations, and the Rust contract jobs run them. */
-const CONTRACT: Job[] = [...OFFLINE, "rust-contract"];
+/** The shards that run the server fixtures, and those that run the device and CLI fixtures. */
+const SERVER_SHARDS: Job[] = ["rust-contract-server"];
+const DEVICE_SHARDS: Job[] = ["rust-contract-device"];
+const CONTRACT_SHARDS: Job[] = [...SERVER_SHARDS, ...DEVICE_SHARDS];
+/** The fixtures: the offline lane holds the citations, and the shards run them. */
+const CONTRACT: Job[] = [...OFFLINE, ...CONTRACT_SHARDS];
 /** A workspace package's code reaches the workspace's build and tests, and the offline lane. */
 const PACKAGES: Job[] = ["quick-checks", "workspace", ...OFFLINE];
-/** Every job that boots the Rust server. */
+/** Every job that reads the server's crates. */
 const RUST_SERVER: Job[] = [
-  "rust-contract",
+  ...CONTRACT_SHARDS,
   "mcp-conformance",
   "restore-drill",
 ];
-/** The Rust contract jobs build the binary for the device and CLI fixtures. */
+/** A change in the server's closure reaches every Linux job that builds or boots it. */
 const RUST_LINUX: Job[] = ["core-checks-linux", ...OFFLINE, ...RUST_SERVER];
+/** A change to the core or the command line reaches the Linux jobs the server does not read. */
+const DEVICE_LINUX: Job[] = ["core-checks-linux", ...OFFLINE, ...DEVICE_SHARDS];
 /** The two jobs that run on a Mac, which a pull request runs only for what a Mac alone can break. */
 const MACOS: Job[] = ["core-checks", "core"];
 const RUST: Job[] = [...RUST_LINUX, ...MACOS];
+const DEVICE: Job[] = [...DEVICE_LINUX, ...MACOS];
 /** The two jobs that read `marfa-enrichment`: its fault-injection tests and its native build. */
 const ENRICHMENT: Job[] = ["core-native", "core-fault-injection"];
-/** The chapters of the contract a server fixture reads while it runs. */
-const READ_AT_RUN_TIME = ["errors.md", "coverage.md", "device.md"];
+/** The chapters of the contract a fixture reads while it runs, and the shards the fixture is in. */
+const READ_AT_RUN_TIME: Record<string, Job[]> = {
+  "errors.md": SERVER_SHARDS,
+  "coverage.md": SERVER_SHARDS,
+  "device.md": DEVICE_SHARDS,
+};
 
 describe("what a change runs", () => {
   it.each<[string, string[], Job[]]>([
@@ -108,7 +122,7 @@ describe("what a change runs", () => {
         "quick-checks",
         "workspace",
         "core-checks-linux",
-        "rust-contract",
+        ...CONTRACT_SHARDS,
         "mcp-conformance",
         "restore-drill",
       ],
@@ -120,9 +134,7 @@ describe("what a change runs", () => {
         "quick-checks",
         "core-checks-linux",
         "conformance-offline",
-        "rust-contract",
-        "mcp-conformance",
-        "restore-drill",
+        ...DEVICE_SHARDS,
         "core",
         "clients-freshness",
         "workspace",
@@ -167,7 +179,7 @@ describe("what a change runs", () => {
     [
       "the action that makes the native build image",
       [".github/actions/native-build-image/action.yml"],
-      ["quick-checks", "core-native", "image", "rust-contract"],
+      ["quick-checks", "core-native", "image", ...CONTRACT_SHARDS],
     ],
     [
       "an action a workflow could use",
@@ -197,13 +209,13 @@ describe("what a change runs", () => {
         "workspace",
         ...OFFLINE,
         "core-checks-linux",
-        "rust-contract",
+        ...SERVER_SHARDS,
       ],
     ],
     [
       "the coverage table, which a compliance fixture reads at run time",
       ["conformance/spec/coverage.md"],
-      ["quick-checks", "workspace", ...OFFLINE, "rust-contract"],
+      ["quick-checks", "workspace", ...OFFLINE, ...SERVER_SHARDS],
     ],
     [
       "a type definition, which the core's catalog is written from",
@@ -223,17 +235,17 @@ describe("what a change runs", () => {
     [
       "a Rust-only change",
       ["core/marfa-core/src/store.rs"],
-      [...RUST_LINUX, "core", "quick-checks"],
+      [...DEVICE_LINUX, "core", "quick-checks"],
     ],
     [
       "the core's folder watching, which FSEvents, name case and Finder packages change",
       ["core/marfa-core/src/folder/scan.rs", "core/marfa-core/src/watch.rs"],
-      [...RUST, "quick-checks"],
+      [...DEVICE, "quick-checks"],
     ],
     [
       "the command line, with its login keychain and launchd autostart",
       ["core/marfa-cli/src/main.rs"],
-      [...RUST, "quick-checks"],
+      [...DEVICE, "quick-checks"],
     ],
     [
       "the core's lockfile, since a dependency bump can break an Apple build",
@@ -249,7 +261,7 @@ describe("what a change runs", () => {
         "core/marfa-enrichment/native/shim.cc",
         "core/marfa-enrichment/native/linux/Dockerfile",
       ],
-      ["quick-checks", "core-native", "image", "rust-contract"],
+      ["quick-checks", "core-native", "image", ...CONTRACT_SHARDS],
     ],
     [
       "the reader's parsers, which are pure Rust and read the same on a Mac",
@@ -330,13 +342,13 @@ describe("what a change runs", () => {
         "core-checks",
         "core-checks-linux",
         "core",
-        "rust-contract",
+        ...DEVICE_SHARDS,
       ],
     ],
     [
       "the Node module's manifest, which its build reads",
       ["core/bindings/node/package.json"],
-      ["quick-checks", "core", "rust-contract", "version-fields"],
+      ["quick-checks", "core", ...DEVICE_SHARDS, "version-fields"],
     ],
     [
       "the Node module's JavaScript",
@@ -357,17 +369,17 @@ describe("what a change runs", () => {
     [
       "a CLI scenario",
       ["conformance/src/suites/cli/folder.test.ts"],
-      ["quick-checks", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...OFFLINE, ...DEVICE_SHARDS],
     ],
     [
       "the CLI harness, which a device fixture imports",
       ["conformance/src/suites/cli/harness.ts"],
-      ["quick-checks", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...OFFLINE, ...DEVICE_SHARDS],
     ],
     [
       "the device harness shared by CLI scenarios",
       ["conformance/src/suites/device/harness.ts"],
-      ["quick-checks", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...OFFLINE, ...DEVICE_SHARDS],
     ],
     [
       "the device suites' adapters and scripted server, which a CLI scenario imports",
@@ -375,7 +387,7 @@ describe("what a change runs", () => {
         "conformance/src/device/cli-adapter.ts",
         "conformance/src/device/scripted-server.ts",
       ],
-      ["quick-checks", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...OFFLINE, ...DEVICE_SHARDS],
     ],
     [
       "a test beside the helpers, which only the offline lane runs",
@@ -412,17 +424,17 @@ describe("what a change runs", () => {
     [
       "a device fixture",
       ["conformance/src/suites/device/folders.test.ts"],
-      ["quick-checks", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...OFFLINE, ...DEVICE_SHARDS],
     ],
     [
       "the helpers the folder fixtures share",
       ["conformance/src/suites/device/folders.shared.ts"],
-      ["quick-checks", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...OFFLINE, ...DEVICE_SHARDS],
     ],
     [
       "the item names and previews the core is held to",
       ["conformance/fixtures/item-display.json"],
-      ["quick-checks", "core-checks-linux", ...OFFLINE, "rust-contract"],
+      ["quick-checks", "core-checks-linux", ...OFFLINE, ...CONTRACT_SHARDS],
     ],
     [
       "the filter expressions the core's crates and the Node binding share",
@@ -432,22 +444,22 @@ describe("what a change runs", () => {
     [
       "the name fold the core and the contract's title fixture share",
       ["conformance/fixtures/name-fold.json"],
-      ["quick-checks", "core-checks-linux", "rust-contract"],
+      ["quick-checks", "core-checks-linux", ...SERVER_SHARDS],
     ],
     [
       "a compliance fixture",
       ["conformance/src/suites/compliance/owner.test.ts"],
-      ["quick-checks", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...OFFLINE, ...SERVER_SHARDS],
     ],
     [
       "a correctness fixture",
       ["conformance/src/suites/correctness/items.test.ts"],
-      ["quick-checks", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...OFFLINE, ...SERVER_SHARDS],
     ],
     [
       "a sync fixture",
       ["conformance/src/suites/sync/streams.test.ts"],
-      ["quick-checks", "workspace", ...CONTRACT],
+      ["quick-checks", "workspace", ...OFFLINE, ...SERVER_SHARDS],
     ],
     [
       "a suite off the gate",
@@ -531,7 +543,7 @@ describe("what a change runs", () => {
     [
       "the native readers' scripts, which the image's programs and the Rust server are built with",
       ["core/marfa-enrichment/native/lib.sh"],
-      ["quick-checks", "core-native", "image", "rust-contract"],
+      ["quick-checks", "core-native", "image", ...CONTRACT_SHARDS],
     ],
     [
       "the settings, whose names the Dockerfile sets",
@@ -627,13 +639,18 @@ describe("what a change runs", () => {
         ...OFFLINE,
         "clients-freshness",
         "core",
-        ...RUST_SERVER,
+        ...DEVICE_SHARDS,
       ],
     ],
     [
       "the Rust server alone",
       ["core/marfa-server/src/lib.rs", "core/marfa-server/tests/config.rs"],
       ["quick-checks", "core-checks-linux", ...RUST_SERVER],
+    ],
+    [
+      "a test of the Rust server, which is not in the binary the shards boot",
+      ["core/marfa-server/tests/config.rs"],
+      ["quick-checks", "core-checks-linux"],
     ],
     [
       "the Rust server's start, which routes memory to jemalloc on a Mac",
@@ -653,7 +670,7 @@ describe("what a change runs", () => {
     [
       "the score script",
       ["conformance/scripts/rust-score.ts"],
-      ["quick-checks", "workspace", "conformance-offline", "rust-contract"],
+      ["quick-checks", "workspace", "conformance-offline", ...CONTRACT_SHARDS],
     ],
     [
       "an empty change, which cannot be told apart from an unread one",
@@ -671,48 +688,54 @@ describe("what a change runs", () => {
     // The witness: there are icon sets, and a change to one reaches the jobs.
     expect(embedded.length).toBeGreaterThan(0);
     for (const path of embedded) {
-      expect(runs([path]), path).toContain("rust-contract");
+      expect(runs([path]), path).toEqual(
+        expect.arrayContaining(CONTRACT_SHARDS),
+      );
     }
     const packages = tracked().filter(
       (path) => path.startsWith("packages/") && !embedded.includes(path),
     );
     expect(packages.length).toBeGreaterThan(0);
     for (const path of packages) {
-      expect(runs([path]), path).not.toContain("rust-contract");
+      for (const shard of CONTRACT_SHARDS) {
+        expect(runs([path]), path).not.toContain(shard);
+      }
     }
   });
 
   it("reaches the Rust contract jobs from every file outside core/ that the Rust crates embed", () => {
     // `include_str!` and `include_bytes!` read a file at build time, so a
     // change to it changes the program the jobs judge.
-    const outside: string[] = [];
-    for (const path of tracked().filter(
-      (file) => file.startsWith("core/") && file.endsWith(".rs"),
-    )) {
-      // Test code is not in the program the jobs judge.
-      if (
-        /^core\/(marfa-cli|bindings)\//.test(path) ||
-        /(^|\/)(tests|benches)\//.test(path) ||
-        /(^|\/|_)tests\.rs$/.test(path)
-      ) {
-        continue;
-      }
-      const text = readFileSync(join(ROOT, path), "utf8");
-      for (const match of text.matchAll(
-        /include_(?:str|bytes)!\(\s*"([^"]+)"/g,
-      )) {
-        const target = relative(
-          ROOT,
-          resolve(ROOT, dirname(path), match[1] ?? ""),
-        );
-        if (!target.startsWith("core/")) outside.push(target);
-      }
-    }
+    const outside = embeddedOutsideCore(
+      (path) => !/^core\/(marfa-cli|bindings)\//.test(path),
+    );
     // The witness: the scan finds the files, so an empty list is not blindness.
     expect(outside).toContain("openapi.json");
     for (const target of outside) {
-      expect(runs([target]), target).toContain("rust-contract");
+      expect(runs([target]), target).toEqual(
+        expect.arrayContaining(CONTRACT_SHARDS),
+      );
     }
+  });
+
+  it("reads the contract's chapters from the server's test code only, so they stay out of the program the shards boot", () => {
+    const readers = tracked().filter(
+      (path) => path.startsWith("core/marfa-server/") && path.endsWith(".rs"),
+    );
+    const inTests: string[] = [];
+    const inProgram: string[] = [];
+    for (const path of readers) {
+      const whole = readFileSync(join(ROOT, path), "utf8");
+      const cut = whole.indexOf("#[cfg(test)]\nmod ");
+      const program = cut === -1 ? whole : whole.slice(0, cut);
+      const tests = cut === -1 ? "" : whole.slice(cut);
+      const chapter = /include_str!\(\s*"[^"]*conformance\/spec\//;
+      if (chapter.test(program)) inProgram.push(path);
+      if (chapter.test(tests)) inTests.push(path);
+    }
+    // The witness: the scan finds the test code that reads a chapter.
+    expect(inTests).toContain("core/marfa-server/src/app/refusal.rs");
+    expect(inProgram).toEqual([]);
   });
 
   it("names every tracked path in a rule, so only a new one runs everything", () => {
@@ -741,24 +764,17 @@ describe("what a change runs", () => {
     for (const path of markdown) {
       if (path.startsWith("conformance/spec/")) {
         const chapter = path.slice("conformance/spec/".length);
-        expect(beyond(path), path).toEqual(
-          chapter === "errors.md"
-            ? [
-                "workspace",
-                "conformance-offline",
-                "core-checks-linux",
-                "rust-contract",
-              ]
-            : chapter === "instance.md" || chapter === "housekeeping.md"
-              ? [
-                  "workspace",
-                  "conformance-offline",
-                  "core-checks-linux",
-                  "rust-contract",
-                ]
-              : READ_AT_RUN_TIME.includes(chapter)
-                ? ["workspace", "conformance-offline", "rust-contract"]
-                : ["workspace", "conformance-offline"],
+        expect([...beyond(path)].sort(), path).toEqual(
+          [
+            "workspace",
+            "conformance-offline",
+            ...(chapter === "errors.md" ||
+            chapter === "instance.md" ||
+            chapter === "housekeeping.md"
+              ? ["core-checks-linux"]
+              : []),
+            ...(READ_AT_RUN_TIME[chapter] ?? []),
+          ].sort(),
         );
       } else if (
         path === "core/marfa-cli/COMMANDS.md" ||
@@ -899,6 +915,88 @@ function globMatches(glob: string, path: string): boolean {
   return new RegExp(`^${pattern}$`).test(path);
 }
 
+/**
+ * The files outside `core/` that the program code of the scanned Rust files
+ * embeds at build time. A test module, which sits at the end of its file, and
+ * the tests of a crate are not the program.
+ */
+function embeddedOutsideCore(scan: (path: string) => boolean): string[] {
+  const outside: string[] = [];
+  for (const path of tracked().filter(
+    (file) => file.startsWith("core/") && file.endsWith(".rs") && scan(file),
+  )) {
+    if (
+      /(^|\/)(tests|benches)\//.test(path) ||
+      /(^|\/|_)tests\.rs$/.test(path)
+    ) {
+      continue;
+    }
+    const whole = readFileSync(join(ROOT, path), "utf8");
+    const cut = whole.indexOf("#[cfg(test)]\nmod ");
+    const text = cut === -1 ? whole : whole.slice(0, cut);
+    for (const match of text.matchAll(
+      /include_(?:str|bytes)!\(\s*"([^"]+)"/g,
+    )) {
+      const target = relative(
+        ROOT,
+        resolve(ROOT, dirname(path), match[1] ?? ""),
+      );
+      if (!target.startsWith("core/")) outside.push(target);
+    }
+  }
+  return outside;
+}
+
+/** The crates a crate is built from: itself and the path dependencies of each, from the manifests. */
+function crateClosure(root: string): string[] {
+  const manifest = (crate: string) =>
+    parseToml(
+      readFileSync(join(ROOT, "core", crate, "Cargo.toml"), "utf8"),
+    ) as {
+      dependencies?: Record<string, { path?: string; workspace?: boolean }>;
+    };
+  const workspace = (
+    parseToml(readFileSync(join(ROOT, "core", "Cargo.toml"), "utf8")) as {
+      workspace: { dependencies: Record<string, { path?: string }> };
+    }
+  ).workspace.dependencies;
+  const crates = new Set<string>();
+  const pending = [root];
+  for (let crate = pending.pop(); crate !== undefined; crate = pending.pop()) {
+    if (crates.has(crate)) continue;
+    crates.add(crate);
+    for (const [name, dep] of Object.entries(
+      manifest(crate).dependencies ?? {},
+    )) {
+      // A workspace dependency's path is the workspace root's, not the crate's.
+      const path =
+        dep.workspace === true
+          ? workspace[name]?.path
+          : dep.path && join(crate, dep.path);
+      if (path) {
+        pending.push(relative(join(ROOT, "core"), resolve(ROOT, "core", path)));
+      }
+    }
+  }
+  return [...crates].sort();
+}
+
+/** The globs of a step's `hashFiles(...)`, with `!` kept on the ones that exclude. */
+function hashedGlobs(step: { run?: string } | undefined): string[] {
+  return [...(step?.run ?? "").matchAll(/'([^']+)'/g)].map((m) => m[1] ?? "");
+}
+
+/** Whether `hashFiles` over these globs reads the path. */
+function hashes(globs: string[], path: string): boolean {
+  const excluded = globs
+    .filter((g) => g.startsWith("!"))
+    .map((g) => g.slice(1));
+  return (
+    globs.some((g) => !g.startsWith("!") && globMatches(g, path)) &&
+    !excluded.some((g) => globMatches(g, path))
+  );
+}
+
 interface Step {
   name?: string;
   id?: string;
@@ -969,9 +1067,9 @@ describe("the contract's chapters", () => {
       "conformance/src/suites/compliance/instance.test.ts",
       "conformance/src/suites/device/error-codes.test.ts",
     ]);
-    for (const chapter of READ_AT_RUN_TIME) {
-      expect([...affected(`conformance/spec/${chapter}`)], chapter).toContain(
-        "rust-contract",
+    for (const [chapter, shards] of Object.entries(READ_AT_RUN_TIME)) {
+      expect([...affected(`conformance/spec/${chapter}`)], chapter).toEqual(
+        expect.arrayContaining(shards),
       );
     }
   });
@@ -1054,7 +1152,7 @@ const afterBuild = (output: string) =>
 
 /** The build runs for any job that boots it. */
 const buildGate =
-  "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false' || needs.changes.outputs.mcp-conformance != 'false' || needs.changes.outputs.restore-drill != 'false') }}";
+  "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' || needs.changes.outputs.rust-contract-device != 'false' || needs.changes.outputs.mcp-conformance != 'false' || needs.changes.outputs.restore-drill != 'false') }}";
 
 /** The macOS run of the device and CLI fixtures is for the nightly and a dispatch that asks. */
 const macGate =
@@ -1066,14 +1164,21 @@ describe("each job reads its own answer", () => {
     const gated = Object.keys(jobs).filter(
       (name) => name !== "changes" && !NOT_CLASSIFIED.includes(name),
     );
+    // The shards of the two groups share one build, so one job stands for both.
     expect(gated.sort()).toEqual(
-      JOBS.filter(
-        (job) => job !== "workspace" && job !== "swift-package",
-      ).sort(),
+      [
+        ...JOBS.filter(
+          (job) =>
+            job !== "workspace" &&
+            job !== "swift-package" &&
+            !CONTRACT_SHARDS.includes(job),
+        ),
+        "rust-contract",
+      ].sort(),
     );
     expect(jobs.changes?.outputs).toEqual(
       Object.fromEntries(
-        [...JOBS, "full"].map((job) => [
+        [...JOBS, "full", "rust-shards", "rust-projects"].map((job) => [
           job,
           `\${{ steps.classify.outputs.${job} }}`,
         ]),
@@ -1325,7 +1430,7 @@ describe("CodeQL", () => {
 });
 
 describe("what a job reads reaches it", () => {
-  it("every file the CLI fixtures load runs the Rust contract", async () => {
+  it("every file the CLI fixtures load runs the device shards", async () => {
     const { default: config } =
       (await import("../conformance/vitest.config.js")) as {
         default: {
@@ -1343,7 +1448,9 @@ describe("what a job reads reaches it", () => {
       "conformance/scripts/marfa-server.ts",
     ]);
     expect(files).toContain("conformance/src/utils/setup.ts");
-    expect(files.filter((f) => !affected(f).has("rust-contract"))).toEqual([]);
+    expect(
+      files.filter((f) => !DEVICE_SHARDS.every((job) => affected(f).has(job))),
+    ).toEqual([]);
   });
 
   it("every file the restore drill loads runs it", () => {
@@ -1378,42 +1485,8 @@ describe("what a job reads reaches it", () => {
   });
 
   it("the cached device binary is keyed on every crate it is built from", () => {
-    const manifest = (crate: string) =>
-      parseToml(
-        readFileSync(join(ROOT, "core", crate, "Cargo.toml"), "utf8"),
-      ) as {
-        dependencies?: Record<string, { path?: string; workspace?: boolean }>;
-      };
-    const workspace = (
-      parseToml(readFileSync(join(ROOT, "core", "Cargo.toml"), "utf8")) as {
-        workspace: { dependencies: Record<string, { path?: string }> };
-      }
-    ).workspace.dependencies;
-    const crates = new Set<string>();
-    const pending = ["marfa-cli"];
-    for (
-      let crate = pending.pop();
-      crate !== undefined;
-      crate = pending.pop()
-    ) {
-      if (crates.has(crate)) continue;
-      crates.add(crate);
-      for (const [name, dep] of Object.entries(
-        manifest(crate).dependencies ?? {},
-      )) {
-        // A workspace dependency's path is the workspace root's, not the crate's.
-        const path =
-          dep.workspace === true
-            ? workspace[name]?.path
-            : dep.path && join(crate, dep.path);
-        if (path) {
-          pending.push(
-            relative(join(ROOT, "core"), resolve(ROOT, "core", path)),
-          );
-        }
-      }
-    }
-    expect([...crates].sort()).toEqual([
+    const crates = crateClosure("marfa-cli");
+    expect(crates).toEqual([
       "marfa-acl",
       "marfa-allocator",
       "marfa-cli",
@@ -1455,12 +1528,99 @@ describe("what a job reads reaches it", () => {
       );
       for (const crate of crates) {
         expect(
-          affected(`core/${crate}/src/lib.rs`).has("rust-contract"),
+          DEVICE_SHARDS.every((job) =>
+            affected(`core/${crate}/src/lib.rs`).has(job),
+          ),
           crate,
         ).toBe(true);
       }
     }
   });
+  it("the cached servers are keyed on every file they are built from, and on nothing a change to the device alone touches", () => {
+    const crates = crateClosure("marfa-server");
+    expect(crates).toEqual([
+      "marfa-acl",
+      "marfa-allocator",
+      "marfa-enrichment",
+      "marfa-rules",
+      "marfa-server",
+      "marfa-telemetry",
+    ]);
+    const { jobs } = workflow("ci.yml");
+    const steps = jobs["rust-contract"]?.steps ?? [];
+    const globs = hashedGlobs(steps.find((s) => s.id === "key"));
+    // The witness: the helpers read a list, and tell a file in it from one out.
+    expect(globs.length).toBeGreaterThan(0);
+    expect(hashes(globs, "core/marfa-server/src/lib.rs")).toBe(true);
+    expect(hashes(globs, "core/marfa-core/src/lib.rs")).toBe(false);
+    expect(globs.some((glob) => glob.startsWith("!"))).toBe(false);
+
+    // Every file of every crate the server is built from, and what ties
+    // their versions and flags together.
+    const read = tracked().filter(
+      (path) =>
+        crates.some((crate) => path.startsWith(`core/${crate}/`)) ||
+        ["core/Cargo.toml", "core/Cargo.lock"].includes(path) ||
+        path.startsWith("core/.cargo/") ||
+        path.startsWith(".github/actions/native-build-image/") ||
+        path === ".github/workflows/ci.yml" ||
+        path === "openapi.json" ||
+        /^packages\/types\/generated\/icon-set-[\w-]+\.json$/.test(path),
+    );
+    expect(read.length).toBeGreaterThan(0);
+    expect(read.filter((path) => !hashes(globs, path))).toEqual([]);
+    // Every file the program embeds from outside `core/`.
+    const embedded = embeddedOutsideCore((path) =>
+      crates.some((crate) => path.startsWith(`core/${crate}/`)),
+    );
+    expect(embedded).toContain("openapi.json");
+    expect(embedded.filter((path) => !hashes(globs, path))).toEqual([]);
+    // The crates the server is not built from are not in the key, or a change
+    // to the core would build the server again.
+    for (const path of tracked().filter(
+      (file) =>
+        file.startsWith("core/") &&
+        !crates.some((crate) => file.startsWith(`core/${crate}/`)) &&
+        !["core/Cargo.toml", "core/Cargo.lock"].includes(file) &&
+        !file.startsWith("core/.cargo/"),
+    )) {
+      expect(hashes(globs, path), path).toBe(false);
+    }
+    // Everything the key reads that the program is built from runs the
+    // server's shards, so that a changed input is never judged on the cache.
+    for (const path of read.filter(
+      (file) => !/(^|\/)tests\//.test(file) && !file.endsWith(".md"),
+    )) {
+      expect(
+        SERVER_SHARDS.every((job) => affected(path).has(job)),
+        `${path} does not run the server's shards`,
+      ).toBe(true);
+    }
+
+    // Restored only for a pull request, by the exact key; saved by `main`
+    // only, once both servers are built.
+    const restore = steps.find((s) => s.id === "servers");
+    expect(restore?.if).toBe("${{ github.event_name == 'pull_request' }}");
+    expect(restore?.uses).toMatch(/^actions\/cache\/restore@/);
+    expect(restore?.with?.key).toBe("${{ steps.key.outputs.key }}");
+    const save = steps.find((s) => s.uses?.startsWith("actions/cache/save@"));
+    expect(save?.if).toBe(
+      "${{ steps.release.outcome == 'success' && github.ref == 'refs/heads/main' }}",
+    );
+    expect(save?.with?.key).toBe("${{ steps.key.outputs.key }}");
+    expect(save?.with?.path).toBe(restore?.with?.path);
+    // What is restored is what is built where it misses: nothing builds on a hit.
+    for (const name of [
+      "Build the Rust server",
+      "Set the server aside",
+      "Build the Rust server without test hooks",
+    ]) {
+      expect(steps.find((s) => s.name === name)?.if, name).toContain(
+        "steps.servers.outputs.cache-hit != 'true'",
+      );
+    }
+  });
+
   it("the cached device module is keyed on every source it is built from, and the shards that drive it run when they change", () => {
     const steps = workflow("ci.yml").jobs["rust-contract-shards"]?.steps ?? [];
     const run = steps.find((s) => s.id === "module-key")?.run ?? "";
@@ -1485,7 +1645,7 @@ describe("what a job reads reaches it", () => {
         `the module is keyed without ${source}`,
       ).toEqual([]);
       expect(
-        affected(source).has("rust-contract"),
+        DEVICE_SHARDS.every((job) => affected(source).has(job)),
         `${source} does not run the shards that drive the module`,
       ).toBe(true);
     }
@@ -1534,7 +1694,15 @@ describe("the classifier as CI runs it", () => {
     execFileSync("git", args, { cwd: directory, encoding: "utf8" }).trim();
   const commits: Record<string, string> = {};
 
+  /** The commit each one follows, for a diff of one change. */
+  const parents: Record<string, string> = {};
+
   function commit(name: string, files: Record<string, string>) {
+    try {
+      parents[name] = git("rev-parse", "--quiet", "--verify", "HEAD");
+    } catch {
+      // The first commit follows nothing.
+    }
     for (const [path, text] of Object.entries(files)) {
       mkdirSync(dirname(join(directory, path)), { recursive: true });
       writeFileSync(join(directory, path), text);
@@ -1579,6 +1747,25 @@ describe("the classifier as CI runs it", () => {
     commit("fixture", {
       "conformance/src/suites/compliance/owner.test.ts": "export {};\n",
     });
+    // One commit for each kind of change the shards are chosen by.
+    commit("core", { "core/marfa-core/src/store.rs": "// store\n" });
+    commit("cli", { "core/marfa-cli/src/main.rs": "// main\n" });
+    commit("serverRs", { "core/marfa-server/src/lib.rs": "// lib\n" });
+    commit("rules", { "core/marfa-rules/src/lib.rs": "// lib\n" });
+    commit("lock", { "core/Cargo.lock": "# lock\n" });
+    commit("cliFixture", {
+      "conformance/src/suites/cli/folder.test.ts": "export {};\n",
+    });
+    commit("deviceFixture", {
+      "conformance/src/suites/device/folders.test.ts": "export {};\n",
+    });
+    commit("correctnessFixture", {
+      "conformance/src/suites/correctness/items.test.ts": "export {};\n",
+    });
+    commit("syncFixture", {
+      "conformance/src/suites/sync/streams.test.ts": "export {};\n",
+    });
+    commit("classifier", { "scripts/ci-required.ts": "// classifier\n" });
     writeFileSync(
       join(fake, "gh"),
       '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$(dirname "$0")/calls"\ncat "$(dirname "$0")/response"\n',
@@ -1635,8 +1822,15 @@ describe("the classifier as CI runs it", () => {
     });
   }
 
+  /** The matrix and the projects of the shards a run owes. */
+  const owed = (shards: typeof SHARDS) => ({
+    "rust-shards": JSON.stringify({ include: shards }),
+    "rust-projects": projectsOf(shards).join(","),
+  });
+
   const every = (value: string) => ({
     ...Object.fromEntries(JOBS.map((job) => [job, value])),
+    ...owed(value === "true" ? SHARDS : []),
     full: "true",
   });
 
@@ -1665,9 +1859,195 @@ describe("the classifier as CI runs it", () => {
     );
     expect(JOBS.filter((job) => fixture[job] === "true")).toEqual(
       JOBS.filter((job) =>
-        ["quick-checks", "workspace", ...CONTRACT].includes(job),
+        ["quick-checks", "workspace", ...OFFLINE, ...SERVER_SHARDS].includes(
+          job,
+        ),
       ),
     );
+  });
+
+  describe("the shards a pull request runs", () => {
+    const names = (shards: typeof SHARDS) => shards.map((shard) => shard.slug);
+    const device = names(
+      SHARDS.filter((s) => s.lane === "rust-contract-device"),
+    );
+    const server = names(
+      SHARDS.filter((s) => s.lane === "rust-contract-server"),
+    );
+
+    it("lists the shards, and a lane's shards belong to its projects", () => {
+      // The witness: both lanes hold shards, and every project is in one.
+      expect(device.length).toBeGreaterThan(0);
+      expect(server.length).toBeGreaterThan(0);
+      expect(projectsOf(SHARDS)).toEqual([
+        "correctness",
+        "sync",
+        "compliance",
+        "cli",
+        "device",
+      ]);
+      expect(
+        projectsOf(SHARDS.filter((s) => s.lane === "rust-contract-device")),
+      ).toEqual(["cli", "device"]);
+      expect(
+        projectsOf(SHARDS.filter((s) => s.lane === "rust-contract-server")),
+      ).toEqual(["correctness", "sync", "compliance"]);
+      expect(new Set(names(SHARDS)).size).toBe(SHARDS.length);
+      // An answer names the shards of the groups it runs, in list order.
+      expect(
+        names(shardsFor(classify(["core/marfa-core/src/store.rs"]))),
+      ).toEqual(device);
+      expect(names(shardsFor(classify([])))).toEqual(names(SHARDS));
+    });
+
+    it("keeps a project's shards whole, so that a project is judged by every shard of it", () => {
+      for (const project of projectsOf(SHARDS)) {
+        const of = SHARDS.filter((s) =>
+          s.args.includes(`--project ${project}`),
+        );
+        expect(of.length, project).toBeGreaterThan(0);
+        // One lane holds all of a project.
+        expect(new Set(of.map((s) => s.lane)).size, project).toBe(1);
+        // A project split in shards names every one of them.
+        const total = of
+          .map((s) => /--shard=\d+\/(\d+)/.exec(s.args)?.[1])
+          .filter((n) => n !== undefined);
+        if (total.length > 0) {
+          expect(total.length, project).toBe(Number(total[0]));
+        }
+      }
+    });
+
+    it.each<[string, string, string[], string[]]>([
+      ["a core-only change", "core", device, ["cli", "device"]],
+      ["a CLI-only change", "cli", device, ["cli", "device"]],
+      [
+        "a server change",
+        "serverRs",
+        names(SHARDS),
+        ["correctness", "sync", "compliance", "cli", "device"],
+      ],
+      [
+        "a change to the rules crate",
+        "rules",
+        names(SHARDS),
+        ["correctness", "sync", "compliance", "cli", "device"],
+      ],
+      [
+        "a lockfile change",
+        "lock",
+        names(SHARDS),
+        ["correctness", "sync", "compliance", "cli", "device"],
+      ],
+      ["a CLI fixture", "cliFixture", device, ["cli", "device"]],
+      ["a device fixture", "deviceFixture", device, ["cli", "device"]],
+      [
+        "a compliance fixture",
+        "fixture",
+        server,
+        ["correctness", "sync", "compliance"],
+      ],
+      [
+        "a correctness fixture",
+        "correctnessFixture",
+        server,
+        ["correctness", "sync", "compliance"],
+      ],
+      [
+        "a sync fixture",
+        "syncFixture",
+        server,
+        ["correctness", "sync", "compliance"],
+      ],
+      [
+        "the classifier itself",
+        "classifier",
+        names(SHARDS),
+        ["correctness", "sync", "compliance", "cli", "device"],
+      ],
+      [
+        "a path no rule names",
+        "unknown",
+        names(SHARDS),
+        ["correctness", "sync", "compliance", "cli", "device"],
+      ],
+    ])(
+      "%s runs the matrix and the projects of its lane",
+      (_, name, slugs, projects) => {
+        const answer = outputs(
+          "pull_request",
+          parents[name] ?? "",
+          commits[name] ?? "",
+        );
+        const matrix = JSON.parse(answer["rust-shards"] ?? "") as {
+          include: typeof SHARDS;
+        };
+        expect(names(matrix.include)).toEqual(
+          names(SHARDS).filter((slug) => slugs.includes(slug)),
+        );
+        // The score judges the projects of the shards that run, no fewer.
+        expect(answer["rust-projects"]).toBe(
+          projectsOf(matrix.include).join(","),
+        );
+        expect(projectsOf(matrix.include)).toEqual(
+          projectsOf(SHARDS).filter((project) => projects.includes(project)),
+        );
+      },
+    );
+
+    it("a core-only change leaves the server's shards, MCP conformance and the restore drill out", () => {
+      const answer = outputs(
+        "pull_request",
+        parents.core ?? "",
+        commits.core ?? "",
+      );
+      expect(JOBS.filter((job) => answer[job] === "true")).toEqual(
+        JOBS.filter((job) =>
+          ["quick-checks", ...DEVICE_LINUX, "core"].includes(job),
+        ),
+      );
+      for (const job of [
+        ...SERVER_SHARDS,
+        "mcp-conformance",
+        "restore-drill",
+      ]) {
+        expect(answer[job], job).toBe("false");
+      }
+    });
+
+    it("runs no shard, and judges no project, for a change they cannot read", () => {
+      const answer = outputs(
+        "pull_request",
+        commits.base ?? "",
+        commits.docs ?? "",
+      );
+      expect(answer["rust-shards"]).toBe('{"include":[]}');
+      expect(answer["rust-projects"]).toBe("");
+    });
+
+    it("runs no shard for a draft, which runs the quick jobs only", () => {
+      const answer = outputs(
+        "pull_request",
+        parents.core ?? "",
+        commits.core ?? "",
+        true,
+      );
+      expect(answer["rust-shards"]).toBe('{"include":[]}');
+      expect(answer["rust-projects"]).toBe("");
+    });
+
+    it("runs every shard on a push to main", () => {
+      const eventPush = run(
+        "push",
+        { before: parents.core, after: commits.core, forced: false },
+        { GITHUB_REF: "refs/heads/main" },
+      );
+      const matrix = JSON.parse(eventPush["rust-shards"] ?? "") as {
+        include: typeof SHARDS;
+      };
+      expect(names(matrix.include)).toEqual(names(SHARDS));
+      expect(eventPush["rust-projects"]).toBe(projectsOf(SHARDS).join(","));
+    });
   });
 
   it("runs only the quick jobs for a draft and every one once it is ready", () => {
@@ -1711,7 +2091,8 @@ describe("the classifier as CI runs it", () => {
       outputs("pull_request", "invalid", commits.docs ?? "", true),
     ).toMatchObject({
       "quick-checks": "true",
-      "rust-contract": "false",
+      "rust-contract-server": "false",
+      "rust-contract-device": "false",
       full: "false",
     });
   });
