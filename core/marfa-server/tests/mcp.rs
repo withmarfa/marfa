@@ -3517,8 +3517,10 @@ async fn an_edit_that_changes_nothing_through_the_tool_stores_nothing_and_names_
     let id = made.payload()["id"].as_str().unwrap().to_string();
     let versions = || {
         let db = rusqlite::Connection::open(instance._dir.path().join("marfa.db")).unwrap();
-        db.query_row("SELECT count(*) FROM item_versions", [], |row| row.get::<_, i64>(0))
-            .unwrap()
+        db.query_row("SELECT count(*) FROM item_versions", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap()
     };
     let held = versions();
 

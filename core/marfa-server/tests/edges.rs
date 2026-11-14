@@ -746,13 +746,48 @@ async fn an_item_write_names_an_edge_the_edge_checks_refuse_whatever_its_version
         .unwrap();
 
     let cases = [
-        ("user.nothing", json!([other]), StatusCode::NOT_FOUND, "edge_type_not_found"),
-        ("about", json!([note]), StatusCode::BAD_REQUEST, "edge_cycle"),
-        ("user.rated", json!([note]), StatusCode::BAD_REQUEST, "edge_cycle"),
-        ("user.rated", json!([missing]), StatusCode::BAD_REQUEST, "invalid_properties"),
-        ("user.rated", json!([other]), StatusCode::BAD_REQUEST, "invalid_properties"),
-        ("about", json!([missing]), StatusCode::NOT_FOUND, "item_not_found"),
-        ("user.tasks-only", json!([other]), StatusCode::BAD_REQUEST, "edge_constraint_violation"),
+        (
+            "user.nothing",
+            json!([other]),
+            StatusCode::NOT_FOUND,
+            "edge_type_not_found",
+        ),
+        (
+            "about",
+            json!([note]),
+            StatusCode::BAD_REQUEST,
+            "edge_cycle",
+        ),
+        (
+            "user.rated",
+            json!([note]),
+            StatusCode::BAD_REQUEST,
+            "edge_cycle",
+        ),
+        (
+            "user.rated",
+            json!([missing]),
+            StatusCode::BAD_REQUEST,
+            "invalid_properties",
+        ),
+        (
+            "user.rated",
+            json!([other]),
+            StatusCode::BAD_REQUEST,
+            "invalid_properties",
+        ),
+        (
+            "about",
+            json!([missing]),
+            StatusCode::NOT_FOUND,
+            "item_not_found",
+        ),
+        (
+            "user.tasks-only",
+            json!([other]),
+            StatusCode::BAD_REQUEST,
+            "edge_constraint_violation",
+        ),
     ];
     for (kind, targets, status, code) in cases {
         for version in [1, 2] {

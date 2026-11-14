@@ -1656,16 +1656,30 @@ async fn a_write_that_changes_nothing_stores_nothing_at_each_door() {
         let stored = instance.read(&token, &path).await;
         let same = json!({ "title": "t", "count": 1, "link": "https://example.com/a" });
         let doors = [
-            (Method::PATCH, path.clone(), json!({ "version": 1, "properties": { "title": "t" } })),
-            (Method::PATCH, path.clone(), json!({ "version": 1, "properties": {} })),
-            (Method::PATCH, path.clone(), json!({ "version": 1, "properties": same, "tier": "library" })),
+            (
+                Method::PATCH,
+                path.clone(),
+                json!({ "version": 1, "properties": { "title": "t" } }),
+            ),
+            (
+                Method::PATCH,
+                path.clone(),
+                json!({ "version": 1, "properties": {} }),
+            ),
+            (
+                Method::PATCH,
+                path.clone(),
+                json!({ "version": 1, "properties": same, "tier": "library" }),
+            ),
             (Method::POST, "/items".to_string(), thing(&source_id)),
         ];
         for (at, (method, door, body)) in doors.into_iter().enumerate() {
             let key = format!("equal-{round}-{at}");
             let before = instance.written();
             let sent = keyed.then_some(key.as_str());
-            let answer = instance.sent(&token, method.clone(), &door, &body, sent).await;
+            let answer = instance
+                .sent(&token, method.clone(), &door, &body, sent)
+                .await;
             unchanged(&answer, &instance, before, &stored);
             if keyed {
                 let again = instance.sent(&token, method, &door, &body, sent).await;
@@ -1704,7 +1718,9 @@ async fn a_write_equal_after_normalisation_stores_nothing() {
         "properties": { "title": null, "count": 1.0, "link": "  https://example.com/a  " },
     });
     let before = instance.written();
-    let answer = instance.sent(&token, Method::PATCH, &path, &sent, None).await;
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &sent, None)
+        .await;
     unchanged(&answer, &instance, before, &stored);
 
     let upsert = json!({
@@ -1712,11 +1728,15 @@ async fn a_write_equal_after_normalisation_stores_nothing() {
         "source_id": "normal",
         "properties": { "count": 1.0, "link": " https://example.com/a" },
     });
-    let answer = instance.sent(&token, Method::POST, "/items", &upsert, None).await;
+    let answer = instance
+        .sent(&token, Method::POST, "/items", &upsert, None)
+        .await;
     unchanged(&answer, &instance, before, &stored);
 
     let witness = json!({ "version": 1, "properties": { "link": "https://example.com/b" } });
-    let answer = instance.sent(&token, Method::PATCH, &path, &witness, None).await;
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &witness, None)
+        .await;
     stored_next(&answer, &instance, before, 2);
 }
 
@@ -1740,12 +1760,32 @@ async fn a_write_equal_except_one_field_is_stored() {
         body
     };
     let steps = [
-        (Method::PATCH, path.clone(), json!({ "version": 1, "properties": { "title": "u" } })),
-        (Method::PATCH, path.clone(), json!({ "version": 2, "tier": "feed" })),
-        (Method::POST, "/items".to_string(), tagged(json!(["a", "b"]))),
-        (Method::POST, "/items".to_string(), tagged(json!(["b", "a"]))),
+        (
+            Method::PATCH,
+            path.clone(),
+            json!({ "version": 1, "properties": { "title": "u" } }),
+        ),
+        (
+            Method::PATCH,
+            path.clone(),
+            json!({ "version": 2, "tier": "feed" }),
+        ),
+        (
+            Method::POST,
+            "/items".to_string(),
+            tagged(json!(["a", "b"])),
+        ),
+        (
+            Method::POST,
+            "/items".to_string(),
+            tagged(json!(["b", "a"])),
+        ),
         (Method::POST, "/items".to_string(), tagged(json!(["b"]))),
-        (Method::PATCH, path.clone(), json!({ "version": 6, "properties": { "count": 2 } })),
+        (
+            Method::PATCH,
+            path.clone(),
+            json!({ "version": 6, "properties": { "count": 2 } }),
+        ),
     ];
     for (at, (method, door, body)) in steps.into_iter().enumerate() {
         let before = instance.written();
@@ -1755,9 +1795,16 @@ async fn a_write_equal_except_one_field_is_stored() {
 
     let before = instance.written();
     let edge = json!({ "version": 7, "edges": { "about": [target] } });
-    let answer = instance.sent(&token, Method::PATCH, &path, &edge, None).await;
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &edge, None)
+        .await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
-    assert_eq!(answer.json()["acknowledged"], Value::Null, "{}", answer.text);
+    assert_eq!(
+        answer.json()["acknowledged"],
+        Value::Null,
+        "{}",
+        answer.text
+    );
     assert_eq!(answer.json()["item"]["version"], 7);
     assert_eq!(instance.count("SELECT count(*) FROM edges"), 1);
     assert_eq!(instance.written().versions, before.versions);
@@ -1770,13 +1817,22 @@ async fn a_write_equal_except_one_field_is_stored() {
         "properties": { "count": 2 },
         "edges": { "about": [target] },
     });
-    let answer = instance.sent(&token, Method::PATCH, &path, &same, None).await;
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &same, None)
+        .await;
     unchanged(&answer, &instance, before, &stored);
 
     let removed = json!({ "version": 7, "properties": { "count": 2 }, "edges": { "about": [] } });
-    let answer = instance.sent(&token, Method::PATCH, &path, &removed, None).await;
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &removed, None)
+        .await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
-    assert_eq!(answer.json()["acknowledged"], Value::Null, "{}", answer.text);
+    assert_eq!(
+        answer.json()["acknowledged"],
+        Value::Null,
+        "{}",
+        answer.text
+    );
     assert_eq!(answer.json()["item"]["version"], 7);
     assert_eq!(instance.count("SELECT count(*) FROM edges"), 0);
     assert_eq!(instance.written().versions, before.versions);
@@ -1788,7 +1844,9 @@ async fn a_stale_version_is_refused_before_the_write_is_found_equal() {
     let (instance, token) = things().await;
     let (_, path) = made(&instance, &token, thing("stale")).await;
     let moved = json!({ "version": 1, "properties": { "title": "b" } });
-    let answer = instance.sent(&token, Method::PATCH, &path, &moved, None).await;
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &moved, None)
+        .await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
     let stored = instance.read(&token, &path).await;
     let before = instance.written();
@@ -1797,17 +1855,23 @@ async fn a_stale_version_is_refused_before_the_write_is_found_equal() {
     let collision = json!({ "version": 1, "properties": { "title": "b" } });
     let edges = json!({ "version": 1, "edges": { "about": [] } });
     for body in [exact, collision, edges] {
-        let answer = instance.sent(&token, Method::PATCH, &path, &body, None).await;
+        let answer = instance
+            .sent(&token, Method::PATCH, &path, &body, None)
+            .await;
         assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
         assert_eq!(answer.code(), "version_conflict");
     }
     assert_eq!(instance.written(), before);
 
     let echo = json!({ "version": 1, "properties": { "count": 1 } });
-    let answer = instance.sent(&token, Method::PATCH, &path, &echo, None).await;
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &echo, None)
+        .await;
     unchanged(&answer, &instance, before, &stored);
     let merging = json!({ "version": 1, "properties": { "count": 3 } });
-    let answer = instance.sent(&token, Method::PATCH, &path, &merging, None).await;
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &merging, None)
+        .await;
     stored_next(&answer, &instance, before, 3);
 }
 
