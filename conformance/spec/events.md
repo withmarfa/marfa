@@ -1582,11 +1582,11 @@ Where the instance does not allow private addresses, if the server answers `400 
 
 ### `events/address-name-unresolved`
 
-Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name that does not resolve, or whose lookup cannot start or finish within the registration limit of 3 seconds, then the server MUST answer `201`.
+Where the instance does not allow private addresses, if `POST /webhooks` names a `url` whose host is a name that does not resolve, or whose lookup, from the wait for a free lookup to its answer, takes longer than the registration limit of 3 seconds in total, then the server MUST answer `201`.
 
-**Reason:** the receiver may not exist yet, and a lookup that fails or stalls at registration says nothing about the one that delivery makes. A fixed limit of four concurrent webhook name lookups includes timed-out lookups until their blocking threads finish, because those threads share a pool with storage and file reading. This deliberately restores a concurrency bound independently of how many times an attempt resolves its name. The check at each attempt (`events/address-name-unsent`) still has the final say, and the attempt records `The receiver could not be reached.` if it still fails.
+**Reason:** the receiver may not exist yet, and a lookup that fails or stalls at registration says nothing about the one that delivery makes. The check at each attempt (`events/address-name-unsent`) still has the final say, and the attempt records `The receiver could not be reached.` if it still fails.
 
-**Tests:** `compliance/webhook-addresses.test.ts › accepts a name that does not resolve, which delivery looks up again`.
+**Tests:** `compliance/webhook-addresses.test.ts › accepts a name that does not resolve, which delivery looks up again`, `compliance/webhook-lookup-slots.test.ts › accepts a registration within its limit when it waits for a slot and then looks up`.
 
 ### `events/address-ipv6-global`
 
@@ -1717,6 +1717,54 @@ While the subscriptions of one maker have receivers that do not answer, the serv
 **Reason:** the 8 attempts that the one maker leaves free are shared by every later maker. Once they are in flight, a delivery of a further maker starts when an attempt ends.
 
 **Tests:** `compliance/webhook-delivery.test.ts › delivers promptly to a second maker while one maker's subscriptions never answer`, `compliance/webhook-delivery.test.ts › starts a later maker's delivery at once while one maker holds every attempt it may`, `compliance/webhook-delivery.test.ts › starts a third maker's delivery only when an attempt ends once two makers hold every attempt`.
+
+### `events/lookup-maker-isolation`
+
+While the subscriptions of one maker name hosts whose lookups do not finish, the server MUST look up the host name of a due delivery of another maker's subscription, and start that delivery, without waiting for those lookups to end.
+
+**Reason:** a lookup that has not finished keeps its thread until the system resolver returns, after the server has stopped waiting for it, so a bound on lookups is needed. Giving each maker, and each kind of caller, its own share of lookups means one maker's name server that never answers uses only that maker's share. A maker's lookups cannot fill the pool that every maker's deliveries share, because a maker holds at most its own share, and `events/lookup-pool-uncharged` covers the pool being full of other makers' lookups.
+
+**Tests:** `compliance/webhook-lookup-slots.test.ts › delivers to a maker whose host name resolves while another maker's lookups do not finish`.
+
+### `events/lookup-limit-starts-at-slot`
+
+When a delivery's lookup is given a slot, the server MUST allow that lookup 3 seconds from the moment of the slot, however long the delivery waited for the slot.
+
+**Reason:** the time a delivery waited for a slot is not time its receiver's name took. A lookup that finishes within 3 seconds of getting a slot must not be recorded as `The receiver could not be reached.` because other makers' lookups came free in the meantime and woke the delivery early.
+
+**Tests:** `compliance/webhook-lookup-slots.test.ts › delivers to a healthy maker without a failed attempt while another maker's lookups end and free their slots`.
+
+### `events/lookup-share-defers`
+
+If a due delivery has waited 3 seconds for a lookup slot and lookups under way for its maker then hold all 4 slots of that maker's share, then the server MUST leave the delivery due with its count of attempts unchanged.
+
+**Reason:** a maker's share counts its lookups under way, never its deliveries waiting for a slot. The delivery was not tried, so recording the receiver as unreachable would spend one of the eight attempts of a healthy receiver and, after about 5.4 hours, end the delivery as `dead_letter`. The server offers the delivery a lookup again when one of that maker's lookups ends, and `events/lookup-share-ends` ends the wait if none does.
+
+**Tests:** `compliance/webhook-lookup-slots.test.ts › leaves a delivery due, with no attempt spent, when its maker has no lookup slot free`.
+
+### `events/lookup-share-ends`
+
+If a due delivery has been left due under `events/lookup-share-defers` for 10 seconds, and its next attempt has waited 3 seconds for a lookup slot while lookups under way for its maker hold all 4 slots of that maker's share, then the server MUST count that attempt as one that could not reach the receiver, and record `The receiver could not be reached.`
+
+**Reason:** a lookup that never returns would otherwise leave the delivery due for ever, with no attempt spent and no end at `dead_letter`. Four lookups under way for one maker are that maker's own doing, so counting the attempt puts the delivery on its retry schedule, which ends it. Until then the server does not offer the delivery a lookup again unless one of that maker's lookups ends.
+
+**Tests:** `compliance/webhook-lookup-slots.test.ts › counts an attempt for a delivery that has had no lookup slot for 10 seconds, and offers it none meanwhile`.
+
+### `events/lookup-pool-uncharged`
+
+While a due delivery waits for a lookup slot and lookups under way for its maker hold fewer than 4 slots, the server MUST keep the delivery waiting, with its count of attempts unchanged and with no limit on the wait.
+
+**Reason:** the delivery then waits only for the pool that deliveries share, which other makers' lookups fill, however many of its maker's deliveries wait with it. The maker did nothing to cause the wait, so recording the receiver as unreachable would spend an attempt of a healthy receiver for what other makers did. The server stops waiting for a lookup 3 seconds after it gets a slot, and the slot comes back when the system resolver returns, so the pool moves and the wait ends.
+
+**Tests:** `compliance/webhook-lookup-slots.test.ts › leaves every delivery of a healthy maker uncharged while other makers hold every slot of the shared pool, more of them than its share`.
+
+### `events/lookup-pool-fair`
+
+When a slot of the pool that deliveries share comes free and the deliveries of more than one maker wait for it, the server MUST give the slot to the delivery of the next maker in turn whose lookups under way hold fewer than 4 slots, and within a maker to its oldest waiting delivery.
+
+**Reason:** a maker with many deliveries waiting must not keep another maker's one delivery behind all of them. Taking makers in turn bounds how long any maker waits by the number of makers waiting, not by how many deliveries any of them has.
+
+**Tests:** `compliance/webhook-lookup-slots.test.ts › serves the makers waiting for the shared pool in turn, oldest first within each maker`.
 
 ## The audit log
 
