@@ -246,7 +246,16 @@ describe("a datetime property", () => {
     ).toEqual(among("asc", ["noon-utc", "offset", "fine"]));
     expect(
       await searched("desc", 3, 'properties.when gt "2026-01-01T05:00:00Z"'),
-    ).toEqual(among("desc", ["rounded", "last", "beyond", "furthest"]));
+    ).toEqual(
+      among("desc", [
+        "rounded",
+        "last",
+        "beyond",
+        "furthest",
+        // Text that is no datetime compares with a datetime bound by bytes.
+        "text-word",
+      ]),
+    );
     expect(
       await searched("asc", 100, 'properties.when lt "2026-01-01T04:00:00Z"'),
     ).toEqual(
@@ -263,7 +272,7 @@ describe("a datetime property", () => {
     }
     expect(
       await viewed("asc", 2, 'properties.when gte "9999-12-31T23:59:59Z"'),
-    ).toEqual(among("asc", ["last", "beyond", "furthest"]));
+    ).toEqual(among("asc", ["last", "beyond", "furthest", "text-word"]));
   });
 
   it("filters by instant, so one instant written two ways is equal and an earlier time is lower", async () => {
