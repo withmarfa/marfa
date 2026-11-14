@@ -16,7 +16,6 @@ use super::session::{self, New, Opened};
 use super::{Note, Visit, note};
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
-use crate::app::audit::{self, Entry};
 use crate::app::clock::Stamp;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::db::Write;
@@ -206,20 +205,20 @@ impl Refused {
         let actor = self.actor.clone();
         let email = self.email.clone();
         let reason = self.reason;
-        let ip = self.visit.client_ip();
+        let visit = self.visit.clone();
         let left_out = self.left_out;
         app.db
             .write(Write::caller(SIGN_IN_FAILED), move |tx| {
                 let details = json!({ "email": email, "method": "password", "reason": reason });
-                audit::record_from(
+                note(
                     tx,
                     &clock.instant().text(),
                     actor.as_ref(),
-                    ip.as_deref(),
-                    Entry {
+                    &visit,
+                    Note {
                         action: SIGN_IN_FAILED,
                         resource_type: "owner",
-                        resource_id: Some(&email),
+                        resource_id: &email,
                         details: Some(allowance::with_unrecorded_before(details, left_out)),
                     },
                 )
