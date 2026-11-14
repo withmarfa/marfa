@@ -192,7 +192,10 @@ impl Agents {
         }
     }
 
-    /// Follows at most `limit` redirects, sending the same headers at each step.
+    /// Follows at most `limit` redirects. A header that names the caller goes
+    /// only to the origin the call began at: once a redirect changes the
+    /// scheme, the host or the port, every later request goes without it, even
+    /// if a later redirect returns. A redirect from https to http is refused.
     pub fn get(
         &self,
         url: &str,
@@ -200,6 +203,7 @@ impl Agents {
         limit: u32,
     ) -> Result<Response, ureq::Error> {
         let mut at = url.to_string();
+        let mut left_origin = false;
         for _ in 0..=limit {
             let agent = if marfa_telemetry::host::may_use_proxy(&at) {
                 &self.proxied
@@ -208,24 +212,67 @@ impl Agents {
             };
             let mut request = agent.get(&at);
             for (name, value) in headers {
+                if left_origin && names_the_caller(name) {
+                    continue;
+                }
                 request = request.header(*name, value.as_str());
             }
             let response = request.call()?;
             if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
                 return Ok(response);
             }
+            let from = Url::parse(&at).ok();
             let next = response
                 .headers()
                 .get("location")
                 .and_then(|location| location.to_str().ok())
-                .and_then(|location| Url::parse(&at).ok()?.join(location).ok());
-            match next {
-                Some(next) => at = next.to_string(),
-                None => return Ok(response),
+                .and_then(|location| from.as_ref()?.join(location).ok());
+            match (from, next) {
+                (Some(from), Some(next)) => {
+                    match hop(&from, &next) {
+                        Hop::SameOrigin => {}
+                        Hop::OtherOrigin => left_origin = true,
+                        Hop::Downgrade => {
+                            return Err(ureq::Error::Other(
+                                "a redirect from https to http is refused".into(),
+                            ));
+                        }
+                    }
+                    at = next.to_string();
+                }
+                _ => return Ok(response),
             }
         }
         Err(ureq::Error::TooManyRedirects)
     }
+}
+
+/// How a redirect's destination stands to the address it left.
+#[derive(Debug, PartialEq, Eq)]
+enum Hop {
+    SameOrigin,
+    OtherOrigin,
+    Downgrade,
+}
+
+fn hop(from: &Url, to: &Url) -> Hop {
+    if from.scheme() == "https" && to.scheme() == "http" {
+        Hop::Downgrade
+    } else if from.origin() == to.origin() {
+        Hop::SameOrigin
+    } else {
+        Hop::OtherOrigin
+    }
+}
+
+/// A header that says who is asking: the key, a session or the instance a
+/// request is for.
+fn names_the_caller(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    matches!(
+        name.as_str(),
+        "authorization" | "proxy-authorization" | "cookie"
+    ) || name.starts_with("x-marfa-")
 }
 
 /// Which of the agent's time budgets a call is held to.
@@ -3733,6 +3780,217 @@ mod tests {
         );
         let landed = reached.lock().unwrap().clone();
         assert_eq!(landed, vec!["GET /landed HTTP/1.1".to_string()]);
+    }
+
+    /// Listens on loopback and records every request's head, one string each,
+    /// answering with what `reply` makes from the request line.
+    fn heads_listener(
+        reply: impl Fn(&str) -> String + Send + 'static,
+    ) -> (u16, Arc<Mutex<Vec<String>>>) {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut head = String::new();
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        break;
+                    }
+                    if line.trim().is_empty() {
+                        break;
+                    }
+                    head.push_str(&line);
+                }
+                if head.is_empty() {
+                    continue;
+                }
+                let first = head.lines().next().unwrap_or_default().to_string();
+                record.lock().unwrap().push(head.to_ascii_lowercase());
+                let _ = stream.write_all(reply(&first).as_bytes());
+            }
+        });
+        (port, seen)
+    }
+
+    fn redirect(to: &str) -> String {
+        format!(
+            "HTTP/1.1 302 Found\r\nLocation: {to}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+    }
+
+    const OK: &str = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
+
+    fn who_is_asking() -> Vec<(&'static str, String)> {
+        vec![
+            ("Accept", "text/plain".into()),
+            ("Authorization", "Bearer secret".into()),
+            ("Cookie", "session=secret".into()),
+            ("Proxy-Authorization", "Basic secret".into()),
+            ("X-Marfa-Instance-Id", "secret".into()),
+        ]
+    }
+
+    fn carries_credentials(head: &str) -> bool {
+        head.contains("authorization:") || head.contains("cookie:") || head.contains("x-marfa-")
+    }
+
+    fn direct_agents() -> Agents {
+        unsafe {
+            std::env::remove_var("HTTP_PROXY");
+            std::env::remove_var("http_proxy");
+            std::env::remove_var("ALL_PROXY");
+            std::env::remove_var("all_proxy");
+        }
+        Agents::new(Agent::config_builder)
+    }
+
+    #[test]
+    fn a_redirect_to_another_host_leaves_the_credentials_behind() {
+        let (port, seen) = heads_listener(move |line| {
+            if line.contains("/start") {
+                redirect(&format!("http://localhost:{}/landed", PORT.get().unwrap()))
+            } else {
+                OK.into()
+            }
+        });
+        PORT.set(port).unwrap();
+        let mut response = direct_agents()
+            .get(
+                &format!("http://127.0.0.1:{port}/start"),
+                &who_is_asking(),
+                3,
+            )
+            .unwrap();
+        assert_eq!(response.body_mut().read_to_string().unwrap(), "ok");
+        let heads = seen.lock().unwrap().clone();
+        assert_eq!(heads.len(), 2, "{heads:?}");
+        assert!(
+            heads[0].contains("authorization: bearer secret"),
+            "{heads:?}"
+        );
+        assert!(heads[0].contains("cookie: session=secret"), "{heads:?}");
+        assert!(!carries_credentials(&heads[1]), "{heads:?}");
+        assert!(heads[1].contains("accept: text/plain"), "{heads:?}");
+    }
+
+    static PORT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+
+    #[test]
+    fn a_redirect_to_another_port_leaves_the_credentials_behind() {
+        let (other, landed) = heads_listener(|_| OK.into());
+        let (port, first) =
+            heads_listener(move |_| redirect(&format!("http://127.0.0.1:{other}/landed")));
+        let mut response = direct_agents()
+            .get(
+                &format!("http://127.0.0.1:{port}/start"),
+                &who_is_asking(),
+                3,
+            )
+            .unwrap();
+        assert_eq!(response.body_mut().read_to_string().unwrap(), "ok");
+        assert!(first.lock().unwrap()[0].contains("authorization: bearer secret"));
+        let heads = landed.lock().unwrap().clone();
+        assert_eq!(heads.len(), 1, "{heads:?}");
+        assert!(!carries_credentials(&heads[0]), "{heads:?}");
+        assert!(heads[0].contains("accept: text/plain"), "{heads:?}");
+    }
+
+    #[test]
+    fn a_redirect_within_the_origin_keeps_the_credentials() {
+        let (port, seen) = heads_listener(|line| {
+            if line.contains("/start") {
+                redirect("/landed")
+            } else {
+                OK.into()
+            }
+        });
+        direct_agents()
+            .get(
+                &format!("http://127.0.0.1:{port}/start"),
+                &who_is_asking(),
+                3,
+            )
+            .unwrap();
+        let heads = seen.lock().unwrap().clone();
+        assert_eq!(heads.len(), 2, "{heads:?}");
+        assert!(
+            heads[1].contains("authorization: bearer secret"),
+            "{heads:?}"
+        );
+        assert!(
+            heads[1].contains("x-marfa-instance-id: secret"),
+            "{heads:?}"
+        );
+    }
+
+    #[test]
+    fn credentials_left_behind_stay_behind_when_a_chain_returns_to_the_origin() {
+        static BACK: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+        static OUT: std::sync::OnceLock<u16> = std::sync::OnceLock::new();
+        let (origin, seen) = heads_listener(|line| {
+            if line.contains("/start") {
+                redirect(&format!("http://127.0.0.1:{}/away", OUT.get().unwrap()))
+            } else {
+                OK.into()
+            }
+        });
+        let (out, _) =
+            heads_listener(|_| redirect(&format!("http://127.0.0.1:{}/back", BACK.get().unwrap())));
+        BACK.set(origin).unwrap();
+        OUT.set(out).unwrap();
+        direct_agents()
+            .get(
+                &format!("http://127.0.0.1:{origin}/start"),
+                &who_is_asking(),
+                5,
+            )
+            .unwrap();
+        let heads = seen.lock().unwrap().clone();
+        assert_eq!(heads.len(), 2, "{heads:?}");
+        assert!(
+            heads[0].contains("authorization: bearer secret"),
+            "{heads:?}"
+        );
+        assert!(!carries_credentials(&heads[1]), "{heads:?}");
+    }
+
+    #[test]
+    fn a_redirect_from_https_to_http_is_refused_and_what_leaves_the_origin_is_told_apart() {
+        let at = |text: &str| Url::parse(text).unwrap();
+        assert_eq!(
+            hop(&at("https://a.test/x"), &at("http://a.test/x")),
+            Hop::Downgrade
+        );
+        assert_eq!(
+            hop(&at("https://a.test/x"), &at("http://b.test/x")),
+            Hop::Downgrade
+        );
+        assert_eq!(
+            hop(&at("http://a.test/x"), &at("https://a.test/x")),
+            Hop::OtherOrigin
+        );
+        assert_eq!(
+            hop(&at("https://a.test/x"), &at("https://b.test/x")),
+            Hop::OtherOrigin
+        );
+        assert_eq!(
+            hop(&at("https://a.test/x"), &at("https://a.test:8443/x")),
+            Hop::OtherOrigin
+        );
+        assert_eq!(
+            hop(&at("https://a.test/x"), &at("https://a.test:443/y")),
+            Hop::SameOrigin
+        );
+        assert_eq!(
+            hop(&at("http://a.test/x"), &at("http://a.test/y")),
+            Hop::SameOrigin
+        );
     }
 
     #[test]
