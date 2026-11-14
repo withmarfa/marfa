@@ -378,6 +378,75 @@ pub fn apply_row(
     Ok(done)
 }
 
+/// Where strict mode names the type, a property no type declares refuses the item. A restore
+/// names the archived item it refuses in `item_id`.
+pub(super) fn refuse_undeclared(
+    caller: &Caller,
+    catalog: &Catalog,
+    type_id: &str,
+    properties: &Map<String, Value>,
+    item_id: Option<&str>,
+) -> Result<()> {
+    let rules = &catalog.rules;
+    if !caller.levers()?.strict_on(type_id) || !rules.known(type_id) {
+        return Ok(());
+    }
+    let declared = rules.resolved(type_id).map_err(ruled)?;
+    let errors: Vec<Value> = properties
+        .keys()
+        .filter(|name| !declared.contains_key(*name))
+        .map(|name| json!({ "field": name, "message": format!("Unrecognized key: \"{name}\"") }))
+        .collect();
+    if errors.is_empty() {
+        return Ok(());
+    }
+    let refusal = match item_id {
+        None => Refusal::new(
+            Code::InvalidProperties,
+            "Unknown property: strict mode rejects properties not declared in the type schema",
+        ),
+        Some(id) => Refusal::new(
+            Code::InvalidProperties,
+            format!(
+                "Item {id} sets a property no type declares, which strict mode refuses for {type_id}."
+            ),
+        )
+        .with_detail("item_id", id),
+    };
+    Err(refusal
+        .with_detail("errors", errors)
+        .with_detail("code", "unknown_property"))
+}
+
+fn file_bytes(properties: &Map<String, Value>) -> Option<Hash> {
+    properties
+        .get(FILE_BYTES)
+        .and_then(Value::as_str)
+        .and_then(|text| Hash::parse(text).ok())
+}
+
+/// A file item holds as `size_bytes` the stored length of the blob its `blob_ref` lends, and no
+/// size otherwise; `lent_size` answers what a hash lends to this write.
+pub(super) fn stamp_file_size(
+    catalog: &Catalog,
+    type_id: &str,
+    properties: &mut Map<String, Value>,
+    lent_size: impl FnOnce(&Hash) -> Result<Option<u64>>,
+) -> Result<()> {
+    if !catalog.rules.matches(FILE_TYPE, type_id) {
+        return Ok(());
+    }
+    match file_bytes(properties)
+        .map(|hash| lent_size(&hash))
+        .transpose()?
+        .flatten()
+    {
+        Some(size) => properties.insert(FILE_SIZE.to_string(), Value::from(size)),
+        None => properties.shift_remove(FILE_SIZE),
+    };
+    Ok(())
+}
+
 pub fn ruled(error: RuleError) -> Refusal {
     use marfa_rules::error::Code as Rule;
     let code = match error.code {
@@ -789,37 +858,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         .with_detail("allowed", allowed))
     }
 
-    fn refuse_undeclared(
-        &self,
-        type_id: &str,
-        properties: Option<&Map<String, Value>>,
-    ) -> Result<()> {
-        let rules = &self.catalog.rules;
-        let Some(properties) = properties else {
-            return Ok(());
-        };
-        if !self.caller().levers()?.strict_on(type_id) || !rules.known(type_id) {
-            return Ok(());
-        }
-        let declared = rules.resolved(type_id).map_err(ruled)?;
-        let errors: Vec<Value> = properties
-            .keys()
-            .filter(|name| !declared.contains_key(*name))
-            .map(
-                |name| json!({ "field": name, "message": format!("Unrecognized key: \"{name}\"") }),
-            )
-            .collect();
-        if errors.is_empty() {
-            return Ok(());
-        }
-        Err(Refusal::new(
-            Code::InvalidProperties,
-            "Unknown property: strict mode rejects properties not declared in the type schema",
-        )
-        .with_detail("errors", errors)
-        .with_detail("code", "unknown_property"))
-    }
-
     fn schema_version(&self, type_id: &str) -> i64 {
         self.catalog
             .types
@@ -1153,7 +1191,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         if let Some(inline) = &put.edges {
             edges::inline_gates(&self.edge_writing(), inline)?;
         }
-        self.refuse_undeclared(&put.type_id, put.properties.as_ref())?;
+        if let Some(properties) = &put.properties {
+            refuse_undeclared(self.caller(), &self.catalog, &put.type_id, properties, None)?;
+        }
         if !rules.known(&put.type_id) {
             return Err(Refusal::new(
                 Code::UnknownType,
@@ -1317,7 +1357,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             }
         }
         let resulting = writing.destination.as_deref().unwrap_or(&row.type_id);
-        self.refuse_undeclared(resulting, writing.properties.as_ref())?;
+        if let Some(properties) = &writing.properties {
+            refuse_undeclared(self.caller(), &self.catalog, resulting, properties, None)?;
+        }
         if writing.exact {
             if !rules.known(&row.type_id) {
                 return Err(unknown_row(row));
@@ -1672,12 +1714,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         naming: Naming<'_>,
     ) -> Result<Decided> {
         let tx = self.unit.tx();
-        let file = self.is_file(type_id);
-        let bytes = properties
-            .get(FILE_BYTES)
-            .and_then(Value::as_str)
-            .and_then(|text| Hash::parse(text).ok())
-            .filter(|_| file);
+        let bytes = file_bytes(properties).filter(|_| self.is_file(type_id));
         let decided = references::decide(
             tx,
             self.caller(),
@@ -1688,16 +1725,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 ..naming
             },
         )?;
-        if file {
-            match bytes
-                .map(|hash| decided.lent_size(tx, &hash))
-                .transpose()?
-                .flatten()
-            {
-                Some(size) => properties.insert(FILE_SIZE.to_string(), Value::from(size)),
-                None => properties.shift_remove(FILE_SIZE),
-            };
-        }
+        stamp_file_size(&self.catalog, type_id, properties, |hash| {
+            decided.lent_size(tx, hash)
+        })?;
         Ok(decided)
     }
 

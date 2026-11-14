@@ -8,7 +8,6 @@ use serde_json::{Map, Value};
 
 use super::rows::{self, NewRow, Restoring};
 use super::{Writer, index, link_in, title_key};
-use crate::app::blobs::Hash;
 use crate::app::blobs::references::{self, Row};
 use crate::app::catalog::Catalog;
 use crate::app::refusal::{Code, Refusal, Result};
@@ -16,9 +15,6 @@ use crate::app::unit::Unit;
 
 const RESTORED: &str = "restored:";
 const APP_SOURCE: &str = "oauth:";
-const FILE_TYPE: &str = "core.file";
-const FILE_BYTES: &str = "blob_ref";
-const FILE_SIZE: &str = "size_bytes";
 const CONNECTION: &str = "system.connection";
 
 /// What a restore did with one item line.
@@ -125,25 +121,18 @@ pub fn restore(unit: &Unit<'_, '_>, catalog: &Catalog, line: &Value) -> Result<R
     {
         return Ok(Restored::Duplicate);
     }
-    refuse_undeclared(unit, catalog, type_id, &properties, Some(id))?;
+    super::write::refuse_undeclared(&unit.caller, catalog, type_id, &properties, Some(id))?;
     if type_id == CONNECTION && text(&properties, "kind") == Some("app") {
         properties.insert("status".into(), "revoked".into());
     }
     let lent = lending(line.get("lending_blobs"));
-    if catalog.rules.matches(FILE_TYPE, type_id) {
-        let size = properties
-            .get(FILE_BYTES)
-            .and_then(Value::as_str)
-            .and_then(|text| Hash::parse(text).ok())
-            .filter(|hash| lent.contains(hash.as_str()))
-            .map(|hash| crate::app::blobs::stored_size(tx, &hash))
-            .transpose()?
-            .flatten();
-        match size {
-            Some(size) => properties.insert(FILE_SIZE.into(), Value::from(size)),
-            None => properties.shift_remove(FILE_SIZE),
-        };
-    }
+    super::write::stamp_file_size(catalog, type_id, &mut properties, |hash| {
+        if lent.contains(hash.as_str()) {
+            crate::app::blobs::stored_size(tx, hash)
+        } else {
+            Ok(None)
+        }
+    })?;
     let created_at = required_instant(item, "created_at")?;
     let updated_at = required_instant(item, "updated_at")?;
     let last_activity_at = Some(required_instant(item, "last_activity_at")?)
@@ -310,41 +299,6 @@ pub fn restore_version(
         },
     )?;
     references::archived(&properties, &BTreeSet::new()).apply(tx, Row::Version(seq, version))
-}
-
-/// Where the strict-mode lever names the type, a property no type declares refuses the archive.
-fn refuse_undeclared(
-    unit: &Unit<'_, '_>,
-    catalog: &Catalog,
-    type_id: &str,
-    properties: &Map<String, Value>,
-    id: Option<&str>,
-) -> Result<()> {
-    let rules = &catalog.rules;
-    if !unit.caller.levers()?.strict_on(type_id) || !rules.known(type_id) {
-        return Ok(());
-    }
-    let declared = rules.resolved(type_id).map_err(super::write::ruled)?;
-    let errors: Vec<Value> = properties
-        .keys()
-        .filter(|name| !declared.contains_key(*name))
-        .map(|name| {
-            serde_json::json!({ "field": name, "message": format!("Unrecognized key: \"{name}\"") })
-        })
-        .collect();
-    if errors.is_empty() {
-        return Ok(());
-    }
-    Err(Refusal::new(
-        Code::InvalidProperties,
-        format!(
-            "Item {} sets a property no type declares, which strict mode refuses for {type_id}.",
-            id.unwrap_or("with no id")
-        ),
-    )
-    .with_detail("errors", errors)
-    .with_detail("code", "unknown_property")
-    .with_detail("item_id", id))
 }
 
 /// Brings the search index up to the rows written so far.
