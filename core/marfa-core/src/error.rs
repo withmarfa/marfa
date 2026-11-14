@@ -517,6 +517,7 @@ impl From<rusqlite::Error> for CoreError {
         match error.sqlite_error_code() {
             Some(rusqlite::ErrorCode::DiskFull) => CoreError::StorageFull(error.to_string()),
             Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase) => {
+                crate::damage::note_met();
                 CoreError::StoreDamaged {
                     path: String::new(),
                     reason: error.to_string(),

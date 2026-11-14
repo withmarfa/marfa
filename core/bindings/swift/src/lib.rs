@@ -843,6 +843,10 @@ pub enum BlockedReason {
     /// The write was queued against an instance other than the one the copy
     /// has been built from since, and is sent only once released.
     InstanceChanged,
+    /// The write was carried from a store set aside where a record that
+    /// decides how it is sent could not be read, and is sent only once
+    /// released.
+    RecordUnread,
 }
 
 /// Which handle this process holds on the store.
@@ -1989,6 +1993,7 @@ impl From<marfa_core::BlockedReason> for BlockedReason {
             R::ConflictUnresolved => BlockedReason::ConflictUnresolved,
             R::FailingAlone => BlockedReason::FailingAlone,
             R::InstanceChanged => BlockedReason::InstanceChanged,
+            R::RecordUnread => BlockedReason::RecordUnread,
         }
     }
 }
@@ -2003,6 +2008,7 @@ impl From<BlockedReason> for marfa_core::BlockedReason {
             BlockedReason::ConflictUnresolved => R::ConflictUnresolved,
             BlockedReason::FailingAlone => R::FailingAlone,
             BlockedReason::InstanceChanged => R::InstanceChanged,
+            BlockedReason::RecordUnread => R::RecordUnread,
         }
     }
 }
@@ -3121,7 +3127,7 @@ impl Core {
     }
 
     /// Takes a write blocked `ancestor_unavailable`, `conflict_unresolved`,
-    /// `failing_alone` or `instance_changed` out of the queue, and puts the copy back to what the server holds;
+    /// `failing_alone`, `instance_changed` or `record_unread` out of the queue, and puts the copy back to what the server holds;
     /// each write held for it is refused unsent. Answers whether the row was
     /// one a withdraw takes.
     pub fn withdraw(&self, id: String) -> Result<bool, MarfaError> {
@@ -3216,13 +3222,18 @@ pub struct SetAside {
     pub unread: u64,
     /// The id of each unread write whose id could be read.
     pub unread_ids: Vec<String>,
-    /// Whether every write the old queue holds was found; where not, the
+    /// Whether every write the old queue holds was found, and every record
+    /// that decides how a carried write is sent was read; where not, the
     /// store set aside may hold more.
     pub whole: bool,
     /// The carried writes held blocked `instanceChanged`, because the old
     /// store did not say which instance it was built from; release one to
     /// send it to the instance the new store is hydrated from.
     pub held: u64,
+    /// The carried writes held blocked `recordUnread`, because a record that
+    /// decides how each is sent could not be read; release one to send it
+    /// without that record.
+    pub record_unread: u64,
 }
 
 /// Sets aside the store at `path`, which `open` refuses with `StoreDamaged`:
@@ -3245,6 +3256,7 @@ pub fn set_aside_damaged(path: String) -> Result<SetAside, MarfaError> {
         unread_ids: done.unread_ids,
         whole: done.whole,
         held: done.held,
+        record_unread: done.record_unread,
     })
 }
 

@@ -164,6 +164,9 @@ stays because that thing is what it checks.
   holds one table's rows, writes a queued write that only the store's log
   holds, as a crash leaves it, and names a folder in a store's meta. No door or
   fault damages a store or ends a process between a write and its checkpoint.
+  `device/classification.test.ts` damages a store the same way to reach the
+  blocked reason a set-aside gives, and `device/binding-remove-store.test.ts`
+  damages a store's first page or its rows, for the same reason.
 - `inbound-faults`, `inbound-logs` and the other fixtures that read the log
   through `serverOutput` check what the server logged. The log is the subject.
 

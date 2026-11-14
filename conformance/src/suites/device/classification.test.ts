@@ -12,6 +12,7 @@ import {
 import type { DrainReport, QueuedWrite } from "../../device/protocol.js";
 import { BUILT_FOR, type Answer } from "../../device/scripted-server.js";
 import {
+  damageTable,
   hydratedHarness,
   queuedEdit,
   scriptHydration,
@@ -38,7 +39,7 @@ afterEach(async () => {
 
 const HELD = { id: "01a00000-0000-7000-8000-00000000000a", version: 3 };
 
-/** The seven, as the contract names them (`queue-and-verdicts/blocked-reasons-five`). */
+/** The eight, as the contract names them (`queue-and-verdicts/blocked-reasons-five`). */
 const BLOCKED_REASONS = [
   "credential_refused",
   "key_spent",
@@ -47,6 +48,7 @@ const BLOCKED_REASONS = [
   "awaiting_dependency",
   "failing_alone",
   "instance_changed",
+  "record_unread",
 ] as const;
 
 function held() {
@@ -1071,11 +1073,11 @@ describe("the ceiling, and releasing what it stopped", () => {
     ).toBe(0);
   });
 
-  it("reports one of the seven blocked reasons and no other", async () => {
+  it("reports one of the eight blocked reasons and no other", async () => {
     // Every answer that blocks, each in its own store, and the set of
-    // reasons they produce compared against the seven. Both directions: a
-    // reason outside the seven is a store no later build reads, and a reason
-    // in the seven that nothing produces is a promise the device cannot keep.
+    // reasons they produce compared against the eight. Both directions: a
+    // reason outside the eight is a store no later build reads, and a reason
+    // in the eight that nothing produces is a promise the device cannot keep.
     const reached = new Set<string>();
     const blocking: ScriptedWrites[] = [
       { update: [refusal(401, "unauthorized", "revoked")] },
@@ -1223,9 +1225,31 @@ describe("the ceiling, and releasing what it stopped", () => {
       await moved.stop();
     }
 
+    // The eighth comes from setting aside a damaged store: a carried write
+    // whose record of how it is sent does not read.
+    const damaged = await hydratedHarness("class-reasons-record-unread", {
+      items: held(),
+    });
+    try {
+      const carried = await damaged.device.create({
+        type: "core.note",
+        properties: { title: "carried", body: "carried" },
+      });
+      expect(carried.ok).toBe(true);
+      damageTable(damaged.device.store, "body_checks");
+      expect((await damaged.device.setAside()).ok).toBe(true);
+      const row = (await queueOf(damaged)).find(
+        (row) => carried.ok && row.id === carried.value.id,
+      );
+      expect(row?.reason).not.toBeNull();
+      if (row?.reason != null) reached.add(row.reason);
+    } finally {
+      await damaged.stop();
+    }
+
     expect(
       [...reached].sort(),
-      "the reasons this device can reach are not the seven the contract names: a reason outside them is one the store refuses to record, and one inside them that nothing produces is a promise nothing keeps",
+      "the reasons this device can reach are not the eight the contract names: a reason outside them is one the store refuses to record, and one inside them that nothing produces is a promise nothing keeps",
     ).toEqual([...BLOCKED_REASONS].sort());
   });
 

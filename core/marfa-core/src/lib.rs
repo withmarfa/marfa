@@ -318,6 +318,17 @@ pub struct Core {
     /// Raised by a table held while another call held the stream; a follow
     /// looks at it each time it waits for a frame.
     tables_owed: AtomicBool,
+    /// `damage::seen` as the core opened, so its close keeps the
+    /// write-ahead log of a store found damaged since.
+    damage_seen: u64,
+}
+
+impl Drop for Core {
+    fn drop(&mut self) {
+        if let Ok(conn) = self.conn.lock() {
+            damage::keep_log_if_met(&conn, self.damage_seen);
+        }
+    }
 }
 
 const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
@@ -557,7 +568,8 @@ impl Core {
     /// first. The file budget's setting is kept, as far as the old store
     /// gives it: where it holds none, or none that can be read, the new store
     /// has the default. The blob cache is kept: it is addressed by content,
-    /// not by the store.
+    /// not by the store. Refuses with `Invalid` a folder's store, and with
+    /// `StoreDamaged` while a set-aside of the store is unfinished.
     pub fn replace_refused(path: impl AsRef<Path>, server: Option<Server>) -> Result<Core> {
         let path = path.as_ref();
         // Held from the count to the returned core, so no write can be
@@ -568,6 +580,8 @@ impl Core {
         if let Some(server) = &server {
             http::Http::new(&server.url, &server.key)?;
         }
+        store::refuse_folders(path)?;
+        damage::refuse_unfinished(path)?;
         if path.symlink_metadata().is_err() {
             return Err(CoreError::Invalid(format!(
                 "{} holds no store to replace",
@@ -609,10 +623,12 @@ impl Core {
     /// another process, or another `Core` in this one, holds the writer role,
     /// with `UnsentDiffers` and the store's own count where it holds another
     /// number of such writes or one that cannot be counted, and with
-    /// `Invalid` where the store is a folder's, bound or not. A process that
-    /// only reads the store does not hold the writer role, so it does not
-    /// stop the removal. A path with no store holds
-    /// none, so it answers as removed, taking any lock or bytes left there.
+    /// `Invalid` where the store is a folder's, bound or not, and with
+    /// `StoreDamaged` while a set-aside of the store is unfinished, which
+    /// asking for the set-aside again finishes. A process that only reads the
+    /// store does not hold the writer role, so it does not stop the removal.
+    /// A path with no store holds none, so it answers as removed, taking any
+    /// lock or bytes left there.
     pub fn remove_store(path: impl AsRef<Path>, unsent: u64) -> Result<()> {
         Self::remove_agreed(path.as_ref(), Some(unsent))
     }
@@ -648,9 +664,12 @@ impl Core {
         // path that the removal would then take.
         let lock = lock::WriterLock::claim(Some(path))?;
         lock.refuse_unless_writer()?;
+        store::refuse_folders(path)?;
+        // The missing store a stopped set-aside leaves is no store with no writes.
+        damage::refuse_unfinished(path)?;
         let held = match path.metadata() {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(0),
-            _ => store::removal_count(path)?,
+            _ => store::removal_count(path),
         };
         differs(held)?;
         // The store goes after the fetched bytes, so a removal that stops
@@ -681,6 +700,7 @@ impl Core {
             renewals: Arc::default(),
             reclaim_held_until: Mutex::default(),
             tables_owed: AtomicBool::new(false),
+            damage_seen: damage::seen(),
         })
     }
 
@@ -712,26 +732,31 @@ impl Core {
         lock: Arc<lock::WriterLock>,
         cache: Option<blob::Cache>,
     ) -> Result<Core> {
+        let damage_seen = damage::seen();
         let http = match server {
             Some(server) => Some(Arc::new(http::Http::new(&server.url, &server.key)?)),
             None => None,
         };
-        let relocation = if let Some(http) = &http
-            && let Some(expected) = store::meta_get(&conn, store::META_SERVER_ORIGIN)?
-            && expected != http.origin()
-        {
-            Some((expected, store::meta_get(&conn, store::META_INSTANCE_ID)?))
-        } else {
-            None
-        };
-        // A copy that has never reached a server holds the types Marfa ships,
-        // so an app can save before it has connected.
-        if lock.handle() == Handle::Writer
-            && store::never_synced(&conn)?
-            && store::catalog_version(&conn)?.is_none()
-        {
-            store::hold_local_catalog_alone(&conn)?;
-        }
+        let relocation = (|| -> Result<_> {
+            let relocation = if let Some(http) = &http
+                && let Some(expected) = store::meta_get(&conn, store::META_SERVER_ORIGIN)?
+                && expected != http.origin()
+            {
+                Some((expected, store::meta_get(&conn, store::META_INSTANCE_ID)?))
+            } else {
+                None
+            };
+            // A copy that has never reached a server holds the types Marfa
+            // ships, so an app can save before it has connected.
+            if lock.handle() == Handle::Writer
+                && store::never_synced(&conn)?
+                && store::catalog_version(&conn)?.is_none()
+            {
+                store::hold_local_catalog_alone(&conn)?;
+            }
+            Ok(relocation)
+        })()
+        .inspect_err(|_| damage::keep_log_if_met(&conn, damage_seen))?;
         let conn = Arc::new(Mutex::new(conn));
         let renewals = Arc::new(Mutex::new(Vec::new()));
         if let Some(http) = &http {
@@ -784,6 +809,7 @@ impl Core {
             renewals,
             reclaim_held_until: Mutex::default(),
             tables_owed: AtomicBool::new(false),
+            damage_seen,
         })
     }
 
@@ -1967,7 +1993,7 @@ impl Core {
     }
 
     /// Answers `false` for any row not blocked `ancestor_unavailable`,
-    /// `conflict_unresolved`, `failing_alone` or `instance_changed`. Everything it puts back is read from the server
+    /// `conflict_unresolved`, `failing_alone`, `instance_changed` or `record_unread`. Everything it puts back is read from the server
     /// before anything changes, so a withdraw that cannot read leaves the
     /// queue and the copy as they were. A row write goes with every write of
     /// its batch, or none does.

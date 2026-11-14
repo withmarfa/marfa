@@ -262,6 +262,7 @@ export interface SetAsideReport {
   unread_ids: string[];
   whole: boolean;
   held: number;
+  record_unread: number;
 }
 
 export interface Status {

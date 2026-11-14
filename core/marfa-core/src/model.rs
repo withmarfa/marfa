@@ -1263,6 +1263,9 @@ pub enum BlockedReason {
     /// Queued against an instance other than the one the copy was built from
     /// since: sent only once a caller releases it.
     InstanceChanged,
+    /// Carried from a store set aside where a record that decides how it is
+    /// sent could not be read: sent only once a caller releases it.
+    RecordUnread,
 }
 
 /// The reason the queue stores under `blocked` for a write held behind
@@ -1307,13 +1310,14 @@ fn grouped(number: usize) -> String {
 }
 
 impl BlockedReason {
-    pub const ALL: [BlockedReason; 6] = [
+    pub const ALL: [BlockedReason; 7] = [
         BlockedReason::CredentialRefused,
         BlockedReason::KeySpent,
         BlockedReason::AncestorUnavailable,
         BlockedReason::ConflictUnresolved,
         BlockedReason::FailingAlone,
         BlockedReason::InstanceChanged,
+        BlockedReason::RecordUnread,
     ];
 
     pub const fn as_str(self) -> &'static str {
@@ -1324,6 +1328,7 @@ impl BlockedReason {
             BlockedReason::ConflictUnresolved => "conflict_unresolved",
             BlockedReason::FailingAlone => "failing_alone",
             BlockedReason::InstanceChanged => "instance_changed",
+            BlockedReason::RecordUnread => "record_unread",
         }
     }
 }
@@ -1337,7 +1342,7 @@ impl FromStr for BlockedReason {
             .find(|reason| reason.as_str() == text)
             .ok_or_else(|| {
                 CoreError::Invalid(format!(
-                    "{text:?} is not one of the six blocked reasons a caller can release by: {}",
+                    "{text:?} is not one of the seven blocked reasons a caller can release by: {}",
                     BlockedReason::ALL.map(BlockedReason::as_str).join(", ")
                 ))
             })
@@ -1492,6 +1497,7 @@ impl QueuedWrite {
                     | BlockedReason::ConflictUnresolved
                     | BlockedReason::FailingAlone
                     | BlockedReason::InstanceChanged
+                    | BlockedReason::RecordUnread
             )
         )
     }

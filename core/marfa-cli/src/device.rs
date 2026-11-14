@@ -308,7 +308,7 @@ pub enum DeviceCommand {
         reason: Option<marfa_core::BlockedReason>,
     },
     /// Take a write blocked `ancestor_unavailable`, `conflict_unresolved`,
-    /// `failing_alone` or `instance_changed` out of the queue, and put the
+    /// `failing_alone`, `instance_changed` or `record_unread` out of the queue, and put the
     /// copy back to what the server holds.
     ///
     /// A release sends a write again on the version it already names. A write
@@ -368,7 +368,9 @@ pub enum DeviceCommand {
     /// The new store holds no copy: hydrate it, and then drain, to send what
     /// it carries; a drain before then sends nothing. Where the old store
     /// does not say which instance it was built from, each carried write is
-    /// held blocked instance_changed until released. A store that opens as it
+    /// held blocked instance_changed until released, and a carried write
+    /// whose record of how it is sent does not read is held blocked
+    /// record_unread until released. A store that opens as it
     /// is, or a folder's store, is refused invalid. A set-aside that stopped
     /// part way is finished by running it again, and until then the store is
     /// refused store_damaged.
@@ -2082,7 +2084,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     format!("withdrew {id}; the copy holds what the server holds")
                 } else {
                     format!(
-                        "nothing to withdraw: {id} is not blocked ancestor_unavailable, conflict_unresolved, failing_alone or instance_changed"
+                        "nothing to withdraw: {id} is not blocked ancestor_unavailable, conflict_unresolved, failing_alone, instance_changed or record_unread"
                     )
                 }
             })
@@ -2115,7 +2117,13 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     ));
                 }
                 if !done.whole {
-                    line.push_str("\nthe queue could not be read whole, so the store set aside may hold more writes");
+                    line.push_str("\nthe queue, or a record that decides how a carried write is sent, could not be read whole, so the store set aside may hold more");
+                }
+                if done.record_unread > 0 {
+                    line.push_str(&format!(
+                        "\n{} write(s) held blocked record_unread, since a record that decides how each is sent could not be read: release them to send them without it",
+                        done.record_unread
+                    ));
                 }
                 if done.held > 0 {
                     line.push_str(&format!(
