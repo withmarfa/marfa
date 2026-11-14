@@ -6472,6 +6472,14 @@ If a device cannot tell the size of the row a `patch` leaves, because it does no
 
 **Tests:** `device/table-writes-live.test.ts › queues a patch of a row the copy does not hold for the server to judge its size`.
 
+### `device/table-write-required-unjudged`
+
+If a device cannot tell whether a row it does not hold keeps a value the writing key may not read, then a device MUST queue every `put` of that row in a batch that leaves out a required column of type `item`, up to a `delete` of the row in the batch.
+
+**Reason:** a device never refuses what the server might take, and what one operation of a batch leaves out the next leaves out as well.
+
+**Tests:** `device/table-writes-live.test.ts › queues each put of a batch that leaves out a required item column of a row the copy does not hold, for the server to keep what the key may not read`.
+
 ### `device/table-write-withheld`
 
 If an operation of a batch names in `values` a column that the row the device holds names in `withheld`, then a device MUST refuse the write `forbidden`, naming the operation and the column.

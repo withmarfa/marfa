@@ -647,6 +647,60 @@ describe("a write the copy shows at once", () => {
     );
   });
 
+  it("queues each put of a batch that leaves out a required item column of a row the copy does not hold, for the server to keep what the key may not read", async () => {
+    counter += 1;
+    const type = `user.table-required-ref-${String(counter)}`;
+    const made = await working.registerType({
+      id: type,
+      fields: { title: { type: "string" } },
+      tables: {
+        steps: {
+          columns: {
+            count: { type: "integer", required: true },
+            ref: { type: "item", required: true },
+          },
+        },
+      },
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const item = await itemOf(type);
+    const row = uuidv7();
+    const note = await working.createItem({
+      type: "core.note",
+      properties: { title: "Named" },
+    } as never);
+    expect(note.status, JSON.stringify(note.error)).toBe(201);
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, ref: note.data.item.id } },
+    ]);
+    const narrow = await keyFor({ [type]: "write" });
+    const loose = deviceFor("required-ref", narrow.key);
+    value(await loose.hydrate([type], "library"));
+    const queuedPut = value(
+      await loose.writeRows(item, "steps", [
+        { op: "put", id: row, values: { count: 2 } },
+        { op: "put", id: row, values: { count: 3 } },
+      ]),
+    );
+    expect(queuedPut.kind).toBe("write_rows");
+    expect(verdictOf(value(await loose.drain()), queuedPut.id)).toBe(
+      "accepted",
+    );
+    expect(await serverRows(item)).toEqual({
+      [row]: { count: 3, ref: note.data.item.id },
+    });
+    // The witness: a delete leaves no row to keep a reference, so a put after it is refused.
+    const fresh = uuidv7();
+    const missing = refused(
+      await loose.writeRows(item, "steps", [
+        { op: "put", id: fresh, values: { count: 2 } },
+        { op: "delete", id: fresh },
+        { op: "put", id: fresh, values: { count: 3 } },
+      ]),
+    );
+    expect(missing.raw).toContain("operations.2.values.ref");
+  });
+
   it("refuses a write naming a column the row it holds withholds", async () => {
     const { device, item, row } = await judging("withheld");
     const withheld = refused(

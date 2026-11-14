@@ -188,7 +188,6 @@ fn judge_rows(
                 rows::refuse_wide(index, &next).map_err(refused)?;
                 row.exists = Some(true);
                 row.values = Some(next);
-                row.withheld.get_or_insert_with(Vec::new);
             }
             Op::Patch { values, .. } => match row.values.as_mut() {
                 Some(held) if row.exists == Some(true) => {
@@ -1115,6 +1114,50 @@ mod tests {
         let columns = values(columns.clone());
         let ops = operations(&sent).unwrap();
         judge_rows(&conn, "item", "table", &columns, &ops, &sent, false)
+    }
+
+    #[test]
+    fn a_batch_keeps_what_the_copy_cannot_tell_of_a_rows_withheld_columns_across_its_operations() {
+        let columns = json!({
+            "count": { "type": "integer", "required": true },
+            "ref": { "type": "item", "required": true },
+        });
+        let id = "01a1b75e-2d9d-775a-930a-6b3d1207edae";
+        let other = "01a1b75e-2d9d-775a-930a-6b3d1207edaf";
+        let put =
+            |id: &str, count: i64| json!({ "op": "put", "id": id, "values": { "count": count } });
+        // Neither put can tell whether the row keeps a reference the key cannot see.
+        judged(&columns, vec![put(id, 1), put(id, 2)]).unwrap();
+        judged(&columns, vec![put(id, 1), put(other, 1), put(id, 2)]).unwrap();
+        judged(
+            &columns,
+            vec![
+                put(id, 1),
+                json!({ "op": "patch", "id": id, "values": { "count": 3 } }),
+                put(id, 2),
+            ],
+        )
+        .unwrap();
+        // A delete leaves no row to keep one, so a put after it must carry the column.
+        let after_delete = judged(
+            &columns,
+            vec![put(id, 1), json!({ "op": "delete", "id": id }), put(id, 2)],
+        )
+        .unwrap_err();
+        assert!(
+            after_delete.to_string().contains("operations.2.values.ref"),
+            "{after_delete}"
+        );
+        // A row put under a fresh id is new, and keeps nothing.
+        let fresh = judged(
+            &columns,
+            vec![put(id, 1), json!({ "op": "put", "values": { "count": 1 } })],
+        )
+        .unwrap_err();
+        assert!(
+            fresh.to_string().contains("operations.1.values.ref"),
+            "{fresh}"
+        );
     }
 
     #[test]
