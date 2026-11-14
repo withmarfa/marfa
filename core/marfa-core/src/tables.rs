@@ -1186,7 +1186,6 @@ pub(crate) enum Applied {
     Changed,
 }
 
-/// Applies `rows.changed` in the transaction that moves the cursor past it.
 pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) -> Result<Applied> {
     let item = event.item.id.as_str();
     let table = event.table.as_str();

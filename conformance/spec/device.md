@@ -5134,7 +5134,7 @@ If a hydration, a catch-up or a follow ends `decoding` on an answer the device c
 
 If a catch-up or a held stream ends `decoding` on an event whose data the device cannot parse as JSON, then a device MUST keep the cursor it had.
 
-**Reason:** the cursor names the last event the device applied, and an event it could not read was not applied (`device/event-id-number`).
+**Reason:** the cursor must not step over an event the device could not read (`device/event-id-number`).
 
 **Tests:** `device/catch-up.test.ts › ends a catch-up decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`, `› ends a follow decoding, keeping the copy and the cursor it had, where the reader cannot decode an event`.
 
