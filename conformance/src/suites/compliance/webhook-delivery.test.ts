@@ -965,10 +965,19 @@ describe("outbound webhook delivery", () => {
       await patch("type-narrowed", { type_filter: null });
       const later = await makeNote("filters-widened");
       for (const label of ["events-narrowed", "type-narrowed"]) {
-        await waitFor(`the delivery of ${label} for a later event`, async () =>
-          hook.attempts(label).length >= 2 ? true : undefined,
+        // The receiver sees the request before the server records its outcome.
+        const rows = await waitFor(
+          `the recorded delivery of ${label} for a later event`,
+          async () => {
+            if (hook.attempts(label).length < 2) return undefined;
+            const listed = await client.listWebhookDeliveries(
+              subs.get(label)!.id,
+            );
+            return listed.data.data.some((r) => r.status === "pending")
+              ? undefined
+              : listed;
+          },
         );
-        const rows = await client.listWebhookDeliveries(subs.get(label)!.id);
         expect(rows.data.data, label).toHaveLength(2);
         expect(rows.data.data.map((r) => r.status).sort(), label).toEqual([
           "canceled",
