@@ -32,7 +32,7 @@ A release is a git tag `v<version>` on a commit of `main`. Pushing the tag runs 
    gh run list --workflow core.yml --branch main --json headSha,status,conclusion,createdAt --limit 10
    ```
 
-4. Check that the previous tag is a published release, not a draft (`gh release view v0.0.<N-1> --json isDraft`). `Read the version` refuses a version whose predecessor is only tagged, or that is itself released already.
+4. Check that the previous tag is a published release, not a draft (`gh release view v<previous version> --json isDraft`). `Read the version` refuses a version whose predecessor is only tagged, or that is itself released already.
 5. If the database schema (`core/marfa-server/src/db/migrations/`) or the archive layout changed since the previous release, write down what an owner must do before upgrading. Every release's notes start with the same `scripts/release/upgrade-note.md`, so add the words to this release's notes once it is public (step 4 of [Check the release](#check-the-release)).
 6. To prove a change to the release itself or to the native pins before tagging, run a dry run on the commit and wait for it:
 
