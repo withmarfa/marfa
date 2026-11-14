@@ -90,19 +90,13 @@ pub const META_READ_ONLY_READ: &str = "read_only_read_at";
 /// copy no longer holds once there are more than twice this many.
 pub const EDGE_CHANGES_KEPT: usize = 10_000;
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-/// The version of the shape `schema.sql` makes, held in SQLite's
-/// `user_version`. A change to that shape raises it and adds its hash to the
-/// list in `the_shape_this_build_makes_is_the_one_its_version_names`.
+/// SQLite's `user_version`; a shape change increments it and appends to `SHAPES`.
 pub const SCHEMA_VERSION: i64 = 4;
 
-/// The earliest version a writer upgrades in place; a store at an earlier one
-/// is refused `wrong_schema`. It moves with `SCHEMA_VERSION` until the release
-/// that first opens earlier stores, and stays there from then on.
+/// Moves with `SCHEMA_VERSION` until the first compatible release, then stays fixed.
 const OLDEST_UPGRADED: i64 = SCHEMA_VERSION;
 
-/// The step that takes a store from each version to the next, the first from
-/// `OLDEST_UPGRADED`. Each changes the store's shape and keeps every write its
-/// queue holds.
+/// One SQL step per version, starting at `OLDEST_UPGRADED`.
 const UPGRADES: &[&str] = &[];
 
 fn upgraded(found: i64) -> bool {
@@ -850,8 +844,6 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
     )?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     tune(conn)?;
-    // A store at another version is upgraded or refused, never discarded,
-    // because it may hold writes the server has never seen.
     match version(conn)? {
         SCHEMA_VERSION => {}
         0 if !holds_tables(conn)? => make(conn)?,
@@ -911,9 +903,7 @@ pub(crate) fn make_marked(path: &Path, marks: &[(&str, &str)]) -> Result<(), Cor
     without_log(&conn)
 }
 
-/// Takes the store from the version it records to `oldest` plus the number of
-/// `steps`, running the steps from its version in one transaction, so a crash
-/// leaves it at its version or the new one.
+/// A crash must leave the store at its original version or the target version.
 fn upgrade(conn: &Connection, oldest: i64, steps: &[&str]) -> Result<(), CoreError> {
     let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
     let target = oldest + steps.len() as i64;
@@ -1099,9 +1089,7 @@ pub(crate) fn untaken_count(conn: &Connection) -> Option<u64> {
     untaken(conn).map(|writes| writes.len() as u64)
 }
 
-/// The writes `untaken_count` counts, in queue order, read with raw SQL so a
-/// kind this build does not send is listed too. `None` where they cannot be
-/// read.
+/// Raw strings preserve kinds and verdicts this build does not recognize.
 pub(crate) fn untaken(conn: &Connection) -> Option<Vec<crate::UnsentWrite>> {
     let read = (|| -> Result<Vec<crate::UnsentWrite>, CoreError> {
         conn.execute_batch("CREATE TEMP TABLE queue AS SELECT * FROM main.queue")?;
@@ -9542,8 +9530,6 @@ mod tests {
             });
             assert_eq!(queued.kind, kind);
         }
-        // A device never queues a purge, so a reader refuses a queue that
-        // holds one, which only a store another build made can.
         assert!("purge_item".parse::<WriteKind>().is_err());
         assert!(queued_writes(&conn).is_ok());
         conn.execute(
@@ -10744,11 +10730,7 @@ mod tests {
         assert_eq!(unsent, Some(0));
     }
 
-    /// The hash of the shape each schema version makes, version one first.
-    /// An entry once written never changes: any change to what `schema.sql`
-    /// makes, tables, indexes and triggers alike, is a new version with a new
-    /// entry, so a store of an earlier shape is upgraded or refused rather
-    /// than misread.
+    /// Append one hash per schema version; never change an existing entry.
     const SHAPES: [&str; 4] = [
         "9a505dc1b14cecc6",
         "115c1d4def4a3d91",

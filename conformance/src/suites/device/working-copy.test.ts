@@ -1946,8 +1946,6 @@ describe("the working copy belongs to one server", () => {
     } finally {
       store.close();
     }
-    // The witness: the store is refused, so its own build alone could show
-    // the writes until now.
     const refused = await device.queue();
     expect(refused.ok ? null : refused.refusal.code).toBe("wrong_schema");
 
@@ -1973,8 +1971,6 @@ describe("the working copy belongs to one server", () => {
     const queued = await device.replaceMetadata("n1", ["held"]);
     expect(queued.ok, JSON.stringify(queued)).toBe(true);
 
-    // What an earlier build would have left: a write of a kind this build no
-    // longer queues, here the metadata merge it once sent.
     const reshape = (kind: string) => {
       const store = new DatabaseSync(device.store);
       try {

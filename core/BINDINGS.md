@@ -91,6 +91,8 @@ Each binding takes a `Stop` on the calls that can be stopped, such as a hydratio
 
 A writer upgrades in place a store an earlier build made, from the first version this build upgrades, and keeps every write its queue holds. A store of a later version, or of one earlier than that, is refused with the error coded `wrong_schema` and left unchanged. `readUnsent` lists each write such a store holds that the server has not taken, with its id, its kind as the store names it, its item, its body and its verdict, so an app can show the person what removing it would lose.
 
+`readUnsent` does not open a core or upgrade the store. It holds the writer lock and reads the database through a read-only connection. It refuses with `reading_handle` while another core holds that lock, or `store` if it cannot read the queue. The kind and verdict are raw strings and can include values this build does not recognize. A waiting write has no verdict: Node omits the field, and Swift returns `nil`.
+
 ## A store that cannot be read
 
 A store SQLite cannot read, whole or in part, is refused with the error code `store_damaged`. A refusal at open names its `path` and gives `unsent`, the number of writes its queue holds that the server has not taken, or none if the queue cannot be read in full.
