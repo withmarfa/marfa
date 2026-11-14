@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
-import { listEntries } from "../../utils/archive.js";
+import { blobEntry, listEntries } from "../../utils/archive.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -92,7 +92,7 @@ describe("an archive export that reads everything", () => {
     expect(response.status).toBe(200);
     const archive = new Uint8Array(await response.arrayBuffer());
     const names = listEntries(archive).map((entry) => entry.name);
-    for (const hash of hashes) expect(names).toContain(`blobs/${hash}`);
+    for (const hash of hashes) expect(names).toContain(blobEntry(hash));
     await waitFor("the spool to empty", () =>
       Promise.resolve(spooled().length === 0 ? true : undefined),
     );

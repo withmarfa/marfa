@@ -16,11 +16,8 @@ import { heldWhenHealthAnswered } from "../../utils/held-when-answered.js";
  * and its last item (`instance/long-job-health`); `heldWhenHealthAnswered`
  * says how the order is witnessed.
  *
- * A restore holds the write lock from its first item to its commit, so the
- * write probe cannot commit while it is held. The write wait is set shorter
- * than the time `/health` waits on the probe, so the probe's attempt during
- * the hold ends `degraded` and answers the calls of the next ten seconds, and
- * the request the release admits waits on no write.
+ * During the restore's write hold, health reports the restore directly
+ * without queuing a write probe.
  */
 let server: FreshServer;
 

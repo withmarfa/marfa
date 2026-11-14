@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use super::{Destination, OMISSIONS, missing_past_retention, parse};
+use super::{Destination, Listing, OMISSIONS, last_thinned, parse};
 use crate::app::App;
 use crate::app::archive::restore::named::files_named;
 use crate::app::blobs::Hash;
@@ -20,23 +20,20 @@ struct Found {
     seq: i64,
     name: String,
     files_read: bool,
-    missing_since: Option<String>,
     omissions: i64,
 }
 
 fn found(tx: &Transaction<'_>, store: &str) -> Result<Vec<Found>> {
     Ok(tx
         .prepare_cached(
-            "SELECT seq, name, files_read, missing_since, omissions FROM found_backups \
-             WHERE store_id = ?1",
+            "SELECT seq, name, files_read, omissions FROM found_backups WHERE store_id = ?1",
         )?
         .query_map([store], |row| {
             Ok(Found {
                 seq: row.get(0)?,
                 name: row.get(1)?,
                 files_read: row.get(2)?,
-                missing_since: row.get(3)?,
-                omissions: row.get(4)?,
+                omissions: row.get(3)?,
             })
         })?
         .collect::<rusqlite::Result<_>>()?)
@@ -80,43 +77,28 @@ fn forget(tx: &Transaction<'_>, seq: i64) -> Result<()> {
 }
 
 /// Counts each found backup the listing omits, forgetting one omitted as `reconcile` forgets a
-/// backup the server put.
+/// backup the server put, judged at `at`.
 pub(super) fn settle(
     tx: &Transaction<'_>,
     store: &str,
     listed: &HashSet<String>,
-    now: Stamp,
+    at: Option<Stamp>,
 ) -> Result<()> {
+    let listing = Listing::of(listed);
+    let mut counted =
+        tx.prepare_cached("UPDATE found_backups SET omissions = ?2 WHERE seq = ?1")?;
     for backup in found(tx, store)? {
         if listed.contains(&backup.name) {
-            if backup.missing_since.is_some() || backup.omissions > 0 {
-                tx.prepare_cached(
-                    "UPDATE found_backups SET missing_since = NULL, omissions = 0 WHERE seq = ?1",
-                )?
-                .execute([backup.seq])?;
+            if backup.omissions > 0 {
+                counted.execute(params![backup.seq, 0])?;
             }
             continue;
         }
-        let since = match backup.missing_since.as_deref().map(Stamp::parsed) {
-            None => now,
-            Some(Some(since)) => since,
-            Some(None) => {
-                tracing::error!(
-                    backup = %backup.name,
-                    "When listings began to omit a found backup does not read, so the files it \
-                     names stay held"
-                );
-                continue;
-            }
-        };
         let omissions = backup.omissions.saturating_add(1);
-        if omissions >= OMISSIONS && missing_past_retention(since, now) {
+        if omissions >= OMISSIONS && at.is_some_and(|at| listing.would_thin(&backup.name, at)) {
             forget(tx, backup.seq)?;
         } else {
-            tx.prepare_cached(
-                "UPDATE found_backups SET missing_since = ?2, omissions = ?3 WHERE seq = ?1",
-            )?
-            .execute(params![backup.seq, since, omissions])?;
+            counted.execute(params![backup.seq, omissions])?;
         }
     }
     Ok(())
@@ -184,9 +166,15 @@ async fn read(app: &App, destination: &Destination, name: &str) -> Result<()> {
 }
 
 /// Records each backup `listed` in this instance's folder that the database records neither as
-/// put nor as found, with the files it names, and settles the found ones the listing omits. Only
-/// once this has succeeded do the found backups hold every file they name.
-pub(super) async fn survey(app: &App, destination: &Destination, listed: &[String]) -> Result<()> {
+/// put nor as found, with the files it names, and settles the found ones the listing omits at the
+/// thinning `taken`, or else at the last thinning. Only once this has succeeded do the found
+/// backups hold every file they name.
+pub(super) async fn survey(
+    app: &App,
+    destination: &Destination,
+    listed: &[String],
+    taken: Option<Stamp>,
+) -> Result<()> {
     let store = destination.id().to_string();
     let looked = store.clone();
     let (put, held) = app
@@ -214,7 +202,13 @@ pub(super) async fn survey(app: &App, destination: &Destination, listed: &[Strin
     let (listed, now): (HashSet<String>, Stamp) =
         (listed.iter().cloned().collect(), app.clock.instant());
     app.db
-        .write(Write::own(), move |tx| settle(tx, &store, &listed, now))
+        .write(Write::own(), move |tx| {
+            let at = match taken {
+                Some(taken) => Some(taken),
+                None => last_thinned(tx, &store, now)?,
+            };
+            settle(tx, &store, &listed, at)
+        })
         .await
 }
 
@@ -230,5 +224,5 @@ pub async fn survey_folder(app: &App) -> Result<()> {
         .into_iter()
         .map(|(name, _)| name)
         .collect();
-    survey(app, &destination, &listed).await
+    survey(app, &destination, &listed, None).await
 }

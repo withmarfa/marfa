@@ -2672,6 +2672,7 @@ dependencies = [
  "chrono",
  "clap",
  "fd-lock",
+ "flate2",
  "getrandom 0.4.3",
  "hex",
  "ipnet",

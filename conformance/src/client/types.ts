@@ -411,6 +411,7 @@ export interface BackupRun {
   removed: number;
   unremoved: number;
   blobs_lost: string[];
+  blobs_waiting: number;
 }
 
 /** What `POST /backups/folder/adopt` answers. */
@@ -830,7 +831,18 @@ export interface RestoreArchiveResponse {
   connector_agreements_skipped: number;
   rows_imported: number;
   rows_skipped: number;
-  set_up_again: string;
+  entries_skipped: string[];
+  line_kinds_skipped: string[];
+  settings_without_receiver: string[];
+  enforcement_added: string[];
+  enforcement_skipped: string[];
+  not_restored: { kind: string; message: string }[];
+  previous_instance?: {
+    instance_id: string;
+    destination: "folder" | "bucket" | null;
+    kept_by_previous_instance: string[];
+    message: string;
+  };
 }
 
 export interface PerfResult {

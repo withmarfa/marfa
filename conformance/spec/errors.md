@@ -340,7 +340,7 @@ The server MUST declare `503 write_contention` in its OpenAPI document on every 
 
 ### `errors/contention-budget`
 
-When the server answers `503 write_contention`, the server MUST carry the write wait it spent, in milliseconds, in `details.budget_ms`.
+When the server answers `503 write_contention` after a write waited for the write lock, the server MUST carry the write wait it spent, in milliseconds, in `details.budget_ms`.
 
 **Tests:** `compliance/write-contention.test.ts › names the budget it spent, so the setting is observable`.
 
@@ -804,7 +804,8 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `copies_below_minimum`               | 409                 | Dropping the copy would leave fewer live copies than the instance's minimum.                                                                                                                              |
 | `copy_held_by_backup`                | 409                 | A backup kept where the named store holds the files of backups names the blob.                                                                                                                            |
 | `edge_type_in_use`                   | 409                 | Edges of the edge type still exist, and the delete did not ask to force.                                                                                                                                  |
-| `export_entry_unrestorable`          | 409                 | An archive export selected an item or edge that a restore would refuse or skip. No archive bytes were sent. `details.entry` names it.                                                                     |
+| `enforcement_unreadable`             | 409                 | An archive export was asked for while the instance's stored enforcement settings do not read. No archive bytes were sent. Set the settings again, then export again.                                      |
+| `export_entry_unrestorable`          | 409                 | An archive export selected an item or edge that a restore would refuse or skip, or whose line is longer than a restore reads. No archive bytes were sent. `details.entry` names it.                       |
 | `housekeeping_job_running`           | 409                 | The housekeeping job is in the middle of a run.                                                                                                                                                           |
 | `id_reused`                          | 409                 | A caller-minted id already names a different item or edge.                                                                                                                                                |
 | `idempotency_key_in_flight`          | 409                 | An `Idempotency-Key` is held by another request, or kept changing hands. Retry.                                                                                                                           |
@@ -837,7 +838,7 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `inbound_unavailable`                | 503                 | An inbound endpoint cannot take a delivery now, because its connector's backlog is full or the instance holds as many bodies in flight as it allows. Retry later.                                         |
 | `stream_capacity_exhausted`          | 503                 | The instance is serving as many live event streams as it allows. `details.reason` is `viewer_cap`.                                                                                                        |
 | `too_many_connections`               | 503                 | The public listener holds as many open connections as it allows, or the caller's address does. Answered before any request is read; retry later.                                                          |
-| `write_contention`                   | 503                 | A write could not get the store's write lock within the busy budget. Retry it unchanged.                                                                                                                  |
+| `write_contention`                   | 503                 | A write could not get the store's write lock within the busy budget, or a restore is running (`details.reason` `restore_running`). Retry it unchanged.                                                    |
 | `insufficient_storage`               | 507                 | The volume the instance writes to has no room for the request, or the request would leave less free than the instance's reserve. Nothing was kept unless `details.write_outcome` is `unknown`.            |
 
 <!-- errors-table:end -->

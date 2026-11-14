@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use super::App;
+use super::access::Levers;
 use super::refusal::{Refusal, Result};
+use super::{App, provenance};
 use crate::db::Write;
 use crate::settings::registry::{self, Kind, Reading, Seeds, Setting};
 use crate::settings::report_unreadable;
@@ -131,7 +132,7 @@ where
     F: Future<Output = Result<(T, Option<Staged>)>> + Send + 'static,
 {
     let app = app.clone();
-    tokio::spawn(async move {
+    tokio::spawn(provenance::carried(async move {
         match write.await {
             Ok((value, staged)) => {
                 if let Some(staged) = staged {
@@ -146,7 +147,7 @@ where
                 Err(refusal)
             }
         }
-    })
+    }))
     .await
     .map_err(|_| Refusal::internal("a settings change did not finish"))?
 }
@@ -233,26 +234,96 @@ pub fn archived(line: &serde_json::Value) -> Result<(String, Option<String>)> {
     Ok((key.to_string(), Some(text)))
 }
 
+/// What a restore did with the archive's settings.
+#[derive(Debug, Default)]
+pub struct Restored {
+    pub added: usize,
+    pub skipped: usize,
+    /// Reporting switches stored on that send nothing, because this server names no receiver.
+    pub without_receiver: Vec<&'static str>,
+}
+
 /// Stores each archived setting the instance has none stored for, judged together with the
-/// instance's own as `/config` judges them, and answers how many it stored and how many it left.
-pub fn restore(
-    tx: &Transaction<'_>,
-    app: &App,
-    archived: &[(String, String)],
-) -> Result<(usize, usize)> {
-    let mut stored = rows(tx)?;
-    let held = archived.len();
+/// instance's own as `/config` judges them, and counts how many it stored and how many it left.
+pub fn restore(tx: &Transaction<'_>, app: &App, archived: &[(String, String)]) -> Result<Restored> {
+    let before = rows(tx)?;
     let added: Vec<&(String, String)> = archived
         .iter()
-        .filter(|(key, _)| !stored.iter().any(|(held, _)| held == key))
+        .filter(|(key, _)| !before.iter().any(|(held, _)| held == key))
         .collect();
-    stored.extend(added.iter().map(|&row| row.clone()));
+    let mut after = before.clone();
+    after.extend(added.iter().map(|&row| row.clone()));
     let touched: Vec<&str> = added.iter().map(|(key, _)| key.as_str()).collect();
-    super::config::judge_together(app, &stored, &touched)?;
+    super::config::judge_together(app, &before, &after, &touched)?;
     for (key, text) in &added {
         write_row(tx, key, text)?;
     }
-    Ok((added.len(), held - added.len()))
+    let without_receiver = [
+        registry::HEARTBEAT_ENABLED.entry.key,
+        registry::ERROR_REPORTING_ENABLED.entry.key,
+    ]
+    .into_iter()
+    .filter(|switch| {
+        added
+            .iter()
+            .any(|(key, text)| key == switch && text == "true")
+            && crate::settings::together::lacks_receiver(&app.settings.start, switch)
+    })
+    .collect();
+    Ok(Restored {
+        added: added.len(),
+        skipped: archived.len() - added.len(),
+        without_receiver,
+    })
+}
+
+/// What a restore did with the archive's enforcement settings, each by name.
+#[derive(Debug, Default)]
+pub struct RestoredLevers {
+    pub added: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
+/// Stores each archived enforcement setting the instance does not store and keeps each it does.
+/// Stored levers that do not read keep every one, since what they hold is not known.
+pub fn restore_enforcement(
+    tx: &Transaction<'_>,
+    archived: &serde_json::Map<String, serde_json::Value>,
+) -> Result<RestoredLevers> {
+    let names = || archived.keys().cloned().collect::<Vec<_>>();
+    let mut held = match get(tx, super::config::ENFORCEMENT_ROW)? {
+        None => serde_json::Map::new(),
+        Some(text) => match Levers::from_row(&text) {
+            Some(levers) => match levers.to_json() {
+                serde_json::Value::Object(held) => held,
+                _ => return Err(Refusal::internal("stored levers read as no object")),
+            },
+            None => {
+                return Ok(RestoredLevers {
+                    added: Vec::new(),
+                    skipped: names(),
+                });
+            }
+        },
+    };
+    let mut restored = RestoredLevers::default();
+    for (name, setting) in archived {
+        if held.contains_key(name) {
+            restored.skipped.push(name.clone());
+        } else {
+            held.insert(name.clone(), setting.clone());
+            restored.added.push(name.clone());
+        }
+    }
+    if !restored.added.is_empty() {
+        let levers = Levers::from_body_at(&serde_json::Value::Object(held), "enforcement")?;
+        put(
+            tx,
+            super::config::ENFORCEMENT_ROW,
+            &levers.to_json().to_string(),
+        )?;
+    }
+    Ok(restored)
 }
 
 #[cfg(test)]

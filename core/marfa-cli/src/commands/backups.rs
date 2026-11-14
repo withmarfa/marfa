@@ -17,8 +17,8 @@ pub enum BackupsCommand {
     Run,
     /// Restore a backup from the instance's backup folder or object store. The
     /// server reads it itself, files included, so nothing is downloaded here. It
-    /// restores as `restore` does an archive, and holds no sign-in, keys, apps
-    /// or webhooks. Requires private local authority (--socket).
+    /// restores as `restore` does an archive, and holds no sign-in, keys, apps,
+    /// webhooks or inbound endpoints. Requires private local authority (--socket).
     Restore {
         /// The id of the instance that took the backup, as `backups list` shows it.
         instance_id: String,
@@ -100,6 +100,17 @@ fn ran_text(answer: &Value) -> String {
             "\n{} lost, which the backup names and no store could give: {}",
             plural(lost.len() as u64, "file", "files"),
             lost.join(", ")
+        ));
+    }
+    let waiting = count(answer, "blobs_waiting");
+    if waiting > 0 {
+        let files = match waiting {
+            1 => "1 file it names waits for its copy".to_string(),
+            many => format!("{many} files it names wait for their copy"),
+        };
+        line.push_str(&format!(
+            "\nthe backup is incomplete: {files}. A restore needs those files unless the \
+             restoring instance holds them or the backup lists them as lost"
         ));
     }
     line

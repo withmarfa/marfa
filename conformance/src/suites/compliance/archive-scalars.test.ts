@@ -3,14 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import {
-  tar,
-  lineFile,
-  readLineFile,
-  itemsArchive,
-  blobHash,
-  archiveManifest,
-} from "../../utils/archive.js";
+import { editLineFile, itemsArchive, blobHash } from "../../utils/archive.js";
 import {
   cleanup,
   createTestContext,
@@ -59,17 +52,7 @@ function fixture() {
       [{ data, mime_type: "text/plain" }],
       [{ id: typeId, label: "Archive scalar", version: 1, fields: {} }],
     );
-    return tar([
-      {
-        name: "manifest.json",
-        body: JSON.stringify({ ...archiveManifest(base), edge_count: 1 }),
-      },
-      lineFile("instance", readLineFile(base, "instance") ?? ""),
-      lineFile("items", readLineFile(base, "items") ?? ""),
-      lineFile("edges", JSON.stringify({ edge }) + "\n"),
-      lineFile("rows", ""),
-      { name: `blobs/${hash}`, body: data },
-    ]);
+    return editLineFile(base, "edges", () => JSON.stringify({ edge }) + "\n");
   };
   // Also track refused fixtures: a regression that accepts them must clean up.
   trackItem(ctx, first);

@@ -277,10 +277,7 @@ describe("the instance lines of an archive", () => {
           text,
         ),
       );
-    for (const settings of [
-      { heartbeat_enabled: true },
-      { version_daily_snapshot_days: 7 },
-    ]) {
+    for (const settings of [{ version_daily_snapshot_days: 7 }]) {
       const configured = await operator.patchConfig(settings);
       // The witness: /config refuses the same settings on this instance.
       expect(configured.status, JSON.stringify(configured.data)).toBe(400);

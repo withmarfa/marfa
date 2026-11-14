@@ -18,7 +18,7 @@ use tokio::sync::{Notify, watch};
 
 use super::clock::Stamp;
 use super::refusal::{Code, Refusal, Result};
-use super::{App, config, stored};
+use super::{App, config, provenance, stored};
 use crate::db::Write;
 use crate::settings::registry::Setting;
 
@@ -364,16 +364,21 @@ pub async fn run_now(app: &Arc<App>, name: &str) -> Result<Ended> {
             )
         })?;
     let app = app.clone();
+    // The claim admits the run, so it is the request's write; the run itself is the server's.
+    let claiming = {
+        let (app, clock) = (app.clone(), app.clock.clone());
+        provenance::carried(async move {
+            app.db
+                .write(Write::own(), move |tx| {
+                    let at = clock.stamp();
+                    Ok(schedule::claim(tx, job.name, None, &at)?.then_some(at))
+                })
+                .await
+        })
+    };
     tokio::spawn(async move {
         let active = app.housekeeping.active();
-        let clock = app.clock.clone();
-        let claimed = app
-            .db
-            .write(Write::own(), move |tx| {
-                let at = clock.stamp();
-                Ok(schedule::claim(tx, job.name, None, &at)?.then_some(at))
-            })
-            .await?;
+        let claimed = claiming.await?;
         let started_at = claimed.ok_or_else(|| {
             Refusal::new(
                 Code::HousekeepingJobRunning,

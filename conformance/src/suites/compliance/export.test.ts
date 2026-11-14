@@ -17,10 +17,13 @@ import {
 } from "../../utils/setup.js";
 import { createNote, createBookmark } from "../../generators/items.js";
 import {
+  archiveFiles,
+  LINE_FILES,
   listEntries,
   readEntry,
   readLineFile,
   type LineFile,
+  blobEntry,
 } from "../../utils/archive.js";
 import { startReceiver } from "../../utils/webhook-receiver.js";
 
@@ -590,14 +593,16 @@ describe("the archive's contents", () => {
 
     const archive = await archiveOf(source);
     const entries = listEntries(archive).map((e) => e.name);
-    expect(entries.slice(0, 5)).toEqual([
+    expect(entries.slice(0, 7)).toEqual([
       "manifest.json",
+      "files.ndjson.gz",
       "instance.ndjson.gz",
       "items.ndjson.gz",
+      "versions.ndjson.gz",
       "edges.ndjson.gz",
       "rows.ndjson.gz",
     ]);
-    expect(entries.slice(5)).toEqual([`blobs/${upload.data.hash}`]);
+    expect(entries.slice(7)).toEqual([blobEntry(upload.data.hash)]);
 
     const manifest = JSON.parse(
       readEntry(archive, "manifest.json") ?? "{}",
@@ -605,26 +610,31 @@ describe("the archive's contents", () => {
     const typeLines = archiveLines(archive, "instance");
     expect(manifest).toMatchObject({
       version: 1,
+      format: "marfa-archive",
       written_by: expect.stringMatching(/^marfa-server /),
+      file_count: 1,
       item_count: 3,
+      version_count: 0,
       edge_count: 1,
       row_count: 0,
       blob_count: 1,
       type_count: typeLines.filter((l) => "type" in l).length,
       edge_type_count: typeLines.filter((l) => "edge_type" in l).length,
-      blobs: {
-        [upload.data.hash]: {
-          mime_type: "text/plain",
-          size_bytes: bytes.length,
-        },
-      },
     });
+    expect(archiveFiles(archive)).toEqual([
+      {
+        hash: upload.data.hash,
+        mime_type: "text/plain",
+        size_bytes: bytes.length,
+        state: "carried",
+      },
+    ]);
     expect(archiveItemIds(archive).sort()).toEqual([withBlob, a, b].sort());
     expect(archiveLines(archive, "edges")).toHaveLength(1);
     expect(Number.isNaN(Date.parse(String(manifest.created_at)))).toBe(false);
   });
 
-  it("leaves out the bytes of files and names them under missing_blobs when it names files=false", async () => {
+  it("leaves out the bytes of files and names them as not carried when it names files=false", async () => {
     const { writer, source } = await writerOfItsOwn("without-files");
     const bytes = new Uint8Array(Buffer.from(`without files ${ctx.runId}`));
     const upload = await writer.uploadBlob(bytes, "text/plain");
@@ -636,7 +646,7 @@ describe("the archive's contents", () => {
     // The witness: the same selection carries the file without the parameter.
     const whole = await archiveOf(source);
     expect(listEntries(whole).map((e) => e.name)).toContain(
-      `blobs/${upload.data.hash}`,
+      blobEntry(upload.data.hash),
     );
 
     const res = await client.exportArchive({ source, files: "false" });
@@ -645,16 +655,18 @@ describe("the archive's contents", () => {
       readEntry(res.data, "manifest.json") ?? "{}",
     ) as Record<string, unknown>;
     expect(manifest).toMatchObject({
+      file_count: 1,
       item_count: 1,
       blob_count: 0,
-      blobs: {},
-      missing_blobs: {
-        [upload.data.hash]: {
-          mime_type: "text/plain",
-          size_bytes: bytes.length,
-        },
-      },
     });
+    expect(archiveFiles(res.data)).toEqual([
+      {
+        hash: upload.data.hash,
+        mime_type: "text/plain",
+        size_bytes: bytes.length,
+        state: "not_carried",
+      },
+    ]);
     expect(
       listEntries(res.data).filter((e) => e.name.startsWith("blobs/")),
     ).toEqual([]);
@@ -703,16 +715,16 @@ describe("the archive's contents", () => {
       const entries = listEntries(archive.data);
       expect(entries.map((e) => e.name)).toEqual([
         "manifest.json",
+        "files.ndjson.gz",
         "instance.ndjson.gz",
         "items.ndjson.gz",
+        "versions.ndjson.gz",
         "edges.ndjson.gz",
         "rows.ndjson.gz",
       ]);
       const everything = [
         readEntry(archive.data, "manifest.json"),
-        ...(["instance", "items", "edges", "rows"] as const).map((name) =>
-          readLineFile(archive.data, name),
-        ),
+        ...LINE_FILES.map((name) => readLineFile(archive.data, name)),
       ].join("\n");
       for (const absent of [hook.data.secret, purgedLink, apiKey]) {
         expect(everything, absent).not.toContain(absent);

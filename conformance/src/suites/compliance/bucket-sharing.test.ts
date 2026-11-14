@@ -28,8 +28,8 @@ import {
 
 const DAY = 24 * 3_600_000;
 const SETTINGS = {
-  MARFA_BACKUP_INTERVAL_MS: "0",
-  MARFA_BLOB_CLEANUP_GRACE_MS: "0",
+  MARFA_BACKUP_INTERVAL_SECONDS: "0",
+  MARFA_BLOB_CLEANUP_GRACE_SECONDS: "0",
 };
 const servers: FreshServer[] = [];
 const images: string[] = [];
@@ -248,9 +248,15 @@ describe("two servers on one prefix", () => {
     }
     await second.pauseClock(true);
     try {
-      for (const days of [2, 40]) {
-        await second.advanceClock(days * DAY);
-        await cleanEverything(second);
+      // Thinning lets the backups that named them go once 31 later days hold a backup.
+      for (let day = 1; day <= 32; day++) {
+        await second.advanceClock(DAY);
+        if (day < 32) {
+          const daily = await ownerOf(second).runBackup();
+          expect(daily.status, JSON.stringify(daily.error)).toBe(200);
+        } else {
+          await cleanEverything(second);
+        }
       }
     } finally {
       await second.pauseClock(false);
@@ -378,9 +384,11 @@ describe("two servers on one prefix", () => {
 
     await server.pauseClock(true);
     try {
-      await server.advanceClock(40 * DAY);
-      const thinned = await ownerOf(server).runBackup();
-      expect(thinned.status, JSON.stringify(thinned.error)).toBe(200);
+      for (let day = 1; day <= 32; day++) {
+        await server.advanceClock(DAY);
+        const thinned = await ownerOf(server).runBackup();
+        expect(thinned.status, JSON.stringify(thinned.error)).toBe(200);
+      }
       const backups = await bucket.backupKeys();
       expect(backups).not.toContain(earlyKey);
       expect(backups).toContain(unrecordedKey);

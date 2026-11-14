@@ -750,7 +750,7 @@ If a key or app token with `blobs.manage` and no type map sends `GET /export`, t
 
 ### `blobs/export-carries-served`
 
-When a working key sends `GET /export?format=archive`, the server MUST carry a blob's bytes in the archive, as `blobs/<hash>`, only where the blob reads would serve them to that key.
+When a working key sends `GET /export?format=archive`, the server MUST carry a blob's bytes in the archive, as `blobs/<hex>`, only where the blob reads would serve them to that key.
 
 **Reason:** a digest in a reference that does not lend, in an edge or an extension namespace the key may not read, or only in an earlier version, carries no bytes unless another item the key reads lends it.
 

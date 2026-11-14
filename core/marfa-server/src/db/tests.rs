@@ -11,6 +11,7 @@ use super::migrate::{MIGRATIONS, Migration};
 use super::{Db, Options, Write};
 use crate::app::faults::Faults;
 use crate::app::items::bulk::each;
+use crate::app::provenance;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::failure::Failure;
 use crate::settings::DatabasePath;
@@ -279,6 +280,99 @@ async fn a_write_withdrawn_from_the_queue_never_runs() {
     db.write(WRITE, |tx| add(tx, 3)).await.unwrap();
     assert!(!ran.load(Ordering::SeqCst));
     assert_eq!(ids(&db).await, [1, 3]);
+}
+
+#[tokio::test]
+async fn a_hold_refuses_a_callers_write_at_once_and_queues_its_own_and_background_writes() {
+    let place = folder();
+    let db = Arc::new(open(&place.file));
+    let (release, released) = mpsc::channel::<()>();
+    let (started, running) = tokio::sync::oneshot::channel();
+    let busy = {
+        let db = db.clone();
+        tokio::spawn(async move {
+            db.write(WRITE, move |tx| {
+                let _ = started.send(());
+                let _ = released.recv();
+                add(tx, 1)
+            })
+            .await
+        })
+    };
+    running.await.unwrap();
+    let holding = db
+        .hold_writes(Refusal::new(Code::WriteContention, "held"))
+        .unwrap();
+    let own = {
+        let db = db.clone();
+        tokio::spawn(
+            holding
+                .permit()
+                .run(async move { db.write(WRITE, |tx| add(tx, 3)).await }),
+        )
+    };
+    let ran = Arc::new(AtomicBool::new(false));
+    let seen = ran.clone();
+    let asked = std::time::Instant::now();
+    let refusal = db
+        .write(WRITE, move |tx| {
+            seen.store(true, Ordering::SeqCst);
+            add(tx, 2)
+        })
+        .await
+        .unwrap_err();
+    assert!(asked.elapsed() < Duration::from_millis(100));
+    assert_eq!(refusal.message, "held");
+    assert!(refusal.details.is_none());
+    assert!(db.writes_held().is_some());
+    let background = {
+        let db = db.clone();
+        tokio::spawn(async move { db.write(Write::own(), |tx| add(tx, 4)).await })
+    };
+    tokio::task::yield_now().await;
+    release.send(()).unwrap();
+    busy.await.unwrap().unwrap();
+    own.await.unwrap().unwrap();
+    background.await.unwrap().unwrap();
+    drop(holding);
+    assert!(db.writes_held().is_none());
+    db.write(WRITE, |tx| add(tx, 5)).await.unwrap();
+    assert!(!ran.load(Ordering::SeqCst));
+    assert_eq!(ids(&db).await, [1, 3, 4, 5]);
+}
+
+#[tokio::test]
+async fn a_hold_refuses_bookkeeping_a_request_starts_on_another_task_and_queues_the_servers() {
+    let place = folder();
+    let db = Arc::new(open(&place.file));
+    let _holding = db
+        .hold_writes(Refusal::new(Code::WriteContention, "held"))
+        .unwrap();
+    let request = provenance::within(provenance::Origin::default(), async {
+        let spawned = {
+            let db = db.clone();
+            tokio::spawn(provenance::carried(async move {
+                db.write(Write::own(), |tx| add(tx, 1)).await
+            }))
+        };
+        let blocking = {
+            let db = db.clone();
+            let handle = tokio::runtime::Handle::current();
+            tokio::task::spawn_blocking(provenance::carried_blocking(move || {
+                handle.block_on(db.write(Write::own(), |tx| add(tx, 2)))
+            }))
+        };
+        let servers = {
+            let db = db.clone();
+            tokio::spawn(async move { db.write(Write::own(), |tx| add(tx, 3)).await })
+        };
+        (spawned.await, blocking.await, servers.await)
+    });
+    let (spawned, blocking, servers) = request.await;
+    assert_eq!(spawned.unwrap().unwrap_err().message, "held");
+    assert_eq!(blocking.unwrap().unwrap_err().message, "held");
+    servers.unwrap().unwrap();
+    assert_eq!(ids(&db).await, [3]);
 }
 
 #[tokio::test]

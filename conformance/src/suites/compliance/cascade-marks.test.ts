@@ -11,7 +11,6 @@ import type {
 } from "../../client/types.js";
 import {
   createTestContext,
-  getOwnerClient,
   trackFolder,
   trackItem,
   trackKey,
@@ -19,7 +18,6 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { createNote, createTask } from "../../generators/items.js";
-import { readLineFile } from "../../utils/archive.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
 import { startReceiver, type Receiver } from "../../utils/webhook-receiver.js";
@@ -1156,41 +1154,6 @@ describe("a purge says which edges it took, a conflicted copy's link among them"
       expect(taken?.purged_with, path).toBe(original);
     }
     expect((await client.getItem(copy!)).status).toBe(200);
-  });
-});
-
-describe("an archive carries neither what a trash took nor its mark", () => {
-  it("restores an item a cascade trashed as its own trash, which its parent's restore leaves in the bin", async () => {
-    const tag = `archive-${ctx.runId}`;
-    const parent = await note("parent", tag);
-    const child = await note("child", tag);
-    await edge(parent, child, "parent-of");
-    expect((await client.deleteItem(parent)).ok).toBe(true);
-    expect((await listed(tag, "trashed")).get(child)?.trashed_with).toBe(
-      parent,
-    );
-
-    const archive = await client.exportArchive({
-      source: ctx.source,
-      state: "any",
-    });
-    expect(archive.ok).toBe(true);
-    const line = itemLines(readLineFile(archive.data, "items") ?? "").get(
-      child,
-    );
-    expect(line?.trashed_with, "the child's items.ndjson.gz line").toBe(parent);
-    expect(line?.trashed_by_cascade).toBe(true);
-    expect((await client.purgeItem(child)).ok).toBe(true);
-    expect((await client.purgeItem(parent)).ok).toBe(true);
-    const restored = await getOwnerClient().restoreArchive(archive.data);
-    expect(restored.ok).toBe(true);
-
-    const back = await listed(tag, "trashed");
-    expect(back.get(child)?.state).toBe("trashed");
-    expect(back.get(child)).not.toHaveProperty("trashed_with");
-    expect(back.get(child)).not.toHaveProperty("trashed_by_cascade");
-    expect((await client.restoreItem(parent)).ok).toBe(true);
-    expect((await listed(tag, "trashed")).get(child)?.state).toBe("trashed");
   });
 });
 

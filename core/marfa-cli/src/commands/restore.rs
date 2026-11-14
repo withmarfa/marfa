@@ -25,30 +25,13 @@ pub fn run(args: RestoreArgs, remote: &Remote, out: &Printer) -> Result<(), CliE
     answered(&remote.json(&request(&args))?, out)
 }
 
-/// What a restore says is set up again, as one safe line of text.
-fn set_up_again_note(answer: &serde_json::Value) -> Option<String> {
-    answer
-        .get("set_up_again")
-        .and_then(serde_json::Value::as_str)
-        .map(crate::output::printable)
-}
-
-/// Prints a restore's answer, says what is set up again, and fails on blobs it lacks.
+/// Missing blobs make the command fail even when the restore succeeded.
 pub fn answered(answer: &serde_json::Value, out: &Printer) -> Result<(), CliError> {
     out.value(answer)?;
-    if let Some(note) = set_up_again_note(answer) {
-        crate::errln!("{note}");
+    for note in notes(answer) {
+        crate::errln!("{}", crate::output::printable(&note));
     }
-    let missing: Vec<String> = answer
-        .get("blobs_missing")
-        .and_then(serde_json::Value::as_array)
-        .map(|hashes| {
-            hashes
-                .iter()
-                .filter_map(|hash| hash.as_str().map(str::to_owned))
-                .collect()
-        })
-        .unwrap_or_default();
+    let missing = texts(answer, "blobs_missing");
     if missing.is_empty() {
         Ok(())
     } else {
@@ -56,21 +39,163 @@ pub fn answered(answer: &serde_json::Value, out: &Printer) -> Result<(), CliErro
     }
 }
 
+fn texts(answer: &serde_json::Value, key: &str) -> Vec<String> {
+    answer
+        .get(key)
+        .and_then(serde_json::Value::as_array)
+        .map(|held| {
+            held.iter()
+                .filter_map(|text| text.as_str().map(str::to_owned))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The lines a restore's answer gives a person beside the answer itself.
+fn notes(answer: &serde_json::Value) -> Vec<String> {
+    let mut notes = Vec::new();
+    let skipped = texts(answer, "entries_skipped");
+    if !skipped.is_empty() {
+        notes.push(format!(
+            "Skipped {} archive {} this build does not know: {}.",
+            skipped.len(),
+            if skipped.len() == 1 {
+                "entry"
+            } else {
+                "entries"
+            },
+            skipped.join(", ")
+        ));
+    }
+    let kinds = texts(answer, "line_kinds_skipped");
+    if !kinds.is_empty() {
+        notes.push(format!(
+            "Skipped instance lines of {} this build does not know: {}.",
+            if kinds.len() == 1 { "a kind" } else { "kinds" },
+            kinds.join(", ")
+        ));
+    }
+    for switch in texts(answer, "settings_without_receiver") {
+        notes.push(format!(
+            "Stored {switch}, which sends nothing until a receiver is set where Marfa runs."
+        ));
+    }
+    let added = texts(answer, "enforcement_added");
+    if !added.is_empty() {
+        notes.push(format!(
+            "Restored the archive's enforcement settings: {}.",
+            added.join(", ")
+        ));
+    }
+    let skipped = texts(answer, "enforcement_skipped");
+    if !skipped.is_empty() {
+        notes.push(format!(
+            "Kept this instance's own enforcement settings instead of the archive's: {}.",
+            skipped.join(", ")
+        ));
+    }
+    if let Some(message) = answer
+        .pointer("/previous_instance/message")
+        .and_then(serde_json::Value::as_str)
+    {
+        notes.push(message.to_string());
+    }
+    for kind in answer
+        .get("not_restored")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(message) = kind.get("message").and_then(serde_json::Value::as_str) {
+            notes.push(message.to_string());
+        }
+    }
+    notes
+}
+
 #[cfg(test)]
 mod tests {
-    use super::set_up_again_note;
     use serde_json::json;
 
+    use super::notes;
+
     #[test]
-    fn the_note_cannot_start_a_line_or_move_the_cursor() {
-        let answer = json!({"set_up_again": "keys\nrestored 0 items\u{1b}[2K"});
-        let note = set_up_again_note(&answer).expect("a note");
-        assert!(!note.contains('\n') && !note.contains('\u{1b}'), "{note:?}");
-        assert_eq!(note, "keys\\u{a}restored 0 items\\u{1b}[2K");
+    fn names_each_skipped_entry_before_what_to_set_up_again() {
+        let answer = json!({
+            "entries_skipped": ["._manifest.json", "PaxHeaders.4242/items.ndjson.gz"],
+            "not_restored": [{ "kind": "sign_in", "message": "Set up sign-in again." }],
+        });
+        assert_eq!(
+            notes(&answer),
+            [
+                "Skipped 2 archive entries this build does not know: ._manifest.json, PaxHeaders.4242/items.ndjson.gz.",
+                "Set up sign-in again.",
+            ]
+        );
+        let one = json!({ "entries_skipped": [".DS_Store"] });
+        assert_eq!(
+            notes(&one),
+            ["Skipped 1 archive entry this build does not know: .DS_Store."]
+        );
+        assert!(notes(&json!({ "entries_skipped": [] })).is_empty());
     }
 
     #[test]
-    fn no_note_is_none() {
-        assert_eq!(set_up_again_note(&json!({})), None);
+    fn a_printed_note_cannot_start_a_line_or_move_the_cursor() {
+        let answer = json!({
+            "not_restored": [{ "kind": "keys", "message": "keys\nrestored 0 items\u{1b}[2K" }]
+        });
+        let printed: Vec<String> = notes(&answer)
+            .iter()
+            .map(|note| crate::output::printable(note))
+            .collect();
+        assert_eq!(printed, ["keys\\u{a}restored 0 items\\u{1b}[2K"]);
+    }
+
+    #[test]
+    fn prints_one_line_for_each_kind_the_archive_left_out_and_what_the_restore_did() {
+        let answer = json!({
+            "settings_without_receiver": ["heartbeat_enabled"],
+            "enforcement_added": ["source_filter"],
+            "enforcement_skipped": ["strict_mode", "source_allowlist"],
+            "previous_instance": {
+                "instance_id": "0190a1b2-0000-7000-8000-000000000001",
+                "destination": "folder",
+                "kept_by_previous_instance": ["backups/0190a1b2-0000-7000-8000-000000000001", "files/0190a1b2-0000-7000-8000-000000000001"],
+                "message": "Previous instance line.",
+            },
+            "not_restored": [
+                { "kind": "sign_in", "message": "Sign-in line." },
+                { "kind": "inbound_endpoints", "message": "Endpoints line." },
+            ],
+        });
+        assert_eq!(
+            notes(&answer),
+            [
+                "Stored heartbeat_enabled, which sends nothing until a receiver is set where Marfa runs.",
+                "Restored the archive's enforcement settings: source_filter.",
+                "Kept this instance's own enforcement settings instead of the archive's: strict_mode, source_allowlist.",
+                "Previous instance line.",
+                "Sign-in line.",
+                "Endpoints line.",
+            ]
+        );
+        assert!(notes(&json!({ "enforcement_added": [], "enforcement_skipped": [] })).is_empty());
+    }
+
+    #[test]
+    fn names_each_skipped_line_kind() {
+        let answer =
+            json!({ "entries_skipped": [], "line_kinds_skipped": ["later_kind", "other"] });
+        assert_eq!(
+            notes(&answer),
+            ["Skipped instance lines of kinds this build does not know: later_kind, other."]
+        );
+        let one = json!({ "line_kinds_skipped": ["later_kind"] });
+        assert_eq!(
+            notes(&one),
+            ["Skipped instance lines of a kind this build does not know: later_kind."]
+        );
+        assert!(notes(&json!({ "line_kinds_skipped": [] })).is_empty());
     }
 }

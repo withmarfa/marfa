@@ -1456,7 +1456,7 @@ While an item a cascade moved into the bin stays there, the server MUST answer i
 
 **Reason:** a connector must know a trash was a cascade, or it carries to the vendor a trash the person never made.
 
-**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `› answers the marks on POST /items/lookup, to each reader as it may be told`, `› marks an item a cascade trashed on the acknowledgement of a create naming its source and source id, and names the item trashed only to a key that may read its type`, `› marks an item a cascade trashed on the answer to a create repeated under its id, and names the item trashed only to a key that may read its type`, `› delivers the item.deleted of an item a cascade trashed with its mark, and the item trashed's own without one`, `› restores an item a cascade trashed as its own trash, which its parent's restore leaves in the bin`.
+**Tests:** `compliance/cascade-marks.test.ts › marks an item a cascade trashed with the item named, and no item trashed on its own`, `› answers the marks on POST /items/lookup, to each reader as it may be told`, `› marks an item a cascade trashed on the acknowledgement of a create naming its source and source id, and names the item trashed only to a key that may read its type`, `› marks an item a cascade trashed on the answer to a create repeated under its id, and names the item trashed only to a key that may read its type`, `› delivers the item.deleted of an item a cascade trashed with its mark, and the item trashed's own without one`.
 
 ### `items/cascade-mark-names`
 
@@ -1538,13 +1538,37 @@ The server MUST NOT carry `restored_with` on the `item.restored` of the item a r
 
 **Tests:** `compliance/cascade-marks.test.ts › names the item restored on each item its restore brings back, and not on the item itself`, `› names the item moved on each item a transition out of the bin brings back, only to a key that may read its type`, `› names the item moved on each item a bulk transition out of the bin brings back, only to a key that may read its type`.
 
-### `items/restore-archive-alone`
+### `items/restore-archive-marks`
 
-When an archive restore writes an item into the bin, the server MUST hold it as its own trash, with no cascade marks, whatever the archive recorded.
+When an archive restore writes an item into the bin whose line records `trashed_by_cascade` and `trashed_with`, and the instance or the archive holds the item named, the server MUST keep both, so that restoring the item named from the bin brings the item back with it.
 
-**Reason:** what a trash took is the instance's record, and an archive does not carry it.
+**Reason:** a restore that dropped the marks would leave each item a cascade trashed in the bin when its parent comes back, which the instance that was backed up would not.
 
-**Tests:** `compliance/cascade-marks.test.ts › restores an item a cascade trashed as its own trash, which its parent's restore leaves in the bin`.
+**Tests:** `compliance/restore-cascade-marks.test.ts › brings the children back with their parent after a restore into a fresh server, as on the instance that was backed up`, `› skips an item the instance already holds and leaves it as it is`, `› marks a child with a parent the instance holds and the archive leaves out`.
+
+### `items/restore-archive-marks-unheld`
+
+When an archive restore writes an item into the bin whose line names in `trashed_with` an item that neither the instance nor the archive holds, the server MUST hold the item as its own trash, with no cascade marks.
+
+**Reason:** an export names an item a purge removed, or one a `type`, `source` or time filter, or a key's reach, left out of the archive, and the instance that was backed up keeps the mark.
+
+**Tests:** `compliance/restore-cascade-marks.test.ts › holds a child as its own trash when its parent was purged from the bin before the export`, `› holds a child as its own trash when a type filter left its parent out of the export`.
+
+### `items/restore-archive-marks-alone`
+
+When an archive restore writes an item into the bin whose line records `trashed_by_cascade` without `trashed_with`, the server MUST hold the item as its own trash, with no cascade marks.
+
+**Reason:** an export names `trashed_with` only to a key that may read the type of the item named, so a line may record the cascade and not its host.
+
+**Tests:** `compliance/restore-cascade-marks.test.ts › holds an item as its own trash when its line records trashed_by_cascade without trashed_with`.
+
+### `items/restore-archive-marks-hosts`
+
+When an archive restore writes an item into the bin that went there with its hosts through a `with-hosts` edge, the server MUST hold it as trashed with the item `trashed_with` names, and not as a part that waits for its other hosts.
+
+**Reason:** an export records no `with-hosts` edge's part in a trash, so a restore cannot tell a part from any other item a cascade took.
+
+**Tests:** `compliance/restore-cascade-marks.test.ts › holds the part as trashed with the host the line names, not as a part waiting for its other hosts`.
 
 ### `items/purge`
 
@@ -2231,6 +2255,14 @@ When a key reads an extension namespace an item does not hold, the server MUST a
 When an archive round trip restores an item, the server MUST restore its extensions.
 
 **Tests:** `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`.
+
+### `items/extension-archive-rules`
+
+If an item line of an archive carries an extension in `core`, `marfa` or `system`, or an extension whose data is over 102400 characters of JSON, then the server MUST answer `POST /restore` with `400 validation_error` naming the item in `details.item_id` and the namespace in `details.namespace`, and restore nothing.
+
+**Reason:** a restore holds an extension to the rules a write holds it to (`PUT /items/{id}/extensions/{namespace}`), so an archive is not a way to put in an item what no write could.
+
+**Tests:** `compliance/restore-says.test.ts › names an archived item whose extension sits in a reserved namespace or is over 100 KB, and restores nothing of the archive`.
 
 ### `items/extension-announced`
 

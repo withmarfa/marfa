@@ -35,7 +35,7 @@ use super::faults::{
 };
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
-use super::{housekeeping, stored};
+use super::{housekeeping, provenance, stored};
 use crate::db::{Db, Write, volume};
 use crate::failure::Failure;
 use crate::settings::registry::{BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
@@ -717,11 +717,19 @@ fn joined<T>(outcome: std::result::Result<T, tokio::task::JoinError>) -> Result<
 async fn owned<T: Send + 'static>(
     work: impl Future<Output = Result<T>> + Send + 'static,
 ) -> Result<T> {
-    joined(tokio::spawn(work).await)?
+    joined(tokio::spawn(provenance::carried(work)).await)?
 }
 
 fn failed(refused: Refusal) -> Failed {
-    Failed::Io(io::Error::other(refused.to_string()))
+    Failed::Io(io::Error::other(refused))
+}
+
+/// The database's refusal a failure carries, as `failed` keeps it.
+fn refusal_in(failure: &Failed) -> Option<Refusal> {
+    match failure {
+        Failed::Io(error) => error.get_ref()?.downcast_ref::<Refusal>().cloned(),
+        Failed::Late => None,
+    }
 }
 
 /// Refuses a body that would leave less free on the blob volume than the reserve.
@@ -885,6 +893,15 @@ impl App {
         self.settings.start.tuning.blob_read_idle
     }
 
+    /// A restore keeps its blob locks until commit, so waiting writers must hear its refusal.
+    pub(crate) async fn lock_to_write(&self, hash: &Hash) -> Result<store::Held> {
+        tokio::select! {
+            biased;
+            refusal = self.db.writes_refusing() => Err(refusal),
+            held = self.blobs.gate.lock(hash) => Ok(held),
+        }
+    }
+
     /// A refusal is answered only once the staged file is gone.
     async fn place_upload(&self, mut intake: Intake) -> Result<Placed> {
         let Some(staged) = intake.staged.take() else {
@@ -911,7 +928,7 @@ impl App {
         )?
         .map_err(unwritable)?;
         let size = staged.size();
-        let held = self.blobs.gate.lock(&hash).await;
+        let held = self.lock_to_write(&hash).await?;
         if self.blobs.gate.unfinished(&hash) {
             return Err(unavailable());
         }
@@ -921,7 +938,7 @@ impl App {
                 ?failure,
                 "A queued deletion of an upload's bytes did not finish"
             );
-            return Err(unavailable());
+            return Err(refusal_in(&failure).unwrap_or_else(unavailable));
         }
         let (queued, at) = (hash.clone(), self.clock.stamp());
         let disk_id = self.blobs.disk.id().to_string();
@@ -1320,7 +1337,7 @@ impl App {
         if (kept as u64) < min_copies {
             return Err(below(kept + 1, min_copies));
         }
-        let _held = self.blobs.gate.lock(hash).await;
+        let _held = self.lock_to_write(hash).await?;
         if self.blobs.gate.unfinished(hash) {
             return Err(unavailable());
         }

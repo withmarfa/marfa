@@ -1,14 +1,13 @@
 //! An item written as its archive line holds it; a digest lends only where the line says.
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
-use marfa_rules::{number, time};
+use marfa_rules::{number, time, validation};
 use rusqlite::Transaction;
 use serde_json::{Map, Value};
 
 use super::rows::{self, NewRow, Restoring};
-use super::{Writer, index, link_in, title_key};
-use crate::app::blobs::Hash;
+use super::{Mark, Writer, index, link_in, title_key};
 use crate::app::blobs::references::{self, Row};
 use crate::app::catalog::Catalog;
 use crate::app::refusal::{Code, Refusal, Result};
@@ -16,15 +15,13 @@ use crate::app::unit::Unit;
 
 const RESTORED: &str = "restored:";
 const APP_SOURCE: &str = "oauth:";
-const FILE_TYPE: &str = "core.file";
-const FILE_BYTES: &str = "blob_ref";
-const FILE_SIZE: &str = "size_bytes";
 const CONNECTION: &str = "system.connection";
 
 /// What a restore did with one item line.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Restored {
-    Written,
+    /// Written as the row of this sequence number, which the item's versions are written under.
+    Written(i64),
     /// The instance holds the line's id, natural key or link already, and keeps its own row.
     Duplicate,
 }
@@ -88,13 +85,39 @@ pub fn held_snapshots(
     rows::snapshot_ids(tx, ids)
 }
 
+/// The cascade mark a line holds: the item its trash was keyed to, with that item's type, which
+/// the instance's own row gives where it holds one and `archived_types` gives otherwise. A name
+/// held by neither leaves the item its own trash.
+fn mark_of(
+    tx: &Transaction<'_>,
+    item: &Map<String, Value>,
+    archived_types: &HashMap<String, String>,
+) -> Result<Option<Mark>> {
+    let Some(with) = text(item, "trashed_with") else {
+        return Ok(None);
+    };
+    let with_type = match rows::by_id(tx, with)? {
+        Some(held) => held.type_id,
+        None => match archived_types.get(with) {
+            Some(type_id) => type_id.clone(),
+            None => return Ok(None),
+        },
+    };
+    Ok(Some(Mark {
+        with: with.to_string(),
+        with_type,
+        hosts: false,
+    }))
+}
+
 /// Writes the item an archive line holds, already judged by the archive's row checks, unless
-/// the instance holds its id, natural key or link.
+/// the instance holds its id, natural key or link. `archived_types` holds the type of each item
+/// a cascade mark in the archive names.
 pub fn restore(
     unit: &Unit<'_, '_>,
     catalog: &Catalog,
     line: &Value,
-    held: &HashSet<String>,
+    archived_types: &HashMap<String, String>,
 ) -> Result<Restored> {
     let tx = unit.tx();
     let item = line
@@ -104,6 +127,7 @@ pub fn restore(
     let type_id =
         text(item, "type").ok_or_else(|| Refusal::internal("a checked item has no type"))?;
     let id = text(item, "id").ok_or_else(|| Refusal::internal("a checked item has no id"))?;
+    refuse_extensions(line, id)?;
     let source = restored_source(text(item, "source").unwrap_or(unit.caller.own_source()));
     let source_id = text(item, "source_id");
     let mut properties = item
@@ -128,25 +152,18 @@ pub fn restore(
     {
         return Ok(Restored::Duplicate);
     }
-    refuse_undeclared(unit, catalog, type_id, &properties, Some(id))?;
+    super::write::refuse_undeclared(&unit.caller, catalog, type_id, &properties, Some(id))?;
     if type_id == CONNECTION && text(&properties, "kind") == Some("app") {
         properties.insert("status".into(), "revoked".into());
     }
     let lent = lending(line.get("lending_blobs"));
-    if catalog.rules.matches(FILE_TYPE, type_id) {
-        let size = properties
-            .get(FILE_BYTES)
-            .and_then(Value::as_str)
-            .and_then(|text| Hash::parse(text).ok())
-            .filter(|hash| lent.contains(hash.as_str()))
-            .map(|hash| crate::app::blobs::stored_size(tx, &hash))
-            .transpose()?
-            .flatten();
-        match size {
-            Some(size) => properties.insert(FILE_SIZE.into(), Value::from(size)),
-            None => properties.shift_remove(FILE_SIZE),
-        };
-    }
+    super::write::stamp_file_size(catalog, type_id, &mut properties, |hash| {
+        if lent.contains(hash.as_str()) {
+            crate::app::blobs::stored_size(tx, hash)
+        } else {
+            Ok(None)
+        }
+    })?;
     let created_at = required_instant(item, "created_at")?;
     let updated_at = required_instant(item, "updated_at")?;
     let last_activity_at = Some(required_instant(item, "last_activity_at")?)
@@ -171,6 +188,7 @@ pub fn restore(
         });
     let writer = writer_of(line.get("writer"));
     let trashed_by = writer_of(line.get("trashed_by"));
+    let mark = mark_of(tx, item, archived_types)?;
     let key = title_key(&catalog.rules, type_id, &properties);
     let row = rows::insert_restored(
         tx,
@@ -201,6 +219,7 @@ pub fn restore(
             updated_at: &updated_at,
             last_activity_at: &last_activity_at,
             restored_at: restored_at.as_deref(),
+            mark: mark.as_ref(),
         },
     )?;
     references::archived(&properties, &lent).apply(tx, Row::Item(row.seq))?;
@@ -232,18 +251,39 @@ pub fn restore(
             references::archived(data, &lent).apply(tx, Row::Extension(row.seq, namespace))?;
         }
     }
-    if let Some(Value::Array(versions)) = line.get("versions") {
-        for snapshot in versions {
-            restore_snapshot(tx, row.seq, snapshot, held)?;
-        }
-    }
     let item =
         rows::by_seq(tx, row.seq)?.ok_or_else(|| Refusal::internal("a restored row is gone"))?;
     super::write::announce(unit, "item.created", &item)?;
-    Ok(Restored::Written)
+    Ok(Restored::Written(row.seq))
 }
 
-fn restore_snapshot(
+/// Refuses an archive whose item holds an extension that a write refuses, even for an item the
+/// instance already holds.
+fn refuse_extensions(line: &Value, id: &str) -> Result<()> {
+    let held = line
+        .pointer("/metadata/extensions")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten();
+    for (namespace, data) in held {
+        let Some(data) = data.as_object() else {
+            continue;
+        };
+        if validation::extension_reserved(namespace)
+            || validation::extension_too_long(&number::object(data))
+        {
+            return Err(Refusal::validation(format!(
+                "Item {id} carries an extension in \"{namespace}\" that a write would refuse: a reserved namespace, or data over 100 KB."
+            ))
+            .with_detail("item_id", id)
+            .with_detail("namespace", namespace.as_str()));
+        }
+    }
+    Ok(())
+}
+
+/// Requires a checked snapshot; an existing snapshot ID refuses the restore.
+pub fn restore_version(
     tx: &Transaction<'_>,
     seq: i64,
     snapshot: &Value,
@@ -292,41 +332,6 @@ fn restore_snapshot(
         },
     )?;
     references::archived(&properties, &BTreeSet::new()).apply(tx, Row::Version(seq, version))
-}
-
-/// Where the strict-mode lever names the type, a property no type declares refuses the archive.
-fn refuse_undeclared(
-    unit: &Unit<'_, '_>,
-    catalog: &Catalog,
-    type_id: &str,
-    properties: &Map<String, Value>,
-    id: Option<&str>,
-) -> Result<()> {
-    let rules = &catalog.rules;
-    if !unit.caller.levers()?.strict_on(type_id) || !rules.known(type_id) {
-        return Ok(());
-    }
-    let declared = rules.resolved(type_id).map_err(super::write::ruled)?;
-    let errors: Vec<Value> = properties
-        .keys()
-        .filter(|name| !declared.contains_key(*name))
-        .map(|name| {
-            serde_json::json!({ "field": name, "message": format!("Unrecognized key: \"{name}\"") })
-        })
-        .collect();
-    if errors.is_empty() {
-        return Ok(());
-    }
-    Err(Refusal::new(
-        Code::InvalidProperties,
-        format!(
-            "Item {} sets a property no type declares, which strict mode refuses for {type_id}.",
-            id.unwrap_or("with no id")
-        ),
-    )
-    .with_detail("errors", errors)
-    .with_detail("code", "unknown_property")
-    .with_detail("item_id", id))
 }
 
 /// Brings the search index up to the rows written so far.

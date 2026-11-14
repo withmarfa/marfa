@@ -84,7 +84,15 @@ While the last backup run, taken on the schedule or by hand, failed or put a bac
 
 **Reason:** a backup taken by hand with `POST /backups` is not a run of the `backup` job, so the housekeeping check does not see it.
 
-**Tests:** `compliance/backup-folder.test.ts › lists in attention a backup run by hand that failed, until a later one is put`, `› puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`.
+**Tests:** `compliance/backup-folder.test.ts › lists in attention a backup run by hand that failed, until a later one is put`, `› puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`.
+
+### `instance/attention-backup-incomplete`
+
+While the copy record holds no copy in the destination of a file the last backup put names, the last backup run did not fail and the destination takes the copies that wait for it, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `incomplete`, whose description says how many of those files wait.
+
+**Reason:** a fresh instance cannot restore the files until replication copies them, and the owner learns it before they need the backup. The server reads the copy record and asks the destination about no file on a backup; `blob-integrity` strikes a copy it finds missing or altered (`stores/integrity-strikes`), and from then the file waits again.
+
+**Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`, `› calls the newest backup incomplete again once blob-integrity finds a copy of a file it names gone from the object store, until replication copies the file again`.
 
 ### `instance/attention-backup-told-once`
 
@@ -104,7 +112,7 @@ While an entry of kind `backup` with the reference `run` or `store` is listed, t
 
 ### `instance/attention-backup-quiet`
 
-Where a destination is set, while it takes copies, no file waits for one, the last backup run was whole and `backup_interval_seconds` is above 0, the server MUST NOT include an entry of kind `backup` in `GET /attention`.
+Where a destination is set, while it takes copies, no file waits for one, the last backup run was whole, the copy record holds a copy in the destination of each file the last backup put names and `backup_interval_seconds` is above 0, the server MUST NOT include an entry of kind `backup` in `GET /attention`.
 
 **Tests:** `compliance/backup-folder.test.ts › says nothing in health or attention while the folder answers and no file waits for its copy`, `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
 
@@ -348,15 +356,23 @@ When `GET /openapi.json` is answered, the server MUST answer `info.version` as t
 
 When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 1.
 
-**Reason:** the version is the one marker of the archive's layout, and a restore reads only the version its own build writes (`search-and-filters/restore-version`).
+**Reason:** the version is the one marker of the archive's layout, and a restore reads every version up to its own build's and refuses a later one (`search-and-filters/restore-version`). A field or a line kind added within a version is optional to a reader of that version (`search-and-filters/archive-version-additions`): a restore skips a field it does not read and a line kind it does not know, and names the kind (`search-and-filters/restore-unknown-field`, `search-and-filters/restore-unknown-line-kind`). An archive with a new entry, line file or field that a restore must read is a new version, because an older build would skip what it does not know.
 
 **Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
+
+### `instance/archive-format`
+
+When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `format` of `marfa-archive`.
+
+**Reason:** a restore knows an archive by its format before it reads its version, and refuses a manifest without one as written before Marfa 0.1 (`search-and-filters/restore-format`).
+
+**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`.
 
 ### `instance/archive-written-by`
 
 When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `written_by` of `marfa-server` and the version of the build, separated by a space.
 
-**Reason:** a restore that refuses an archive of another version names the build that can read it, and only the manifest says which build wrote it.
+**Reason:** a restore that refuses an archive written before Marfa 0.1, or at a later version, names the build that wrote it, and only the manifest says which build that was.
 
 **Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
 
@@ -532,27 +548,27 @@ The server MUST cut each description and title in the `GET /overview` answer at 
 
 ## Backing up
 
-An owner has two backups of an instance. Where `S3_BUCKET` is set, the server backs itself up to that object store, and where `MARFA_BACKUP_PATH` is set, to that folder: on a schedule, and when the owner asks. With neither set, it keeps no backup. Each backup is an archive, as `GET /export?format=archive` writes one, of every item and instance line, the trash included, and of no file's bytes, since the object store, or the backup folder's files area, already keeps a copy of each file as an attached store. And an image of the data directory, such as a machine backup takes, holds everything the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. Neither holds the setting `MARFA_KEY_SALT`, and a backup holds no credential, so sign-in, keys and apps are set up again after a backup is restored.
+An owner has two backups of an instance. Where `S3_BUCKET` is set, the server backs itself up to that object store, and where `MARFA_BACKUP_PATH` is set, to that folder: on a schedule, and when the owner asks. With neither set, it keeps no backup. Each backup is an archive, as `GET /export?format=archive` writes one, of every item and instance line, the trash included, and of no file's bytes, since the object store, or the backup folder's files area, already keeps a copy of each file as an attached store. And an image of the data directory, such as a machine backup takes, holds everything the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. Neither holds the setting `MARFA_KEY_SALT`, and a backup holds no credential, so after a backup is restored, sign-in, keys, apps, webhooks, inbound endpoints and connector keys are set up again, the instance's addresses and name are set again, and the audit log and the event log are not restored.
 
 ### `instance/backup-object`
 
-Where `S3_BUCKET` is set, when the server takes a backup, the server MUST put it in the object store as one object named `<S3_PREFIX>/backups/<instance id>/<created_at>.tar`, where `<instance id>` is the instance's id and `<created_at>` is its manifest's `created_at`.
+Where `S3_BUCKET` is set, when the server takes a backup, the server MUST put it in the object store as one object named `<S3_PREFIX>/backups/<instance id>/<created>.tar`, where `<instance id>` is the instance's id and `<created>` is its manifest's `created_at` in ISO 8601 basic format, such as `20261109T101530.250Z`.
 
-**Reason:** a server that replaces another can start on the same prefix, and the folder keeps each instance's backups apart.
+**Reason:** a server that replaces another can start on the same prefix, and the folder keeps each instance's backups apart. The basic format holds no colon, so a copy of the backup lands whole on a FAT or exFAT disk and on Windows, and the names still sort by time.
 
 **Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything`.
 
 ### `instance/backup-folder-file`
 
-Where `MARFA_BACKUP_PATH` is set, when the server takes a backup, the server MUST write it as one file named `<MARFA_BACKUP_PATH>/backups/<instance id>/<created_at>.tar`, where `<instance id>` is the instance's id and `<created_at>` is its manifest's `created_at`.
+Where `MARFA_BACKUP_PATH` is set, when the server takes a backup, the server MUST write it as one file named `<MARFA_BACKUP_PATH>/backups/<instance id>/<created>.tar`, where `<instance id>` is the instance's id and `<created>` is its manifest's `created_at` in ISO 8601 basic format, such as `20261109T101530.250Z`.
 
-**Reason:** a server that replaces another, given the same folder, restores its backups, and the folder keeps each instance's backups apart.
+**Reason:** a server that replaces another, given the same folder, restores its backups, and the folder keeps each instance's backups apart. The basic format holds no colon, which a FAT or exFAT disk refuses in a file's name, and the names still sort by time.
 
 **Tests:** `compliance/backup-folder.test.ts › writes each backup as one file named for its created_at in the folder's backups folder for its instance, and a copy of each file it names in the folder's files area`.
 
 ### `instance/backup-folder-copies`
 
-Where `MARFA_BACKUP_PATH` is set, the server MUST NOT give a backup its name in the folder before `<MARFA_BACKUP_PATH>/files/<instance id>/<first four hex digits>/<hex>` holds the bytes of each file the backup names but those its manifest names in `lost_blobs`, where `<hex>` is the file's SHA-256 in hex.
+Where `MARFA_BACKUP_PATH` is set, the server MUST NOT give a backup its name in the folder before `<MARFA_BACKUP_PATH>/files/<instance id>/<first four hex digits>/<hex>` holds the bytes of each file the backup names but those its `files.ndjson.gz` names as `lost`, where `<hex>` is the file's SHA-256 in hex.
 
 **Reason:** a backup carries no file's bytes, so the folder alone restores a backup only while it holds a copy of each file. Each file is copied once and kept while a backup names it, so a backup costs what changed since the last.
 
@@ -560,7 +576,7 @@ Where `MARFA_BACKUP_PATH` is set, the server MUST NOT give a backup its name in 
 
 ### `instance/backup-folder-whole`
 
-Where `MARFA_BACKUP_PATH` is set, if a backup run fails, or the process ends, before the server has written the whole backup and a copy of each file it names but those it names in `lost_blobs`, then the server MUST NOT leave a file directly under `<MARFA_BACKUP_PATH>/backups/<instance id>/` whose name reads as a backup.
+Where `MARFA_BACKUP_PATH` is set, if a backup run fails, or the process ends, before the server has written the whole backup and a copy of each file it names but those it names as `lost`, then the server MUST NOT leave a file directly under `<MARFA_BACKUP_PATH>/backups/<instance id>/` whose name reads as a backup.
 
 **Reason:** the server writes a backup under a name that begins with `.`, which no listing reads, and gives it its name only once it is whole and synced to the disk.
 
@@ -684,19 +700,19 @@ When the server takes a backup, the server MUST put in it the items, edges, rows
 
 ### `instance/backup-no-file-bytes`
 
-When the server takes a backup, the server MUST name every file its items name under the manifest's `missing_blobs`, and carry no file's bytes.
+When the server takes a backup, the server MUST name every file its items name in its `files.ndjson.gz`, each as `not_carried` or `lost`, and carry no file's bytes.
 
-**Reason:** the object store or the backup folder already holds a copy of each file the instance has replicated, so a backup that carried them would put every file there again each time.
+**Reason:** the object store or the backup folder already holds a copy of each file the instance has replicated, so a backup that carried them would put every file there again each time. A file that has not been replicated yet leaves the backup incomplete until its copy is made (`instance/backup-health-incomplete`).
 
 **Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything`.
 
 ### `instance/backup-lost-files-named`
 
-When the server takes a backup, the server MUST name in the manifest's `lost_blobs` each file the backup names of which no attached store gives the bytes whole.
+When the server takes a backup, the server MUST name as `lost` in its `files.ndjson.gz` each file the backup names of which no attached store gives the bytes whole.
 
 **Reason:** a restore then tells a file that was gone before the backup from one taken out of the backup folder after it. Where `MARFA_BACKUP_PATH` is set the server learns it as it copies each file to the folder; for the object store, from each store's answer for the copies the copy record names.
 
-**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file in lost_blobs and in health, and clears health with the next backup that loses none`.
+**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file lost and in health, and clears health with the next backup that loses none`.
 
 ### `instance/backup-lost-files-put`
 
@@ -704,19 +720,35 @@ If a file a backup names is one no attached store gives the bytes of whole, then
 
 **Reason:** one lost file stops no backup of every item, edge and setting.
 
-**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file in lost_blobs and in health, and clears health with the next backup that loses none`.
+**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file lost and in health, and clears health with the next backup that loses none`.
 
 ### `instance/backup-lost-files-answered`
 
-When the private local command sends `POST /backups`, the server MUST answer in `blobs_lost` the hash of each file the manifest of the backup it put names in `lost_blobs`.
+When the private local command sends `POST /backups`, the server MUST answer in `blobs_lost` the hash of each file the backup it put names as `lost`.
 
-**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file in lost_blobs and in health, and clears health with the next backup that loses none`.
+**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file lost and in health, and clears health with the next backup that loses none`.
+
+### `instance/backup-line-cap`
+
+If an item, an earlier version of an item or an edge a backup would hold takes more than 67108864 bytes on its archive line, then the server MUST answer `POST /backups` with `409 export_entry_unrestorable`, with `details.entry` naming the item or edge, without putting the backup.
+
+**Reason:** a restore reads no line longer (`search-and-filters/restore-text-cap`), so such a backup could never be restored, and an owner told at the time can correct the item while the earlier backups still stand.
+
+**Tests:** `compliance/archive-line-cap.test.ts › refuses an export and a backup whose item line is past the limit, naming the item`.
+
+### `instance/backup-answer-waiting`
+
+When the private local command sends `POST /backups`, the server MUST answer in `blobs_waiting` how many files the backup it put names of which the copy record holds no copy in the destination.
+
+**Reason:** the object store takes a file's copy when replication reaches it, which can be after the backup that names it. The server reads the copy record and asks the destination about no file on a backup; `blob-integrity` strikes a copy it finds missing or altered (`stores/integrity-strikes`), and from then the file waits again.
+
+**Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`.
 
 ### `instance/backup-keeps-files`
 
-While the server has recorded a backup it put in the object store or the backup folder, and has neither thinned that backup nor, while a later backup was recorded, found it missing from three or more consecutive listings of the store of which the first and the last are more than 31 days apart, the server MUST NOT purge a file that backup names.
+While the server has recorded a backup it put in the object store or the backup folder, and has neither thinned that backup nor, while a later backup was recorded, found it missing from three or more consecutive listings of the store, the last of which lists backups of its own such that thinning them together with that backup would delete that backup, the server MUST NOT purge a file that backup names.
 
-**Reason:** Backups contain no file bytes and outlive the orphan grace. The server knows a backup only by its record and the store's listings, and one listing can leave out an object the store holds. So the server takes a backup to be gone only once several listings over longer than retention have left it out, and a listing that shows it again starts the count over.
+**Reason:** Backups contain no file bytes and outlive the orphan grace. The server knows a backup only by its record and the store's listings, and one listing can leave out an object the store holds. So the server takes a backup to be gone only once several listings in a row have left it out and thinning would delete it anyway, and a listing that shows it again starts the count over. Being missing never lets go of a backup that thinning keeps, however the clock has moved. Thinning is judged on the listed backups and that one backup, so another backup the listings leave out cannot push it out of the days thinning keeps.
 
 **Tests:** `compliance/backup-files.test.ts › keeps a file a retained backup names once nothing else names it, across a restart, so a fresh server on the bucket restores it whole`.
 
@@ -804,17 +836,31 @@ While the last backup run failed, the server MUST answer `GET /health` with `bac
 
 ### `instance/backup-health-lost`
 
-While the last backup run put a backup whose manifest names a file in `lost_blobs`, the server MUST answer `GET /health` with `backups.status` `failing`.
+While the last backup run put a backup that names a file as `lost`, the server MUST answer `GET /health` with `backups.status` `failing`.
 
 **Reason:** a lost file is a failure the owner learns of at once, and the run counts among `backups.failures`.
 
-**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file in lost_blobs and in health, and clears health with the next backup that loses none`.
+**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file lost and in health, and clears health with the next backup that loses none`.
 
 ### `instance/backup-health-lost-named`
 
-While the last backup run put a backup whose manifest names files in `lost_blobs`, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST name the first ten of those files in `backups.last_error`.
+While the last backup run put a backup that names files as `lost`, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST name the first ten of those files in `backups.last_error`.
 
-**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file in lost_blobs and in health, and clears health with the next backup that loses none`.
+**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`, `compliance/backup-faults.test.ts › puts the backup, names the file lost and in health, and clears health with the next backup that loses none`.
+
+### `instance/backup-health-incomplete`
+
+Where `backup_interval_seconds` is above 0, while the copy record holds no copy in the destination of a file the last backup put names, the last backup run did not fail and the destination takes the copies that wait for it, the server MUST answer `GET /health` with `backups.status` `incomplete`.
+
+**Reason:** a backup is complete once the copy record holds a copy in its destination of every file it names, so a fresh instance can restore them. The server reads the copy record and asks the destination about no file on a backup; `blob-integrity` strikes a copy it finds missing or altered (`stores/integrity-strikes`), and from then the file waits again. Replication copies the files without the owner, so the overall `status` stays as it was.
+
+**Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`, `› calls the newest backup incomplete again once blob-integrity finds a copy of a file it names gone from the object store, until replication copies the file again`.
+
+### `instance/backup-health-files-waiting`
+
+Where `S3_BUCKET` or `MARFA_BACKUP_PATH` is set, when a request authorized by `instance.read` or local authority sends `GET /health`, the server MUST answer `backups.last_backup_files_waiting` with how many files the last backup put names of which the copy record holds no copy in the destination, or `null` when no backup was put or the count could not be read.
+
+**Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`.
 
 ### `instance/backup-health-detail`
 
@@ -886,7 +932,7 @@ When the object store or the backup folder takes copies again and a run of `blob
 
 ### `instance/backup-health-quiet`
 
-Where a destination is set, while it takes copies, no file waits for one and the last backup run was whole, the server MUST answer `GET /health` with `backups.status` `ok` and `backups.store_error` `null`.
+Where a destination is set and `backup_interval_seconds` is above 0, while it takes copies, no file waits for one, the last backup run was whole and the copy record holds a copy in the destination of each file the last backup put names, the server MUST answer `GET /health` with `backups.status` `ok` and `backups.store_error` `null`.
 
 **Reason:** a report that is never empty is not read.
 
@@ -922,6 +968,14 @@ When the private local command sends `POST /backups/{instance_id}/{name}/restore
 
 **Tests:** `compliance/backups.test.ts › restores a named backup into a fresh server on the same bucket, files included`, `compliance/backup-folder.test.ts › restores a named backup into a fresh server on another data path from the folder alone, every line and file`.
 
+### `instance/backup-bucket-restore-lacking`
+
+Where `S3_BUCKET` is set, if a file the backup names, which the instance that took it held and the manifest does not name in `lost_blobs`, is held whole neither in the object store nor by the restoring instance, then the server MUST answer `POST /backups/{instance_id}/{name}/restore` with `409 backup_files_missing` and each such file's hash in `details.missing_blobs`.
+
+**Reason:** a restore that left a file out would lose it without a word, as `instance/backup-folder-restore-lacking` says for the folder. The refusal restores nothing; the backup's object, restored through `POST /restore`, restores the rest without those files.
+
+**Tests:** `compliance/backups.test.ts › calls the newest backup incomplete in its answer, health and attention while the object store lacks files it names, refuses a restore from it, and clears once replication copies them`.
+
 ### `instance/backup-folder-restore-files`
 
 Where `MARFA_BACKUP_PATH` is set, when the private local command sends `POST /backups/{instance_id}/{name}/restore`, the server MUST read each file the backup names that the instance does not hold from `<MARFA_BACKUP_PATH>/files/<instance_id>/`.
@@ -930,7 +984,7 @@ Where `MARFA_BACKUP_PATH` is set, when the private local command sends `POST /ba
 
 ### `instance/backup-folder-restore-lacking`
 
-Where `MARFA_BACKUP_PATH` is set, if a file the backup names, which the instance that took it held and the manifest does not name in `lost_blobs`, is held whole neither in `<MARFA_BACKUP_PATH>/files/<instance_id>/` nor by the restoring instance, then the server MUST answer `POST /backups/{instance_id}/{name}/restore` with `409 backup_files_missing` and each such file's hash in `details.missing_blobs`.
+Where `MARFA_BACKUP_PATH` is set, if a file the backup names, which the instance that took it held and the backup does not name as `lost`, is held whole neither in `<MARFA_BACKUP_PATH>/files/<instance_id>/` nor by the restoring instance, then the server MUST answer `POST /backups/{instance_id}/{name}/restore` with `409 backup_files_missing` and each such file's hash in `details.missing_blobs`.
 
 **Reason:** a restore that left a file out would lose it without a word. The refusal restores nothing; the backup's archive file, restored through `POST /restore`, restores the rest without those files.
 
@@ -954,11 +1008,11 @@ Where `MARFA_BACKUP_PATH` is set, when the private local command sends `POST /ba
 
 ### `instance/backup-folder-restore-lost`
 
-Where `MARFA_BACKUP_PATH` is set, if a file the manifest names in `lost_blobs` is held whole neither in `<MARFA_BACKUP_PATH>/files/<instance_id>/` nor by the restoring instance, then the server MUST NOT refuse `POST /backups/{instance_id}/{name}/restore` for that file.
+Where `MARFA_BACKUP_PATH` is set, if a file the backup names as `lost` is held whole neither in `<MARFA_BACKUP_PATH>/files/<instance_id>/` nor by the restoring instance, then the server MUST NOT refuse `POST /backups/{instance_id}/{name}/restore` for that file.
 
 **Reason:** the file was gone before the backup was taken, so no folder could restore it. The restore names it in `blobs_missing`, as a restore of the same archive through `POST /restore` does.
 
-**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it`.
+**Tests:** `compliance/backup-folder.test.ts › puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it`.
 
 ### `instance/backup-restore-unknown`
 
@@ -968,23 +1022,27 @@ If `POST /backups/{instance_id}/{name}/restore` names no backup the object store
 
 ### `instance/backup-thinning-day`
 
-When the server has put a backup, the server MUST keep every backup of its own taken in the 24 hours before that backup was taken.
+When the server has put a backup, the server MUST keep every backup of its own taken in the 24 hours before that backup was taken, or after it.
 
-**Reason:** the day is counted from when the backup was taken, so a slow put deletes nothing it would otherwise keep.
+**Reason:** the day is counted from when the backup was taken, so a slow put deletes nothing it would otherwise keep. A backup taken later by the clock is one the clock ran ahead for, and is kept.
 
-**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup of this instance`, `› keeps every backup taken in the day before the one just put, however long the put took`.
+**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each of the 31 older days that hold a backup, and deletes nothing that is not a listed backup of this instance`, `› keeps every backup taken in the day before the one just put, however long the put took`, `› keeps every backup when one is put 40 days after the last, and when the next comes six weeks later`.
 
 ### `instance/backup-thinning-daily`
 
-When the server has put a backup, the server MUST keep, of its own backups taken between one and 31 days before, the newest of each UTC day, and delete the others.
+When the server has put a backup, the server MUST keep, of its own backups taken more than 24 hours before that backup, the newest of each of the 31 most recent UTC days that hold one, and delete the others.
 
-**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup of this instance`.
+**Reason:** the days kept are the days that hold a backup, not a span back on the clock. A server that was off for weeks keeps the newest backup of each of its last 31 backup days after its first new one. A clock jump does not add days with no backups to the count.
 
-### `instance/backup-thinning-old`
+**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each of the 31 older days that hold a backup, and deletes nothing that is not a listed backup of this instance`, `› keeps every backup when one is put 40 days after the last, and when the next comes six weeks later`.
 
-When the server has put a backup, the server MUST delete each of its own backups taken more than 31 days before.
+### `instance/backup-thinning-newest`
 
-**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup of this instance`.
+When the server has put a backup, the server MUST keep the newest of its own backups.
+
+**Reason:** however wrong the clock, the instance always keeps the backup it took last by the clock.
+
+**Tests:** `compliance/backup-thinning.test.ts › keeps every backup when one is put 40 days after the last, and when the next comes six weeks later`.
 
 ### `instance/backup-thinning-only-backups`
 
@@ -992,13 +1050,13 @@ When the server thins its backups, the server MUST NOT delete an object or file 
 
 **Reason:** the prefix also holds the instance's files, another instance on the same prefix keeps its own backups, and the bucket may hold objects the instance did not write. A backup in its own folder that its database never recorded, such as one put after the image of the data directory the server started on, is kept (`instance/backup-found-keeps-files`).
 
-**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup of this instance`, `compliance/bucket-sharing.test.ts › keeps the files a backup in its folder names when its database never recorded that backup, and deletes only the backups it recorded`.
+**Tests:** `compliance/backup-thinning.test.ts › keeps the last day and the newest of each of the 31 older days that hold a backup, and deletes nothing that is not a listed backup of this instance`, `compliance/bucket-sharing.test.ts › keeps the files a backup in its folder names when its database never recorded that backup, and deletes only the backups it recorded`.
 
 ### `instance/backup-found-keeps-files`
 
 While a backup that the server did not record putting is listed directly under `<S3_PREFIX>/backups/<instance id>/` or `<MARFA_BACKUP_PATH>/backups/<instance id>/`, where `<instance id>` is its own, the server MUST NOT purge a file that backup's manifest names.
 
-**Reason:** a server started on an image of its data directory does not record the backups put after the image, and those backups restore their files from the bucket. Such a backup stops holding its files as `instance/backup-keeps-files` lets a recorded one go: once three or more consecutive listings, the first and the last more than 31 days apart, have left it out. Where the server cannot list or read that folder, a file the object store holds a copy of is not purged.
+**Reason:** a server started on an image of its data directory does not record the backups put after the image, and those backups restore their files from the bucket. Such a backup stops holding its files as `instance/backup-keeps-files` lets a recorded one go: once three or more consecutive listings have left it out and thinning the backups the last of them lists together with that backup would delete it. Where the server cannot list or read that folder, a file the object store holds a copy of is not purged.
 
 **Tests:** `compliance/bucket-sharing.test.ts › keeps the files a backup in its folder names when its database never recorded that backup, and deletes only the backups it recorded`.
 
@@ -1154,9 +1212,17 @@ If the disk store refuses to look for a blob, or its folder or its `.marfa-store
 
 If the write that the `database_write` probe makes is refused with `write_contention`, then the server MUST answer the `database_write` component as `degraded`, not `down`.
 
-**Reason:** a lock held past the write wait is a busy instance rather than a broken one. An archive restore holds it until it commits (`search-and-filters/restore-writers-wait`).
+**Reason:** a lock held past the write wait is a busy instance rather than a broken one. An archive restore holds it until it commits, and `instance/health-restore-running` says so.
 
 **Tests:** `compliance/health.test.ts › answers 200 and degraded while the write is refused, and ok once the lock is released`.
+
+### `instance/health-restore-running`
+
+While a restore runs, when a credential with `instance.read` sends `GET /health`, the server MUST answer the `database_write` component as `degraded` with an `error` that says a restore is running.
+
+**Reason:** a bare `degraded` leaves an owner and a monitor guessing at a fault that is the restore doing its work, and a probe that queued behind the restore would only report a refusal.
+
+**Tests:** `compliance/restore-faults.test.ts › refuses each kind of write at once, naming the restore, while reads and the restore itself go on`.
 
 ### `instance/health-timeout-degraded`
 
@@ -2262,7 +2328,7 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | -------------------------------- | ------------------ | --------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `disk_reserve_bytes`             | `134217728` bytes  | Whole number of bytes, 0 to 1099511627776                 | The free space on the disk store's volume that uploads, restores, and archive exports must leave. An export's temporary files are included. A request that would take the volume below it is refused `507 insufficient_storage`. At 0 nothing is held back.                                                                            |
 | `max_request_bytes`              | `1048576` bytes    | Whole number of bytes, 1 to 1099511627776                 | The largest ordinary JSON request body. A larger body is answered `413 request_too_large`. Bulk writes, connector state, client registration, blob uploads and inbound webhook deliveries have separate limits. The server waits 180 seconds for a body, so a body larger than about 21 MiB can't arrive in time over a 1 Mbit/s link. |
-| `max_bulk_request_bytes`         | `16777216` bytes   | Whole number of bytes, 1 to 1099511627776                 | The largest body the bulk operations accept. The server waits 180 seconds for a body, so a body larger than about 21 MiB can't arrive in time over a 1 Mbit/s link.                                                                                                                                                                    |
+| `max_bulk_request_bytes`         | `16777216` bytes   | Whole number of bytes, 1 to 33554432                      | The largest body the bulk operations accept. It may be at most half of the 67108864 bytes a restore reads on one archive line, so that an item written at this limit fits on its line. The server waits 180 seconds for a body, so a body larger than about 21 MiB can't arrive in time over a 1 Mbit/s link.                          |
 | `blob_min_copies`                | `1`                | Whole number, 1 to 1000000                                | The fewest live copies a blob keeps. A drop that would leave fewer is refused.                                                                                                                                                                                                                                                         |
 | `blob_cleanup_enabled`           | `true`             | `true` or `false`                                         | Whether the `blob-orphans` job sweeps for unreferenced blobs. When off, no blob is reported or purged.                                                                                                                                                                                                                                 |
 | `blob_cleanup_grace_seconds`     | `86400` seconds    | Whole number of seconds, 0 to 31536000                    | How long an unreferenced blob stands in the orphan report before a later run purges it. At 0 the next run purges it.                                                                                                                                                                                                                   |
@@ -2502,11 +2568,11 @@ When an authorized caller replaces or updates the configuration, the server MUST
 
 ### `instance/live-policy-validation`
 
-If a configuration write would make the effective recent, daily and weekly version windows decrease in that order, set a negative window or inactivity period, set a version count below one, or enable reporting without a configured receiver, then the server MUST refuse it with `400 validation_error` without changing the stored configuration.
+If a configuration write would make the effective recent, daily and weekly version windows decrease in that order, set a negative window or inactivity period, set a version count below one, or turn reporting from off to on without a configured receiver, then the server MUST refuse it with `400 validation_error` without changing the stored configuration.
 
 **Reason:** validation includes the defaults exposed by clearing a stored setting. The receivers' addresses and credentials are start-only settings.
 
-**Tests:** `compliance/instance-config.test.ts › keeps live settings across restart, preserves omitted choices and clears to the environment`.
+**Tests:** `compliance/instance-config.test.ts › keeps live settings across restart, preserves omitted choices and clears to the environment`, `compliance/restore-says.test.ts › restores a reporting setting that is turned on where no receiver is set, names it, and still refuses turning it on again from off`.
 
 ### `instance/live-work`
 

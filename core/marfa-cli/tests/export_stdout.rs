@@ -13,12 +13,16 @@ use isolated::Isolated;
 
 const TAR_BLOCK: usize = 512;
 
-/// A tar of a manifest that lists no missing blobs and one item file.
+/// A tar of a manifest, a list of files that names none, and one item file.
 fn archive() -> Vec<u8> {
-    let manifest = br#"{"version":0,"blobs":{},"missing_blobs":{}}"#;
+    let manifest = br#"{"version":1,"format":"marfa-archive","file_count":0}"#;
+    let files = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default())
+        .finish()
+        .unwrap();
     let mut tar = Vec::new();
     for (name, body) in [
         ("manifest.json", manifest.as_slice()),
+        ("files.ndjson.gz", files.as_slice()),
         ("items.ndjson.gz", b"\x1f\x8b".as_slice()),
     ] {
         let mut header = [0u8; TAR_BLOCK];

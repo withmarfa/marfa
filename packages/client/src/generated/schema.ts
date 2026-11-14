@@ -2375,7 +2375,7 @@ export interface paths {
         put?: never;
         /**
          * Restore from an archive
-         * @description Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires the private local command.
+         * @description Restores an exported archive atomically and returns counts of written and skipped records. While it writes, Marfa turns other writes away at once and tells them when to try again. Requires the private local command.
          */
         post: operations["restoreArchive"];
         delete?: never;
@@ -2439,7 +2439,7 @@ export interface paths {
         put?: never;
         /**
          * Restore a backup
-         * @description Restores a backup from the instance's backup folder or object store, as `POST /restore` restores an archive, with a backup folder's files read from the folder. Other writes wait until it finishes. Requires the private local command.
+         * @description Restores a backup from the backup folder or object store, as `POST /restore` does, reading a folder's files from it. While it writes, Marfa turns other writes away at once. Requires the private local command.
          */
         post: operations["restoreBackup"];
         delete?: never;
@@ -3138,10 +3138,10 @@ export interface components {
             /** @description Whether Marfa backs itself up to its backup folder or object store, how the last backup went, and whether the place it backs up to is taking copies. */
             backups: {
                 /**
-                 * @description `ok`: backing up on schedule, and the last run succeeded. `failing`: the last run failed or lost files, or a store isn't taking copies, which makes the overall `status` at least `degraded`. `off`: no scheduled backups.
+                 * @description `ok`: on schedule, and the last backup is whole. `incomplete`: files it names have no recorded copy. `failing`: a run failed or lost files, or a store isn't taking copies, so the overall `status` is at least `degraded`. `off`: no scheduled backups.
                  * @enum {string}
                  */
-                status: "ok" | "failing" | "off";
+                status: "ok" | "incomplete" | "failing" | "off";
                 /**
                  * @description Why backups are `off`: `no_backup_destination` when the instance has nowhere to put them, with neither `MARFA_BACKUP_PATH` nor `S3_BUCKET` set, `turned_off` when `backup_interval_seconds` is 0.
                  * @enum {string}
@@ -3170,6 +3170,8 @@ export interface components {
                 last_failed_at?: string | null;
                 /** @description How many files waited for their copy in the object store or backup folder when `blob-replicate` last ran. Present only for a caller that holds `instance.read`, and only when a destination is set. */
                 copies_waiting?: number;
+                /** @description How many files the last backup names with no recorded copy in the destination, or `null` when unknown. `blob-integrity` keeps the record true. Present only for a caller that holds `instance.read`, and only when a destination is set. */
+                last_backup_files_waiting?: number | null;
                 /** @description Why the object store or backup folder isn't taking copies, or `null` while it does. It covers a backup folder whose disk isn't there. Present only for a caller that holds `instance.read`, and only when a destination is set. */
                 store_error?: string | null;
             };
@@ -6260,6 +6262,23 @@ export interface components {
                 };
             };
         };
+        /** @description An error response. */
+        EnforcementUnreadableOrExportItemsUnrestorableRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "enforcement_unreadable" | "export_entry_unrestorable";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         /**
          * @description The active app grants.
          * @example {
@@ -6581,6 +6600,16 @@ export interface components {
                 message: string;
                 /** @description More about the error, such as the field it concerns. Each code defines its own details. */
                 details?: {
+                    /** @description The milliseconds the write waited for the write lock. Absent when a restore turned the write away at once. */
+                    budget_ms?: number;
+                    /**
+                     * @description Why Marfa turned the write away without a wait. `restore_running` means a restore is running.
+                     * @enum {string}
+                     */
+                    reason?: "restore_running";
+                    /** @description The same whole seconds as `Retry-After`. Present when `reason` is `restore_running`. */
+                    retry_after?: number;
+                } & {
                     [key: string]: unknown;
                 };
             };
@@ -6843,8 +6872,8 @@ export interface components {
         /** @description A backup in the instance's backup folder or object store. */
         Backup: {
             /**
-             * @description The backup's name: the instant Marfa took it, followed by `.tar`.
-             * @example 2026-11-09T10:15:30.250Z.tar
+             * @description The backup's name: the instant Marfa took it in ISO 8601 basic format, with no colons, followed by `.tar`.
+             * @example 20261109T101530.250Z.tar
              */
             name: string;
             /**
@@ -7307,6 +7336,30 @@ export interface components {
                 outcome: "created" | "replaced" | "deleted" | "unchanged";
             }[];
         };
+        /** @description One kind of thing the archive doesn't hold, with what to do about it. */
+        NotRestored: {
+            /**
+             * @description What the archive doesn't hold. `enforcement` appears only when the instance that wrote the archive couldn't read its enforcement settings.
+             * @enum {string}
+             */
+            kind: "sign_in" | "keys" | "apps" | "webhooks" | "inbound_endpoints" | "connector_keys" | "addresses" | "name" | "logs" | "enforcement";
+            /** @description A sentence saying that this kind is not restored and what to do about it. */
+            message: string;
+        };
+        /** @description The instance that wrote an archive, and what it keeps in this instance's backup destination. Present when the archive was written by another instance than this one. */
+        PreviousInstance: {
+            /** @description The ID of the instance that wrote the archive. */
+            instance_id: string;
+            /**
+             * @description Where this instance takes its backups: `folder` for a backup folder, `bucket` for an object store, or `null` when it has no backup destination.
+             * @enum {string|null}
+             */
+            destination: "folder" | "bucket" | null;
+            /** @description Its `backups/<id>` and `files/<id>` folders in a backup folder, or only `<prefix>/backups/<id>` in a bucket, whose `<prefix>/blobs/` is shared. Empty with none. Delete only once that instance no longer runs and nothing else restores from them. */
+            kept_by_previous_instance: string[];
+            /** @description A sentence naming that instance and what it keeps, and saying to delete it only once that instance no longer runs and nothing else restores from it. */
+            message: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -7320,7 +7373,7 @@ export interface components {
         "X-Request-ID": string;
         /** @description The machine-readable error code, identical to `error.code` in the body and drawn from the same enum the response schema lists. Read it rather than matching on `error.message`, which is prose written for a person and may be reworded. Present on every error the server renders, including one served from an idempotency record. */
         "X-Error-Code": string;
-        /** @description Whole seconds to wait before retrying, sent with a rate limit's refusal. Rounded up from the time left until the latest end among the limits that are spent, and never fewer than 1, so a client that honors it needs no backoff of its own. */
+        /** @description Whole seconds to wait before retrying, sent with a rate limit's refusal and with a write turned away while a restore runs. For a rate limit it is rounded up from the time left until the latest end among the limits that are spent, and never fewer than 1, so a client that honors it needs no backoff of its own. While a restore runs it is always 5. */
         "Retry-After": number;
         /** @description Sent as `true` when this response was served from the record of an earlier request carrying the same `Idempotency-Key`, rather than by performing the write. It is only ever sent on a replay and only with that value, so its absence means the write was performed. The status and body are the first attempt's, which is why the header can arrive on an error: a recorded 409 replays as a 409. Read a replayed response exactly as the original would have been read: the header says where the answer came from, not that anything went wrong. */
         "Idempotency-Replayed": "true";
@@ -7466,12 +7519,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7727,13 +7781,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -7877,12 +7932,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8064,13 +8120,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8323,13 +8380,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8500,12 +8558,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8705,13 +8764,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -8885,13 +8945,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9074,13 +9135,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9284,13 +9346,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9416,12 +9479,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9589,12 +9653,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9755,12 +9820,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -9925,12 +9991,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10139,12 +10206,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10281,12 +10349,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10412,12 +10481,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10530,12 +10600,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10701,12 +10772,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10817,12 +10889,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -10974,12 +11047,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -11131,12 +11205,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -11288,12 +11363,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -11447,12 +11523,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -11705,13 +11782,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -11829,12 +11907,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -11978,12 +12057,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -12103,12 +12183,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -12302,13 +12383,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -12504,13 +12586,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -12688,13 +12771,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -12797,12 +12881,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -12932,12 +13017,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -13133,13 +13219,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -13317,13 +13404,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -13444,12 +13532,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -13618,12 +13707,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -13865,13 +13955,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14010,12 +14101,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14168,12 +14260,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14314,12 +14407,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14468,12 +14562,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14662,13 +14757,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -14799,12 +14895,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15032,13 +15129,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15174,12 +15272,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15354,13 +15453,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15569,13 +15669,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15768,12 +15869,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -15918,12 +16020,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16050,12 +16153,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16197,12 +16301,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16308,12 +16413,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16482,12 +16588,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16604,12 +16711,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16797,12 +16905,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -16968,12 +17077,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -17163,12 +17273,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -17319,12 +17430,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -17490,12 +17602,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -17642,12 +17755,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -17753,12 +17867,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -17933,12 +18048,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -18088,12 +18204,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -18243,6 +18360,7 @@ export interface operations {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -18411,6 +18529,7 @@ export interface operations {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -18535,12 +18654,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -18657,12 +18777,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -18811,6 +18932,7 @@ export interface operations {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -18912,12 +19034,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -19019,12 +19142,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -19181,6 +19305,7 @@ export interface operations {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -19282,12 +19407,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -19447,12 +19573,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -19569,12 +19696,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -19718,12 +19846,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -19892,12 +20021,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -20019,12 +20149,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -20170,12 +20301,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -20282,12 +20414,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -20483,13 +20616,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -20709,13 +20843,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -20889,13 +21024,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -21053,12 +21189,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -21232,12 +21369,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -21417,13 +21555,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -21553,12 +21692,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -21730,13 +21870,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -21941,13 +22082,14 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
                     "Idempotency-Replayed": components["headers"]["Idempotency-Replayed"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -22038,12 +22180,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -22209,12 +22352,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -22319,12 +22463,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -22468,12 +22613,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -22617,12 +22763,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -22796,12 +22943,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -22911,12 +23059,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -23089,12 +23238,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -23244,12 +23394,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -23366,12 +23517,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -23550,12 +23702,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -23699,12 +23852,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -23828,12 +23982,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -24019,12 +24174,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -24193,12 +24349,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -24315,12 +24472,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -24485,12 +24643,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -24639,12 +24798,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -24770,12 +24930,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -24897,12 +25058,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -25079,12 +25241,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -25174,12 +25337,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -25287,12 +25451,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -25455,12 +25620,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -25562,12 +25728,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -25745,12 +25912,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -25869,12 +26037,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -26018,12 +26187,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -26219,12 +26389,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -26420,12 +26591,13 @@ export interface operations {
                     "application/json": components["schemas"]["RateLimitedRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -26515,12 +26687,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -26652,12 +26825,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -26822,12 +26996,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -26941,12 +27116,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -27251,12 +27427,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -27371,12 +27548,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -27538,12 +27716,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -27672,12 +27851,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -27835,12 +28015,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -27998,12 +28179,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -28105,12 +28287,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -28257,12 +28440,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -28431,12 +28615,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -28538,12 +28723,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -28687,12 +28873,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -28855,12 +29042,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -28996,12 +29184,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -29103,12 +29292,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -29205,7 +29395,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: a lever lacks `types` or `sources`.
-             *     - `validation_error`: the body names a setting Marfa doesn't know, a value is out of range, the effective version windows are out of order, reporting is enabled without a configured receiver, the name is invalid, or `instance_id` names a different instance.
+             *     - `validation_error`: the body names a setting Marfa doesn't know, a value is out of range, the effective version windows are out of order, reporting is turned from off to on without a configured receiver, the name is invalid, or `instance_id` names a different instance.
              */
             400: {
                 headers: {
@@ -29309,12 +29499,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -29411,7 +29602,7 @@ export interface operations {
             };
             /**
              * @description - `missing_required_field`: a lever lacks `types` or `sources`.
-             *     - `validation_error`: the body names a setting Marfa doesn't know, a value is out of range, the effective version windows are out of order, reporting is enabled without a configured receiver, the name is invalid, or `instance_id` names a different instance.
+             *     - `validation_error`: the body names a setting Marfa doesn't know, a value is out of range, the effective version windows are out of order, reporting is turned from off to on without a configured receiver, the name is invalid, or `instance_id` names a different instance.
              */
             400: {
                 headers: {
@@ -29515,12 +29706,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -29622,12 +29814,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -29757,12 +29950,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -29922,12 +30116,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -30088,12 +30283,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -30214,12 +30410,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -30321,12 +30518,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -30470,12 +30668,13 @@ export interface operations {
                     "application/json": components["schemas"]["InternalErrorRefusal"];
                 };
             };
-            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. */
+            /** @description `write_contention`: the database was busy, and Marfa couldn't complete the request in time. Nothing changed. Try the request again. While a restore runs, `details.reason` is `restore_running`. */
             503: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -30509,9 +30708,9 @@ export interface operations {
                 occurred_after?: string;
                 /** @description Only export items whose own time (`occurred_at`, else `created_at`) is before this time. */
                 occurred_before?: string;
-                /** @description `ndjson` for lines of JSON, or `archive` for a tar file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists under `missing_blobs` each blob it doesn't hold, including a file's blob your credential can't read. */
+                /** @description `ndjson` for lines of JSON, or `archive` for a tar file that `POST /restore` reads. Defaults to `ndjson`. An archive's `files.ndjson.gz` marks each file it doesn't carry `not_carried`, including one your credential can't read. */
                 format?: "ndjson" | "archive";
-                /** @description With `format=archive`, `false` leaves out the bytes of files, which the manifest then names in `missing_blobs`. Defaults to `true`. `format=ndjson` carries no file bytes either way. */
+                /** @description With `format=archive`, `false` leaves out the bytes of files, which `files.ndjson.gz` then marks `not_carried`. Defaults to `true`. `format=ndjson` carries no file bytes either way. */
                 files?: "true" | "false";
             };
             header?: never;
@@ -30520,7 +30719,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description With `format=ndjson`, one JSON object per line: each item, then each readable edge between them. With `format=archive`, a tar of the manifest, compressed line files of your registrations and settings, items with their history, and edges, then the blobs. If the export fails partway or your credential ends or stops reading what it carries, the connection ends early and an archive won't unpack. */
+            /** @description With `format=ndjson`, one JSON object per line: each item, then each readable edge between them. With `format=archive`, a tar of the manifest, compressed lines of its files, registrations and settings, items, versions, edges and table rows, then the blobs. If the export fails partway or your credential ends or stops reading what it carries, the connection ends early and an archive won't unpack. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30571,7 +30770,10 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `export_entry_unrestorable`: with `format=archive`, a restore would refuse or skip an item or edge this instance holds, so no archive was sent. `details.entry` names it by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct it or its type, then export again. */
+            /**
+             * @description - `enforcement_unreadable`: with `format=archive`, the instance's enforcement settings do not read. Set them again with `PATCH /config`, then export again.
+             *     - `export_entry_unrestorable`: with `format=archive`, a restore would refuse or skip an item or edge, or its line is over the 64 MiB a restore reads. `details.entry` names it and why. Correct it or its type, then export again.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30580,7 +30782,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ExportItemsUnrestorableRefusal"];
+                    "application/json": components["schemas"]["EnforcementUnreadableOrExportItemsUnrestorableRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -30617,6 +30819,7 @@ export interface operations {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -30647,7 +30850,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`. Only the build that wrote an archive is sure to read it. */
+        /** @description The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `files.ndjson.gz`, `instance.ndjson.gz`, `items.ndjson.gz`, `versions.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`, in that order. Only the build that wrote an archive is sure to read it. */
         requestBody: {
             content: {
                 "application/x-tar": Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
@@ -30677,6 +30880,10 @@ export interface operations {
                         };
                         /** @description How many blobs the archive carried whose bytes match their hash, whether or not the instance already had them. */
                         blobs_imported: number;
+                        /** @description The name of each archive entry Marfa doesn't know and skipped, such as one a tar tool adds, in the order the archive holds them. */
+                        entries_skipped: string[];
+                        /** @description Each kind of `instance.ndjson.gz` line Marfa doesn't know and skipped, such as one a later build of the same archive version adds, named once in the order the archive first holds it. */
+                        line_kinds_skipped: string[];
                         /** @description The hashes of the blobs the archive names but doesn't carry with matching bytes, and that Marfa holds no copy of. Upload their bytes again with `POST /blobs` to restore them. */
                         blobs_missing: string[];
                         /** @description How many types Marfa registered. */
@@ -30709,6 +30916,12 @@ export interface operations {
                         settings_skipped: number;
                         /** @description The names of the settings the archive carried that this instance does not have. Marfa left them out and stored nothing for them. */
                         settings_dropped: string[];
+                        /** @description The reporting switches Marfa stored as on that send nothing, because no receiver is configured where Marfa runs: `heartbeat_enabled` and `error_reporting_enabled`. */
+                        settings_without_receiver: string[];
+                        /** @description The archive's enforcement settings Marfa stored, each one the instance didn't store. */
+                        enforcement_added: ("strict_mode" | "source_allowlist" | "source_filter")[];
+                        /** @description The archive's enforcement settings Marfa skipped, because the instance already stores each one or stores enforcement settings that don't read. */
+                        enforcement_skipped: ("strict_mode" | "source_allowlist" | "source_filter")[];
                         /** @description How many connector state documents Marfa stored, for sources the instance held none for. */
                         connector_states_added: number;
                         /** @description How many connector state documents Marfa skipped because the instance already holds one for the source. */
@@ -30721,13 +30934,14 @@ export interface operations {
                         rows_imported: number;
                         /** @description How many table rows Marfa skipped because their item was counted as a duplicate. */
                         rows_skipped: number;
-                        /** @description A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance. */
-                        set_up_again: string;
+                        /** @description Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs. Then `enforcement` when the instance that wrote the archive couldn't read its enforcement settings, so the archive doesn't hold them. */
+                        not_restored: components["schemas"]["NotRestored"][];
+                        previous_instance?: components["schemas"]["PreviousInstance"];
                     };
                 };
             };
             /**
-             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid line, or a line over 64 MiB.
+             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.
              *     - `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.
              *     - `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.
              */
@@ -30851,6 +31065,7 @@ export interface operations {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -31025,6 +31240,8 @@ export interface operations {
                         unremoved: number;
                         /** @description The hashes of the files the backup names that no store could give when Marfa took it. A restore of the backup goes ahead without them, and `GET /health` answers `backups.status` `failing` until a backup is put without losing any. */
                         blobs_lost: string[];
+                        /** @description How many files the backup names with no recorded copy in the destination, `blobs_lost` included. `blob-integrity` keeps the record true. A restore needs those files unless the restoring instance holds them or the backup lists them as lost. */
+                        blobs_waiting: number;
                     };
                 };
             };
@@ -31065,9 +31282,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `conflict`: a file the backup names was purged, or its copy where backups go was dropped, while the backup was read, or a backup by this name is already recorded. The next run takes the backup again.
+             * @description - `conflict`: a file the backup names was purged or dropped while it was read, or the name is taken.
+             *     - `export_entry_unrestorable`: the backup would hold an item or edge that `GET /export` refuses, named in `details.entry`, so none was put.
              *     - `housekeeping_job_running`: a backup is running. Try again once it ends.
-             *     - `no_backup_destination`: the instance has nowhere to put backups, so it keeps none.
+             *     - `no_backup_destination`: the instance has nowhere to put backups.
              */
             409: {
                 headers: {
@@ -31077,7 +31295,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
+                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["ExportItemsUnrestorableRefusal"] | components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -31300,6 +31518,10 @@ export interface operations {
                         };
                         /** @description How many blobs the archive carried whose bytes match their hash, whether or not the instance already had them. */
                         blobs_imported: number;
+                        /** @description The name of each archive entry Marfa doesn't know and skipped, such as one a tar tool adds, in the order the archive holds them. */
+                        entries_skipped: string[];
+                        /** @description Each kind of `instance.ndjson.gz` line Marfa doesn't know and skipped, such as one a later build of the same archive version adds, named once in the order the archive first holds it. */
+                        line_kinds_skipped: string[];
                         /** @description The hashes of the blobs the archive names but doesn't carry with matching bytes, and that Marfa holds no copy of. Upload their bytes again with `POST /blobs` to restore them. */
                         blobs_missing: string[];
                         /** @description How many types Marfa registered. */
@@ -31332,6 +31554,12 @@ export interface operations {
                         settings_skipped: number;
                         /** @description The names of the settings the archive carried that this instance does not have. Marfa left them out and stored nothing for them. */
                         settings_dropped: string[];
+                        /** @description The reporting switches Marfa stored as on that send nothing, because no receiver is configured where Marfa runs: `heartbeat_enabled` and `error_reporting_enabled`. */
+                        settings_without_receiver: string[];
+                        /** @description The archive's enforcement settings Marfa stored, each one the instance didn't store. */
+                        enforcement_added: ("strict_mode" | "source_allowlist" | "source_filter")[];
+                        /** @description The archive's enforcement settings Marfa skipped, because the instance already stores each one or stores enforcement settings that don't read. */
+                        enforcement_skipped: ("strict_mode" | "source_allowlist" | "source_filter")[];
                         /** @description How many connector state documents Marfa stored, for sources the instance held none for. */
                         connector_states_added: number;
                         /** @description How many connector state documents Marfa skipped because the instance already holds one for the source. */
@@ -31344,8 +31572,9 @@ export interface operations {
                         rows_imported: number;
                         /** @description How many table rows Marfa skipped because their item was counted as a duplicate. */
                         rows_skipped: number;
-                        /** @description A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance. */
-                        set_up_again: string;
+                        /** @description Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs. Then `enforcement` when the instance that wrote the archive couldn't read its enforcement settings, so the archive doesn't hold them. */
+                        not_restored: components["schemas"]["NotRestored"][];
+                        previous_instance?: components["schemas"]["PreviousInstance"];
                         /** @description The backup Marfa restored. */
                         backup: {
                             /** @description The backup's name. */
@@ -31360,7 +31589,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid line, or a line over 64 MiB.
+             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.
              *     - `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.
              *     - `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.
              */
@@ -31412,7 +31641,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `backup_files_missing`: neither the folder nor this instance holds files it needs, named in `details.missing_blobs`. Nothing was restored.
+             * @description - `backup_files_missing`: neither the destination nor this instance holds files it needs, in `details.missing_blobs`. Nothing was restored.
              *     - `conflict`: the archive redefines a type registered here differently, carries a core edge type, or reuses a snapshot ID.
              *     - `link_taken`: the archive's type names a `link_field` two items share.
              *     - `no_backup_destination`: there is nowhere to put backups.
@@ -31486,6 +31715,7 @@ export interface operations {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
                     "X-Request-ID": components["headers"]["X-Request-ID"];
                     "X-Error-Code": components["headers"]["X-Error-Code"];
+                    "Retry-After": components["headers"]["Retry-After"];
                     [name: string]: unknown;
                 };
                 content: {

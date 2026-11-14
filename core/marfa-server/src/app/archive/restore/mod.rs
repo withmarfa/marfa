@@ -4,7 +4,7 @@ pub mod intake;
 pub mod named;
 mod untar;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 
@@ -25,12 +25,93 @@ use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM};
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{connectors, edge_types, sources, stored, tables, types};
-use intake::{Intake, Received};
+use crate::app::{provenance, restore_running};
+use intake::{Intake, LineFile, Received};
 
-/// What every answer says of what an archive does not hold.
-pub const SET_UP_AGAIN: &str =
-    "An archive holds no sign-in, keys, apps or webhooks. Set them up again on this instance.";
+/// What an archive never holds, each with the kind a client reads and what the owner does.
+pub const NOT_RESTORED: [(&str, &str); 9] = [
+    (
+        "sign_in",
+        "The owner's sign-in is not restored. Sign in again on this instance.",
+    ),
+    (
+        "keys",
+        "Keys are not restored. Make new keys on this instance.",
+    ),
+    (
+        "apps",
+        "Apps are not restored. Each app signs in again and is approved again.",
+    ),
+    ("webhooks", "Webhooks are not restored. Make them again."),
+    (
+        "inbound_endpoints",
+        "Inbound endpoints are not restored, and the addresses other services hold for them no longer work. Make each endpoint again and give its sender the new address.",
+    ),
+    (
+        "connector_keys",
+        "A connector's state and agreements are restored but not its key. Give each connector a new key.",
+    ),
+    (
+        "addresses",
+        "The instance's addresses are not restored. Set them on this instance.",
+    ),
+    (
+        "name",
+        "The instance's name is not restored. Set it on this instance.",
+    ),
+    ("logs", "The audit log and the event log are not restored."),
+];
+/// What the writer of an archive could not read and so left out, each with what the owner does.
+const UNREADABLE: [(&str, &str); 1] = [(
+    "enforcement",
+    "The instance that wrote this archive could not read its enforcement settings, so the archive does not hold them. Set strict mode, the source allowlist and the source filter on this instance.",
+)];
 const QUEUED: usize = 8;
+
+/// The instance that wrote an archive, and where the backup destination in use keeps what it
+/// wrote. Nothing here is known to be unused: that instance may still run, or be restored again.
+fn previous_instance(app: &App, id: &str) -> Value {
+    const WHEN: &str =
+        "Delete them only once that instance no longer runs and nothing else restores from them.";
+    let start = &app.settings.start;
+    let (destination, kept, message) = match (&start.object_store, &start.backup_path) {
+        (Some(bucket), _) => {
+            let backups = format!("{}/{}/{id}", bucket.prefix, crate::app::backups::FOLDER);
+            let message = format!(
+                "Instance {id} wrote this archive. If it took backups to this object store, they \
+                 are under {backups}. {WHEN} The file copies under {}/{}/ are shared with this \
+                 instance, so keep them.",
+                bucket.prefix,
+                crate::app::blobs::s3::BLOBS,
+            );
+            (json!("bucket"), vec![backups], message)
+        }
+        (None, Some(_)) => {
+            use crate::app::blobs::folder::{BACKUPS, FILES};
+            let kept = vec![format!("{BACKUPS}/{id}"), format!("{FILES}/{id}")];
+            let message = format!(
+                "Instance {id} wrote this archive. If it took backups to this backup folder, its \
+                 backups and file copies are in {} and {}. {WHEN}",
+                kept[0], kept[1],
+            );
+            (json!("folder"), kept, message)
+        }
+        (None, None) => (
+            Value::Null,
+            Vec::new(),
+            format!(
+                "Instance {id} wrote this archive. This instance has no backup destination, so \
+                 the places that instance keeps its backups are not known here. {WHEN}"
+            ),
+        ),
+    };
+    json!({
+        "instance_id": id,
+        "destination": destination,
+        "kept_by_previous_instance": kept,
+        "message": message,
+    })
+}
 const SETTLE_EVERY: usize = 1000;
 
 pub(crate) fn conflicting(ids: Vec<String>) -> Refusal {
@@ -165,10 +246,10 @@ impl App {
             .read(move |tx| catalog::current(&cache, tx, Snapshot::Committed))
             .await?;
         let spool = self.restore_spool();
-        let cap = self.bulk_cap();
+        let (cap, line_cap) = (self.bulk_cap(), self.archive_line_cap());
         let (parts, mut arriving) = mpsc::channel::<Bytes>(QUEUED);
         let reading = tokio::task::spawn_blocking(move || {
-            let mut intake = Intake::new(spool, committed, cap)?;
+            let mut intake = Intake::new(spool, committed, cap, line_cap)?;
             while let Some(part) = arriving.blocking_recv() {
                 intake.push(&part)?;
             }
@@ -190,10 +271,18 @@ impl App {
         whole: bool,
     ) -> Result<Value> {
         caller.require_local()?;
+        let holding = self.db.hold_writes(restore_running::refusal())?;
+        let permit = holding.permit();
         let app = self.clone();
         let caller = caller.clone();
         let task = async move {
             let absent = received.absent();
+            let previous = received
+                .manifest
+                .instance_id
+                .clone()
+                .filter(|id| *id != app.instance_id);
+            let unreadable = received.manifest.unreadable.clone();
             let needed: HashSet<String> = if whole {
                 received.manifest.held_files()
             } else {
@@ -203,7 +292,10 @@ impl App {
                 registrations,
                 spools,
                 snapshots,
+                mark_types,
                 carried,
+                skipped,
+                unknown_kinds,
                 ..
             } = received;
             let placed = app.place_restored(carried, absent).await?;
@@ -276,8 +368,14 @@ impl App {
                             icons.skip("already_set");
                         }
                         let named = sources::restore(tx, &unit.at, &registrations.sources)?;
-                        let (settings_added, settings_skipped) =
+                        let restored_settings =
                             stored::restore(tx, &settings, &registrations.settings)?;
+                        let (settings_added, settings_skipped) =
+                            (restored_settings.added, restored_settings.skipped);
+                        let levers = match &registrations.enforcement {
+                            None => stored::RestoredLevers::default(),
+                            Some(levers) => stored::restore_enforcement(tx, levers)?,
+                        };
                         let mut states = Counted::default();
                         for (source, state) in &registrations.states {
                             if connectors::restore_state(tx, source, state, &unit.at)? {
@@ -289,16 +387,16 @@ impl App {
                         blobs::record(tx, &copies, replicates, &unit.caller.credential_handle(), &unit.at)?;
                         let held = restored::held_snapshots(tx, snapshots.each())?;
                         let (mut imported, mut duplicates) = (0usize, 0usize);
-                        let mut written: HashSet<u128> = HashSet::new();
-                        for (row, line) in lines(&spools[1])?.enumerate() {
+                        let mut written: HashMap<u128, i64> = HashMap::new();
+                        for (row, line) in lines(&spools[LineFile::Items.slot()])?.enumerate() {
                             let line = line?;
                             checks::item(&catalog, cap, &line, row + 1).map_err(|refused| refused.refusal)?;
                             faults.hold_writing(HOLD_RESTORE_ITEM);
-                            match restored::restore(unit, &catalog, &line, &held)? {
-                                Restored::Written => {
+                            match restored::restore(unit, &catalog, &line, &mark_types)? {
+                                Restored::Written(seq) => {
                                     imported += 1;
                                     if let Some(id) = line.pointer("/item/id").and_then(Value::as_str).and_then(bits) {
-                                        written.insert(id);
+                                        written.insert(id, seq);
                                     }
                                 }
                                 Restored::Duplicate => duplicates += 1,
@@ -307,10 +405,17 @@ impl App {
                                 restored::settle(tx, &catalog)?;
                             }
                         }
+                        for (row, line) in lines(&spools[LineFile::Versions.slot()])?.enumerate() {
+                            let line = line?;
+                            let key = checks::version(cap, &line, row + 1).map_err(|refused| refused.refusal)?;
+                            if let Some(seq) = bits(&key.item_id).and_then(|id| written.get(&id)) {
+                                restored::restore_version(tx, *seq, &line, &held)?;
+                            }
+                        }
                         restored::settle(tx, &catalog)?;
                         let writing = Writing::of(unit, &catalog, None);
                         let mut edges = Counted::default();
-                        for (row, line) in lines(&spools[2])?.enumerate() {
+                        for (row, line) in lines(&spools[LineFile::Edges.slot()])?.enumerate() {
                             let line = line?;
                             if let Err(refused) = checks::edge(&catalog, cap, &line, row + 1, |_| None)
                                 && refused.skip.is_none()
@@ -323,7 +428,7 @@ impl App {
                             }
                         }
                         let mut agreements = Counted::default();
-                        for line in lines(&spools[0])? {
+                        for line in lines(&spools[LineFile::Instance.slot()])? {
                             let line = line?;
                             let Some(agreement) = line.get("connector_agreement") else {
                                 continue;
@@ -342,10 +447,10 @@ impl App {
                             }
                         }
                         let mut restoring = tables::archive::Restoring::new(unit, &catalog);
-                        for (row, line) in lines(&spools[3])?.enumerate() {
+                        for (row, line) in lines(&spools[LineFile::Rows.slot()])?.enumerate() {
                             let line = line?;
                             let key = checks::row(&line, row + 1).map_err(|refused| refused.refusal)?;
-                            let holds = bits(&key.item_id).is_some_and(|id| written.contains(&id));
+                            let holds = bits(&key.item_id).is_some_and(|id| written.contains_key(&id));
                             restoring.row(&line, key, holds)?;
                         }
                         let (rows_imported, rows_skipped) = restoring.finish()?;
@@ -370,12 +475,17 @@ impl App {
                             "settings_added": settings_added,
                             "settings_skipped": settings_skipped,
                             "settings_dropped": registrations.dropped_settings,
+                            "settings_without_receiver": restored_settings.without_receiver,
+                            "enforcement_added": levers.added,
+                            "enforcement_skipped": levers.skipped,
                             "connector_states_added": states.added,
                             "connector_states_skipped": states.skipped,
                             "connector_agreements_added": agreements.added,
                             "connector_agreements_skipped": agreements.skipped,
                             "rows_imported": rows_imported,
                             "rows_skipped": rows_skipped,
+                            "entries_skipped": skipped,
+                            "line_kinds_skipped": unknown_kinds,
                         });
                         unit.audit_set("restore_archive", Some(answer.clone()))?;
                         let staged = (settings_added > 0)
@@ -394,6 +504,7 @@ impl App {
                 })
                 .await;
             drop(placed);
+            drop(holding);
             let (mut answer, staged) = written?;
             let emptying = app.clone();
             tokio::spawn(async move { emptying.db.empty_log().await });
@@ -401,10 +512,21 @@ impl App {
                 staged.publish(&app);
             }
             app.publish_catalog().await;
-            answer["set_up_again"] = Value::from(SET_UP_AGAIN);
+            answer["not_restored"] = NOT_RESTORED
+                .iter()
+                .chain(
+                    UNREADABLE
+                        .iter()
+                        .filter(|(kind, _)| unreadable.iter().any(|named| named == kind)),
+                )
+                .map(|(kind, message)| json!({ "kind": kind, "message": message }))
+                .collect();
+            if let Some(id) = previous {
+                answer["previous_instance"] = previous_instance(&app, &id);
+            }
             Ok(answer)
         };
-        tokio::spawn(task)
+        tokio::spawn(provenance::carried(permit.run(task)))
             .await
             .map_err(|error| Refusal::internal(&format!("a restore did not finish: {error}")))?
     }

@@ -55,7 +55,7 @@ async function backUpAt(
 }
 
 describe("thinning the backups", () => {
-  it("keeps the last day and the newest of each older day for thirty days, and deletes nothing that is not a listed backup of this instance", async () => {
+  it("keeps the last day and the newest of each of the 31 older days that hold a backup, and deletes nothing that is not a listed backup of this instance", async () => {
     const start = await server.pauseClock(true);
     try {
       // Noon UTC on a day more than 400 days ahead, so every backup is put
@@ -65,8 +65,18 @@ describe("thinning the backups", () => {
       const last = noon.getTime();
       const before = (days: number, hours = 0) =>
         last - days * DAY + hours * HOUR;
-      const keptAt = [before(30), before(10, 3), last - 2 * HOUR];
-      const deletedAt = [before(400), before(40), before(10, -3)];
+      const daily = Array.from({ length: 33 }, (_, day) => before(day + 1));
+      const keptAt = [
+        ...daily.slice(0, 31).filter((at) => at !== before(10)),
+        before(10, 3),
+        last - 2 * HOUR,
+      ];
+      const deletedAt = [
+        ...daily.slice(31),
+        before(400),
+        before(10),
+        before(10, -3),
+      ];
       const others = [
         `${folder}/${OTHER_INSTANCE}/${backupName(new Date(before(10, -3)))}`,
         `${folder}/${OTHER_INSTANCE}/${backupName(new Date(before(40)))}`,
@@ -140,6 +150,32 @@ describe("thinning the backups", () => {
       }
     } finally {
       await server.pauseClock(false);
+    }
+  });
+
+  it("keeps every backup when one is put 40 days after the last, and when the next comes six weeks later", async () => {
+    const own = ownObjectStore();
+    const ownBucket = bucketAt(own.S3_PREFIX);
+    const alone = await bootFreshServer("backup-thinning-clock", {
+      ...own,
+      MARFA_BACKUP_INTERVAL_SECONDS: "0",
+    });
+    try {
+      await alone.pauseClock(true);
+      const names: string[] = [];
+      for (const days of [0, 1, 1, 40, 42]) {
+        if (days > 0) await alone.advanceClock(days * DAY);
+        const run = await ownerOf(alone).runBackup();
+        expect(run.status, JSON.stringify(run.error)).toBe(200);
+        expect(run.data.removed).toBe(0);
+        names.push(run.data.backup.name);
+      }
+      const prefix = `${own.S3_PREFIX}/backups/${await instanceIdOf(alone)}`;
+      expect((await ownBucket.backupKeys()).sort()).toEqual(
+        names.map((name) => `${prefix}/${name}`).sort(),
+      );
+    } finally {
+      await alone.stop();
     }
   });
 });

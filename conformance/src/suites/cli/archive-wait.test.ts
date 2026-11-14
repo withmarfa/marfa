@@ -13,6 +13,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { notCarried } from "../../utils/archive.js";
 import { Cli, releaseHeld, requireBinary } from "./harness.js";
 
 /**
@@ -66,6 +67,6 @@ it("waits for an archive whose first byte comes after the usual answer budget, s
   const outcome = await pending;
   expect(outcome.code, outcome.stderr).toBe(0);
   expect(outcome.stderr).toContain("still preparing the archive");
-  expect(readFileSync(path).toString("latin1")).toContain('"missing_blobs":{}');
+  expect(notCarried(new Uint8Array(readFileSync(path)))).toEqual({});
   expect(readdirSync(dir)).toEqual(["nightly.tar"]);
 }, 180_000);

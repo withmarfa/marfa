@@ -13,6 +13,7 @@ path = "src/main.rs"
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std"] }
 clap.workspace = true
+flate2 = "1"
 keyring = "4"
 marfa-core = { workspace = true, features = ["telemetry"] }
 marfa-acl.workspace = true

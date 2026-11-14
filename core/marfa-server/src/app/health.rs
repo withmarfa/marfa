@@ -12,6 +12,7 @@ use super::backups::BackupHealth;
 use super::blobs::MARKER;
 use super::faults::{FAIL_HEALTH_WRITE, HOLD_DISK_PROBE, REFUSE_BLOB_STORE, Volume};
 use super::refusal::{Code, Refusal};
+use super::restore_running;
 use super::stored;
 use crate::db::{Write, volume};
 
@@ -97,9 +98,10 @@ pub struct Report {
 }
 
 /// Fields of the `backups` object given only to a caller who may read the reasons.
-const BACKUP_DETAIL: [&str; 8] = [
+const BACKUP_DETAIL: [&str; 9] = [
     "destination",
     "copies_waiting",
+    "last_backup_files_waiting",
     "store_error",
     "last_backup",
     "last_backup_at",
@@ -227,6 +229,9 @@ async fn attempt_write(app: Arc<App>, result: watch::Sender<Option<Component>>) 
 }
 
 async fn database_write(app: &Arc<App>) -> Component {
+    if app.db.writes_held().is_some() {
+        return Component::not_ok(Status::Degraded, restore_running::HEALTH);
+    }
     let mut running = {
         let mut attempt = app
             .health

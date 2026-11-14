@@ -2180,7 +2180,7 @@ Export the instance's data: everything, as an archive.
 
 With no `--format`, this writes the archive: every item, edge, table, setting and file the key may read, the bin included, which `restore` brings back. `--state` narrows the items. `--format ndjson` writes the items alone, one per line, without tables, settings or files, and leaves out the bin unless `--state any` asks for it.
 
-An archive is kept even when it lacks blobs it names: a blob no store could read whole, or a file's blob the key may not read, such as one only an earlier version names. A key holding `blobs.manage` reads every blob. The manifest lists the blobs it lacks under `missing_blobs`, and the command then exits 1 with `blobs_missing`, naming up to ten of them.
+An archive is kept even when it lacks blobs it names: a blob no store could read whole, or a file's blob the key may not read, such as one only an earlier version names. A key holding `blobs.manage` reads every blob. Its `files.ndjson.gz` marks each blob it lacks `not_carried` or `lost`, and the command then exits 1 with `blobs_missing`, naming up to ten of them.
 
 With `--output`, such an archive is not written to the path. It is kept beside it as `<PATH>.incomplete`, which replaces only an earlier file of that name, and the file at the path stays as it was, so a script that reads the path never gets an archive that lacks files. The message names both paths. When that name cannot be taken, the archive stays in a hidden partial file beside the path, and the message names it. Without `--output`, the archive goes to standard output, which it refuses when that is a terminal: save it with `--output <PATH>`, such as `marfa-export.tar`, or redirect it.
 
@@ -2206,9 +2206,9 @@ Restore an archive with local authority.
 
 Preserves item and edge IDs, created_at and updated_at dates, current versions, tags, extensions, and the item's earlier versions carried in the archive. Existing items and their history remain unchanged.
 
-The archive contains only data the exporting credential could read, including history allowed by each snapshot's type permissions and blobs that credential could read. It holds no sign-in, keys, apps, or webhooks, so set those up again after a restore; the command says so. Settings, type icons, source names, and connector state come back only where this instance has none. Items in the bin are absent unless explicitly exported, for example with `export --format archive --state any`.
+The archive contains only data the exporting credential could read, including history allowed by each snapshot's type permissions and blobs that credential could read. It holds no sign-in, keys, apps, webhooks, inbound endpoints, connector keys, addresses, name or logs, so set those up again after a restore; the command prints one line for each. Each setting, enforcement setting, type icon, source name, and connector state comes back only where this instance has none of its own. After a restore of another instance's archive, the command names where the backup destination keeps that instance's backups: delete them only once that instance no longer runs and nothing else restores from them. Items in the bin are absent unless explicitly exported, for example with `export --format archive --state any`.
 
-Until the first public release, restore only with the server build that wrote the archive. Archive format 0 does not promise compatibility between builds.
+A build restores every archive version up to its own and refuses a later one, or one written before Marfa 0.1, naming the build that wrote it. An entry the build does not know, such as one a tar tool adds, is skipped, and the answer names it in `entries_skipped`, which the command also prints.
 
 When the archive lacks blobs it names and this instance does not hold them either, the answer lists them in `blobs_missing`, and the command prints it and exits 1 with `blobs_missing`. Upload their bytes again with `blobs upload` to restore them.
 
@@ -2248,7 +2248,7 @@ marfa backups run [OPTIONS]
 
 ### marfa backups restore
 
-Restore a backup from the instance's backup folder or object store. The server reads it itself, files included, so nothing is downloaded here. It restores as `restore` does an archive, and holds no sign-in, keys, apps or webhooks. Requires private local authority (--socket).
+Restore a backup from the instance's backup folder or object store. The server reads it itself, files included, so nothing is downloaded here. It restores as `restore` does an archive, and holds no sign-in, keys, apps, webhooks or inbound endpoints. Requires private local authority (--socket).
 
 ```text
 marfa backups restore [OPTIONS] <INSTANCE_ID> <NAME>

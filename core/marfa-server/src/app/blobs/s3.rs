@@ -31,7 +31,7 @@ const PARTS_IN_FLIGHT: usize = 2;
 const ABORT_DEADLINE: Duration = Duration::from_secs(15);
 const MARKER: &str = ".marfa-store";
 /// The folder under the prefix that holds the blobs' objects and the marker.
-const BLOBS: &str = "blobs";
+pub const BLOBS: &str = "blobs";
 /// The object metadata that names the store which wrote an object.
 const WRITER: &str = "marfa-store";
 
