@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Reports a failed scheduled run. The `report-failure` job of each scheduled
-# workflow runs this, after a job of the workflow failed.
+# workflow runs this, after a job of the workflow failed or was cancelled. A job
+# that reaches its `timeout-minutes` ends as cancelled, so a cancelled job is
+# reported as "cancelled or timed out".
 #
 # One issue stays open per workflow, titled "Nightly failed: <workflow>". The
 # first failure opens it and each failure after that comments on it, so a
@@ -21,10 +23,13 @@ title="Nightly failed: ${workflow}"
 
 failed=$(
   gh run view "${run_id}" --repo "${repo}" --json jobs |
-    jq -r '[.jobs[] | select(.conclusion == "failure") | "- " + .name] | join("\n")'
+    jq -r '[.jobs[]
+      | select(.conclusion == "failure" or .conclusion == "cancelled")
+      | "- " + .name + ": " + (if .conclusion == "failure" then "failed" else "cancelled or timed out" end)]
+      | join("\n")'
 )
 if [[ -z "${failed}" ]]; then
-  failed="- None ended as failed. A job may have been cancelled or timed out."
+  failed="- None ended as failed or cancelled. The run itself may have been stopped."
 fi
 
 # The search matches words, not the whole title, so only an exact title counts.
@@ -39,7 +44,7 @@ if [[ -n "${open}" ]]; then
 
 Commit: \`${sha}\`
 
-Failed jobs:
+Jobs that failed or were cancelled:
 
 ${failed}"
   echo "Commented on issue ${open}."
@@ -51,13 +56,13 @@ trap 'rm -f "${body}"' EXIT
 cat >"${body}" <<EOF
 ## Summary
 
-The scheduled run of the ${workflow} workflow failed. The cause is not known yet.
+The scheduled run of the ${workflow} workflow failed, or a job in it was cancelled or timed out. The cause is not known yet.
 
 ## Context
 
 - Run: ${run_url}
 - Commit: \`${sha}\`
-- Failed jobs:
+- Jobs that failed or were cancelled:
 
 ${failed}
 
