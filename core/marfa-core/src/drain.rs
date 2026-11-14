@@ -1024,6 +1024,17 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
     Ok(answer)
 }
 
+/// Judging needs the original read and a table that is still held whole.
+fn judged(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<bool> {
+    let (WriteKind::WriteRows, Some(item), Some(table)) =
+        (row.kind, row.item_id.as_deref(), row.table.as_deref())
+    else {
+        return Ok(false);
+    };
+    Ok(store::read_of(conn, &row.id)?.is_some()
+        && crate::tables::state(conn, item, table)?.as_deref() == Some(crate::tables::WHOLE))
+}
+
 /// Whether a drain now has work: a write with no verdict, one blocked for a
 /// reason a drain clears itself, a read-back owed, a body whose names wait,
 /// or a body's answers still to apply. A dead write, or one blocked until
@@ -1115,13 +1126,30 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainRepor
     let (http, generation) = crate::catch_up::naming_instance(core, core.http()?)?;
     let mut pass = ReachChange::default();
     let mut report = DrainReport::empty();
-    let mut sent = send_queue(core, &http, generation, stop, &mut pass, &mut report);
+    let mut caught_up = false;
+    let mut sent = send_queue(
+        core,
+        &http,
+        generation,
+        stop,
+        &mut pass,
+        &mut report,
+        &mut caught_up,
+    );
     // No host owes a drain for a write it was not told is waiting, so one an
     // answer queued goes out in this drain, as a pass of its own.
     if sent.is_ok() && pass.follow_up && !pass.changed() && report.has_nothing_left() {
         pass.follow_up = false;
         let mut later = DrainReport::empty();
-        sent = send_queue(core, &http, generation, stop, &mut pass, &mut later);
+        sent = send_queue(
+            core,
+            &http,
+            generation,
+            stop,
+            &mut pass,
+            &mut later,
+            &mut caught_up,
+        );
         report.absorb(later);
     }
     let result = match sent {
@@ -1185,6 +1213,7 @@ fn send_queue(
     stop: &AtomicBool,
     pass: &mut ReachChange,
     report: &mut DrainReport,
+    caught_up: &mut bool,
 ) -> Result<()> {
     let waiting = store::waiting_writes(&*core.conn()?)?;
     let owed = !store::owed_read_backs(&*core.conn()?)?.is_empty()
@@ -1529,6 +1558,19 @@ fn send_queue(
                 landing: &landing,
             },
         )?;
+        // Here rather than as the drain starts, so writes queued ahead are not held.
+        if !*caught_up {
+            let conn = core.conn()?;
+            let mut judging = judged(&conn, row)?;
+            for joined in &batched {
+                judging = judging || judged(&conn, joined)?;
+            }
+            drop(conn);
+            if judging {
+                *caught_up = true;
+                core.catch_up_before_rows(stop)?;
+            }
+        }
         let payload = match payload_to_send(core, http, row, &all, &mut lookups)? {
             Ok(_) if row.kind == WriteKind::WriteRows => rows::body(row, &batched),
             Ok(payload) => payload,
