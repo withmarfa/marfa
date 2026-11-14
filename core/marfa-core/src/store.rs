@@ -6002,10 +6002,7 @@ fn waits_for_withdrawn(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     )?)
 }
 
-/// Transitive: a write two steps behind a withdrawn one can land no more than
-/// the one between, and left unanswered it would wait on a row clearing may
-/// take. A write sent before is held only behind an upload, without which
-/// it can never be sent again.
+/// Sent dependents qualify only through an upload; unsent dependents are transitive.
 pub fn held_for(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
     read_writes(
         conn,
@@ -6053,8 +6050,7 @@ pub fn stop_waiting_on(conn: &Connection, id: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// Also refuses each of `held` and puts the copy back as it was beneath
-/// each. The caller has read their rows back already.
+/// The caller must read back every affected row before withdrawing it.
 pub fn withdraw(
     conn: &Connection,
     row: &QueuedWrite,
@@ -6063,8 +6059,6 @@ pub fn withdraw(
     take_out(conn, row, held, "withdrawn")
 }
 
-/// `row` leaves the queue, with each of `held` refused for it and the copy
-/// put back as it was beneath every one of them.
 fn take_out(
     conn: &Connection,
     row: &QueuedWrite,
@@ -6084,14 +6078,7 @@ fn take_out(
     let_go_of_ends(conn, &ends)
 }
 
-/// Never clears a row `release` takes (blocked, dead, or refused unsent), nor
-/// one an unanswered or releasable row depends on: written as a list of
-/// verdicts instead, a release would leave a row waiting forever on a
-/// dependency that is gone. Nor a refused row carrying content, which goes
-/// only by `discard`. Nor an upload a write refused with `blob_not_found`
-/// names, whose bytes `kept_uploads` keeps. A row refused unsent behind a
-/// withdrawn write can never be released and is cleared; passes repeat until
-/// one clears nothing, since each can free what the last kept.
+/// Keeps releasable writes, refused content and uploads still needed by dependents.
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
     forget_answered_inner(conn, None, None, true)
 }
