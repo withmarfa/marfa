@@ -757,3 +757,243 @@ fn a_create_whose_chosen_tier_does_not_read_is_held_and_the_rest_wait_for_the_in
         Some("instance_changed")
     );
 }
+
+#[test]
+fn a_log_with_no_store_of_a_set_asides_beside_it_is_left_and_named() {
+    for (name, log) in [
+        (".carrying", "-wal"),
+        (".carrying", "-journal"),
+        (".carrying", "-shm"),
+        (".making", "-wal"),
+    ] {
+        let (_dir, path, _) = store_with(1);
+        damage_table(&path, "items");
+        let stray = beside(&beside(&path, name), log);
+        std::fs::write(&stray, b"a person's log").unwrap();
+        let before = bytes(&path);
+        let said = Core::set_aside_damaged(&path).unwrap_err().to_string();
+        assert!(said.contains(&stray.display().to_string()), "{said}");
+        assert_eq!(bytes(&stray).as_deref(), Some(&b"a person's log"[..]));
+        assert_eq!(bytes(&path), before, "{name}{log}");
+        assert!(!beside(&path, ".damaged-1").exists(), "{name}{log}");
+        assert!(!beside(&path, name).exists(), "{name}{log}");
+
+        // The witness: with the log moved, the set-aside goes ahead.
+        std::fs::remove_file(&stray).unwrap();
+        assert_eq!(set_aside(&path).carried, 1, "{name}{log}");
+    }
+}
+
+#[test]
+fn a_new_store_left_part_made_is_removed_only_where_it_holds_nothing_or_a_set_aside_marked_it() {
+    let making = |path: &Path| beside(path, ".making");
+    let empty = |path: &Path| std::fs::write(making(path), b"").unwrap();
+    let marked = |path: &Path| {
+        store::make_marked(&making(path), &[("set_aside_making", "true")]).unwrap();
+    };
+    // A crash part way through the transaction that makes it leaves frames
+    // in the log that no commit made part of the store.
+    let crashed = |path: &Path| logged(path, false);
+    for (left, make) in [
+        ("empty", &empty as &dyn Fn(&Path)),
+        ("marked", &marked),
+        ("crashed", &crashed),
+    ] {
+        let (_dir, path, _) = store_with(1);
+        damage_table(&path, "items");
+        make(&path);
+        assert_eq!(set_aside(&path).carried, 1, "{left}");
+        for log in store::STORE_FILES {
+            assert!(!beside(&making(&path), log).exists(), "{left}{log}");
+        }
+    }
+
+    let unmarked = |path: &Path| drop(store::open(&making(path)).unwrap());
+    let other = |path: &Path| std::fs::write(making(path), b"unrelated bytes").unwrap();
+    let committed = |path: &Path| logged(path, true);
+    for (left, make) in [
+        ("unmarked", &unmarked as &dyn Fn(&Path)),
+        ("other", &other),
+        ("committed", &committed),
+    ] {
+        let (_dir, path, _) = store_with(1);
+        damage_table(&path, "items");
+        make(&path);
+        let kept = bytes(&making(&path));
+        let before = bytes(&path);
+        let said = match Core::set_aside_damaged(&path) {
+            Err(error) => error.to_string(),
+            Ok(done) => panic!("{left}: set aside past what it did not make: {done:?}"),
+        };
+        assert!(said.contains(&making(&path).display().to_string()), "{said}");
+        assert_eq!(bytes(&making(&path)), kept, "{left}");
+        assert_eq!(bytes(&path), before, "{left}");
+        assert!(!beside(&path, ".carrying").exists(), "{left}");
+        assert!(!beside(&path, ".damaged-1").exists(), "{left}");
+    }
+}
+
+/// An empty file at `<path>.making` with a log beside it that holds a table
+/// of rows, committed or not, as a process that ended part way leaves it.
+fn logged(path: &Path, committed: bool) {
+    empty_with_log(&beside(path, ".making"), committed);
+}
+
+fn empty_with_log(made: &Path, committed: bool) {
+    let scratch = beside(made, ".scratch");
+    std::fs::write(made, b"").unwrap();
+    let conn = Connection::open(&scratch).unwrap();
+    conn.execute_batch(
+        "PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; PRAGMA cache_size = 1;
+         BEGIN; CREATE TABLE t (x);
+         WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500)
+         INSERT INTO t SELECT randomblob(1000) FROM n;",
+    )
+    .unwrap();
+    if committed {
+        conn.execute_batch("COMMIT").unwrap();
+    }
+    let log = bytes(&beside(&scratch, "-wal")).unwrap();
+    assert!(!log.is_empty());
+    std::fs::write(beside(made, "-wal"), log).unwrap();
+    drop(conn);
+    store::remove(&scratch).unwrap();
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_set_aside_stopped_while_it_makes_the_new_store_leaves_nothing_at_carrying_and_finishes() {
+    for stop in ["made", "making"] {
+        let (_dir, path, queued) = store_with(1);
+        damage_table(&path, "items");
+        let damaged_bytes = bytes(&path);
+        {
+            let _stopping = crate::fault::fail_on_this_thread(&format!("set-aside-stop:{stop}"));
+            assert!(Core::set_aside_damaged(&path).is_err(), "{stop}");
+        }
+        assert!(!beside(&path, ".carrying").exists(), "{stop}");
+        assert_eq!(bytes(&path), damaged_bytes, "{stop}");
+        let done = set_aside(&path);
+        assert_eq!((done.carried, done.unread), (1, 0), "{stop}");
+        assert!(done.set_aside.ends_with("core.sqlite.damaged-1"), "{stop}");
+        assert!(!beside(&path, ".making").exists(), "{stop}");
+        let carried = Core::open(&path, None).unwrap().queue().unwrap();
+        assert_eq!(
+            carried.iter().map(sent).collect::<Vec<_>>(),
+            queued.iter().map(sent).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
+fn every_carried_write_whose_record_does_not_read_is_held_whatever_its_verdict() {
+    let (_dir, path, queued) = store_with(3);
+    {
+        let conn = Connection::open(&path).unwrap();
+        for write in &queued {
+            store::choose_tier(&conn, &write.id, crate::Tier::Feed).unwrap();
+        }
+        conn.execute(
+            "UPDATE queue SET verdict = 'blocked', reason = 'key_spent',
+                    answered_at = '2026-01-01T00:00:00Z' WHERE id = ?1",
+            [&queued[0].id],
+        )
+        .unwrap();
+        conn.execute(
+            "UPDATE queue SET verdict = 'dead', answered_at = '2026-01-01T00:00:00Z' WHERE id = ?1",
+            [&queued[1].id],
+        )
+        .unwrap();
+    }
+    damage_table(&path, "meta");
+    let done = set_aside(&path);
+    assert_eq!((done.carried, done.record_unread, done.held), (3, 3, 0));
+    for write in &queued {
+        assert_eq!(
+            verdict_of(&path, &write.id),
+            (
+                Some(crate::Verdict::Blocked),
+                Some("record_unread".to_string())
+            ),
+            "{}",
+            write.id
+        );
+    }
+
+    // Released, a write keeps the key the server spent, so a drain is
+    // refused under it again.
+    let core = Core::open(&path, None).unwrap();
+    assert!(core.release(&queued[0].id).unwrap());
+    let released = core
+        .queue()
+        .unwrap()
+        .into_iter()
+        .find(|write| write.id == queued[0].id)
+        .unwrap();
+    assert_eq!(
+        (released.verdict, released.idempotency_key),
+        (None, queued[0].idempotency_key.clone())
+    );
+}
+
+#[test]
+fn a_write_held_record_unread_keeps_its_reason_when_the_copy_moves_to_another_instance() {
+    let (_dir, path, edge) = store_with_a_lost_bodys_edge();
+    damage_table(&path, "body_edges");
+    assert_eq!(set_aside(&path).record_unread, 1);
+    let core = Core::open(&path, None).unwrap();
+    let waiting = core.create_item(&note(None)).unwrap();
+    let conn = core.conn().unwrap();
+    store::block_for_another_instance(&conn).unwrap();
+    let reason = |id: &str| store::queued_write(&conn, id).unwrap().unwrap().reason;
+    // The witness: a write that was waiting is held for the instance.
+    assert_eq!(
+        reason(&waiting.id).as_deref(),
+        Some("instance_changed")
+    );
+    assert_eq!(reason(&edge).as_deref(), Some("record_unread"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_folders_store_that_fails_to_open_on_damage_keeps_its_log() {
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let state = dir.path().join(crate::folder::STATE_DIR);
+    std::fs::create_dir(&state).unwrap();
+    let path = state.join(store::FOLDER_STORE);
+    drop(Core::open(&path, None).unwrap());
+    damage_table(&path, "meta");
+    in_log(&path, "CREATE TABLE logged (x); INSERT INTO logged VALUES (1);");
+    let before = bytes(&path);
+    let log = bytes(&beside(&path, "-wal"));
+    assert!(log.is_some());
+    let directory = crate::directory::Directory::open(&state).unwrap();
+    let error = Core::open_directory(&directory, &path, None).err().unwrap();
+    assert_eq!(error.code(), "store_damaged", "{error}");
+    assert!(bytes(&beside(&path, "-wal")) == log, "the open changed the log");
+    assert!(bytes(&path) == before, "the open changed the store");
+}
+
+#[test]
+fn an_empty_file_whose_log_holds_writes_keeps_its_log() {
+    // SQLite deletes such a log as it opens the file, even to read.
+    let (_dir, path, _) = store_with(0);
+    store::remove(&path).unwrap();
+    empty_with_log(&path, true);
+    let log = bytes(&beside(&path, "-wal"));
+    let (named, unsent, _) = damaged(Core::check_store(&path).unwrap_err());
+    assert_eq!((named, unsent), (path.display().to_string(), None));
+    assert_eq!(bytes(&beside(&path, "-wal")), log);
+    let done = set_aside(&path);
+    assert_eq!(bytes(&beside(Path::new(&done.set_aside), "-wal")), log);
+
+    let (_dir, path, _) = store_with(1);
+    damage_table(&path, "items");
+    let made = beside(&path, ".carrying");
+    empty_with_log(&made, true);
+    let log = bytes(&beside(&made, "-wal"));
+    let said = Core::set_aside_damaged(&path).unwrap_err().to_string();
+    assert!(said.contains(&made.display().to_string()), "{said}");
+    assert!(Core::open(&path, None).is_err());
+    assert_eq!(bytes(&beside(&made, "-wal")), log);
+}

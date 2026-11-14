@@ -99,8 +99,8 @@ const EDGE_COLUMNS: &str =
     "id, source_id, target_id, edge_type, properties, version, created_at, updated_at";
 
 pub fn open(path: &Path) -> Result<Connection, CoreError> {
-    let conn = Connection::open(path)?;
     let seen = crate::damage::seen();
+    let conn = Connection::open(path)?;
     // The store may have been named by an environment variable rather than
     // typed, so the refusal names its path.
     prepare(&conn).map_err(|error| {
@@ -115,13 +115,17 @@ pub(crate) fn open_directory(
     vfs: &crate::directory_vfs::DirectoryVfs,
     label: &Path,
 ) -> Result<Connection, CoreError> {
+    let seen = crate::damage::seen();
     let conn = vfs.open(
         FOLDER_STORE,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
             | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
             | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    prepare(&conn).map_err(|error| in_folder(error, label, &conn))?;
+    prepare(&conn).map_err(|error| {
+        crate::damage::keep_log_if_met(&conn, seen);
+        in_folder(error, label, &conn)
+    })?;
     Ok(conn)
 }
 
@@ -211,6 +215,7 @@ fn uncarried(conn: &Connection) -> Result<Option<&'static str>, CoreError> {
 /// connection that closes last checkpoints the writer's journal into the file.
 /// SQLite may still create the WAL's two side files, which a WAL reader needs.
 pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
+    let seen = crate::damage::seen();
     let conn = Connection::open_with_flags(
         path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -221,7 +226,8 @@ pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
             path.display()
         ))
     })?;
-    read_connection(conn, path)
+    read_checked(&conn, path).inspect_err(|_| crate::damage::keep_log_if_met(&conn, seen))?;
+    Ok(conn)
 }
 
 /// Why a writer would refuse the store at `path`, read without changing it:
@@ -239,6 +245,18 @@ pub(crate) fn refusal(path: &Path) -> Result<Option<CoreError>, CoreError> {
 /// that holds its writer lock. SQLite may make a `-shm` index beside a log to
 /// read it.
 pub(crate) fn open_refused(path: &Path) -> Result<Connection, CoreError> {
+    // SQLite deletes a log beside an empty file as it opens it, even to read.
+    if path.metadata().is_ok_and(|held| held.len() == 0)
+        && suffixed(path, "-wal")
+            .metadata()
+            .is_ok_and(|log| log.len() > 0)
+    {
+        return Err(CoreError::StoreDamaged {
+            path: path.display().to_string(),
+            reason: "the file is empty and its write-ahead log is not".into(),
+            unsent: None,
+        });
+    }
     let flags =
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let logged = ["-wal", "-journal"]
@@ -564,6 +582,7 @@ pub(crate) fn replace_folder_store(
             let _ = state.unlink(&named(FOLDER_STORE_MADE, suffix));
         }
     };
+    let seen = crate::damage::seen();
     let old = vfs.open(
         FOLDER_STORE,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -588,6 +607,7 @@ pub(crate) fn replace_folder_store(
         Ok((kept, tables))
     })();
     let (kept, tables) = read.map_err(|error| {
+        crate::damage::keep_log_if_met(&old, seen);
         unreplaced(format!(
             "what it records of the folder cannot be read: {error}"
         ))
@@ -640,6 +660,7 @@ pub(crate) fn replace_folder_store(
             )
             .map_err(|error| CoreError::Store(error.to_string()))
     })();
+    crate::damage::keep_log_if_met(&old, seen);
     drop(old);
     if let Err(error) = made {
         clear_made();
@@ -688,16 +709,15 @@ pub(crate) fn read_directory(
     vfs: &crate::directory_vfs::DirectoryVfs,
     label: &Path,
 ) -> Result<Connection, CoreError> {
+    let seen = crate::damage::seen();
     let conn = vfs.open(
         FOLDER_STORE,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    read_checked(&conn, label).map_err(|error| in_folder(error, label, &conn))?;
-    Ok(conn)
-}
-
-fn read_connection(conn: Connection, path: &Path) -> Result<Connection, CoreError> {
-    read_checked(&conn, path)?;
+    read_checked(&conn, label).map_err(|error| {
+        crate::damage::keep_log_if_met(&conn, seen);
+        in_folder(error, label, &conn)
+    })?;
     Ok(conn)
 }
 
@@ -850,6 +870,33 @@ fn make(conn: &Connection) -> Result<(), CoreError> {
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     tx.commit()?;
     Ok(())
+}
+
+/// Makes a store at `path`, an empty file, with `marks` in its meta, in one
+/// transaction, so a crash leaves it holding no tables or holding the marks.
+pub(crate) fn make_marked(path: &Path, marks: &[(&str, &str)]) -> Result<(), CoreError> {
+    let conn = Connection::open(path)?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))?;
+    let tx = rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Immediate)?;
+    if version(&tx)? != 0 || holds_tables(&tx)? {
+        return Err(CoreError::Store(format!(
+            "{} is not empty, so no store is made there",
+            path.display()
+        )));
+    }
+    tx.execute_batch(SCHEMA)?;
+    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    meta_set(
+        &tx,
+        META_STORE_ID,
+        &uuid::Uuid::now_v7().simple().to_string(),
+    )?;
+    for (key, value) in marks {
+        meta_set(&tx, key, value)?;
+    }
+    tx.commit()?;
+    without_log(&conn)
 }
 
 pub(crate) fn version(conn: &Connection) -> rusqlite::Result<i64> {
@@ -5884,23 +5931,10 @@ pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usiz
 /// For a copy about to be built from an instance other than the one its
 /// writes were queued against: every write a drain or a release could still
 /// send is held until a caller releases it, so none reaches rows the copy
-/// never held. A refused write stays refused. Answers how many it held.
+/// never held. A refused write stays refused, and one held `record_unread`
+/// keeps that reason, so its release still says what it goes without.
+/// Answers how many it held.
 pub fn block_for_another_instance(conn: &Connection) -> Result<usize, CoreError> {
-    Ok(conn.execute(
-        &format!("UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3 WHERE {WAITING}"),
-        params![
-            Verdict::Blocked.as_str(),
-            BlockedReason::InstanceChanged.as_str(),
-            now_iso()
-        ],
-    )?)
-}
-
-/// `block_for_another_instance`, leaving each write blocked `kept` as it is.
-pub(crate) fn block_for_another_instance_but(
-    conn: &Connection,
-    kept: BlockedReason,
-) -> Result<usize, CoreError> {
     Ok(conn.execute(
         &format!(
             "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
@@ -5910,28 +5944,24 @@ pub(crate) fn block_for_another_instance_but(
             Verdict::Blocked.as_str(),
             BlockedReason::InstanceChanged.as_str(),
             now_iso(),
-            kept.as_str()
+            BlockedReason::RecordUnread.as_str()
         ],
     )?)
 }
 
-pub(crate) fn hold(
-    conn: &Connection,
-    ids: &[String],
-    reason: BlockedReason,
-) -> Result<usize, CoreError> {
-    let [credential_refused, awaiting] = SELF_CLEARING;
+/// Holds each of `ids` the server has not taken `blocked` `record_unread`,
+/// whatever it was. A release keeps its key, so a drain judges it again.
+pub(crate) fn hold_record_unread(conn: &Connection, ids: &[String]) -> Result<usize, CoreError> {
     Ok(conn.execute(
-        "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
-          WHERE id IN (SELECT value FROM json_each(?4))
-            AND (verdict IS NULL OR verdict = ?1 AND reason IN (?5, ?6))",
+        &format!(
+            "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
+              WHERE id IN (SELECT value FROM json_each(?4)) AND {WAITING}"
+        ),
         params![
             Verdict::Blocked.as_str(),
-            reason.as_str(),
+            BlockedReason::RecordUnread.as_str(),
             now_iso(),
-            serde_json::to_string(ids)?,
-            credential_refused,
-            awaiting
+            serde_json::to_string(ids)?
         ],
     )?)
 }

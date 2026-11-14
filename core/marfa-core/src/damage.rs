@@ -8,7 +8,7 @@ use rusqlite::{Connection, config::DbConfig, types::Value};
 use serde::{Deserialize, Serialize};
 
 use crate::error::CoreError;
-use crate::model::{BlockedReason, Verdict, WriteKind};
+use crate::model::{Verdict, WriteKind};
 use crate::store::{self, SCHEMA_VERSION};
 
 /// What a set-aside did.
@@ -40,6 +40,11 @@ pub struct SetAside {
 /// Where a set-aside makes the new store before it takes the old one's name.
 fn carrying(path: &Path) -> PathBuf {
     store::suffixed(path, ".carrying")
+}
+
+/// Where the new store is made and marked before it takes `carrying`.
+fn making(path: &Path) -> PathBuf {
+    store::suffixed(path, ".making")
 }
 
 // Markers distinguish an interrupted set-aside from an unrelated file.
@@ -222,7 +227,8 @@ pub(crate) fn set_aside(path: &Path) -> Result<SetAside, CoreError> {
     }
     let aside = store::free_set_aside(path, ".damaged")?;
     let made = carrying(path);
-    // `finish` left nothing at `made`, so what a failed carry leaves is its own.
+    make(path, &made)?;
+    // `make` put a marked store at `made`, so what a failed carry leaves is its own.
     carry(path, &made, &aside).inspect_err(|_| {
         let _ = store::remove(&made);
     })?;
@@ -234,11 +240,111 @@ pub(crate) fn set_aside(path: &Path) -> Result<SetAside, CoreError> {
     })
 }
 
+/// `finish` found nothing at `made`, so it takes the new store only once
+/// the store holds its mark.
+fn make(path: &Path, made: &Path) -> Result<(), CoreError> {
+    let making = making(path);
+    clear_left(path, &making)?;
+    crate::owner_only(&making)?;
+    stop_if_asked("made")?;
+    store::make_marked(&making, &[(META_SET_ASIDE_MAKING, "true")])?;
+    stop_if_asked("making")?;
+    let _ = std::fs::remove_file(store::suffixed(&making, "-shm"));
+    std::fs::rename(&making, made).map_err(|error| {
+        CoreError::Store(format!(
+            "{} cannot take {}: {error}",
+            making.display(),
+            made.display()
+        ))
+    })?;
+    sync_holder(path);
+    Ok(())
+}
+
+fn clear_left(path: &Path, making: &Path) -> Result<(), CoreError> {
+    let Some(first) = present(making) else {
+        return Ok(());
+    };
+    if !left_part_made(making) {
+        return Err(not_made(path, &first));
+    }
+    store::remove(making)
+}
+
+/// Whether `making` holds a set-aside's mark, or nothing at all.
+fn left_part_made(making: &Path) -> bool {
+    let Ok(held) = making.symlink_metadata() else {
+        return false;
+    };
+    let log = store::suffixed(making, "-wal");
+    if !held.is_file() || store::suffixed(making, "-journal").symlink_metadata().is_ok() {
+        return false;
+    }
+    if held.len() == 0 {
+        return !commits(&log);
+    }
+    store::open_refused(making).is_ok_and(|conn| match store::holds_tables(&conn) {
+        Ok(false) => !commits(&log),
+        Ok(true) => matches!(store::meta_get(&conn, META_SET_ASIDE_MAKING), Ok(Some(_))),
+        Err(_) => false,
+    })
+}
+
+/// Whether the write-ahead log at `log` holds a committed frame, or cannot
+/// be shown not to. SQLite reads no log beside an empty file.
+fn commits(log: &Path) -> bool {
+    let Ok(bytes) = std::fs::read(log) else {
+        return log.symlink_metadata().is_ok();
+    };
+    if bytes.is_empty() {
+        return false;
+    }
+    let word = |at: usize| {
+        bytes
+            .get(at..at + 4)
+            .map(|four| u32::from_be_bytes([four[0], four[1], four[2], four[3]]))
+    };
+    let page = match word(8) {
+        Some(1) => 65_536,
+        Some(size) if (512..=32_768).contains(&size) && size.is_power_of_two() => size as usize,
+        _ => return true,
+    };
+    if !matches!(word(0), Some(0x377f_0682 | 0x377f_0683)) {
+        return true;
+    }
+    (32..bytes.len())
+        .step_by(24 + page)
+        .any(|frame| word(frame + 4) != Some(0))
+}
+
+/// The first of `store`'s file and logs that stands.
+fn present(store: &Path) -> Option<PathBuf> {
+    store::STORE_FILES
+        .iter()
+        .map(|suffix| store::suffixed(store, suffix))
+        .find(|name| name.symlink_metadata().is_ok())
+}
+
+fn not_made(path: &Path, standing: &Path) -> CoreError {
+    CoreError::Store(format!(
+        "{} cannot be set aside: {} stands where its new store is made, and is not one a set-aside made, so it is left as it is. Move it elsewhere, then set the store aside again",
+        path.display(),
+        standing.display()
+    ))
+}
+
+fn sync_holder(path: &Path) {
+    if let Some(holder) = path
+        .parent()
+        .filter(|holder| !holder.as_os_str().is_empty())
+    {
+        let _ = std::fs::File::open(holder).and_then(|dir| dir.sync_all());
+    }
+}
+
 fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
     let old = store::open_refused(path).ok();
-    crate::owner_only(made)?;
     let mut conn = store::open(made)?;
-    store::meta_set(&conn, META_SET_ASIDE_MAKING, "true")?;
     let columns = columns(&conn, "queue")?;
     let read = old
         .as_ref()
@@ -322,11 +428,9 @@ fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
     }
     let ids: Vec<String> = carried.keys().cloned().collect();
     lay_rows(&tx, &ids);
-    let record_unread = store::hold(&tx, &unchecked, BlockedReason::RecordUnread)? as u64;
+    let record_unread = store::hold_record_unread(&tx, &unchecked)? as u64;
     let held = match meta.get(old.as_ref(), store::META_INSTANCE_ID) {
-        Said::Unknown if !carried.is_empty() => {
-            store::block_for_another_instance_but(&tx, BlockedReason::RecordUnread)? as u64
-        }
+        Said::Unknown if !carried.is_empty() => store::block_for_another_instance(&tx)? as u64,
         _ => 0,
     };
     let done = SetAside {
@@ -371,7 +475,11 @@ fn guarded(guards: &[WriteKind], kind: Option<WriteKind>) -> bool {
 fn finish(path: &Path) -> Result<Option<SetAside>, CoreError> {
     let made = carrying(path);
     if made.symlink_metadata().is_err() {
-        return Ok(None);
+        // A log is a set-aside's only beside a store it made.
+        return match present(&made) {
+            Some(log) => Err(not_made(path, &log)),
+            None => Ok(None),
+        };
     }
     let (to, mut done) = match markers(&made) {
         Markers::Done(to, done) => (to, done),
@@ -380,13 +488,7 @@ fn finish(path: &Path) -> Result<Option<SetAside>, CoreError> {
             store::remove(&made)?;
             return Ok(None);
         }
-        Markers::Unknown => {
-            return Err(CoreError::Store(format!(
-                "{} cannot be set aside: {} stands where its new store is made, and is not one a set-aside made, so it is left as it is. Move it elsewhere, then set the store aside again",
-                path.display(),
-                made.display()
-            )));
-        }
+        Markers::Unknown => return Err(not_made(path, &made)),
     };
     {
         let conn = Connection::open(&made)?;
@@ -422,7 +524,7 @@ fn finish(path: &Path) -> Result<Option<SetAside>, CoreError> {
         std::fs::rename(&from, &onto).map_err(|error| {
             CoreError::Store(format!("{} cannot be set aside: {error}", from.display()))
         })?;
-        stop_if_asked(suffix)?;
+        stop_if_asked(if suffix.is_empty() { "store" } else { suffix })?;
     }
     std::fs::rename(&made, path).map_err(|error| {
         CoreError::Store(format!(
@@ -431,12 +533,7 @@ fn finish(path: &Path) -> Result<Option<SetAside>, CoreError> {
             path.display()
         ))
     })?;
-    if let Some(holder) = path
-        .parent()
-        .filter(|holder| !holder.as_os_str().is_empty())
-    {
-        let _ = std::fs::File::open(holder).and_then(|dir| dir.sync_all());
-    }
+    sync_holder(path);
     let conn = store::open(path)?;
     done.carried = store::untaken_count(&conn).unwrap_or_default();
     store::meta_delete(&conn, META_SET_ASIDE_TO)?;
@@ -445,10 +542,9 @@ fn finish(path: &Path) -> Result<Option<SetAside>, CoreError> {
 }
 
 #[allow(unused_variables)]
-fn stop_if_asked(suffix: &str) -> Result<(), CoreError> {
+fn stop_if_asked(named: &str) -> Result<(), CoreError> {
     #[cfg(debug_assertions)]
     {
-        let named = if suffix.is_empty() { "store" } else { suffix };
         if crate::fault::named("set-aside-crash").as_deref() == Some(named) {
             eprintln!("crashing after setting aside {named} as MARFA_TEST_FAULT asks");
             std::process::abort();
