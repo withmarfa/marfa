@@ -37,6 +37,7 @@ import {
   loseBlobs,
   spooled as spooledOn,
 } from "../../utils/store-faults.js";
+import { inParts, slowPost } from "../../utils/slow-body.js";
 import { parseSse, type SseEvent } from "../../utils/sse.js";
 import {
   baselineEventId,
@@ -681,6 +682,64 @@ describe("a writer while a restore writes", () => {
       properties: { body: "written after the restore placed its files" },
     });
     expect(landed.status, JSON.stringify(landed.error)).toBe(201);
+  });
+
+  it("takes writes and uploads while the archive is still arriving, and refuses a write at once once the restore writes", async () => {
+    const bytes = new TextEncoder().encode(
+      `bytes a slow archive and an upload both carry, ${uuidv7()}`,
+    );
+    const rows = carrying(bytes);
+    const source = (await working.getCurrentKey()).data.source as string;
+    const parts = inParts(rows.archive, 4);
+    const upload = slowPost({ socketPath: server.controlSocket }, "/restore", {
+      "content-type": "application/x-tar",
+    });
+    let answered = false;
+    void upload.answered.then(() => (answered = true));
+    for (const part of parts.slice(0, -1)) await upload.write(part);
+
+    // The body has not ended, so the restore cannot have begun to write.
+    const made = await working.createItem({
+      type: "core.note",
+      source,
+      properties: { body: "written while the archive arrived" },
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const fresh = new TextEncoder().encode(`an upload ${uuidv7()}`);
+    const sent = await working.uploadBlob(fresh, "application/octet-stream");
+    expect(sent.status, JSON.stringify(sent.error)).toBe(201);
+    const same = await working.uploadBlob(bytes, "application/octet-stream");
+    expect(same.status, JSON.stringify(same.error)).toBe(201);
+    expect(answered).toBe(false);
+
+    await server.setFault("hold:restore:before-commit");
+    await upload.write(parts.at(-1)!);
+    upload.end();
+    await server.waitForHold("hold:restore:before-commit");
+    try {
+      const started = performance.now();
+      const answer = await working.createItem({
+        type: "core.note",
+        source,
+        properties: { body: "refused: written while the restore wrote" },
+      });
+      expectRefusedForTheRestore(
+        "POST /items",
+        answer,
+        performance.now() - started,
+      );
+    } finally {
+      await server.clearFault();
+    }
+    const done = await upload.answered;
+    expect(done.status, done.body).toBe(200);
+    await expectAllOf(rows);
+
+    // Every write answered with success while the archive arrived is kept.
+    expect((await working.getItem(made.data.item.id)).status).toBe(200);
+    const kept = await operator.downloadBlob(blobHash(fresh));
+    expect(kept.status).toBe(200);
+    expect(new Uint8Array(kept.data)).toEqual(fresh);
   });
 
   it("refuses a housekeeping run asked for while the restore runs, at once and naming the restore", async () => {
