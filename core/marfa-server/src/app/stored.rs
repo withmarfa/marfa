@@ -5,7 +5,6 @@ use std::sync::Arc;
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use super::App;
 use super::access::Levers;
 use super::refusal::{Refusal, Result};
 use super::{App, provenance};
