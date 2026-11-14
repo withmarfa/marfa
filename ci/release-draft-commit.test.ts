@@ -1,6 +1,7 @@
 // A release refuses a draft or an image tag that was built from another commit.
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -47,6 +48,8 @@ interface Outcome {
   said: string;
   /** Each write the step made, one per line. */
   writes: string[];
+  /** How many times the step asked docker to inspect the tag. */
+  inspects: number;
 }
 
 function inFolder(
@@ -91,6 +94,10 @@ function inFolder(
       status: ran.status,
       said: `${ran.stdout}${ran.stderr}`,
       writes: readFileSync(log, "utf8").split("\n").filter(Boolean),
+      inspects: existsSync(`${log}.inspects`)
+        ? readFileSync(`${log}.inspects`, "utf8").split("\n").filter(Boolean)
+            .length
+        : 0,
     };
   } finally {
     rmSync(directory, { recursive: true, force: true });
@@ -194,24 +201,39 @@ const platform = (revision: string | null) => ({
   },
 });
 
-/** What `docker buildx imagetools inspect` does for the image tag. */
+/**
+ * What `docker buildx imagetools inspect` does for the image tag: an index
+ * answers a map of platforms to configs, a single manifest answers its config.
+ */
 function image(
-  tag: { amd64: string | null; arm64: string | null } | "none",
+  tag:
+    | { amd64: string | null; arm64: string | null }
+    | { single: string | null }
+    | "none"
+    | "docker-error",
 ): Outcome {
   const inspected =
-    tag === "none"
+    tag === "none" || tag === "docker-error"
       ? ""
-      : JSON.stringify({
-          "linux/amd64": platform(tag.amd64),
-          "linux/arm64": platform(tag.arm64),
-        });
+      : JSON.stringify(
+          "single" in tag
+            ? platform(tag.single)
+            : {
+                "linux/amd64": platform(tag.amd64),
+                "linux/arm64": platform(tag.arm64),
+              },
+        );
+  const inspect =
+    tag === "none"
+      ? `echo "ghcr.io/withmarfa/marfa-server:0.1.0: not found" >&2; exit 1`
+      : tag === "docker-error"
+        ? `echo "dial tcp: i/o timeout" >&2; exit 1`
+        : `echo '${inspected}'`;
   return inFolder(
     imageStep,
     {
       docker: `case "$*" in
-  *"--format"*) echo '${inspected}' ;;
-  "buildx imagetools inspect"*)
-    ${tag === "none" ? `echo "ghcr.io/withmarfa/marfa-server:0.1.0: not found" >&2; exit 1` : "exit 0"} ;;
+  "buildx imagetools inspect"*) echo x >> "$LOG.inspects"; ${inspect} ;;
   "buildx imagetools create"*) echo "$*" >> "$LOG" ;;
 esac
 `,
@@ -266,4 +288,36 @@ describe("the server image tag of a release", () => {
       expect(result.said).toContain("Delete the 0.1.0 version");
     },
   );
+
+  it("asks docker once, and is kept when it is", () => {
+    const result = image({ amd64: COMMIT, arm64: COMMIT });
+    expect(result.inspects).toBe(1);
+  });
+
+  it.each([
+    ["from another commit", OTHER, OTHER],
+    ["from this commit", COMMIT, COMMIT],
+    ["with no revision label", null, "none"],
+  ])(
+    "is refused, and nothing tagged, when it is one manifest %s, not an index",
+    (_, revision, named) => {
+      const result = image({ single: revision });
+      expect(result.status).toBe(1);
+      expect(result.writes).toEqual([]);
+      expect(result.said).toContain(
+        `was built from ${named} (one platform only)`,
+      );
+      expect(result.said).not.toContain("jq:");
+    },
+  );
+
+  it("fails on a docker error, with no advice to delete the image and nothing tagged", () => {
+    const result = image("docker-error");
+    expect(result.status).toBe(1);
+    expect(result.writes).toEqual([]);
+    expect(result.said).toContain("Could not ask whether");
+    expect(result.said).toContain("i/o timeout");
+    expect(result.said).not.toContain("was built from");
+    expect(result.said).not.toContain("Delete the");
+  });
 });

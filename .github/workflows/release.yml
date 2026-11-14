@@ -875,10 +875,14 @@ jobs:
               exit 1
             fi
           done
-          if docker buildx imagetools inspect "$IMAGE:$VERSION" > /dev/null 2> "$RUNNER_TEMP/image-view.err"; then
-            # Every platform's image carries the commit it was built from.
-            built_from=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Image}}' \
-              | jq -r 'map(.config.Labels["org.opencontainers.image.revision"] // "none") | unique | join(" ")')
+          if inspected=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Image}}' 2> "$RUNNER_TEMP/image-view.err"); then
+            # Every platform's image carries the commit it was built from. An
+            # index answers a map of platforms to configs; a single manifest
+            # answers its one config, which is never the two this run builds.
+            built_from=$(jq -r '
+              (if has("config") then [.] else [.[]] end) as $images
+              | ($images | map(.config.Labels["org.opencontainers.image.revision"] // "none") | unique | join(" "))
+                + (if has("config") then " (one platform only)" else "" end)' <<< "$inspected")
             if [ "$built_from" != "$GITHUB_SHA" ]; then
               echo "::error::$IMAGE:$VERSION was built from $built_from, and this run builds $GITHUB_SHA. A version tag is never moved, so nothing was tagged or published. Delete the $VERSION version of the marfa-server package (GitHub, the withmarfa organization, Packages, marfa-server, the version's settings), then re-run this job."
               exit 1
