@@ -462,7 +462,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // `target_os = "macos"`, `"ios"` and `target_vendor = "apple"` and requires
   // every file it finds here.
   [
-    /^core\/(marfa-cli\/|marfa-core\/src\/(folder\/|watch\.rs$|file_cache\.rs$|lock\.rs$|priority\.rs$|blob\.rs$|lib\.rs$|stop_tests\.rs$|directory[^/]*$))/,
+    /^core\/(marfa-cli\/|marfa-core\/src\/(folder\/|watch\.rs$|file_cache\.rs$|lock\.rs$|priority\.rs$|blob\.rs$|lib\.rs$|stop_tests\.rs$|damage_tests\.rs$|directory[^/]*$))/,
     RUST,
   ],
   // The core's other source is what the live tests (`tests/live*.rs`) run
