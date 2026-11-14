@@ -1977,6 +1977,79 @@ describe("catch-up replays from the cursor", () => {
     ).toEqual(["(none)", "10", "10", "12"]);
   });
 
+  it("never leaves its cursor before an applied event or past one it did not take when the stream ends among skipped events", async () => {
+    harness = await startHarness("short-stream-skipped");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    const skipped = (id: string) =>
+      copyItemEvent(
+        id,
+        "item.created",
+        wireItem({ id: `bookmark-${id}`, type: "core.bookmark" }),
+      );
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyIncompleteReplay("20", [
+        skipped("11"),
+        copyItemEvent("12", "item.created", wireItem({ id: "applied" })),
+        skipped("13"),
+        skipped("14"),
+      ]),
+      copyLiveReplay("14", [skipped("13"), skipped("14")]),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(caught.ok ? null : caught.refusal.code).toBe("stream_incomplete");
+    const status = await device.status();
+    const stored = Number(status.ok ? status.value.event_cursor : Number.NaN);
+    expect(
+      stored,
+      "the cursor stayed before the last event the device took, or passed an event it never took",
+    ).toBe(14);
+
+    const resumed = await device.catchUp();
+    expect(
+      lastEventIds(harness).at(-1),
+      "the next catch-up resumed from somewhere other than the cursor the device holds",
+    ).toBe(String(stored));
+    expect(
+      resumed.ok ? [resumed.value.applied, resumed.value.cursor] : undefined,
+      "what the next catch-up replayed was not skipped again",
+    ).toEqual([0, "14"]);
+    expect((await device.get("applied")).ok).toBe(true);
+  });
+
+  it("commits its cursor at the last skipped event, in a run that outlasts the commit bound, when the stream ends early", async () => {
+    harness = await startHarness("short-stream-long-skip");
+    const { server, device } = harness;
+    scriptHydration(server, { head: "10" });
+    const last = 2_510;
+    const run = Array.from({ length: last - 10 }, (_, index) =>
+      copyItemEvent(
+        String(11 + index),
+        "item.created",
+        wireItem({ id: `bookmark-${11 + index}`, type: "core.bookmark" }),
+      ),
+    );
+    server.copyAnswer(
+      "GET",
+      "/events",
+      copyIncompleteReplay(String(last + 10), run),
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(caught.ok ? null : caught.refusal.code).toBe("stream_incomplete");
+    const status = await device.status();
+    const stored = Number(status.ok ? status.value.event_cursor : Number.NaN);
+    expect(
+      stored,
+      "the cursor stayed behind a long run of skipped events, so the next catch-up reads them all again",
+    ).toBe(last);
+  });
+
   it("reports what a catch-up carried, and refuses one that stopped short", async () => {
     harness = await startHarness("head-report");
     const { server, device } = harness;

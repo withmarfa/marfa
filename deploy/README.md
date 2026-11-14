@@ -140,7 +140,7 @@ docker run --name marfa -d -p 127.0.0.1:8600:8600 -v marfa-data:/data \
 
 - **Publish the port on `127.0.0.1`.** A bare `-p 8600:8600` is open to every network the machine is on. Put a proxy or tunnel on the machine in front of it.
 - **Publish another host port, and leave `MARFA_PORT` alone.** The image's health check runs `marfa status` against port 8600 inside the container. For port 9000 on the host, use `-p 127.0.0.1:9000:8600`.
-- **A folder mounted at `/data` must be writable by user 65532 and readable by no other account** (`chown 65532 <folder>` and `chmod 700 <folder>`), or run the container as the folder's owner with `--user`. The server writes the database and the files readable by other accounts on the host, so the folder is what keeps them private. A named volume works as it is.
+- **A folder mounted at `/data` must be writable by user 65532 and readable by no other account** (`chown 65532 <folder>` and `chmod 700 <folder>`), or run the container as the folder's owner with `--user`. A named volume works as it is.
 - **Secrets:** on a first start without `MARFA_KEY_SALT` and `MARFA_AUTH_SECRET`, the server makes them and keeps them in `/data/marfa.secrets`, readable by its user alone. Keep that file with the data. A database without its salt is refused.
 
 The image sets `MARFA_LISTEN_HOST`, `MARFA_PORT`, `MARFA_DATABASE_PATH`, `MARFA_BLOB_PATH` and `MARFA_CONTROL_SOCKET`; [Settings](#settings) gives the values. To pass more settings, use `-e` or `--env-file`.

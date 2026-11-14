@@ -37,6 +37,7 @@ pub fn error(error: &CliError) -> &'static str {
         CliError::NoKeychain(_) => "the system's credential storage is unavailable",
         CliError::SignedOut { .. } => "the sign-in has ended",
         CliError::CredentialEnded => "the credential that held the stream has ended",
+        CliError::DeviceCodeEnded => "the device code is no longer valid",
         CliError::Invalid(_) => "a value was not accepted",
         CliError::ArchiveLacksBlobs(_) | CliError::ArchiveKeptApart { .. } => {
             "the export archive lacks blobs its manifest names"

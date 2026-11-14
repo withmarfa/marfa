@@ -381,6 +381,8 @@ describe("changing the password", () => {
   });
 
   it("records a refused change in the audit log as a refused password sign-in, with its reason", async () => {
+    // Past any lockout an earlier case recorded.
+    await server.advanceClock(15 * 60 * 1000);
     const here = await signIn();
     const failed = "auth.sign_in.failed";
     const before = (await audited(failed)).length;
@@ -419,6 +421,44 @@ describe("changing the password", () => {
       method: "password",
       reason: "too_many_attempts",
     });
+    const again = await change(
+      { current_password: TEST_OWNER.password, new_password: NEW_PASSWORD },
+      here,
+      { address },
+    );
+    expect(again.status).toBe(429);
+    expect(await audited(failed)).toHaveLength(before + 12);
+    expect(await signsIn(TEST_OWNER.password)).toBe(true);
+  });
+
+  it("records the next refused change when the record of the one before could not be written", async () => {
+    // A new quarter hour, past the case before's record and its windows.
+    await server.advanceClock(15 * 60 * 1000);
+    const here = await signIn();
+    const failed = "auth.sign_in.failed";
+    const address = nextAddress();
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const spent = await change(
+        { current_password: "wrong again", new_password: NEW_PASSWORD },
+        here,
+        { address },
+      );
+      expect(spent.status).toBe(401);
+    }
+    const before = (await audited(failed)).length;
+    await server.setFault("fail:lock=1");
+    const right = {
+      current_password: TEST_OWNER.password,
+      new_password: NEW_PASSWORD,
+    };
+    const unrecorded = await change(right, here, { address });
+    expect(unrecorded.status).toBe(503);
+    expect(await audited(failed)).toHaveLength(before);
+    const locked = await change(right, here, { address });
+    expect(locked.status).toBe(429);
+    const held = await audited(failed);
+    expect(held).toHaveLength(before + 1);
+    expect(held[0]?.details).toMatchObject({ reason: "too_many_attempts" });
     expect(await signsIn(TEST_OWNER.password)).toBe(true);
   });
 });

@@ -263,10 +263,10 @@ fn a_row_that_does_not_read_keeps_the_server_up_and_stays() {
 #[tokio::test]
 async fn the_sign_in_address_follows_the_port_bound_until_one_is_stored() {
     let dir = TempDir::new().unwrap();
-    let database = dir.path().join("marfa.db");
+    let (database, blobs) = (dir.path().join("marfa.db"), dir.path().join("blobs"));
     let pairs = [
         ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
-        ("MARFA_BLOB_PATH", dir.path().to_str().unwrap()),
+        ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
         ("MARFA_LISTEN_HOST", "127.0.0.1"),
         ("MARFA_PORT", "0"),
     ];
@@ -286,10 +286,10 @@ struct Instance {
 }
 
 async fn boot(dir: &Path) -> Arc<App> {
-    let database = dir.join("marfa.db");
+    let (database, blobs) = (dir.join("marfa.db"), dir.join("blobs"));
     let pairs = [
         ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
-        ("MARFA_BLOB_PATH", dir.to_str().unwrap()),
+        ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
         ("MARFA_TEST_HOOKS", "true"),
         ("MARFA_MAX_REQUEST_BYTES", "4096"),
     ];

@@ -409,12 +409,11 @@ fn open(http: &Http, cursor: &str, bound: Duration) -> Result<Receiver<io::Resul
 struct Taken {
     change: Option<Change>,
     rows: Vec<Change>,
+    /// Defers the cursor until the caller commits the skipped batch.
+    behind: bool,
 }
 
-/// The connection is released before this returns, so a caller told of the
-/// change can read the row it names. A transaction another program's commit
-/// refuses is made again from its first read, without reading from the server
-/// again.
+/// Retries the whole transaction without repeating server reads.
 #[allow(clippy::too_many_arguments)]
 fn take(
     core: &Core,
@@ -424,8 +423,16 @@ fn take(
     id: &str,
     kind: &str,
     payload: &EventPayload,
+    leave_skipped: bool,
     stop: &AtomicBool,
 ) -> Result<Taken> {
+    if leave_skipped && untouched(core, catalog, slice, kind, payload)? {
+        return Ok(Taken {
+            change: None,
+            rows: Vec::new(),
+            behind: true,
+        });
+    }
     // A held stream spans ordinary pin changes. Snapshot pins for this event's
     // awaited reads, while retaining the stream's copy and authority guard.
     let operation = {
@@ -461,11 +468,16 @@ fn take(
         reach::cursor(id).ok_or_else(reach::invalid)?;
         if let Some(rows) = &payload.rows {
             let applied = crate::tables::apply(&tx, rows, read_rows.as_ref())?;
-            store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
+            let behind = leave_skipped && applied == crate::tables::Applied::Nothing;
+            if !behind {
+                store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
+            }
             tx.commit()?;
             return Ok(Taken {
-                change: applied.then(|| rows_changed(rows.item.id.clone())),
+                change: (applied == crate::tables::Applied::Changed)
+                    .then(|| rows_changed(rows.item.id.clone())),
                 rows: Vec::new(),
+                behind,
             });
         }
         // Judged outside the transaction: a row held or pinned since is taken
@@ -476,14 +488,12 @@ fn take(
                 None => false,
             };
         if ITEM_CHANGES.contains(&kind) || kind == "item.purged" {
-            let listed = payload.listed.ok_or_else(reach::invalid)?;
+            payload.listed.ok_or_else(reach::invalid)?;
             let item = payload.item.as_ref().ok_or_else(reach::invalid)?;
-            // A row the copy does not take keeps no mark, so the marks grow
-            // with the rows held, not with the events.
             if outside {
                 reach::forget_listed(&tx, &item.id)?;
-            } else {
-                reach::set_listed(&tx, &item.id, listed)?;
+            } else if kind == "item.purged" {
+                reach::set_listed(&tx, &item.id, payload.listed == Some(true))?;
             }
         }
         let applied =
@@ -502,9 +512,13 @@ fn take(
         };
         // The last id applied, never the highest seen: where an event is not
         // applied, a high-water mark would step over it forever.
-        store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
+        let behind = leave_skipped && !applied && reread.is_empty();
+        if !behind {
+            store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
+        }
         tx.commit()?;
         Ok(Taken {
+            behind,
             change: applied.then(|| Change {
                 event: ChangeEvent::Applied(kind.to_string()),
                 item_id: payload.item.as_ref().map(|item| item.id.clone()),
@@ -517,6 +531,22 @@ fn take(
                 .collect(),
         })
     })
+}
+
+fn untouched(
+    core: &Core,
+    catalog: &Catalog,
+    slice: &Slice,
+    kind: &str,
+    payload: &EventPayload,
+) -> Result<bool> {
+    let (Some(item), None, Some(_)) = (&payload.item, &payload.rows, payload.listed) else {
+        return Ok(false);
+    };
+    if !ITEM_CHANGES.contains(&kind) || in_slice(catalog, slice, item)? {
+        return Ok(false);
+    }
+    store::holds_nothing_of(&*core.conn()?, &item.id)
 }
 
 /// Frames the filter or the credential withheld are never sent, so the
@@ -617,6 +647,8 @@ fn mark_synced_if_same(core: &Core, context: &Context) -> Result<()> {
     Ok(())
 }
 
+/// However it ends, the cursor the replay deferred past skipped events is
+/// committed first, so only a crash leaves it behind the last event taken.
 pub(crate) fn replay_build(
     core: &Core,
     http: &Http,
@@ -624,6 +656,33 @@ pub(crate) fn replay_build(
     idle: Duration,
     stop: &AtomicBool,
     catalog_changed: &mut bool,
+) -> Result<CatchUpReport> {
+    let mut behind = Behind::default();
+    let result = replay(
+        core,
+        http,
+        context,
+        idle,
+        stop,
+        catalog_changed,
+        &mut behind,
+    );
+    // A stop must not keep the commit from being made.
+    let flushed = commit_cursor(core, context, &mut behind, &AtomicBool::new(false));
+    match result {
+        Ok(report) => flushed.map(|()| report),
+        Err(error) => Err(error),
+    }
+}
+
+fn replay(
+    core: &Core,
+    http: &Http,
+    context: &Context,
+    idle: Duration,
+    stop: &AtomicBool,
+    catalog_changed: &mut bool,
+    behind: &mut Behind,
 ) -> Result<CatchUpReport> {
     crate::busy::transaction(core, context, stop, crate::tables::forget_reread)?;
     let (slice, cursor) = start_build(&*core.conn()?)?;
@@ -706,6 +765,7 @@ pub(crate) fn replay_build(
                         {
                             return Err(reach::invalid());
                         }
+                        commit_cursor(core, context, behind, stop)?;
                         if let Some(cursor) =
                             pass_withheld(core, context, &report.cursor, payload.cursor.as_deref())?
                         {
@@ -746,13 +806,28 @@ pub(crate) fn replay_build(
                             refuse_if_stopped(stop)?;
                             catalog = adopt(core, context, &refreshed_catalog, catalog_changed)?;
                         }
-                        if take(core, context, &catalog, &slice, &id, kind, &payload, stop)?
-                            .change
-                            .is_some()
-                        {
+                        let taken = take(
+                            core, context, &catalog, &slice, &id, kind, &payload, true, stop,
+                        )?;
+                        if taken.behind {
+                            behind.last = Some(id.clone());
+                            behind.count += 1;
+                            if behind.count >= SKIPPED_PER_COMMIT {
+                                commit_cursor(core, context, behind, stop)?;
+                            }
+                        } else {
+                            *behind = Behind::default();
+                        }
+                        if taken.change.is_some() {
                             report.applied += 1;
                         } else {
                             report.skipped += 1;
+                            #[cfg(debug_assertions)]
+                            if crate::fault::named("crash-after-skipped")
+                                .is_some_and(|after| after == report.skipped.to_string())
+                            {
+                                std::process::abort();
+                            }
                         }
                         report.cursor = id.clone();
                         unsettled += usize::from(may_owe(kind));
@@ -781,6 +856,30 @@ pub(crate) fn replay_build(
     }
     report.catalog_changed = *catalog_changed;
     Ok(report)
+}
+
+/// Bounds crash replay without committing every skipped event.
+const SKIPPED_PER_COMMIT: usize = 1_000;
+
+#[derive(Default)]
+struct Behind {
+    last: Option<String>,
+    count: usize,
+}
+
+fn commit_cursor(
+    core: &Core,
+    context: &Context,
+    behind: &mut Behind,
+    stop: &AtomicBool,
+) -> Result<()> {
+    if let Some(id) = behind.last.take() {
+        crate::busy::transaction(core, context, stop, |tx| {
+            store::meta_set(tx, store::META_EVENT_CURSOR, &id)
+        })?;
+    }
+    behind.count = 0;
+    Ok(())
 }
 
 const AGED_OUT: &str = "the event log no longer holds the cursor";
@@ -1674,7 +1773,9 @@ fn read_stream(
                 }
                 // A read that fails for a reason that clears reopens the
                 // stream from before this event rather than ending.
-                let taken = match take(core, context, catalog, slice, &id, kind, &payload, stop) {
+                let taken = match take(
+                    core, context, catalog, slice, &id, kind, &payload, false, stop,
+                ) {
                     Err(ref error) if crate::folder::copy_changed(error) => {
                         context.same_copy(&*core.conn()?)?;
                         // Pins changed during an awaited read. Replay this event
@@ -2228,17 +2329,19 @@ fn apply(
             let Some(item) = &payload.item else {
                 return Ok(false);
             };
+            let listed = payload.listed == Some(true);
             if store::removed(tx, Subject::Item, &item.id)? {
+                reach::set_listed(tx, &item.id, listed)?;
                 return Ok(false);
             }
             // Strictly older, not "no newer": the stream's order decides a
             // tie, and the copy can hold a row read ahead of the stream.
             if store::holds_later(tx, Subject::Item, &item.id, item.version, &item.updated_at)? {
+                reach::set_listed(tx, &item.id, listed)?;
                 return Ok(false);
             }
-            if (payload.listed == Some(true) && in_slice(catalog, slice, item)?)
-                || store::pinned(tx, &item.id)?
-            {
+            if (listed && in_slice(catalog, slice, item)?) || store::pinned(tx, &item.id)? {
+                reach::set_listed(tx, &item.id, listed)?;
                 let tags = payload
                     .metadata
                     .as_ref()
@@ -5592,5 +5695,310 @@ mod tests {
             after > first,
             "heartbeats at the head never moved the record"
         );
+    }
+    const SKIPPED_TYPE: &str = "core.task";
+
+    fn skipped_events(from: u64, to: u64) -> Vec<String> {
+        (from..=to)
+            .map(|id| {
+                let row = item_payload("item.created", &format!("t{id}"), SKIPPED_TYPE, 1);
+                event(&id.to_string(), "item.created", &row)
+            })
+            .collect()
+    }
+
+    fn skipped_server(frames: Vec<Vec<String>>) -> Scripted {
+        skipped_server_answering(
+            frames
+                .into_iter()
+                .map(|frames| stream(frames, held()))
+                .collect(),
+        )
+    }
+
+    fn skipped_server_answering(events: Vec<Answer>) -> Scripted {
+        let server = Scripted::start();
+        server.on("/types", vec![types(&[(NOTE, None), (SKIPPED_TYPE, None)])]);
+        server.on("/events", events);
+        server
+    }
+
+    #[test]
+    fn a_run_of_skipped_events_commits_the_cursor_in_batches() {
+        let last = 2 * SKIPPED_PER_COMMIT as u64 + 510;
+        let mut frames = vec![stream_cursor(&last.to_string())];
+        frames.extend(skipped_events(11, last));
+        frames.push(stream_live(Some(&last.to_string())));
+        let server = skipped_server(vec![frames]);
+        let (_dir, core) = hydrated(&server);
+        let writes = meta_writes(&core);
+        let report = core.catch_up().unwrap();
+        assert_eq!((report.applied, report.skipped), (0, last - 10));
+        assert_eq!(stored_cursor(&core), Some(last.to_string()));
+        let writes = writes.load(Ordering::Relaxed);
+        assert!(
+            writes <= 8,
+            "{writes} writes to meta for {} skipped events",
+            last - 10
+        );
+    }
+
+    #[test]
+    fn a_catch_up_stopped_among_skipped_events_keeps_the_cursor_of_the_last() {
+        let mut frames = vec![stream_cursor("30")];
+        frames.extend(skipped_events(11, 13));
+        let server = skipped_server(vec![frames]);
+        let (_dir, core) = hydrated(&server);
+        let stop = Arc::new(AtomicBool::new(false));
+        let (ended, done) = mpsc::channel();
+        {
+            let (core, stop) = (Arc::clone(&core), Arc::clone(&stop));
+            thread::spawn(move || {
+                let _ = ended.send(core.catch_up_until(&stop));
+            });
+        }
+        server.wait_for("/events", 1, Duration::from_secs(5));
+        thread::sleep(MS(200));
+        stop.store(true, Ordering::Relaxed);
+        let failed = done
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the catch-up did not end")
+            .expect_err("the catch-up did not fail");
+        assert!(matches!(failed.error, CoreError::Canceled));
+        assert_eq!(stored_cursor(&core).as_deref(), Some("13"));
+    }
+
+    #[test]
+    fn a_catch_up_whose_stream_ends_among_skipped_events_keeps_the_cursor_of_the_last() {
+        let mut frames = vec![stream_cursor("30")];
+        frames.extend(skipped_events(11, 13));
+        let server = skipped_server_answering(vec![stream(frames, Then::End)]);
+        let (_dir, core) = hydrated(&server);
+        let error = core.catch_up().unwrap_err();
+        assert!(
+            matches!(error, CoreError::StreamIncomplete { .. }),
+            "{error}"
+        );
+        assert_eq!(stored_cursor(&core).as_deref(), Some("13"));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn a_crash_in_a_run_of_skipped_events_replays_only_events_skipped_again() {
+        if let Some(dir) = std::env::var_os("MARFA_TEST_CATCH_UP_CHILD") {
+            let core = Core::open(
+                std::path::Path::new(&dir).join("core.sqlite"),
+                Some(Server {
+                    url: std::env::var("MARFA_TEST_CATCH_UP_URL").unwrap(),
+                    key: "k".into(),
+                }),
+            )
+            .unwrap();
+            let _ = core.catch_up();
+            return;
+        }
+        let first = |to: u64| {
+            let mut frames = vec![stream_cursor("30")];
+            frames.extend(skipped_events(11, 15));
+            frames.push(event(
+                "16",
+                "item.created",
+                &item_payload("item.created", "n16", NOTE, 1),
+            ));
+            frames.extend(skipped_events(17, to));
+            frames
+        };
+        let mut again = vec![stream_cursor("30")];
+        again.extend(skipped_events(17, 30));
+        again.push(stream_live(Some("30")));
+        let server = skipped_server(vec![first(30), again]);
+        let (dir, core) = hydrated(&server);
+        drop(core);
+        let child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "catch_up::tests::a_crash_in_a_run_of_skipped_events_replays_only_events_skipped_again",
+                "--nocapture",
+            ])
+            .env("MARFA_TEST_CATCH_UP_CHILD", dir.path())
+            .env("MARFA_TEST_CATCH_UP_URL", server.url())
+            .env("MARFA_TEST_FAULT", "crash-after-skipped=10")
+            .output()
+            .unwrap();
+        assert!(!child.status.success(), "the catch-up did not crash");
+        let core = Core::open(
+            dir.path().join("core.sqlite"),
+            Some(Server {
+                url: server.url(),
+                key: "k".into(),
+            }),
+        )
+        .unwrap();
+        assert_eq!(
+            stored_cursor(&core).as_deref(),
+            Some("16"),
+            "the cursor passed events that were not yet committed as skipped"
+        );
+        assert!(core.get("n16").unwrap().is_some());
+        let report = core.catch_up().unwrap();
+        assert_eq!((report.applied, report.skipped), (0, 14));
+        assert_eq!(stored_cursor(&core).as_deref(), Some("30"));
+        assert_eq!(
+            server.seen("/events")[1].last_event_id.as_deref(),
+            Some("16")
+        );
+    }
+    fn table_event(id: u64, item: &str, deleted: bool) -> String {
+        let payload = serde_json::json!({
+            "event_type": "rows.changed",
+            "item": {"id": item},
+            "table": "log",
+            "batch": format!("b{id}"),
+            "last_activity_at": "2026-01-01T00:00:00Z",
+            "rows": [{"id": "r1", "values": {"a": 1}, "deleted": deleted}],
+        });
+        event(&id.to_string(), "rows.changed", &payload.to_string())
+    }
+
+    fn meta_writes(core: &Core) -> Arc<AtomicUsize> {
+        let writes = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&writes);
+        core.conn()
+            .unwrap()
+            .update_hook(Some(
+                move |_: rusqlite::hooks::Action, _: &str, table: &str, _| {
+                    if table == "meta" {
+                        counted.fetch_add(1, Ordering::Relaxed);
+                    }
+                },
+            ))
+            .unwrap();
+        writes
+    }
+
+    #[test]
+    fn a_run_of_table_events_for_an_item_the_copy_does_not_hold_commits_in_batches() {
+        let last = 2_500 + 10;
+        let mut frames = vec![stream_cursor(&last.to_string())];
+        frames.extend((11..=last).map(|id| table_event(id, "elsewhere", false)));
+        frames.push(stream_live(Some(&last.to_string())));
+        let server = skipped_server(vec![frames]);
+        let (_dir, core) = hydrated(&server);
+        let writes = meta_writes(&core);
+        let report = core.catch_up().unwrap();
+        assert_eq!((report.applied, report.skipped), (0, last - 10));
+        assert_eq!(stored_cursor(&core), Some(last.to_string()));
+        let writes = writes.load(Ordering::Relaxed);
+        assert!(
+            writes <= 8,
+            "{writes} writes to meta for {} table events that changed nothing",
+            last - 10
+        );
+    }
+
+    #[test]
+    fn a_table_event_that_moves_a_table_commits_the_cursor_among_events_that_change_nothing() {
+        let mut frames = vec![stream_cursor("20")];
+        frames.push(table_event(11, "elsewhere", false));
+        frames.push(table_event(12, "n1", true));
+        frames.push(table_event(13, "elsewhere", false));
+        frames.push(incomplete());
+        let ledger = serde_json::json!({
+            "id": "app.acme.ledger",
+            "fields": {},
+            "tables": {"log": {"columns": {"a": {"type": "string"}}}},
+        });
+        let server = Scripted::start();
+        server.on(
+            "/types",
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                &serde_json::json!({
+                    "data": [
+                        {"id": NOTE, "display_hints": {"title_field": "title"}},
+                        ledger,
+                    ],
+                    "next_cursor": null,
+                })
+                .to_string(),
+            ))],
+        );
+        server.on("/events", vec![stream(frames, held())]);
+        let (_dir, core) = hydrated(&server);
+        {
+            let conn = core.conn().unwrap();
+            let ledger: marfa_rules::wire::WireType = serde_json::from_value(ledger).unwrap();
+            store::replace_catalog(
+                &conn,
+                &WireCatalog {
+                    types: vec![store::testing::wire_type(NOTE, None, Some("title")), ledger],
+                    edge_types: Vec::new(),
+                },
+            )
+            .unwrap();
+            let catalog = crate::catalog::load(&conn).unwrap();
+            let held = store::testing::wire_item(
+                "n1",
+                "app.acme.ledger",
+                "active",
+                "2026-01-01T00:00:00Z",
+                serde_json::json!({}),
+            );
+            store::put_server_item(&conn, &held, Some(&[]), &catalog).unwrap();
+            conn.execute(
+                "INSERT INTO table_choices (type, name) VALUES ('app.acme.ledger', 'log')",
+                [],
+            )
+            .unwrap();
+            crate::tables::reconcile_item(&conn, "n1").unwrap();
+            conn.execute(
+                "UPDATE item_tables SET state = 'online' WHERE item_id = 'n1'",
+                [],
+            )
+            .unwrap();
+        }
+        let error = core.catch_up().unwrap_err();
+        assert!(matches!(error, CoreError::StreamIncomplete { .. }));
+        let state: String = core
+            .conn()
+            .unwrap()
+            .query_row(
+                "SELECT state FROM item_tables WHERE item_id = 'n1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            state, "owed",
+            "the event was not taken, so the control says nothing"
+        );
+        assert_eq!(
+            stored_cursor(&core).as_deref(),
+            Some("13"),
+            "the cursor was left behind the events the catch-up took, the table event that moved a table among them"
+        );
+    }
+
+    #[test]
+    fn a_held_row_retyped_out_of_the_slice_leaves_among_events_skipped_around_it() {
+        let retyped = item_payload("item.updated", "n1", SKIPPED_TYPE, 2);
+        let mut frames = vec![stream_cursor("13")];
+        frames.extend(skipped_events(11, 11));
+        frames.push(event("12", "item.updated", &retyped));
+        frames.extend(skipped_events(13, 13));
+        frames.push(stream_live(Some("13")));
+        let server = skipped_server(vec![frames]);
+        let (_dir, core) = hydrated(&server);
+        {
+            let conn = core.conn().unwrap();
+            let catalog = crate::catalog::load(&conn).unwrap();
+            let held = store::testing::note("n1", "n1", "body", "2026-01-01T00:00:00Z");
+            store::put_server_item(&conn, &held, Some(&[]), &catalog).unwrap();
+        }
+        assert!(core.get("n1").unwrap().is_some());
+        let report = core.catch_up().unwrap();
+        assert_eq!((report.applied, report.skipped), (1, 2));
+        assert!(core.get("n1").unwrap().is_none());
+        assert_eq!(stored_cursor(&core).as_deref(), Some("13"));
     }
 }

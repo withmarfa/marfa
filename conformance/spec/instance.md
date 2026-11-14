@@ -1578,15 +1578,15 @@ If the public listener reads a request body whole, other than one sent to `POST 
 
 ### `instance/open-door-body-declared`
 
-If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/authorize/decision`, `POST /auth/oauth2/token`, `POST /auth/oauth2/revoke`, `POST /auth/oauth2/register`, `POST /auth/device/code`, `POST /auth/device` or `POST /auth/device/consent` declares a body longer than 32768 bytes, then the server MUST answer `413 request_too_large` before it reads any of the body.
+If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/authorize/decision`, `POST /auth/oauth2/token`, `POST /auth/oauth2/revoke`, `POST /auth/device/code`, `POST /auth/device` or `POST /auth/device/consent` declares a body longer than 32768 bytes, then the server MUST answer `413 request_too_large` before it reads any of the body.
 
-**Reason:** these operations judge no credential before they read the body, so any caller can send them, and the general cap, which an owner can set up to a terabyte, would let such a caller make the server hold a body for the whole of the deadline in `instance/body-deadline`. The largest real body at these operations is about half a kilobyte, a consent decision that carries an authorization's signed query, so 32768 bytes leaves room for any.
+**Reason:** these operations judge no credential before they read the body, so any caller can send them, and the general cap, which an owner can set up to a terabyte, would let such a caller make the server hold a body for the whole of the deadline in `instance/body-deadline`. The largest real body at these operations is about half a kilobyte, a consent decision that carries an authorization's signed query, so 32768 bytes leaves room for any. Registration, the other operation of this kind, has a smaller cap of its own (`keys-and-oauth/register-body-cap`).
 
 **Tests:** `compliance/public-body.test.ts › answers 413 to a body over 32768 bytes declared to it, before any of it is sent`.
 
 ### `instance/open-door-body-streamed`
 
-If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/authorize/decision`, `POST /auth/oauth2/token`, `POST /auth/oauth2/revoke`, `POST /auth/oauth2/register`, `POST /auth/device/code`, `POST /auth/device` or `POST /auth/device/consent` sends more than 32768 bytes of body without declaring its length, then the server MUST answer `413 request_too_large`.
+If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/authorize/decision`, `POST /auth/oauth2/token`, `POST /auth/oauth2/revoke`, `POST /auth/device/code`, `POST /auth/device` or `POST /auth/device/consent` sends more than 32768 bytes of body without declaring its length, then the server MUST answer `413 request_too_large`.
 
 **Reason:** a body with no declared length cannot be refused at the head, so the server stops reading at the cap.
 
@@ -2365,7 +2365,7 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `version_max_versions`           | `500`              | Whole number, 1 to 1000000                                | The most versions the version policy keeps for one item.                                                                                                                                                                                                                                                                               |
 | `trash_retention_days`           | `60` days          | Whole number of days, 0 to 36500                          | How long an item stays in the trash before the server deletes it. At 0 nothing in the trash expires by age.                                                                                                                                                                                                                            |
 | `row_log_retention_days`         | `30` days          | Whole number of days, 0 to 36500                          | How long a table keeps a batch in its change log, which bounds how far back a batch can be undone. At 0 no batch leaves the log by age.                                                                                                                                                                                                |
-| `dcr_client_retention_days`      | `1` day            | Whole number of days, 0 to 36500                          | How long a dynamically registered client with no grants is kept, counted from its registration or the last time an approval page offered it. At 0 no such client is removed.                                                                                                                                                           |
+| `dcr_client_retention_hours`     | `1` hour           | Whole number of hours, 0 to 876000                        | How long a dynamically registered client with no grants is kept, counted from its registration or the last time an approval page offered it. At 0 none is removed by age.                                                                                                                                                              |
 | `sse_max_viewers`                | `0`                | Whole number, 0 to 1000000                                | The most event-stream viewers one server instance serves at once. At 0 there is no limit.                                                                                                                                                                                                                                              |
 | `mcp_fetch_enabled`              | `true`             | `true` or `false`                                         | Whether MCP tools fetch a file from a web address, or a file a chat attached, to save it. When off, a tool asked to fetch one is refused.                                                                                                                                                                                              |
 | `mcp_fetch_max_bytes`            | `52428800` bytes   | Whole number of bytes, 1 to 1099511627776                 | The largest file an MCP tool fetches from a web address to save. A larger file is refused and nothing is stored.                                                                                                                                                                                                                       |
@@ -2660,6 +2660,86 @@ When the server writes an archive export, the server MUST NOT include `marfa.sec
 **Reason:** an export is meant to be shared and restored elsewhere, and the secrets belong to the instance that made them.
 
 **Tests:** `compliance/hook-free-server.test.ts › leaves marfa.secrets out of an export, whether the file was generated or the secrets came from the environment`.
+
+### `instance/files-private`
+
+While the server runs, the server MUST keep its database, the database's log files and its blob folder readable and writable by its own account alone, whatever umask it started under.
+
+**Reason:** the database holds every item and the owner's credentials, and the blob folder holds every file's bytes.
+
+**Tests:** `compliance/hook-free-server.test.ts › keeps no file or folder in its data folder open to group or others, though it starts under umask 022`.
+
+### `instance/files-tightened`
+
+When the server starts and its own account owns its database, one of the database's log files or its blob folder, and another account could read or enter it, the server MUST make it private to its own account before it serves a request.
+
+**Reason:** a file made by an earlier start, or by an operator, keeps its mode and access control list unless the server changes them.
+
+**Tests:** `compliance/hook-free-server.test.ts › makes a database and blob folder it owns private when an earlier start left them open`, `› makes a database named by a file URI with an escaped path private when an earlier start left it open`.
+
+### `instance/files-folder-kept`
+
+When the server starts and the folder that holds its database already exists, the server MUST NOT change the mode or the access control list of that folder or of any file in it other than the database, the database's log files, the copies of the database the server makes before an upgrade and the server's secrets file.
+
+**Reason:** an operator may keep the database in a folder that holds other things, and only the server's own files are the server's to change.
+
+**Tests:** `compliance/hook-free-server.test.ts › leaves a shared folder that holds its database, and the other files there, as they were`.
+
+### `instance/files-link-refused`
+
+If the server's database, one of the database's log files or its blob folder is a symbolic link when the server starts, however its path is written, then the server MUST refuse to start, name the path and leave what the link points to unchanged.
+
+**Reason:** the server changes modes only on what it keeps, and a link can point anywhere.
+
+**Tests:** `compliance/hook-free-server.test.ts › refuses to start on a blob folder that is a symbolic link, and leaves what it points to as it was`, `› refuses to start on a blob folder named through a symbolic link with a trailing slash, and leaves what it points to as it was`.
+
+### `instance/files-blobs-owned`
+
+If the server's blob folder exists when the server starts and another account owns it, then the server MUST refuse to start, name the folder and leave it unchanged.
+
+**Reason:** the server writes the owner's files inside its blob folder, and only a folder of its own is one it can keep private.
+
+**Tests:** `compliance/hook-free-server.test.ts › refuses to start on a blob folder another account owns, and leaves it as it was`.
+
+### `instance/files-blobs-apart`
+
+If the server's blob folder is the folder that holds its database, or a folder above it, when the server starts, then the server MUST refuse to start, name the blob folder and leave it unchanged.
+
+**Reason:** the server makes its blob folder private, and the folder that holds the database, with the other files in it, is not the server's to change (`instance/files-folder-kept`).
+
+**Tests:** `compliance/hook-free-server.test.ts › refuses a blob folder that is the folder holding its database, or one above it, and leaves that folder as it was`.
+
+### `instance/files-memory-none`
+
+While the server's database is held in memory, the server MUST NOT check, make or change a database file, its log files or a secrets file.
+
+**Reason:** a database held in memory keeps nothing in a file, so no folder holds a database the server must guard, and the server keeps its secrets in memory too.
+
+**Tests:** `compliance/hook-free-server.test.ts › starts with an in-memory database from a folder other accounts can add files to, and makes nothing there`.
+
+### `instance/files-way-guarded`
+
+If another account could replace or remove what a folder on the path to the server's database or blob folder holds when the server starts, because that account owns the folder, may write to it while it is not both owned by the system's administrator account and marked sticky, or owns a symbolic link on that path or may change or remove one through its access control list, then the server MUST refuse to start, name the folder or link and leave the database and the blob folder unchanged.
+
+**Reason:** whoever can replace a folder on the way decides which files the server makes private and where it writes the owner's data.
+
+**Tests:** `compliance/hook-free-server.test.ts › refuses to start when another account could write to a folder on the way to its blob folder, and leaves the blob folder as it was`, `› refuses to start through a symbolic link whose access control list lets another account remove it`.
+
+### `instance/files-holder-shared`
+
+If another account may add files to the folder that holds the server's database, or to the folder the server would make its blob folder in, when the server starts, then the server MUST refuse to start, name the folder and make no file in it.
+
+**Reason:** a file another account made first under a name the server keeps would be the file the server then writes the owner's data in.
+
+**Tests:** `compliance/hook-free-server.test.ts › refuses to start with its database in a folder other accounts can add files to, and makes nothing there`.
+
+### `instance/files-reach-refused`
+
+If the folder that holds the server's database, or the folder the server would make its blob folder in, passes access to another account on to the files made in it, through its access control list, when the server starts, then the server MUST refuse to start, name the folder and make no file in it.
+
+**Reason:** a file made in such a folder takes the folder's entries whatever the umask, so another account could read the database or a blob before the server could close it.
+
+**Tests:** `compliance/hook-free-server.test.ts › refuses to start in a database folder that passes access on to another account, and makes nothing there, not even its control socket's folder`, `› refuses to make its blob folder in a folder that passes access on to another account, and makes nothing there`.
 
 ### `instance/unknown-setting-warned`
 

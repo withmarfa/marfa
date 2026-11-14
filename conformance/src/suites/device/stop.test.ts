@@ -12,6 +12,7 @@ import {
   connected,
   copyHeadRead,
   itemsPage,
+  copyItemEvent,
   copyStreamCursor,
   edgeTypeCatalog,
   refusal,
@@ -344,6 +345,62 @@ describe("stopping a catch-up", () => {
     // by itself.
     holding = false;
     expect((await device.catchUp()).ok).toBe(true);
+  });
+
+  it("commits the cursor of the skipped events it took when it is stopped among them", async () => {
+    harness = await hydratedHarness("stop-catch-up-skipped", { head: "10" });
+    const { server, device } = harness;
+    const skipped = (id: string, type: string) =>
+      copyItemEvent(id, "item.created", wireItem({ id: `item-${id}`, type }));
+    server.copyAnswer("GET", "/events", () => ({
+      kind: "sse",
+      frames: [
+        connected,
+        copyStreamCursor("30"),
+        skipped("11", "core.bookmark"),
+        skipped("12", "core.bookmark"),
+        // A type the catalog lacks makes the device read the catalog before
+        // it takes the event, which says it took the two above.
+        skipped("13", "custom.unlisted"),
+      ],
+      hold: true,
+    }));
+    // A door answers its scripts in order, so the answer the hydration left is
+    // spent by a catch-up that reaches the head, and the held stream is the
+    // one the command below meets.
+    expect((await device.catchUp()).ok).toBe(true);
+    const requests = (path: string) =>
+      server.requests.filter((request) => request.pathname === path).length;
+    // The catch-up reads the catalog once as it starts, and again for the
+    // event whose type it lacks.
+    const before = requests("/types");
+    const catching = device.hold(["catch-up"]);
+    try {
+      await vi.waitFor(
+        () => {
+          expect(requests("/types"), catching.stderr).toBe(before + 2);
+        },
+        { timeout: 10_000, interval: 25 },
+      );
+      catching.interrupt();
+      await catching.exited();
+      expect(catching.exitCode(), `${catching.stdout} ${catching.stderr}`).toBe(
+        UNFINISHED,
+      );
+      expect(JSON.parse(catching.stderr).error.code).toBe("canceled");
+    } finally {
+      await catching.stop();
+    }
+    const status = await device.status();
+    const stored = Number(status.ok ? status.value.event_cursor : Number.NaN);
+    expect(
+      stored,
+      "the cursor stayed where the catch-up started, so the next one reads the skipped events again",
+    ).toBeGreaterThanOrEqual(12);
+    expect(
+      stored,
+      "the cursor passed an event the device was never sent",
+    ).toBeLessThanOrEqual(13);
   });
 });
 

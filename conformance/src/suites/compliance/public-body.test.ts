@@ -501,6 +501,7 @@ describe("a body on a request no operation reads one for", () => {
 });
 
 const OPEN_CAP = 32768;
+// Registration has its own smaller cap (`keys-and-oauth/register-body-cap`).
 const OPEN_DOORS = [
   "/owner",
   "/setup/exchange",
@@ -511,7 +512,6 @@ const OPEN_DOORS = [
   "/auth/authorize/decision",
   "/auth/oauth2/token",
   "/auth/oauth2/revoke",
-  "/auth/oauth2/register",
   "/auth/device/code",
   "/auth/device",
   "/auth/device/consent",

@@ -57,6 +57,7 @@ use tokio::sync::{Notify, watch};
 use crate::db::migrate::MIGRATIONS;
 use crate::db::{Db, Options, Write};
 use crate::failure::Failure;
+use crate::private_files::Kept;
 use crate::settings::{Accepted, Settings};
 use crate::telemetry::Telemetry;
 use addresses::Addresses;
@@ -73,6 +74,14 @@ use query::Secret;
 
 const READERS: usize = 4;
 
+pub(crate) async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, Failure> + Send + 'static,
+) -> Result<T, Failure> {
+    tokio::task::spawn_blocking(work).await.map_err(|error| {
+        Failure::start(format!("The data's files could not be checked: {error}"))
+    })?
+}
+
 pub struct App {
     pub db: Db,
     pub clock: Arc<Clock>,
@@ -82,6 +91,7 @@ pub struct App {
     pub health: Health,
     pub usage: Usage,
     pub limiter: Limiter,
+    pub refusal_records: auth::allowance::RefusalRecords,
     pub metrics: metrics::Permit,
     pub passwords: Passwords,
     pub housekeeping: Housekeeping,
@@ -107,6 +117,15 @@ pub struct App {
 
 impl App {
     pub async fn start(accepted: Accepted) -> Result<Arc<App>, Failure> {
+        let fixed = accepted.fixed();
+        let (database, blob_path) = (fixed.database.clone(), fixed.blob_path.clone());
+        let kept = blocking(move || Kept::closed(&database, &blob_path)).await?;
+        App::start_kept(accepted, kept).await
+    }
+
+    /// Starts on the files [`Kept::closed`] judged, for a caller that must judge them before it
+    /// makes anything beside the database.
+    pub async fn start_kept(accepted: Accepted, kept: Kept) -> Result<Arc<App>, Failure> {
         let settings = accepted.open_secrets()?;
         let start = settings.start.clone();
         let faults = Arc::<Faults>::default();
@@ -162,6 +181,7 @@ impl App {
             at.clone(),
         )
         .await?;
+        blocking(move || kept.blobs_opened()).await?;
         db.write(Write::own(), move |tx| catalog::reconcile(tx, &at))
             .await
             .map_err(|refused| Failure::start(refused.to_string()))?;
@@ -188,6 +208,7 @@ impl App {
             health: Health::default(),
             usage: Usage::default(),
             limiter: Limiter::default(),
+            refusal_records: auth::allowance::RefusalRecords::default(),
             metrics: metrics::Permit::default(),
             passwords: Passwords::default(),
             housekeeping: Housekeeping::default(),
