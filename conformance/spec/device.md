@@ -3502,11 +3502,11 @@ Where the address of the server is `https`, the CLI MUST NOT print the plain `ht
 
 ### `device/command-loopback-no-proxy`
 
-When a command sends a request to `localhost`, an address in `127.0.0.0/8` or `::1`, the CLI MUST send it directly, whatever proxy the environment names.
+When a command sends a request to `localhost`, an address in `127.0.0.0/8` or `::1`, the CLI MUST send it directly, whatever proxy the environment names, and that holds for a request made by following a redirect as for the first one.
 
-**Reason:** a proxy cannot reach this machine, and would be handed the request with its key, and one that cannot reach it makes the checks of `marfa server` report the wrong health.
+**Reason:** a proxy cannot reach this machine, and would be handed the request with its key, and one that cannot reach it makes the checks of `marfa server` report the wrong health. A redirect names a new destination, so the rule is applied to it again.
 
-**Tests:** `cli/key-and-files.test.ts › never goes through a proxy the environment names, and one to another host does`, `cli/server-status.test.ts › asks the server on this machine directly, whatever proxy the environment names`.
+**Tests:** `cli/key-and-files.test.ts › never goes through a proxy the environment names, and one to another host does`, `› is sent through the proxy or not by where it goes, each time`, `cli/server-status.test.ts › asks the server on this machine directly, whatever proxy the environment names`.
 
 ### `device/command-key-own-server`
 
@@ -3534,11 +3534,11 @@ If a transfer to a file named by `--output` ends before the whole answer arrives
 
 ### `device/command-text-printable`
 
-When a command prints text a server holds, without `--json`, the CLI MUST print each control character and bidirectional formatting character in it as an escape sequence.
+When a command prints text a server holds, without `--json`, the CLI MUST print each control character and bidirectional formatting character in it as an escape sequence, a newline, a tab and an escape that starts a colour included, and add its own line breaks, columns and colour only around that text.
 
-**Reason:** a title, a name or a message is text on the line it was printed on, and must not move the cursor, erase a line, retitle the window or reorder what follows it.
+**Reason:** a title, a name or a message is text on the line it was printed on, and must not move the cursor, erase a line, retitle the window, reorder what follows it, start a row of its own or colour what follows it.
 
-**Tests:** `cli/key-and-files.test.ts › prints no control or bidirectional character from a title, and --json is unchanged`, `› print no control or bidirectional character from a view's title`.
+**Tests:** `cli/key-and-files.test.ts › prints no control or bidirectional character from a title, and --json is unchanged`, `› print no control or bidirectional character from a view's title`, `› stays on its own line, in its own column and uncoloured, in a list, the overview and a device's views`.
 
 ### `device/command-cleartext-allow-flag`
 

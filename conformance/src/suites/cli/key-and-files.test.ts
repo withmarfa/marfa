@@ -341,3 +341,144 @@ describe("the overview and a device's copy of the views", () => {
     expect(listed.stdout).toContain("fake");
   });
 });
+
+// A title that tries to start a line of its own, move to a column and colour
+// what follows it.
+const LAYOUT = "one\n  forged-row  forged view\tcolumn\u001b[1;31m";
+
+/** No line starts as a row of its own, and nothing but the binary's own layout is a tab or an escape. */
+function expectOneRow(text: string, id: string) {
+  expect(text).not.toContain("\t");
+  expect(text).not.toContain("\u001b");
+  for (const line of text.split("\n")) {
+    expect(line).not.toMatch(/^\s*forged-row/);
+  }
+  const rows = text.split("\n").filter((line) => line.includes(id));
+  expect(rows).toHaveLength(1);
+  expect(rows[0]).toContain("forged-row");
+}
+
+describe("stored text that is layout or colour", () => {
+  it("stays on its own line, in its own column and uncoloured, in a list, the overview and a device's views", async () => {
+    const created = await c.cli.json<ItemEnvelope>([
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--prop",
+      // A list shows the first line of a title.
+      `title=${LAYOUT.replace("\n", " ")}`,
+      "--tag",
+      "layout-escape",
+    ]);
+    trackItem(c.ctx, created.item.id);
+    const listed = await c.cli.run([
+      "items",
+      "list",
+      "--type",
+      "core.note",
+      "--all",
+    ]);
+    expect(listed.code, listed.stderr).toBe(0);
+    expectOneRow(listed.stdout, created.item.id);
+
+    const made = await c.cli.json<{ item: { id: string } }>([
+      "views",
+      "create",
+      "--title",
+      LAYOUT,
+      "--query",
+      JSON.stringify({ filter: `source eq "${c.ctx.source}"` }),
+    ]);
+    trackView(c.ctx, made.item.id);
+    const overview = await c.cli.run(["overview"]);
+    expect(overview.code, overview.stderr).toBe(0);
+    expectOneRow(overview.stdout, made.item.id);
+
+    const db = join(dir, "layout.sqlite");
+    const hydrated = await c.cli.run([
+      "device",
+      "--db",
+      db,
+      "hydrate",
+      "--types",
+      "system.view",
+      "--tier",
+      "all",
+    ]);
+    expect(hydrated.code, hydrated.stderr).toBe(0);
+    const views = await c.cli.run(["device", "--db", db, "views", "list"]);
+    expect(views.code, views.stderr).toBe(0);
+    expectOneRow(views.stdout, made.item.id);
+
+    // The witness: the same text is what the server holds, so the lines
+    // above are the binary's doing.
+    const json = await c.cli.json(["overview"]);
+    expect(JSON.stringify(json)).toContain("forged-row  forged view\\tcolumn");
+  });
+});
+
+describe("a redirect from the docs site", () => {
+  it("is sent through the proxy or not by where it goes, each time", async () => {
+    const landed = await listen("127.0.0.1", (_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(
+        JSON.stringify({
+          pages: [
+            {
+              title: "Files",
+              url: "https://docs.marfa.so/files",
+              description: null,
+              breadcrumbs: [],
+            },
+          ],
+        }),
+      );
+    });
+    const sentByProxy: string[] = [];
+    const behind = createServer((request, response) => {
+      sentByProxy.push(`${request.method ?? ""} ${request.url ?? ""}`);
+      response.writeHead(302, {
+        location: `http://127.0.0.1:${String(landed.port)}/api/docs/topics`,
+      });
+      response.end();
+    });
+    const proxy = createServer();
+    proxy.on("connect", (request, socket) => {
+      sentByProxy.push(`CONNECT ${request.url ?? ""}`);
+      if (!(request.url ?? "").startsWith("docs.example.test")) {
+        socket.destroy();
+        return;
+      }
+      socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+      behind.emit("connection", socket);
+    });
+    servers.push(behind, proxy);
+    await new Promise<void>((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    const through = `http://127.0.0.1:${String((proxy.address() as AddressInfo).port)}`;
+
+    const outcome = await c.cli
+      .withEnv({
+        MARFA_DOCS_URL: "http://docs.example.test",
+        HTTP_PROXY: through,
+        http_proxy: through,
+        HTTPS_PROXY: through,
+        ALL_PROXY: through,
+        all_proxy: through,
+        NO_PROXY: "",
+        no_proxy: "",
+      })
+      .run(["--json", "docs", "topics"]);
+    expect(outcome.code, outcome.stderr).toBe(0);
+    expect(JSON.parse(outcome.stdout).pages[0].title).toBe("Files");
+    // The first request went through the proxy, so it was in use, and the
+    // redirect to this machine did not.
+    expect(sentByProxy).toEqual([
+      "CONNECT docs.example.test:80",
+      "GET /api/docs/topics",
+    ]);
+    expect(landed.arrivals.map((entry) => entry.url)).toEqual([
+      "/api/docs/topics",
+    ]);
+  });
+});
