@@ -401,6 +401,18 @@ pub fn refused_nesting(edge_type: &str, source_id: &str, source_type: &str) -> R
     }
 }
 
+pub fn refused_parts_cycle(edge_type: &str, source_id: &str, target_id: &str) -> Refused {
+    Refused {
+        message: format!("Edge \"{edge_type}\" would make an item a part of its own part"),
+        details: json!({
+            "edge_type": edge_type,
+            "source_id": source_id,
+            "target_id": target_id,
+            "constraint": "cycle",
+        }),
+    }
+}
+
 pub fn refused_cardinality(edge_type: &EdgeType, end: End, at: &str) -> Refused {
     let (end, edge) = match end {
         End::Source => ("source", "outbound"),
