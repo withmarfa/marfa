@@ -1,18 +1,15 @@
-//! The server's listing grammar, answered from the working copy. Each
-//! condition the rules crate parses compiles to the SQL the server runs, bound
-//! as its driver binds it. Read even slightly otherwise, a condition answers
-//! one set of rows offline and another online.
+//! The server's listing grammar, answered from the working copy. The rules
+//! crate compiles each condition as it does for the server (`marfa_rules::filter::sql`);
+//! this module names the working copy's tables and what its `properties`
+//! column may hold.
 
-use marfa_rules::catalog::StatusField;
-use marfa_rules::filter::{
-    Compare, Condition, Expression, Literal, Op, Term, parse, system_literal,
-};
+use marfa_rules::catalog::Catalog;
+use marfa_rules::filter::sql::{self, Bind, Items, Relation, Sink};
+use marfa_rules::filter::{Expression, parse};
 use serde_json::{Number, Value};
 
 use crate::Result;
 use crate::error::CoreError;
-use marfa_rules::catalog::Catalog;
-use marfa_rules::query::escape_like;
 
 pub(crate) use marfa_rules::filter::reads;
 pub use marfa_rules::filter::{
@@ -40,12 +37,7 @@ pub(crate) fn narrow(
 ) -> Result<()> {
     if let Some(filter) = filter {
         let expression = parse(filter)?;
-        let statuses = if expression.reads_status() {
-            catalog.status_fields()
-        } else {
-            Vec::new()
-        };
-        clauses.push(expression_clause(&expression, values, whole, &statuses)?);
+        clauses.push(expression_clause(&expression, values, whole, catalog)?);
     }
     if let Some(root) = beneath {
         clauses.push(format!("items.id IN ({})", beneath_walk()));
@@ -72,226 +64,120 @@ pub(crate) fn beneath_walk() -> String {
 /// Refuses, before any read, what `narrow` would refuse for this expression
 /// on a copy that holds no edge type whole.
 pub(crate) fn check(filter: &str) -> Result<()> {
-    expression_clause(&parse(filter)?, &mut Vec::new(), &[], &[]).map(|_| ())
+    expression_clause(&parse(filter)?, &mut Vec::new(), &[], &Catalog::empty()).map(|_| ())
+}
+
+/// SQL as text with a `?` for each value, the values as the driver is handed them.
+#[derive(Default)]
+pub(crate) struct Compiled {
+    pub(crate) text: String,
+    pub(crate) values: Vec<Value>,
+}
+
+impl Sink for Compiled {
+    fn push(&mut self, text: &str) {
+        self.text.push_str(text);
+    }
+
+    fn bind(&mut self, value: Bind) {
+        self.text.push('?');
+        self.values.push(value_of(value));
+    }
+}
+
+fn value_of(bind: Bind) -> Value {
+    match bind {
+        Bind::Null => Value::Null,
+        Bind::Real(number) => Number::from_f64(number).map_or(Value::Null, Value::Number),
+        Bind::Text(text) => Value::String(text),
+    }
 }
 
 fn expression_clause(
     expression: &Expression,
     values: &mut Vec<Value>,
     whole: &[String],
-    statuses: &[StatusField],
+    catalog: &Catalog,
 ) -> Result<String> {
-    let joiner = if expression.any { " OR " } else { " AND " };
-    let parts = expression
-        .conditions
-        .iter()
-        .map(|condition| condition_clause(condition, values, whole, statuses))
-        .collect::<Result<Vec<String>>>()?;
-    Ok(format!("({})", parts.join(joiner)))
-}
-
-fn condition_clause(
-    condition: &Condition,
-    values: &mut Vec<Value>,
-    whole: &[String],
-    statuses: &[StatusField],
-) -> Result<String> {
-    Ok(match &condition.term {
-        Term::System { column, compare } => compared(
-            &format!("items.{column}"),
-            *compare,
-            &system_literal(column, *compare, &condition.value)?,
-            values,
-        ),
-        Term::Property { name, op } => {
-            values.push(Value::String(format!("$.{name}")));
-            let extract = "json_extract(items.properties, ?)";
-            // SQLite raises on stored text that is not JSON and so would
-            // fail the whole query for one damaged row; such a row matches
-            // no property condition. `CASE`, not `AND`, because SQLite
-            // promises no order of evaluation for `AND`.
-            let clause = match op {
-                Op::Compare(compare @ (Compare::Eq | Compare::Neq))
-                    if matches!(condition.value, Literal::Number(_)) =>
-                {
-                    values.extend(std::iter::repeat_n(Value::String(format!("$.{name}")), 2));
-                    compared(
-                        &format!(
-                            "CASE WHEN json_type(items.properties, ?) IN ('integer', 'real') THEN CAST({extract} AS REAL) ELSE {extract} END"
-                        ),
-                        *compare,
-                        &condition.value,
-                        values,
-                    )
-                }
-                Op::Compare(
-                    compare @ (Compare::Gt | Compare::Gte | Compare::Lt | Compare::Lte),
-                ) if matches!(condition.value, Literal::Number(_)) => compared(
-                    &format!("CAST({extract} AS REAL)"),
-                    *compare,
-                    &condition.value,
-                    values,
-                ),
-                Op::Compare(compare) => compared(extract, *compare, &condition.value, values),
-                Op::Exists => format!("{extract} IS NOT NULL"),
-                Op::NotExists => format!("{extract} IS NULL"),
-            };
-            format!("CASE WHEN json_valid(items.properties) THEN ({clause}) ELSE 0 END")
-        }
-        // The server's `entryMemberSql`: some entry of the list is an
-        // object whose member equals the value. `CASE` keeps
-        // `json_extract` off an entry that is not an object.
-        Term::Entry { field, member } => {
-            let list = format!("$.{field}");
-            let path = format!("$.{member}");
-            let extract = "json_extract(entry.value, ?)";
-            let member_value = if matches!(condition.value, Literal::Number(_)) {
-                values.extend([
-                    Value::String(list.clone()),
-                    Value::String(list),
-                    Value::String(path.clone()),
-                    Value::String(path.clone()),
-                    Value::String(path),
-                ]);
-                format!(
-                    "CASE WHEN entry.type <> 'object' THEN NULL WHEN json_type(entry.value, ?) IN ('integer', 'real') THEN CAST({extract} AS REAL) ELSE {extract} END"
-                )
-            } else {
-                values.extend([
-                    Value::String(list.clone()),
-                    Value::String(list),
-                    Value::String(path),
-                ]);
-                format!("CASE WHEN entry.type = 'object' THEN {extract} END")
-            };
-            values.push(bound(&condition.value));
-            format!(
-                "CASE WHEN json_valid(items.properties) THEN EXISTS (SELECT 1 FROM json_each(items.properties, ?) AS entry WHERE json_type(items.properties, ?) = 'array' AND {member_value} = ?) ELSE 0 END"
-            )
-        }
-        // `+` takes the column's text affinity off, so a number is
-        // compared as the number it is, as it is against the server's
-        // JSON array, and never matches a tag spelled like it.
-        Term::TagHeld => {
-            values.push(bound(&condition.value));
-            "EXISTS (SELECT 1 FROM tags WHERE tags.item_id = items.id AND +tags.tag = ?)".into()
-        }
-        Term::TagsPresent(present) => format!(
-            "{}EXISTS (SELECT 1 FROM tags WHERE tags.item_id = items.id)",
-            if *present { "" } else { "NOT " }
-        ),
-        Term::Edge {
-            edge_type,
-            backref,
-            negated,
-            to_item,
-        } => {
-            // The copy holds the edges its items draw, not every edge
-            // drawn to them, unless it holds the type whole.
-            if *backref && !whole.contains(edge_type) {
-                return Err(CoreError::Invalid(format!(
-                    "a backref condition on {edge_type:?} is not answered from a working copy that does not hold that edge type whole: hydrate with it as an edge type held whole, or ask the server"
-                )));
+    let items = Items {
+        alias: "items",
+        unreadable_properties: true,
+    };
+    let mut out = Compiled::default();
+    sql::item_filter(&mut out, expression, &items, catalog, |out, relation| {
+        match relation {
+            // `+` takes the column's text affinity off, so a number is
+            // compared as the number it is, as it is against the server's
+            // JSON array, and never matches a tag spelled like it.
+            Relation::Tag(value) => {
+                out.push(
+                    "EXISTS (SELECT 1 FROM tags WHERE tags.item_id = items.id AND +tags.tag = ",
+                );
+                out.bind(sql::bound(value));
+                out.push(")");
             }
-            let (own, far) = if *backref {
-                ("target_id", "source_id")
-            } else {
-                ("source_id", "target_id")
-            };
-            values.push(Value::String(edge_type.clone()));
-            let other = if *to_item {
-                values.push(bound(&condition.value));
-                format!(" AND e.{far} = ?")
-            } else {
-                String::new()
-            };
-            format!(
-                "{}EXISTS (SELECT 1 FROM edges e WHERE e.{own} = items.id AND e.edge_type = ?{other})",
-                if *negated { "NOT " } else { "" }
-            )
+            Relation::Tags { present } => out.push(&format!(
+                "{}EXISTS (SELECT 1 FROM tags WHERE tags.item_id = items.id)",
+                if present { "" } else { "NOT " }
+            )),
+            Relation::Edge {
+                edge_type,
+                backref,
+                negated,
+                to,
+            } => {
+                // The copy holds the edges its items draw, not every edge
+                // drawn to them, unless it holds the type whole.
+                if backref && !whole.iter().any(|held| held == edge_type) {
+                    return Err(marfa_rules::RuleError::invalid(format!(
+                        "a backref condition on {edge_type:?} is not answered from a working copy that does not hold that edge type whole: hydrate with it as an edge type held whole, or ask the server"
+                    )));
+                }
+                let (own, far) = if backref {
+                    ("target_id", "source_id")
+                } else {
+                    ("source_id", "target_id")
+                };
+                out.push(if negated { "NOT " } else { "" });
+                out.push(&format!(
+                    "EXISTS (SELECT 1 FROM edges e WHERE e.{own} = items.id AND e.edge_type = "
+                ));
+                out.bind(Bind::Text(edge_type.to_string()));
+                if let Some(value) = to {
+                    out.push(&format!(" AND e.{far} = "));
+                    out.bind(sql::bound(value));
+                }
+                out.push(")");
+            }
+            Relation::Part { selected } => {
+                out.push(if selected { "" } else { "NOT " });
+                out.push(PART_SQL);
+            }
         }
-        Term::StatusGroup(op) => status_group(*op, &condition.value, statuses, values),
-        Term::Part(compare) => {
-            let selected =
-                matches!(condition.value, Literal::Bool(true)) == (*compare == Compare::Eq);
-            format!("{}{PART_SQL}", if selected { "" } else { "NOT " })
-        }
-    })
+        Ok(())
+    })?;
+    values.extend(out.values);
+    Ok(out.text)
 }
 
 /// A row filter of `marfa_rules::filter::parse_rows` over `table_rows r`, as
 /// the server compiles it over its own rows.
 pub(crate) fn row_clause(expression: &Expression, values: &mut Vec<Value>) -> Result<String> {
-    let joiner = if expression.any { " OR " } else { " AND " };
-    let parts = expression
-        .conditions
-        .iter()
-        .map(|condition| {
-            Ok(match &condition.term {
-                Term::System { column, compare } => compared(
-                    &format!("r.{column}"),
-                    *compare,
-                    &system_literal(column, *compare, &condition.value)?,
-                    values,
-                ),
-                Term::Property { name, op } => {
-                    let path = Value::String(format!("$.{name}"));
-                    let extract = "json_extract(r.body, ?)";
-                    values.push(path.clone());
-                    match op {
-                        Op::Compare(compare @ (Compare::Eq | Compare::Neq))
-                            if matches!(condition.value, Literal::Number(_)) =>
-                        {
-                            values.extend([path.clone(), path]);
-                            compared(
-                                &format!(
-                                    "CASE WHEN json_type(r.body, ?) IN ('integer', 'real') THEN CAST({extract} AS REAL) ELSE {extract} END"
-                                ),
-                                *compare,
-                                &condition.value,
-                                values,
-                            )
-                        }
-                        Op::Compare(
-                            compare @ (Compare::Gt | Compare::Gte | Compare::Lt | Compare::Lte),
-                        ) if matches!(condition.value, Literal::Number(_)) => compared(
-                            &format!("CAST({extract} AS REAL)"),
-                            *compare,
-                            &condition.value,
-                            values,
-                        ),
-                        Op::Compare(compare) => {
-                            compared(extract, *compare, &condition.value, values)
-                        }
-                        Op::Exists => format!("{extract} IS NOT NULL"),
-                        Op::NotExists => format!("{extract} IS NULL"),
-                    }
-                }
-                _ => {
-                    return Err(CoreError::Invalid(
-                        "filter: a row filter names columns, id and updated_at".into(),
-                    ));
-                }
-            })
-        })
-        .collect::<Result<Vec<String>>>()?;
-    Ok(format!("({})", parts.join(joiner)))
-}
-
-/// As the server's driver binds it: every number, a boolean included, goes in
-/// as a REAL. It matters against a text column, whose affinity turns `5` into
-/// `'5.0'` rather than `'5'`.
-fn bound(literal: &Literal) -> Value {
-    match literal {
-        Literal::Text(text) => Value::String(text.clone()),
-        Literal::Number(number) => real(*number),
-        Literal::Bool(flag) => real(if *flag { 1.0 } else { 0.0 }),
-        Literal::Null => Value::Null,
-    }
-}
-
-fn real(number: f64) -> Value {
-    Number::from_f64(number).map_or(Value::Null, Value::Number)
+    let column = |out: &mut Compiled, function: &str, name: &str| {
+        out.push(&format!("{function}(r.body, "));
+        out.bind(Bind::Text(format!("$.{name}")));
+        out.push(")");
+    };
+    let mut out = Compiled::default();
+    sql::row_filter(
+        &mut out,
+        expression,
+        |out, name| column(out, "json_extract", name),
+        |out, name| column(out, "json_type", name),
+    )
+    .map_err(CoreError::from)?;
+    values.extend(out.values);
+    Ok(out.text)
 }
 
 /// An item out of the bin that draws an edge of a `with-hosts` type, read
@@ -306,99 +192,6 @@ const PART_SQL: &str = "(items.state <> 'trashed' AND EXISTS (
         WHERE CASE WHEN json_valid(json) THEN json_extract(json, '$.cascade_on_delete') END = 'with-hosts'
       )
       AND (h.id IS NULL OR h.state <> 'trashed')))";
-
-/// A `status_group` term, answered through each type's status field: the
-/// row's type picks the field and its words, and the words pick the group. A
-/// row whose type has no status field, or whose value is no word its type
-/// declares, is in no group, so `eq` and `neq` both pass it by and
-/// `not_exists` takes it.
-fn status_group(
-    op: Op,
-    value: &Literal,
-    statuses: &[StatusField],
-    values: &mut Vec<Value>,
-) -> String {
-    let wanted = |group: &str| match (op, value) {
-        (Op::Compare(Compare::Eq), Literal::Text(asked)) => group == asked,
-        (Op::Compare(Compare::Neq), Literal::Text(asked)) => group != asked,
-        _ => true,
-    };
-    // Types that share a field and the words it selects are compared together.
-    let mut selections: Vec<(&str, Vec<&str>, Vec<&str>)> = Vec::new();
-    for status in statuses {
-        let words: Vec<&str> = status
-            .words
-            .iter()
-            .filter(|(_, group)| wanted(group))
-            .map(|(word, _)| word.as_str())
-            .collect();
-        if words.is_empty() {
-            continue;
-        }
-        match selections
-            .iter_mut()
-            .find(|(name, selected, _)| *name == status.name && *selected == words)
-        {
-            Some((_, _, types)) => types.push(&status.type_id),
-            None => selections.push((&status.name, words, vec![&status.type_id])),
-        }
-    }
-    let placeholders = |count: usize| vec!["?"; count].join(", ");
-    let mut parts = Vec::new();
-    for (name, words, types) in selections {
-        let path = format!("$.{}", Value::String(name.to_string()));
-        parts.push(format!(
-            "(items.type IN ({}) AND CASE WHEN json_valid(items.properties) THEN json_extract(items.properties, ?) IN ({}) ELSE 0 END)",
-            placeholders(types.len()),
-            placeholders(words.len()),
-        ));
-        values.extend(types.into_iter().map(|id| Value::String(id.into())));
-        values.push(Value::String(path));
-        values.extend(words.into_iter().map(|word| Value::String(word.into())));
-    }
-    // `IFNULL`, since an absent value compares as unknown, and `NOT` an
-    // unknown would pass the row by rather than take it.
-    let matched = if parts.is_empty() {
-        "0".to_string()
-    } else {
-        format!("IFNULL(({}), 0)", parts.join(" OR "))
-    };
-    if op == Op::NotExists {
-        format!("NOT {matched}")
-    } else {
-        matched
-    }
-}
-
-fn compared(
-    expression: &str,
-    compare: Compare,
-    value: &Literal,
-    values: &mut Vec<Value>,
-) -> String {
-    let (operator, bound) = match compare {
-        Compare::Eq => ("=", bound(value)),
-        Compare::Neq => ("!=", bound(value)),
-        Compare::Gt => (">", bound(value)),
-        Compare::Gte => (">=", bound(value)),
-        Compare::Lt => ("<", bound(value)),
-        Compare::Lte => ("<=", bound(value)),
-        Compare::Contains => (
-            "LIKE",
-            Value::String(format!("%{}%", escape_like(&value.text()))),
-        ),
-        Compare::StartsWith => (
-            "LIKE",
-            Value::String(format!("{}%", escape_like(&value.text()))),
-        ),
-    };
-    values.push(bound);
-    if operator == "LIKE" {
-        format!("{expression} LIKE ? ESCAPE '\\'")
-    } else {
-        format!("{expression} {operator} ?")
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -418,7 +211,7 @@ mod tests {
                 let mut values = Vec::new();
                 let expression =
                     parse(&format!("{field} {op} \"2026-01-01T01:00:00.500+01:00\"")).unwrap();
-                expression_clause(&expression, &mut values, &[], &[]).unwrap();
+                expression_clause(&expression, &mut values, &[], &Catalog::empty()).unwrap();
                 assert_eq!(values, [Value::String("2026-01-01T00:00:00.500Z".into())]);
                 for invalid in ["42", "true", "null", "\"bad\""] {
                     assert!(
@@ -747,6 +540,43 @@ mod tests {
             ("properties.emails.value eq 1", &[]),
         ] {
             assert_eq!(ids(&conn, Some(filter), None), matched, "{filter}");
+        }
+    }
+
+    const CORPUS: &str = include_str!("../../marfa-rules/src/filter/parity.json");
+
+    #[test]
+    fn the_filters_both_sides_share_select_the_ids_the_server_selects() {
+        let corpus: Value = serde_json::from_str(CORPUS).unwrap();
+        let conn = conn();
+        let catalog = marfa_rules::wire::WireCatalog {
+            types: serde_json::from_value(corpus["types"].clone()).unwrap(),
+            edge_types: Vec::new(),
+        };
+        store::replace_catalog(&conn, &catalog).unwrap();
+        for item in corpus["items"].as_array().unwrap() {
+            let wire = wire_item(
+                item["id"].as_str().unwrap(),
+                item["type"].as_str().unwrap(),
+                item["state"].as_str().unwrap(),
+                item["occurred_at"].as_str().unwrap(),
+                item["properties"].clone(),
+            );
+            let tags: Vec<String> = item["tags"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|tag| tag.as_str().unwrap().to_string())
+                .collect();
+            store::upsert_item(&conn, &wire, Some(&tags), &Indexing::default()).unwrap();
+        }
+        for case in corpus["filters"].as_array().unwrap() {
+            let filter = case["filter"].as_str().unwrap();
+            assert_eq!(
+                json!(ids(&conn, Some(filter), None)),
+                case["ids"],
+                "{filter}"
+            );
         }
     }
 
