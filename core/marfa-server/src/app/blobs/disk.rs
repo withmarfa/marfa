@@ -4,20 +4,26 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use super::hash::Hash;
 use crate::failure::Failure;
+use crate::server_lock::{self, Untaken};
 
 pub const MARKER: &str = ".marfa-store";
 const TMP: &str = "tmp";
+const LOCK: &str = ".server-lock";
 
 #[derive(Debug)]
 pub struct Disk {
     id: String,
     root: PathBuf,
+    /// Keeps a second server from emptying `tmp` under this one, until `let_go` or the end of
+    /// the process.
+    lock: Mutex<Option<File>>,
 }
 
 fn refused(root: &Path, what: &str, error: io::Error) -> Failure {
@@ -51,6 +57,14 @@ impl Disk {
     /// empties `tmp`. It blocks, so it runs before the server takes requests.
     pub fn open(root: &Path) -> Result<Disk, Failure> {
         fs::create_dir_all(root).map_err(|error| refused(root, "could not be made", error))?;
+        let lock = server_lock::take(&root.join(LOCK)).map_err(|untaken| match untaken {
+            Untaken::Held => Failure::start(format!(
+                "The blob folder {} is open in another Marfa server. Stop that server, or give \
+                 this one a blob folder of its own.",
+                root.display()
+            )),
+            Untaken::Failed(error) => refused(root, "could not be locked", error),
+        })?;
         let id = match read_marker(root)? {
             Some(id) => id,
             None => fresh_marker(root, &root.join(MARKER))?,
@@ -58,6 +72,7 @@ impl Disk {
         let disk = Disk {
             id,
             root: root.to_path_buf(),
+            lock: Mutex::new(Some(lock)),
         };
         let tmp = disk.tmp();
         match fs::remove_dir_all(&tmp) {
@@ -71,7 +86,11 @@ impl Disk {
 
     /// A store the server recorded at `root` whose folder is not there now; nothing is touched.
     pub fn unmounted(id: String, root: PathBuf) -> Disk {
-        Disk { id, root }
+        Disk {
+            id,
+            root,
+            lock: Mutex::default(),
+        }
     }
 
     /// The id the marker in `root` holds, where it holds one. It blocks.
@@ -101,6 +120,7 @@ impl Disk {
         let disk = Disk {
             id: id.to_string(),
             root: root.to_path_buf(),
+            lock: Mutex::default(),
         };
         fs::create_dir_all(disk.tmp())?;
         Ok(disk)
@@ -108,6 +128,14 @@ impl Disk {
 
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// Lets another server open the folder, once this one writes nothing more in it.
+    pub fn let_go(&self) {
+        self.lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
     }
 
     pub fn root(&self) -> &Path {
@@ -486,9 +514,35 @@ mod tests {
     fn a_fresh_folder_gets_a_marker_that_a_second_start_reads_back() {
         let dir = TempDir::new().unwrap();
         let first = Disk::open(&dir.path().join("blobs")).unwrap();
+        let id = first.id().to_string();
+        drop(first);
         let second = Disk::open(&dir.path().join("blobs")).unwrap();
-        assert_eq!(first.id(), second.id());
-        assert!(Uuid::parse_str(first.id()).is_ok());
+        assert_eq!(second.id(), id);
+        assert!(Uuid::parse_str(&id).is_ok());
+    }
+
+    #[test]
+    fn a_folder_another_server_has_open_is_refused_and_keeps_its_tmp() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path().join("blobs");
+        let first = Disk::open(&root).unwrap();
+        let half = root.join(TMP).join("half");
+        fs::write(&half, b"half an upload").unwrap();
+        let through = dir.path().join("through");
+        std::os::unix::fs::symlink(dir.path(), &through).unwrap();
+        for named in [root.clone(), through.join("blobs")] {
+            let refused = Disk::open(&named).unwrap_err();
+            assert_eq!(refused.status, 1);
+            assert!(
+                refused.message.contains("is open in another Marfa server"),
+                "{}",
+                refused.message
+            );
+            assert_eq!(fs::read(&half).unwrap(), b"half an upload");
+        }
+        drop(first);
+        Disk::open(&root).unwrap();
+        assert!(!half.exists());
     }
 
     #[test]
@@ -501,9 +555,11 @@ mod tests {
         let hash = staged.seal().unwrap();
         disk.publish(&mut staged, &hash).unwrap();
         fs::write(root.join(TMP).join("half"), b"half an upload").unwrap();
+        let kept = disk.path_of(&hash);
+        drop(disk);
         Disk::open(&root).unwrap();
         assert!(fs::read_dir(root.join(TMP)).unwrap().next().is_none());
-        assert_eq!(fs::read(disk.path_of(&hash)).unwrap(), b"kept");
+        assert_eq!(fs::read(&kept).unwrap(), b"kept");
         let hex = hash.hex();
         assert!(root.join(&hex[0..4]).join(hex).is_file());
     }

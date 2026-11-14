@@ -242,6 +242,12 @@ impl App {
         self.stop.send_replace(true);
     }
 
+    /// Closes the database and lets go of the folders, so another server may open them.
+    pub async fn close(&self) {
+        self.db.close().await;
+        self.blobs.let_go();
+    }
+
     pub(crate) fn catalog_handle(&self) -> Arc<ArcSwap<Catalog>> {
         self.catalog.clone()
     }

@@ -154,25 +154,129 @@ fn judge_differences(
     Ok(Standing::Unfinished)
 }
 
-/// Applies the migrations after `from` to a file an earlier build wrote whole.
-pub fn upgrade(conn: &mut Connection, migrations: &[Migration], from: u32) -> rusqlite::Result<()> {
-    let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    for migration in migrations
-        .iter()
-        .filter(|migration| migration.version > from)
-    {
-        tx.execute_batch(migration.sql)?;
+/// Why migrations did not leave the connection ready.
+#[derive(Debug)]
+pub enum Unapplied {
+    /// Nothing was committed.
+    Failed(rusqlite::Error),
+    /// Nothing was committed. Each table left with rows that refer to a row its parent table
+    /// does not hold, with that parent and the number of rows.
+    Dangling(Vec<(String, String, i64)>),
+    /// SQLite did not take the foreign key setting asked for.
+    KeysUnchanged { on: bool },
+    /// The migrations committed, and foreign keys did not come back on.
+    Committed(Box<Unapplied>),
+}
+
+impl From<rusqlite::Error> for Unapplied {
+    fn from(error: rusqlite::Error) -> Unapplied {
+        Unapplied::Failed(error)
     }
-    tx.pragma_update(None, "user_version", latest(migrations))?;
-    tx.commit()
+}
+
+impl Unapplied {
+    fn why(&self) -> String {
+        match self {
+            Unapplied::Failed(error) => error.to_string(),
+            Unapplied::Dangling(tables) => format!(
+                "it would leave rows that refer to rows that are not there ({})",
+                tables
+                    .iter()
+                    .map(|(table, parent, rows)| format!("{rows} in {table}, to {parent}"))
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ),
+            Unapplied::KeysUnchanged { on } => format!(
+                "SQLite did not turn its foreign key checks {}",
+                if *on { "on" } else { "off" }
+            ),
+            Unapplied::Committed(cause) => cause.why(),
+        }
+    }
+
+    pub fn failure(&self, label: &str, from: Option<u32>, migrations: &[Migration]) -> Failure {
+        let to = latest(migrations);
+        let why = self.why();
+        Failure::start(match (self, from) {
+            (Unapplied::Committed(_), Some(from)) => format!(
+                "{label} was upgraded from schema version {from} to {to}, but then {why}. \
+                 Start the server again."
+            ),
+            (Unapplied::Committed(_), None) => format!(
+                "{label} was made at schema version {to}, but then {why}. Start the server again."
+            ),
+            (_, Some(from)) => format!(
+                "{label} was not upgraded from schema version {from} to {to}, because {why}. \
+                 Nothing was changed."
+            ),
+            (_, None) => format!("{label} could not be made at schema version {to}: {why}"),
+        })
+    }
+}
+
+/// Applies the migrations after `from` to a file an earlier build wrote whole.
+pub fn upgrade(
+    conn: &mut Connection,
+    migrations: &[Migration],
+    from: u32,
+) -> Result<(), Unapplied> {
+    let steps = migrations
+        .iter()
+        .filter(|migration| migration.version > from);
+    apply(conn, steps, latest(migrations))
 }
 
 /// Applies every migration to a new or unfinished file, which holds no rows.
-pub fn complete(conn: &mut Connection, migrations: &[Migration]) -> rusqlite::Result<()> {
+pub fn complete(conn: &mut Connection, migrations: &[Migration]) -> Result<(), Unapplied> {
+    apply(conn, migrations.iter(), latest(migrations))
+}
+
+/// SQLite changes a table's definition only by making it anew, and dropping the old table
+/// would cascade to its children or be refused, so foreign keys are off around the
+/// transaction, where alone SQLite heeds that, and are checked before it commits.
+fn apply<'a>(
+    conn: &mut Connection,
+    steps: impl Iterator<Item = &'a Migration>,
+    version: u32,
+) -> Result<(), Unapplied> {
+    set_foreign_keys(conn, false)?;
+    let applied = in_one_transaction(conn, steps, version);
+    let restored = set_foreign_keys(conn, true);
+    applied?;
+    restored.map_err(|cause| Unapplied::Committed(Box::new(cause)))
+}
+
+fn in_one_transaction<'a>(
+    conn: &mut Connection,
+    steps: impl Iterator<Item = &'a Migration>,
+    version: u32,
+) -> Result<(), Unapplied> {
     let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
-    for migration in migrations {
+    for migration in steps {
         tx.execute_batch(migration.sql)?;
     }
-    tx.pragma_update(None, "user_version", latest(migrations))?;
-    tx.commit()
+    let dangling: Vec<(String, String, i64)> = tx
+        .prepare(
+            "SELECT \"table\", parent, count(*) FROM pragma_foreign_key_check \
+             GROUP BY \"table\", parent ORDER BY \"table\", parent",
+        )?
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<rusqlite::Result<_>>()?;
+    if !dangling.is_empty() {
+        return Err(Unapplied::Dangling(dangling));
+    }
+    tx.pragma_update(None, "user_version", version)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// SQLite ignores the setting inside a transaction without a word, so it is read back.
+fn set_foreign_keys(conn: &Connection, on: bool) -> Result<(), Unapplied> {
+    conn.pragma_update(None, "foreign_keys", on)?;
+    let now: bool = conn.pragma_query_value(None, "foreign_keys", |row| row.get(0))?;
+    if now == on {
+        Ok(())
+    } else {
+        Err(Unapplied::KeysUnchanged { on })
+    }
 }

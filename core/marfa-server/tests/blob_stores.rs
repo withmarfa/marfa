@@ -259,6 +259,7 @@ async fn start_over_a_missing_or_unmarked_folder_with_recorded_copies_is_refused
     instance.stored(b"a copy the record names").await;
     let folder = instance.folder();
     let marker = folder.join(".marfa-store");
+    instance.app.close().await;
 
     std::fs::remove_file(&marker).unwrap();
     let refused = App::start(settings(instance.dir.path(), &[])).await;
@@ -276,6 +277,7 @@ async fn start_over_a_missing_or_unmarked_folder_with_recorded_copies_is_refused
 #[tokio::test]
 async fn start_over_a_missing_folder_with_no_recorded_copies_makes_a_fresh_store() {
     let instance = Instance::start(&[]).await;
+    instance.app.close().await;
     std::fs::remove_dir_all(instance.folder()).unwrap();
     let again = App::start(settings(instance.dir.path(), &[])).await;
     assert!(again.is_ok());
@@ -431,6 +433,7 @@ async fn a_folder_gone_while_running_is_unreachable_strikes_nothing_and_reads_an
 async fn a_blob_held_only_by_a_detached_store_answers_503_and_an_unknown_one_404() {
     let instance = Instance::start(&[]).await;
     let hash = instance.stored(b"left in a folder no longer named").await;
+    instance.app.close().await;
     let elsewhere = instance.dir.path().join("elsewhere");
     let app = App::start(settings(
         instance.dir.path(),
@@ -670,6 +673,7 @@ async fn an_upload_cut_off_between_its_file_and_its_record_is_deleted_after_a_re
     instance.when_held().await;
     assert!(instance.file(&hash).is_file());
 
+    instance.app.close().await;
     let restarted = App::start(settings(instance.dir.path(), &[]))
         .await
         .unwrap();
@@ -809,6 +813,7 @@ async fn a_start_falls_back_to_the_recorded_object_store_only_when_it_is_not_rea
     instance
         .replicated(&s3, b"a copy in the object store")
         .await;
+    instance.app.close().await;
 
     s3.set_mode(Mode::AllNotFound);
     let refused = App::start(settings(instance.dir.path(), &pairs(&env))).await;
@@ -846,6 +851,7 @@ async fn a_missing_folder_is_filled_only_from_an_object_store_the_server_kept_co
     let env = s3.settings(BUCKET, "blobs");
     let instance = Instance::start(&pairs(&env)).await;
     let hash = instance.replicated(&s3, b"rebuilt from the bucket").await;
+    instance.app.close().await;
     let folder = instance.folder();
     std::fs::remove_dir_all(&folder).unwrap();
 

@@ -325,6 +325,7 @@ impl Kept {
                     "-journal",
                     ".before-upgrade",
                     ".before-upgrade.partial",
+                    ".server-lock",
                 ]
                 .iter()
                 .map(|suffix| {

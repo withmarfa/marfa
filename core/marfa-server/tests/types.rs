@@ -81,7 +81,7 @@ impl Instance {
     }
 
     async fn restart(self, change: impl FnOnce(&rusqlite::Connection)) -> Instance {
-        self.app.db.close().await;
+        self.app.close().await;
         let Instance { dir, .. } = self;
         let database: PathBuf = dir.path().join("marfa.db");
         change(&rusqlite::Connection::open(database).unwrap());

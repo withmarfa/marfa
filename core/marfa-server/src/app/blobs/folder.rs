@@ -160,6 +160,10 @@ impl Folder {
             .clone()
     }
 
+    pub fn let_go(&self) {
+        self.files().let_go();
+    }
+
     /// Whether the folder is the one the server took: its files area holds this store's marker.
     pub fn reachable(&self) -> bool {
         self.files().reachable()

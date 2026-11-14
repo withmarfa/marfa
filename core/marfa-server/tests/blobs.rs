@@ -139,7 +139,10 @@ impl Instance {
                 let path = entry.unwrap().path();
                 if path.is_dir() {
                     walk(&path, root, into);
-                } else if path.file_name().is_some_and(|name| name != ".marfa-store") {
+                } else if path
+                    .file_name()
+                    .is_some_and(|name| name != ".marfa-store" && name != ".server-lock")
+                {
                     into.push(path.strip_prefix(root).unwrap().to_path_buf());
                 }
             }

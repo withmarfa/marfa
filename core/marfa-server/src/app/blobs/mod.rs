@@ -286,6 +286,14 @@ impl Blobs {
         self.folder.clone()
     }
 
+    /// Lets another server open the blob folder and the backup folder's files area.
+    pub fn let_go(&self) {
+        self.disk.let_go();
+        if let Some(folder) = &self.folder {
+            folder.let_go();
+        }
+    }
+
     /// Records the backup folder's files area as the store `id`, forgetting the store `old` and
     /// every copy it records; answers how many copies it forgot.
     pub fn replace_folder_store(

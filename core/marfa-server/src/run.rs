@@ -194,7 +194,7 @@ pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     if closed.is_err() {
         tracing::error!("A request was still open when the stop's wait ended");
     }
-    app.db.close().await;
+    app.close().await;
     telemetry.stop(
         FLUSH_WITHIN.min((STOP_WAIT + FLUSH_AFTER_WAIT).saturating_sub(stopping_at.elapsed())),
     );

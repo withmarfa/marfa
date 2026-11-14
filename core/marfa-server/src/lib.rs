@@ -11,5 +11,6 @@ pub mod log;
 pub mod open_files;
 pub mod private_files;
 pub mod run;
+pub mod server_lock;
 pub mod settings;
 pub mod telemetry;

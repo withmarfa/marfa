@@ -271,7 +271,7 @@ impl Instance {
     }
 
     async fn restarted_with(mut self, secret: &str) -> Instance {
-        self.app.db.close().await;
+        self.app.close().await;
         self.app = boot(&self._dir, &self.origin, Some(secret)).await;
         self.public = public(self.app.clone());
         self.control = control(self.app.clone());
