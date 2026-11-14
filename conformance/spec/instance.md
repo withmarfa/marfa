@@ -1340,6 +1340,22 @@ When the server starts on a database at an earlier schema version of its own, wh
 
 **Tests:** waiting on #2802.
 
+### `instance/upgrade-keeps-references`
+
+If the migrations the server applies to a database would leave a row that refers to a row that does not exist, then the server MUST refuse to start and leave the database at the schema version and with the rows it found.
+
+**Reason:** a migration that rebuilds a table turns off SQLite's checks of the references between rows while it runs, so the references are checked once, before the upgrade commits.
+
+**Tests:** waiting on #2802.
+
+### `instance/upgrade-keeps-rows`
+
+When the server upgrades a database, the server MUST keep every row of every table a migration rebuilds, and every row that refers to one.
+
+**Reason:** a rebuilt table is dropped and made again, and dropping it while SQLite checks references deletes every row that refers to it with a cascading delete.
+
+**Tests:** waiting on #2802.
+
 ### `instance/upgrade-copy-before`
 
 When the server upgrades a database that holds a row, the server MUST write a copy of the database as it stands, to the file `<database file>.before-upgrade` beside it, before it applies any migration.
@@ -1777,6 +1793,56 @@ When the server starts on a database that holds some of its own tables, lacks th
 When the server completes an unfinished database, the server MUST leave it holding what a new database holds, unclaimed, with no key, no item and an `instance_id` of its own.
 
 **Tests:** `compliance/database-file.test.ts › creates the tables it lacks and remains unclaimed until a real claim`.
+
+## One server on its files
+
+A database and a blob folder belong to one running server at a time. A second server started on either is refused before it changes anything of the first's, however it names them, and a server that ends, however it ends, leaves nothing that refuses the next.
+
+### `instance/open-database-held`
+
+If the server starts on a database file that another running server has open, then the server MUST refuse to start, whatever control socket, working directory and path to that file it was given.
+
+**Reason:** each server would take the database's blob folder and background work as its own, and the second would empty the uploads the first is receiving. A control socket of its own, a relative path and a path through a symbolic link do not make the file another one.
+
+**Tests:** `compliance/one-server.test.ts › is refused on the database however its path is written, though it has a control socket of its own, and names the database`, `› is not refused once the running server is killed, and empties the spool it left`.
+
+### `instance/open-blobs-held`
+
+If the server starts on a blob folder that another running server has open, then the server MUST refuse to start, whatever database it was given.
+
+**Reason:** a server empties the files it was receiving when it starts, and those in a folder another server has open are that server's uploads in progress.
+
+**Tests:** `compliance/one-server.test.ts › is refused on the blob folder though it has a database of its own, and names the folder`.
+
+### `instance/open-held-named`
+
+When the server refuses to start under `instance/open-database-held` or `instance/open-blobs-held`, the server MUST name in its log message the database file or the blob folder it was given and say that another server has it open.
+
+**Reason:** the owner stops the other server or gives this one files of its own, and needs to know which.
+
+**Tests:** `compliance/one-server.test.ts › is refused on the database however its path is written, though it has a control socket of its own, and names the database`, `› is refused on the blob folder though it has a database of its own, and names the folder`.
+
+### `instance/open-held-leaves-files`
+
+If the server refuses to start under `instance/open-database-held` or `instance/open-blobs-held`, then the server MUST leave the running server's database, blob folder and uploads in progress as they were.
+
+**Tests:** `compliance/one-server.test.ts › leaves the running server's upload in progress, which lands once it is let go`.
+
+### `instance/open-after-end`
+
+When the server starts on a database and a blob folder whose last server has ended, however it ended, the server MUST NOT refuse to start under `instance/open-database-held` or `instance/open-blobs-held`.
+
+**Reason:** a supervisor starts a killed or crashed server again at once, on the same files.
+
+**Tests:** `compliance/one-server.test.ts › is not refused once the running server is killed, and empties the spool it left`.
+
+### `instance/open-needs-log`
+
+If the server's database file cannot keep a write-ahead log, then the server MUST refuse to start and say in its log message that the database cannot keep one.
+
+**Reason:** the server reads while it writes, which SQLite allows only with a write-ahead log, and SQLite keeps the mode a database had when it cannot change it, without an error. A database on a file system that keeps no shared memory, such as some network file systems, cannot keep the log.
+
+**Tests:** `compliance/one-server.test.ts › is refused, saying so, and the same file is opened when it can keep one`.
 
 ## Durability
 
@@ -2679,7 +2745,7 @@ When the server starts and its own account owns its database, one of the databas
 
 ### `instance/files-folder-kept`
 
-When the server starts and the folder that holds its database already exists, the server MUST NOT change the mode or the access control list of that folder or of any file in it other than the database, the database's log files, the copies of the database the server makes before an upgrade and the server's secrets file.
+When the server starts and the folder that holds its database already exists, the server MUST NOT change the mode or the access control list of that folder or of any file in it other than the database, the database's log files, the copies of the database the server makes before an upgrade, the server's secrets file and the file `<database file>.server-lock` the server keeps beside the database.
 
 **Reason:** an operator may keep the database in a folder that holds other things, and only the server's own files are the server's to change.
 

@@ -223,22 +223,36 @@ fn a_second_server_with_its_own_socket_is_refused_on_the_database_and_changes_no
     let mut first = Server::start(dir.path());
     let staged = staged(dir.path());
 
-    let output = program(dir.path())
-        .env("MARFA_CONTROL_SOCKET", control_socket(elsewhere.path()))
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    let said = String::from_utf8_lossy(&output.stdout);
-    let database = dir.path().join("marfa.db");
-    assert!(
-        said.contains(&format!(
-            "{} is open in another Marfa server",
-            database.display()
-        )),
-        "{said}"
-    );
-    assert!(staged.exists());
-    assert_eq!(status(&first.control(&request("GET", "/health", b""))), 200);
+    let through = elsewhere.path().join("through");
+    std::os::unix::fs::symlink(dir.path(), &through).unwrap();
+    let name = dir.path().file_name().unwrap();
+    let relative = Path::new("..").join(name).join("marfa.db");
+    let ways = [
+        dir.path().join("marfa.db"),
+        through.join("marfa.db"),
+        relative.clone(),
+    ];
+    for database in ways {
+        let mut second = program(dir.path());
+        second
+            .env("MARFA_CONTROL_SOCKET", control_socket(elsewhere.path()))
+            .env("MARFA_DATABASE_PATH", &database);
+        if database == relative {
+            second.current_dir(elsewhere.path());
+        }
+        let output = second.output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{}", database.display());
+        let said = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            said.contains(&format!(
+                "{} is open in another Marfa server",
+                database.display()
+            )),
+            "{said}"
+        );
+        assert!(staged.exists());
+        assert_eq!(status(&first.control(&request("GET", "/health", b""))), 200);
+    }
 
     first.signal("-KILL");
     first.wait();
