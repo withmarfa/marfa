@@ -92,7 +92,7 @@ pub const EDGE_CHANGES_KEPT: usize = 10_000;
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 /// The version of the shape `schema.sql` makes, held in SQLite's
 /// `user_version`. A change to that shape raises it.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at, read_only";
 const EDGE_COLUMNS: &str =
@@ -10304,6 +10304,44 @@ mod tests {
     }
 
     #[test]
+    fn a_store_the_previous_shape_made_is_refused_with_its_writes_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            queue_one(&conn);
+            conn.execute_batch("ALTER TABLE tags DROP COLUMN position")
+                .unwrap();
+        }
+        at_version(&path, 1);
+        let before = queued(&path);
+        let (reason, unsent, _) = refusal_of(&path);
+        assert!(
+            reason.contains("schema version 1, and this build reads schema version 2"),
+            "{reason}"
+        );
+        assert_eq!(unsent, Some(1));
+        assert!(matches!(
+            open_to_read(&path),
+            Err(CoreError::WrongSchema {
+                unsent: Some(1),
+                ..
+            })
+        ));
+        assert_eq!(
+            queued(&path),
+            before,
+            "refusing the store changed its queue"
+        );
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(version(&conn).unwrap(), 1);
+        assert!(
+            conn.prepare("SELECT position FROM tags").is_err(),
+            "refusing the store changed its tags"
+        );
+    }
+
+    #[test]
     fn a_store_at_another_version_whose_queue_cannot_be_read_says_so() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite");
@@ -10420,7 +10458,7 @@ mod tests {
                 SCHEMA_VERSION,
                 crate::folder::state::hash(named.as_bytes()).as_str()
             ),
-            (1, "115c1d4def4a3d91"),
+            (2, "115c1d4def4a3d91"),
             "the shape schema.sql makes changed: raise SCHEMA_VERSION and write the new hash here"
         );
     }
