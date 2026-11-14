@@ -225,8 +225,6 @@ struct Streaming {
     backlog: Backlog,
 }
 
-/// What the stream a follow holds has applied, for a drain that waits on it
-/// before it sends a row write.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 enum Backlog {
     /// No stream is had.
@@ -238,7 +236,7 @@ enum Backlog {
     Applied,
 }
 
-/// Holds `Backlog::Applying` while a follow reads one stream.
+/// Clears replay progress when the follow releases its stream.
 struct Reading<'a>(&'a Mutex<Streaming>);
 
 impl Drop for Reading<'_> {
@@ -1284,9 +1282,6 @@ impl Core {
         })
     }
 
-    /// `queue-and-verdicts/rows-caught-up-first`. Beside a follow it waits for
-    /// the follow's stream to be live; where the stream cannot be had or ends
-    /// first, the drain goes on (`queue-and-verdicts/rows-caught-up-unreached`).
     pub(crate) fn catch_up_before_rows(&self, stop: &AtomicBool) -> Result<()> {
         loop {
             catch_up::refuse_if_stopped(stop)?;

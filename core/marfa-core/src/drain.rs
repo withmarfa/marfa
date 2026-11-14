@@ -1035,8 +1035,6 @@ fn sendable(row: &QueuedWrite) -> bool {
     }
 }
 
-/// Whether a write a drain would send is a row write whose table the copy
-/// holds whole, so its clash is judged by what the copy has applied.
 fn judges_row_writes(conn: &rusqlite::Connection) -> Result<bool> {
     for row in store::waiting_writes(conn)?
         .iter()
