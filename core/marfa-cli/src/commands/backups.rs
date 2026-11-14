@@ -102,6 +102,17 @@ fn ran_text(answer: &Value) -> String {
             lost.join(", ")
         ));
     }
+    let waiting = count(answer, "blobs_waiting");
+    if waiting > 0 {
+        let files = match waiting {
+            1 => "1 file it names waits for its copy".to_string(),
+            many => format!("{many} files it names wait for their copy"),
+        };
+        line.push_str(&format!(
+            "\nthe backup is incomplete: {files}. A restore needs those files unless the \
+             restoring instance holds them or the backup lists them as lost"
+        ));
+    }
     line
 }
 
