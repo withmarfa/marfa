@@ -312,7 +312,7 @@ pub struct Judged {
 }
 
 impl Judged {
-    /// Whether the blob folder is there to be locked.
+    /// Whether the blob folder is there, and the server's account owns it.
     pub fn has_blob_folder(&self) -> bool {
         self.blob_folder.is_some()
     }
@@ -388,8 +388,11 @@ impl Kept {
         } else {
             None
         };
-        if opened.is_none() {
-            holds_new_files(&reached.folder, me)?;
+        match &opened {
+            Some(opened) => {
+                judge_blob_folder(opened, &path, me)?;
+            }
+            None => holds_new_files(&reached.folder, me)?,
         }
         Ok(Judged {
             files,
@@ -532,7 +535,7 @@ fn secure(path: &Path, me: u32) -> Result<(), Failure> {
 }
 
 /// The store writes inside this folder, so it must be one the server can keep private.
-fn secure_blob_folder(file: &File, path: &Path, me: u32) -> Result<(), Failure> {
+fn judge_blob_folder(file: &File, path: &Path, me: u32) -> Result<Metadata, Failure> {
     let found = read(file, path)?;
     if !found.is_dir() {
         return Err(refused(path, "is not a folder"));
@@ -544,6 +547,11 @@ fn secure_blob_folder(file: &File, path: &Path, me: u32) -> Result<(), Failure> 
              own. Give it to the server's account with `chown`.",
         ));
     }
+    Ok(found)
+}
+
+fn secure_blob_folder(file: &File, path: &Path, me: u32) -> Result<(), Failure> {
+    let found = judge_blob_folder(file, path, me)?;
     close(file, &found, path)?;
     match exposure(file, path)? {
         None => Ok(()),

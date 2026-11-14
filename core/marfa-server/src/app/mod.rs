@@ -126,12 +126,12 @@ pub struct Held {
 /// server is refused before it changes anything of the first's. It blocks.
 pub fn take_files(database: &DatabasePath, blobs: &Path) -> Result<(Kept, Held), Failure> {
     let judged = Kept::judged(database, blobs)?;
+    // A running server has marked its folder. One with no marker is locked once it is judged, so
+    // a folder the start refuses is left as it was.
+    let marked = judged.has_blob_folder() && blobs.join(blobs::MARKER).is_file();
     let held = Held {
         database: Lock::take(database)?,
-        blobs: judged
-            .has_blob_folder()
-            .then(|| blobs::lock_blobs(blobs))
-            .transpose()?,
+        blobs: marked.then(|| blobs::lock_blobs(blobs)).transpose()?,
     };
     Ok((judged.keep()?, held))
 }
