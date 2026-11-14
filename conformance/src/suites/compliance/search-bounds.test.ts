@@ -17,6 +17,8 @@ let apiUrl: string;
 let apiKey: string;
 let mcp: McpConnection;
 let word: string;
+let stem: string;
+let companion: string;
 
 beforeAll(async () => {
   ({ ctx, client, apiUrl, apiKey } = await createTestContext(
@@ -34,6 +36,17 @@ beforeAll(async () => {
   );
   expect(made.status, JSON.stringify(made.error)).toBe(201);
   trackItem(ctx, made.data.item.id);
+  const run = ctx.runId.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  stem = `prefixed${run}`;
+  companion = `companion${run}`;
+  const lengthy = await client.createItem(
+    createNote({
+      source: ctx.source,
+      properties: { title: `${companion} ${stem}catalogue`, body: "second" },
+    }),
+  );
+  expect(lengthy.status, JSON.stringify(lengthy.error)).toBe(201);
+  trackItem(ctx, lengthy.data.item.id);
 });
 
 afterAll(async () => {
@@ -109,6 +122,23 @@ describe("GET /search bounds", () => {
     const many = await search(repeats());
     expect(many.status, "more repeats than the word bound").toBe(200);
     expect(many.data.data).toEqual(once.data.data);
+  });
+
+  it("matches a repeated last word as a prefix, as typing it once does", async () => {
+    // Only a prefix reaches the item: no word of it is the stem whole.
+    const prefix = `${stem}cat`;
+    const once = await search(`${companion} ${prefix}`);
+    expect(once.status).toBe(200);
+    expect(once.data.data.length, "the witness: the prefix matches").toBe(1);
+    for (const typed of [
+      `${companion} ${prefix} ${prefix}`,
+      `${companion} ${prefix} ${prefix} ${prefix}`,
+      `${prefix} ${companion} ${prefix}`,
+    ]) {
+      const repeated = await search(typed);
+      expect(repeated.status, typed).toBe(200);
+      expect(repeated.data.data, typed).toEqual(once.data.data);
+    }
   });
 });
 
@@ -202,19 +232,23 @@ describe("marfa_find bounds", () => {
     }
   });
 
-  it("states the bounds in the marfa_find input schema", async () => {
-    const { tools } = await mcp.client.listTools();
-    const find = tools.find((tool) => tool.name === "marfa_find");
-    const properties = find?.inputSchema.properties as Record<
-      string,
-      {
-        maxLength?: number;
-        maxItems?: number;
-        items?: { maxLength?: number };
-      }
-    >;
-    expect(properties.query?.maxLength).toBe(500);
-    expect(properties.tags?.maxItems).toBe(100);
-    expect(properties.tags?.items?.maxLength).toBe(128);
+  it("counts what marfa_find is given as the server does, after trimming and dropping repeats", async () => {
+    const copies = Array(101).fill("kept");
+    toolResult(await callTool(mcp, "marfa_find", { tags: copies }));
+    toolResult(
+      await callTool(mcp, "marfa_find", {
+        tags: [...copies, ` ${"x".repeat(128)} `, " "],
+      }),
+    );
+    toolResult(
+      await callTool(mcp, "marfa_find", { query: ` ${"x".repeat(500)} ` }),
+    );
+    const prefix = `${stem}cat`;
+    const found = toolResult(
+      await callTool(mcp, "marfa_find", { query: `${prefix} ${prefix}` }),
+    );
+    expect(JSON.stringify(found), "a repeated last word is a prefix").toContain(
+      stem,
+    );
   });
 });

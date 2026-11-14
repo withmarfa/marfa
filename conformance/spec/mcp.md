@@ -116,19 +116,17 @@ When a tool call writes, the server MUST record on the write's audit entry the c
 
 If a `marfa_find` call names a `query` that `GET /search` refuses for its length or its number of distinct words (`search-and-filters/search-q-length`, `search-and-filters/search-q-words`), then the server MUST answer the call with a tool error carrying `validation_error`.
 
-**Tests:** `compliance/search-bounds.test.ts › refuses a marfa_find query past the bound, and takes one at it`.
+**Reason:** the bound is held after the text is trimmed and repeated words are dropped, as at `GET /search`, so the tool's input schema carries no length of its own, which would refuse what that door takes.
+
+**Tests:** `compliance/search-bounds.test.ts › refuses a marfa_find query past the bound, and takes one at it`, `› counts what marfa_find is given as the server does, after trimming and dropping repeats`.
 
 ### `mcp/find-tags-bound`
 
 If a `marfa_find` call names `tags` that `GET /items` refuses for their number or a tag's length (`search-and-filters/tags-count`, `search-and-filters/tags-length`), then the server MUST answer the call with a tool error carrying `validation_error`.
 
-**Tests:** `compliance/search-bounds.test.ts › refuses marfa_find tags past the bound, and takes them at it`.
+**Reason:** the bound is held after tags are trimmed and repeats and blank entries are dropped, as at `GET /items`, so the tool's input schema carries no count or length of its own, which would refuse what that door takes.
 
-### `mcp/find-schema-bounds`
-
-The server MUST state in the input schema of `marfa_find` a `maxLength` of 500 for `query`, a `maxItems` of 100 for `tags` and a `maxLength` of 128 for each tag.
-
-**Tests:** `compliance/search-bounds.test.ts › states the bounds in the marfa_find input schema`.
+**Tests:** `compliance/search-bounds.test.ts › refuses marfa_find tags past the bound, and takes them at it`, `› counts what marfa_find is given as the server does, after trimming and dropping repeats`.
 
 ## Reading items
 

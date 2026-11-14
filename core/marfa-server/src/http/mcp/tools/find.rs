@@ -27,13 +27,12 @@ pub fn definition() -> Definition {
         input: json!({
             "type": "object",
             "properties": {
-                "query": { "type": "string", "minLength": 1, "maxLength": search::MAX_QUERY_CHARS,
+                "query": { "type": "string", "minLength": 1,
                     "description": format!("Words to search for, at most {} characters and {} distinct words. Leave out to list items in order instead.", search::MAX_QUERY_CHARS, search::MAX_QUERY_TERMS) },
                 "type": { "type": "string", "minLength": 1,
                     "description": "Only items of this type or its subtypes, such as `core.note`; `core.*` matches every type under `core`." },
-                "tags": { "type": "array", "maxItems": search::MAX_FILTER_TAGS,
-                    "items": { "type": "string", "minLength": 1, "maxLength": MAX_TAG_LENGTH },
-                    "description": "Only items that carry all of these tags." },
+                "tags": { "type": "array", "items": { "type": "string", "minLength": 1 },
+                    "description": format!("Only items that carry all of these tags, at most {} distinct tags of {} characters each.", search::MAX_FILTER_TAGS, MAX_TAG_LENGTH) },
                 "source": { "type": "string", "minLength": 1,
                     "description": "Only items saved by this source." },
                 "state": { "type": "string", "enum": ["active", "archived", "trashed", "any"],

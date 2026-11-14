@@ -68,7 +68,7 @@ impl From<PastBound> for RuleError {
     }
 }
 
-/// A query wholly inside double quotes is one phrase; otherwise each distinct whitespace-separated word is quoted, so nothing a person types is FTS5 syntax, and the last word also matches as a prefix. A word typed again is dropped.
+/// A query wholly inside double quotes is one phrase; otherwise each distinct whitespace-separated word is quoted, so nothing a person types is FTS5 syntax, and the last word typed also matches as a prefix. A word typed again counts once.
 pub fn fts_expression(query: &str) -> Option<String> {
     fts_phrases(query).map(|phrases| phrases.join(" "))
 }
@@ -84,15 +84,15 @@ pub fn fts_phrases(query: &str) -> Option<Vec<String>> {
         .split(char::is_whitespace)
         .filter(|word| !word.is_empty())
         .collect();
-    let newest = typed.last()?;
-    // A last word typed earlier too is already required whole, which also covers it as a prefix.
-    let prefix = typed.iter().filter(|word| *word == newest).count() == 1;
+    let (newest, earlier) = typed.split_last()?;
+    // The word still being typed keeps its prefix match, so it closes the list and its earlier copies drop out.
     let mut words: Vec<&str> = Vec::new();
-    for word in &typed {
-        if !words.contains(word) {
+    for word in earlier {
+        if word != newest && !words.contains(word) {
             words.push(word);
         }
     }
+    words.push(newest);
     let last = words.len() - 1;
     Some(
         words
@@ -100,7 +100,7 @@ pub fn fts_phrases(query: &str) -> Option<Vec<String>> {
             .enumerate()
             .map(|(at, word)| {
                 let quoted = format!("\"{}\"", word.replace('"', "\"\""));
-                if at == last && prefix {
+                if at == last {
                     format!("{quoted}*")
                 } else {
                     quoted
@@ -250,11 +250,12 @@ mod tests {
     }
 
     #[test]
-    fn a_repeated_word_is_searched_once_and_is_a_prefix_only_when_typed_last_and_once() {
-        assert_eq!(fts_expression("the the the"), Some("\"the\"".into()));
-        assert_eq!(fts_expression("a b a"), Some("\"a\" \"b\"".into()));
-        assert_eq!(fts_expression("a b b"), Some("\"a\" \"b\"".into()));
+    fn a_repeated_word_is_searched_once_and_the_last_typed_keeps_its_prefix() {
+        assert_eq!(fts_expression("the the the"), Some("\"the\"*".into()));
+        assert_eq!(fts_expression("a b a"), Some("\"b\" \"a\"*".into()));
+        assert_eq!(fts_expression("a b b"), Some("\"a\" \"b\"*".into()));
         assert_eq!(fts_expression("a a b"), Some("\"a\" \"b\"*".into()));
+        assert_eq!(fts_expression("a cat cat"), fts_expression("a cat"));
     }
 
     #[test]

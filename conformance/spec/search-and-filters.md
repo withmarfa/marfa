@@ -1190,11 +1190,11 @@ If `GET /search` carries a `q` that is not wholly inside double quotes and holds
 
 ### `search-and-filters/search-repeated-word`
 
-When a query is not wholly inside double quotes and repeats a word, the server MUST match it as it matches the query with each repeated word typed once.
+When a query is not wholly inside double quotes and repeats a word, the server MUST match it as it matches the query with each repeated word typed once, at the place of its last copy.
 
-**Reason:** a repeat adds no condition, so it does not count toward `search-and-filters/search-q-words`.
+**Reason:** a repeat adds no condition, so it does not count toward `search-and-filters/search-q-words`, and a last word typed more than once still matches as a prefix, as it does typed once.
 
-**Tests:** `compliance/search-bounds.test.ts › searches a repeated word once and does not count it again`.
+**Tests:** `compliance/search-bounds.test.ts › searches a repeated word once and does not count it again`, `› matches a repeated last word as a prefix, as typing it once does`.
 
 ### `search-and-filters/search-matches`
 
