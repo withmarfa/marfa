@@ -33,7 +33,7 @@ impl Lane {
         }
     }
 
-    /// Never dropped to make room; only the owner's, the instance's and other emails' keys.
+    /// Never dropped to make room for another window.
     pub fn pinned(family: &'static str, key: String, limit: u64, window_ms: i64) -> Lane {
         Lane {
             pinned: true,

@@ -8,7 +8,7 @@ use serde_json::json;
 use super::device::{Holder, Known};
 use super::limits::{self, too_many_passwords};
 use super::owner::{self, Owner};
-use super::password::{self, Checked};
+use super::password::{self, Checked, Queue};
 use super::session::{self, New, Opened};
 use super::{Note, Visit, note};
 use crate::app::App;
@@ -46,12 +46,11 @@ impl<T> Tried<T> {
 async fn counted<T>(
     app: &App,
     email: &str,
-    owner: Option<&str>,
     device: Option<&Known>,
     visit: &Visit,
     attempt: impl Future<Output = Tried<T>>,
 ) -> Result<std::result::Result<T, i64>> {
-    let lanes = limits::password_lanes(email, owner, visit.address, device);
+    let lanes = limits::password_lanes(email, visit.address, device);
     let admitted_ms = app.clock.now_ms();
     if let Some(wait) = app.limiter.admit(admitted_ms, &lanes) {
         return Ok(Err(wait));
@@ -130,7 +129,13 @@ struct Proven {
 }
 
 /// `rehash` replaces a hash made under older settings once the password proves right.
-async fn prove(app: &App, email: &str, password: String, rehash: bool) -> Result<Option<Proven>> {
+async fn prove(
+    app: &App,
+    email: &str,
+    password: String,
+    rehash: bool,
+    queue: Queue,
+) -> Result<Option<Proven>> {
     let email = email.to_string();
     let found = app
         .db
@@ -143,7 +148,7 @@ async fn prove(app: &App, email: &str, password: String, rehash: bool) -> Result
         })
         .await?;
     let stored = found.as_ref().map(|(_, held)| held.as_str());
-    let checked = app.passwords.check(stored, password.clone()).await?;
+    let checked = app.passwords.check(stored, password.clone(), queue).await?;
     if checked == Checked::Wrong {
         return Ok(None);
     }
@@ -227,9 +232,13 @@ pub async fn with_password(
     let email = limits::account_key(&email);
     let current = current(app).await?;
     let known = known(app, current.as_ref(), mark);
-    let owner = current.as_ref().map(|current| current.owner.email.as_str());
-    let attempt = open_with_password(app, &email, password, &visit);
-    match counted(app, &email, owner, known.as_ref(), &visit, attempt).await? {
+    let queue = if known.is_some() {
+        Queue::Owner
+    } else {
+        Queue::Open
+    };
+    let attempt = open_with_password(app, &email, password, queue, &visit);
+    match counted(app, &email, known.as_ref(), &visit, attempt).await? {
         Ok(opening) => opening.signed_in(app, known.as_ref()),
         Err(wait) => {
             refused_sign_in(app, None, &email, TOO_MANY, &visit).await?;
@@ -254,9 +263,10 @@ async fn open_with_password(
     app: &App,
     email: &str,
     password: String,
+    queue: Queue,
     visit: &Visit,
 ) -> Tried<Opening> {
-    let proven = match prove(app, email, password, true).await {
+    let proven = match prove(app, email, password, true, queue).await {
         Ok(Some(proven)) => proven,
         Ok(None) => {
             return Tried::unproven(
@@ -334,7 +344,7 @@ pub async fn confirm(
     let known = known(app, Some(&current), mark);
     let email = current.owner.email.clone();
     let attempt = reopen(app, caller, session, &email, password, visit.clone());
-    match counted(app, &email, Some(&email), known.as_ref(), &visit, attempt).await? {
+    match counted(app, &email, known.as_ref(), &visit, attempt).await? {
         Ok(opening) => opening.signed_in(app, known.as_ref()),
         Err(wait) => {
             refused_sign_in(app, Some(caller), &email, TOO_MANY, &visit).await?;
@@ -356,7 +366,7 @@ async fn reopen(
     visit: Visit,
 ) -> Tried<Opening> {
     let actor = Some(caller);
-    match prove(app, email, password, true).await {
+    match prove(app, email, password, true, Queue::Owner).await {
         Ok(Some(proven)) => {
             let outcome = match confirmed(app, caller, session, proven, visit.clone()).await {
                 Ok(Some(opening)) => Ok(opening),
@@ -447,9 +457,9 @@ pub async fn change_password(
         new_password,
         visit.clone(),
     );
-    match counted(app, &email, Some(&email), known.as_ref(), &visit, attempt).await? {
+    match counted(app, &email, known.as_ref(), &visit, attempt).await? {
         Ok((owner_id, credentials)) => {
-            limits::clear_account(&app.limiter, &email);
+            limits::clear_for_new_password(&app.limiter);
             let holder = Holder {
                 owner_id: &owner_id,
                 credentials,
@@ -477,7 +487,7 @@ async fn replace(
     visit: Visit,
 ) -> Tried<(String, i64)> {
     let actor = Some(caller);
-    match prove(app, email, current_password, false).await {
+    match prove(app, email, current_password, false, Queue::Owner).await {
         Ok(Some(proven)) => {
             let changed = replaced(app, caller, session, proven, new_password, visit.clone());
             let outcome = match changed.await {

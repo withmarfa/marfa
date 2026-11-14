@@ -215,6 +215,12 @@ impl Refusal {
         Refusal::new(Code::Forbidden, message).with_detail("needs", "local")
     }
 
+    /// `403` for a change a browser session may make only within minutes of signing in.
+    pub fn needs_recent_sign_in() -> Refusal {
+        Refusal::new(Code::Forbidden, "Sign in again to perform this operation")
+            .with_detail("needs", "recent_sign_in")
+    }
+
     pub fn with_detail(mut self, name: &str, value: impl Into<Value>) -> Refusal {
         self.details
             .get_or_insert_default()

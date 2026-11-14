@@ -258,7 +258,7 @@ When a claimed instance restarts, the server MUST retain its completed claim and
 
 ### `instance-claim/recovery-clears-sign-in-lock`
 
-When the private local command recovers the owner's password, the server MUST permit password sign-in despite the owner's previous sign-in lock.
+When the private local command recovers the owner's password, the server MUST permit password sign-in from any address despite every password sign-in limit spent before the recovery.
 
 **Tests:** `compliance/owner.test.ts › recovers the existing owner and ends the old browser session`.
 

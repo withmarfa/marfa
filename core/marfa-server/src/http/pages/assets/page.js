@@ -1,7 +1,6 @@
 "use strict";
 (() => {
   document.documentElement.classList.add("js");
-  const RECENT_SIGN_IN_REFUSAL = "Sign in again to perform this operation";
 
   /** Sends JSON and reads the answer. Null when no answer came. */
   async function postJson(path, data) {
@@ -91,7 +90,7 @@
   async function isRecentSignInRefusal(response) {
     if (response.status !== 403) return false;
     const body = await response.clone().json().catch(() => null);
-    return body?.error?.message === RECENT_SIGN_IN_REFUSAL;
+    return body?.error?.details?.needs === "recent_sign_in";
   }
 
   // A form marked data-change is sent with fetch; a stale sign-in opens the dialog and the

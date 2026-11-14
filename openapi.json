@@ -50232,7 +50232,7 @@
             }
           },
           "403": {
-            "description": "Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes.",
+            "description": "Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes; without one, `details.needs` is `recent_sign_in`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -50462,7 +50462,7 @@
             }
           },
           "403": {
-            "description": "Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes.",
+            "description": "Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes; without one, `details.needs` is `recent_sign_in`.",
             "content": {
               "application/json": {
                 "schema": {
@@ -50731,7 +50731,7 @@
             }
           },
           "403": {
-            "description": "Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes.",
+            "description": "Requires the owner's browser session or local authority. Mutations require an owner sign-in within five minutes; without one, `details.needs` is `recent_sign_in`.",
             "content": {
               "application/json": {
                 "schema": {
