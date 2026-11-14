@@ -1285,7 +1285,7 @@ impl Core {
     }
 
     /// Applies every event the stream holds, before a drain sends a row write
-    /// judged against the copy (`device/rows-caught-up-first`). Where a follow
+    /// judged against the copy (`queue-and-verdicts/rows-caught-up-first`). Where a follow
     /// holds the stream, it waits for that stream to be live. Where the stream
     /// cannot be had, or ends first, the drain goes on and the write is
     /// judged by what the copy has applied.
