@@ -31,8 +31,7 @@ impl DatabasePath {
         }
     }
 
-    /// The file SQLite opens: `None` in memory, for SQLite's own temporary file, and for a
-    /// URI SQLite refuses.
+    /// Resolves disk paths; memory, temporary files and unsupported authorities return `None`.
     pub fn file(&self) -> Option<PathBuf> {
         match self {
             DatabasePath::File(path) => Some(path.clone()),

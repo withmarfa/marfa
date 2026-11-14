@@ -389,8 +389,7 @@ const ACCESS: &std::ffi::CStr = c"system.posix_acl_access";
 #[cfg(any(target_os = "linux", target_os = "android"))]
 const DEFAULT: &std::ffi::CStr = c"system.posix_acl_default";
 
-/// Named entries past the mask, and a default ACL's group and other entries; the access
-/// ACL's group and other entries are the mode's.
+/// Mode bits cover access ACL group and other entries; default ACLs need a separate check.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn reach(file: &impl std::os::fd::AsRawFd, own: u32) -> std::io::Result<Reach> {
     let fd = file.as_raw_fd();
@@ -529,8 +528,7 @@ pub mod testing {
         InheritReadToFiles,
     }
 
-    /// Sets `grant` on an owned folder, or a file for `ReadFile`; failure to set the ACL fails
-    /// the test.
+    /// Returns whether the requested grant could be set on the file or folder.
     #[cfg(target_os = "macos")]
     pub fn let_another_account(folder: &Path, grant: Grant) -> bool {
         let entry = match grant {

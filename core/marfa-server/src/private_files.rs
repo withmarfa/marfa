@@ -1,7 +1,3 @@
-//! The database, its side files and the blob folder are readable and writable by the server's
-//! account alone. The server changes the mode and access control list only of what is its own,
-//! and never through a symbolic link; what it cannot make private refuses the start.
-
 use std::ffi::{CString, OsStr};
 use std::fs::{DirBuilder, File, Metadata, OpenOptions, Permissions};
 use std::io::ErrorKind;
@@ -16,7 +12,6 @@ use crate::settings::{DatabasePath, secrets_file};
 const OTHERS: u32 = 0o077;
 const OWNER: u32 = 0o700;
 
-/// Makes every file and folder the process creates from now on private, SQLite's included.
 pub fn take_umask() {
     // SAFETY: `umask` takes a mask and cannot fail.
     unsafe {
@@ -33,8 +28,7 @@ fn refused(path: &Path, why: impl std::fmt::Display) -> Failure {
     Failure::start(format!("{} {why}", path.display()))
 }
 
-/// Makes the database's folder private, when it is not there. A folder already there is
-/// never changed, since it may hold what is not the server's.
+// An existing database folder may hold files that do not belong to the server.
 pub fn make_data_folder(database: &DatabasePath) -> Result<(), Failure> {
     let Some(file) = database.file() else {
         return Ok(());
@@ -75,7 +69,6 @@ pub fn make_data_folder(database: &DatabasePath) -> Result<(), Failure> {
     Ok(())
 }
 
-/// What the server keeps, checked before the database and the blob folder open and again after.
 pub struct Kept {
     files: Vec<PathBuf>,
     blobs: PathBuf,
@@ -83,8 +76,6 @@ pub struct Kept {
 }
 
 impl Kept {
-    /// Refuses the start before anything is opened through a link or made where another account
-    /// could read it.
     pub fn closed(database_path: &DatabasePath, blobs: &Path) -> Result<Kept, Failure> {
         let me = me();
         let mut files = match database_path.file() {
@@ -138,7 +129,6 @@ impl Kept {
     }
 }
 
-/// `None` when nothing is there; a link is refused, never followed.
 fn open(path: &Path, folder: bool) -> Result<Option<File>, Failure> {
     let flags = libc::O_NOFOLLOW | libc::O_NONBLOCK | if folder { libc::O_DIRECTORY } else { 0 };
     match OpenOptions::new().read(true).custom_flags(flags).open(path) {
@@ -186,7 +176,6 @@ fn read(file: &File, path: &Path) -> Result<Metadata, Failure> {
         .map_err(|error| refused(path, format_args!("could not be read: {error}")))
 }
 
-/// Takes group and other access and every access control list entry off what is the server's.
 fn close(file: &File, found: &Metadata, path: &Path) -> Result<(), Failure> {
     let reach = marfa_acl::reach(file, me()).map_err(|error| unreadable_acl(path, &error))?;
     if reach != marfa_acl::Reach::default() {
@@ -295,8 +284,7 @@ fn secure(path: &Path, folder: bool, me: u32) -> Result<(), Failure> {
     }
 }
 
-/// A folder of another account's may be open, as a mounted volume often is, as long as what
-/// the server keeps inside is private.
+// A mounted folder may belong to another account while its contents belong to the server.
 fn secure_opened(file: &File, path: &Path, folder: bool, me: u32) -> Result<(), Failure> {
     let found = read(file, path)?;
     if !folder && !found.is_file() {
