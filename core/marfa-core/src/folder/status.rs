@@ -114,8 +114,7 @@ impl Folder {
             .refused_creates(item_id, 0)?
             .into_iter()
             .next_back()
-            .and_then(|row| row.reason)
-            .and_then(|reason| super::over_limit_held(&reason)))
+            .and_then(|row| super::over_limit_held(row.reason.as_deref()?, row.refusal.as_ref())))
     }
 
     fn refused_creates(&self, item_id: &str, sent: i64) -> Result<Vec<QueuedWrite>> {

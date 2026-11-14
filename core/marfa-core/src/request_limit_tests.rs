@@ -1,7 +1,7 @@
 //! What a device does with the request size a server publishes at its root.
 
 use crate::contract::CONTRACT_VERSION;
-use crate::model::{OVER_REQUEST_LIMIT, OVER_REQUEST_LIMIT_REASON, Verdict};
+use crate::model::{OVER_REQUEST_LIMIT, RequestLimit, Verdict};
 use crate::scripted::{self, Answer, INSTANCE, Scripted};
 use crate::stop_tests::{copy, holding_a_catalog, note};
 use crate::{Core, CoreError, Draft, store};
@@ -82,8 +82,33 @@ fn a_write_over_the_limit_the_root_names_is_refused_unsent_and_one_at_it_goes() 
     let verdict = &report.verdicts[0];
     assert_eq!(verdict.verdict, Some(Verdict::Refused));
     let reason = verdict.reason.as_deref().unwrap();
-    assert!(reason.starts_with(OVER_REQUEST_LIMIT_REASON), "{reason}");
+    assert!(reason.starts_with("This write is "), "{reason}");
     assert!(!reason.contains("request_too_large"), "{reason}");
+    assert!(!reason.contains(OVER_REQUEST_LIMIT), "{reason}");
+    let refusal = verdict.refusal.as_ref().unwrap();
+    assert_eq!(
+        refusal.request_limit,
+        Some(RequestLimit {
+            size: size as u64,
+            limit: size as u64 - 1
+        })
+    );
+    assert_eq!(refusal.code, None);
+    let stored = core.queue().unwrap();
+    assert_eq!(
+        stored[0].refusal.as_ref().unwrap().request_limit,
+        refusal.request_limit,
+        "the queue forgot why the write was refused"
+    );
+    // The witness: a refusal the server sent names no request limit.
+    assert_eq!(
+        crate::model::Refusal::read(
+            "item_not_found",
+            Some(r#"{"error":{"code":"item_not_found"}}"#)
+        )
+        .request_limit,
+        None
+    );
 
     // The witness: a body of exactly the limit is sent.
     let server = Scripted::start();

@@ -1860,12 +1860,11 @@ fn over_limit_words(held: &str) -> Option<&str> {
 
 /// What a file's record holds for a write the drain refused unsent for its
 /// size, so the scan judges it as it judges a hold it made itself.
-fn over_limit_held(reason: &str) -> Option<String> {
-    let words = reason.strip_prefix(crate::model::OVER_REQUEST_LIMIT_REASON)?;
+fn over_limit_held(reason: &str, refusal: Option<&crate::model::Refusal>) -> Option<String> {
+    refusal?.request_limit?;
     Some(format!(
-        "{LOCAL_ADMISSION_REFUSAL}validation ({}): {}{words}",
+        "{LOCAL_ADMISSION_REFUSAL}validation ({}): {reason}",
         crate::model::OVER_REQUEST_LIMIT,
-        crate::model::OVER_REQUEST_LIMIT_WRITE
     ))
 }
 
@@ -2190,7 +2189,10 @@ impl Folder {
                 // A delete of an edge already gone did what it was asked.
                 let gone = row.kind == WriteKind::DeleteEdge
                     && verdict.reason.as_deref() == Some("edge_not_found");
-                let over_limit = verdict.reason.as_deref().and_then(over_limit_held);
+                let over_limit = verdict
+                    .reason
+                    .as_deref()
+                    .and_then(|reason| over_limit_held(reason, verdict.refusal.as_ref()));
                 // A file's edit carries the whole file, as a title's alone
                 // does not, so an answer to its last save says what became of
                 // the bytes it holds now.

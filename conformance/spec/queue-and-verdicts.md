@@ -1476,6 +1476,14 @@ When a device does not send a write under `queue-and-verdicts/request-over-limit
 
 **Tests:** `device/pages.test.ts › refuses unsent a write one byte past the limit, and sends one at it`.
 
+### `queue-and-verdicts/request-over-limit-numbers`
+
+When a device refuses a write under `queue-and-verdicts/request-over-limit-said`, a device MUST give the refusal the size of the request and the server's limit as two numbers of bytes, and no `code` of a server's envelope.
+
+**Reason:** an app tells a person how much to remove from the numbers, and a code in the envelope's place would be one the server never sent.
+
+**Tests:** `device/binding-queue.test.ts › tells an app the size and the limit as numbers, and names no code the server did not send`.
+
 ### `queue-and-verdicts/request-over-limit-own-word`
 
 When a device refuses a write under `queue-and-verdicts/request-over-limit-said`, a device MUST NOT give it the reason `request_too_large`.

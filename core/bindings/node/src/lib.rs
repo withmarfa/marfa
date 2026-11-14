@@ -639,6 +639,11 @@ pub enum Verdict {
         sibling_id: String,
         fields: Vec<String>,
     },
+    /// The server applied a row write over cells changed since and replaced
+    /// them unseen. No sibling item holds them.
+    RowsConflicted {
+        conflicts: Vec<RowConflict>,
+    },
     /// The refusal read into its parts.
     Refused {
         refusal: Refusal,
@@ -671,6 +676,19 @@ pub struct Refusal {
     pub trashed: bool,
     /// The permission the credential's key lacks, where the refusal names one.
     pub grant: Option<MissingGrant>,
+    /// Set where the device refused the write without sending it, because
+    /// its request body is larger than the server takes.
+    pub request_limit: Option<RequestLimit>,
+}
+
+/// A write too large for the server to take, and what it takes.
+#[napi(object)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct RequestLimit {
+    /// The bytes of the write's request body.
+    pub size: i64,
+    /// The most bytes the server takes in one request.
+    pub limit: i64,
 }
 
 #[napi(object)]
@@ -1198,6 +1216,10 @@ impl From<marfa_core::Refusal> for Refusal {
                     marfa_core::GrantLevel::Write => GrantLevel::Write,
                 },
             }),
+            request_limit: refusal.request_limit.map(|limit| RequestLimit {
+                size: limit.size as i64,
+                limit: limit.limit as i64,
+            }),
         }
     }
 }
@@ -1211,6 +1233,9 @@ fn crossed(outcome: Option<marfa_core::Outcome>) -> (Option<Verdict>, bool) {
         Some(O::Accepted) => Verdict::Accepted,
         Some(O::Merged { fields }) => Verdict::Merged { fields },
         Some(O::Conflicted { sibling_id, fields }) => Verdict::Conflicted { sibling_id, fields },
+        Some(O::RowsConflicted { conflicts }) => Verdict::RowsConflicted {
+            conflicts: row_conflicts(conflicts),
+        },
         Some(O::Refused(refusal)) => Verdict::Refused {
             refusal: refusal.into(),
         },
@@ -3714,6 +3739,7 @@ mod tests {
             Some("credential_refused"),
             None,
             Vec::new(),
+            &[],
             Some(&refusal),
         )
         .unwrap();
@@ -3805,6 +3831,20 @@ mod tests {
         assert!(matches!(
             crossed(Some(O::Conflicted { sibling_id: "s".into(), fields: vec!["body".into()] })),
             (Some(Verdict::Conflicted { sibling_id, fields }), false) if sibling_id == "s" && fields == ["body"]
+        ));
+        assert!(matches!(
+            crossed(Some(O::RowsConflicted { conflicts: vec![marfa_core::RowConflict { row: "r".into(), column: "c".into() }] })),
+            (Some(Verdict::RowsConflicted { conflicts }), false) if conflicts.len() == 1 && conflicts[0].row == "r"
+        ));
+        let sized = marfa_core::Refusal::read(
+            "This write is 5 bytes as a request.",
+            Some(r#"{"request_limit":{"size":5,"limit":4}}"#),
+        );
+        assert!(matches!(
+            crossed(Some(O::Refused(sized))),
+            (Some(Verdict::Refused { refusal }), false)
+                if refusal.code.is_none()
+                    && matches!(refusal.request_limit, Some(RequestLimit { size: 5, limit: 4 }))
         ));
         let refusal = marfa_core::Refusal::read(
             "item_not_found",

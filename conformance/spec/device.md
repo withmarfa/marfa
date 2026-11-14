@@ -8030,6 +8030,78 @@ When `OTEL_SDK_DISABLED` is `true`, the CLI MUST send neither a trace nor an exc
 
 **Tests:** `device/cli-exception-report.test.ts › sends nothing when the SDK is disabled, with an endpoint or without`.
 
+## The codes a refusal carries
+
+A refusal the CLI reports carries one `code`, a lowercase snake case word. The first table lists the codes the working copy gives, which an app built on a binding switches on, and the second the codes only the CLI adds.
+
+| Code                   | Meaning                                                                                                                                                                                                                                                                            |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `not_found`            | Nothing is at what the call named: a server answered `404`, or the working copy does not hold it. The envelope's `server` or `local` member says which.                                                                                                                            |
+| `unauthorized`         | The credential was refused: a server answered `401`, or a credential the working copy relied on was.                                                                                                                                                                               |
+| `forbidden`            | The credential lacks a permission the call needs: a server answered `403`, or the copy's own reading of what the credential reaches refused it.                                                                                                                                    |
+| `validation`           | A value the caller gave breaks a rule of the data: a property, a tag, a link, an id, an edge or a query that the type or the server's rules do not take. A server answered `400` or `422`, or the copy applied the same rule itself. `server.code` or `local.code` names the rule. |
+| `invalid`              | The call is wrong for this device whatever the data: an argument that cannot be read, a path or a file that cannot be used, or a state that does not allow the call. No rule of the data is named, and a refusal the copy makes carries no server code.                            |
+| `unknown_type`         | The call names a type the catalog does not hold, or a server answered `unknown_type`.                                                                                                                                                                                              |
+| `rate_limited`         | A server answered `429`, or asked the device to wait.                                                                                                                                                                                                                              |
+| `server`               | A server answered a status that no other code names.                                                                                                                                                                                                                               |
+| `io`                   | Reading or writing a file or a stream failed.                                                                                                                                                                                                                                      |
+| `network`              | The server could not be reached, or the connection failed or timed out.                                                                                                                                                                                                            |
+| `unnamed_answer`       | An answer named no contract, so it came from something in front of the server.                                                                                                                                                                                                     |
+| `decoding`             | An answer or a stored value could not be read as the shape the contract describes.                                                                                                                                                                                                 |
+| `store`                | The working copy's store failed for a reason of its own.                                                                                                                                                                                                                           |
+| `store_busy`           | Another program's write holds the store, and a fresh attempt may clear it.                                                                                                                                                                                                         |
+| `storage_full`         | The volume that holds the store or the file cache is full.                                                                                                                                                                                                                         |
+| `signed_out`           | The sign-in the call used has ended, so only a new one lets it through.                                                                                                                                                                                                            |
+| `no_keychain`          | The credential store cannot be used.                                                                                                                                                                                                                                               |
+| `redirect`             | The server answered a redirect, which the device does not follow.                                                                                                                                                                                                                  |
+| `no_server`            | The call needs a server and none is configured.                                                                                                                                                                                                                                    |
+| `no_cursor`            | The copy holds no event cursor, so it must hydrate first.                                                                                                                                                                                                                          |
+| `hydration_incomplete` | The copy is not whole: a hydration is under way or unfinished.                                                                                                                                                                                                                     |
+| `no_catalog`           | The copy has never held the server's type catalog.                                                                                                                                                                                                                                 |
+| `reading_handle`       | The handle is a reading handle, and another process holds the writer.                                                                                                                                                                                                              |
+| `wrong_schema`         | The store was made by another build of the core, which only that build can read.                                                                                                                                                                                                   |
+| `unsent_differs`       | A store's removal was refused, because it holds a different number of unsent writes from the one agreed to lose.                                                                                                                                                                   |
+| `copy_expired`         | The copy can no longer be kept current, and is rebuilt from the server.                                                                                                                                                                                                            |
+| `stream_incomplete`    | The event stream ended before it finished.                                                                                                                                                                                                                                         |
+| `wrong_server`         | The file belongs to another server.                                                                                                                                                                                                                                                |
+| `bytes_absent`         | The bytes of a file are not held and cannot be fetched.                                                                                                                                                                                                                            |
+| `no_room`              | A file would not fit in the room left on the volume that holds the file cache.                                                                                                                                                                                                     |
+| `contract_mismatch`    | An answer was on a contract this build does not speak.                                                                                                                                                                                                                             |
+| `canceled`             | The caller's stop was raised before the call finished.                                                                                                                                                                                                                             |
+| `first_sync_waiting`   | A folder's first sync waits for confirmation, and nothing is written or sent until it is given.                                                                                                                                                                                    |
+| `fault`                | The core itself failed, and a panic it caught ended the call.                                                                                                                                                                                                                      |
+
+| Code                     | Meaning                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------ |
+| `usage`                  | The command line or the profile file was wrong.                                            |
+| `watch`                  | The folder watch failed.                                                                   |
+| `install`                | The service manager, Docker, Tailscale or the server did not do what `marfa server` needs. |
+| `no_store`               | The command names no working copy, or none is at the path it names.                        |
+| `no_credential`          | No credential is held for the server.                                                      |
+| `key_command`            | A profile's key command gave no key.                                                       |
+| `blobs_missing`          | An archive lacks blobs its manifest names.                                                 |
+| `docs_page_not_found`    | The docs site has no page at the path.                                                     |
+| `docs_section_not_found` | The docs page has no heading of that name.                                                 |
+| `docs_unreachable`       | The docs site cannot be read.                                                              |
+| `conflict`               | A server answered `409` to a command.                                                      |
+| `too_large`              | A server answered `413` to a command.                                                      |
+
+### `device/error-codes-closed`
+
+The CLI MUST give the `code` of every refusal it reports as one of the codes in the two tables of this section.
+
+**Reason:** an app or a script branches on the code, so a code outside the tables is one nobody was told of.
+
+**Tests:** `device/error-codes.test.ts › gives a refusal of each kind a code from the contract's tables`.
+
+### `device/error-codes-help`
+
+The CLI MUST list in its help, as the codes a refusal can carry, exactly the codes of the two tables of this section.
+
+**Reason:** a code the core or the CLI adds without a line here fails this rule, so the tables stay the whole set.
+
+**Tests:** `device/error-codes.test.ts › lists in its help exactly the codes the contract lists`.
+
 ## What the real server cannot be made to produce
 
 The device fixtures drive a scripted server where the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every scripted answer the real server can also give matches the real one's shape; these are the answers it cannot check.

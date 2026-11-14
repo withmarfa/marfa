@@ -159,6 +159,7 @@ impl DrainVerdict {
             self.reason.as_deref(),
             self.conflicted_copy_id.as_deref(),
             self.merged_fields.clone(),
+            &self.conflicts,
             self.refusal.as_ref(),
         )
     }
@@ -1506,7 +1507,7 @@ fn send_queue(
                 continue;
             }
             Readiness::RefusedWith(reason) => {
-                refuse_unsent(core, row, reason, replacing, pass, report)?;
+                refuse_unsent(core, row, reason, None, replacing, pass, report)?;
                 answers.insert(row.id.clone(), Some(Verdict::Refused));
                 continue;
             }
@@ -1563,12 +1564,20 @@ fn send_queue(
         // again under its key for the server to say.
         let limit = store::request_limit(&*core.conn()?)?;
         if row.kind != WriteKind::UploadBlob
-            && let Some(words) = crate::model::over_request_limit(payload.len(), limit)
+            && let Some(over) = crate::model::RequestLimit::over(payload.len(), limit)
             && store::unsent(&*core.conn()?, &row.id)?
         {
-            let reason = format!("{}{words}", crate::model::OVER_REQUEST_LIMIT_REASON);
+            let reason = format!("{}{}", crate::model::OVER_REQUEST_LIMIT_WRITE, over.words());
             store::note_limit_refused(&*core.conn()?)?;
-            refuse_unsent(core, row, reason, replacing, pass, report)?;
+            refuse_unsent(
+                core,
+                row,
+                reason,
+                Some(over.stored()),
+                replacing,
+                pass,
+                report,
+            )?;
             answers.insert(row.id.clone(), Some(Verdict::Refused));
             continue;
         }
@@ -2003,6 +2012,7 @@ fn refuse_unsent(
     core: &Core,
     row: &QueuedWrite,
     reason: String,
+    answer: Option<String>,
     replacing: Option<usize>,
     pass: &mut ReachChange,
     report: &mut DrainReport,
@@ -2016,7 +2026,7 @@ fn refuse_unsent(
             &store::Answered {
                 verdict: Verdict::Refused,
                 reason: Some(&reason),
-                answer: None,
+                answer: answer.as_deref(),
                 conflicted_copy_id: None,
             },
         )?;
@@ -2033,7 +2043,7 @@ fn refuse_unsent(
         verdict_of(
             row,
             &Settled::plain(Some(Verdict::Refused), Some(reason), row.refusals),
-            None,
+            answer.as_deref(),
         ),
     );
     if let Some(unread) = reconcile(core, row, pass)? {

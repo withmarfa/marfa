@@ -145,6 +145,46 @@ describe("the queue as a binding shows it", () => {
   });
 });
 
+describe("a write refused unsent for its size, as a binding shows it", () => {
+  it("tells an app the size and the limit as numbers, and names no code the server did not send", async () => {
+    harness = await bindingHarness("binding-request-limit");
+    const { device, server } = harness;
+    server.copyAnswer("GET", "/", () =>
+      answers.root(server.contract, undefined, 100),
+    );
+    const created = await device.createItem({
+      type: "core.note",
+      properties: { title: "large", body: "x".repeat(2_000) },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    scriptWrites(server, {
+      read: [refusal(404, "item_not_found")],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    const refused = (await queueOf(device)).find(
+      (row) => row.id === created.value.id,
+    );
+    const verdict = refused?.verdict as
+      | {
+          verdict: string;
+          refusal?: {
+            reason: string;
+            code: string | null;
+            requestLimit: { size: number; limit: number } | null;
+          };
+        }
+      | undefined;
+    expect(verdict?.verdict).toBe("refused");
+    expect(verdict?.refusal?.requestLimit?.limit).toBe(100);
+    expect(verdict?.refusal?.requestLimit?.size).toBeGreaterThan(2_000);
+    expect(verdict?.refusal?.code ?? null).toBeNull();
+    expect(verdict?.refusal?.reason).not.toContain("over_request_limit");
+    expect(createsSent(server)).toEqual([]);
+  });
+});
+
 describe("two drains in one process", () => {
   it("makes a drain asked for while another runs wait for it, and send only what is still unanswered", async () => {
     harness = await bindingHarness("binding-drains-one-process");

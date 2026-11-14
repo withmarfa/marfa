@@ -272,11 +272,11 @@ impl CatalogExt for Catalog {
     }
 
     fn refuse_over_request_limit(&self, payload: &str) -> Result<(), CoreError> {
-        match crate::model::over_request_limit(payload.len(), self.request_limit()) {
-            Some(words) => Err(CoreError::Validation {
+        match crate::model::RequestLimit::over(payload.len(), self.request_limit()) {
+            Some(over) => Err(CoreError::Validation {
                 server: None,
                 code: crate::model::OVER_REQUEST_LIMIT.into(),
-                message: format!("{}{words}", crate::model::OVER_REQUEST_LIMIT_WRITE),
+                message: format!("{}{}", crate::model::OVER_REQUEST_LIMIT_WRITE, over.words()),
                 details: None,
             }),
             None => Ok(()),
