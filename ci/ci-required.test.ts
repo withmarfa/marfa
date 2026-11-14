@@ -206,8 +206,31 @@ describe("what a change runs", () => {
       ["quick-checks", "workspace", ...OFFLINE, "rust-contract"],
     ],
     [
-      "a type definition, which the core's catalog is written from",
+      "a type definition, which the core's catalog is written from and its tests hold to the rules for a registered type",
       ["packages/types/core/note.json"],
+      [
+        ...PACKAGES,
+        "types-freshness",
+        "clients-freshness",
+        "core-checks-linux",
+      ],
+    ],
+    [
+      "an edge type definition and a system type definition, which the same tests read",
+      [
+        "packages/types/core/edges/about.json",
+        "packages/types/core/system/folder.json",
+      ],
+      [
+        ...PACKAGES,
+        "types-freshness",
+        "clients-freshness",
+        "core-checks-linux",
+      ],
+    ],
+    [
+      "the types package's source, which the core's tests do not read",
+      ["packages/types/src/index.ts"],
       [...PACKAGES, "types-freshness", "clients-freshness"],
     ],
     [

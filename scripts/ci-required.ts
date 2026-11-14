@@ -261,6 +261,18 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       ...RUST,
     ],
   ],
+  // The rules crate's tests read each shipped definition and hold it to the
+  // rules for a registered type.
+  [
+    /^packages\/types\/core\/.*\.json$/,
+    [
+      "workspace",
+      "conformance-offline",
+      "types-freshness",
+      "clients-freshness",
+      "core-checks-linux",
+    ],
+  ],
   // The core's catalog is written from the shipped types.
   [
     /^packages\/types\//,
