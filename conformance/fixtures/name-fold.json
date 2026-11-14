@@ -1,5 +1,5 @@
 {
-  "description": "Names as the server folds them: trimmed of Unicode White_Space, in NFC, lowercased one code point at a time with no context rules, and in NFC again. The core's names::folded and the contract's title lookups are held to these cases.",
+  "description": "Names as the server folds them: trimmed of Unicode White_Space, in NFC, under Unicode full case folding with no locale rule, and in NFC again. The core's names::folded and the contract's title lookups are held to these cases.",
   "cases": [
     {
       "about": "plain ASCII",
@@ -7,8 +7,13 @@
       "folded": "hello world"
     },
     {
+      "about": "a name already folded stays as it is",
+      "name": "strasse οδοσ café",
+      "folded": "strasse οδοσ café"
+    },
+    {
       "about": "white space at the edges, including no-break space and next line",
-      "name": "\u00a0\u0085 Note\u2003\n",
+      "name": " \u0085 Note \n",
       "folded": "note"
     },
     {
@@ -18,98 +23,118 @@
     },
     {
       "about": "only white space",
-      "name": "\u3000 \t",
+      "name": "　 \t",
       "folded": ""
     },
     {
       "about": "a byte order mark is not white space",
-      "name": "\ufeffNote",
-      "folded": "\ufeffnote"
+      "name": "﻿Note",
+      "folded": "﻿note"
     },
     {
       "about": "a zero width space is not white space",
-      "name": "\u200bNote",
-      "folded": "\u200bnote"
+      "name": "​Note",
+      "folded": "​note"
     },
     {
       "about": "a combining sequence composes",
-      "name": "e\u0301",
-      "folded": "\u00e9"
+      "name": "é",
+      "folded": "é"
     },
     {
       "about": "precomposed capital",
-      "name": "\u00c9",
-      "folded": "\u00e9"
+      "name": "É",
+      "folded": "é"
     },
     {
       "about": "decomposed capital",
-      "name": "E\u0301",
-      "folded": "\u00e9"
+      "name": "É",
+      "folded": "é"
     },
     {
-      "about": "Greek capital sigma at the end of a word keeps the plain small sigma",
-      "name": "\u039f\u0394\u039f\u03a3",
-      "folded": "\u03bf\u03b4\u03bf\u03c3"
+      "about": "Greek capital sigma at the end of a word folds to the plain small sigma",
+      "name": "ΟΔΟΣ",
+      "folded": "οδοσ"
     },
     {
-      "about": "Greek final sigma stays final",
-      "name": "\u03bf\u03b4\u03bf\u03c2",
-      "folded": "\u03bf\u03b4\u03bf\u03c2"
+      "about": "Greek final sigma folds to the plain small sigma",
+      "name": "οδος",
+      "folded": "οδοσ"
     },
     {
       "about": "capital sigma alone",
-      "name": "\u03a3",
-      "folded": "\u03c3"
+      "name": "Σ",
+      "folded": "σ"
     },
     {
-      "about": "capital I with dot above lowercases to i and a combining dot",
-      "name": "\u0130stanbul",
-      "folded": "i\u0307stanbul"
+      "about": "long s folds to s",
+      "name": "ſtar",
+      "folded": "star"
     },
     {
-      "about": "sharp s is already lowercase",
-      "name": "Stra\u00dfe",
-      "folded": "stra\u00dfe"
+      "about": "sharp s folds to ss",
+      "name": "Straße",
+      "folded": "strasse"
     },
     {
-      "about": "capital sharp s lowercases to sharp s",
-      "name": "STRA\u1e9eE",
-      "folded": "stra\u00dfe"
+      "about": "capital sharp s folds to ss",
+      "name": "STRAẞE",
+      "folded": "strasse"
+    },
+    {
+      "about": "a ligature folds to its letters",
+      "name": "ﬃx",
+      "folded": "ffix"
+    },
+    {
+      "about": "capital I with dot above folds to i and a combining dot",
+      "name": "İstanbul",
+      "folded": "i̇stanbul"
+    },
+    {
+      "about": "no locale rule: capital I folds to i, and dotless i stays dotless",
+      "name": "Iı",
+      "folded": "iı"
     },
     {
       "about": "titlecase digraph",
-      "name": "\u01c5",
-      "folded": "\u01c6"
+      "name": "ǅ",
+      "folded": "ǆ"
+    },
+    {
+      "about": "a Cherokee small letter folds to its capital",
+      "name": "ꭰ",
+      "folded": "Ꭰ"
     },
     {
       "about": "Hangul jamo compose",
-      "name": "\u1112\u1161\u11ab",
-      "folded": "\ud55c"
+      "name": "한",
+      "folded": "한"
     },
     {
       "about": "an astral letter",
-      "name": "\ud801\udc00",
-      "folded": "\ud801\udc28"
+      "name": "𐐀",
+      "folded": "𐐨"
     },
     {
-      "about": "lowercase can compose after the fold",
-      "name": "I\u0307",
-      "folded": "i\u0307"
+      "about": "capital I and a combining dot compose before the fold",
+      "name": "İ",
+      "folded": "i̇"
     },
     {
-      "about": "Kelvin sign lowercases to k",
-      "name": "\u212a",
+      "about": "Kelvin sign folds to k",
+      "name": "K",
       "folded": "k"
     },
     {
-      "about": "ohm sign lowercases to omega",
-      "name": "\u2126",
-      "folded": "\u03c9"
+      "about": "ohm sign folds to omega",
+      "name": "Ω",
+      "folded": "ω"
     },
     {
       "about": "an emoji with a variation selector is untouched",
-      "name": "\u2764\ufe0f",
-      "folded": "\u2764\ufe0f"
+      "name": "❤️",
+      "folded": "❤️"
     }
   ]
 }

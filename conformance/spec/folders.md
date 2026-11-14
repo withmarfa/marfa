@@ -1100,7 +1100,9 @@ When a generated file name has more than 32 bytes from its last dot to its end, 
 
 ### `folders/name-comparison`
 
-When a device compares folder paths, file names or titles, a device MUST treat names differing only in case or Unicode normalization as the same name.
+When a device compares folder paths, file names or titles, a device MUST treat two names as the same name where they are equal after each is put in normalization form NFC, has Unicode full case folding applied with no locale rule, and is put in NFC again.
+
+**Reason:** a case-insensitive file system such as APFS compares names by full case folding, so two names the device kept apart could be one file on disk, and the second item would never be written.
 
 **Tests:** `device/folders.test.ts › treats names differing only in case or Unicode form as one`, `device/folders-contract-b.test.ts › matches include names in NFC regardless of case and asks the server for a name once, in the form typed`, `device/folders-contract-b.test.ts › matches Unicode %s patterns with the folder name equivalence`, `device/folder-patterns.test.ts › matches escaped brackets and Unicode literals without turning them into classes`, `device/folder-patterns.test.ts › folds Unicode literals with an escape on the $position`.
 

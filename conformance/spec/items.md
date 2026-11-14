@@ -762,9 +762,9 @@ When a key sends `POST /items/titles` with `names`, the server MUST answer `200`
 
 ### `items/titles-fold`
 
-When a key sends `POST /items/titles`, the server MUST match a title to a name if they are equal after each loses the Unicode `White_Space` at either end, is put in normalization form NFC, has each code point lowercased on its own with no context rule, and is put in NFC again.
+When a key sends `POST /items/titles`, the server MUST match a title to a name if they are equal after each loses the Unicode `White_Space` at either end, is put in normalization form NFC, has Unicode full case folding applied with no locale rule, and is put in NFC again.
 
-**Reason:** a device compares names the same way (`folders/name-comparison`), so a lookup that folded otherwise would find an item the device calls another name, or miss one it calls the same. A capital sigma lowercases to `σ` at the end of a word, as the device lowercases it.
+**Reason:** a device compares names the same way (`folders/name-comparison`), so a lookup that folded otherwise would find an item the device calls another name, or miss one it calls the same. Full case folding makes `ΟΔΟΣ` and `οδος` one name, and `Straße` and `STRASSE` one name.
 
 **Tests:** `compliance/item-titles.test.ts › finds a title by its folded form and by the name as typed, for every case of the shared fold`.
 
