@@ -16,6 +16,11 @@ pub enum HousekeepingCommand {
         /// The housekeeping job's name, as `housekeeping list` shows it.
         name: String,
     },
+    /// Take the server's clock as right (private socket required). While the
+    /// clock reads more than 7 days later than the newest time the server has
+    /// stored, the jobs that delete old records do nothing; this lets them run
+    /// now. A clock behind that time stamps new records by the clock again.
+    ConfirmClock,
 }
 
 pub fn list_request() -> Request {
@@ -26,10 +31,15 @@ pub fn run_request(name: &str) -> Request {
     Request::post(&["housekeeping", name, "run"])
 }
 
+pub fn confirm_clock_request() -> Request {
+    Request::post(&["_control", "clock", "confirm"])
+}
+
 pub fn run(command: HousekeepingCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let request = match &command {
         HousekeepingCommand::List => list_request(),
         HousekeepingCommand::Run { name } => run_request(name),
+        HousekeepingCommand::ConfirmClock => confirm_clock_request(),
     };
     let answer = remote.json(&request)?;
     match &command {
@@ -46,6 +56,13 @@ pub fn run(command: HousekeepingCommand, remote: &Remote, out: &Printer) -> Resu
             format!("ran {name}: {} {said}", printable(text("outcome")))
                 .trim_end()
                 .to_string()
+        }),
+        HousekeepingCommand::ConfirmClock => out.report(&answer, |answer| {
+            let at = answer
+                .get("confirmed_at")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            format!("confirmed the clock at {}", printable(at))
         }),
         HousekeepingCommand::List => out.value(&answer),
     }

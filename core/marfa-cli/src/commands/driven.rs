@@ -167,6 +167,7 @@ fn socket_only(words: &[String]) -> bool {
         || words == ["owner", "recover"]
         || words.starts_with(&["owner".into(), "passkeys".into()])
         || words == ["owner", "update"]
+        || words == ["housekeeping", "confirm-clock"]
 }
 
 /// Where a command has no use: what is not a request to the server, what
@@ -399,6 +400,7 @@ fn socket_only_commands_require_a_socket_without_sending_http() {
             "owner passkeys add",
             "owner recover",
             "owner update",
+            "housekeeping confirm-clock",
         ]
     );
     for leaf in commands {

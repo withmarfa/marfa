@@ -2560,6 +2560,14 @@ marfa housekeeping run [OPTIONS] <NAME>
 | --- | --- |
 | `<NAME>` | The housekeeping job's name, as `housekeeping list` shows it. |
 
+### marfa housekeeping confirm-clock
+
+Take the server's clock as right (private socket required). While the clock reads more than 7 days later than the newest time the server has stored, the jobs that delete old records do nothing; this lets them run now. A clock behind that time stamps new records by the clock again.
+
+```text
+marfa housekeeping confirm-clock [OPTIONS]
+```
+
 ## connectors
 
 Programs outside the server that register under a key of their own: registered, heard from, and reporting their runs. A key registers itself; `connectors.manage` sees every registration and may remove one.
