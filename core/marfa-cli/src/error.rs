@@ -1,6 +1,6 @@
 use std::io;
 
-use marfa_core::{CatchUpFailed, CoreError, ERROR_CODES};
+use marfa_core::{CatchUpFailed, CoreError, ERROR_CODES, ServerAnswer};
 
 /// Agents read the exit code and the code string. The help and the command
 /// reference list the codes from the lists they are made from, and each exit
@@ -35,7 +35,8 @@ pub enum CliError {
     #[error("{}", marfa_core::folder::not_handed_over(.0))]
     FolderNotHandedOver(std::path::PathBuf),
     #[error("{0}")]
-    Watch(String),
+    /// A watch that ended; the answer is the server's, where one ended it.
+    Watch(String, Option<Box<ServerAnswer>>),
     #[error("output closed")]
     ClosedOutput,
     /// The status and the server's own code are both kept, because neither
@@ -214,12 +215,13 @@ impl From<CoreError> for CliError {
                     code,
                     message,
                     retry_after_seconds,
+                    details,
                 } => Self::Refused {
                     status: 429,
                     code,
                     message,
                     retry_after_seconds,
-                    details: None,
+                    details,
                 },
                 CoreError::SignedOut { origin } => Self::SignedOut { origin },
                 CoreError::NoKeychain(reason) => Self::NoKeychain(reason),
@@ -236,7 +238,7 @@ impl From<CoreError> for CliError {
             },
             // The credential that held a stream has ended: a new one is the
             // way on, and a retry with this one is not.
-            CoreError::StreamIncomplete { reason } if reason == "credential_ended" => {
+            CoreError::StreamIncomplete { reason, .. } if reason == "credential_ended" => {
                 Self::CredentialEnded
             }
             other => Self::Core(other),
@@ -319,7 +321,7 @@ macro_rules! own_codes {
 own_codes! {
     CliError::Io(_) => "io",
     CliError::FolderHeld(_) | CliError::FolderNotHandedOver(_) => "reading_handle",
-    CliError::Watch(_) => "watch",
+    CliError::Watch(..) => "watch",
     CliError::ClosedOutput => "closed_output",
     CliError::Usage(_) => "usage",
     CliError::Install(_) => "install",
@@ -437,7 +439,7 @@ impl CliError {
                 | CoreError::Fault(_) => Exit::Local,
             },
             CliError::Io(_)
-            | CliError::Watch(_)
+            | CliError::Watch(..)
             | CliError::Install(_)
             | CliError::DocsUnreachable { .. } => Exit::Environment,
             CliError::Invalid(_)
@@ -498,60 +500,31 @@ impl CliError {
         }
     }
 
-    /// Local refusals provide no evidence of a server answer.
-    fn server(&self) -> Option<(Option<u16>, Option<&str>, Option<&serde_json::Value>)> {
+    /// What a server sent, wherever one answered and whatever the command then
+    /// called the refusal.
+    fn server(&self) -> Option<ServerAnswer> {
         match self {
             CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
                 error.server()
             }
-            CliError::Core(core) => match core {
-                CoreError::NotFound {
-                    code,
-                    status: Some(status),
-                    ..
-                }
-                | CoreError::Unauthorized {
-                    code,
-                    status: Some(status),
-                    ..
-                }
-                | CoreError::Forbidden {
-                    code,
-                    status: Some(status),
-                    ..
-                } => Some((Some(*status), Some(code), None)),
-                CoreError::Validation {
-                    code,
-                    details,
-                    status: Some(status),
-                    ..
-                } => Some((Some(*status), Some(code), details.as_deref())),
-                CoreError::UnknownType {
-                    status: Some(status),
-                    ..
-                } => Some((Some(*status), Some("unknown_type"), None)),
-                CoreError::RateLimited { code, .. } => Some((Some(429), Some(code), None)),
-                CoreError::Server { status, code, .. } => Some((Some(*status), Some(code), None)),
-                CoreError::ContractMismatch {
-                    status: Some(status),
-                    ..
-                }
-                | CoreError::Unnamed { status, .. }
-                | CoreError::Redirected { status, .. } => Some((Some(*status), None, None)),
-                _ => None,
-            },
+            CliError::Core(core) => core.answer(),
+            CliError::Watch(_, answer) => answer.as_deref().cloned(),
             CliError::Refused {
                 status,
                 code,
                 details,
                 ..
-            } => Some((Some(*status), Some(code), details.as_deref())),
+            } => Some(ServerAnswer {
+                status: *status,
+                code: Some(code.clone()),
+                details: details.as_deref().cloned(),
+            }),
             // The body, and so the code, was not read.
             CliError::ContractMismatch {
                 status: Some(status),
                 ..
             }
-            | CliError::Redirected { status, .. } => Some((Some(*status), None, None)),
+            | CliError::Redirected { status, .. } => Some(*ServerAnswer::status_only(*status)),
             _ => None,
         }
     }
@@ -561,25 +534,7 @@ impl CliError {
             CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
                 error.local()
             }
-            CliError::Core(core) => match core {
-                CoreError::NotFound {
-                    code, status: None, ..
-                }
-                | CoreError::Unauthorized {
-                    code, status: None, ..
-                }
-                | CoreError::Forbidden {
-                    code, status: None, ..
-                } => Some((code, None)),
-                CoreError::Validation {
-                    code,
-                    details,
-                    status: None,
-                    ..
-                } => Some((code, details.as_deref())),
-                CoreError::UnknownType { status: None, .. } => Some(("unknown_type", None)),
-                _ => None,
-            },
+            CliError::Core(core) => core.local(),
             _ => None,
         }
     }
@@ -604,7 +559,7 @@ impl CliError {
     pub fn envelope(&self) -> serde_json::Value {
         let server = self
             .server()
-            .map(|(status, code, details)| serde_json::json!({ "status": status, "code": code, "details": details }));
+            .map(|answer| serde_json::json!({ "status": answer.status, "code": answer.code, "details": answer.details }));
         let local = self
             .local()
             .map(|(code, details)| serde_json::json!({ "code": code, "details": details }));
@@ -812,6 +767,7 @@ mod tests {
     fn a_stream_the_credential_ended_is_refused_as_a_credential_for_every_command() {
         let ended = CliError::from(CoreError::StreamIncomplete {
             reason: "credential_ended".into(),
+            server: None,
         });
         assert_eq!(ended.code(), "unauthorized");
         assert_eq!(ended.exit(), Exit::Credential);
@@ -828,6 +784,7 @@ mod tests {
         // The witness: any other reason is the environment's.
         let behind = CliError::from(CoreError::StreamIncomplete {
             reason: "read_failed".into(),
+            server: None,
         });
         assert_eq!(behind.code(), "stream_incomplete");
         assert_eq!(behind.exit(), Exit::Environment);
@@ -956,7 +913,7 @@ mod tests {
             CliError::Io(io::Error::other("x")),
             CliError::FolderHeld(std::path::PathBuf::new()),
             CliError::FolderNotHandedOver(std::path::PathBuf::new()),
-            CliError::Watch(String::new()),
+            CliError::Watch(String::new(), None),
             CliError::Usage(String::new()),
             CliError::Install(String::new()),
             CliError::NoStoreNamed,
@@ -1073,11 +1030,13 @@ mod tests {
             code: "rate_limited".into(),
             message: "slow down".into(),
             retry_after_seconds: Some(7),
+            details: Some(Box::new(serde_json::json!({ "scope": "key" }))),
         });
         let envelope = error.envelope();
         assert_eq!(envelope["error"]["code"], "rate_limited");
         assert_eq!(envelope["error"]["server"]["status"], 429);
         assert_eq!(envelope["error"]["server"]["code"], "rate_limited");
+        assert_eq!(envelope["error"]["server"]["details"]["scope"], "key");
         assert_eq!(envelope["error"]["retry_after_seconds"], 7);
         assert_eq!(envelope["exit"], 3);
 
@@ -1089,7 +1048,7 @@ mod tests {
         assert_eq!(envelope["exit"], 4);
 
         let validation = CliError::Core(CoreError::Validation {
-            status: Some(422),
+            server: heard(422, "invalid_properties"),
             code: "invalid_properties".into(),
             message: "body is required".into(),
             details: None,
@@ -1100,7 +1059,7 @@ mod tests {
         assert_eq!(validation.envelope()["exit"], 1);
 
         let edge = CliError::Core(CoreError::Validation {
-            status: None,
+            server: None,
             code: "edge_constraint_violation".into(),
             message: "Edge \"supersedes\" already exists between these items".into(),
             details: Some(Box::new(serde_json::json!({ "constraint": "duplicate" }))),
@@ -1132,6 +1091,79 @@ mod tests {
         assert!(direct.to_string().ends_with(r#"{"index":3}"#));
     }
 
+    fn heard(status: u16, code: &str) -> Option<Box<marfa_core::ServerAnswer>> {
+        Some(Box::new(marfa_core::ServerAnswer {
+            status,
+            code: Some(code.into()),
+            details: None,
+        }))
+    }
+
+    #[test]
+    fn a_code_of_the_devices_own_never_hides_the_answer_that_led_to_it() {
+        let answer = |status, code: &str, details| {
+            Some(Box::new(marfa_core::ServerAnswer {
+                status,
+                code: Some(code.into()),
+                details,
+            }))
+        };
+        let expired = CliError::Core(CoreError::CopyExpired {
+            reason: "credential_ended".into(),
+            server: answer(
+                401,
+                "unauthorized",
+                Some(serde_json::json!({ "why": "ended" })),
+            ),
+        })
+        .envelope();
+        assert_eq!(expired["error"]["code"], "copy_expired");
+        assert_eq!(expired["error"]["server"]["status"], 401);
+        assert_eq!(expired["error"]["server"]["code"], "unauthorized");
+        assert_eq!(expired["error"]["server"]["details"]["why"], "ended");
+        assert!(expired["error"]["local"].is_null());
+
+        let stopped = CliError::Core(CoreError::Unauthorized {
+            code: "credential_refused".into(),
+            message: "stopped".into(),
+            server: answer(401, "unauthorized", None),
+        })
+        .envelope();
+        assert_eq!(stopped["error"]["code"], "unauthorized");
+        assert_eq!(stopped["error"]["server"]["code"], "unauthorized");
+        assert_eq!(stopped["error"]["local"]["code"], "credential_refused");
+
+        let signed_out = CliError::Core(CoreError::Unauthorized {
+            code: "credential_refused".into(),
+            message: "stopped".into(),
+            server: None,
+        })
+        .envelope();
+        assert!(signed_out["error"]["server"].is_null());
+
+        let details = serde_json::json!({ "errors": [{ "field": "title" }] });
+        let refused = CliError::Core(CoreError::Validation {
+            code: "invalid_properties".into(),
+            message: "no".into(),
+            details: None,
+            server: answer(422, "invalid_properties", Some(details.clone())),
+        })
+        .envelope();
+        assert_eq!(refused["error"]["server"]["details"], details);
+        assert!(refused["error"]["local"].is_null());
+    }
+
+    #[test]
+    fn a_stream_the_device_ended_after_an_answer_keeps_the_answer() {
+        let ended = CliError::Core(CoreError::StreamIncomplete {
+            reason: "local_copy_changed".into(),
+            server: Some(marfa_core::ServerAnswer::status_only(409)),
+        })
+        .envelope();
+        assert_eq!(ended["error"]["code"], "stream_incomplete");
+        assert_eq!(ended["error"]["server"]["status"], 409);
+    }
+
     #[test]
     fn only_an_answer_a_server_sent_fills_server_and_only_a_local_refusal_fills_local() {
         let answered = |error: CoreError| CliError::Core(error).envelope();
@@ -1140,16 +1172,16 @@ mod tests {
             CoreError::NotFound {
                 code: "item_not_found".into(),
                 message: message(),
-                status: Some(404),
+                server: heard(404, "item_not_found"),
             },
             CoreError::Forbidden {
                 code: "type_not_permitted".into(),
                 message: message(),
-                status: Some(403),
+                server: heard(403, "type_not_permitted"),
             },
             CoreError::UnknownType {
                 message: message(),
-                status: Some(400),
+                server: heard(400, "unknown_type"),
             },
         ];
         for error in asked {
@@ -1162,16 +1194,16 @@ mod tests {
             CoreError::NotFound {
                 code: "item_not_found".into(),
                 message: message(),
-                status: None,
+                server: None,
             },
             CoreError::Forbidden {
                 code: "type_not_permitted".into(),
                 message: message(),
-                status: None,
+                server: None,
             },
             CoreError::UnknownType {
                 message: message(),
-                status: None,
+                server: None,
             },
         ];
         for error in refused_by_the_copy {
@@ -1251,7 +1283,7 @@ mod tests {
         assert_eq!(CliError::RestoreLacksBlobs(vec![]).exit(), Exit::Refused);
         assert_eq!(
             CliError::Core(CoreError::Unauthorized {
-                status: None,
+                server: None,
                 code: "unauthorized".into(),
                 message: String::new(),
             })

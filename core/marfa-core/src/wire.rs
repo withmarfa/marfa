@@ -105,6 +105,8 @@ pub struct WireErrorBody {
     pub code: String,
     #[serde(default)]
     pub message: Option<String>,
+    #[serde(default)]
+    pub details: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -717,7 +717,7 @@ fn a_look_answered_outside_the_copys_reach_expires_it_as_any_read_does() {
 
     assert!(matches!(
         core.catch_up(),
-        Err(CoreError::CopyExpired { reason }) if reason == "reach_invalid"
+        Err(CoreError::CopyExpired { reason, .. }) if reason == "reach_invalid"
     ));
 
     let queue = core.queue().unwrap();

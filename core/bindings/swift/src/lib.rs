@@ -2,6 +2,9 @@
 //! cross as `JsonValue` and `JsonObject`, values the generated Swift holds as
 //! its own, not as text to parse.
 
+// UniFFI error enums cannot hold a boxed field, and an app reads `server` whole.
+#![allow(clippy::result_large_err)]
+
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1348,6 +1351,25 @@ pub struct DrainReport {
     pub retry_after_seconds: Option<u64>,
 }
 
+/// What a server sent: its status, and the code and details of its envelope
+/// where its body carried them.
+#[derive(Debug, Clone, PartialEq, uniffi::Record)]
+pub struct ServerAnswer {
+    pub status: u16,
+    pub code: Option<String>,
+    pub details: Option<JsonValue>,
+}
+
+impl From<marfa_core::ServerAnswer> for ServerAnswer {
+    fn from(answer: marfa_core::ServerAnswer) -> Self {
+        Self {
+            status: answer.status,
+            code: answer.code,
+            details: answer.details.map(JsonValue::from),
+        }
+    }
+}
+
 /// Every variant carries `message`, the core's own sentence for it, because
 /// UniFFI renders an error's description by reflection otherwise.
 #[derive(Debug, Clone, PartialEq, uniffi::Error)]
@@ -1355,37 +1377,44 @@ pub enum MarfaError {
     NotFound {
         code: String,
         message: String,
+        /// What a server sent, present only where one answered.
+        server: Option<ServerAnswer>,
     },
     Unauthorized {
         code: String,
         message: String,
+        server: Option<ServerAnswer>,
     },
     Forbidden {
         code: String,
         message: String,
+        server: Option<ServerAnswer>,
     },
     Validation {
         code: String,
         message: String,
-        /// The server's `error.details` for the same refusal, on each
-        /// `edge_constraint_violation` and `edge_cycle` the copy gives
-        /// itself, such as its `constraint`; `nil` on every other refusal.
-        /// Shaped as a refused write's `answer` holds them, under
-        /// `error.details`.
+        /// The details of a refusal the copy gave itself, such as the
+        /// `constraint` of an `edge_constraint_violation`, shaped as a server
+        /// carries them under `error.details`; `nil` on every other refusal.
+        /// A server's own are in `server`.
         details: Option<JsonValue>,
+        server: Option<ServerAnswer>,
     },
     UnknownType {
         message: String,
+        server: Option<ServerAnswer>,
     },
     RateLimited {
         code: String,
         message: String,
         retry_after_seconds: Option<u64>,
+        server: Option<ServerAnswer>,
     },
     Server {
         status: u16,
         code: String,
         message: String,
+        details: Option<JsonValue>,
     },
     Io {
         message: String,
@@ -1467,10 +1496,13 @@ pub enum MarfaError {
     CopyExpired {
         reason: String,
         message: String,
+        /// What a server sent, where its answer ended the copy.
+        server: Option<ServerAnswer>,
     },
     StreamIncomplete {
         reason: String,
         message: String,
+        server: Option<ServerAnswer>,
     },
     WrongServer {
         expected: String,
@@ -1528,7 +1560,7 @@ impl MarfaError {
             | MarfaError::Unauthorized { message, .. }
             | MarfaError::Forbidden { message, .. }
             | MarfaError::Validation { message, .. }
-            | MarfaError::UnknownType { message }
+            | MarfaError::UnknownType { message, .. }
             | MarfaError::RateLimited { message, .. }
             | MarfaError::Server { message, .. }
             | MarfaError::Io { message }
@@ -1619,17 +1651,31 @@ impl From<marfa_core::CoreError> for MarfaError {
     fn from(error: marfa_core::CoreError) -> Self {
         use marfa_core::CoreError as E;
         let message = error.to_string();
+        let server = error.answer().map(ServerAnswer::from);
         match error {
             E::RenewalFailed(cause) => Self::from(*cause),
-            E::NotFound { code, .. } => MarfaError::NotFound { code, message },
-            E::Unauthorized { code, .. } => MarfaError::Unauthorized { code, message },
-            E::Forbidden { code, .. } => MarfaError::Forbidden { code, message },
+            E::NotFound { code, .. } => MarfaError::NotFound {
+                code,
+                message,
+                server,
+            },
+            E::Unauthorized { code, .. } => MarfaError::Unauthorized {
+                code,
+                message,
+                server,
+            },
+            E::Forbidden { code, .. } => MarfaError::Forbidden {
+                code,
+                message,
+                server,
+            },
             E::Validation { code, details, .. } => MarfaError::Validation {
                 code,
                 message,
                 details: details.map(|details| JsonValue::from(*details)),
+                server,
             },
-            E::UnknownType { .. } => MarfaError::UnknownType { message },
+            E::UnknownType { .. } => MarfaError::UnknownType { message, server },
             E::RateLimited {
                 code,
                 retry_after_seconds,
@@ -1638,11 +1684,18 @@ impl From<marfa_core::CoreError> for MarfaError {
                 code,
                 message,
                 retry_after_seconds,
+                server,
             },
-            E::Server { status, code, .. } => MarfaError::Server {
+            E::Server {
+                status,
+                code,
+                details,
+                ..
+            } => MarfaError::Server {
                 status,
                 code,
                 message,
+                details: details.map(|details| JsonValue::from(*details)),
             },
             E::Io(_) => MarfaError::Io { message },
             E::Network(_) | E::ConnectionRefused { .. } => MarfaError::Network { message },
@@ -1689,8 +1742,16 @@ impl From<marfa_core::CoreError> for MarfaError {
                 agreed,
                 message,
             },
-            E::CopyExpired { reason } => MarfaError::CopyExpired { reason, message },
-            E::StreamIncomplete { reason } => MarfaError::StreamIncomplete { reason, message },
+            E::CopyExpired { reason, .. } => MarfaError::CopyExpired {
+                reason,
+                message,
+                server,
+            },
+            E::StreamIncomplete { reason, .. } => MarfaError::StreamIncomplete {
+                reason,
+                message,
+                server,
+            },
             E::WrongServer { expected, got } => MarfaError::WrongServer {
                 expected,
                 got,
@@ -3181,34 +3242,35 @@ mod tests {
         let text = || "text".to_string();
         let all = vec![
             E::NotFound {
-                status: None,
+                server: None,
                 code: text(),
                 message: text(),
             },
             E::Unauthorized {
-                status: None,
+                server: None,
                 code: text(),
                 message: text(),
             },
             E::Forbidden {
-                status: None,
+                server: None,
                 code: text(),
                 message: text(),
             },
             E::Validation {
-                status: None,
+                server: None,
                 code: text(),
                 message: text(),
                 details: None,
             },
             E::UnknownType {
                 message: text(),
-                status: None,
+                server: None,
             },
             E::RateLimited {
                 code: text(),
                 message: text(),
                 retry_after_seconds: None,
+                details: None,
             },
             E::Server {
                 status: 500,
@@ -3251,8 +3313,14 @@ mod tests {
                 unsent: None,
                 agreed: 0,
             },
-            E::CopyExpired { reason: text() },
-            E::StreamIncomplete { reason: text() },
+            E::CopyExpired {
+                reason: text(),
+                server: None,
+            },
+            E::StreamIncomplete {
+                reason: text(),
+                server: None,
+            },
             E::WrongServer {
                 expected: text(),
                 got: text(),
@@ -3286,7 +3354,7 @@ mod tests {
         listed.sort_unstable();
         assert_eq!(named, listed, "a code of the core's has no case here");
         let wrapped = E::RenewalFailed(Box::new(E::Forbidden {
-            status: None,
+            server: None,
             code: text(),
             message: text(),
         }));
@@ -3526,7 +3594,7 @@ mod tests {
         let crossed: Vec<(MarfaError, &str)> = vec![
             (
                 E::NotFound {
-                    status: None,
+                    server: None,
                     code: text(),
                     message: text(),
                 }
@@ -3535,7 +3603,7 @@ mod tests {
             ),
             (
                 E::Unauthorized {
-                    status: None,
+                    server: None,
                     code: text(),
                     message: text(),
                 }
@@ -3544,7 +3612,7 @@ mod tests {
             ),
             (
                 E::Forbidden {
-                    status: None,
+                    server: None,
                     code: text(),
                     message: text(),
                 }
@@ -3553,7 +3621,7 @@ mod tests {
             ),
             (
                 E::Validation {
-                    status: None,
+                    server: None,
                     code: text(),
                     message: text(),
                     details: None,
@@ -3564,7 +3632,7 @@ mod tests {
             (
                 E::UnknownType {
                     message: text(),
-                    status: None,
+                    server: None,
                 }
                 .into(),
                 "UnknownType",
@@ -3574,6 +3642,7 @@ mod tests {
                     code: text(),
                     message: text(),
                     retry_after_seconds: Some(1),
+                    details: None,
                 }
                 .into(),
                 "RateLimited",
@@ -3633,9 +3702,20 @@ mod tests {
                 .into(),
                 "UnsentDiffers",
             ),
-            (E::CopyExpired { reason: text() }.into(), "CopyExpired"),
             (
-                E::StreamIncomplete { reason: text() }.into(),
+                E::CopyExpired {
+                    reason: text(),
+                    server: None,
+                }
+                .into(),
+                "CopyExpired",
+            ),
+            (
+                E::StreamIncomplete {
+                    reason: text(),
+                    server: None,
+                }
+                .into(),
                 "StreamIncomplete",
             ),
             (
@@ -3708,6 +3788,63 @@ mod tests {
                 .unwrap()
                 .0,
             MarfaError::Unnamed { status: 401, .. }
+        ));
+    }
+
+    #[test]
+    fn a_server_answer_crosses_beside_the_devices_own_code_and_only_where_one_answered() {
+        use marfa_core::CoreError as E;
+        let details = serde_json::json!({ "grant": { "name": "core.note" } });
+        let answered = |status, code: &str| {
+            Some(Box::new(marfa_core::ServerAnswer {
+                status,
+                code: Some(code.into()),
+                details: Some(details.clone()),
+            }))
+        };
+        let crossed = MarfaError::from(E::Forbidden {
+            code: "type_not_permitted".into(),
+            message: "no".into(),
+            server: answered(403, "type_not_permitted"),
+        });
+        let MarfaError::Forbidden { code, server, .. } = crossed else {
+            panic!("a Forbidden crossed as another case");
+        };
+        let server = server.expect("the answer crossed");
+        assert_eq!(code, "type_not_permitted");
+        assert_eq!(
+            (server.status, server.code.as_deref()),
+            (403, Some("type_not_permitted"))
+        );
+        assert_eq!(server.details, Some(JsonValue::from(details.clone())));
+
+        let expired = MarfaError::from(E::CopyExpired {
+            reason: "credential_ended".into(),
+            server: answered(401, "unauthorized"),
+        });
+        assert!(matches!(
+            expired,
+            MarfaError::CopyExpired {
+                server: Some(ServerAnswer { status: 401, .. }),
+                ..
+            }
+        ));
+
+        let local = MarfaError::from(E::not_held("x"));
+        assert!(matches!(local, MarfaError::NotFound { server: None, .. }));
+
+        let carried = MarfaError::from(E::Server {
+            status: 500,
+            code: "internal_error".into(),
+            message: "no".into(),
+            details: Some(Box::new(details.clone())),
+        });
+        assert!(matches!(
+            carried,
+            MarfaError::Server {
+                details: Some(_),
+                ..
+            }
         ));
     }
 

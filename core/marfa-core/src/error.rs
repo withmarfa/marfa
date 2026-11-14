@@ -2,60 +2,80 @@ use std::time::Duration;
 
 use thiserror::Error;
 
+/// The code the core gives a refusal whose body it could not read.
+pub const UNREAD_CODE: &str = "unknown";
+
+/// What a server sent: its status, and the code and details of its envelope
+/// where it sent a body that carries them.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ServerAnswer {
+    pub status: u16,
+    pub code: Option<String>,
+    pub details: Option<serde_json::Value>,
+}
+
+impl ServerAnswer {
+    pub fn status_only(status: u16) -> Box<Self> {
+        Box::new(Self {
+            status,
+            code: None,
+            details: None,
+        })
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum CoreError {
     #[error("{}", classified("not found", Some(code), message))]
     NotFound {
         code: String,
         message: String,
-        /// `None` means the device refused without asking the server.
-        status: Option<u16>,
+        /// `None` means no server answered: the device refused on its own.
+        server: Option<Box<ServerAnswer>>,
     },
     #[error("{}", classified("unauthorized", Some(code), message))]
     Unauthorized {
         code: String,
         message: String,
-        /// `None` means the device refused without asking the server.
-        status: Option<u16>,
+        /// `None` means no server answered: the device refused on its own.
+        server: Option<Box<ServerAnswer>>,
     },
     #[error("{}", classified("forbidden", Some(code), message))]
     Forbidden {
         code: String,
         message: String,
-        /// `None` means the device refused without asking the server.
-        status: Option<u16>,
+        /// `None` means no server answered: the device refused on its own.
+        server: Option<Box<ServerAnswer>>,
     },
     #[error("{}", classified("validation", Some(code), message))]
     Validation {
         code: String,
         message: String,
-        /// The server's `error.details` for the same refusal, on each
+        /// The device's own details for a refusal it made itself, on each
         /// `edge_constraint_violation` and `edge_cycle` the copy gives
-        /// itself. `None` on every other refusal, one read from the server
-        /// among them.
+        /// itself. A server's details are in `server`.
         details: Option<Box<serde_json::Value>>,
-        /// `None` means the device refused without asking the server.
-        status: Option<u16>,
+        /// `None` means no server answered: the device refused on its own.
+        server: Option<Box<ServerAnswer>>,
     },
     #[error("{}", classified("unknown type", None, message))]
     UnknownType {
         message: String,
-        /// `None` means the device refused without asking the server.
-        status: Option<u16>,
+        /// `None` means no server answered: the device refused on its own.
+        server: Option<Box<ServerAnswer>>,
     },
     #[error("{}", classified("rate limited", Some(code), message))]
     RateLimited {
         code: String,
         message: String,
         retry_after_seconds: Option<u64>,
+        details: Option<Box<serde_json::Value>>,
     },
     #[error("server answered {status} ({code}): {message}")]
     Server {
         status: u16,
         code: String,
         message: String,
-        /// The envelope's `error.details`, supplied only by a caller that
-        /// read the envelope itself; `Http` does not read them.
         details: Option<Box<serde_json::Value>>,
     },
     #[error("{0}")]
@@ -146,9 +166,18 @@ pub enum CoreError {
     /// The cursor is dropped, so the copy reports itself expired until a
     /// hydration, which keeps the queue.
     #[error("{}", copy_expired(reason))]
-    CopyExpired { reason: String },
+    CopyExpired {
+        reason: String,
+        /// The server's answer, where one ended the copy: a `409` naming a
+        /// reach or an instance change, or a `401` on the credential.
+        server: Option<Box<ServerAnswer>>,
+    },
     #[error("the event stream ended early: {reason}")]
-    StreamIncomplete { reason: String },
+    StreamIncomplete {
+        reason: String,
+        /// The server's answer, where one was read before the device ended the call.
+        server: Option<Box<ServerAnswer>>,
+    },
     #[error("this file belongs to {expected}, not {got}")]
     WrongServer { expected: String, got: String },
     #[error("the bytes of {hash} are not held here and cannot be fetched: {reason}")]
@@ -289,7 +318,91 @@ impl CoreError {
         CoreError::NotFound {
             code: NOT_HELD.into(),
             message: message.into(),
-            status: None,
+            server: None,
+        }
+    }
+
+    /// A copy that ended for `reason` without a server's answer.
+    pub fn expired(reason: impl Into<String>) -> Self {
+        CoreError::CopyExpired {
+            reason: reason.into(),
+            server: None,
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn expired_by(reason: &str, status: u16, code: &str) -> Self {
+        CoreError::CopyExpired {
+            reason: reason.into(),
+            server: Some(Box::new(ServerAnswer {
+                status,
+                code: Some(code.into()),
+                details: None,
+            })),
+        }
+    }
+
+    /// This error, naming the answer of the server that caused it.
+    pub(crate) fn told_by(mut self, answer: Option<Box<ServerAnswer>>) -> Self {
+        if let CoreError::CopyExpired { server, .. } | CoreError::StreamIncomplete { server, .. } =
+            &mut self
+        {
+            *server = answer;
+        }
+        self
+    }
+
+    /// The code, and the details, the device named a refusal by itself: where
+    /// no server answered, or where the code it chose is not the server's own.
+    pub fn local(&self) -> Option<(&str, Option<&serde_json::Value>)> {
+        let (code, details) = match self {
+            CoreError::RenewalFailed(cause) => return cause.local(),
+            CoreError::NotFound { code, .. }
+            | CoreError::Unauthorized { code, .. }
+            | CoreError::Forbidden { code, .. } => (code.as_str(), None),
+            CoreError::Validation { code, details, .. } => (code.as_str(), details.as_deref()),
+            CoreError::UnknownType { .. } => ("unknown_type", None),
+            _ => return None,
+        };
+        let said = self.answer().and_then(|answer| answer.code);
+        (said.as_deref() != Some(code)).then_some((code, details))
+    }
+
+    /// What a server sent, wherever one answered and whatever the device then
+    /// called the refusal; `None` where no server did.
+    pub fn answer(&self) -> Option<ServerAnswer> {
+        match self {
+            CoreError::RenewalFailed(cause) => cause.answer(),
+            CoreError::NotFound { server, .. }
+            | CoreError::Unauthorized { server, .. }
+            | CoreError::Forbidden { server, .. }
+            | CoreError::Validation { server, .. }
+            | CoreError::UnknownType { server, .. }
+            | CoreError::CopyExpired { server, .. }
+            | CoreError::StreamIncomplete { server, .. } => server.as_deref().cloned(),
+            CoreError::RateLimited { code, details, .. } => Some(ServerAnswer {
+                status: 429,
+                code: (code != UNREAD_CODE).then(|| code.clone()),
+                details: details.as_deref().cloned(),
+            }),
+            CoreError::Server {
+                status,
+                code,
+                details,
+                ..
+            } => Some(ServerAnswer {
+                status: *status,
+                code: (code != UNREAD_CODE).then(|| code.clone()),
+                details: details.as_deref().cloned(),
+            }),
+            CoreError::Unnamed { status, .. } | CoreError::Redirected { status, .. } => {
+                Some(*ServerAnswer::status_only(*status))
+            }
+            CoreError::ContractMismatch {
+                status: Some(status),
+                ..
+            } => Some(*ServerAnswer::status_only(*status)),
+            _ => None,
         }
     }
 
@@ -558,14 +671,14 @@ impl From<marfa_rules::RuleError> for CoreError {
         match error.code {
             Code::ValidationError | Code::InvalidProperties | Code::InvalidId => {
                 CoreError::Validation {
-                    status: None,
+                    server: None,
                     code: error.code.as_str().into(),
                     message: error.message,
                     details: None,
                 }
             }
             Code::UnknownType => CoreError::UnknownType {
-                status: None,
+                server: None,
                 message: error.message,
             },
             Code::Invalid => CoreError::Invalid(error.message),
@@ -581,6 +694,7 @@ mod tests {
     fn said(reason: &str) -> String {
         CoreError::CopyExpired {
             reason: reason.into(),
+            server: None,
         }
         .to_string()
     }
@@ -646,7 +760,8 @@ mod tests {
             assert!(!text.to_lowercase().contains("hydrat"), "{text}");
             assert_eq!(
                 CoreError::CopyExpired {
-                    reason: reason.into()
+                    reason: reason.into(),
+                    server: None,
                 }
                 .code(),
                 "copy_expired"
@@ -683,12 +798,12 @@ mod tests {
     #[test]
     fn server_refusal_display_does_not_repeat_its_classification() {
         let unknown = CoreError::UnknownType {
-            status: None,
+            server: None,
             message: "Unknown type: acme.missing".into(),
         };
         assert_eq!(unknown.to_string(), "Unknown type: acme.missing");
         let unauthorized = CoreError::Unauthorized {
-            status: None,
+            server: None,
             code: "unauthorized".into(),
             message: "Authentication required".into(),
         };
@@ -698,7 +813,7 @@ mod tests {
         );
         assert!(!unauthorized.is_environmental());
         let validation = CoreError::Validation {
-            status: None,
+            server: None,
             code: "invalid_properties".into(),
             message: "read: Expected boolean".into(),
             details: None,
@@ -726,7 +841,8 @@ mod tests {
             CoreError::RateLimited {
                 code: "x".into(),
                 message: String::new(),
-                retry_after_seconds: None
+                retry_after_seconds: None,
+                details: None,
             }
             .is_unreachable()
         );
@@ -756,6 +872,7 @@ mod tests {
             code: "rate_limited".into(),
             message: String::new(),
             retry_after_seconds: seconds,
+            details: None,
         };
         assert!(limited(None).is_environmental());
         assert_eq!(limited(None).retry_after(), None);
@@ -774,7 +891,7 @@ mod tests {
         assert!(answered(507).is_environmental());
         assert!(!answered(405).is_environmental());
         let refused = CoreError::Forbidden {
-            status: None,
+            server: None,
             code: "type_not_permitted".into(),
             message: String::new(),
         };
@@ -833,7 +950,7 @@ mod tests {
             assert_eq!(
                 CoreError::from(RuleError::new(code, "words")),
                 CoreError::Validation {
-                    status: None,
+                    server: None,
                     code: wire.into(),
                     message: "words".into(),
                     details: None,
@@ -843,7 +960,7 @@ mod tests {
         assert_eq!(
             CoreError::from(RuleError::new(Code::UnknownType, "words")),
             CoreError::UnknownType {
-                status: None,
+                server: None,
                 message: "words".into()
             }
         );

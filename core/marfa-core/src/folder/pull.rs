@@ -46,7 +46,7 @@ fn refuse_unless_held(conn: &rusqlite::Connection, item_id: &str) -> Result<()> 
 }
 
 pub fn copy_changed(error: &CoreError) -> bool {
-    matches!(error, CoreError::StreamIncomplete { reason } if reason == "local_copy_changed")
+    matches!(error, CoreError::StreamIncomplete { reason, .. } if reason == "local_copy_changed")
 }
 
 /// Whether a failed read of an edge's other end ends the pass instead of

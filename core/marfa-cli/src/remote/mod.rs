@@ -283,22 +283,28 @@ fn renewal_error(error: CliError) -> CoreError {
             status: 401,
             code,
             message,
+            details,
             ..
         } => CoreError::Unauthorized {
+            server: Some(Box::new(marfa_core::ServerAnswer {
+                status: 401,
+                code: Some(code.clone()),
+                details: details.as_deref().cloned(),
+            })),
             code,
             message,
-            status: Some(401),
         },
         CliError::Refused {
             status: 429,
             code,
             message,
             retry_after_seconds,
-            ..
+            details,
         } => CoreError::RateLimited {
             code,
             message,
             retry_after_seconds,
+            details,
         },
         CliError::Refused {
             status,

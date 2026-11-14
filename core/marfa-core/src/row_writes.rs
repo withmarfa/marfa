@@ -219,7 +219,7 @@ fn whole(conn: &Connection, item: &str, table: &str) -> Result<bool> {
 fn columns_of(conn: &Connection, item: &str, table: &str) -> Result<Map<String, Value>> {
     let tables = tables::of_item(conn, item)?;
     let definition = tables.get(table).ok_or_else(|| CoreError::NotFound {
-        status: None,
+        server: None,
         code: "table_not_found".into(),
         message: format!("the type of {item} declares no table {table}"),
     })?;
@@ -238,7 +238,7 @@ fn refuse_unheld(
     if !store::item_held(conn, item)? {
         store::refuse_unless_held(completeness)?;
         return Err(CoreError::NotFound {
-            status: None,
+            server: None,
             code: "item_not_found".into(),
             message: format!("{item} is not an item this copy holds"),
         });
@@ -328,7 +328,7 @@ pub(crate) fn write(
                     .find(|column| values.contains_key(*column))
             {
                 return Err(CoreError::Forbidden {
-                    status: None,
+                    server: None,
                     code: "forbidden".into(),
                     message: format!(
                         "operation {index} names the column {column}, whose value names an item this key may not read"

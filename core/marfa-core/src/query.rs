@@ -94,7 +94,7 @@ fn ordered(filters: &ListFilters, sort: Option<Sort>) -> Result<Sort> {
     match (sort, filters.updated_after.is_some()) {
         (None, _) => Ok(Sort::unnamed(filters)),
         (Some(sort), true) if sort != Sort::RESUMED => Err(CoreError::Validation {
-            status: None,
+            server: None,
             code: "validation_error".into(),
             message: "updated_after orders by updated_at, ascending; leave out sort and direction"
                 .into(),
@@ -459,7 +459,7 @@ mod tests {
         assert_eq!(
             list(&conn, &catalog, &named("core.taks"), None).unwrap_err(),
             crate::error::CoreError::UnknownType {
-                status: None,
+                server: None,
                 message: "Unknown type: core.taks".into()
             }
         );

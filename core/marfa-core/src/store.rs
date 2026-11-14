@@ -5857,7 +5857,7 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         .optional()?
     else {
         return Err(CoreError::NotFound {
-            status: None,
+            server: None,
             code: "queued_write_not_found".into(),
             message: format!("{id} is not a write this queue holds"),
         });
@@ -6395,7 +6395,7 @@ fn content_free_kinds() -> String {
 pub fn discard(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     let Some(row) = queued_write(conn, id)? else {
         return Err(CoreError::NotFound {
-            status: None,
+            server: None,
             code: "queued_write_not_found".into(),
             message: format!("{id} is not a write this queue holds"),
         });

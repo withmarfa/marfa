@@ -152,7 +152,8 @@ The Node module takes no renewer.
 
 Every surface names a core error by `CoreError::code`: the `code` in the binary's `--json` envelope, `code()` on the Swift error, and `code` on an error the Node module throws or rejects with. A test that crosses every `CoreError` holds the Swift word to the core's.
 
-- The Node error is an `Error` whose message starts `code: `, with the fields the Swift error carries as properties: `serverCode`, `details`, `status`, `retryAfterSeconds`, `origin`, `location`, `path`, `reason`, `unsent`, `agreed`, `expected`, `got`, `served`, `writeSent` and `hash`, each where the error has it.
+- A refusal says where it came from the same way on every surface. `server` holds what a server sent, its `status`, `code` and `details`, and is absent or `nil` unless a server answered, whatever code the device then gave the refusal. The Swift error's `code` is the code the device named the refusal by; the Node error's and the envelope's `local` holds that code and its `details` where it differs from the server's own, or no server answered.
+- The Node error is an `Error` whose message starts `code: `, with the fields the Swift error carries as properties: `server`, `local`, `retryAfterSeconds`, `origin`, `location`, `path`, `reason`, `unsent`, `agreed`, `expected`, `got`, `served`, `writeSent` and `hash`, each where the error has it.
 - `onEnd` of a Node `follow` receives that same error, or one coded `listener_threw` where an `onChange` threw.
 - A catch-up keeps the catalog it took whatever ends it, so a failed one says whether it changed: `catalogChanged` on the Node error, `CatchUpError.Failed(error:catalogChanged:)` in Swift, and `catalog_changed` in the binary's `--json` envelope.
 

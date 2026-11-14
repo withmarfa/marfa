@@ -54,7 +54,7 @@ fn object(id: &str, json: &str) -> Result<Map<String, Value>, CoreError> {
 
 fn type_not_found(id: &str) -> CoreError {
     CoreError::NotFound {
-        status: None,
+        server: None,
         code: "type_not_found".into(),
         message: format!("the catalog this copy holds has no type {id}"),
     }
@@ -140,7 +140,7 @@ pub fn edge_type(conn: &Connection, id: &str) -> Result<EdgeType, CoreError> {
         {
             Some((id, json)) => edge_type_of(&id, &json),
             None => Err(CoreError::NotFound {
-                status: None,
+                server: None,
                 code: "edge_type_not_found".into(),
                 message: format!("the catalog this copy holds has no edge type {id}"),
             }),
@@ -274,7 +274,7 @@ impl CatalogExt for Catalog {
     fn refuse_over_request_limit(&self, payload: &str) -> Result<(), CoreError> {
         match crate::model::over_request_limit(payload.len(), self.request_limit()) {
             Some(words) => Err(CoreError::Validation {
-                status: None,
+                server: None,
                 code: crate::model::OVER_REQUEST_LIMIT.into(),
                 message: format!("{}{words}", crate::model::OVER_REQUEST_LIMIT_WRITE),
                 details: None,

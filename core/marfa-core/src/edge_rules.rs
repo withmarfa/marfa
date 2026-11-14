@@ -103,7 +103,7 @@ fn held_row(conn: &Connection, id: &str) -> Result<Option<(String, bool)>> {
 
 fn end_not_found(end: &str, id: &str) -> CoreError {
     CoreError::NotFound {
-        status: None,
+        server: None,
         code: "item_not_found".into(),
         message: format!("Edge {end} item not found: {id}"),
     }
@@ -111,7 +111,7 @@ fn end_not_found(end: &str, id: &str) -> CoreError {
 
 fn constraint_violation(message: String, details: Value) -> CoreError {
     CoreError::Validation {
-        status: None,
+        server: None,
         code: "edge_constraint_violation".into(),
         message,
         details: Some(Box::new(details)),
@@ -200,7 +200,7 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
         }
         if edge_type.acyclic && closes_cycle(conn, edge, &refused)? {
             return Err(CoreError::Validation {
-                status: None,
+                server: None,
                 code: "edge_cycle".into(),
                 message: format!("Edge \"{}\" would close a cycle", edge.edge_type),
                 details: Some(Box::new(json!({

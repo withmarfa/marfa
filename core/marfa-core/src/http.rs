@@ -11,7 +11,7 @@ use ureq::unversioned::transport::{
 use url::Url;
 
 use crate::contract::CONTRACT_VERSION;
-use crate::error::CoreError;
+use crate::error::{CoreError, ServerAnswer};
 use crate::model::SliceTier;
 use crate::wire::{
     WireEdge, WireErrorEnvelope, WireItem, WireItemWithMetadata, WireMetadata, WirePage,
@@ -318,6 +318,42 @@ impl Answer {
     /// it, so the copy it was queued against is no longer the server's.
     pub fn instance_changed(&self) -> bool {
         self.contract_named && self.status == 409 && self.code == INSTANCE_CHANGED
+    }
+
+    /// What the server sent: the status, and the envelope's code and details
+    /// where the body holds one.
+    pub(crate) fn server_answer(&self) -> Box<ServerAnswer> {
+        let envelope = serde_json::from_str::<WireErrorEnvelope>(&self.body).ok();
+        Box::new(ServerAnswer {
+            status: self.status,
+            code: envelope
+                .as_ref()
+                .map(|envelope| envelope.error.code.clone()),
+            details: envelope.and_then(|envelope| envelope.error.details),
+        })
+    }
+
+    /// The error for `instance_changed`, which carries the server's answer.
+    pub(crate) fn instance_changed_error(&self) -> CoreError {
+        CoreError::CopyExpired {
+            reason: INSTANCE_CHANGED.into(),
+            server: Some(self.server_answer()),
+        }
+    }
+}
+
+/// A read by id: the row, or the server's answer that it is gone.
+pub(crate) enum ByIdRead<T> {
+    Row(T),
+    Absent(Option<Box<ServerAnswer>>),
+}
+
+impl<T> ByIdRead<T> {
+    pub(crate) fn row(self) -> Option<T> {
+        match self {
+            ByIdRead::Row(row) => Some(row),
+            ByIdRead::Absent(_) => None,
+        }
     }
 }
 
@@ -750,9 +786,7 @@ impl Http {
         if named {
             let refused = refusal(status, text, retry_after_seconds);
             if self.reach.is_some() && status == 401 {
-                return CoreError::CopyExpired {
-                    reason: "credential_ended".into(),
-                };
+                return credential_ended(&refused);
             }
             refused
         } else {
@@ -1165,12 +1199,18 @@ impl Http {
         }
     }
 
-    pub fn item_with_edges(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {
+    /// The row with its edges and metadata, or the server's `404` for it.
+    pub(crate) fn item_with_edges(
+        &self,
+        id: &str,
+    ) -> Result<ByIdRead<WireItemWithMetadata>, CoreError> {
         match self
             .get_json::<WireItemWithMetadata>(&["items", id], &[("include", "edges,metadata")])
         {
-            Ok(item) => Ok(Some(item)),
-            Err(CoreError::NotFound { .. }) => Ok(None),
+            Ok(item) => Ok(ByIdRead::Row(item)),
+            Err(absent @ CoreError::NotFound { .. }) => {
+                Ok(ByIdRead::Absent(absent.answer().map(Box::new)))
+            }
             Err(error) => Err(error),
         }
     }
@@ -1420,9 +1460,7 @@ impl Http {
         // Not the write's answer: the instance that gave it never had the
         // rows the write was made against.
         if answer.instance_changed() {
-            return Err(CoreError::CopyExpired {
-                reason: INSTANCE_CHANGED.into(),
-            });
+            return Err(answer.instance_changed_error());
         }
         Ok(answer)
     }
@@ -1545,9 +1583,7 @@ impl Http {
             let retry_after = retry_after(&response);
             let text = response.into_body().read_to_string().unwrap_or_default();
             if status == 401 && named {
-                return Err(CoreError::CopyExpired {
-                    reason: "credential_ended".into(),
-                });
+                return Err(credential_ended(&refusal(status, &text, retry_after)));
             }
             return Err(self.refused(status, named, &text, retry_after));
         }
@@ -2089,56 +2125,76 @@ fn published_limit<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Option<u
 
 /// Only for an answer naming the server's contract; `Http::refused` decides.
 fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreError {
-    let (code, message) = match serde_json::from_str::<WireErrorEnvelope>(text) {
+    let (code, message, details, read) = match serde_json::from_str::<WireErrorEnvelope>(text) {
         Ok(envelope) => (
             envelope.error.code,
             envelope.error.message.unwrap_or_default(),
+            envelope.error.details,
+            true,
         ),
-        Err(_) => ("unknown".to_string(), text.chars().take(200).collect()),
+        Err(_) => (
+            crate::error::UNREAD_CODE.to_string(),
+            text.chars().take(200).collect(),
+            None,
+            false,
+        ),
     };
+    let server = Some(Box::new(ServerAnswer {
+        status,
+        code: read.then(|| code.clone()),
+        details: details.clone(),
+    }));
     match status {
         409 if code == "reach_changed" => CoreError::CopyExpired {
             reason: "reach_changed".into(),
+            server,
         },
         409 if code == INSTANCE_CHANGED => CoreError::CopyExpired {
             reason: INSTANCE_CHANGED.into(),
+            server,
         },
-        400 if code == "unknown_type" => CoreError::UnknownType {
-            message,
-            status: Some(status),
-        },
+        400 if code == "unknown_type" => CoreError::UnknownType { message, server },
         400 | 422 => CoreError::Validation {
             code,
             message,
             details: None,
-            status: Some(status),
+            server,
         },
         401 => CoreError::Unauthorized {
             code,
             message,
-            status: Some(status),
+            server,
         },
         403 => CoreError::Forbidden {
             code,
             message,
-            status: Some(status),
+            server,
         },
         404 => CoreError::NotFound {
             code,
             message,
-            status: Some(status),
+            server,
         },
         429 => CoreError::RateLimited {
             code,
             message,
             retry_after_seconds,
+            details: details.map(Box::new),
         },
         _ => CoreError::Server {
             status,
             code,
             message,
-            details: None,
+            details: details.map(Box::new),
         },
+    }
+}
+
+/// The copy's credential ended, said by the server's own `401`.
+fn credential_ended(refused: &CoreError) -> CoreError {
+    CoreError::CopyExpired {
+        reason: "credential_ended".into(),
+        server: refused.answer().map(Box::new),
     }
 }
 
@@ -2461,12 +2517,66 @@ mod tests {
     }
 
     #[test]
+    fn a_refusal_keeps_the_details_the_server_sent_whatever_its_status() {
+        let details = serde_json::json!({ "errors": [{ "field": "title" }] });
+        let body = r#"{"error":{"code":"validation_error","message":"no","details":{"errors":[{"field":"title"}]}}}"#;
+        for status in [400u16, 401, 403, 404, 409, 422, 429, 500] {
+            let answer = refusal(status, body, None)
+                .answer()
+                .unwrap_or_else(|| panic!("{status} carries no answer"));
+            assert_eq!(answer.status, status);
+            assert_eq!(answer.code.as_deref(), Some("validation_error"));
+            assert_eq!(answer.details.as_ref(), Some(&details), "{status}");
+        }
+        let unread = refusal(502, "<html>", None).answer().unwrap();
+        assert_eq!(
+            (unread.status, unread.code, unread.details),
+            (502, None, None)
+        );
+    }
+
+    #[test]
+    fn a_credential_the_server_ended_expires_the_copy_and_names_its_answer() {
+        let body =
+            r#"{"error":{"code":"unauthorized","message":"no","details":{"why":"expired"}}}"#;
+        let ended = credential_ended(&refusal(401, body, None));
+        let answer = ended.answer().unwrap();
+        assert!(
+            matches!(&ended, CoreError::CopyExpired { reason, .. } if reason == "credential_ended")
+        );
+        assert_eq!(
+            (answer.status, answer.code.as_deref(), answer.details),
+            (
+                401,
+                Some("unauthorized"),
+                Some(serde_json::json!({ "why": "expired" }))
+            )
+        );
+        let instance = Answer {
+            status: 409,
+            code: INSTANCE_CHANGED.into(),
+            body: r#"{"error":{"code":"instance_changed","details":{"a":1}}}"#.into(),
+            retry_after_seconds: None,
+            replayed: false,
+            contract_named: true,
+        }
+        .instance_changed_error();
+        let answer = instance.answer().unwrap();
+        assert_eq!(answer.status, 409);
+        assert_eq!(answer.details, Some(serde_json::json!({ "a": 1 })));
+    }
+
+    #[test]
     fn refusals_keep_the_server_code() {
         let body = r#"{"error":{"code":"unknown_type","message":"no such type"}}"#;
         assert_eq!(
             refusal(400, body, None),
             CoreError::UnknownType {
-                status: Some(400),
+                server: Some(Box::new(ServerAnswer {
+                    status: 400,
+                    code: Some("unknown_type".into()),
+                    details: None,
+                })),
                 message: "no such type".into()
             }
         );
@@ -2477,7 +2587,11 @@ mod tests {
                 None
             ),
             CoreError::NotFound {
-                status: Some(404),
+                server: Some(Box::new(ServerAnswer {
+                    status: 404,
+                    code: Some("item_not_found".into()),
+                    details: None,
+                })),
                 code: "item_not_found".into(),
                 message: "gone".into()
             }

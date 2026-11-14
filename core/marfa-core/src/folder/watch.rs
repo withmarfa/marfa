@@ -828,7 +828,7 @@ fn credential_refused(drain: &Drained) -> Option<CoreError> {
         .as_ref()
         .filter(|_| credential)
         .map(|stopped| CoreError::Unauthorized {
-            status: Some(401),
+            server: None,
             code: "unauthorized".into(),
             message: stopped.clone(),
         })
@@ -1643,7 +1643,7 @@ mod tests {
             out(),
             CoreError::RenewalFailed(Box::new(out())),
             CoreError::Unauthorized {
-                status: Some(401),
+                server: Some(crate::error::ServerAnswer::status_only(401)),
                 code: "unauthorized".into(),
                 message: "refused".into(),
             },
@@ -1941,6 +1941,7 @@ mod tests {
             code: "rate_limited".into(),
             message: String::new(),
             retry_after_seconds: Some(seconds),
+            details: None,
         };
         assert_eq!(
             retry_schedule(SECOND, &limited(45)),
@@ -2683,11 +2684,12 @@ mod tests {
     fn a_pass_waits_out_the_hydration_the_follow_runs() {
         assert!(hydrated_by_the_follow(&CoreError::HydrationIncomplete));
         assert!(hydrated_by_the_follow(&CoreError::CopyExpired {
-            reason: "catchup_too_old".into()
+            reason: "catchup_too_old".into(),
+            server: None,
         }));
         assert!(!hydrated_by_the_follow(&CoreError::NoCursor));
         assert!(!hydrated_by_the_follow(&CoreError::Unauthorized {
-            status: Some(401),
+            server: Some(crate::error::ServerAnswer::status_only(401)),
             code: "unauthorized".into(),
             message: "ended".into()
         }));

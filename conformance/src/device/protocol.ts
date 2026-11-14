@@ -14,11 +14,20 @@ export type Tier = "library" | "feed";
 /** The tiers a slice holds: one, or `all` for both (`device/slice-held`). */
 export type SliceTier = Tier | "all";
 
+/** The status, code and details of a server's answer. */
+export interface ServerAnswer {
+  status: number;
+  code: string | null;
+  details: unknown;
+}
+
 export interface Refusal {
   /** The adapter's reading of the device's refusal. `unclassified` when it could not read one. */
   code: string;
-  /** The code the device gave a refusal it made itself, such as `not_held`, from the envelope's `local` member; null when a server answered. */
+  /** The code the device named a refusal by itself, such as `not_held`, from the envelope's `local` member or the binding error's `local` property; null when it named none of its own. */
   local: string | null;
+  /** What a server sent, from the envelope's `server` member or the binding error's `server` property; null when no server answered. */
+  server: ServerAnswer | null;
   /** Everything the device said, kept so a failing assertion can print it. */
   raw: string;
 }

@@ -32,6 +32,7 @@ import {
   type QueuedWrite,
   type Refusal,
   type SearchFilters,
+  type ServerAnswer,
   type SearchHit,
   type SliceTier,
   type TableFill,
@@ -80,22 +81,35 @@ function classify(stderr: string, exitCode: number | null): Refusal {
   const raw = stderr.trim();
   const last = refusalLine(raw);
   if (exitCode === 2 && !last.startsWith("{")) {
-    return { code: "usage", local: null, raw };
+    return { code: "usage", local: null, server: null, raw };
   }
   type Envelope = {
-    error?: { code?: unknown; local?: { code?: unknown } | null };
+    error?: {
+      code?: unknown;
+      local?: { code?: unknown } | null;
+      server?: { status?: unknown; code?: unknown; details?: unknown } | null;
+    };
   };
   let envelope: Envelope;
   try {
     envelope = JSON.parse(last) as Envelope;
   } catch {
-    return { code: "unclassified", local: null, raw };
+    return { code: "unclassified", local: null, server: null, raw };
   }
   const code = envelope.error?.code;
   const local = envelope.error?.local?.code;
+  const answered = envelope.error?.server;
+  const server: ServerAnswer | null =
+    answered && typeof answered.status === "number"
+      ? {
+          status: answered.status,
+          code: typeof answered.code === "string" ? answered.code : null,
+          details: answered.details ?? null,
+        }
+      : null;
   return typeof code === "string"
-    ? { code, local: typeof local === "string" ? local : null, raw }
-    : { code: "unclassified", local: null, raw };
+    ? { code, local: typeof local === "string" ? local : null, server, raw }
+    : { code: "unclassified", local: null, server: null, raw };
 }
 
 /** The last line of stderr, where `--json` puts a refusal (`device/command-json-refusal-last`). */

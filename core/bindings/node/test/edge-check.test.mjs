@@ -6,7 +6,11 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { EdgeEnd, MarfaCore } from "../index.js";
 
-const CONSTRAINT = { code: "validation", serverCode: "edge_constraint_violation" };
+/** @param {Record<string, string>} details */
+const constraint = (details) => ({
+  code: "validation",
+  local: { code: "edge_constraint_violation", details },
+});
 
 test("a move is checked as its update would be, and queues nothing", () => {
   const dir = mkdtempSync(join(tmpdir(), "marfa-node-edge-check-"));
@@ -27,31 +31,22 @@ test("a move is checked as its update would be, and queues nothing", () => {
     core.createEdge(supersedes(c, d));
     const queued = core.queue().length;
 
-    assert.throws(() => core.checkEdge(supersedes(a, b)), {
-      ...CONSTRAINT,
-      details: { edge_type: "supersedes", source_id: a, target_id: b, constraint: "duplicate" },
-    });
+    assert.throws(() => core.checkEdge(supersedes(a, b)), constraint({ edge_type: "supersedes", source_id: a, target_id: b, constraint: "duplicate" }));
     assert.throws(
       () => core.checkEdgeMove(moving, { end: EdgeEnd.Target, to: d }),
-      {
-        ...CONSTRAINT,
-        details: { edge_type: "supersedes", target_id: d, constraint: "cardinality" },
-      },
+      constraint({ edge_type: "supersedes", target_id: d, constraint: "cardinality" }),
       "d already has an inbound supersedes edge",
     );
     assert.throws(
       () => core.checkEdgeMove(moving, { end: EdgeEnd.Source, to: c }),
-      {
-        ...CONSTRAINT,
-        details: { edge_type: "supersedes", source_id: c, constraint: "cardinality" },
-      },
+      constraint({ edge_type: "supersedes", source_id: c, constraint: "cardinality" }),
       "c already has an outbound supersedes edge",
     );
     core.checkEdgeMove(moving, { end: EdgeEnd.Target, to: b });
     core.checkEdgeMove(moving, { end: EdgeEnd.Target, to: e });
     assert.throws(
       () => core.checkEdgeMove("00000000-0000-7000-8000-000000000009", { end: EdgeEnd.Target, to: e }),
-      { serverCode: "edge_not_found" },
+      { code: "not_found", local: { code: "edge_not_found", details: null } },
     );
     assert.equal(core.queue().length, queued);
   } finally {

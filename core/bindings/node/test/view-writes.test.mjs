@@ -113,9 +113,14 @@ test("view writes preserve settings, versions, keys, and structured refusals acr
     await assert.rejects(
       core.changeView("view", { title: "Refused" }, 1),
       (error) => {
-        const refusal = /** @type {{code:string, serverCode:string}} */ (error);
+        const refusal =
+          /** @type {{code:string, server:{status:number, code:string}, local?:unknown}} */ (
+            error
+          );
         assert.equal(refusal.code, classification);
-        assert.equal(refusal.serverCode, serverCode);
+        assert.equal(refusal.server.status, httpStatus);
+        assert.equal(refusal.server.code, serverCode);
+        assert.equal(refusal.local, undefined);
         return true;
       },
     );

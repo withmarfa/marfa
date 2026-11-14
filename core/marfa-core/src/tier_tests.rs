@@ -247,9 +247,11 @@ fn a_lookup_another_instance_refuses_expires_the_copy_and_sends_nothing() {
     );
     assert_eq!(
         core.drain().unwrap_err(),
-        crate::CoreError::CopyExpired {
-            reason: crate::http::INSTANCE_CHANGED.into()
-        }
+        crate::CoreError::expired_by(
+            crate::http::INSTANCE_CHANGED,
+            409,
+            crate::http::INSTANCE_CHANGED
+        )
     );
     assert_eq!(
         server.seen("/items/lookup")[0].instance.as_deref(),

@@ -21,7 +21,7 @@ pub fn error(error: &CliError) -> &'static str {
         CliError::FolderNotHandedOver(_) => {
             "another process is working the folder, and did not let it go when asked"
         }
-        CliError::Watch(_) => "the folder watch failed",
+        CliError::Watch(..) => "the folder watch failed",
         CliError::ClosedOutput => "the output was closed",
         CliError::Refused { status, .. } => refused(refused_code(*status)),
         CliError::Usage(_) => "the command line was wrong",
@@ -71,11 +71,11 @@ fn refused(code: &str) -> &'static str {
 
 fn core_error(error: &CoreError) -> &'static str {
     match error {
-        CoreError::NotFound { status: None, .. }
-        | CoreError::Unauthorized { status: None, .. }
-        | CoreError::Forbidden { status: None, .. }
-        | CoreError::Validation { status: None, .. }
-        | CoreError::UnknownType { status: None, .. } => {
+        CoreError::NotFound { server: None, .. }
+        | CoreError::Unauthorized { server: None, .. }
+        | CoreError::Forbidden { server: None, .. }
+        | CoreError::Validation { server: None, .. }
+        | CoreError::UnknownType { server: None, .. } => {
             "the working copy refused the request without asking the server"
         }
         CoreError::NotFound { .. } => "the server has nothing at what the request named",

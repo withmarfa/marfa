@@ -250,6 +250,25 @@ describe("the exit codes", () => {
     expect(refused.envelope.error.local).toBeNull();
   });
 
+  it("carries the server's own 401 beside the copy_expired a refused key ends a hydration with", async () => {
+    const refused = await c.cli
+      .as("marfa_k1_refused_fixture")
+      .refused([
+        "device",
+        "--db",
+        join(dir, "refused-key"),
+        "hydrate",
+        "--types",
+        "core.note",
+        "--tier",
+        "library",
+      ]);
+    expect(refused.envelope.error.code).toBe("copy_expired");
+    expect(refused.envelope.error.server?.status).toBe(401);
+    expect(refused.envelope.error.server?.code).toBe("unauthorized");
+    expect(refused.envelope.error.local).toBeNull();
+  });
+
   it("leaves by 2 when the command line is wrong, with the envelope under --json and the usage text without it", async () => {
     const refused = await c.cli.refused(["items", "get"]);
     expect(refused.code).toBe(2);

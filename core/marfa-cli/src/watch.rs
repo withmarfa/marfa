@@ -70,6 +70,7 @@ pub fn watch_every(named: &Named, stop_after: Option<u64>, json: bool) -> Result
     let registry = Registry::located().ok_or_else(|| {
         CliError::Watch(
             "there is no folder registry to read: HOME is not set, and MARFA_FOLDER_REGISTRY names none".into(),
+            None,
         )
     })?;
     interrupt::stop_on_interrupt();
@@ -526,10 +527,11 @@ fn ended(server: &str, error: WatchError<CliError>) -> CliError {
     match error {
         WatchError::CredentialRefused(error) if error.is_signed_out() => signed_out(error),
         WatchError::CredentialRefused(error) => refused_credential(server, &error),
-        WatchError::FollowEnded(error) => CliError::Watch(format!(
-            "the server's changes stopped reaching this folder: {error}"
-        )),
-        WatchError::Unwatchable(reason) => CliError::Watch(reason),
+        WatchError::FollowEnded(error) => CliError::Watch(
+            format!("the server's changes stopped reaching this folder: {error}"),
+            error.answer().map(Box::new),
+        ),
+        WatchError::Unwatchable(reason) => CliError::Watch(reason, None),
         WatchError::Core(error) => error.into(),
         WatchError::Told(error) => error,
     }
@@ -645,7 +647,7 @@ fn tell(
 /// sends can land until a person replaces it.
 fn refused_credential(server: &str, said: &CoreError) -> CliError {
     CliError::Core(CoreError::Unauthorized {
-        status: Some(401),
+        server: said.answer().map(Box::new),
         code: "credential_refused".into(),
         message: format!(
             "the server at {server} refused this watch's credential ({said}), so the watch stopped; \
@@ -914,6 +916,30 @@ mod tests {
     }
 
     #[test]
+    fn a_refused_credential_reports_the_answer_the_server_sent_and_none_it_did_not() {
+        let said = CoreError::Forbidden {
+            code: "type_not_permitted".into(),
+            message: "no".into(),
+            server: Some(Box::new(marfa_core::ServerAnswer {
+                status: 403,
+                code: Some("type_not_permitted".into()),
+                details: Some(serde_json::json!({ "grant": "core.note" })),
+            })),
+        };
+        let envelope = refused_credential("https://one.test", &said).envelope();
+        assert_eq!(envelope["error"]["code"], "unauthorized");
+        assert_eq!(envelope["error"]["server"]["status"], 403);
+        assert_eq!(envelope["error"]["server"]["details"]["grant"], "core.note");
+        assert_eq!(envelope["error"]["local"]["code"], "credential_refused");
+
+        let out = CoreError::SignedOut {
+            origin: "https://one.test".into(),
+        };
+        let envelope = refused_credential("https://one.test", &out).envelope();
+        assert!(envelope["error"]["server"].is_null());
+    }
+
+    #[test]
     fn a_refused_credential_is_not_sent_again_and_one_kept_since_is_tried_once() {
         let machine = Machine {
             named: Named::default(),
@@ -1078,9 +1104,10 @@ mod tests {
     #[test]
     fn a_watch_that_ends_gives_its_own_result_and_a_thread_that_died_is_a_fault() {
         let (done, ended) = mpsc::channel();
-        done.send(Err(CliError::Watch("stopped".into()))).unwrap();
+        done.send(Err(CliError::Watch("stopped".into(), None)))
+            .unwrap();
         let result = await_end(&ended, || true, Duration::from_secs(60));
-        assert!(matches!(result, Err(CliError::Watch(ref reason)) if reason == "stopped"));
+        assert!(matches!(result, Err(CliError::Watch(ref reason, _)) if reason == "stopped"));
         let (done, ended) = mpsc::channel::<Result<(), CliError>>();
         drop(done);
         let result = await_end(&ended, || false, Duration::from_secs(60));

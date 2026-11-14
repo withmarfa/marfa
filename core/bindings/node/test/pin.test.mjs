@@ -246,7 +246,8 @@ test("refuses a pin of a row neither the server nor the copy holds", async (t) =
   await assert.rejects(core.pin("absent"), (/** @type {any} */ error) => {
     assert.ok(error instanceof Error);
     assert.equal(error.code, "not_found");
-    assert.equal(typeof error.serverCode, "string");
+    assert.equal(error.server.status, 404);
+    assert.equal(typeof error.server.code, "string");
     assert.match(error.message, /^not_found: /);
     return true;
   });
