@@ -381,7 +381,6 @@ struct Unreadable {
     hash: String,
 }
 
-/// A file added, then its held bytes made unreadable.
 #[cfg(unix)]
 fn file_with_unreadable_bytes(server: &Scripted, dir: &Path) -> Unreadable {
     use std::os::unix::fs::PermissionsExt;
@@ -418,7 +417,6 @@ fn upload_of(core: &crate::Core) -> crate::QueuedWrite {
         .unwrap()
 }
 
-/// Five minutes on, so the next drain is the third that met the failure over five minutes.
 #[cfg(unix)]
 fn five_minutes_on(core: &crate::Core) {
     let conn = core.conn().unwrap();

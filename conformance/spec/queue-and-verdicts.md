@@ -1310,7 +1310,7 @@ If a drain sends a write that meets an environmental failure other than a `429` 
 
 A device MUST NOT give a write the reason `failing_alone` in a drain unless that drain sent it, and it met an environmental failure before its test and again after it, in that drain, other than an upload whose held bytes cannot be opened (`queue-and-verdicts/stuck-upload-unopened`).
 
-**Reason:** a write the drain did not send was not shown to fail. Set aside unsent, a write the server would take, such as one that failed only while the server was down, would be kept from it until a person released it. An upload whose held bytes cannot be opened can never be sent until a person acts, so no drain sends it, and setting it aside is its only exit.
+**Reason:** a write the drain did not send was not shown to fail. Set aside unsent, a write the server would take, such as one that failed only while the server was down, would be kept from it until a person released it. When a drain cannot open an upload's held bytes, it cannot test that upload by sending it. The repeated local failure instead supplies the evidence to set it aside.
 
 **Tests:** `device/stuck-write.test.ts › sets the write aside only when the write sent to test it was not itself met by a failure`, `› sends two requests a drain in an outage once every queued write has met the failure in three drains, and still sets nothing aside`, `› sets the first of 6 stuck uploads aside in the 9th drain, when the note behind them lands`.
 

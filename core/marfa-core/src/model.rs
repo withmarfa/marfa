@@ -1497,10 +1497,7 @@ impl QueuedWrite {
             )
     }
 
-    /// The write in `queue` that holds this one: the first it follows or
-    /// depends on that has no answer yet or is blocked, followed through any
-    /// write that is itself held, to the one nothing holds. `None` where no
-    /// write holds it, so that a drain moves it.
+    /// Queue length bounds the walk even if predecessors form a cycle.
     pub fn blocker<'a>(&self, queue: &'a [QueuedWrite]) -> Option<&'a QueuedWrite> {
         let holding = |write: &QueuedWrite| {
             write
@@ -1520,9 +1517,7 @@ impl QueuedWrite {
         Some(blocker)
     }
 
-    /// The commands that take this write out of its wait, where nothing holds
-    /// it. A write held behind another is cleared through that write
-    /// (`blocker`), not through any command of its own.
+    /// A held write uses its blocker's exits.
     pub fn exits(&self) -> &'static str {
         if self.withdrawable() {
             "withdraw or release"

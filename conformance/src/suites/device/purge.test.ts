@@ -221,8 +221,6 @@ describe("a purge refusal names the exits a waiting write has", () => {
     const drained = await harness.device.drain();
     expect(drained.ok, JSON.stringify(drained)).toBe(true);
     const queue = await harness.device.queue();
-    // The witness: the create is blocked for a credential, and the delete is
-    // held behind it, a write no drain can move.
     expect(
       queue.ok && queue.value.map((row) => [row.id, row.verdict, row.reason]),
     ).toEqual([
