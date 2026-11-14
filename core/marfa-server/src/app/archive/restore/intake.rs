@@ -1299,7 +1299,7 @@ mod tests {
         );
     }
 
-    const COUNTS: &str = r#""file_count":0,"item_count":0,"version_count":0,"edge_count":0,"row_count":0,"blob_count":0,"type_count":0,"edge_type_count":0,"type_icon_count":0,"source_count":0,"setting_count":0,"connector_state_count":0,"connector_agreement_count":0"#;
+    const COUNTS: &str = r#""file_count":0,"item_count":0,"version_count":0,"edge_count":0,"row_count":0,"blob_count":0,"type_count":0,"edge_type_count":0,"type_icon_count":0,"source_count":0,"setting_count":0,"enforcement_count":0,"connector_state_count":0,"connector_agreement_count":0"#;
 
     #[test]
     fn a_manifest_with_no_format_is_refused_as_written_before_0_1() {
@@ -1343,6 +1343,7 @@ mod tests {
             "file_count",
             "version_count",
             "setting_count",
+            "enforcement_count",
             "blob_count",
         ] {
             assert!(message.contains(field), "{message}");
