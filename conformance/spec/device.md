@@ -7898,6 +7898,22 @@ When a query holds only spaces, a device MUST match nothing.
 
 **Tests:** `device/search-live.test.ts › answers the server's hits, in the server's order: $name: $query`.
 
+### `device/search-q-bound`
+
+If a local search names a query longer than 500 characters once its surrounding whitespace is trimmed, or one not wholly inside double quotes with more than 16 distinct whitespace-separated words, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+
+**Reason:** a character outside the Basic Multilingual Plane counts once (`search-and-filters/search-q-length`), and a repeated word does not count again (`search-and-filters/search-repeated-word`).
+
+**Tests:** `device/local-refusals.test.ts › refuses a search query past the server's bound, and takes one at it`.
+
+### `device/tags-bound`
+
+If a local list or a local search names more than 100 distinct tags, or a tag longer than 128 characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+
+**Reason:** blank entries and repeats do not count (`search-and-filters/tags-count`).
+
+**Tests:** `device/local-refusals.test.ts › refuses tags past the server's bound on a list and a search, and takes them at it`.
+
 ### `device/index-fields`
 
 While an item is not in the bin, a device MUST match a query against the item's `title`, `body`, `description` and `name` where each is a string, every other string property its type declares or inherits, and its tags.

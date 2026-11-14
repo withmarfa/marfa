@@ -12499,10 +12499,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Comma-separated tags. Only return items that carry all of them."
+              "description": "Comma-separated tags. Only return items that carry all of them. At most 100 distinct tags, each at most 128 characters."
             },
             "required": false,
-            "description": "Comma-separated tags. Only return items that carry all of them.",
+            "description": "Comma-separated tags. Only return items that carry all of them. At most 100 distinct tags, each at most 128 characters.",
             "name": "tags",
             "in": "query"
           },
@@ -17287,10 +17287,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Comma-separated tags. Only return items that carry all of them."
+              "description": "Comma-separated tags. Only return items that carry all of them. At most 100 distinct tags, each at most 128 characters."
             },
             "required": false,
-            "description": "Comma-separated tags. Only return items that carry all of them.",
+            "description": "Comma-separated tags. Only return items that carry all of them. At most 100 distinct tags, each at most 128 characters.",
             "name": "tags",
             "in": "query"
           },
@@ -28074,10 +28074,10 @@
             "schema": {
               "type": "string",
               "minLength": 1,
-              "description": "The text to search for. Marfa matches every word by its stem, in any order, and the last word as the start of a word. Wrap the query in double quotes to match a phrase."
+              "description": "The text to search for. Marfa matches every word by its stem, in any order, and the last word as the start of a word. Wrap the query in double quotes to match a phrase. At most 500 characters, and 16 distinct words outside quotes."
             },
             "required": true,
-            "description": "The text to search for. Marfa matches every word by its stem, in any order, and the last word as the start of a word. Wrap the query in double quotes to match a phrase.",
+            "description": "The text to search for. Marfa matches every word by its stem, in any order, and the last word as the start of a word. Wrap the query in double quotes to match a phrase. At most 500 characters, and 16 distinct words outside quotes.",
             "name": "q",
             "in": "query"
           },
@@ -28139,10 +28139,10 @@
           {
             "schema": {
               "type": "string",
-              "description": "Comma-separated tags. Only return items that carry all of them."
+              "description": "Comma-separated tags. Only return items that carry all of them. At most 100 distinct tags, each at most 128 characters."
             },
             "required": false,
-            "description": "Comma-separated tags. Only return items that carry all of them.",
+            "description": "Comma-separated tags. Only return items that carry all of them. At most 100 distinct tags, each at most 128 characters.",
             "name": "tags",
             "in": "query"
           },

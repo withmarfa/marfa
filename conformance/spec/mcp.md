@@ -112,6 +112,22 @@ When a tool call writes, the server MUST record on the write's audit entry the c
 
 **Tests:** `compliance/mcp-scripted.test.ts › records a tool call's write with the caller's address and marks it as made through MCP`, `compliance/table-rows-mcp.test.ts › records a rows write made through MCP with the caller's key and address and via mcp`.
 
+### `mcp/find-query-bound`
+
+If a `marfa_find` call names a `query` that `GET /search` refuses for its length or its number of distinct words (`search-and-filters/search-q-length`, `search-and-filters/search-q-words`), then the server MUST answer the call with a tool error carrying `validation_error`.
+
+**Reason:** the bound is held after the text is trimmed and repeated words are dropped, as at `GET /search`, so the tool's input schema carries no length of its own, which would refuse what that door takes.
+
+**Tests:** `compliance/search-bounds.test.ts › refuses a marfa_find query past the bound, and takes one at it`, `› counts what marfa_find is given as the server does, after trimming and dropping repeats`.
+
+### `mcp/find-tags-bound`
+
+If a `marfa_find` call names `tags` that `GET /items` refuses for their number or a tag's length (`search-and-filters/tags-count`, `search-and-filters/tags-length`), then the server MUST answer the call with a tool error carrying `validation_error`.
+
+**Reason:** the bound is held after tags are trimmed and repeats and blank entries are dropped, as at `GET /items`, so the tool's input schema carries no count or length of its own, which would refuse what that door takes.
+
+**Tests:** `compliance/search-bounds.test.ts › refuses marfa_find tags past the bound, and takes them at it`, `› counts what marfa_find is given as the server does, after trimming and dropping repeats`.
+
 ## Reading items
 
 `marfa_get` keeps its answer short enough for a client to hand to the model whole, and says where to read what it left out.
