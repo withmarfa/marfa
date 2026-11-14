@@ -1,7 +1,7 @@
 {
  "prefix": "simple-icons",
  "package": "@iconify-json/simple-icons",
- "version": "1.2.101",
+ "version": "1.2.102",
  "icons": [
   "1001tracklists",
   "1and1",
@@ -1992,6 +1992,7 @@
   "nette",
   "netto",
   "neutralinojs",
+  "newapi",
   "newbalance",
   "newegg",
   "newgrounds",
@@ -2073,6 +2074,7 @@
   "obsstudio",
   "obtainium",
   "ocaml",
+  "oceanbase",
   "oclc",
   "oclif",
   "octanerender",
@@ -3455,6 +3457,7 @@
   "zigbee2mqtt",
   "ziggo",
   "zilch",
+  "zilliz",
   "zillow",
   "zincsearch",
   "zingat",
