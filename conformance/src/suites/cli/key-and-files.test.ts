@@ -14,8 +14,15 @@ import {
 import { networkInterfaces, tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
-import { cleanup, trackItem, trackView } from "../../utils/setup.js";
-import { cliContext } from "./harness.js";
+import {
+  cleanup,
+  getOwnerClient,
+  trackItem,
+  trackKey,
+  trackType,
+  trackView,
+} from "../../utils/setup.js";
+import { cliContext, unique } from "./harness.js";
 import type { CliContext, ItemEnvelope } from "./harness.js";
 
 let c: CliContext;
@@ -46,6 +53,8 @@ interface Arrival {
   method: string;
   url: string;
   authorization: string | undefined;
+  cookie: string | undefined;
+  marfa: string[];
 }
 
 type Answer = (
@@ -64,6 +73,10 @@ async function listen(
       method: request.method ?? "",
       url: request.url ?? "",
       authorization: request.headers.authorization,
+      cookie: request.headers.cookie,
+      marfa: Object.keys(request.headers).filter((name) =>
+        name.startsWith("x-marfa-"),
+      ),
     });
     request.resume();
     answer(request, response);
@@ -73,6 +86,8 @@ async function listen(
       method: "CONNECT",
       url: request.url ?? "",
       authorization: undefined,
+      cookie: undefined,
+      marfa: [],
     });
     socket.destroy();
   });
@@ -418,6 +433,71 @@ describe("stored text that is layout or colour", () => {
   });
 });
 
+describe("a type move that is only asked what it would do", () => {
+  it("says a key's label on the line of that key, however the label is written", async () => {
+    const stem = unique("clilabel").replace(/-/g, "");
+    const from = `user.${stem}a`;
+    const to = `user.${stem}b`;
+    for (const id of [from, to]) {
+      await c.cli.json([
+        "types",
+        "register",
+        "--body",
+        JSON.stringify({ id, fields: { note: { type: "string" } } }),
+      ]);
+      trackType(c.ctx, id);
+    }
+    const label = `first\nwould move 99 items from ${from} to ${to}\u001b[2K${HOSTILE}`;
+    const minted = await c.cli.json<{ id: string }>([
+      "keys",
+      "create",
+      "--label",
+      label,
+      "--source",
+      unique("cli-label"),
+      "--type-permission",
+      `${from}=read`,
+    ]);
+    trackKey(c.ctx, minted.id);
+    const manager = await getOwnerClient().createKey({
+      label: "type move manager",
+      source: unique("cli-manager"),
+      permissions: ["keys.manage", "schema.write"],
+      type_permissions: { "*": "write" },
+    });
+    expect(manager.ok, JSON.stringify(manager.error)).toBe(true);
+    trackKey(c.ctx, manager.data.id);
+    const asManager = c.cli.as(manager.data.key);
+
+    const outcome = await asManager.run([
+      "types",
+      "move",
+      from,
+      to,
+      "--dry-run",
+    ]);
+    expect(outcome.code, outcome.stderr).toBe(0);
+    expect(outcome.stdout).not.toMatch(CONTROLS);
+    expect(outcome.stdout).toContain(minted.id);
+    expect(outcome.stdout).toContain("first");
+    const lines = outcome.stdout.split("\n");
+    expect(lines.filter((line) => line.startsWith("would move"))).toHaveLength(
+      1,
+    );
+    expect(lines.some((line) => line.startsWith("would move 99"))).toBe(false);
+
+    // The witness: the server holds the label with its line break.
+    const json = await asManager.json<{ grants: { label: string }[] }>([
+      "types",
+      "move",
+      from,
+      to,
+      "--dry-run",
+    ]);
+    expect(json.grants.map((grant) => grant.label)).toContain(label);
+  });
+});
+
 describe("a redirect from the docs site", () => {
   it("is sent through the proxy or not by where it goes, each time", async () => {
     const landed = await listen("127.0.0.1", (_request, response) => {
@@ -480,5 +560,34 @@ describe("a redirect from the docs site", () => {
     expect(landed.arrivals.map((entry) => entry.url)).toEqual([
       "/api/docs/topics",
     ]);
+  });
+
+  it("leaves what names the caller behind when it goes to another host or port", async () => {
+    const landed = await listen("127.0.0.1", (_request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ pages: [] }));
+    });
+    const { arrivals, port: first } = await listen(
+      "127.0.0.1",
+      (request, response) => {
+        const to =
+          request.url === "/api/docs/topics"
+            ? `http://localhost:${String(landed.port)}/api/docs/topics`
+            : "/";
+        response.writeHead(302, { location: to });
+        response.end();
+      },
+    );
+    const outcome = await c.cli
+      .withEnv({ MARFA_DOCS_URL: `http://127.0.0.1:${String(first)}` })
+      .run(["--json", "docs", "topics"]);
+    expect(outcome.code, outcome.stderr).toBe(0);
+    expect(arrivals).toHaveLength(1);
+    expect(landed.arrivals).toHaveLength(1);
+    for (const arrival of [...arrivals, ...landed.arrivals]) {
+      expect(arrival.authorization).toBeUndefined();
+      expect(arrival.cookie).toBeUndefined();
+      expect(arrival.marfa).toEqual([]);
+    }
   });
 });

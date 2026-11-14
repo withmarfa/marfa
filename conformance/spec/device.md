@@ -3508,6 +3508,14 @@ When a command sends a request to `localhost`, an address in `127.0.0.0/8` or `:
 
 **Tests:** `cli/key-and-files.test.ts › never goes through a proxy the environment names, and one to another host does`, `› is sent through the proxy or not by where it goes, each time`, `cli/server-status.test.ts › asks the server on this machine directly, whatever proxy the environment names`.
 
+### `device/command-redirect-no-credentials`
+
+When a command follows a redirect from the docs site or from a link to a blob, and the redirect changes the scheme, the host or the port, then the CLI MUST send no `Authorization`, `Proxy-Authorization` or `Cookie` header and no header whose name starts with `X-Marfa-` on that request or on any later request of the command, whatever `MARFA_API_KEY` holds.
+
+**Reason:** the headers that say who is asking belong to the origin the command began at. An address that redirect names is another party's, and a later redirect back to the first origin does not make it the first one again.
+
+**Tests:** `cli/key-and-files.test.ts › is sent through the proxy or not by where it goes, each time`, `› leaves what names the caller behind when it goes to another host or port`.
+
 ### `device/command-key-own-server`
 
 If `--url` names a server other than the one `MARFA_API_URL` names, `MARFA_API_KEY` is set and `--key` is not given, then the CLI MUST exit 2 with `usage` and send no request.
@@ -3538,7 +3546,7 @@ When a command prints text a server holds, without `--json`, the CLI MUST print 
 
 **Reason:** a title, a name or a message is text on the line it was printed on, and must not move the cursor, erase a line, retitle the window, reorder what follows it, start a row of its own or colour what follows it.
 
-**Tests:** `cli/key-and-files.test.ts › prints no control or bidirectional character from a title, and --json is unchanged`, `› print no control or bidirectional character from a view's title`, `› stays on its own line, in its own column and uncoloured, in a list, the overview and a device's views`.
+**Tests:** `cli/key-and-files.test.ts › prints no control or bidirectional character from a title, and --json is unchanged`, `› print no control or bidirectional character from a view's title`, `› stays on its own line, in its own column and uncoloured, in a list, the overview and a device's views`, `› says a key's label on the line of that key, however the label is written`.
 
 ### `device/command-cleartext-allow-flag`
 
