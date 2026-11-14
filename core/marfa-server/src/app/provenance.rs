@@ -18,6 +18,11 @@ pub fn current() -> Origin {
     ORIGIN.try_with(Clone::clone).unwrap_or_default()
 }
 
+/// Whether the current task serves a request.
+pub fn in_request() -> bool {
+    ORIGIN.try_with(|_| ()).is_ok()
+}
+
 pub async fn within<F: Future>(origin: Origin, work: F) -> F::Output {
     ORIGIN.scope(origin, work).await
 }

@@ -5,7 +5,7 @@
  * declares them and the document's general sections do. This holds the
  * declarations to each other: the always-on headers on every response,
  * `X-Error-Code` on refusals,
- * `Retry-After` on `429`, copy proof on the supported reads and
+ * `Retry-After` on `429` and on a write turned away for a restore, copy proof on the supported reads and
  * `Idempotency-Replayed` on the writes that take an `Idempotency-Key`. What a
  * server sends is held by the contract's fixtures.
  */
@@ -14,6 +14,7 @@ import { document } from "./document.js";
 
 type Operation = Record<string, unknown>;
 interface SpecResponse {
+  description?: string;
   headers?: Record<string, unknown>;
 }
 
@@ -152,14 +153,17 @@ describe("the document declares the headers the server sets", () => {
     expect(wrong.sort()).toEqual([]);
   });
 
-  it("declares Retry-After on the rate limiter's refusal, and only there", () => {
+  it("declares Retry-After on the rate limiter's refusal and on write contention, and only there", () => {
     const wrong: string[] = [];
     let refusals = 0;
     for (const [key, responses] of operations) {
       for (const [status, response] of Object.entries(responses)) {
         const declared = "Retry-After" in (response.headers ?? {});
+        const contended =
+          status === "503" &&
+          String(response.description).includes("`write_contention`");
         if (status === "429") refusals += 1;
-        if (declared !== (status === "429")) {
+        if (declared !== (status === "429" || contended)) {
           wrong.push(`${key} ${status} declared=${String(declared)}`);
         }
       }

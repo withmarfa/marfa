@@ -1,5 +1,6 @@
 //! The only door to SQLite; nothing outside holds a `Connection`.
 
+mod hold;
 pub mod migrate;
 mod open;
 pub mod rank;
@@ -17,12 +18,14 @@ use std::time::Duration;
 use rusqlite::Transaction;
 use tokio::sync::watch;
 
+pub use hold::{Holding, Permit};
 pub use open::Options;
 pub use writer::{Pulse, Watcher};
 
 use crate::app::faults::{
     FAIL_LOCK, Faults, HOLD_WRITE, REFUSE_READ, REFUSE_WRITE, REFUSE_WRITE_LOCK,
 };
+use crate::app::provenance;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::failure::Failure;
 
@@ -83,6 +86,7 @@ pub struct Db {
     readers: reader::Pool,
     writer: writer::Writer,
     faults: Arc<Faults>,
+    held: Arc<hold::Hold>,
     budget: Duration,
     /// A statement has met pages SQLite cannot read; nothing clears it but a restart.
     damaged: AtomicBool,
@@ -98,9 +102,25 @@ impl Db {
             readers: reader::Pool::new(opened.readers),
             writer,
             faults,
+            held: Arc::default(),
             budget: options.write_wait,
             damaged: AtomicBool::new(false),
         })
+    }
+
+    /// The permit admits the holder's writes; dropping the guard admits other requests again.
+    pub fn hold_writes(&self, refusal: Refusal) -> Result<Holding> {
+        self.held.arm(refusal)
+    }
+
+    /// The armed hold's refusal, whoever asks.
+    pub fn writes_held(&self) -> Option<Refusal> {
+        self.held.armed()
+    }
+
+    /// Answers once a write from this task would be refused, for a wait a hold's holder may own.
+    pub async fn writes_refusing(&self) -> Refusal {
+        self.held.refusing().await
     }
 
     /// Whether the file has answered a statement with damage since the server started.
@@ -183,6 +203,11 @@ impl Db {
         T: Send + 'static,
         F: FnOnce(&Transaction<'_>) -> Result<T> + Send + 'static,
     {
+        // A hold must not interrupt background bookkeeping between its claim and completion.
+        let held = (write.for_caller || provenance::in_request()).then_some(&*self.held);
+        if let Some(refusal) = held.and_then(|hold| hold.refusal()) {
+            return Err(refusal);
+        }
         if write.action.is_some() {
             self.faults.hold(HOLD_WRITE, write.action).await;
         }
@@ -202,9 +227,12 @@ impl Db {
             ));
         }
         self.writer
-            .submit(write, budget, cap, job)
+            .submit(write, budget, cap, held, job)
             .await
-            .map_err(|refusal| self.answered(refusal, budget))
+            .map_err(|turned| match turned {
+                writer::Turned::Held(refusal) => refusal,
+                writer::Turned::Failed(refusal) => self.answered(refusal, budget),
+            })
     }
 
     /// Waits as for a lock another connection holds, until it is let go or the write wait is spent.

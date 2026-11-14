@@ -10,6 +10,7 @@ use rusqlite::{Connection, ErrorCode, Transaction, TransactionBehavior};
 use tokio::sync::{mpsc, oneshot, watch};
 
 use super::Write;
+use super::hold::Hold;
 use crate::app::faults::{FAIL_AUDIT, FAIL_COMMIT, FAIL_COMMIT_ACK, FAIL_COMMIT_FULL, Faults};
 use crate::app::refusal::{Code, Refusal, Result};
 
@@ -76,6 +77,19 @@ impl Pulse {
 
     fn last(&self) -> Instant {
         self.origin + Duration::from_millis(self.beat.load(Ordering::Relaxed))
+    }
+}
+
+/// Why a submitted job did not answer with its own result.
+pub enum Turned {
+    /// A hold refused it before it was queued.
+    Held(Refusal),
+    Failed(Refusal),
+}
+
+impl From<Refusal> for Turned {
+    fn from(refusal: Refusal) -> Turned {
+        Turned::Failed(refusal)
     }
 }
 
@@ -251,8 +265,9 @@ impl Writer {
         write: Write,
         budget: Duration,
         cap: Option<Duration>,
+        hold: Option<&Hold>,
         job: F,
-    ) -> Result<T>
+    ) -> std::result::Result<T, Turned>
     where
         T: Send + 'static,
         F: FnOnce(&Transaction<'_>) -> Result<T> + Send + 'static,
@@ -276,22 +291,28 @@ impl Writer {
                 ));
             }
         });
-        let send = self.queue.send(Message::Run(run));
-        tokio::pin!(send);
-        loop {
-            match tokio::time::timeout_at(wait.into(), &mut send).await {
-                Ok(Ok(())) => break,
-                Ok(Err(_)) => return Err(Refusal::internal("the writer has stopped")),
+        let reserve = self.queue.reserve();
+        tokio::pin!(reserve);
+        let slot = loop {
+            match tokio::time::timeout_at(wait.into(), &mut reserve).await {
+                Ok(Ok(slot)) => break slot,
+                Ok(Err(_)) => return Err(Refusal::internal("the writer has stopped").into()),
                 Err(_) => match self.waiting_on(budget, cap) {
                     Some(later) => wait = later,
-                    None => return Err(contention()),
+                    None => return Err(contention().into()),
                 },
             }
+        };
+        match hold {
+            Some(hold) => hold
+                .admit(move || slot.send(Message::Run(run)))
+                .map_err(Turned::Held)?,
+            None => slot.send(Message::Run(run)),
         }
         let lost = |_| Refusal::internal("the writer has stopped");
         loop {
             match tokio::time::timeout_at(wait.into(), &mut answered).await {
-                Ok(result) => return result.map_err(lost)?,
+                Ok(result) => return Ok(result.map_err(lost)??),
                 Err(_) => {
                     if let Some(later) = self.waiting_on(budget, cap) {
                         wait = later;
@@ -301,9 +322,9 @@ impl Writer {
                         .compare_exchange(QUEUED, ABANDONED, Ordering::SeqCst, Ordering::SeqCst)
                         .is_ok();
                     return if withdrawn {
-                        Err(contention())
+                        Err(contention().into())
                     } else {
-                        answered.await.map_err(lost)?
+                        Ok(answered.await.map_err(lost)??)
                     };
                 }
             }
