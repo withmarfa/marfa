@@ -3542,7 +3542,7 @@ If a transfer to a file named by `--output` ends before the whole answer arrives
 
 ### `device/command-text-printable`
 
-When a command prints text a server holds, without `--json`, the CLI MUST print each control character and bidirectional formatting character in it as an escape sequence, a newline, a tab and an escape that starts a colour included, and add its own line breaks, columns and colour only around that text, and MUST print two names that differ in any character as two different names.
+When a command prints text a server holds, without `--json`, the CLI MUST print each control character and bidirectional formatting character in it as an escape sequence, a newline, a tab and an escape that starts a colour included, and add its own line breaks, columns and colour only around that text, and print two names that differ in any character as two different names.
 
 **Reason:** a title, a name or a message is text on the line it was printed on, and must not move the cursor, erase a line, retitle the window, reorder what follows it, start a row of its own or colour what follows it, and an object holding both of two names that differ only by such a character must not show one value for them.
 
