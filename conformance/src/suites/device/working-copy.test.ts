@@ -1963,6 +1963,42 @@ describe("the working copy belongs to one server", () => {
     );
   });
 
+  it("holds in its queue no kind and no verdict its schema version does not name", async () => {
+    harness = await hydratedHarness("store-version-names", {
+      items: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const { device } = harness;
+    const queued = await device.replaceMetadata("n1", ["held"]);
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    if (!queued.ok) return;
+
+    const store = new DatabaseSync(device.store);
+    try {
+      const set = (column: "kind" | "verdict", value: string) => () =>
+        store
+          .prepare(`UPDATE queue SET ${column} = ? WHERE id = ?`)
+          .run(value, queued.value.id);
+      // The witness: a kind and a verdict the version names are held.
+      expect(set("kind", "add_tag")).not.toThrow();
+      expect(set("verdict", "dead")).not.toThrow();
+      expect(
+        set("kind", "merge_metadata"),
+        "the store held a kind its version does not name",
+      ).toThrow();
+      expect(
+        set("verdict", "maybe"),
+        "the store held a verdict its version does not name",
+      ).toThrow();
+      expect(
+        store
+          .prepare("SELECT kind, verdict FROM queue WHERE id = ?")
+          .get(queued.value.id),
+      ).toEqual({ kind: "add_tag", verdict: "dead" });
+    } finally {
+      store.close();
+    }
+  });
+
   it("names a write of a kind this build does not send, among the writes a store of another version holds", async () => {
     harness = await hydratedHarness("store-version-kind", {
       items: { "core.note": [{ item: { id: "n1" } }] },
@@ -1971,9 +2007,29 @@ describe("the working copy belongs to one server", () => {
     const queued = await device.replaceMetadata("n1", ["held"]);
     expect(queued.ok, JSON.stringify(queued)).toBe(true);
 
+    // What an earlier build would have left: a queue that admits a kind this
+    // build no longer queues, here the metadata merge it once sent.
     const reshape = (kind: string) => {
-      const store = new DatabaseSync(device.store);
+      const store = new DatabaseSync(device.store, {
+        enableForeignKeyConstraints: false,
+      });
       try {
+        const { sql } = store
+          .prepare(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'queue'",
+          )
+          .get() as { sql: string };
+        const admitting = sql
+          .replace(
+            "'replace_metadata',",
+            "'replace_metadata', 'merge_metadata',",
+          )
+          .replace(/^CREATE TABLE\s+"?queue"?/, "CREATE TABLE queue_admitting");
+        expect(admitting).toContain("'merge_metadata'");
+        store.exec(admitting);
+        store.exec(
+          "INSERT INTO queue_admitting SELECT * FROM queue; DROP TABLE queue; ALTER TABLE queue_admitting RENAME TO queue;",
+        );
         store.prepare("UPDATE queue SET kind = ?").run(kind);
         store.exec("PRAGMA user_version = 0");
       } finally {
