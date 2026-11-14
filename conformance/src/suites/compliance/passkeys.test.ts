@@ -488,7 +488,7 @@ describe("owner passkeys", () => {
     expect((await signIn(first, 3)).status).toBe(200);
     expect((await post("/auth/sign-in", owner)).status).toBe(429);
   });
-  it("signs in on a challenge asked for before other callers asked for 1,100 more, and only once", async () => {
+  it("signs in on an unanswered challenge however many others are asked for, and only once", async () => {
     const device = testAuthenticator();
     const id = (await register(device, "Pending")).id;
     const pending = await options("authenticate");
