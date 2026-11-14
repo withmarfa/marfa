@@ -158,7 +158,7 @@ Every surface names a core error by `CoreError::code`: the `code` in the binary'
 
 ## The Node module
 
-- `withdraw(id)` and `discard(id)` return `Promise<boolean>`: await them to read the result or catch a refusal. `withdraw` reads rows from the server, and `discard` can wait for a running drain. Both run off the JavaScript thread.
+- `withdraw(id)` returns `Promise<string[]>`, the ids of every write it took out of the queue (those of a row write's batch among them, and none where the write is not one a withdraw takes), and `discard(id)` returns `Promise<boolean>`: await them to read the result or catch a refusal. `withdraw` reads rows from the server, and `discard` can wait for a running drain. Both run off the JavaScript thread. In Swift, `withdraw(id:)` returns `[String]`.
 - Build and test it as `core/AGENTS.md` says. `core/scripts/binding-proof.sh` drives the built module through an offline write and its verdict against a real server.
 
 ## The Swift package
