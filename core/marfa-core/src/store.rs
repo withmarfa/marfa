@@ -3225,12 +3225,7 @@ pub fn set_attachment_miss(
     Ok(())
 }
 
-/// The bytes the cache keeps for the queue: those of every upload not yet
-/// taken, and those of every taken upload a write that may still be sent
-/// waits on, which a drain under another credential sends again
-/// (`uploads_to_send_again`). A write may still be sent while it has no
-/// verdict, is blocked or dead, or is refused unsent behind no withdrawn
-/// write, as `release` decides: released, it waits on the upload again.
+/// A taken upload may need resending, or hold a refused file's only copy.
 pub fn kept_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
     let mut statement = conn.prepare(
         "SELECT DISTINCT blob FROM queue
@@ -3256,7 +3251,8 @@ pub fn kept_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
             AND named.value = upload.id
             AND (waiting.verdict IS NULL
                  OR waiting.verdict IN (:blocked, :dead)
-                 OR waiting.verdict = :refused AND waiting.sent = 0)",
+                 OR waiting.verdict = :refused AND waiting.sent = 0
+                 OR waiting.verdict = :refused AND waiting.reason = :bytes_absent)",
     )?;
     let waiting = statement
         .query_map(
@@ -3268,6 +3264,7 @@ pub fn kept_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
                 ":blocked": Verdict::Blocked.as_str(),
                 ":dead": Verdict::Dead.as_str(),
                 ":refused": Verdict::Refused.as_str(),
+                ":bytes_absent": BYTES_ABSENT,
             },
             |row| {
                 Ok((
@@ -3371,6 +3368,80 @@ pub fn send_upload_again(conn: &Connection, id: &str) -> Result<(), CoreError> {
         params![id, WriteKind::UploadBlob.as_str()],
     )?;
     Ok(())
+}
+
+pub const BYTES_ABSENT: &str = "blob_not_found";
+
+fn bytes_sent_again_key(id: &str) -> String {
+    format!("bytes_sent_again/{id}")
+}
+
+pub fn forget_bytes_sent_again(conn: &Connection, id: &str) -> Result<(), CoreError> {
+    meta_delete(conn, &bytes_sent_again_key(id))
+}
+
+/// Whether the write `id` now waits, once, on its held uploads going again.
+pub fn send_bytes_again(
+    conn: &Connection,
+    id: &str,
+    held: impl Fn(&str) -> bool,
+) -> Result<bool, CoreError> {
+    let key = bytes_sent_again_key(id);
+    if meta_get(conn, &key)?.is_some() {
+        return Ok(false);
+    }
+    let mut statement = conn.prepare(
+        "SELECT upload.id, upload.blob,
+                EXISTS (SELECT 1 FROM queue AS ahead
+                         WHERE ahead.kind = :upload AND ahead.blob = upload.blob
+                           AND ahead.verdict IS NULL AND ahead.seq < waiting.seq)
+           FROM queue AS waiting, json_each(waiting.depends_on) AS named, queue AS upload
+          WHERE waiting.id = :id AND upload.id = named.value
+            AND upload.kind = :upload AND upload.blob IS NOT NULL
+            AND upload.verdict IN (:accepted, :merged, :conflicted)",
+    )?;
+    let taken = statement
+        .query_map(
+            named_params! {
+                ":id": id,
+                ":upload": WriteKind::UploadBlob.as_str(),
+                ":accepted": Verdict::Accepted.as_str(),
+                ":merged": Verdict::Merged.as_str(),
+                ":conflicted": Verdict::Conflicted.as_str(),
+            },
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, bool>(2)?,
+                ))
+            },
+        )?
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut waits = false;
+    for (upload, hash, going) in taken {
+        if !held(&hash) {
+            continue;
+        }
+        if !going {
+            send_upload_again(conn, &upload)?;
+        }
+        waits = true;
+    }
+    if waits {
+        record_verdict(
+            conn,
+            id,
+            &Answered {
+                verdict: Verdict::Blocked,
+                reason: Some(crate::model::AWAITING_DEPENDENCY),
+                answer: None,
+                conflicted_copy_id: None,
+            },
+        )?;
+        meta_set(conn, &key, "1")?;
+    }
+    Ok(waits)
 }
 
 /// A keyed create's version-zero row can still name an unseen server target.
@@ -5813,6 +5884,7 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     }
     let batch = crate::row_writes::batch_of(conn, id)?;
     for write in &batch {
+        forget_bytes_sent_again(conn, write)?;
         conn.execute(
             "UPDATE queue
                 SET verdict = NULL, reason = NULL, answer = NULL,
@@ -5941,9 +6013,7 @@ fn waits_for_withdrawn(conn: &Connection, id: &str) -> Result<bool, CoreError> {
     )?)
 }
 
-/// Transitive: a write two steps behind a withdrawn one can land no more than
-/// the one between, and left unanswered it would wait on a row clearing may
-/// take.
+/// Sent dependents qualify only through an upload; unsent dependents are transitive.
 pub fn held_for(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreError> {
     read_writes(
         conn,
@@ -5953,11 +6023,18 @@ pub fn held_for(conn: &Connection, id: &str) -> Result<Vec<QueuedWrite>, CoreErr
              UNION
              SELECT waiting.id FROM queue AS waiting, held, json_each(waiting.depends_on) AS named
               WHERE named.value = held.id
-                AND waiting.sent = 0 AND (waiting.verdict IS NULL OR waiting.verdict = ?2)
+                AND (waiting.verdict IS NULL OR waiting.verdict = ?2)
+                AND (waiting.sent = 0
+                     OR EXISTS (SELECT 1 FROM queue AS upload
+                                 WHERE upload.id = held.id AND upload.kind = ?3))
            )
            SELECT id FROM held WHERE id <> ?1
          )",
-        [id, Verdict::Blocked.as_str()],
+        [
+            id,
+            Verdict::Blocked.as_str(),
+            WriteKind::UploadBlob.as_str(),
+        ],
     )
 }
 
@@ -5984,8 +6061,7 @@ pub fn stop_waiting_on(conn: &Connection, id: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// Also refuses each of `held`, unsent, and puts the copy back as it was
-/// beneath each. The caller has read their rows back already.
+/// The caller must read back every affected row before withdrawing it.
 pub fn withdraw(
     conn: &Connection,
     row: &QueuedWrite,
@@ -5994,8 +6070,6 @@ pub fn withdraw(
     take_out(conn, row, held, "withdrawn")
 }
 
-/// `row` leaves the queue, with each of `held` refused unsent for it and the
-/// copy put back as it was beneath every one of them.
 fn take_out(
     conn: &Connection,
     row: &QueuedWrite,
@@ -6015,13 +6089,7 @@ fn take_out(
     let_go_of_ends(conn, &ends)
 }
 
-/// Never clears a row `release` takes (blocked, dead, or refused unsent), nor
-/// one an unanswered or releasable row depends on: written as a list of
-/// verdicts instead, a release would leave a row waiting forever on a
-/// dependency that is gone. Nor a refused row carrying content, which goes
-/// only by `discard`. A row refused unsent behind a withdrawn write can never
-/// be released and is cleared; passes repeat until one clears nothing, since
-/// each can free what the last kept.
+/// Keeps releasable writes, refused content and uploads still needed by dependents.
 pub fn forget_answered(conn: &Connection) -> Result<usize, CoreError> {
     forget_answered_inner(conn, None, None, true)
 }
@@ -6219,6 +6287,7 @@ fn forget_answered_inner(
                     "chosen_tier/",
                     "upload_sent_as/",
                     "cleared_time/",
+                    "bytes_sent_again/",
                 ] {
                     conn.execute(
                         "DELETE FROM main.meta
@@ -6283,7 +6352,9 @@ fn forget_answered_once(
               SELECT 1 FROM queue AS waiting
                WHERE (waiting.verdict IS NULL
                       OR waiting.verdict IN (:blocked, :dead)
-                      OR (waiting.verdict = :refused AND waiting.sent = 0))
+                      OR (waiting.verdict = :refused AND waiting.sent = 0)
+                      OR (waiting.verdict = :refused AND waiting.reason = :bytes_absent
+                          AND queue.kind = :upload))
                  AND waiting.depends_on LIKE '%' || queue.id || '%'
             )"
             ),
@@ -6296,6 +6367,8 @@ fn forget_answered_once(
                 ":refused": Verdict::Refused.as_str(),
                 ":blocked": Verdict::Blocked.as_str(),
                 ":dead": Verdict::Dead.as_str(),
+                ":bytes_absent": BYTES_ABSENT,
+                ":upload": WriteKind::UploadBlob.as_str(),
             },
         )?)
 }

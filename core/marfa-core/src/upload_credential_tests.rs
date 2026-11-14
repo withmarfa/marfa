@@ -436,3 +436,62 @@ fn writes_down_a_renewal_left_in_memory_when_a_drain_ends() {
         "the renewal was left in memory, for a process that exits to lose"
     );
 }
+
+#[test]
+fn withdrawing_bytes_sent_again_under_a_new_key_refuses_the_file_sent_before() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let (file_id, _) = taken_upload_then_held_item(&server, dir.path());
+    let core = copy_in_keyed(&server, dir.path(), "second");
+    server.on(
+        "/blobs",
+        vec![scripted::refusal(503, "service_unavailable")],
+    );
+    core.drain().unwrap();
+    assert_eq!(
+        authorizations(&server, "/blobs"),
+        ["Bearer first", "Bearer second"]
+    );
+    let queue = core.queue().unwrap();
+    let (upload, file) = (queue[0].clone(), queue[1].clone());
+    assert_eq!(upload.verdict, None, "the bytes were not made to go again");
+    assert!(!crate::store::unsent(&core.conn().unwrap(), &file.id).unwrap());
+    // What a withdrawal reads to learn whether the create made anything.
+    server.on("/items", vec![crate::upload_again_tests::empty_bin()]);
+    server.on(
+        &format!("/items/{file_id}"),
+        vec![scripted::certified(scripted::refusal(
+            404,
+            "item_not_found",
+        ))],
+    );
+
+    crate::upload_again_tests::set_aside(&core, &upload.id);
+    assert!(core.withdraw(&upload.id).unwrap());
+
+    let after = core.queue().unwrap();
+    assert_eq!(
+        after
+            .iter()
+            .map(|queued| (queued.kind, queued.verdict, queued.reason.clone()))
+            .collect::<Vec<_>>(),
+        [(
+            crate::model::WriteKind::CreateItem,
+            Some(Verdict::Refused),
+            Some("the upload_blob it waits for was withdrawn".into())
+        )],
+        "the file still waits on bytes the queue no longer holds"
+    );
+    assert_eq!(
+        after[0].body, file.body,
+        "the refused file lost its content"
+    );
+    let (items, blobs) = (server.seen("/items").len(), server.seen("/blobs").len());
+    core.drain().unwrap();
+    assert_eq!(
+        (server.seen("/items").len(), server.seen("/blobs").len()),
+        (items, blobs),
+        "a write refused behind a withdrawn upload went again"
+    );
+    assert!(!core.release(&file.id).unwrap());
+}

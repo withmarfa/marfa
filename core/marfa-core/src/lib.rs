@@ -84,6 +84,8 @@ mod tier_tests;
 #[cfg(test)]
 mod trashed_at_tests;
 #[cfg(test)]
+mod upload_again_tests;
+#[cfg(test)]
 mod upload_credential_tests;
 mod view_writes;
 mod views;

@@ -756,6 +756,14 @@ Where the copy still holds an upload's bytes, when a device drains with a creden
 
 **Tests:** `device/upload-credential-live.test.ts › sends a taken upload again under the key that replaced its sender, before the file waiting on it`.
 
+### `queue-and-verdicts/upload-again-bytes-absent`
+
+Where the copy still holds the bytes of a taken upload that a write waits on, when the server answers that write `404 blob_not_found`, a device MUST send the upload again before it sends that write again, unless the uploads the write waits on already went again for an earlier such answer to it.
+
+**Reason:** a stalled write can outlive its upload's orphan grace (`stores/orphan-upload-kept`), and a credential that neither sent the bytes nor may read them gets the same answer (`blobs/proof-file-refused`). Sending the bytes again can cure either refusal without changing the write's key (`items/idempotency-unproven-file-not-kept`); the one-resend limit prevents a loop, and `device/file-trim-keeps-queued` protects the local copy.
+
+**Tests:** `device/upload-again-live.test.ts › sends a file's bytes again once the server has purged them, and the file item lands`.
+
 ## What a drain reports
 
 A drain is one pass over the queue. Its report says what became of each write the pass came to, in counts and in an entry for each write it settled or sent.
@@ -978,7 +986,7 @@ When the working copy holds a copy the server set aside, a device MUST hold its 
 
 ### `queue-and-verdicts/refused-contract`
 
-When the server answers a write with a `4xx` naming its contract, other than `408`, `425`, `429` and the answers `queue-and-verdicts/credential-blocks-queue`, `queue-and-verdicts/grant-blocks`, `queue-and-verdicts/unclaimed-source-blocks`, `queue-and-verdicts/key-spent-blocks`, `queue-and-verdicts/ancestor-blocks`, `queue-and-verdicts/conflict-blocks`, `queue-and-verdicts/in-flight-counted`, `queue-and-verdicts/not-retained-accepted`, `queue-and-verdicts/contract-changed-accepted` and `queue-and-verdicts/contract-changed-key-spent` name, a device MUST give it the verdict `refused` on the first such answer, with the server's code as its reason, or `unknown` where the answer names none.
+When the server answers a write with a `4xx` naming its contract, other than `408`, `425`, `429` and the answers `queue-and-verdicts/credential-blocks-queue`, `queue-and-verdicts/grant-blocks`, `queue-and-verdicts/unclaimed-source-blocks`, `queue-and-verdicts/key-spent-blocks`, `queue-and-verdicts/ancestor-blocks`, `queue-and-verdicts/conflict-blocks`, `queue-and-verdicts/in-flight-counted`, `queue-and-verdicts/not-retained-accepted`, `queue-and-verdicts/contract-changed-accepted`, `queue-and-verdicts/contract-changed-key-spent` and `queue-and-verdicts/upload-again-bytes-absent` name, a device MUST give it the verdict `refused` on the first such answer, with the server's code as its reason, or `unknown` where the answer names none.
 
 **Reason:** the same request sent again is the same request: a device that retried it would spend the ceiling on identical refusals.
 
@@ -1340,11 +1348,11 @@ While a write is blocked `failing_alone`, a device MUST keep each write that dep
 
 ### `queue-and-verdicts/failing-alone-withdraw-dependants`
 
-When a caller withdraws a write blocked `failing_alone`, a device MUST refuse without sending each write that waits for it.
+When a caller withdraws a write blocked `failing_alone`, a device MUST refuse without sending each write that waits for it, one sent before included, with the reason `the <kind> it waits for was withdrawn`.
 
-**Reason:** the write the others wait for is gone, so they could never be sent.
+**Reason:** the write the others wait for is gone, so they could never be sent. A write sent before waits on an upload only once the device sends that upload again (`queue-and-verdicts/upload-again-bytes-absent`, `queue-and-verdicts/upload-sent-as-writer`), and without the upload no drain can send it again. Its content stays in the queue until it is discarded.
 
-**Tests:** `device/stuck-write.test.ts › never depends on that write, so the writes waiting on an upload stay waiting`.
+**Tests:** `device/stuck-write.test.ts › never depends on that write, so the writes waiting on an upload stay waiting`, `› refuses the file sent before when its bytes sent again are set aside and withdrawn, and sends nothing for it after`.
 
 ### `queue-and-verdicts/queue-shows-last-failure`
 

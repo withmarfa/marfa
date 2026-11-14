@@ -740,6 +740,14 @@ While a blob's report is younger than `blob_cleanup_grace_seconds`, the server M
 
 **Tests:** `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`, `compliance/blob-rules.test.ts › reports an unreferenced blob on one run and purges it on the next, never one an item names`.
 
+### `stores/orphan-upload-kept`
+
+While fewer than `blob_cleanup_grace_seconds` have passed since the server last took an upload of a blob, the server MUST NOT purge it.
+
+**Reason:** a client that uploads bytes before writing the item naming them has at least the grace to finish, because an upload clears any earlier orphan report (`stores/orphan-upload-lifts`). With successful runs at the configured interval and nothing else keeping the blob, the report and purge take at most the grace plus two intervals after the upload: between one and three days at the default grace of a day and a daily run.
+
+**Tests:** `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`.
+
 ### `stores/orphan-purge-not-found`
 
 When a run of `blob-orphans` purges a blob, the server MUST answer the blob's reads with `404 blob_not_found`.

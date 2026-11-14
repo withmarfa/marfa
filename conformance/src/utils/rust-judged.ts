@@ -567,6 +567,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/device/time-comparisons-live.test.ts",
   "src/suites/device/types-scaffold-live.test.ts",
   "src/suites/device/types-scaffold.test.ts",
+  "src/suites/device/upload-again-live.test.ts",
   "src/suites/device/upload-credential-live.test.ts",
   "src/suites/device/verdicts.test.ts",
   "src/suites/device/versioned-deletes-live.test.ts",

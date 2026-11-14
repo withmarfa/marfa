@@ -2752,9 +2752,9 @@ When a device takes bytes away to fit the file budget, a device MUST NOT take an
 
 ### `device/file-trim-keeps-queued`
 
-When a device takes bytes away to fit the file budget, a device MUST NOT take bytes a queued upload names.
+When a device takes bytes away to fit the file budget, a device MUST NOT take bytes a queued upload names while that upload has not been taken, a write that depends on it can still be sent, or a write that depends on it is refused with `blob_not_found`.
 
-**Reason:** until the server has taken an upload, its bytes are the only copy.
+**Reason:** an upload can outlive the server's orphan grace before the write naming it lands, so a dependent write may need the bytes again even after the upload was taken. A refusal with `blob_not_found` can leave the device holding the only copy.
 
 **Tests:** `device/file-cache.test.ts › keeps the bytes a queued upload names, under a budget of zero`.
 
