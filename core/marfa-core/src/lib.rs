@@ -501,8 +501,8 @@ impl Core {
             .map_err(|error| damage::at_path(error, path))
     }
 
-    /// Reads every page of the store at `path`. Refuses, leaving it as it
-    /// is, with `StoreDamaged`, its path and what its queue holds where
+    /// Reads every page of the store at `path`, and checks each index
+    /// against its rows. Refuses, leaving it as it is, with `StoreDamaged`, its path and what its queue holds where
     /// SQLite cannot read it, with `WrongSchema` where another build made it,
     /// and with `ReadingHandle` while another process, or another `Core` in
     /// this one, holds the writer role. Reads the whole file, so it takes
@@ -528,7 +528,10 @@ impl Core {
     /// idempotency key, with its body, base version and verdict. The new
     /// store keeps the server and instance the old one was built from, and
     /// the fetched and uploaded bytes beside the path, which are addressed by
-    /// content. It holds no copy: a drain sends nothing until it is
+    /// content. Where it cannot read every write, or every record that decides
+    /// how a carried write is sent, every byte held beside the path as it
+    /// sets the store aside stays, whatever the file budget, until the store
+    /// set aside is gone. It holds no copy: a drain sends nothing until it is
     /// hydrated, and a hydration from another instance holds the carried
     /// writes, as for any store. Refuses with `Invalid` a store that opens
     /// as it is and a folder's store, with `WrongSchema` a store another
@@ -544,7 +547,8 @@ impl Core {
 
     /// For a writer, lets go of old changes of removed edges and takes what
     /// a process that ended part way left in the cache, sparing the partial
-    /// files of attachments.
+    /// files of attachments, and forgets the bytes kept for a store set
+    /// aside that is gone.
     fn swept(self) -> Core {
         if self.handle() != Handle::Writer {
             return self;
@@ -560,6 +564,9 @@ impl Core {
                 .ok()
                 .and_then(|conn| store::kept_attachments(&conn).ok());
             cache.sweep_incoming(INCOMING_GRACE, attachments.as_ref());
+            if let Ok(conn) = self.conn() {
+                let _ = damage::forget_gone_keeps(&conn, |name| cache.beside_store(name));
+            }
         }
         self
     }
@@ -3231,7 +3238,7 @@ impl Core {
     /// The bytes the queue keeps and the bytes attachments keep, by the hex
     /// of their hash, both read on `conn`.
     fn keep_sets(&self, conn: &Connection) -> Result<(HashSet<String>, HashSet<String>)> {
-        let kept = queue_keeps(conn)?;
+        let kept = self.queue_keeps(conn)?;
         #[cfg(debug_assertions)]
         crate::fault::hold(|| format!("uploads-read:{:p}", self));
         let attachments = store::kept_attachments(conn)?;
@@ -3261,7 +3268,20 @@ impl Core {
     }
 
     fn kept_blobs(&self) -> Option<HashSet<String>> {
-        queue_keeps(&*self.conn().ok()?).ok()
+        self.queue_keeps(&*self.conn().ok()?).ok()
+    }
+
+    /// The bytes the queue keeps, and those a set-aside keeps for writes it
+    /// could not read, by the hex of their hash.
+    fn queue_keeps(&self, conn: &Connection) -> Result<HashSet<String>> {
+        let mut kept: HashSet<String> = store::kept_uploads(conn)?
+            .iter()
+            .filter_map(|hash| blob::hex_of(hash).ok().map(str::to_string))
+            .collect();
+        if let Some(cache) = &self.cache {
+            kept.extend(damage::kept_bytes(conn, |name| cache.beside_store(name))?);
+        }
+        Ok(kept)
     }
 
     /// The bytes attachments keep, by the hex of their hash, with the
@@ -3614,7 +3634,7 @@ impl Core {
 
     /// Takes every file the cache holds that a device can fetch again, and
     /// answers how many bytes it took. Keeps the bytes of attachments, of
-    /// queued uploads and of reads in progress, and the partial files a
+    /// queued uploads, of a set-aside's unread writes and of reads in progress, and the partial files a
     /// fetch holds, and leaves the file budget as it was. Where the store or
     /// the cache cannot be read, takes nothing and answers the error. An
     /// attachment made while the files go can lose its bytes, which the next
@@ -4777,15 +4797,6 @@ pub(crate) fn name_bytes(
     if catalog.matches("core.file", r#type) {
         properties.insert("size_bytes".into(), taken.size.into());
     }
-}
-
-/// The bytes the queue keeps, by the hex of their hash.
-fn queue_keeps(conn: &Connection) -> Result<HashSet<String>> {
-    let hashes = store::kept_uploads(conn)?;
-    Ok(hashes
-        .iter()
-        .filter_map(|hash| blob::hex_of(hash).ok().map(str::to_string))
-        .collect())
 }
 
 fn queue_upload(conn: &Connection, hash: &str, mime_type: &str) -> Result<QueuedWrite> {

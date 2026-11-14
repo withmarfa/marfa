@@ -3873,7 +3873,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device check
 
-Read every page of the store, and refuse one SQLite cannot read store_damaged, naming it and how many writes its queue holds that the server has not taken, or that its queue cannot be read whole.
+Read every page of the store, check each index against its rows, and refuse one SQLite cannot read store_damaged, naming it and how many writes its queue holds that the server has not taken, or that its queue cannot be read whole.
 
 It reads the whole file, so it takes longer the larger the store. It changes nothing, and is refused reading_handle while another process holds the store's writer role.
 
@@ -3887,7 +3887,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Set aside a store SQLite cannot read, and make a new one in its place that carries every write its queue lets be read.
 
-The damaged store and its logs move to `PATH.damaged-N` beside it, for the first N no file holds, and are never deleted. Each write carried keeps its id and idempotency key, its body, its base version and its verdict, and the new store keeps the server and instance the old one was built from and the bytes kept beside the store. The answer counts the writes carried that the server has not taken and the writes it could not read, names each of those by id where it can, and says whether the whole queue was found.
+The damaged store and its logs move to `PATH.damaged-N` beside it, for the first N no file holds, and are never deleted. Each write carried keeps its id and idempotency key, its body, its base version and its verdict, and the new store keeps the server and instance the old one was built from and the bytes kept beside the store. The answer counts the writes carried that the server has not taken and the writes it could not read, names each of those by id where it can, and says whether the whole queue was found. Where it could not read every write, or every record of how one is sent, every byte kept beside the store as it was set aside stays until the store set aside is removed.
 
 The new store holds no copy: hydrate it, and then drain, to send what it carries; a drain before then sends nothing. Where the old store does not say which instance it was built from, each carried write is held blocked instance_changed until released, and a carried write whose record of how it is sent does not read is held blocked record_unread until released. A store that opens as it is, or a folder's store, is refused invalid. A set-aside that stopped part way is finished by running it again, and until then the store is refused store_damaged.
 

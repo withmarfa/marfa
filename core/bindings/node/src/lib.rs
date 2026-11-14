@@ -256,8 +256,10 @@ pub struct SetAside {
     /// The id of each unread write whose id could be read.
     pub unread_ids: Vec<String>,
     /// Whether every write the old queue holds was found, and every record
-    /// that decides how a carried write is sent was read; where not, the
-    /// store set aside may hold more.
+    /// that decides how a carried write is sent was read; where not, or
+    /// where a write did not read, the store set aside may hold more, and
+    /// every byte the cache held as it was set aside stays until that store
+    /// is gone.
     pub whole: bool,
     /// The carried writes held blocked `instance_changed`, because the old
     /// store did not say which instance it was built from; release one to
@@ -2516,7 +2518,8 @@ impl MarfaCore {
         marfa_core::Core::remove_store_losing_all(path).map_err(|error| failure(env, error))
     }
 
-    /// Reads every page of the store at `path`. Refuses with `store_damaged`,
+    /// Reads every page of the store at `path`, and checks each index against
+    /// its rows. Refuses with `store_damaged`,
     /// naming it and how many writes its queue holds that the server has not
     /// taken as `unsent`, where SQLite cannot read it, with `wrong_schema`
     /// where another build made it, and with `reading_handle` while another

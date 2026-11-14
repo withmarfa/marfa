@@ -355,8 +355,8 @@ pub enum DeviceCommand {
     /// that fills a stale copy in place keeps it until that hydration
     /// completes.
     Status,
-    /// Read every page of the store, and refuse one SQLite cannot read
-    /// store_damaged, naming it and how many writes its queue holds that the
+    /// Read every page of the store, check each index against its rows, and
+    /// refuse one SQLite cannot read store_damaged, naming it and how many writes its queue holds that the
     /// server has not taken, or that its queue cannot be read whole.
     ///
     /// It reads the whole file, so it takes longer the larger the store. It
@@ -373,7 +373,9 @@ pub enum DeviceCommand {
     /// was built from and the bytes kept beside the store. The answer counts
     /// the writes carried that the server has not taken and the writes it
     /// could not read, names each of those by id where it can, and says
-    /// whether the whole queue was found.
+    /// whether the whole queue was found. Where it could not read every
+    /// write, or every record of how one is sent, every byte kept beside the
+    /// store as it was set aside stays until the store set aside is removed.
     ///
     /// The new store holds no copy: hydrate it, and then drain, to send what
     /// it carries; a drain before then sends nothing. Where the old store
@@ -1183,7 +1185,7 @@ pub enum DeviceFoldersCommand {
 }
 
 /// A store found damaged part way through a read is named, with what its
-/// queue holds, where the store can be read to say so.
+/// queue holds where the store can be read to say so.
 pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError> {
     let db = args.db.clone();
     run_on(args, named, json).map_err(|error| match (error, db) {
@@ -1197,7 +1199,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         ) if path.is_empty() => match Core::check_store(&db) {
             Err(named @ marfa_core::CoreError::StoreDamaged { .. }) => CliError::Core(named),
             _ => CliError::Core(marfa_core::CoreError::StoreDamaged {
-                path,
+                path: db.display().to_string(),
                 reason,
                 unsent,
             }),

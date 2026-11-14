@@ -3302,7 +3302,8 @@ pub fn remove_store_losing_all(path: String) -> Result<(), MarfaError> {
     Ok(marfa_core::Core::remove_store_losing_all(path)?)
 }
 
-/// Reads every page of the store at `path`. Throws `StoreDamaged`, naming it
+/// Reads every page of the store at `path`, and checks each index against its
+/// rows. Throws `StoreDamaged`, naming it
 /// and how many writes its queue holds that the server has not taken, where
 /// SQLite cannot read it, `WrongSchema` where another build made it, and
 /// `ReadingHandle` while another process, or another `Core` in this one,
@@ -3325,8 +3326,10 @@ pub struct SetAside {
     /// The id of each unread write whose id could be read.
     pub unread_ids: Vec<String>,
     /// Whether every write the old queue holds was found, and every record
-    /// that decides how a carried write is sent was read; where not, the
-    /// store set aside may hold more.
+    /// that decides how a carried write is sent was read; where not, or
+    /// where a write did not read, the store set aside may hold more, and
+    /// every byte the cache held as it was set aside stays until that store
+    /// is gone.
     pub whole: bool,
     /// The carried writes held blocked `instanceChanged`, because the old
     /// store did not say which instance it was built from; release one to

@@ -168,6 +168,11 @@ impl Cache {
 
     /// The folder of fetched bytes beside the store at `store`
     /// (`device/blob-kept-beside`).
+    /// The file `name` beside the store this cache is kept for.
+    pub(crate) fn beside_store(&self, name: &str) -> PathBuf {
+        self.dir.with_file_name(name)
+    }
+
     pub(crate) fn dir_beside(store: &Path) -> PathBuf {
         let mut name = store.as_os_str().to_owned();
         name.push(".blobs");

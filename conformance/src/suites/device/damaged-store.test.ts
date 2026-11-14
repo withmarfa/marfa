@@ -1,12 +1,21 @@
 import { createHash } from "node:crypto";
 import {
+  closeSync,
   copyFileSync,
   existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
   readFileSync,
+  readdirSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -15,11 +24,14 @@ import {
   refusal,
   wireItem,
 } from "../../device/marfa-answers.js";
+import { CliDevice } from "../../device/cli-adapter.js";
 import type { QueuedWrite } from "../../device/protocol.js";
 import { BUILT_FOR } from "../../device/scripted-server.js";
 import {
+  KEY,
   damageTable,
   hydratedHarness,
+  requireBinary,
   scriptHydration,
   scriptWrites,
   startHarness,
@@ -107,6 +119,50 @@ function writes(harness: Harness): Array<{ key: string | undefined }> {
     .map((request) => ({ key: request.headers["idempotency-key"] }));
 }
 
+function verdicts(store: string, sql: string): void {
+  const db = new DatabaseSync(store);
+  try {
+    db.exec(sql);
+  } finally {
+    db.close();
+  }
+}
+
+/**
+ * Puts back the page of `index` from `before`, as a copy taken while the
+ * store was written leaves an index out of step with its rows.
+ */
+function indexFrom(store: string, before: Buffer, index: string): void {
+  const db = new DatabaseSync(store, { readOnly: true });
+  let size: number;
+  let root: number;
+  try {
+    size = (db.prepare("PRAGMA page_size").get() as { page_size: number })
+      .page_size;
+    root = (
+      db
+        .prepare(
+          "SELECT rootpage FROM sqlite_master WHERE type = 'index' AND name = ?",
+        )
+        .get(index) as { rootpage: number }
+    ).rootpage;
+  } finally {
+    db.close();
+  }
+  const file = openSync(store, "r+");
+  try {
+    writeSync(file, before, (root - 1) * size, size, (root - 1) * size);
+  } finally {
+    closeSync(file);
+  }
+}
+
+function cached(store: string): string[] {
+  return readdirSync(`${store}.blobs`)
+    .filter((name) => !name.startsWith("."))
+    .sort();
+}
+
 describe("a store that cannot be read", () => {
   it("refuses a damaged store store_damaged, naming it and the writes its queue holds, and leaves it as it was", async () => {
     const { harness } = await storeWith("damaged-refused", 2);
@@ -141,6 +197,43 @@ describe("a store that cannot be read", () => {
       "refusing the store changed its log",
     ).toBe(log);
     expect(existsSync(`${device.store}.damaged-1`)).toBe(false);
+  });
+
+  it("refuses a store whose index is out of step with its rows store_damaged, naming it, and sets it aside", async () => {
+    const { harness, queued } = await storeWith("damaged-index", 2);
+    const { device } = harness;
+    const before = readFileSync(device.store);
+    verdicts(
+      device.store,
+      `UPDATE queue SET verdict = 'dead', answered_at = '2026-01-01T00:00:00Z' WHERE id = '${queued[1]?.id ?? ""}'`,
+    );
+    // The witness: the same store reads whole before its index goes back.
+    const whole = await device.check();
+    expect(whole.ok && whole.value.whole, JSON.stringify(whole)).toBe(true);
+
+    indexFrom(device.store, before, "queue_verdict_seq");
+    const refused = await device.check();
+    expect(refused.ok, "a check read the store as whole").toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal.code, refused.refusal.raw).toBe("store_damaged");
+    expect(refused.refusal.raw).toContain(device.store);
+    expect(refused.refusal.raw).toContain("queue_verdict_seq");
+    expect(refused.refusal.raw).toContain(
+      "holds 2 writes the server has not taken",
+    );
+
+    const done = await device.setAside();
+    expect(done.ok, JSON.stringify(done)).toBe(true);
+    if (!done.ok) return;
+    expect([done.value.carried, done.value.unread, done.value.whole]).toEqual([
+      2,
+      0,
+      true,
+    ]);
+    const carried = await device.queue();
+    expect(carried.ok && carried.value.map(sent)).toEqual(queued.map(sent));
+    const now = await device.check();
+    expect(now.ok, JSON.stringify(now)).toBe(true);
   });
 
   it("says a damaged store's queue cannot be read whole where its rows do not read", async () => {
@@ -393,6 +486,39 @@ describe("setting a damaged store aside", () => {
     expect(existsSync(`${harness.device.store}.damaged-1`)).toBe(false);
   });
 
+  it("sets aside a device's own store kept in a folder named like a folder's state", async () => {
+    const { harness } = await storeWith("set-aside-in-state", 1);
+    damageTable(harness.device.store, "items");
+    const state = join(
+      mkdtempSync(join(realpathSync(tmpdir()), "marfa-device-state-")),
+      ".marfa",
+    );
+    mkdirSync(state);
+    const at = (name: string) => {
+      const store = join(state, name);
+      copyFileSync(harness.device.store, store);
+      return new CliDevice({
+        binary: requireBinary(),
+        store,
+        url: harness.server.url,
+        key: KEY,
+      });
+    };
+    // The witness: under a folder's store's name, it is refused as one.
+    const folders = await at("core.sqlite").setAside();
+    expect(folders.ok).toBe(false);
+    if (!folders.ok) expect(folders.refusal.code).toBe("invalid");
+
+    const own = at("device.sqlite");
+    const done = await own.setAside();
+    expect(done.ok, JSON.stringify(done)).toBe(true);
+    if (!done.ok) return;
+    expect([done.value.set_aside, done.value.carried]).toEqual([
+      `${own.store}.damaged-1`,
+      1,
+    ]);
+  });
+
   it("refuses a store whose set-aside stopped part way, and finishes it when asked again", async () => {
     const { harness, queued } = await storeWith("set-aside-stopped", 1);
     const { device } = harness;
@@ -457,6 +583,128 @@ describe("setting a damaged store aside", () => {
       expect(existsSync(`${device.store}.making`)).toBe(false);
       const carried = await device.queue();
       expect(carried.ok && carried.value.map(sent)).toEqual(queued.map(sent));
+      await made.stop();
+      harness = undefined;
+    }
+  });
+
+  it("answers a set-aside that ended after its new store took the path, when asked again", async () => {
+    const { harness, queued } = await storeWith("set-aside-taken", 1);
+    const { device } = harness;
+    damageTable(device.store, "items");
+    const crashed = device.hold(["set-aside"], "device", {
+      MARFA_TEST_FAULT: "set-aside-crash=taken",
+    });
+    await crashed.exited();
+    expect(crashed.exitCode(), "the set-aside did not stop").not.toBe(0);
+    expect(existsSync(`${device.store}.carrying`)).toBe(false);
+    expect(existsSync(`${device.store}.damaged-1`)).toBe(true);
+
+    const done = await device.setAside();
+    expect(done.ok, JSON.stringify(done)).toBe(true);
+    if (!done.ok) return;
+    expect(done.value).toEqual({
+      set_aside: `${device.store}.damaged-1`,
+      carried: 1,
+      unread: 0,
+      unread_ids: [],
+      whole: true,
+      held: 0,
+      record_unread: 0,
+    });
+    const carried = await device.queue();
+    expect(carried.ok && carried.value.map(sent)).toEqual(queued.map(sent));
+    const again = await device.setAside();
+    expect(again.ok, "a set-aside answered twice").toBe(false);
+    if (!again.ok) expect(again.refusal.code).toBe("invalid");
+  });
+
+  it("keeps every byte the cache held when a set-aside could not read every write, until the store set aside is removed", async () => {
+    for (const damaged of ["items", "queue"]) {
+      const { harness: made } = await storeWith(
+        `set-aside-bytes-${damaged}`,
+        0,
+      );
+      const { device } = made;
+      const file = join(realpathSync(tmpdir()), `marfa-offline-${damaged}.txt`);
+      writeFileSync(file, `offline bytes ${damaged}`);
+      expect((await device.addFile(file)).ok).toBe(true);
+      expect((await device.fileBudget("0")).ok).toBe(true);
+      const fetched = "0f".repeat(32);
+      writeFileSync(join(`${device.store}.blobs`, fetched), "fetched bytes");
+      const held = cached(device.store);
+      expect(held.length).toBe(2);
+      damageTable(device.store, damaged);
+
+      const done = await device.setAside();
+      expect(done.ok, JSON.stringify(done)).toBe(true);
+      if (!done.ok) return;
+      expect(await device.fileBudget("0", { trim: true })).toMatchObject({
+        ok: true,
+      });
+      if (damaged === "items") {
+        // The witness: a set-aside that read every write keeps only what
+        // its writes name.
+        expect(done.value.whole).toBe(true);
+        expect(cached(device.store)).not.toContain(fetched);
+      } else {
+        expect(done.value.unread > 0 || !done.value.whole).toBe(true);
+        expect(cached(device.store)).toEqual(held);
+        rmSync(done.value.set_aside);
+        expect((await device.fileBudget("0", { trim: true })).ok).toBe(true);
+        expect(cached(device.store)).toEqual([]);
+      }
+      rmSync(file);
+      await made.stop();
+      harness = undefined;
+    }
+  });
+
+  it("holds a carried write refused unsent whose record does not read, so releasing the write it waits for leaves it held", async () => {
+    for (const damaged of ["items", "body_edges"]) {
+      const { harness: made, queued } = await storeWith(
+        `set-aside-refused-${damaged}`,
+        2,
+      );
+      const { device } = made;
+      const [source, target] = queued.map((write) => write.item_id ?? "");
+      const edge = await device.createEdge({
+        source: source ?? "",
+        target: target ?? "",
+        type: "about",
+      });
+      expect(edge.ok, JSON.stringify(edge)).toBe(true);
+      if (!edge.ok) return;
+      expect(edge.value.depends_on).toContain(queued[0]?.id);
+      verdicts(
+        device.store,
+        `UPDATE queue SET verdict = 'dead', answered_at = '2026-01-01T00:00:00Z' WHERE id = '${queued[0]?.id ?? ""}';
+         UPDATE queue SET verdict = 'refused', reason = 'the write it depends on died', sent = 0,
+                answered_at = '2026-01-01T00:00:00Z' WHERE id = '${edge.value.id}';`,
+      );
+      damageTable(device.store, damaged);
+      const done = await device.setAside();
+      expect(done.ok, JSON.stringify(done)).toBe(true);
+      if (!done.ok) return;
+
+      const released = await device.release({ id: queued[0]?.id ?? "" });
+      expect(released.ok, JSON.stringify(released)).toBe(true);
+      const after = await device.queue();
+      expect(after.ok, JSON.stringify(after)).toBe(true);
+      if (!after.ok) return;
+      const left = after.value.find((write) => write.id === edge.value.id);
+      if (damaged === "items") {
+        // The witness: with its record read, the edge goes with the write
+        // it waits for.
+        expect(done.value.record_unread).toBe(0);
+        expect([left?.verdict, left?.reason]).toEqual([null, null]);
+      } else {
+        expect(done.value.record_unread).toBe(1);
+        expect([left?.verdict, left?.reason]).toEqual([
+          "blocked",
+          "record_unread",
+        ]);
+      }
       await made.stop();
       harness = undefined;
     }

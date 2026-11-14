@@ -4708,6 +4708,14 @@ If a device is asked to open a store, as a writer or a reader, whose file is emp
 
 **Tests:** `device/damaged-store.test.ts › refuses every open of a store whose file is empty while its log holds committed writes, keeping the log, and a set-aside carries them`.
 
+### `device/store-damaged-index`
+
+If a store holds an index entry out of step with its row, then a device MUST refuse a check of the store `store_damaged`.
+
+**Reason:** a copy taken while the store was written can leave one. Each page reads, so only a check of each index against its rows finds it, and a write that meets it is refused. A check that read such a store as whole would leave a person no way to set it aside.
+
+**Tests:** `device/damaged-store.test.ts › refuses a store whose index is out of step with its rows store_damaged, naming it, and sets it aside`.
+
 ### `device/store-damaged-names`
 
 When the CLI refuses a store `store_damaged`, the CLI MUST name the store's path.
@@ -4792,11 +4800,19 @@ If a device sets aside a store and cannot read which instance it was built from,
 
 ### `device/set-aside-record-unread`
 
-If a device sets aside a store and cannot read a record the old store kept that decides how a carried write still waiting is sent, then a device MUST give that write the verdict `blocked` with the reason `record_unread`, whether it was waiting, blocked for another reason or dead.
+If a device sets aside a store and cannot read a record the old store kept that decides how a carried write still waiting is sent, then a device MUST give that write the verdict `blocked` with the reason `record_unread`, whether it was waiting, blocked for another reason, dead or refused unsent.
 
-**Reason:** such a record can be what stops a write from changing what a person did not mean it to, as for an edge a body made after the server kept another body on the item. Without it the device cannot know the write is safe to send, so it waits for a person to release or withdraw it. A write blocked for another reason, or dead, is a release away from being sent, so it is held the same way. Released, it keeps its idempotency key (`queue-and-verdicts/key-kept-on-retry`), so a drain judges it again: a key the server spent is refused again.
+**Reason:** such a record can be what stops a write from changing what a person did not mean it to, as for an edge a body made after the server kept another body on the item. Without it the device cannot know the write is safe to send, so it waits for a person to release or withdraw it. A write blocked for another reason, or dead, is a release away from being sent, and a write refused unsent because a write it depends on died is sent when that write is released, so each is held the same way. Released, it keeps its idempotency key (`queue-and-verdicts/key-kept-on-retry`), so a drain judges it again: a key the server spent is refused again.
 
-**Tests:** `device/damaged-store.test.ts › holds a carried write whose record of how it is sent does not read, until a person releases or withdraws it`, `› holds a carried write whose record does not read whatever its verdict, and a released one goes under its key and is judged again`.
+**Tests:** `device/damaged-store.test.ts › holds a carried write whose record of how it is sent does not read, until a person releases or withdraws it`, `› holds a carried write whose record does not read whatever its verdict, and a released one goes under its key and is judged again`, `› holds a carried write refused unsent whose record does not read, so releasing the write it waits for leaves it held`.
+
+### `device/set-aside-keeps-bytes`
+
+If a device sets aside a store and cannot read every write its queue holds, or every record that decides how a carried write is sent, then a device MUST keep every byte the cache beside the store held as it set the store aside, whatever the file budget, until the store set aside is removed.
+
+**Reason:** a write the new store lacks, such as an upload whose row did not read, may name bytes that nothing else holds. The new store's queue cannot say which, so the bytes stay for as long as the store set aside can still give that write back.
+
+**Tests:** `device/damaged-store.test.ts › keeps every byte the cache held when a set-aside could not read every write, until the store set aside is removed`.
 
 ### `device/set-aside-record-unread-kept`
 
@@ -4842,6 +4858,14 @@ If a device is asked to set aside a folder's store, then a device MUST refuse `i
 
 **Tests:** `device/damaged-store.test.ts › refuses to set aside a folder's store`.
 
+### `device/set-aside-own-store`
+
+If a device is asked to set aside a store whose file is not named `core.sqlite` and that names no folder, then a device MUST NOT refuse it as a folder's store, wherever the store is kept.
+
+**Reason:** a folder's store takes that name in the folder's `.marfa` state folder. A device's own store kept in a folder of that name, or in a listed folder's state folder, is set aside like any other.
+
+**Tests:** `device/damaged-store.test.ts › sets aside a device's own store kept in a folder named like a folder's state`.
+
 ### `device/set-aside-stopped`
 
 If a device's set-aside of a store stopped after it made the new store, then a device MUST refuse to open the store as a writer `store_damaged` until a set-aside of it completes.
@@ -4878,7 +4902,9 @@ If a file that no set-aside made stands at `<store>.carrying` or `<store>.making
 
 When a device is asked to set aside a store whose set-aside stopped part way, a device MUST finish it, under the name the stopped set-aside chose.
 
-**Tests:** `device/damaged-store.test.ts › refuses a store whose set-aside stopped part way, and finishes it when asked again`.
+**Reason:** a set-aside that stopped after its new store took the path has moved everything, and only its answer is left to give. Asked again, the device gives that answer once.
+
+**Tests:** `device/damaged-store.test.ts › refuses a store whose set-aside stopped part way, and finishes it when asked again`, `› answers a set-aside that ended after its new store took the path, when asked again`.
 
 ### `device/remove-store-all`
 

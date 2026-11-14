@@ -25,8 +25,10 @@ pub struct SetAside {
     /// The id of each unread write whose id could be read.
     pub unread_ids: Vec<String>,
     /// Whether every write the old queue holds was found, and every record
-    /// that decides how a carried write is sent was read. Where not, the
-    /// store set aside may hold writes or records the new store lacks.
+    /// that decides how a carried write is sent was read. Where not, or
+    /// where a write did not read, the store set aside may hold writes or
+    /// records the new store lacks, and every byte the cache held as it was
+    /// set aside stays until that store is gone.
     pub whole: bool,
     /// The carried writes held `blocked` with the reason `instance_changed`,
     /// because which instance the old store was built from could not be
@@ -56,6 +58,11 @@ fn making(path: &Path) -> PathBuf {
 const META_SET_ASIDE_TO: &str = "set_aside_to";
 const META_SET_ASIDE: &str = "set_aside";
 const META_SET_ASIDE_MAKING: &str = "set_aside_making";
+
+/// `<prefix><set-aside name>/<hex>`: bytes kept while that store stands.
+const META_KEEPS: &str = "set_aside_keeps/";
+/// The first key after every `META_KEEPS` key.
+const META_KEEPS_END: &str = "set_aside_keeps0";
 
 // Unread records block only the write kinds whose sending they govern.
 const BY_WRITE: [(&str, &[WriteKind]); 5] = [
@@ -197,7 +204,7 @@ pub(crate) fn refuse_unfinished(path: &Path) -> Result<(), CoreError> {
 }
 
 enum Markers {
-    Done(String, SetAside),
+    Done(String),
     /// Made by a set-aside that stopped before it carried anything.
     Making,
     /// Not shown to be a set-aside's.
@@ -215,14 +222,15 @@ fn markers(made: &Path) -> Markers {
         get(META_SET_ASIDE_MAKING),
     ) {
         (Ok(Some(to)), Ok(Some(done)), _) => {
-            serde_json::from_str(&done).map_or(Markers::Unknown, |done| Markers::Done(to, done))
+            serde_json::from_str::<SetAside>(&done).map_or(Markers::Unknown, |_| Markers::Done(to))
         }
         (Ok(None), Ok(None), Ok(Some(_))) => Markers::Making,
         _ => Markers::Unknown,
     }
 }
 
-/// Requires the store's writer lock.
+/// Requires the store's writer lock. A quick check misses an index entry
+/// out of step with its row, which a copy taken mid-write leaves.
 pub(crate) fn check(path: &Path) -> Result<(), CoreError> {
     let damaged = |error: CoreError| match error {
         CoreError::StoreDamaged { reason, .. } => refusal(path, reason),
@@ -235,7 +243,7 @@ pub(crate) fn check(path: &Path) -> Result<(), CoreError> {
         return Err(store::at_path(store::refused(&conn, found), path));
     }
     let said = (|| -> rusqlite::Result<Vec<String>> {
-        let mut query = conn.prepare("PRAGMA quick_check")?;
+        let mut query = conn.prepare("PRAGMA integrity_check")?;
         let rows = query.query_map([], |row| row.get::<_, String>(0))?;
         rows.collect()
     })()
@@ -265,11 +273,14 @@ pub(crate) fn set_aside(path: &Path) -> Result<SetAside, CoreError> {
     store::refuse_folders(path)?;
     match check(path) {
         Err(CoreError::StoreDamaged { .. }) => {}
+        // A set-aside that stopped after its new store took the path answers now.
         Ok(()) => {
-            return Err(CoreError::Invalid(format!(
-                "{} opens as it is, so there is nothing to set aside",
-                path.display()
-            )));
+            return answer(path)?.ok_or_else(|| {
+                CoreError::Invalid(format!(
+                    "{} opens as it is, so there is nothing to set aside",
+                    path.display()
+                ))
+            });
         }
         Err(other) => return Err(other),
     }
@@ -556,6 +567,20 @@ fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
     if let Some(old) = old {
         let _ = copy_rows(old, &tx, "declared_types");
     }
+    for (key, value) in meta
+        .rows
+        .range(META_KEEPS.to_string()..META_KEEPS_END.to_string())
+    {
+        let aside = key[META_KEEPS.len()..]
+            .rsplit_once('/')
+            .map(|(aside, _)| aside);
+        if aside.is_some_and(|aside| stands(&path.with_file_name(aside))) {
+            store::meta_set(&tx, key, value)?;
+        }
+    }
+    if unread > 0 || !whole {
+        keep_bytes(&tx, path, aside)?;
+    }
     let ids: Vec<String> = carried.keys().cloned().collect();
     lay_rows(&tx, &ids);
     let record_unread = store::hold_record_unread(&tx, &unchecked)? as u64;
@@ -601,6 +626,85 @@ fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
     Ok(())
 }
 
+/// Records every byte the cache beside `path` holds, kept while the store
+/// set aside at `aside` stands, since its unread writes may name them.
+fn keep_bytes(tx: &Connection, path: &Path, aside: &Path) -> Result<(), CoreError> {
+    let cache = crate::blob::Cache::beside(path);
+    let held = cache.sizes().map_err(|error| {
+        CoreError::Store(format!(
+            "{} cannot be set aside: the bytes beside it cannot be listed to be kept: {error}",
+            path.display()
+        ))
+    })?;
+    let aside = aside.file_name().unwrap_or_default().to_string_lossy();
+    for hex in held.keys().filter(|name| !name.starts_with('.')) {
+        store::meta_set(tx, &format!("{META_KEEPS}{aside}/{hex}"), "")?;
+    }
+    Ok(())
+}
+
+/// The bytes each set-aside that could not read every write keeps, by hex,
+/// while the store it set aside stands where `beside` names it.
+pub(crate) fn kept_bytes(
+    conn: &Connection,
+    beside: impl Fn(&str) -> PathBuf,
+) -> Result<BTreeSet<String>, CoreError> {
+    Ok(keeps(conn, beside)?.0)
+}
+
+/// Forgets the bytes kept for each store set aside that is gone, since a
+/// later set-aside can take its name.
+pub(crate) fn forget_gone_keeps(
+    conn: &Connection,
+    beside: impl Fn(&str) -> PathBuf,
+) -> Result<(), CoreError> {
+    for aside in keeps(conn, beside)?.1 {
+        conn.execute(
+            "DELETE FROM meta WHERE key >= ?1 AND key < ?2",
+            [
+                format!("{META_KEEPS}{aside}/"),
+                format!("{META_KEEPS}{aside}0"),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// The bytes kept, and the stores set aside shown gone.
+fn keeps(
+    conn: &Connection,
+    beside: impl Fn(&str) -> PathBuf,
+) -> Result<(BTreeSet<String>, BTreeSet<String>), CoreError> {
+    let mut query = conn.prepare_cached("SELECT key FROM meta WHERE key >= ?1 AND key < ?2")?;
+    let keys = query
+        .query_map([META_KEEPS, META_KEEPS_END], |row| row.get::<_, String>(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let mut standing = BTreeMap::new();
+    let (mut kept, mut gone) = (BTreeSet::new(), BTreeSet::new());
+    for key in &keys {
+        let Some((aside, hex)) = key[META_KEEPS.len()..].rsplit_once('/') else {
+            continue;
+        };
+        let stands = *standing
+            .entry(aside.to_string())
+            .or_insert_with(|| stands(&beside(aside)));
+        if stands {
+            kept.insert(hex.to_string());
+        } else {
+            gone.insert(aside.to_string());
+        }
+    }
+    Ok((kept, gone))
+}
+
+/// Unless shown gone, as a store a person moved or removed is.
+fn stands(path: &Path) -> bool {
+    !matches!(
+        path.symlink_metadata(),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+    )
+}
+
 fn kinds(tx: &Connection) -> Result<BTreeMap<String, Option<WriteKind>>, CoreError> {
     let mut query = tx.prepare("SELECT id, kind FROM queue")?;
     let rows = query.query_map([], |row| {
@@ -628,8 +732,8 @@ fn finish(path: &Path) -> Result<Option<SetAside>, CoreError> {
             None => Ok(None),
         };
     }
-    let (to, mut done) = match markers(&made) {
-        Markers::Done(to, done) => (to, done),
+    let to = match markers(&made) {
+        Markers::Done(to) => to,
         // Its markers show a set-aside made it, and it carries nothing yet.
         Markers::Making => {
             store::remove(&made)?;
@@ -681,10 +785,32 @@ fn finish(path: &Path) -> Result<Option<SetAside>, CoreError> {
         ))
     })?;
     sync_holder(path);
+    stop_if_asked("taken")?;
+    answer(path)?.map(Some).ok_or_else(|| {
+        CoreError::Store(format!(
+            "{} took {} but does not say what it carries",
+            made.display(),
+            path.display()
+        ))
+    })
+}
+
+/// The answer the new store at `path` holds, given once: its markers go
+/// as it is read.
+fn answer(path: &Path) -> Result<Option<SetAside>, CoreError> {
     let conn = store::open(path)?;
+    let (Some(_), Some(done)) = (
+        store::meta_get(&conn, META_SET_ASIDE_TO)?,
+        store::meta_get(&conn, META_SET_ASIDE)?,
+    ) else {
+        return Ok(None);
+    };
+    let mut done: SetAside = serde_json::from_str(&done)?;
     done.carried = store::untaken_count(&conn).unwrap_or_default();
-    store::meta_delete(&conn, META_SET_ASIDE_TO)?;
-    store::meta_delete(&conn, META_SET_ASIDE)?;
+    conn.execute(
+        "DELETE FROM meta WHERE key IN (?1, ?2)",
+        [META_SET_ASIDE_TO, META_SET_ASIDE],
+    )?;
     Ok(Some(done))
 }
 

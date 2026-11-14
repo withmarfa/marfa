@@ -331,15 +331,18 @@ fn folders(path: &Path) -> CoreError {
 }
 
 fn kept_by_folder(path: &Path) -> bool {
+    let named = |name: Option<&std::ffi::OsStr>, expected: &str| {
+        name.and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case(expected))
+    };
+    if !named(path.file_name(), FOLDER_STORE) {
+        return false;
+    }
     let state = path
         .parent()
         .filter(|state| !state.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    if state
-        .file_name()
-        .and_then(|name| name.to_str())
-        .is_some_and(|name| name.eq_ignore_ascii_case(crate::folder::STATE_DIR))
-    {
+    if named(state.file_name(), crate::folder::STATE_DIR) {
         return true;
     }
     let Ok(here) = std::fs::metadata(state) else {
@@ -5972,17 +5975,20 @@ fn hold_for_instance(conn: &Connection, batch: &[String]) -> Result<bool, CoreEr
 
 /// Holds each of `ids` the server has not taken `blocked` `record_unread`,
 /// whatever it was. A release keeps its key, so a drain judges it again.
+/// One refused unsent is held too: releasing what it waits for would send it.
 pub(crate) fn hold_record_unread(conn: &Connection, ids: &[String]) -> Result<usize, CoreError> {
     Ok(conn.execute(
         &format!(
             "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
-              WHERE id IN (SELECT value FROM json_each(?4)) AND {WAITING}"
+              WHERE id IN (SELECT value FROM json_each(?4))
+                AND ({WAITING} OR (verdict = ?5 AND sent = 0))"
         ),
         params![
             Verdict::Blocked.as_str(),
             BlockedReason::RecordUnread.as_str(),
             now_iso(),
-            serde_json::to_string(ids)?
+            serde_json::to_string(ids)?,
+            Verdict::Refused.as_str()
         ],
     )?)
 }

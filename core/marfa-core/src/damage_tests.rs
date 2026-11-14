@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 
 use crate::stop_tests::note;
-use crate::{Core, CoreError, QueuedWrite, SetAside, store};
+use crate::{Core, CoreError, QueuedWrite, SetAside, blob, store};
 
 fn beside(path: &Path, suffix: &str) -> PathBuf {
     store::suffixed(path, suffix)
@@ -1348,4 +1348,270 @@ fn present_beside(path: &Path) -> Vec<std::ffi::OsString> {
         .filter(|name| !own.contains(name))
         .map(|name| name.file_name().unwrap().to_owned())
         .collect()
+}
+
+#[test]
+fn a_write_refused_unsent_whose_record_does_not_read_is_held_past_its_dependencys_release() {
+    // The witness: with its record read, the edge is carried refused, and
+    // releasing the dead write it depends on releases it.
+    for (damaged, kept) in [("items", None), ("body_edges", Some("record_unread"))] {
+        let (_dir, path, edge) = store_with_a_lost_bodys_edge();
+        let body: String = {
+            let conn = Connection::open(&path).unwrap();
+            conn.execute(
+                "UPDATE queue SET verdict = 'dead', answer = NULL, conflicted_copy_id = NULL,
+                        answered_at = '2026-01-01T00:00:00Z' WHERE id <> 'edge'",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "UPDATE queue SET verdict = 'refused', reason = 'the write it depends on died',
+                        sent = 0, answered_at = '2026-01-01T00:00:00Z',
+                        payload = json_object('id', edge_id, 'source_id', item_id,
+                          'target_id', target_id, 'edge_type', 'link', 'properties', json('{}'))
+                  WHERE id = 'edge'",
+                [],
+            )
+            .unwrap();
+            conn.query_row("SELECT id FROM queue WHERE id <> 'edge'", [], |row| {
+                row.get(0)
+            })
+            .unwrap()
+        };
+        damage_table(&path, damaged);
+        let done = set_aside(&path);
+        assert_eq!(done.record_unread, u64::from(kept.is_some()), "{damaged}");
+        let core = Core::open(&path, None).unwrap();
+        assert!(core.release(&body).unwrap(), "{damaged}");
+        assert_eq!(reason_of(&core, &edge).as_deref(), kept, "{damaged}");
+        let verdict = store::queued_write(&core.conn().unwrap(), &edge)
+            .unwrap()
+            .unwrap()
+            .verdict;
+        assert_eq!(verdict, kept.map(|_| crate::Verdict::Blocked), "{damaged}");
+    }
+}
+
+/// Puts back the page of `index` from `before`, as a copy taken while the
+/// store was written leaves an index out of step with its rows.
+fn index_from(path: &Path, before: &[u8], index: &str) {
+    let conn = Connection::open(path).unwrap();
+    let size: i64 = conn
+        .query_row("PRAGMA page_size", [], |row| row.get(0))
+        .unwrap();
+    let root: i64 = conn
+        .query_row(
+            "SELECT rootpage FROM sqlite_master WHERE type = 'index' AND name = ?1",
+            [index],
+            |row| row.get(0),
+        )
+        .unwrap();
+    drop(conn);
+    let (size, at) = (size as usize, (root as usize - 1) * size as usize);
+    let mut file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+    file.seek(SeekFrom::Start(at as u64)).unwrap();
+    file.write_all(&before[at..at + size]).unwrap();
+}
+
+#[test]
+fn a_store_whose_index_is_out_of_step_with_its_rows_is_refused_by_name_and_set_aside() {
+    let (_dir, path, queued) = store_with(2);
+    let before = bytes(&path).unwrap();
+    Connection::open(&path)
+        .unwrap()
+        .execute(
+            "UPDATE queue SET verdict = 'dead', answered_at = '2026-01-01T00:00:00Z' WHERE id = ?1",
+            [&queued[1].id],
+        )
+        .unwrap();
+    Core::check_store(&path).unwrap();
+    index_from(&path, &before, "queue_verdict_seq");
+    // The witness: SQLite's quick check reads such a store as whole.
+    let quick: String = Connection::open(&path)
+        .unwrap()
+        .query_row("PRAGMA quick_check", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(quick, "ok");
+
+    let (named, unsent, said) = damaged(Core::check_store(&path).unwrap_err());
+    assert_eq!(named, path.display().to_string());
+    assert_eq!(unsent, Some(2), "{said}");
+    assert!(said.contains("queue_verdict_seq"), "{said}");
+    let done = set_aside(&path);
+    assert_eq!((done.carried, done.unread, done.whole), (2, 0, true));
+    Core::check_store(&path).unwrap();
+}
+
+#[test]
+fn a_device_store_in_a_folder_named_like_a_folders_state_is_set_aside() {
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let state = dir.path().join(crate::folder::STATE_DIR);
+    std::fs::create_dir(&state).unwrap();
+    // The witness: the folder's store's name, in any case, is refused.
+    for name in [
+        store::FOLDER_STORE.to_string(),
+        store::FOLDER_STORE.to_uppercase(),
+    ] {
+        let path = state.join(&name);
+        drop(Core::open(&path, None).unwrap());
+        damage_table(&path, "items");
+        assert!(
+            matches!(
+                Core::set_aside_damaged(&path),
+                Err(CoreError::Invalid(said)) if said.contains("folder's store")
+            ),
+            "{name}"
+        );
+        store::remove(&path).unwrap();
+    }
+    let path = state.join("device.sqlite");
+    let core = Core::open(&path, None).unwrap();
+    core.create_item(&note(None)).unwrap();
+    drop(core);
+    damage_table(&path, "items");
+    assert_eq!(set_aside(&path).carried, 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_device_store_in_a_listed_folders_state_by_another_name_is_set_aside() {
+    let (registry, _own) = crate::folder::registry::tests::own_registry();
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let root = dir.path().join("folder");
+    let state = root.join(crate::folder::STATE_DIR);
+    std::fs::create_dir_all(&state).unwrap();
+    registry
+        .add(
+            &root,
+            &crate::directory::Directory::open(&root).unwrap(),
+            "f1",
+            None,
+        )
+        .unwrap();
+    let link = dir.path().join("elsewhere");
+    std::os::unix::fs::symlink(&state, &link).unwrap();
+    // The witness: the folder's store's name there is refused.
+    let folders = link.join(store::FOLDER_STORE);
+    drop(Core::open(&folders, None).unwrap());
+    damage_table(&folders, "items");
+    assert!(matches!(
+        Core::remove_store_losing_all(&folders),
+        Err(CoreError::Invalid(said)) if said.contains("folder's store")
+    ));
+    let path = link.join("device.sqlite");
+    let core = Core::open(&path, None).unwrap();
+    core.create_item(&note(None)).unwrap();
+    drop(core);
+    damage_table(&path, "items");
+    assert_eq!(set_aside(&path).carried, 1);
+}
+
+#[cfg(debug_assertions)]
+#[test]
+fn a_set_aside_stopped_after_the_new_store_took_the_path_answers_when_asked_again() {
+    let (_dir, path, queued) = store_with(1);
+    damage_table(&path, "items");
+    {
+        let _stopping = crate::fault::fail_on_this_thread("set-aside-stop:taken");
+        assert!(Core::set_aside_damaged(&path).is_err());
+    }
+    assert!(!beside(&path, ".carrying").exists());
+    let done = set_aside(&path);
+    assert_eq!(
+        (done.carried, done.unread, done.whole),
+        (1, 0, true),
+        "{done:?}"
+    );
+    assert!(
+        done.set_aside.ends_with("core.sqlite.damaged-1"),
+        "{done:?}"
+    );
+    let conn = Connection::open(&path).unwrap();
+    for key in ["set_aside", "set_aside_to"] {
+        assert_eq!(store::meta_get(&conn, key).unwrap(), None, "{key}");
+    }
+    drop(conn);
+    assert_eq!(
+        Core::open(&path, None).unwrap().queue().unwrap()[0].id,
+        queued[0].id
+    );
+    // Answered once, the store opens as it is.
+    assert!(matches!(
+        Core::set_aside_damaged(&path),
+        Err(CoreError::Invalid(said)) if said.contains("nothing to set aside")
+    ));
+}
+
+const FETCHED: &str = "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f";
+
+/// A store whose cache holds an upload's bytes and bytes no write names,
+/// with a budget of nothing, closed.
+fn store_with_bytes() -> (tempfile::TempDir, PathBuf, String) {
+    let (dir, path, _) = store_with(0);
+    let core = Core::open(&path, None).unwrap();
+    let source = dir.path().join("offline.txt");
+    std::fs::write(&source, b"offline upload bytes").unwrap();
+    core.add_file(&source, &crate::Attachment::default(), &[])
+        .unwrap();
+    let hash = core
+        .queue()
+        .unwrap()
+        .into_iter()
+        .find_map(|q| q.blob)
+        .unwrap();
+    core.set_file_budget(crate::FileBudget::Bytes(0)).unwrap();
+    drop(core);
+    std::fs::write(
+        blob::Cache::dir_beside(&path).join(FETCHED),
+        b"fetched bytes",
+    )
+    .unwrap();
+    (dir, path, hash)
+}
+
+fn cached(path: &Path, name: &str) -> bool {
+    blob::Cache::dir_beside(path).join(name).exists()
+}
+
+#[test]
+fn bytes_a_set_aside_could_not_read_every_write_for_stay_until_the_store_set_aside_goes() {
+    // The witness: after a set-aside that read every write, a trim takes
+    // the bytes no carried write names.
+    let (_dir, path, hash) = store_with_bytes();
+    damage_table(&path, "items");
+    assert!(set_aside(&path).whole);
+    Core::open(&path, None).unwrap().trim_files().unwrap();
+    assert!(!cached(&path, FETCHED));
+    assert!(cached(&path, blob::hex_of(&hash).unwrap()));
+
+    let (_dir, path, hash) = store_with_bytes();
+    let hex = blob::hex_of(&hash).unwrap().to_string();
+    damage_table(&path, "queue");
+    let done = set_aside(&path);
+    assert!(done.unread > 0 || !done.whole, "{done:?}");
+    let core = Core::open(&path, None).unwrap();
+    core.trim_files().unwrap();
+    assert!(cached(&path, &hex));
+    assert!(cached(&path, FETCHED));
+    drop(core);
+
+    let keeps = |path: &Path| {
+        store::meta_keys(&Connection::open(path).unwrap(), "set_aside_keeps/")
+            .unwrap()
+            .len()
+    };
+    assert_eq!(keeps(&path), 2);
+    // A later set-aside that reads every write keeps them too.
+    damage_table(&path, "items");
+    assert!(set_aside(&path).whole);
+    Core::open(&path, None).unwrap().trim_files().unwrap();
+    assert!(cached(&path, &hex));
+    assert!(cached(&path, FETCHED));
+    assert_eq!(keeps(&path), 2);
+
+    store::remove(Path::new(&done.set_aside)).unwrap();
+    Core::open(&path, None).unwrap().trim_files().unwrap();
+    assert!(!cached(&path, &hex));
+    assert!(!cached(&path, FETCHED));
+    assert_eq!(keeps(&path), 0);
 }
