@@ -16,6 +16,8 @@ import {
   type App,
 } from "../../utils/signed-in.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { jobs, quiet } from "../../utils/moved-clock.js";
+import { NEVER_MS, QUIET_TUNING, tuning } from "../../utils/tuning.js";
 
 /**
  * The owner's sign-ins: every browser session, app and key, listed, renamed
@@ -43,10 +45,15 @@ beforeAll(async () => {
   server = await bootFreshServer("owner-sign-ins", {
     MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
     MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-    // How long a write waits for the lock before it gives up, kept short for
-    // the case that holds the lock from outside.
-    MARFA_TEST_TUNING: "write_wait_ms=1000",
+    // `write_wait_ms` is how long a write waits for the lock before it gives
+    // up, kept short for the case that holds the lock from outside. The
+    // intervals keep a housekeeping job from taking the writer when the clock
+    // moves, which leaves a session's use unwritten and its cookie unsent.
+    ...tuning("write_wait_ms=1000", ...QUIET_TUNING, `interval.*=${NEVER_MS}`),
   });
+  // Each job's first run is some seconds after boot, so the scheduler would
+  // still make it once the clock has moved; make it now.
+  await quiet(server, Object.keys(await jobs(server)));
   origin = await issuerOrigin(server);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
@@ -119,23 +126,6 @@ function use(browser: Browser): Promise<Response> {
   return fetch(`${server.apiUrl}/owner/passkeys`, {
     headers: { cookie: browser.cookie },
   });
-}
-
-/** Asks again until a request records the session's use: a busy writer may leave one unwritten, and only a recorded use sends the cookie again. */
-async function recordedUse(
-  browser: Browser,
-  send: () => Promise<Response> = () => use(browser),
-): Promise<Response> {
-  const id = await idOf(browser);
-  const tries = 5;
-  for (let attempt = 1; attempt <= tries; attempt += 1) {
-    const before = (await stored(id)).updated_at;
-    const response = await send();
-    if ((await stored(id)).updated_at > before) return response;
-  }
-  throw new Error(
-    `no request recorded the session's use in ${String(tries)} tries`,
-  );
 }
 
 function answered(
@@ -1012,7 +1002,7 @@ describe("a browser session's idle week", () => {
     // a request 23 hours on would leave it alone.
     await pass(23 * HOUR);
     const before = Math.floor(serverNow());
-    const response = await recordedUse(browser);
+    const response = await use(browser);
     expect(response.status).toBe(200);
     const after = Math.ceil(serverNow());
     const row = await stored(id);
@@ -1035,19 +1025,17 @@ describe("a browser session's idle week", () => {
     const browser = await signIn();
     const id = await idOf(browser);
     await pass(2 * MINUTE);
-    const missing = await recordedUse(browser, () =>
-      fetch(`${server.apiUrl}/owner/passkeys/absent`, {
-        method: "DELETE",
-        headers: { cookie: browser.cookie, origin },
-      }),
-    );
+    const missing = await fetch(`${server.apiUrl}/owner/passkeys/absent`, {
+      method: "DELETE",
+      headers: { cookie: browser.cookie, origin },
+    });
     expect(missing.status).toBe(404);
     expect(cookieMaxAge(missing, browser.cookie)).toBe(COOKIE_SECONDS);
     expect((await stored(id)).updated_at).toBeGreaterThan(
       Math.floor(serverNow() - MINUTE),
     );
     await pass(2 * MINUTE);
-    const listed = await recordedUse(browser);
+    const listed = await use(browser);
     expect(listed.status).toBe(200);
     expect(cookieMaxAge(listed, browser.cookie)).toBe(COOKIE_SECONDS);
   });
@@ -1070,7 +1058,7 @@ describe("a browser session's idle week", () => {
       await server.clearFault();
     }
     expect((await stored(id)).updated_at).toBe(recorded);
-    const next = await recordedUse(browser);
+    const next = await use(browser);
     expect(next.status).toBe(200);
     expect(cookieMaxAge(next, browser.cookie)).toBe(COOKIE_SECONDS);
     expect((await stored(id)).updated_at).toBeGreaterThan(recorded);
@@ -1157,7 +1145,7 @@ describe("a restart", () => {
     expect((await refresh(endedApp)).status).toBe(400);
     expect(await itemsStatus(server, endedKey.key)).toBe(401);
     expect(await stored(liveId)).toEqual(before);
-    expect((await recordedUse(live)).status).toBe(200);
+    expect((await use(live)).status).toBe(200);
     const listed = (await signIns()).find((row) => row.id === liveId)!;
     // The session's use after the restart is recorded.
     expect(Date.parse(listed.last_used_at)).toBeGreaterThan(before.updated_at);
