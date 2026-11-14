@@ -129,7 +129,7 @@ fn cutoff_of(tx: &Transaction<'_>, app: &App, retention: Retention) -> Result<Op
     let kept = i64::try_from(units)
         .unwrap_or(i64::MAX)
         .saturating_mul(retention.unit_ms);
-    Ok(app.clock.instant().earlier_by(kept))
+    Ok(app.clock.judging().and_then(|now| now.earlier_by(kept)))
 }
 
 fn consents_in(
@@ -277,7 +277,7 @@ async fn expired_in(
     key: &'static str,
     kept_ms: i64,
 ) -> Result<i64> {
-    let Some(cutoff) = app.clock.instant().earlier_by(kept_ms) else {
+    let Some(cutoff) = app.clock.judging().and_then(|now| now.earlier_by(kept_ms)) else {
         return Ok(0);
     };
     app.db
@@ -296,7 +296,9 @@ async fn expired_in(
 }
 
 async fn expired_sessions(app: &Arc<App>) -> Result<i64> {
-    let now = app.clock.instant();
+    let Some(now) = app.clock.judging() else {
+        return Ok(0);
+    };
     app.db
         .write(Write::own(), move |tx| {
             session::remove_expired(tx, now, BATCH)
@@ -330,7 +332,8 @@ pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
         let (taken, finished) = drain(run, BATCH, || expired_in(app, table, key, kept_ms)).await?;
         deleted += taken;
         done = finished;
-        if let (true, Some(before)) = (done, app.clock.instant().earlier_by(kept_ms)) {
+        let before = app.clock.judging().and_then(|now| now.earlier_by(kept_ms));
+        if let (true, Some(before)) = (done, before) {
             let unread = Unread {
                 table,
                 time: "expires_at",

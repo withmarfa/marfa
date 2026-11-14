@@ -359,7 +359,7 @@ CREATE TABLE IF NOT EXISTS housekeeping_jobs (
     running_since TEXT,
     last_started_at TEXT,
     last_finished_at TEXT,
-    last_outcome TEXT CHECK (last_outcome IN ('ok', 'error')),
+    last_outcome TEXT CHECK (last_outcome IN ('ok', 'error', 'held')),
     last_error TEXT,
     last_result TEXT
 ) STRICT, WITHOUT ROWID;
@@ -1033,6 +1033,12 @@ CREATE TABLE IF NOT EXISTS connector_agreements (
 CREATE INDEX IF NOT EXISTS connector_agreements_order
     ON connector_agreements (source, updated_at, item_id);
 CREATE INDEX IF NOT EXISTS connector_agreements_item ON connector_agreements (item_id);
+
+-- One row: the newest time the server has committed, kept by every write that commits.
+CREATE TABLE IF NOT EXISTS clock_mark (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    committed_at TEXT NOT NULL
+) STRICT;
 
 -- One row, and an integer by construction: a stored generation always reads.
 CREATE TABLE IF NOT EXISTS read_only_generation (

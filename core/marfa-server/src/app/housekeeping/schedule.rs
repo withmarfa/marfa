@@ -194,6 +194,16 @@ pub fn bring_forward(tx: &Transaction<'_>, name: &str, at: &str) -> Result<()> {
     Ok(())
 }
 
+/// Brings forward a job whose last run was held.
+pub fn bring_forward_held(tx: &Transaction<'_>, name: &str, at: &str) -> Result<()> {
+    tx.prepare_cached(
+        "UPDATE housekeeping_jobs SET next_run_at = MIN(next_run_at, ?2) \
+         WHERE name = ?1 AND last_outcome = 'held'",
+    )?
+    .execute(params![name, at])?;
+    Ok(())
+}
+
 #[derive(Debug)]
 pub struct Finish<'a> {
     pub name: &'a str,

@@ -16,7 +16,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::{Notify, watch};
 
-use super::clock::Stamp;
+use super::clock::{Stamp, Standing};
 use super::refusal::{Code, Refusal, Result};
 use super::{App, config, provenance, stored};
 use crate::db::Write;
@@ -65,6 +65,8 @@ pub struct Job {
     switch: Option<fn(&App) -> bool>,
     /// Whether a run reaches the database, which `fail:housekeeping:<job>` needs.
     statements: bool,
+    /// Whether a run deletes by age, so that a clock far ahead of the mark holds it.
+    deletes: bool,
     run: Body,
 }
 
@@ -115,12 +117,18 @@ impl Job {
             deadline,
             switch: None,
             statements: true,
+            deletes: false,
             run,
         }
     }
 
     const fn switched_by(mut self, switch: fn(&App) -> bool) -> Job {
         self.switch = Some(switch);
+        self
+    }
+
+    const fn deleting(mut self) -> Job {
+        self.deletes = true;
         self
     }
 
@@ -248,7 +256,8 @@ pub fn runs_statements(name: &str) -> bool {
     JOBS.iter().any(|job| job.name == name && job.statements)
 }
 
-/// The instant a retention keeps records from, or `None` while it is zero and keeps everything.
+/// The instant a retention keeps records from, or `None` while it is zero, or the clock is too far
+/// ahead to judge age by, and it keeps everything.
 /// Read from `tx`, since the live settings lag a change the writer has committed.
 pub fn cutoff(
     tx: &rusqlite::Transaction<'_>,
@@ -263,10 +272,10 @@ pub fn cutoff(
     Ok(ago(app, i64::try_from(kept).unwrap_or(i64::MAX), unit_ms))
 }
 
-/// `None` once no stored time can be that early.
+/// `None` once no stored time can be that early, or while the clock holds clean-up.
 pub fn ago(app: &App, amount: i64, unit_ms: i64) -> Option<String> {
     app.clock
-        .instant()
+        .judging()?
         .earlier_by(amount.saturating_mul(unit_ms))
         .map(Stamp::text)
 }
@@ -460,5 +469,36 @@ pub async fn attention(app: &App) -> Value {
     json!({
         "failed": failed,
         "unreadable_settings": unreadable,
+        "held": held(app.clock.standing()),
     })
+}
+
+/// Why the jobs that delete are held, or `null` while they are not.
+pub fn held(standing: Standing) -> Value {
+    match standing {
+        Standing::Ahead { mark, wall, ends } => json!({
+            "reason": "clock_ahead",
+            "clock_at": wall,
+            "newest_committed_at": mark,
+            "ends_at": ends,
+        }),
+        Standing::Agrees | Standing::Behind { .. } => Value::Null,
+    }
+}
+
+/// Takes the server's clock as right and lets the jobs a clock ahead held run now.
+pub async fn confirm_clock(app: &App) -> Result<Stamp> {
+    let clock = app.clock.clone();
+    let confirmed = app
+        .db
+        .write(Write::own(), move |tx| {
+            let at = clock.confirm();
+            for job in JOBS.iter().filter(|job| job.deletes) {
+                schedule::bring_forward_held(tx, job.name, &at.text())?;
+            }
+            Ok(at)
+        })
+        .await?;
+    tracing::info!(at = %confirmed, "The owner confirmed the server's clock");
+    Ok(confirmed)
 }

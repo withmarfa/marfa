@@ -13,7 +13,7 @@ use super::connectors::{self, Reason};
 use super::faults::{FAIL_ATTENTION, HOLD_ATTENTION};
 use super::refusal::Result;
 use super::{App, folders, health, housekeeping, keys};
-use crate::app::clock::Stamp;
+use crate::app::clock::{Stamp, Standing};
 
 const CHECK_WAIT: Duration = Duration::from_secs(3);
 const SOON_MS: i64 = 7 * housekeeping::DAY_MS;
@@ -195,6 +195,47 @@ fn capitalized(text: &str) -> String {
         .unwrap_or_default()
 }
 
+/// A length of time in the largest whole unit that keeps it above one.
+fn span(ms: i64) -> String {
+    const HOUR_MS: i64 = housekeeping::HOUR_MS;
+    match ms {
+        ms if ms >= 2 * housekeeping::DAY_MS => format!("{} days", ms / housekeeping::DAY_MS),
+        ms if ms >= 2 * HOUR_MS => format!("{} hours", ms / HOUR_MS),
+        ms => plural((ms / 60_000).max(1), "minute", "minutes"),
+    }
+}
+
+const CONFIRM: &str = "`marfa housekeeping confirm-clock --socket PATH`";
+
+fn clocked(standing: Standing) -> Option<Concern> {
+    match standing {
+        Standing::Agrees => None,
+        Standing::Ahead { mark, wall, ends } => Some(Concern {
+            kind: "clock",
+            reference: "clock_ahead".to_string(),
+            title: "Clean-up is held because the clock is ahead".to_string(),
+            description: format!(
+                "The server's clock reads {wall}, {} later than the newest time it has stored, \
+                 {mark}. Jobs that delete old records do nothing until {ends}, once the clock \
+                 has run a day without jumping. If the clock is right, run {CONFIRM} on the \
+                 server to let them run now. If it is wrong, set it right.",
+                span(wall.ms() - mark.ms())
+            ),
+        }),
+        Standing::Behind { mark, wall } => Some(Concern {
+            kind: "clock",
+            reference: "clock_behind".to_string(),
+            title: "The server's clock is behind".to_string(),
+            description: format!(
+                "The server's clock reads {wall}, {} earlier than the newest time it has stored, \
+                 {mark}. New records are stamped {mark} until the clock catches up. If the clock \
+                 is right, run {CONFIRM} on the server to stamp by it again.",
+                span(mark.ms() - wall.ms())
+            ),
+        }),
+    }
+}
+
 async fn jobs(app: &Arc<App>) -> Result<Vec<Concern>> {
     Ok(housekeeping::failed(app)
         .await?
@@ -365,7 +406,8 @@ pub async fn read(app: &Arc<App>) -> Value {
         checked(app, KEYS, ending(app, &at)),
     );
     let jobs = without_covered_jobs(&health, jobs);
-    let data: Vec<Value> = [health, jobs, connectors, folders, keys]
+    let clock: Vec<Concern> = clocked(app.clock.standing()).into_iter().collect();
+    let data: Vec<Value> = [health, clock, jobs, connectors, folders, keys]
         .iter()
         .flatten()
         .map(Concern::to_json)

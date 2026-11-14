@@ -25,42 +25,52 @@ pub(super) const JOBS: &[Job] = &[
     }),
     Job::new("audit-cleanup", DAY_MS, 5_000, HOUR, |app, run| {
         Box::pin(cleanups::audit(app, run))
-    }),
+    })
+    .deleting(),
     Job::new("trash-purge", DAY_MS, 5_000, HOUR, |app, run| {
         Box::pin(items::sweep::trash_purge(app, run))
-    }),
+    })
+    .deleting(),
     Job::new("version-thinning", HOUR_MS, 5_000, SIX_HOURS, |app, run| {
         Box::pin(items::thinning::version_thinning(app, run))
-    }),
+    })
+    .deleting(),
     Job::new("feed-expiry", HOUR_MS, 5_000, SIX_HOURS, |app, run| {
         Box::pin(items::expiry::feed_expiry(app, run))
-    }),
+    })
+    .deleting(),
     Job::new("event-log-cleanup", HOUR_MS, 10_000, HOUR, |app, run| {
         Box::pin(cleanups::event_log(app, run))
-    }),
+    })
+    .deleting(),
     Job::new(
         "inbound-delivery-cleanup",
         MINUTE_MS,
         15_000,
         HOUR,
         |app, run| Box::pin(inbound::delivery_cleanup(app, run)),
-    ),
+    )
+    .deleting(),
     Job::new("bulk-action-gc", HOUR_MS, 30_000, HOUR, |app, run| {
         Box::pin(jobs::gc(app, run))
-    }),
+    })
+    .deleting(),
     Job::new("table-row-cleanup", HOUR_MS, 30_000, HOUR, |app, run| {
         Box::pin(tables::cleanup(app, run))
-    }),
+    })
+    .deleting(),
     Job::new("credential-cleanup", HOUR_MS, 20_000, HOUR, |app, run| {
         Box::pin(cleanups::credentials(app, run))
-    }),
+    })
+    .deleting(),
     Job::new("blob-replicate", MINUTE_MS, 5_000, HOUR, |app, run| {
         Box::pin(upkeep::replicate(app, run))
     }),
     Job::new("blob-orphans", DAY_MS, 30_000, HOUR, |app, run| {
         Box::pin(upkeep::orphans(app, run))
     })
-    .switched_by(upkeep::sweeps),
+    .switched_by(upkeep::sweeps)
+    .deleting(),
     Job::new("blob-integrity", HOUR_MS, 60_000, HOUR, |app, run| {
         Box::pin(upkeep::integrity(app, run))
     }),
@@ -86,14 +96,25 @@ mod tests {
             .nth(1)
             .and_then(|rest| rest.split("<!-- housekeeping-table:end -->").next())
             .expect("housekeeping.md holds the table");
-        let tabled: Vec<&str> = table
+        let rows: Vec<(&str, &str)> = table
             .lines()
             .filter_map(|line| line.strip_prefix("| `"))
-            .filter_map(|rest| rest.split('`').next())
+            .filter_map(|rest| {
+                let name = rest.split('`').next()?;
+                let held = rest.trim_end().trim_end_matches('|').rsplit('|').next()?;
+                Some((name, held.trim()))
+            })
             .collect();
+        let tabled: Vec<&str> = rows.iter().map(|(name, _)| *name).collect();
         assert!(JOBS.len() > 5);
         for job in JOBS {
             assert!(tabled.contains(&job.name), "{} is not tabled", job.name);
+            let held = if job.deletes { "yes" } else { "no" };
+            assert!(
+                rows.contains(&(job.name, held)),
+                "{} is not tabled as held: {held}",
+                job.name
+            );
         }
         for (index, name) in tabled.iter().enumerate() {
             assert!(

@@ -1,12 +1,15 @@
-//! The one place code asks the time; it never goes back.
+//! The one place code asks the time. A stamp is never earlier than the newest time the server
+//! committed, and a clock far ahead of that time judges nothing old enough to delete.
 
 #[cfg(feature = "test-hooks")]
-use std::sync::Mutex;
+use std::sync::MutexGuard;
+use std::sync::{Mutex, PoisonError};
 
 use std::fmt;
 
 use chrono::{DateTime, Utc};
 use marfa_rules::time;
+use rusqlite::OptionalExtension;
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use tokio::sync::watch;
 
@@ -17,16 +20,105 @@ pub const MAX_OFFSET_MS: u64 = 3_153_600_000_000;
 const FIRST_MS: i64 = -62_167_219_200_000;
 const LAST_MS: i64 = 253_402_300_799_999;
 
+const DAY_MS: i64 = 86_400_000;
+/// How far the wall clock may run ahead of the mark before clean-up holds.
+pub const AHEAD_MS: i64 = 7 * DAY_MS;
+/// How long the server runs with no further jump before a hold ends by itself.
+pub const STEADY_MS: i64 = DAY_MS;
+/// How far behind the mark the wall clock is before the owner is told.
+pub const BEHIND_MS: i64 = 3_600_000;
+/// The most the wall clock and the steady clock may part between two looks without it being a jump.
+const JUMP_MS: i64 = 60_000;
+
+/// What the clock knows of the newest time committed, and how long it has held clean-up.
+#[derive(Debug, Default)]
+struct Guard {
+    mark: Option<i64>,
+    /// The wall and steady readings at the last look.
+    last: Option<(i64, i64)>,
+    /// The steady reading the count toward a hold's end started from.
+    steady_since: Option<i64>,
+}
+
+impl Guard {
+    /// Brings the guard up to these readings, and answers whether clean-up holds.
+    fn look(&mut self, wall: i64, steady: i64) -> bool {
+        let jumped = self.last.is_some_and(|(last_wall, last_steady)| {
+            ((wall - last_wall) - (steady - last_steady)).abs() > JUMP_MS
+        });
+        self.last = Some((wall, steady));
+        let mark = *self.mark.get_or_insert(wall);
+        if wall - mark <= AHEAD_MS {
+            self.steady_since = None;
+            self.mark = Some(mark.max(wall));
+            return false;
+        }
+        let since = match self.steady_since {
+            Some(since) if !jumped => since,
+            _ => steady,
+        };
+        if steady - since >= STEADY_MS {
+            self.confirm(wall);
+            return false;
+        }
+        self.steady_since = Some(since);
+        true
+    }
+
+    fn confirm(&mut self, wall: i64) {
+        self.mark = Some(wall);
+        self.steady_since = None;
+    }
+
+    fn standing(&mut self, wall: i64, steady: i64) -> Standing {
+        let held = self.look(wall, steady);
+        let mark = self.mark.unwrap_or(wall);
+        match (held, self.steady_since) {
+            (true, Some(since)) => Standing::Ahead {
+                mark: Stamp::clamped(mark),
+                wall: Stamp::clamped(wall),
+                ends: Stamp::clamped(wall.saturating_add(STEADY_MS - (steady - since))),
+            },
+            _ if mark - wall > BEHIND_MS => Standing::Behind {
+                mark: Stamp::clamped(mark),
+                wall: Stamp::clamped(wall),
+            },
+            _ => Standing::Agrees,
+        }
+    }
+}
+
+/// How the wall clock stands against the newest time committed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Standing {
+    Agrees,
+    /// Clean-up holds until `ends`, unless the clock jumps again or the owner confirms the time.
+    Ahead {
+        mark: Stamp,
+        wall: Stamp,
+        ends: Stamp,
+    },
+    /// Stamps stay at the mark until the clock catches up or the owner confirms the time.
+    Behind {
+        mark: Stamp,
+        wall: Stamp,
+    },
+}
+
 #[cfg(feature = "test-hooks")]
 #[derive(Debug)]
 struct State {
     offset_ms: u64,
-    paused_at_ms: Option<i64>,
+    /// Moves the wall clock alone, as a host's clock being set does.
+    jump_ms: i64,
+    /// The wall and steady readings it was paused at.
+    paused_at: Option<(i64, i64)>,
 }
 
 #[derive(Debug)]
 #[cfg_attr(not(feature = "test-hooks"), derive(Default))]
 pub struct Clock {
+    guard: Mutex<Guard>,
     #[cfg(feature = "test-hooks")]
     state: Mutex<State>,
     moved: watch::Sender<u64>,
@@ -39,48 +131,124 @@ pub enum Refused {
     TooFarAhead,
     #[error("the clock cannot move past the last instant")]
     PastLastInstant,
+    #[error("the clock cannot be set more than {MAX_OFFSET_MS} ms either way")]
+    TooFarSet,
 }
 
 fn system_ms() -> i64 {
     Utc::now().timestamp_millis()
 }
 
+/// A clock that counts the time the host sleeps and that nothing sets.
+fn steady_ms() -> i64 {
+    #[cfg(target_os = "linux")]
+    const STEADY: libc::clockid_t = libc::CLOCK_BOOTTIME;
+    #[cfg(not(target_os = "linux"))]
+    const STEADY: libc::clockid_t = libc::CLOCK_MONOTONIC;
+    let mut at = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
+    // SAFETY: `at` is a whole `timespec`, which the call fills.
+    unsafe { libc::clock_gettime(STEADY, &mut at) };
+    at.tv_sec
+        .saturating_mul(1_000)
+        .saturating_add(at.tv_nsec / 1_000_000)
+}
+
 impl Clock {
     #[cfg(feature = "test-hooks")]
     pub fn new(offset_ms: u64) -> Clock {
         Clock {
+            guard: Mutex::default(),
             state: Mutex::new(State {
                 offset_ms,
-                paused_at_ms: None,
+                jump_ms: 0,
+                paused_at: None,
             }),
             moved: watch::Sender::new(0),
         }
     }
 
-    #[cfg(feature = "test-hooks")]
-    fn state(&self) -> std::sync::MutexGuard<'_, State> {
-        self.state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    /// Starts from the mark the database holds, before anything asks the time.
+    pub fn resume_from(&self, mark: Option<Stamp>) {
+        self.guard().mark = mark.map(Stamp::ms);
+    }
+
+    fn guard(&self) -> std::sync::MutexGuard<'_, Guard> {
+        self.guard.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
     #[cfg(feature = "test-hooks")]
-    pub fn now_ms(&self) -> i64 {
+    fn state(&self) -> MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    #[cfg(feature = "test-hooks")]
+    fn readings(&self) -> (i64, i64) {
         let state = self.state();
-        state.paused_at_ms.unwrap_or_else(system_ms) + state.offset_ms as i64
+        let (wall, steady) = state
+            .paused_at
+            .unwrap_or_else(|| (system_ms(), steady_ms()));
+        let offset = state.offset_ms as i64;
+        (wall + offset + state.jump_ms, steady + offset)
     }
 
     #[cfg(not(feature = "test-hooks"))]
+    fn readings(&self) -> (i64, i64) {
+        (system_ms(), steady_ms())
+    }
+
+    /// The later of the wall clock and the mark, except while clean-up holds, when the mark
+    /// stays put so that a clock set right again is not left behind it.
     pub fn now_ms(&self) -> i64 {
-        system_ms()
+        let mut guard = self.guard();
+        let (wall, steady) = self.readings();
+        if guard.look(wall, steady) {
+            wall
+        } else {
+            guard.mark.unwrap_or(wall)
+        }
+    }
+
+    /// The time a clean-up judges age by, or `None` while it holds and must keep everything.
+    pub fn judging(&self) -> Option<Stamp> {
+        let mut guard = self.guard();
+        let (wall, steady) = self.readings();
+        (!guard.look(wall, steady)).then(|| Stamp::clamped(guard.mark.unwrap_or(wall)))
+    }
+
+    pub fn standing(&self) -> Standing {
+        let (mut guard, (wall, steady)) = (self.guard(), self.readings());
+        guard.standing(wall, steady)
+    }
+
+    /// Takes the wall clock as right: the mark moves to it, earlier or later, and a hold ends.
+    pub fn confirm(&self) -> Stamp {
+        let mut guard = self.guard();
+        let (wall, steady) = self.readings();
+        guard.last = Some((wall, steady));
+        guard.confirm(wall);
+        Stamp::clamped(wall)
+    }
+
+    /// Writes the mark in the transaction about to commit, so it survives what that write does.
+    pub fn keep_mark(&self, tx: &rusqlite::Transaction<'_>) -> refusal::Result<()> {
+        let Some(mark) = self.guard().mark else {
+            return Ok(());
+        };
+        tx.prepare_cached(
+            "INSERT INTO clock_mark (id, committed_at) VALUES (1, ?1) \
+             ON CONFLICT (id) DO UPDATE SET committed_at = excluded.committed_at \
+             WHERE committed_at IS NOT excluded.committed_at",
+        )?
+        .execute([Stamp::clamped(mark)])?;
+        Ok(())
     }
 
     /// The time to the millisecond, which never leaves the years a [`Stamp`] holds.
     pub fn instant(&self) -> Stamp {
-        Stamp(
-            DateTime::from_timestamp_millis(self.now_ms().clamp(FIRST_MS, LAST_MS))
-                .unwrap_or_default(),
-        )
+        Stamp::clamped(self.now_ms())
     }
 
     pub fn now(&self) -> DateTime<Utc> {
@@ -97,8 +265,13 @@ impl Clock {
     }
 
     #[cfg(feature = "test-hooks")]
+    pub fn jump_ms(&self) -> i64 {
+        self.state().jump_ms
+    }
+
+    #[cfg(feature = "test-hooks")]
     pub fn is_paused(&self) -> bool {
-        self.state().paused_at_ms.is_some()
+        self.state().paused_at.is_some()
     }
 
     #[cfg(not(feature = "test-hooks"))]
@@ -116,36 +289,82 @@ impl Clock {
         self.moved.send_modify(|count| *count += 1);
     }
 
+    /// Time passing while the server runs: both clocks move, and the mark follows unless clean-up holds.
     #[cfg(feature = "test-hooks")]
     pub fn advance(&self, ms: u64) -> Result<u64, Refused> {
+        let mut guard = self.guard();
+        let (wall, steady) = self.readings();
+        let held = guard.look(wall, steady);
         let mut state = self.state();
         let offset = state
             .offset_ms
             .checked_add(ms)
             .filter(|offset| *offset <= MAX_OFFSET_MS)
             .ok_or(Refused::TooFarAhead)?;
-        let base = state.paused_at_ms.unwrap_or_else(system_ms);
-        if base + offset as i64 > LAST_MS {
+        if wall.saturating_add(ms as i64) > LAST_MS {
             return Err(Refused::PastLastInstant);
         }
         state.offset_ms = offset;
         drop(state);
+        let (wall, steady) = self.readings();
+        guard.last = Some((wall, steady));
+        if !held {
+            guard.mark = guard.mark.map(|mark| mark.max(wall));
+        }
+        drop(guard);
         self.tell_moved();
         Ok(offset)
+    }
+
+    /// The host's clock set by `ms`, either way, while no time passes.
+    #[cfg(feature = "test-hooks")]
+    pub fn jump(&self, ms: i64) -> Result<i64, Refused> {
+        let guard = self.guard();
+        let (wall, _) = self.readings();
+        let mut state = self.state();
+        let jump = state
+            .jump_ms
+            .checked_add(ms)
+            .filter(|jump| jump.unsigned_abs() <= MAX_OFFSET_MS)
+            .ok_or(Refused::TooFarSet)?;
+        if !(FIRST_MS..=LAST_MS).contains(&wall.saturating_add(ms)) {
+            return Err(Refused::PastLastInstant);
+        }
+        state.jump_ms = jump;
+        drop((state, guard));
+        self.tell_moved();
+        Ok(jump)
     }
 
     /// Resuming reads the system clock again, so the time paused is caught up.
     #[cfg(feature = "test-hooks")]
     pub fn pause(&self, paused: bool) {
+        let guard = self.guard();
         let mut state = self.state();
-        state.paused_at_ms = if paused {
-            Some(state.paused_at_ms.unwrap_or_else(system_ms))
+        state.paused_at = if paused {
+            Some(
+                state
+                    .paused_at
+                    .unwrap_or_else(|| (system_ms(), steady_ms())),
+            )
         } else {
             None
         };
-        drop(state);
+        drop((state, guard));
         self.tell_moved();
     }
+}
+
+/// The mark the database holds; `None` before the first write that stamps.
+pub fn stored_mark(tx: &rusqlite::Transaction<'_>) -> refusal::Result<Option<Stamp>> {
+    let stored: Option<String> = tx
+        .query_row(
+            "SELECT committed_at FROM clock_mark WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .optional()?;
+    stored.as_deref().map(Stamp::read).transpose()
 }
 
 /// A time as every table holds it: RFC 3339 UTC text with milliseconds, which sorts as it reads.
@@ -153,6 +372,10 @@ impl Clock {
 pub struct Stamp(DateTime<Utc>);
 
 impl Stamp {
+    fn clamped(ms: i64) -> Stamp {
+        Stamp(DateTime::from_timestamp_millis(ms.clamp(FIRST_MS, LAST_MS)).unwrap_or_default())
+    }
+
     /// Refuses an instant outside the years 0000 to 9999, which no text of this form can hold.
     pub fn from_ms(ms: i64) -> refusal::Result<Stamp> {
         (FIRST_MS..=LAST_MS)
@@ -292,6 +515,141 @@ mod tests {
         clock.pause(false);
         assert!(clock.now_ms() >= at + 1_005);
         assert_eq!(clock.offset_ms(), 1_000);
+    }
+
+    const T0: i64 = 1_800_000_000_000;
+
+    fn started_at(mark: i64) -> Guard {
+        Guard {
+            mark: Some(mark),
+            ..Guard::default()
+        }
+    }
+
+    #[test]
+    fn holds_only_once_the_wall_clock_is_more_than_seven_days_ahead_of_the_mark() {
+        let mut guard = started_at(T0);
+        assert!(!guard.look(T0 + AHEAD_MS, 0));
+        assert_eq!(guard.mark, Some(T0 + AHEAD_MS));
+        let mut guard = started_at(T0);
+        assert!(guard.look(T0 + AHEAD_MS + 1, 0));
+        assert_eq!(guard.mark, Some(T0), "the mark stays while it holds");
+    }
+
+    #[test]
+    fn a_clock_behind_the_mark_stamps_the_mark_and_holds_nothing() {
+        let clock = Clock::new(0);
+        let ahead = clock.instant().ms() + DAY_MS;
+        clock.resume_from(Some(Stamp::from_ms(ahead).unwrap()));
+        assert_eq!(clock.now_ms(), ahead);
+        assert_eq!(clock.judging().map(Stamp::ms), Some(ahead));
+        assert!(matches!(clock.standing(), Standing::Behind { .. }));
+    }
+
+    #[test]
+    fn a_hold_ends_after_a_steady_day_and_a_jump_starts_the_day_again() {
+        let mut guard = started_at(T0);
+        let wall = T0 + 31 * DAY_MS;
+        assert!(guard.look(wall, 0));
+        assert!(guard.look(wall + STEADY_MS / 2, STEADY_MS / 2));
+        // Set a further hour ahead while half the day had passed.
+        assert!(guard.look(wall + STEADY_MS / 2 + 3_600_000, STEADY_MS / 2));
+        assert!(guard.look(wall + STEADY_MS + 3_600_000, STEADY_MS));
+        let ends = wall + 3 * STEADY_MS / 2 + 3_600_000;
+        assert!(guard.look(ends - 1, 3 * STEADY_MS / 2 - 1));
+        assert!(!guard.look(ends, 3 * STEADY_MS / 2));
+        assert_eq!(guard.mark, Some(ends));
+    }
+
+    #[test]
+    fn a_host_asleep_past_the_margin_holds_for_a_day_on_waking() {
+        let mut guard = started_at(T0);
+        assert!(!guard.look(T0, 0));
+        let woke = T0 + 10 * DAY_MS;
+        assert!(guard.look(woke, 10 * DAY_MS));
+        assert!(!guard.look(woke + STEADY_MS, 11 * DAY_MS));
+    }
+
+    #[test]
+    fn a_clock_set_right_after_a_hold_leaves_no_stamp_pinned() {
+        let mut guard = started_at(T0);
+        assert!(guard.look(T0 + 400 * DAY_MS, 0));
+        assert!(!guard.look(T0 + 1_000, 1_000));
+        assert_eq!(guard.mark, Some(T0 + 1_000));
+    }
+
+    #[test]
+    fn confirming_takes_the_wall_clock_either_way() {
+        let clock = Clock::new(0);
+        let now = clock.instant().ms();
+        clock.resume_from(Some(Stamp::from_ms(now - 180 * DAY_MS).unwrap()));
+        assert_eq!(clock.judging(), None);
+        assert!(matches!(clock.standing(), Standing::Ahead { .. }));
+        assert!(clock.confirm().ms() >= now);
+        assert!(clock.judging().is_some());
+        assert_eq!(clock.standing(), Standing::Agrees);
+
+        let clock = Clock::new(0);
+        clock.resume_from(Some(Stamp::from_ms(now + 30 * DAY_MS).unwrap()));
+        let confirmed = clock.confirm().ms();
+        assert!(confirmed < now + DAY_MS);
+        assert!(clock.now_ms() < now + DAY_MS);
+    }
+
+    #[test]
+    fn time_that_passes_carries_the_mark_and_a_set_clock_does_not() {
+        let clock = Clock::new(0);
+        clock.pause(true);
+        let start = clock.now_ms();
+        clock.advance(400 * DAY_MS as u64).unwrap();
+        assert_eq!(clock.judging().map(Stamp::ms), Some(start + 400 * DAY_MS));
+        clock.jump(31 * DAY_MS).unwrap();
+        assert_eq!(clock.judging(), None);
+        assert_eq!(clock.now_ms(), start + 431 * DAY_MS);
+        clock.advance(STEADY_MS as u64 - 1).unwrap();
+        assert_eq!(clock.judging(), None);
+        clock.advance(1).unwrap();
+        assert_eq!(
+            clock.judging().map(Stamp::ms),
+            Some(start + 431 * DAY_MS + STEADY_MS)
+        );
+    }
+
+    #[test]
+    fn a_clock_stepped_back_stamps_nothing_earlier() {
+        let clock = Clock::new(0);
+        clock.pause(true);
+        let before = clock.now_ms();
+        clock.jump(-DAY_MS).unwrap();
+        assert_eq!(clock.now_ms(), before);
+        clock.advance(DAY_MS as u64 + 1).unwrap();
+        assert_eq!(clock.now_ms(), before + 1);
+    }
+
+    #[test]
+    fn keeps_its_mark_in_the_transaction() {
+        let mut db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE clock_mark (id INTEGER PRIMARY KEY CHECK (id = 1), committed_at TEXT NOT NULL) STRICT",
+        )
+        .unwrap();
+        let clock = Clock::new(0);
+        let tx = db.transaction().unwrap();
+        assert_eq!(stored_mark(&tx).unwrap(), None);
+        clock.keep_mark(&tx).unwrap();
+        assert_eq!(
+            stored_mark(&tx).unwrap(),
+            None,
+            "no mark before the first look"
+        );
+        let at = clock.instant();
+        clock.keep_mark(&tx).unwrap();
+        assert_eq!(stored_mark(&tx).unwrap(), Some(at));
+        tx.commit().unwrap();
+        let tx = db.transaction().unwrap();
+        tx.execute("UPDATE clock_mark SET committed_at = 'soon'", [])
+            .unwrap();
+        assert!(stored_mark(&tx).is_err());
     }
 
     #[test]

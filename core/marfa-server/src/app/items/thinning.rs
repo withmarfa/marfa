@@ -191,7 +191,10 @@ fn doomed(
         .optional()?;
     let policy = type_id.and_then(|type_id| policy_of(defaults, catalog, &type_id));
     match policy {
-        Some(policy) => Ok(thin(&history(tx, seq)?, &policy, app.clock.now_ms())),
+        Some(policy) => Ok(match app.clock.judging() {
+            Some(now) => thin(&history(tx, seq)?, &policy, now.ms()),
+            None => Vec::new(),
+        }),
         None => Ok(Vec::new()),
     }
 }

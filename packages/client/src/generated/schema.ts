@@ -3188,6 +3188,20 @@ export interface components {
                 }[] | null;
                 /** @description The keys of stored settings that no longer read, which Marfa runs on their defaults. */
                 unreadable_settings: string[];
+                /** @description Why the jobs that delete old records do nothing, or `null` if they run. */
+                held: {
+                    /**
+                     * @description Why the jobs that delete are held. `clock_ahead`: the server's clock is more than 7 days later than the newest time Marfa has stored.
+                     * @enum {string}
+                     */
+                    reason: "clock_ahead";
+                    /** @description What the server's clock reads, in UTC. */
+                    clock_at: string;
+                    /** @description The newest time Marfa has stored, in UTC. */
+                    newest_committed_at: string;
+                    /** @description When the hold ends if the clock runs without jumping until then, in UTC. `marfa housekeeping confirm-clock` on the server ends it at once. */
+                    ends_at: string;
+                } | null;
             };
         };
         /** @description A page of trashed item summaries. */
@@ -5205,10 +5219,10 @@ export interface components {
             last_result: components["schemas"]["HousekeepingReport"] | null;
         };
         /**
-         * @description How a run ended: `ok` if it finished, `error` if it failed.
+         * @description How a run ended: `ok` if it finished, `error` if it failed, `held` if it did nothing because the clock is far ahead or a restore holds writes.
          * @enum {string}
          */
-        HousekeepingOutcome: "ok" | "error";
+        HousekeepingOutcome: "ok" | "error" | "held";
         /** @description What a run reports, under names its job chooses, such as `deleted`, `copied` or, for `trash-purge`, `passed_over`: the items it could not purge and left for the next run. */
         HousekeepingReport: {
             [key: string]: number | boolean | string | null;
@@ -5520,11 +5534,11 @@ export interface components {
         /** @description One known concern or unavailable check. */
         AttentionConcern: {
             /**
-             * @description health: component degraded or down; job: last run failed; connector: failed, has problems, or quiet over a day; folder: sync problems; key: expires soon; backup: none kept, off, store failing, or run failed; unavailable: check could not answer.
+             * @description health: component degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expires soon; backup: none kept, off, store failing, or run failed; clock: ahead or behind; unavailable: no answer.
              * @enum {string}
              */
-            kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "unavailable";
-            /** @description The component, job, connector, folder, or key ID, the name of the check that could not answer, or for a backup concern `no_backup_destination`, `turned_off`, `store` or `run`. */
+            kind: "health" | "job" | "connector" | "folder" | "key" | "backup" | "clock" | "unavailable";
+            /** @description The component, job, connector, folder, or key ID, the name of the check that could not answer, for a backup concern `no_backup_destination`, `turned_off`, `store` or `run`, or for a clock concern `clock_ahead` or `clock_behind`. */
             reference: string;
             /** @description A short name for the concern. */
             title: string;

@@ -448,6 +448,7 @@ fn control_doors(app: &Arc<App>) -> Routes {
         .route("/_control/setup/code", post(control::setup_code))
         .route("/_control/setup/ticket", post(control::setup_ticket))
         .route("/_control/owner/recover", post(control::recover_owner))
+        .route("/_control/clock/confirm", post(control::confirm_clock))
         .route(
             "/_control/owner/passkeys/add-url",
             get(auth::passkeys::add_url),

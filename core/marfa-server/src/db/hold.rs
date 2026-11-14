@@ -80,6 +80,10 @@ impl Hold {
         }
     }
 
+    pub(super) async fn lifted(&self) {
+        let _ = self.armed.subscribe().wait_for(Option::is_none).await;
+    }
+
     /// Answers once the current task's writes would be refused.
     pub(super) async fn refusing(&self) -> Refusal {
         let mut armed = self.armed.subscribe();
