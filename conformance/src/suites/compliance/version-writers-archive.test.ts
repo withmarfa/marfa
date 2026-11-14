@@ -9,6 +9,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import {
+  archiveLines,
   editLineFile,
   readLineFile,
   itemsArchive,
@@ -169,7 +170,11 @@ describe("who wrote each version, through an archive", () => {
       .map((text) => JSON.parse(text) as Record<string, unknown>)
       .find((parsed) => (parsed.item as { id: string }).id === id);
     expect(line, "the archive does not carry the note").toBeDefined();
-    expect(writers(line!.versions as Snapshot[])).toEqual([byFirst, bySecond]);
+    const versions = archiveLines<Snapshot & { item_id: string }>(
+      archive.data,
+      "versions",
+    ).filter((snapshot) => snapshot.item_id === id);
+    expect(writers(versions)).toEqual([byFirst, bySecond]);
     expect(line!.writer).toEqual(byFirst);
 
     const owner = new MarfaClient({
@@ -349,7 +354,7 @@ describe("who wrote each version, through an archive", () => {
     }).exportArchive({ type: "core.note", source: minted.source });
     expect(archive.status).toBe(200);
     let stripped = 0;
-    const forgotten = editLineFile(archive.data, "items", (body) =>
+    const unwritten = (body: string) =>
       body
         .split("\n")
         .filter((text) => text.trim() !== "")
@@ -358,13 +363,13 @@ describe("who wrote each version, through an archive", () => {
           // The witness: the export named a writer to take out.
           if (line.writer) stripped += 1;
           delete line.writer;
-          for (const snapshot of line.versions as Record<string, unknown>[]) {
-            if (snapshot.writer) stripped += 1;
-            delete snapshot.writer;
-          }
           return `${JSON.stringify(line)}\n`;
         })
-        .join(""),
+        .join("");
+    const forgotten = editLineFile(
+      editLineFile(archive.data, "items", unwritten),
+      "versions",
+      unwritten,
     );
     expect(stripped).toBe(3);
     const owner = new MarfaClient({
@@ -408,48 +413,54 @@ describe("who wrote each version, through an archive", () => {
       controlSocket: target.controlSocket,
     });
 
-    const edits: [string, (line: Record<string, unknown>) => void][] = [
+    const edits: [
+      string,
+      "items" | "versions",
+      (line: Record<string, unknown>) => void,
+    ][] = [
       [
-        "versions.0.writer.kind",
+        "versions.1.writer.kind",
+        "versions",
         (l) => {
-          (l.versions as Record<string, unknown>[])[0]!.writer = {
-            kind: "robot",
-            id: "x",
-            name: "x",
-          };
+          l.writer = { kind: "robot", id: "x", name: "x" };
         },
       ],
       [
-        "versions.0.writer.name",
+        "versions.1.writer.name",
+        "versions",
         (l) => {
-          (l.versions as Record<string, unknown>[])[0]!.writer = {
-            kind: "key",
-            id: "x",
-            name: "a\u0007b",
-          };
+          l.writer = { kind: "key", id: "x", name: "a\u0007b" };
         },
       ],
       [
         "writer.id",
+        "items",
         (l) => {
           l.writer = { kind: "key", id: "", name: "x" };
         },
       ],
       [
         "writer",
+        "items",
         (l) => {
           l.writer = "a key";
         },
       ],
     ];
-    for (const [field, edit] of edits) {
-      const edited = editLineFile(archive.data, "items", (body) =>
+    for (const [field, file, edit] of edits) {
+      const edited = editLineFile(archive.data, file, (body) =>
         body
           .split("\n")
           .filter((text) => text.trim() !== "")
           .map((text) => {
             const parsed = JSON.parse(text) as Record<string, unknown>;
-            if ((parsed.item as { id: string }).id === id) edit(parsed);
+            const owner =
+              file === "items"
+                ? (parsed.item as { id: string }).id
+                : (parsed.item_id as string);
+            if (owner === id && (file === "items" || parsed.version === 1)) {
+              edit(parsed);
+            }
             return `${JSON.stringify(parsed)}\n`;
           })
           .join(""),

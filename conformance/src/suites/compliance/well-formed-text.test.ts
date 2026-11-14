@@ -9,14 +9,7 @@ import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
-import {
-  tar,
-  lineFile,
-  readEntry,
-  itemsArchive,
-  itemFields,
-  blobHash,
-} from "../../utils/archive.js";
+import { editLineFile, itemsArchive, itemFields } from "../../utils/archive.js";
 import {
   cleanup,
   createTestContext,
@@ -595,7 +588,7 @@ describe("a restore", () => {
       properties: { body } as Record<string, unknown>,
       version: 1,
     });
-    const first = item(ids.first, "first");
+    const first = { ...item(ids.first, "first"), version: 2 };
     const second = item(ids.second, "second");
     let metadata: Record<string, unknown> = { tags: [], extensions: {} };
     const edge: Record<string, unknown> = {
@@ -623,34 +616,33 @@ describe("a restore", () => {
     if (where === "edge lending list")
       edgeLine.lending_blobs = [`sha256:${text}`];
     const blob = new Uint8Array(randomBytes(16));
-    const hash = blobHash(blob);
-    const base = itemsArchive([first, second], [], [type]);
-    const manifest = readEntry(base, "manifest.json");
-    if (manifest === null) throw new Error("the archive has no manifest");
-    return tar([
-      {
-        name: "manifest.json",
-        body: JSON.stringify({
-          ...JSON.parse(manifest),
-          edge_count: 1,
-          row_count: where === "row value" ? 1 : 0,
-          ...(where === "manifest"
-            ? {
-                blob_count: 1,
-                blobs: {
-                  [hash]: {
-                    mime_type: `text/${text}`,
-                    size_bytes: blob.length,
-                  },
-                },
-              }
-            : {}),
-        }),
-      },
-      ...(where === "manifest" ? [{ name: `blobs/${hash}`, body: blob }] : []),
-      lineFile("instance", `${JSON.stringify({ type })}\n`),
-      lineFile(
-        "items",
+    const earlier: Record<string, unknown> = {
+      id: ids.version,
+      item_id: ids.first,
+      version: 1,
+      properties: { body: where === "version property" ? `a ${text}` : "one" },
+      type: "core.note",
+      tier: "library",
+      occurred_at: "2026-01-01T00:00:00.000Z",
+      created_at: "2026-01-01T00:00:00.000Z",
+      source_id: null,
+    };
+    let archive = itemsArchive(
+      [first, second],
+      where === "file mime type"
+        ? [{ data: blob, mime_type: `text/${text}` }]
+        : [],
+      [type],
+      (manifest) =>
+        where === "manifest"
+          ? { ...manifest, written_by: `marfa-server ${text}` }
+          : manifest,
+      [earlier],
+    );
+    archive = editLineFile(
+      archive,
+      "items",
+      () =>
         [first, second]
           .map((row) =>
             JSON.stringify({
@@ -659,26 +651,33 @@ describe("a restore", () => {
             }),
           )
           .join("\n") + "\n",
-      ),
-      lineFile("edges", `${JSON.stringify(edgeLine)}\n`),
-      lineFile(
+    );
+    archive = editLineFile(
+      archive,
+      "edges",
+      () => `${JSON.stringify(edgeLine)}\n`,
+    );
+    if (where === "row value") {
+      archive = editLineFile(
+        archive,
         "rows",
-        where === "row value"
-          ? `${JSON.stringify({
-              item_id: ids.first,
-              table: "ledger",
-              id: ids.row,
-              values: { note: `a ${text}` },
-              updated_at: "2026-01-01T00:00:00.000Z",
-            })}\n`
-          : "",
-      ),
-    ]);
+        () =>
+          `${JSON.stringify({
+            item_id: ids.first,
+            table: "ledger",
+            id: ids.row,
+            values: { note: `a ${text}` },
+            updated_at: "2026-01-01T00:00:00.000Z",
+          })}\n`,
+      );
+    }
+    return archive;
   }
 
   interface Ids {
     first: string;
     second: string;
+    version: string;
     edge: string;
     type: string;
     row: string;
@@ -693,7 +692,9 @@ describe("a restore", () => {
     ["edge lending list", "/lending_blobs/0", "edge"],
     ["type", "/type/label", "type"],
     ["row value", "/values/note", "row"],
-    ["manifest", "/blobs/", "manifest.json"],
+    ["version property", "/properties/body", "first"],
+    ["file mime type", "/mime_type", "files.ndjson.gz"],
+    ["manifest", "/written_by", "manifest.json"],
   ] as const)(
     "refuses a %s that holds a surrogate escape with no partner, naming the line and where, and takes a pair there",
     async (where, pointer, row) => {
@@ -702,6 +703,7 @@ describe("a restore", () => {
       const ids: Ids = {
         first: uuidv7(),
         second: uuidv7(),
+        version: uuidv7(),
         edge: uuidv7(),
         type: `user.wellformed${hex}`,
         row: uuidv7(),
@@ -715,7 +717,11 @@ describe("a restore", () => {
       expect(refused.status, JSON.stringify(refused.error)).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
       const named =
-        row === "first" ? ids.first : row === "manifest.json" ? row : ids[row];
+        row === "first"
+          ? ids.first
+          : row === "manifest.json" || row === "files.ndjson.gz"
+            ? row
+            : ids[row];
       expect(refused.error?.error.message).toContain(named);
       expect(refused.error?.error.message).toContain(pointer);
       expect(JSON.stringify(refused.error)).not.toMatch(/\\ud[89a-f]/i);

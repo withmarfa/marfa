@@ -24,7 +24,8 @@ const CONNECTION: &str = "system.connection";
 /// What a restore did with one item line.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Restored {
-    Written,
+    /// Written as the row of this sequence number, which the item's versions are written under.
+    Written(i64),
     /// The instance holds the line's id, natural key or link already, and keeps its own row.
     Duplicate,
 }
@@ -90,12 +91,7 @@ pub fn held_snapshots(
 
 /// Writes the item an archive line holds, already judged by the archive's row checks, unless
 /// the instance holds its id, natural key or link.
-pub fn restore(
-    unit: &Unit<'_, '_>,
-    catalog: &Catalog,
-    line: &Value,
-    held: &HashSet<String>,
-) -> Result<Restored> {
+pub fn restore(unit: &Unit<'_, '_>, catalog: &Catalog, line: &Value) -> Result<Restored> {
     let tx = unit.tx();
     let item = line
         .get("item")
@@ -232,18 +228,14 @@ pub fn restore(
             references::archived(data, &lent).apply(tx, Row::Extension(row.seq, namespace))?;
         }
     }
-    if let Some(Value::Array(versions)) = line.get("versions") {
-        for snapshot in versions {
-            restore_snapshot(tx, row.seq, snapshot, held)?;
-        }
-    }
     let item =
         rows::by_seq(tx, row.seq)?.ok_or_else(|| Refusal::internal("a restored row is gone"))?;
     super::write::announce(unit, "item.created", &item)?;
-    Ok(Restored::Written)
+    Ok(Restored::Written(row.seq))
 }
 
-fn restore_snapshot(
+/// Requires a checked snapshot; an existing snapshot ID refuses the restore.
+pub fn restore_version(
     tx: &Transaction<'_>,
     seq: i64,
     snapshot: &Value,

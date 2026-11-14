@@ -267,6 +267,10 @@ const BYTES: Rule = Rule::Whole {
     min: 1,
     max: rule::TERABYTE,
 };
+const BULK_BYTES: Rule = Rule::Whole {
+    min: 1,
+    max: (crate::app::archive::LINE_CAP / 2) as u64,
+};
 const BYTES_OR_NONE: Rule = Rule::Whole {
     min: 0,
     max: rule::TERABYTE,
@@ -282,7 +286,7 @@ const COUNT_OR_NONE: Rule = Rule::Whole {
 
 registry! {
     MAX_REQUEST_BYTES: u64 = "max_request_bytes", BYTES, "1048576", "The largest request body the server accepts, in bytes. The server waits 180 seconds for a body, so a body larger than about 21 MiB can't arrive in time over a 1 Mbit/s link.";
-    MAX_BULK_REQUEST_BYTES: u64 = "max_bulk_request_bytes", BYTES, "16777216", "The largest body the bulk operations accept, in bytes. A restore refuses a row larger than this. The server waits 180 seconds for a body, so a body larger than about 21 MiB can't arrive in time over a 1 Mbit/s link.";
+    MAX_BULK_REQUEST_BYTES: u64 = "max_bulk_request_bytes", BULK_BYTES, "16777216", "The largest body the bulk operations accept, in bytes. A restore refuses a row larger than this. It may be set to at most 33554432, half of the 67108864 bytes a restore reads on one archive line. An export or backup refuses an item, version or edge whose line passes that limit, and names it. The server waits 180 seconds for a body, so a body larger than about 21 MiB can't arrive in time over a 1 Mbit/s link.";
     DISK_RESERVE_BYTES: u64 = "disk_reserve_bytes", BYTES_OR_NONE, "134217728", "Free disk space on the blob volume that an upload must leave, and below which health reports the disk as degraded, in bytes.";
     BLOB_MIN_COPIES: u64 = "blob_min_copies", COUNT, "1", "The fewest live copies the server keeps of each blob.";
     BLOB_CLEANUP_ENABLED: bool = "blob_cleanup_enabled", Rule::Boolean, "true", "Whether the `blob-orphans` job sweeps for blobs nothing references and purges them once they have stood in the orphan report for the grace.";

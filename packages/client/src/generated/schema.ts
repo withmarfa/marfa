@@ -30507,9 +30507,9 @@ export interface operations {
                 occurred_after?: string;
                 /** @description Only export items whose own time (`occurred_at`, else `created_at`) is before this time. */
                 occurred_before?: string;
-                /** @description `ndjson` for lines of JSON, or `archive` for a tar file that `POST /restore` reads. Defaults to `ndjson`. An archive's `manifest.json` lists under `missing_blobs` each blob it doesn't hold, including a file's blob your credential can't read. */
+                /** @description `ndjson` for lines of JSON, or `archive` for a tar file that `POST /restore` reads. Defaults to `ndjson`. An archive's `files.ndjson.gz` marks each file it doesn't carry `not_carried`, including one your credential can't read. */
                 format?: "ndjson" | "archive";
-                /** @description With `format=archive`, `false` leaves out the bytes of files, which the manifest then names in `missing_blobs`. Defaults to `true`. `format=ndjson` carries no file bytes either way. */
+                /** @description With `format=archive`, `false` leaves out the bytes of files, which `files.ndjson.gz` then marks `not_carried`. Defaults to `true`. `format=ndjson` carries no file bytes either way. */
                 files?: "true" | "false";
             };
             header?: never;
@@ -30518,7 +30518,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description With `format=ndjson`, one JSON object per line: each item, then each readable edge between them. With `format=archive`, a tar of the manifest, compressed line files of your registrations and settings, items with their history, and edges, then the blobs. If the export fails partway or your credential ends or stops reading what it carries, the connection ends early and an archive won't unpack. */
+            /** @description With `format=ndjson`, one JSON object per line: each item, then each readable edge between them. With `format=archive`, a tar of the manifest, compressed lines of its files, registrations and settings, items, versions, edges and table rows, then the blobs. If the export fails partway or your credential ends or stops reading what it carries, the connection ends early and an archive won't unpack. */
             200: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30569,7 +30569,7 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `export_entry_unrestorable`: with `format=archive`, a restore would refuse or skip an item or edge this instance holds, so no archive was sent. `details.entry` names it by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct it or its type, then export again. */
+            /** @description - `export_entry_unrestorable`: with `format=archive`, a restore would refuse or skip an item or edge this instance holds, or its line is longer than the 64 MiB a restore reads, so no archive was sent. `details.entry` names it by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct it or its type, then export again. */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30675,6 +30675,10 @@ export interface operations {
                         };
                         /** @description How many blobs the archive carried whose bytes match their hash, whether or not the instance already had them. */
                         blobs_imported: number;
+                        /** @description The name of each archive entry Marfa doesn't know and skipped, such as one a tar tool adds, in the order the archive holds them. */
+                        entries_skipped: string[];
+                        /** @description Each kind of `instance.ndjson.gz` line Marfa doesn't know and skipped, such as one a later build of the same archive version adds, named once in the order the archive first holds it. */
+                        line_kinds_skipped: string[];
                         /** @description The hashes of the blobs the archive names but doesn't carry with matching bytes, and that Marfa holds no copy of. Upload their bytes again with `POST /blobs` to restore them. */
                         blobs_missing: string[];
                         /** @description How many types Marfa registered. */
@@ -30725,7 +30729,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid line, or a line over 64 MiB.
+             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.
              *     - `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.
              *     - `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.
              */
@@ -31063,9 +31067,10 @@ export interface operations {
                 };
             };
             /**
-             * @description - `conflict`: a file the backup names was purged, or its copy where backups go was dropped, while the backup was read, or a backup by this name is already recorded. The next run takes the backup again.
+             * @description - `conflict`: a file the backup names was purged or dropped while it was read, or the name is taken.
+             *     - `export_entry_unrestorable`: the backup would hold an item or edge that `GET /export` refuses, named in `details.entry`, so none was put.
              *     - `housekeeping_job_running`: a backup is running. Try again once it ends.
-             *     - `no_backup_destination`: the instance has nowhere to put backups, so it keeps none.
+             *     - `no_backup_destination`: the instance has nowhere to put backups.
              */
             409: {
                 headers: {
@@ -31075,7 +31080,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
+                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["ExportItemsUnrestorableRefusal"] | components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */
@@ -31298,6 +31303,10 @@ export interface operations {
                         };
                         /** @description How many blobs the archive carried whose bytes match their hash, whether or not the instance already had them. */
                         blobs_imported: number;
+                        /** @description The name of each archive entry Marfa doesn't know and skipped, such as one a tar tool adds, in the order the archive holds them. */
+                        entries_skipped: string[];
+                        /** @description Each kind of `instance.ndjson.gz` line Marfa doesn't know and skipped, such as one a later build of the same archive version adds, named once in the order the archive first holds it. */
+                        line_kinds_skipped: string[];
                         /** @description The hashes of the blobs the archive names but doesn't carry with matching bytes, and that Marfa holds no copy of. Upload their bytes again with `POST /blobs` to restore them. */
                         blobs_missing: string[];
                         /** @description How many types Marfa registered. */
@@ -31358,7 +31367,7 @@ export interface operations {
                 };
             };
             /**
-             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is at another version, has an invalid line, or a line over 64 MiB.
+             * @description - `validation_error`: the body isn't an archive, lacks or repeats an entry, is from before Marfa 0.1 or a later version, or has an invalid line or one over 64 MiB.
              *     - `invalid_properties`: a `core` or `system` item breaks its type, or `strict_mode` refuses a property.
              *     - `invalid_schema`, `inheritance_violation`, `property_shadows_field`: an archived type is refused as `POST /types` would refuse it.
              */

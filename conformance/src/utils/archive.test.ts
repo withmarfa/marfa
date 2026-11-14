@@ -13,6 +13,7 @@ import {
   archiveLines,
   archiveManifest,
   blobHash,
+  carriedFiles,
   editLineFile,
   itemsArchive,
   lineFile,
@@ -122,8 +123,10 @@ describe("itemsArchive", () => {
     );
     expect(listEntries(archive).map((e) => e.name)).toEqual([
       "manifest.json",
+      "files.ndjson.gz",
       "instance.ndjson.gz",
       "items.ndjson.gz",
+      "versions.ndjson.gz",
       "edges.ndjson.gz",
       "rows.ndjson.gz",
       `blobs/${blobHash(data)}`,
@@ -131,10 +134,11 @@ describe("itemsArchive", () => {
     expect(archiveLines(archive, "items")).toHaveLength(1);
     const manifest = archiveManifest<{
       blob_count: number;
-      blobs: Record<string, { size_bytes: number }>;
+      file_count: number;
     }>(archive);
     expect(manifest.blob_count).toBe(1);
-    expect(manifest.blobs[blobHash(data)]?.size_bytes).toBe(data.length);
+    expect(manifest.file_count).toBe(1);
+    expect(carriedFiles(archive)[blobHash(data)]?.size_bytes).toBe(data.length);
   });
 
   it("names an entry as asked, whether or not the bytes hash to it", () => {
@@ -144,9 +148,7 @@ describe("itemsArchive", () => {
       [],
       [{ data, mime_type: "application/octet-stream", named }],
     );
-    expect(
-      Object.keys(archiveManifest<{ blobs: object }>(archive).blobs),
-    ).toEqual([named]);
+    expect(Object.keys(carriedFiles(archive))).toEqual([named]);
     expect(readEntry(archive, `blobs/${named}`)).not.toBeNull();
     expect(readEntry(archive, `blobs/${blobHash(data)}`)).toBeNull();
   });

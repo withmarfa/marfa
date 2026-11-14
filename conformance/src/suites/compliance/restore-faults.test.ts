@@ -8,6 +8,7 @@ import {
   editLineFile,
   itemsArchive,
   blobHash,
+  ndjson,
 } from "../../utils/archive.js";
 import {
   bootFreshServer,
@@ -534,17 +535,28 @@ describe("a restore that does not commit and removes the bytes it placed", () =>
 
 function carryingBoth(rows: Carried, extra: Uint8Array): Uint8Array {
   const extraHash = blobHash(extra);
-  const entries = listEntries(rows.archive).map((entry) => {
+  const listed = editLineFile(rows.archive, "files", (text) =>
+    ndjson(
+      [
+        ...text
+          .split("\n")
+          .filter((line) => line !== "")
+          .map((line) => JSON.parse(line) as { hash: string }),
+        {
+          hash: extraHash,
+          mime_type: "application/octet-stream",
+          size_bytes: extra.length,
+          state: "carried",
+        },
+      ].sort((a, b) => (a.hash < b.hash ? -1 : a.hash > b.hash ? 1 : 0)),
+    ),
+  );
+  const entries = listEntries(listed).map((entry) => {
     if (entry.name === "manifest.json") {
       const manifest = JSON.parse(entry.body.toString("utf8")) as {
         blob_count: number;
-        blobs: Record<string, unknown>;
       };
       manifest.blob_count += 1;
-      manifest.blobs[extraHash] = {
-        mime_type: "application/octet-stream",
-        size_bytes: extra.length,
-      };
       return { name: entry.name, body: JSON.stringify(manifest) };
     }
     return { name: entry.name, body: entry.body };

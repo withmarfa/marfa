@@ -1,12 +1,13 @@
-//! The files an archive's manifest names, read from the start of the archive alone.
+//! Reads a backup's file list without reading its items or blobs.
 
-use std::io;
+use std::io::{self, Write};
 
+use flate2::write::GzDecoder;
 use futures_util::StreamExt;
 use serde_json::Value;
 
-use super::intake::{MANIFEST, TEXT_CAP};
 use super::untar::{Part, Reader};
+use crate::app::archive::{BLOBS, ENTRIES, FILES, FORMAT, LINE_CAP, MANIFEST, VERSION};
 use crate::app::blobs::{ByteStream, Hash};
 
 enum Stop {
@@ -14,12 +15,65 @@ enum Stop {
     NotAnArchive,
 }
 
-/// Every file the manifest names, or `None` for bytes that do not begin with a manifest.
+/// The hashes of a `files.ndjson.gz` as its bytes arrive, one line at a time.
+#[derive(Default)]
+struct Hashes {
+    pending: Vec<u8>,
+    named: Vec<Hash>,
+    broken: bool,
+}
+
+impl Hashes {
+    fn take(&mut self, line: &[u8]) {
+        if line.is_empty() {
+            return;
+        }
+        let hash = serde_json::from_slice::<Value>(line)
+            .ok()
+            .and_then(|held| Hash::parse(held.get("hash")?.as_str()?).ok());
+        match hash {
+            Some(hash) => self.named.push(hash),
+            None => self.broken = true,
+        }
+    }
+}
+
+impl Write for Hashes {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        let mut rest = bytes;
+        while let Some(at) = rest.iter().position(|byte| *byte == b'\n') {
+            let mut line = std::mem::take(&mut self.pending);
+            line.extend_from_slice(&rest[..at]);
+            self.take(&line);
+            rest = &rest[at + 1..];
+        }
+        if self.pending.len() + rest.len() > LINE_CAP {
+            return Err(io::Error::other("a line is too long"));
+        }
+        self.pending.extend_from_slice(rest);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+enum Reading {
+    Before,
+    Manifest(Vec<u8>),
+    BetweenManifestAndFiles,
+    Files(Box<GzDecoder<Hashes>>),
+    Other,
+}
+
+/// Returns `None` if the manifest or file list does not read.
 pub async fn files_named(mut bytes: ByteStream) -> io::Result<Option<Vec<Hash>>> {
     let mut reader = Reader::default();
-    let mut manifest: Option<Vec<u8>> = None;
-    let mut read = false;
-    while !read {
+    let mut reading = Reading::Before;
+    let mut skipping = None;
+    let mut done: Option<Vec<Hash>> = None;
+    while done.is_none() {
         let Some(chunk) = bytes.next().await else {
             return Ok(None);
         };
@@ -28,59 +82,83 @@ pub async fn files_named(mut bytes: ByteStream) -> io::Result<Option<Vec<Hash>>>
             &chunk,
             |part| match part {
                 Part::Begins { name, size } => {
-                    if manifest.is_some() || name != MANIFEST || size > TEXT_CAP as u64 {
-                        return Err(Stop::NotAnArchive);
+                    let known = ENTRIES.contains(&name.as_str()) || name.starts_with(BLOBS);
+                    let before = matches!(reading, Reading::Before);
+                    let between = matches!(reading, Reading::BetweenManifestAndFiles);
+                    match name.as_str() {
+                        MANIFEST if before && size <= LINE_CAP as u64 => {
+                            reading = Reading::Manifest(Vec::with_capacity(size as usize));
+                        }
+                        FILES if between => {
+                            reading = Reading::Files(Box::new(GzDecoder::new(Hashes::default())));
+                        }
+                        _ if !known => {
+                            skipping = Some(std::mem::replace(&mut reading, Reading::Other));
+                        }
+                        _ => return Err(Stop::NotAnArchive),
                     }
-                    manifest = Some(Vec::with_capacity(size as usize));
                     Ok(())
                 }
-                Part::Bytes(part) => match manifest.as_mut() {
-                    Some(held) => {
+                Part::Bytes(part) => match &mut reading {
+                    Reading::Manifest(held) => {
                         held.extend_from_slice(part);
                         Ok(())
                     }
-                    None => Err(Stop::NotAnArchive),
+                    Reading::Files(decoder) => {
+                        decoder.write_all(part).map_err(|_| Stop::NotAnArchive)
+                    }
+                    Reading::Other => Ok(()),
+                    _ => Err(Stop::NotAnArchive),
                 },
-                Part::Ends => Err(Stop::Read),
+                Part::Ends => match std::mem::replace(&mut reading, Reading::Other) {
+                    Reading::Manifest(held) => {
+                        if !readable(&held) {
+                            return Err(Stop::NotAnArchive);
+                        }
+                        reading = Reading::BetweenManifestAndFiles;
+                        Ok(())
+                    }
+                    Reading::Files(decoder) => {
+                        let mut hashes = decoder.finish().map_err(|_| Stop::NotAnArchive)?;
+                        let last = std::mem::take(&mut hashes.pending);
+                        hashes.take(&last);
+                        if hashes.broken {
+                            return Err(Stop::NotAnArchive);
+                        }
+                        done = Some(hashes.named);
+                        Err(Stop::Read)
+                    }
+                    Reading::Other => {
+                        reading = skipping.take().unwrap_or(Reading::Before);
+                        Ok(())
+                    }
+                    _ => Err(Stop::NotAnArchive),
+                },
                 Part::Closed => Err(Stop::NotAnArchive),
             },
             |_| Stop::NotAnArchive,
         );
         match fed {
-            Ok(()) => {}
-            Err(Stop::Read) => read = true,
+            Ok(()) | Err(Stop::Read) => {}
             Err(Stop::NotAnArchive) => return Ok(None),
         }
     }
-    let Some(manifest) = manifest else {
-        return Ok(None);
-    };
-    tokio::task::spawn_blocking(move || named_in(&manifest))
-        .await
-        .map_err(io::Error::other)
-}
-
-fn named_in(manifest: &[u8]) -> Option<Vec<Hash>> {
-    let Ok(Value::Object(held)) = serde_json::from_slice::<Value>(manifest) else {
-        return None;
-    };
-    let keys = ["blobs", "missing_blobs"]
-        .into_iter()
-        .filter_map(|field| held.get(field)?.as_object())
-        .flat_map(|listed| listed.keys().map(String::as_str));
-    let listed = held
-        .get("bucket_blobs")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_str);
-    let mut files: Vec<Hash> = keys
-        .chain(listed)
-        .filter_map(|hash| Hash::parse(hash).ok())
-        .collect();
+    let mut files = done.unwrap_or_default();
     files.sort_by(|a, b| a.as_str().cmp(b.as_str()));
     files.dedup();
-    Some(files)
+    Ok(Some(files))
+}
+
+/// Whether a manifest names an archive of a version this build reads.
+fn readable(manifest: &[u8]) -> bool {
+    let Ok(Value::Object(held)) = serde_json::from_slice::<Value>(manifest) else {
+        return false;
+    };
+    held.get("format").and_then(Value::as_str) == Some(FORMAT)
+        && held
+            .get("version")
+            .and_then(Value::as_u64)
+            .is_some_and(|version| (1..=VERSION).contains(&version))
 }
 
 #[cfg(test)]
@@ -127,25 +205,72 @@ mod tests {
         format!("sha256:{}", letter.to_string().repeat(64))
     }
 
+    fn gzip(text: &str) -> Vec<u8> {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(text.as_bytes()).unwrap();
+        encoder.finish().unwrap()
+    }
+
+    const MANIFEST_V1: &str = r#"{"format":"marfa-archive","version":1}"#;
+
+    fn files_line(letter: char, state: &str) -> String {
+        format!(
+            r#"{{"hash":"{}","mime_type":null,"size_bytes":null,"state":"{state}"}}"#,
+            hash(letter)
+        )
+    }
+
     #[tokio::test]
-    async fn names_every_file_the_manifest_lists_and_reads_no_further() {
-        let manifest = format!(
-            r#"{{"missing_blobs":{{"{a}":{{}},"{b}":{{}}}},"blobs":{{}},"bucket_blobs":["{b}","{c}","not a hash"]}}"#,
-            a = hash('a'),
-            b = hash('b'),
-            c = hash('c'),
-        );
-        let mut bytes = archive(&[("manifest.json", manifest.as_bytes())]);
-        bytes.truncate(BLOCK + manifest.len());
+    async fn names_every_file_the_files_entry_lists_and_reads_no_further() {
+        let files = gzip(&format!(
+            "{}\n{}\n{}\n{}",
+            files_line('a', "not_carried"),
+            files_line('b', "lost"),
+            files_line('b', "lost"),
+            files_line('c', "carried"),
+        ));
+        let mut bytes = archive(&[
+            ("._manifest.json", b"\x00\x05"),
+            ("manifest.json", MANIFEST_V1.as_bytes()),
+            ("PaxHeaders.1/files.ndjson.gz", b"path=x\n"),
+            ("files.ndjson.gz", &files),
+            ("instance.ndjson.gz", b"never read"),
+        ]);
+        let end = bytes.len() - 3 * BLOCK;
+        bytes.truncate(end);
         let named = files_named(chunked(bytes)).await.unwrap().unwrap();
         let named: Vec<&str> = named.iter().map(Hash::as_str).collect();
         assert_eq!(named, [hash('a'), hash('b'), hash('c')]);
     }
 
     #[tokio::test]
-    async fn names_nothing_for_bytes_that_do_not_begin_with_a_manifest() {
+    async fn names_nothing_for_bytes_that_do_not_begin_with_a_manifest_this_build_reads() {
+        let files = gzip(&files_line('a', "carried"));
+        let witness = archive(&[
+            ("manifest.json", MANIFEST_V1.as_bytes()),
+            ("files.ndjson.gz", &files),
+        ]);
+        assert!(files_named(chunked(witness)).await.unwrap().is_some());
         let other = archive(&[("items.ndjson.gz", b"x"), ("manifest.json", b"{}")]);
         assert!(files_named(chunked(other)).await.unwrap().is_none());
+        for manifest in [
+            r#"{"version":1,"blobs":{}}"#,
+            r#"{"format":"marfa-archive","version":2}"#,
+        ] {
+            let old = archive(&[
+                ("manifest.json", manifest.as_bytes()),
+                ("files.ndjson.gz", &files),
+            ]);
+            assert!(
+                files_named(chunked(old)).await.unwrap().is_none(),
+                "{manifest}"
+            );
+        }
+        let no_files = archive(&[
+            ("manifest.json", MANIFEST_V1.as_bytes()),
+            ("instance.ndjson.gz", &files),
+        ]);
+        assert!(files_named(chunked(no_files)).await.unwrap().is_none());
         assert!(
             files_named(chunked(b"not a tar".repeat(100)))
                 .await

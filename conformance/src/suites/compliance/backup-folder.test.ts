@@ -15,9 +15,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
   archiveLines,
-  archiveManifest,
+  LINE_FILES,
   listEntries,
-  type LineFile,
+  lostFiles,
+  notCarried,
 } from "../../utils/archive.js";
 import {
   afterFirstScheduledBackup,
@@ -50,7 +51,6 @@ import { waitFor } from "../../utils/wait.js";
  * under `files/<instance id>/`, and a restore from the folder alone into a
  * fresh server on another data path.
  */
-const LINE_FILES: readonly LineFile[] = ["instance", "items", "edges", "rows"];
 const folder = mkdtempSync(join(tmpdir(), "marfa-backup-folder-"));
 const away = `${folder}-away`;
 const YEAR_SECONDS = "31536000";
@@ -165,6 +165,12 @@ describe("backups to a folder", () => {
       properties: { title: "kept in the folder" },
     });
     expect(note.status, JSON.stringify(note.error)).toBe(201);
+    // An edit, so the backup carries a version line.
+    const edited = await working.updateItem(note.data.item.id, {
+      version: note.data.item.version,
+      properties: { title: "kept in the folder, edited" },
+    });
+    expect(edited.status, JSON.stringify(edited.error)).toBe(200);
     const bytes = bytesOf("a file the backup copies", 4096);
     const uploaded = await working.uploadBlob(bytes, "text/plain");
     expect(uploaded.status, JSON.stringify(uploaded.error)).toBe(201);
@@ -199,10 +205,7 @@ describe("backups to a folder", () => {
     const archive = new Uint8Array(
       readFileSync(join(folder, "backups", originId, name)),
     );
-    const manifest = archiveManifest<{
-      missing_blobs: Record<string, unknown>;
-    }>(archive);
-    expect(Object.keys(manifest.missing_blobs)).toContain(made.hash);
+    expect(Object.keys(notCarried(archive))).toContain(made.hash);
     expect(
       listEntries(archive).filter((entry) => entry.name.startsWith("blobs/")),
     ).toEqual([]);
@@ -396,7 +399,7 @@ describe("a backup folder that lacks a file or its disk", () => {
     return { hash: uploaded.data.hash, item: file.data.item.id };
   }
 
-  it("puts a backup past a file no store can give, names it in lost_blobs and in health, and a restore goes ahead without it", async () => {
+  it("puts a backup past a file no store can give, names it lost and in health, and a restore goes ahead without it", async () => {
     await withFolder("backup-folder-lost", async (server, root) => {
       const id = await instanceIdOf(server);
       await server.setFault("hold:housekeeping:blob-replicate");
@@ -412,8 +415,7 @@ describe("a backup folder that lacks a file or its disk", () => {
       const archive = new Uint8Array(
         readFileSync(join(root, "backups", id, run.data.backup.name)),
       );
-      const manifest = archiveManifest<{ lost_blobs: string[] }>(archive);
-      expect(manifest.lost_blobs).toEqual([lost.hash]);
+      expect(lostFiles(archive)).toEqual([lost.hash]);
       expect(existsSync(copyIn(root, id, kept.hash))).toBe(true);
       const answer = await health(server);
       expect(answer.backups.status).toBe("failing");

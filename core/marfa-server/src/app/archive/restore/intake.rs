@@ -10,22 +10,15 @@ use marfa_rules::schema::{Obj, icon_issue};
 use serde_json::{Map, Value, json};
 
 use super::untar::{NotTar, Part, Reader};
-use crate::app::archive::{VERSION, checks};
+use crate::app::archive::{
+    BLOBS, EDGES, ENTRIES, FILES, FORMAT, INSTANCE, ITEMS, MANIFEST, ROWS, VERSION, VERSIONS,
+    checks,
+};
 use crate::app::blobs::Hash;
 use crate::app::blobs::restore::{Arriving, Named, Sealed, Spool};
 use crate::app::catalog::Catalog;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{edge_types, sources, stored, types};
-
-/// The most a manifest, or one line of a line file, may hold.
-pub const TEXT_CAP: usize = 64 * 1024 * 1024;
-pub(super) const MANIFEST: &str = "manifest.json";
-const INSTANCE: &str = "instance.ndjson.gz";
-const ITEMS: &str = "items.ndjson.gz";
-const EDGES: &str = "edges.ndjson.gz";
-const ROWS: &str = "rows.ndjson.gz";
-const BLOBS: &str = "blobs/";
-const ENTRIES: [&str; 5] = [MANIFEST, INSTANCE, ITEMS, EDGES, ROWS];
 
 fn invalid(message: impl Into<String>) -> Refusal {
     Refusal::validation(message.into())
@@ -45,6 +38,15 @@ fn bits(id: &str) -> Option<u128> {
         .ok()
         .filter(|held| held.hyphenated().to_string() == id)
         .map(|held| held.as_u128())
+}
+
+fn too_long(file: LineFile, row: usize, cap: usize) -> Refusal {
+    invalid(format!(
+        "Line {row} of {} holds more than {cap} bytes, more than a restore reads.",
+        file.name()
+    ))
+    .with_detail("entry", file.name())
+    .with_detail("line", row)
 }
 
 /// Snapshot ids, each kept as its 128 bits.
@@ -69,15 +71,28 @@ impl Ids {
     }
 }
 
-/// The manifest's blobs, by hash: those carried and those it says the archive lacks.
+/// What a `files.ndjson.gz` line says of a file.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum State {
+    Carried,
+    NotCarried,
+    /// No store gave the file whole when the backup was taken.
+    Lost,
+}
+
+#[derive(Debug)]
+pub struct Listed {
+    pub mime_type: Option<String>,
+    pub size_bytes: Option<u64>,
+    pub state: State,
+}
+
+/// What the manifest counts, and each file `files.ndjson.gz` names, by hash.
 #[derive(Debug, Default)]
 pub struct Manifest {
-    pub blobs: BTreeMap<String, (String, u64)>,
-    pub missing: BTreeMap<String, (Option<String>, Option<u64>)>,
-    /// The files of `missing` that no store could give when the backup was taken.
-    pub lost: BTreeSet<String>,
-    /// The lines it counts in `items.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`.
-    pub counts: [u64; 3],
+    pub files: BTreeMap<String, Listed>,
+    /// The lines it counts in each line file but `instance.ndjson.gz`, in the order of `COUNTED`.
+    pub counts: [u64; COUNTED.len()],
     /// The lines it counts of each kind in `instance.ndjson.gz`, in the order of `KINDS`.
     pub instance_counts: [u64; KINDS.len()],
     /// The `blobs/` entries it says the archive carries.
@@ -87,19 +102,26 @@ pub struct Manifest {
 impl Manifest {
     /// The files the instance that wrote the archive held and had not lost.
     pub fn held_files(&self) -> HashSet<String> {
-        self.blobs
-            .keys()
-            .chain(
-                self.missing
-                    .iter()
-                    .filter(|(_, (_, size))| size.is_some())
-                    .map(|(hash, _)| hash),
-            )
-            .filter(|hash| !self.lost.contains(*hash))
-            .cloned()
+        self.files
+            .iter()
+            .filter(|(_, listed)| match listed.state {
+                State::Carried => true,
+                State::NotCarried => listed.size_bytes.is_some(),
+                State::Lost => false,
+            })
+            .map(|(hash, _)| hash.clone())
             .collect()
     }
 }
+
+/// The manifest field that counts the lines of each line file but `instance.ndjson.gz`.
+const COUNTED: [(&str, &str); 5] = [
+    ("file_count", FILES),
+    ("item_count", ITEMS),
+    ("version_count", VERSIONS),
+    ("edge_count", EDGES),
+    ("row_count", ROWS),
+];
 
 /// What `instance.ndjson.gz` registers and sets; the agreements stay in the spool.
 #[derive(Default)]
@@ -119,9 +141,14 @@ pub struct Registrations {
 pub struct Received {
     pub manifest: Manifest,
     pub registrations: Registrations,
-    pub spools: [crate::app::blobs::Scratch; 4],
+    /// The line files, in the order of `LineFile`.
+    pub spools: [crate::app::blobs::Scratch; LINE_FILES.len()],
     pub snapshots: Ids,
     pub carried: Vec<(Sealed, String)>,
+    /// Each entry the restore did not read, by name, in the order the archive holds them.
+    pub skipped: Vec<String>,
+    /// Each kind of `instance.ndjson.gz` line the restore skipped, in the order first read.
+    pub unknown_kinds: Vec<String>,
 }
 
 impl Received {
@@ -132,25 +159,15 @@ impl Received {
             .iter()
             .map(|(sealed, _)| sealed.hash.as_str())
             .collect();
-        let listed = self
-            .manifest
-            .blobs
+        self.manifest
+            .files
             .iter()
-            .map(|(hash, (mime, size))| (hash, Some(mime.clone()), Some(*size)));
-        let lacking = self
-            .manifest
-            .missing
-            .iter()
-            .map(|(hash, (mime, size))| (hash, mime.clone(), *size));
-        let mut seen = HashSet::new();
-        listed
-            .chain(lacking)
-            .filter(|(hash, _, _)| !carried.contains(hash.as_str()) && seen.insert(hash.as_str()))
-            .filter_map(|(hash, mime_type, size_bytes)| {
+            .filter(|(hash, _)| !carried.contains(hash.as_str()))
+            .filter_map(|(hash, listed)| {
                 Some(Named {
                     hash: Hash::parse(hash).ok()?,
-                    mime_type,
-                    size_bytes,
+                    mime_type: listed.mime_type.clone(),
+                    size_bytes: listed.size_bytes,
                 })
             })
             .collect()
@@ -158,48 +175,75 @@ impl Received {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum LineFile {
+pub enum LineFile {
+    Files,
     Instance,
     Items,
+    Versions,
     Edges,
     Rows,
 }
 
+/// The line files, in the order the archive holds them after its manifest.
+pub const LINE_FILES: [LineFile; 6] = [
+    LineFile::Files,
+    LineFile::Instance,
+    LineFile::Items,
+    LineFile::Versions,
+    LineFile::Edges,
+    LineFile::Rows,
+];
+
 impl LineFile {
     fn name(self) -> &'static str {
         match self {
+            LineFile::Files => FILES,
             LineFile::Instance => INSTANCE,
             LineFile::Items => ITEMS,
+            LineFile::Versions => VERSIONS,
             LineFile::Edges => EDGES,
             LineFile::Rows => ROWS,
         }
     }
 
-    fn slot(self) -> usize {
+    pub fn slot(self) -> usize {
         self as usize
     }
+}
+
+/// What the line checks keep of an item the archive holds.
+struct HeldItem {
+    type_index: u32,
+    line: usize,
+    version: i64,
 }
 
 /// What the line checks carry from one line to the next and from file to file.
 struct Rows {
     committed: Arc<Catalog>,
     cap: usize,
+    /// The most one line may hold.
+    line_cap: usize,
     catalog: Option<Catalog>,
     registrations: Registrations,
+    files: BTreeMap<String, Listed>,
     icon_types: HashSet<String>,
-    item_types: HashMap<u128, u32>,
+    items_held: HashMap<u128, HeldItem>,
     type_ids: HashSet<String>,
     edge_type_ids: HashSet<String>,
     setting_keys: HashSet<String>,
     type_names: Vec<String>,
     snapshots: Ids,
-    items: usize,
-    edges: usize,
-    rows: usize,
-    instance: usize,
+    /// The lines read of each line file, in the order of `LineFile`.
+    read: [usize; LINE_FILES.len()],
     kinds: [u64; KINDS.len()],
+    /// Each kind of `instance.ndjson.gz` line this build does not know, in the order first read.
+    unknown_kinds: Vec<String>,
+    kinds_seen: HashSet<String>,
     /// The place of the last row line read, which the next must come after.
     last_row: Option<checks::RowKey>,
+    /// The item line and version of the last version line read, which the next must come after.
+    last_version: Option<(usize, i64)>,
 }
 
 /// Each kind of `instance.ndjson.gz` line, with the manifest field that counts it.
@@ -213,6 +257,9 @@ const KINDS: [(&str, &str); 7] = [
     ("connector_agreement", "connector_agreement_count"),
 ];
 
+/// The key beside a line's kind that says who registered it.
+const PROVENANCE: &str = "provenance";
+
 fn kind_of(line: &Value) -> Option<usize> {
     let object = line.as_object()?;
     KINDS
@@ -225,12 +272,8 @@ impl Rows {
         let row = self.counted(file);
         *row += 1;
         let row = *row;
-        if text.len() > TEXT_CAP {
-            return Err(invalid(format!(
-                "Line {row} of {} holds more than {TEXT_CAP} bytes, more than a restore reads.",
-                file.name()
-            ))
-            .with_detail("entry", file.name()));
+        if text.len() > self.line_cap {
+            return Err(too_long(file, row, self.line_cap));
         }
         if let Some(pointer) = marfa_rules::json_text::ill_formed_at(text) {
             let named = named_by(file, text);
@@ -255,25 +298,132 @@ impl Rows {
                 .with_detail("line", row)
         })?;
         match file {
+            LineFile::Files => self.file_line(&line, row),
             LineFile::Instance => self.instance_line(&line, row),
             LineFile::Items => self.item_line(&line, row),
+            LineFile::Versions => self.version_line(&line, row),
             LineFile::Edges => self.edge_line(&line, row),
             LineFile::Rows => self.row_line(&line, row),
         }
     }
 
     fn counted(&mut self, file: LineFile) -> &mut usize {
-        match file {
-            LineFile::Instance => &mut self.instance,
-            LineFile::Items => &mut self.items,
-            LineFile::Edges => &mut self.edges,
-            LineFile::Rows => &mut self.rows,
+        &mut self.read[file.slot()]
+    }
+
+    fn file_line(&mut self, line: &Value, row: usize) -> Result<()> {
+        let wrong = |field: &str, expected: &str| {
+            invalid(format!(
+                "Line {row} of {FILES}: {field} must be {expected}."
+            ))
+            .with_detail("entry", FILES)
+            .with_detail("line", row)
+            .with_detail("field", field)
+        };
+        let Some(object) = line.as_object() else {
+            return Err(invalid(format!("Line {row} of {FILES} must be an object."))
+                .with_detail("entry", FILES)
+                .with_detail("line", row));
+        };
+        let Some(hash) = object
+            .get("hash")
+            .and_then(Value::as_str)
+            .filter(|hash| Hash::parse(hash).is_ok())
+        else {
+            return Err(wrong("hash", "a sha256: hash"));
+        };
+        let state = match object.get("state").and_then(Value::as_str) {
+            Some("carried") => State::Carried,
+            Some("not_carried") => State::NotCarried,
+            Some("lost") => State::Lost,
+            _ => return Err(wrong("state", "carried, not_carried or lost")),
+        };
+        let mime_type = match object.get("mime_type") {
+            Some(Value::String(mime)) => Some(served_type(mime)),
+            Some(Value::Null) if state != State::Carried => None,
+            _ => {
+                return Err(wrong(
+                    "mime_type",
+                    "a string, or null for a file not carried",
+                ));
+            }
+        };
+        let size_bytes = match object.get("size_bytes") {
+            Some(Value::Null) if state != State::Carried => None,
+            Some(size) if size.as_u64().is_some() => size.as_u64(),
+            _ => {
+                return Err(wrong(
+                    "size_bytes",
+                    "a non-negative integer, or null for a file not carried",
+                ));
+            }
+        };
+        let listed = Listed {
+            mime_type,
+            size_bytes,
+            state,
+        };
+        if self.files.insert(hash.to_string(), listed).is_some() {
+            return Err(invalid(format!("{FILES} names {hash} more than once."))
+                .with_detail("entry", FILES)
+                .with_detail("hash", hash));
         }
+        Ok(())
+    }
+
+    fn version_line(&mut self, line: &Value, row: usize) -> Result<()> {
+        let named = |refusal: Refusal| refusal.with_detail("entry", VERSIONS);
+        let key = checks::version(self.cap, line, row).map_err(|refused| named(refused.refusal))?;
+        let refused = |message: String, field: &str| {
+            named(invalid(message))
+                .with_detail("line", row)
+                .with_detail("item_id", key.item_id.as_str())
+                .with_detail("field", field)
+        };
+        let Some(item) = bits(&key.item_id).and_then(|id| self.items_held.get(&id)) else {
+            return Err(refused(
+                format!(
+                    "Version {} on line {row} of {VERSIONS} names item {}, which the archive does not hold.",
+                    key.version, key.item_id
+                ),
+                "item_id",
+            ));
+        };
+        if key.version >= item.version {
+            return Err(refused(
+                format!(
+                    "Version {} on line {row} of {VERSIONS} is not below the version of item {}, {}.",
+                    key.version, key.item_id, item.version
+                ),
+                "version",
+            ));
+        }
+        let place = (item.line, key.version);
+        if self.last_version.is_some_and(|last| last >= place) {
+            return Err(refused(
+                format!(
+                    "Version {} of item {} on line {row} of {VERSIONS} does not come after the line before it, in the order of the items and then of their versions.",
+                    key.version, key.item_id
+                ),
+                "version",
+            ));
+        }
+        self.last_version = Some(place);
+        if !self.snapshots.insert(&key.id) {
+            return Err(refused(
+                format!(
+                    "Version {} of item {} on line {row} of {VERSIONS} has the id {}, which another version in the archive has.",
+                    key.version, key.item_id, key.id
+                ),
+                "id",
+            ));
+        }
+        Ok(())
     }
 
     fn row_line(&mut self, line: &Value, row: usize) -> Result<()> {
         let key = checks::row(line, row).map_err(|refused| refused.refusal)?;
-        let held = bits(&key.item_id).is_some_and(|id| self.item_types.contains_key(&id));
+        let held = bits(&key.item_id).is_some_and(|id| self.items_held.contains_key(&id));
         if !held {
             return Err(invalid(format!(
                 "Row {} on line {row} of {ROWS} names item {}, which the archive does not hold.",
@@ -298,11 +448,26 @@ impl Rows {
     }
 
     fn instance_line(&mut self, line: &Value, row: usize) -> Result<()> {
-        let at = kind_of(line).ok_or_else(|| {
+        let unnamed = || {
             invalid(format!(
-                "Line {row} of {INSTANCE} names none of type, edge_type, type_icon, source, setting, connector_state or connector_agreement."
+                "Line {row} of {INSTANCE} must be an object that names its kind."
             ))
-        })?;
+            .with_detail("entry", INSTANCE)
+            .with_detail("line", row)
+        };
+        let object = line.as_object().ok_or_else(unnamed)?;
+        let Some(at) = kind_of(line) else {
+            let kinds: Vec<&String> = object.keys().filter(|key| *key != PROVENANCE).collect();
+            if kinds.is_empty() {
+                return Err(unnamed());
+            }
+            for kind in kinds {
+                if self.kinds_seen.insert(kind.clone()) {
+                    self.unknown_kinds.push(kind.clone());
+                }
+            }
+            return Ok(());
+        };
         self.kinds[at] += 1;
         let kind = KINDS[at].0;
         let body = &line[kind];
@@ -464,29 +629,26 @@ impl Rows {
         checks::item(catalog, self.cap, line, row).map_err(|refused| refused.refusal)?;
         let item = &line["item"];
         let id = item.get("id").and_then(Value::as_str);
-        if let Some(Value::Array(versions)) = line.get("versions") {
-            for (index, snapshot) in versions.iter().enumerate() {
-                let held = snapshot
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default();
-                if !self.snapshots.insert(held) {
-                    let field = format!("versions.{index}.id");
-                    return Err(invalid(format!(
-                        "Item {} on line {row} of the archive: {field} must be unique in the archive.",
-                        id.unwrap_or("with no id")
-                    ))
-                    .with_detail("line", row)
-                    .with_detail("item_id", id)
-                    .with_detail("field", field));
-                }
-            }
-        }
+        let version = item.get("version").and_then(Value::as_i64).unwrap_or(0);
         if let (Some(held), Some(type_id)) =
             (id.and_then(bits), item.get("type").and_then(Value::as_str))
         {
-            let index = self.type_index(type_id);
-            self.item_types.insert(held, index);
+            let type_index = self.type_index(type_id);
+            let item = HeldItem {
+                type_index,
+                line: row,
+                version,
+            };
+            if self.items_held.insert(held, item).is_some() {
+                let id = id.unwrap_or_default();
+                return Err(invalid(format!(
+                    "Line {row} of {ITEMS} holds item {id}, which an earlier line holds."
+                ))
+                .with_detail("entry", ITEMS)
+                .with_detail("line", row)
+                .with_detail("item_id", id)
+                .with_detail("field", "id"));
+            }
         }
         Ok(())
     }
@@ -495,11 +657,11 @@ impl Rows {
         let Some(catalog) = &self.catalog else {
             return Ok(());
         };
-        let (names, items) = (&self.type_names, &self.item_types);
+        let (names, items) = (&self.type_names, &self.items_held);
         let ends = |id: &str| {
-            let index = items.get(&bits(id)?)?;
+            let held = items.get(&bits(id)?)?;
             Some(checks::End {
-                type_id: names.get(*index as usize)?.as_str(),
+                type_id: names.get(held.type_index as usize)?.as_str(),
             })
         };
         match checks::edge(catalog, self.cap, line, row, ends) {
@@ -568,6 +730,8 @@ fn named_by(file: LineFile, text: &[u8]) -> Option<(&'static str, String)> {
             .map(str::to_string)
     };
     match file {
+        LineFile::Files => None,
+        LineFile::Versions => Some(("Item", named("/item_id")?)),
         LineFile::Items => Some(("Item", named("/item/id")?)),
         LineFile::Edges => Some(("Edge", named("/edge/id")?)),
         LineFile::Rows => Some(("Row", named("/id")?)),
@@ -611,15 +775,9 @@ impl Write for Splitter {
             }
             rest = &rest[at + 1..];
         }
-        if self.pending.len() + rest.len() > TEXT_CAP {
+        if self.pending.len() + rest.len() > self.rows.line_cap {
             let row = *self.rows.counted(self.file) + 1;
-            self.failed = Some(
-                invalid(format!(
-                    "Line {row} of {} holds more than {TEXT_CAP} bytes, more than a restore reads.",
-                    self.file.name()
-                ))
-                .with_detail("entry", self.file.name()),
-            );
+            self.failed = Some(too_long(self.file, row, self.rows.line_cap));
             return Err(io::Error::other("a line is too long"));
         }
         self.pending.extend_from_slice(rest);
@@ -658,9 +816,10 @@ pub struct Intake {
     disorder: Option<String>,
     manifest: Option<Manifest>,
     rows: Option<Rows>,
-    spools: [Option<crate::app::blobs::Scratch>; 4],
+    spools: [Option<crate::app::blobs::Scratch>; LINE_FILES.len()],
     carried: Vec<(Sealed, String)>,
     blob_entries: u64,
+    skipped: Vec<String>,
 }
 
 fn not_tar(_: NotTar) -> Refusal {
@@ -676,14 +835,17 @@ fn not_gzip(file: LineFile) -> Refusal {
 }
 
 impl Intake {
-    /// Opens the four line spools at once, so the body is spooled from its first part.
-    pub fn new(spool: Spool, committed: Arc<Catalog>, cap: usize) -> Result<Intake> {
-        let spools = [
-            Some(spool.scratch()?),
-            Some(spool.scratch()?),
-            Some(spool.scratch()?),
-            Some(spool.scratch()?),
-        ];
+    /// `cap` limits properties; `line_cap` limits each complete archive line.
+    pub fn new(
+        spool: Spool,
+        committed: Arc<Catalog>,
+        cap: usize,
+        line_cap: usize,
+    ) -> Result<Intake> {
+        let mut spools = [None, None, None, None, None, None];
+        for held in &mut spools {
+            *held = Some(spool.scratch()?);
+        }
         Ok(Intake {
             spool,
             tar: Reader::default(),
@@ -696,25 +858,28 @@ impl Intake {
             rows: Some(Rows {
                 committed,
                 cap,
+                line_cap,
                 catalog: None,
                 registrations: Registrations::default(),
+                files: BTreeMap::new(),
                 icon_types: HashSet::new(),
-                item_types: HashMap::new(),
+                items_held: HashMap::new(),
                 type_ids: HashSet::new(),
                 edge_type_ids: HashSet::new(),
                 setting_keys: HashSet::new(),
                 type_names: Vec::new(),
                 snapshots: Ids::default(),
-                items: 0,
-                edges: 0,
-                rows: 0,
-                instance: 0,
+                read: [0; LINE_FILES.len()],
                 kinds: [0; KINDS.len()],
+                unknown_kinds: Vec::new(),
+                kinds_seen: HashSet::new(),
                 last_row: None,
+                last_version: None,
             }),
             spools,
             carried: Vec::new(),
             blob_entries: 0,
+            skipped: Vec::new(),
         })
     }
 
@@ -761,12 +926,7 @@ impl Intake {
                 self.entry = Entry::Manifest(Vec::new());
                 return Ok(());
             }
-            let file = [
-                LineFile::Instance,
-                LineFile::Items,
-                LineFile::Edges,
-                LineFile::Rows,
-            ][rank - 1];
+            let file = LINE_FILES[rank - 1];
             let mut rows = self
                 .rows
                 .take()
@@ -791,11 +951,16 @@ impl Intake {
         }
         if let Some(rest) = name.strip_prefix(BLOBS) {
             self.blob_entries += 1;
+            if self.stage < ENTRIES.len() {
+                self.out_of_order(&name);
+                return Ok(());
+            }
             let listed = self
-                .manifest
+                .rows
                 .as_ref()
-                .and_then(|manifest| manifest.blobs.get(rest))
-                .map(|(mime, _)| mime.clone());
+                .and_then(|rows| rows.files.get(rest))
+                .filter(|listed| listed.state == State::Carried)
+                .and_then(|listed| listed.mime_type.clone());
             match (Hash::parse(rest).ok(), listed) {
                 (Some(hash), Some(mime_type)) => {
                     self.entry = Entry::Blob {
@@ -805,10 +970,14 @@ impl Intake {
                         arriving: Box::new(self.spool.stage()?),
                     };
                 }
-                _ => self.entry = Entry::Skip,
+                _ => {
+                    self.skipped.push(name);
+                    self.entry = Entry::Skip;
+                }
             }
             return Ok(());
         }
+        self.skipped.push(name);
         self.entry = Entry::Skip;
         Ok(())
     }
@@ -817,9 +986,10 @@ impl Intake {
         match &mut self.entry {
             Entry::None | Entry::Skip => Ok(()),
             Entry::Manifest(held) => {
-                if held.len() + bytes.len() > TEXT_CAP {
+                let cap = self.rows.as_ref().map_or(0, |rows| rows.line_cap);
+                if held.len() + bytes.len() > cap {
                     return Err(invalid(format!(
-                        "{MANIFEST} holds more than {TEXT_CAP} bytes, more than a restore reads."
+                        "{MANIFEST} holds more than {cap} bytes, more than a restore reads."
                     ))
                     .with_detail("entry", MANIFEST));
                 }
@@ -922,13 +1092,16 @@ impl Intake {
             .rows
             .take()
             .ok_or_else(|| Refusal::internal("a restore's row checks were lost"))?;
-        let manifest = self.manifest.take().unwrap_or_default();
+        let mut manifest = self.manifest.take().unwrap_or_default();
         let held = [
-            ("item_count", ITEMS, rows.items),
-            ("edge_count", EDGES, rows.edges),
-            ("row_count", ROWS, rows.rows),
+            rows.read[LineFile::Files.slot()],
+            rows.read[LineFile::Items.slot()],
+            rows.read[LineFile::Versions.slot()],
+            rows.read[LineFile::Edges.slot()],
+            rows.read[LineFile::Rows.slot()],
         ];
-        for ((count, file, lines), counted) in held.into_iter().zip(manifest.counts) {
+        for (((count, file), lines), counted) in COUNTED.into_iter().zip(held).zip(manifest.counts)
+        {
             if lines as u64 != counted {
                 return Err(invalid(format!(
                     "{MANIFEST} counts {counted} in {count}, and {file} holds {lines} lines."
@@ -953,17 +1126,26 @@ impl Intake {
             ))
             .with_detail("field", "blob_count"));
         }
-        let [Some(instance), Some(items), Some(edges), Some(row_lines)] =
-            std::mem::take(&mut self.spools)
+        let [
+            Some(files),
+            Some(instance),
+            Some(items),
+            Some(versions),
+            Some(edges),
+            Some(row_lines),
+        ] = std::mem::take(&mut self.spools)
         else {
             return Err(Refusal::internal("a restore's spool was lost"));
         };
+        manifest.files = rows.files;
         Ok(Received {
             manifest,
             registrations: rows.registrations,
-            spools: [instance, items, edges, row_lines],
+            spools: [files, instance, items, versions, edges, row_lines],
             snapshots: rows.snapshots,
             carried: std::mem::take(&mut self.carried),
+            skipped: std::mem::take(&mut self.skipped),
+            unknown_kinds: rows.unknown_kinds,
         })
     }
 }
@@ -981,7 +1163,7 @@ fn served_type(mime: &str) -> String {
     }
 }
 
-/// Reads and checks the manifest: a version this build reads, and the blobs it names.
+/// Reads and checks the manifest: an archive of a version this build reads, and its counts.
 fn manifest(bytes: &[u8]) -> Result<Manifest> {
     if let Some(pointer) = marfa_rules::json_text::ill_formed_at(bytes) {
         return Err(invalid(format!(
@@ -995,36 +1177,57 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
             invalid(format!("{MANIFEST} is not a JSON object.")).with_detail("entry", MANIFEST)
         );
     };
-    if let Some(version) = held
-        .get("version")
-        .filter(|version| version.is_number() && version.as_u64() != Some(VERSION))
-    {
-        let writer = held
-            .get("written_by")
-            .and_then(Value::as_str)
-            .map_or_else(|| "a build that does not say".to_string(), str::to_string);
-        return Err(invalid(format!(
-            "The archive is at version {version}, written by {writer}; this build restores only version {VERSION}, so restore it with the build that wrote it."
-        ))
-        .with_detail("version", version.clone()));
+    let written_by = held.get("written_by").and_then(Value::as_str);
+    let writer = written_by.unwrap_or("a build that does not say");
+    match held.get("format") {
+        None => {
+            return Err(invalid(format!(
+                "This archive was written by {writer}, before Marfa 0.1, and this build cannot read it."
+            ))
+            .with_detail("entry", MANIFEST)
+            .with_detail("written_by", written_by));
+        }
+        Some(format) if format.as_str() != Some(FORMAT) => {
+            return Err(invalid(format!(
+                "{MANIFEST} names the format {format}, and this build reads only {FORMAT} archives."
+            ))
+            .with_detail("entry", MANIFEST)
+            .with_detail("field", "format"));
+        }
+        Some(_) => {}
     }
+    match held.get("version").and_then(Value::as_u64) {
+        Some(version) if version > VERSION => Err(invalid(format!(
+            "The archive is at version {version}, written by {writer}; this build reads archives up to version {VERSION}."
+        ))
+        .with_detail("entry", MANIFEST)
+        .with_detail("version", version)
+        .with_detail("written_by", written_by)),
+        Some(1) => first(&held),
+        _ => Err(invalid(format!(
+            "{MANIFEST} is missing or mistypes version, a whole number from 1 to {VERSION}."
+        ))
+        .with_detail("entry", MANIFEST)
+        .with_detail(
+            "errors",
+            json!([{ "path": "version", "message": "Must be a whole number from 1." }]),
+        )),
+    }
+}
+
+/// Reads the counts a manifest of archive version 1 holds.
+fn first(held: &Map<String, Value>) -> Result<Manifest> {
     let mut errors = Vec::new();
     let mut wrong =
         |path: String, message: &str| errors.push(json!({ "path": path, "message": message }));
-    if held.get("version").and_then(Value::as_u64) != Some(VERSION) {
-        wrong("version".into(), "Must be a number.");
-    }
     if !held.get("written_by").is_some_and(Value::is_string) {
         wrong("written_by".into(), "Must be a string.");
     }
     let mut manifest = Manifest::default();
-    for (at, count) in ["item_count", "edge_count", "row_count"]
-        .into_iter()
-        .enumerate()
-    {
-        match held.get(count).and_then(Value::as_u64) {
+    for (at, (count, _)) in COUNTED.iter().enumerate() {
+        match held.get(*count).and_then(Value::as_u64) {
             Some(counted) => manifest.counts[at] = counted,
-            None => wrong(count.into(), "Must be a non-negative integer."),
+            None => wrong((*count).into(), "Must be a non-negative integer."),
         }
     }
     for (at, (_, count)) in KINDS.iter().enumerate() {
@@ -1036,79 +1239,6 @@ fn manifest(bytes: &[u8]) -> Result<Manifest> {
     match held.get("blob_count").and_then(Value::as_u64) {
         Some(counted) => manifest.blob_count = counted,
         None => wrong("blob_count".into(), "Must be a non-negative integer."),
-    }
-    match held.get("blobs") {
-        Some(Value::Object(blobs)) => {
-            for (hash, entry) in blobs {
-                let mime = entry.get("mime_type").and_then(Value::as_str);
-                let size = entry.get("size_bytes").and_then(Value::as_u64);
-                if mime.is_none() {
-                    wrong(format!("blobs.{hash}.mime_type"), "Must be a string.");
-                }
-                if size.is_none() {
-                    wrong(
-                        format!("blobs.{hash}.size_bytes"),
-                        "Must be a non-negative integer.",
-                    );
-                }
-                if let (Some(mime), Some(size)) = (mime, size) {
-                    manifest
-                        .blobs
-                        .insert(hash.clone(), (served_type(mime), size));
-                }
-            }
-        }
-        _ => wrong("blobs".into(), "Must be an object."),
-    }
-    match held.get("missing_blobs") {
-        None => {}
-        Some(Value::Object(lacking)) => {
-            for (hash, entry) in lacking {
-                let mime = entry.get("mime_type");
-                let size = entry.get("size_bytes");
-                let mime_ok = mime.is_some_and(|mime| mime.is_null() || mime.is_string());
-                let size_ok = size.is_some_and(|size| size.is_null() || size.as_u64().is_some());
-                if !mime_ok {
-                    wrong(
-                        format!("missing_blobs.{hash}.mime_type"),
-                        "Must be a string or null.",
-                    );
-                }
-                if !size_ok {
-                    wrong(
-                        format!("missing_blobs.{hash}.size_bytes"),
-                        "Must be a non-negative integer or null.",
-                    );
-                }
-                if mime_ok && size_ok {
-                    manifest.missing.insert(
-                        hash.clone(),
-                        (
-                            mime.and_then(Value::as_str).map(served_type),
-                            size.and_then(Value::as_u64),
-                        ),
-                    );
-                }
-            }
-        }
-        Some(_) => wrong("missing_blobs".into(), "Must be an object."),
-    }
-    match held.get("lost_blobs") {
-        None => {}
-        Some(Value::Array(lost)) => {
-            for (at, hash) in lost.iter().enumerate() {
-                match hash.as_str() {
-                    Some(hash) if manifest.missing.contains_key(hash) => {
-                        manifest.lost.insert(hash.to_string());
-                    }
-                    _ => wrong(
-                        format!("lost_blobs.{at}"),
-                        "Must be a hash that missing_blobs names.",
-                    ),
-                }
-            }
-        }
-        Some(_) => wrong("lost_blobs".into(), "Must be an array."),
     }
     if !errors.is_empty() {
         let named: Vec<String> = errors
@@ -1142,41 +1272,56 @@ mod tests {
         );
     }
 
-    const COUNTS: &str = r#""item_count":0,"edge_count":0,"row_count":0,"blob_count":0,"type_count":0,"edge_type_count":0,"type_icon_count":0,"source_count":0,"setting_count":0,"connector_state_count":0,"connector_agreement_count":0"#;
+    const COUNTS: &str = r#""file_count":0,"item_count":0,"version_count":0,"edge_count":0,"row_count":0,"blob_count":0,"type_count":0,"edge_type_count":0,"type_icon_count":0,"source_count":0,"setting_count":0,"connector_state_count":0,"connector_agreement_count":0"#;
 
     #[test]
-    fn a_manifest_at_another_version_is_refused_naming_the_build_that_wrote_it() {
-        for version in [0, 2] {
-            let text =
-                format!(r#"{{"version":{version},"written_by":"marfa-server 0.0.1","blobs":[]}}"#);
-            let refused = manifest(text.as_bytes()).unwrap_err();
-            let message = refused.message.to_string();
-            assert!(message.contains("marfa-server 0.0.1"), "{message}");
-            assert!(message.contains("restores only version 1"), "{message}");
-        }
-        let refused = manifest(br#"{"version":0}"#).unwrap_err();
+    fn a_manifest_with_no_format_is_refused_as_written_before_0_1() {
+        let refused = manifest(br#"{"version":1,"written_by":"marfa-server 0.0.70","blobs":{}}"#)
+            .unwrap_err();
+        assert_eq!(
+            refused.message,
+            "This archive was written by marfa-server 0.0.70, before Marfa 0.1, and this build cannot read it."
+        );
+        let refused = manifest(br#"{"version":1}"#).unwrap_err();
         assert!(refused.message.contains("a build that does not say"));
+        let other = manifest(br#"{"format":"tar","version":1}"#).unwrap_err();
+        assert_eq!(other.details.unwrap()["field"], "format");
+    }
+
+    #[test]
+    fn a_manifest_at_a_later_version_is_refused_and_one_at_none_is_mistyped() {
+        let text = r#"{"format":"marfa-archive","version":2,"written_by":"marfa-server 9.0.0"}"#;
+        let refused = manifest(text.as_bytes()).unwrap_err();
+        assert!(
+            refused.message.contains("up to version 1"),
+            "{}",
+            refused.message
+        );
+        let details = refused.details.unwrap();
+        assert_eq!(details["version"], 2);
+        assert_eq!(details["written_by"], "marfa-server 9.0.0");
+        for version in ["0", "1.5", "\"1\"", "null"] {
+            let text = format!(r#"{{"format":"marfa-archive","version":{version}}}"#);
+            let refused = manifest(text.as_bytes()).unwrap_err();
+            assert_eq!(refused.details.unwrap()["errors"][0]["path"], "version");
+        }
     }
 
     #[test]
     fn a_manifest_lacking_a_field_it_relies_on_is_refused_naming_each() {
-        let text = format!(
-            r#"{{"version":1,"written_by":"x",{COUNTS},"blobs":{{"h":{{"mime_type":null,"size_bytes":-1}}}}}}"#
-        );
-        let refused = manifest(text.as_bytes()).unwrap_err();
-        let paths: Vec<String> = refused.details.unwrap()["errors"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|error| error["path"].as_str().unwrap().to_string())
-            .collect();
-        assert_eq!(paths, ["blobs.h.mime_type", "blobs.h.size_bytes"]);
-        let bare = manifest(br#"{"version":1,"blobs":{}}"#).unwrap_err();
+        let bare = manifest(br#"{"format":"marfa-archive","version":1}"#).unwrap_err();
         let message = bare.message.to_string();
-        for field in ["written_by", "item_count", "setting_count", "blob_count"] {
+        for field in [
+            "written_by",
+            "file_count",
+            "version_count",
+            "setting_count",
+            "blob_count",
+        ] {
             assert!(message.contains(field), "{message}");
         }
-        let whole = format!(r#"{{"version":1,"written_by":"x",{COUNTS},"blobs":{{}}}}"#);
+        let whole =
+            format!(r#"{{"format":"marfa-archive","version":1,"written_by":"x",{COUNTS}}}"#);
         assert!(manifest(whole.as_bytes()).is_ok());
     }
 

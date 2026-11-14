@@ -11,12 +11,7 @@ import {
   trackKey,
   trackType,
 } from "../../utils/setup.js";
-import {
-  tar,
-  lineFile,
-  emptyManifest,
-  itemFields,
-} from "../../utils/archive.js";
+import { editLineFile, itemFields, itemsArchive } from "../../utils/archive.js";
 import { v7 as uuidv7 } from "uuid";
 
 /**
@@ -228,36 +223,14 @@ describe("a file item carries the size of the bytes it names", () => {
         metadata: { tags: [], extensions: {} },
         ...(lends && { lending_blobs: [sha256(bytes)] }),
       });
-    const archive = tar([
-      {
-        name: "manifest.json",
-        body: JSON.stringify({
-          ...emptyManifest(),
-          created_at: new Date().toISOString(),
-          item_count: 2,
-          edge_count: 0,
-          row_count: 0,
-          blob_count: 2,
-          type_count: 0,
-          edge_type_count: 0,
-          blobs: Object.fromEntries(
-            [lent, unlent].map((bytes) => [
-              sha256(bytes),
-              { mime_type: "image/png", size_bytes: bytes.length },
-            ]),
-          ),
-        }),
-      },
-      lineFile("instance", ""),
-      lineFile(
-        "items",
-        `${line(lentId, lent, true)}\n${line(unlentId, unlent, false)}\n`,
+    const archive = editLineFile(
+      itemsArchive(
+        [],
+        [lent, unlent].map((data) => ({ data, mime_type: "image/png" })),
       ),
-      lineFile("edges", ""),
-      lineFile("rows", ""),
-      { name: `blobs/${sha256(lent)}`, body: lent },
-      { name: `blobs/${sha256(unlent)}`, body: unlent },
-    ]);
+      "items",
+      () => `${line(lentId, lent, true)}\n${line(unlentId, unlent, false)}\n`,
+    );
     const restored = await getOwnerClient().restoreArchive(archive);
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, lentId);

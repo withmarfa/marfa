@@ -48,6 +48,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/approval-screens.test.ts",
   "src/suites/compliance/archive-history.test.ts",
   "src/suites/compliance/archive-limits.test.ts",
+  "src/suites/compliance/archive-line-cap.test.ts",
   "src/suites/compliance/archive-scalars.test.ts",
   "src/suites/compliance/attendees.test.ts",
   "src/suites/compliance/audit-actions.test.ts",

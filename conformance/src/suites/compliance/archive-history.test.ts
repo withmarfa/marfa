@@ -7,12 +7,14 @@ import type {
   TestContext,
 } from "../../client/types.js";
 import {
-  archiveManifest,
+  archiveLines,
+  carriedFiles,
   editLineFile,
   itemFields,
   itemsArchive,
   listEntries,
-  readLineFile,
+  ndjson,
+  notCarried,
 } from "../../utils/archive.js";
 import {
   bootFreshServer,
@@ -68,22 +70,26 @@ afterAll(async () => {
 interface ArchivedLine {
   item: MarfaItem;
   metadata: { tags: string[]; extensions: Record<string, unknown> };
-  versions: MarfaVersion[];
 }
 
 function itemLines(archive: Uint8Array): ArchivedLine[] {
-  return (readLineFile(archive, "items") ?? "")
-    .split("\n")
-    .filter((line) => line.trim() !== "")
-    .map((line) => JSON.parse(line) as ArchivedLine);
+  return archiveLines<ArchivedLine>(archive, "items");
 }
 
-/** The archive with the `items` line file rewritten by `change`, and nothing else. */
-function withItemLines(
+/** The earlier versions of `itemId` an archive carries on their own lines. */
+function versionLines(archive: Uint8Array, itemId: string): MarfaVersion[] {
+  return archiveLines<MarfaVersion>(archive, "versions").filter(
+    (line) => line.item_id === itemId,
+  );
+}
+
+/** The archive with the `name` line file rewritten by `change`, and nothing else. */
+function withLines(
   archive: Uint8Array,
+  name: "items" | "versions",
   change: (lines: Record<string, unknown>[]) => Record<string, unknown>[],
 ): Uint8Array {
-  return editLineFile(archive, "items", (text) =>
+  return editLineFile(archive, name, (text) =>
     change(
       text
         .split("\n")
@@ -157,7 +163,7 @@ describe("the history an archive carries", () => {
     expect(archive.status).toBe(200);
     const line = itemLines(archive.data).find((l) => l.item.id === item.id);
     expect(line?.item.version).toBe(202);
-    const carried = line?.versions ?? [];
+    const carried = versionLines(archive.data, item.id);
     expect(carried).toHaveLength(201);
     expect(carried.map((v) => v.version).sort((a, b) => a - b)).toEqual(
       Array.from({ length: 201 }, (_, i) => i + 1),
@@ -169,6 +175,29 @@ describe("the history an archive carries", () => {
       listed.map((v) => v.id).sort(),
     );
   }, 120_000);
+
+  it("puts each snapshot on its own line of versions.ndjson.gz, in the order of its item and then of its version", async () => {
+    const made = [await note(), await note(), await note()];
+    for (const item of made) {
+      await patch(item.id, { properties: { body: "second" } });
+      await patch(item.id, { properties: { body: "third" } });
+    }
+
+    const archive = await client.exportArchive({ source: ctx.source });
+    expect(archive.status).toBe(200);
+    const ours = new Set(made.map((item) => item.id));
+    const order = itemLines(archive.data)
+      .map((line) => line.item.id)
+      .filter((id) => ours.has(id));
+    expect([...order].sort()).toEqual([...ours].sort());
+    for (const line of archiveLines(archive.data, "items")) {
+      expect(line).not.toHaveProperty("versions");
+    }
+    const carried = archiveLines<MarfaVersion>(archive.data, "versions")
+      .filter((line) => ours.has(line.item_id))
+      .map((line) => `${line.item_id}/${String(line.version)}`);
+    expect(carried).toEqual(order.flatMap((id) => [`${id}/1`, `${id}/2`]));
+  });
 
   it("carries only the snapshots the exporting key may read under the type each had", async () => {
     // A bookmark that became a note: its first snapshot is a bookmark's.
@@ -207,14 +236,14 @@ describe("the history an archive carries", () => {
       expect(archive.status).toBe(200);
       const line = itemLines(archive.data).find((l) => l.item.id === id);
       expect(line, "the item is carried").toBeDefined();
-      return line?.versions.map((v) => v.type);
+      return versionLines(archive.data, id).map((v) => v.type);
     };
     // The witness: a key that may read both types is carried the snapshot.
     expect(await versionsFor(client)).toEqual(["core.bookmark"]);
     expect(await versionsFor(noteReader)).toEqual([]);
   });
 
-  it("carries the bytes only a snapshot names when the exporting key could read them through the blob doors, and names in missing_blobs only a file's it could not", async () => {
+  it("carries the bytes only a snapshot names when the exporting key could read them through the blob doors, and names as not carried only a file's it could not", async () => {
     const stranger = await client.createKey({
       label: "history-other-uploader",
       source: `${ctx.source}-other-uploader`,
@@ -287,16 +316,13 @@ describe("the history an archive carries", () => {
     expect(carried).not.toContain(`blobs/${upHidden.data.hash}`);
     expect(carried).toContain(`blobs/${current.data.hash}`);
     expect(carried).not.toContain(`blobs/${earlier.data.hash}`);
-    const manifest = archiveManifest<{
-      blobs: Record<string, unknown>;
-      missing_blobs: Record<string, unknown>;
-    }>(archive.data);
-    expect(Object.keys(manifest.blobs)).toContain(up.data.hash);
-    expect(Object.keys(manifest.blobs)).not.toContain(upHidden.data.hash);
-    expect(Object.keys(manifest.blobs)).not.toContain(earlier.data.hash);
+    const listed = Object.keys(carriedFiles(archive.data));
+    expect(listed).toContain(up.data.hash);
+    expect(listed).not.toContain(upHidden.data.hash);
+    expect(listed).not.toContain(earlier.data.hash);
     // The file's earlier blob is named with nothing of its record, and the
     // note's, which only the instance's record makes a blob, is not named.
-    expect(manifest.missing_blobs).toEqual({
+    expect(notCarried(archive.data)).toEqual({
       [earlier.data.hash]: { mime_type: null, size_bytes: null },
     });
   });
@@ -431,7 +457,10 @@ function snapshot(
   };
 }
 
-/** One archive of two items, the second carrying `versions` and a version 3. */
+/**
+ * One archive of two items, the second at version 3, and their earlier
+ * versions on lines of their own: the first's, then the second's.
+ */
 interface Rows {
   first: Record<string, unknown>;
   second: Record<string, unknown>;
@@ -475,122 +504,154 @@ function twoRows(edit: (rows: Rows) => void): {
       properties: { body: "a placeholder the items replace" },
     },
   ]);
-  const archive = editLineFile(
-    base,
-    "items",
-    () =>
-      [
-        { item: rows.first, versions: rows.firstVersions },
-        { item: rows.second, versions: rows.secondVersions },
-      ]
-        .map((l) =>
-          JSON.stringify({
-            ...l,
-            metadata: { tags: [], extensions: {} },
-          }),
-        )
-        .join("\n") + "\n",
+  const items = editLineFile(base, "items", () =>
+    ndjson(
+      [rows.first, rows.second].map((item) => ({
+        item,
+        metadata: { tags: [], extensions: {} },
+      })),
+    ),
+  );
+  const archive = editLineFile(items, "versions", () =>
+    ndjson([...rows.firstVersions, ...rows.secondVersions]),
   );
   return { archive, first, second };
 }
 
 describe("an archive's dates and history, refused before anything is written", () => {
   const invalidInstant = "not-a-date";
-  const cases: [string, string, (rows: Rows) => void][] = [];
-  const add = (path: string, edit: (rows: Rows) => void, label = path) =>
-    cases.push([label, path, edit]);
+  /**
+   * A case's label, the text its refusal holds, whether that refusal names
+   * the second item, and the damage done.
+   */
+  const cases: [string, string, boolean, (rows: Rows) => void][] = [];
+  const add = (
+    label: string,
+    names: string,
+    edit: (rows: Rows) => void,
+    namesSecond = true,
+  ) => cases.push([label, names, namesSecond, edit]);
+  const field = (path: string, edit: (rows: Rows) => void) =>
+    add(path, path, edit);
 
-  add("created_at", ({ second }) => {
+  field("created_at", ({ second }) => {
     second.created_at = invalidInstant;
   });
-  add("updated_at", ({ second }) => {
+  field("updated_at", ({ second }) => {
     second.updated_at = invalidInstant;
   });
-  add("last_activity_at", ({ second }) => {
+  field("last_activity_at", ({ second }) => {
     second.last_activity_at = invalidInstant;
   });
-  add("versions", (rows) => {
-    rows.secondVersions = "none" as never;
-  });
-  add("versions.0", ({ secondVersions }) => {
-    secondVersions[0] = 5 as never;
-  });
-  add("versions.0.id", ({ secondVersions }) => {
+  add(
+    "version line that is no object",
+    "versions.ndjson.gz must be an object",
+    ({ secondVersions }) => {
+      secondVersions[0] = 5 as never;
+    },
+    false,
+  );
+  field("versions.1.id", ({ secondVersions }) => {
     secondVersions[0]!.id = "not an id";
   });
   add(
-    "versions.1.id",
+    "versions.2.id repeating one of the same item",
+    "which another version in the archive has",
     ({ secondVersions }) => {
       secondVersions[1]!.id = secondVersions[0]!.id;
     },
-    "versions.1.id repeating one of the same item",
   );
   add(
-    "versions.0.id",
+    "versions.1.id repeating one of another item",
+    "which another version in the archive has",
     ({ firstVersions, secondVersions }) => {
       secondVersions[0]!.id = firstVersions[0]!.id;
     },
-    "versions.0.id repeating one of another item",
   );
-  add("versions.0.item_id", ({ secondVersions }) => {
-    secondVersions[0]!.item_id = uuidv7();
-  });
   add(
-    "versions.0.version",
+    "version line naming an item the archive does not hold",
+    "which the archive does not hold",
+    ({ secondVersions }) => {
+      secondVersions[0]!.item_id = uuidv7();
+    },
+    false,
+  );
+  add(
+    "version at 0",
+    "version must be a whole number",
     ({ secondVersions }) => {
       secondVersions[0]!.version = 0;
     },
-    "versions.0.version at 0",
   );
   add(
-    "versions.0.version",
+    "version fractional",
+    "version must be a whole number",
     ({ secondVersions }) => {
       secondVersions[0]!.version = 1.5;
     },
-    "versions.0.version fractional",
   );
   add(
-    "versions.1.version",
+    "version equal to the item's",
+    "is not below the version of item",
     ({ secondVersions }) => {
       secondVersions[1]!.version = 3;
     },
-    "versions.1.version equal to the item's",
   );
   add(
-    "versions.1.version",
+    "version repeating one of the same item",
+    "does not come after the line before it",
     ({ secondVersions }) => {
       secondVersions[1]!.version = 1;
     },
-    "versions.1.version repeating one of the same item",
   );
-  add("versions.0.properties", ({ secondVersions }) => {
+  add(
+    "versions out of their order",
+    "does not come after the line before it",
+    (rows) => {
+      rows.secondVersions.reverse();
+    },
+  );
+  add(
+    "versions ahead of an earlier item's",
+    "does not come after the line before it",
+    (rows) => {
+      [rows.firstVersions, rows.secondVersions] = [
+        rows.secondVersions,
+        rows.firstVersions,
+      ];
+    },
+    false,
+  );
+  field("versions.1.properties", ({ secondVersions }) => {
     secondVersions[0]!.properties = "text";
   });
-  add("versions.0.type", ({ secondVersions }) => {
+  field("versions.1.type", ({ secondVersions }) => {
     secondVersions[0]!.type = "Not A Type";
   });
-  add("versions.0.tier", ({ secondVersions }) => {
+  field("versions.1.tier", ({ secondVersions }) => {
     secondVersions[0]!.tier = "other";
   });
-  add("versions.0.occurred_at", ({ secondVersions }) => {
+  field("versions.1.occurred_at", ({ secondVersions }) => {
     secondVersions[0]!.occurred_at = invalidInstant;
   });
-  add("versions.0.created_at", ({ secondVersions }) => {
+  field("versions.1.created_at", ({ secondVersions }) => {
     secondVersions[0]!.created_at = invalidInstant;
   });
-  add("versions.0.source_id", ({ secondVersions }) => {
+  field("versions.1.source_id", ({ secondVersions }) => {
     secondVersions[0]!.source_id = 5;
   });
 
   it.each(cases)(
-    "refuses an item whose %s is malformed, and writes the item ahead of it nowhere",
-    async (_label, path, edit) => {
+    "refuses an archive whose %s is malformed, and writes the item ahead of it nowhere",
+    async (_label, names, namesSecond, edit) => {
       const bad = twoRows(edit);
       const refused = await ownerClient.restoreArchive(bad.archive);
       expect(refused.status, JSON.stringify(refused.error)).toBe(400);
       expect(refused.error?.error.code).toBe("validation_error");
-      expect(refused.error?.error.message).toContain(bad.second);
-      expect(refused.error?.error.message).toContain(path);
+      if (namesSecond) {
+        expect(refused.error?.error.message).toContain(bad.second);
+      }
+      expect(refused.error?.error.message).toContain(names);
       expect((await client.getItem(bad.first)).status).toBe(404);
       expect((await client.getItem(bad.second)).status).toBe(404);
 
@@ -615,16 +676,26 @@ describe("an archive's dates and history, refused before anything is written", (
     expect(again.ok, JSON.stringify(again.error)).toBe(true);
     expect(again.data).toMatchObject({ imported: 0, duplicates: 2 });
 
-    for (const damage of [
-      (line: Record<string, unknown>) => {
-        (line.item as Record<string, unknown>).created_at = invalidInstant;
-      },
-      (line: Record<string, unknown>) => {
-        (line.versions as Record<string, unknown>[])[0]!.tier = "other";
-      },
-    ]) {
+    const damages: [
+      "items" | "versions",
+      (line: Record<string, unknown>) => void,
+    ][] = [
+      [
+        "items",
+        (line) => {
+          (line.item as Record<string, unknown>).created_at = invalidInstant;
+        },
+      ],
+      [
+        "versions",
+        (line) => {
+          line.tier = "other";
+        },
+      ],
+    ];
+    for (const [name, damage] of damages) {
       const refused = await ownerClient.restoreArchive(
-        withItemLines(good.archive, (lines) => {
+        withLines(good.archive, name, (lines) => {
           damage(lines[1]!);
           return lines;
         }),
