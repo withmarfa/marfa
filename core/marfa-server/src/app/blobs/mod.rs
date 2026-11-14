@@ -885,8 +885,7 @@ impl App {
         self.settings.start.tuning.blob_read_idle
     }
 
-    /// A blob's lock, unless this task's writes are refused first: a restore keeps the locks of
-    /// the blobs it carries until it commits.
+    /// A restore keeps its blob locks until commit, so waiting writers must hear its refusal.
     pub(crate) async fn lock_to_write(&self, hash: &Hash) -> Result<store::Held> {
         tokio::select! {
             biased;

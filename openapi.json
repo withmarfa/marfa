@@ -10230,7 +10230,7 @@
                     "enum": [
                       "restore_running"
                     ],
-                    "description": "Why Marfa turned the write away without a wait. `restore_running` means a restore holds every write."
+                    "description": "Why Marfa turned the write away without a wait. `restore_running` means a restore is running."
                   },
                   "retry_after": {
                     "type": "integer",
