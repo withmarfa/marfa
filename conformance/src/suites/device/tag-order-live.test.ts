@@ -13,13 +13,6 @@ import {
 } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
 
-/**
- * A device answers an item's tags in the order the server keeps them
- * (`items/tags-set`), whichever way the copy came to hold them: a hydration,
- * a catch-up, a write the server answered, or a tag the device wrote itself
- * and has not sent. Run against a real server and the real binary.
- */
-
 let client: MarfaClient;
 let ctx: TestContext;
 let device: CliDevice;

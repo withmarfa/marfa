@@ -41,7 +41,7 @@ test("offline views preserve settings, sort, groups, search, and refusal reasons
   put.run("view", "system.view", AT, AT, AT, JSON.stringify(settings));
   put.run("a", "core.note", AT, AT, AT, JSON.stringify({ title: "Note a", amount: 4 }));
   put.run("b", "core.note", AT, AT, AT, JSON.stringify({ title: "Note b", amount: 2 }));
-  db.exec("INSERT INTO tags VALUES ('a','first'), ('a','second')");
+  db.exec("INSERT INTO tags (item_id, tag, position) VALUES ('a','first',0), ('a','second',1)");
   db.exec("INSERT INTO items_fts(rowid,title) SELECT seq,json_extract(properties,'$.title') FROM items WHERE type='core.note'");
   const before = server.asked();
   assert.deepEqual(core.listViews(), {
