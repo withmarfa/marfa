@@ -188,7 +188,7 @@ impl Order {
         self.order_by_named(sql, "i.id");
     }
 
-    /// Orders the aliases emitted by [`Order::columns`]. A nullable key is named alone with `NULLS LAST`, so that its expression is computed once for the select list and the sort.
+    /// Orders the aliases emitted by [`Order::columns`], a nullable key's nulls last.
     pub fn order_by_named(&self, sql: &mut Sql, id: &str) {
         sql.push(" ORDER BY ");
         for (at, key) in self.keys.iter().enumerate() {
