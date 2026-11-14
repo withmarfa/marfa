@@ -541,6 +541,65 @@ fn pass_withheld(
     Ok(Some(live.to_string()))
 }
 
+/// Reads the copy's stream from its cursor to `stream_live`, applying
+/// nothing, and answers the id of the last event it carries up to the head of
+/// the server's log: none where it carries none past the cursor. A stream that
+/// has not gone live by `deadline` is an error.
+pub(crate) fn last_carried(
+    core: &Core,
+    http: &Http,
+    deadline: Instant,
+    stop: &AtomicBool,
+) -> Result<Option<u64>> {
+    let (context, cursor) = {
+        let conn = core.conn()?;
+        let context = Context::capture(&conn)?;
+        let cursor =
+            store::meta_get(&conn, store::META_EVENT_CURSOR)?.ok_or_else(reach::invalid)?;
+        (context, cursor)
+    };
+    let frames = open(
+        &context.http(http),
+        &cursor,
+        deadline.saturating_duration_since(Instant::now()),
+    )?;
+    let unended = |reason: &str| CoreError::StreamIncomplete {
+        reason: reason.into(),
+        server: None,
+    };
+    let mut head = None;
+    let mut last = None;
+    loop {
+        let left = deadline.saturating_duration_since(Instant::now());
+        let frame = match next_frame(&frames, left, stop)? {
+            Ok(Ok(frame)) => frame,
+            Ok(Err(error)) => return Err(CoreError::Network(error.to_string())),
+            Err(_) => return Err(unended("read_failed")),
+        };
+        let Frame::Event { id, name, data } = frame else {
+            continue;
+        };
+        let payload = reach::event_payload(name.as_deref(), id.as_deref(), &data)?;
+        let kind = name.as_deref().unwrap_or(&payload.event_type);
+        match (kind, id, head) {
+            ("stream_cursor", None, None) => head = Some(context.marker(&payload, kind)?),
+            ("stream_live", None, Some(head)) => {
+                let live = context.marker(&payload, kind)?;
+                return if live < head || last.is_some_and(|last| last > live) {
+                    Err(reach::invalid())
+                } else {
+                    Ok(last)
+                };
+            }
+            ("stream_cursor" | "stream_live", _, _) => return Err(reach::invalid()),
+            (_, Some(id), Some(_)) => {
+                last = Some(reach::cursor(&id).ok_or_else(reach::invalid)?);
+            }
+            (kind, _, _) => return Err(unended(kind)),
+        }
+    }
+}
+
 pub(crate) fn refuse_if_stopped(stop: &AtomicBool) -> Result<()> {
     if stop.load(Ordering::Relaxed) {
         Err(CoreError::Canceled)
@@ -1162,7 +1221,6 @@ fn follow_paced(
             })?;
             #[cfg(debug_assertions)]
             crate::fault::hold(|| "follow-stream-had");
-            let _reading = core.reading();
             if !told.stalled {
                 if owes_drain && told.reachable != Some(false) {
                     recovery.reachable();
@@ -1648,9 +1706,6 @@ fn read_stream(
                     return Ok(ended);
                 }
                 live_confirmed = reach::cursor(&report.cursor).is_some_and(|cursor| cursor >= live);
-                if live_confirmed {
-                    core.backlog_applied();
-                }
                 told.unstalled(&report.cursor, recovery, on_change);
                 on_live(live_confirmed);
                 if live_confirmed {
