@@ -5702,6 +5702,50 @@ While an edit that replaces the properties waits to be sent, a device MUST keep 
 
 **Tests:** `device/property-order-live.test.ts › keeps a whole edit's order through a hydration and onto an answer ahead of it`.
 
+## Tag order
+
+A device answers an item's tags in the order the server keeps them (`items/tags-set`), before the server has answered a write and after.
+
+### `device/tag-order-answered`
+
+When a device holds an item from a hydration, a catch-up or the answer to a write, a device MUST answer the item's tags in the order the server answers them.
+
+**Reason:** an app that shows tags in the order a person wrote them would otherwise show two orders for one item, depending on whether it read online or offline.
+
+**Tests:** `device/tag-order-live.test.ts › answers the tags in the order the server answers them, after a hydration, a catch-up and a write the server answered`.
+
+### `device/tag-order-added`
+
+When a device adds a tag to an item before the write is sent, a device MUST answer the tag after the item's other tags.
+
+**Reason:** the server places a tag it adds last (`items/tags-set`).
+
+**Tests:** `device/tag-order-live.test.ts › places a tag the device adds last, keeps a tag already held where it was, and leaves the others in order when it removes one, before the write is sent and after`.
+
+### `device/tag-order-added-held`
+
+When a device adds a tag an item already holds, a device MUST answer the tag in the place it held it.
+
+**Tests:** `device/tag-order-live.test.ts › places a tag the device adds last, keeps a tag already held where it was, and leaves the others in order when it removes one, before the write is sent and after`.
+
+### `device/tag-order-removed`
+
+When a device removes a tag from an item before the write is sent, a device MUST answer the item's other tags in the order it answered them before.
+
+**Tests:** `device/tag-order-live.test.ts › places a tag the device adds last, keeps a tag already held where it was, and leaves the others in order when it removes one, before the write is sent and after`.
+
+### `device/tag-order-replaced`
+
+When a device replaces an item's tags before the write is sent, a device MUST answer each tag the replace names once, in the order the replace first names it.
+
+**Tests:** `device/tag-order-live.test.ts › answers a local replace of the tags in the order it names them, each once, before the write is sent and after`.
+
+### `device/tag-order-created`
+
+While a device holds a create that the server has not answered, a device MUST answer the item's tags in the order the create names them.
+
+**Tests:** `device/tag-order-live.test.ts › answers an item created offline with its tags in the order they were named, before the write is sent and after`.
+
 ## Views read from a copy
 
 ### `device/view-read`

@@ -69,6 +69,7 @@ CREATE INDEX IF NOT EXISTS edges_target ON edges (target_id, edge_type);
 CREATE TABLE IF NOT EXISTS tags (
   item_id TEXT NOT NULL REFERENCES items (id) ON DELETE CASCADE,
   tag TEXT NOT NULL,
+  position INTEGER NOT NULL,
   PRIMARY KEY (item_id, tag)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS tags_tag ON tags (tag);

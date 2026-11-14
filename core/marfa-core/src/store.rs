@@ -92,7 +92,7 @@ pub const EDGE_CHANGES_KEPT: usize = 10_000;
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 /// The version of the shape `schema.sql` makes, held in SQLite's
 /// `user_version`. A change to that shape raises it.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at, read_only";
 const EDGE_COLUMNS: &str =
@@ -2731,17 +2731,26 @@ fn is_tag_write(row: &QueuedWrite) -> bool {
     )
 }
 
-fn tag_targets(row: &QueuedWrite) -> HashSet<String> {
-    if row.kind == WriteKind::RemoveTag {
-        return row.tag.iter().cloned().collect();
+/// The tags a write names, each once, in the order it names them.
+fn tag_targets(row: &QueuedWrite) -> Vec<String> {
+    let named: Vec<String> = if row.kind == WriteKind::RemoveTag {
+        row.tag.iter().cloned().collect()
+    } else {
+        row.body
+            .get("tags")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|tag| tag.as_str().map(str::to_string))
+            .collect()
+    };
+    let mut targets: Vec<String> = Vec::with_capacity(named.len());
+    for tag in named {
+        if !targets.contains(&tag) {
+            targets.push(tag);
+        }
     }
-    row.body
-        .get("tags")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|tag| tag.as_str().map(str::to_string))
-        .collect()
+    targets
 }
 
 fn tag_field(tag: &str) -> EditField {
@@ -4080,7 +4089,7 @@ fn write_index(conn: &Connection, seq: i64, id: &str, text: IndexEntry) -> Resul
     conn.prepare_cached("DELETE FROM items_fts WHERE rowid = ?1")?
         .execute([seq])?;
     if let Some(text) = text {
-        let tags = tags_for_one(conn, id)?;
+        let tags = tags_for_index(conn, id)?;
         conn.prepare_cached(
             "INSERT INTO items_fts (rowid, title, body, description, name, extra, tags)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
@@ -4445,10 +4454,11 @@ pub fn upsert_item(
     if let Some(tags) = tags {
         conn.prepare_cached("DELETE FROM tags WHERE item_id = ?1")?
             .execute([&item.id])?;
-        let mut insert =
-            conn.prepare_cached("INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?1, ?2)")?;
-        for tag in tags {
-            insert.execute(params![item.id, tag])?;
+        let mut insert = conn.prepare_cached(
+            "INSERT OR IGNORE INTO tags (item_id, tag, position) VALUES (?1, ?2, ?3)",
+        )?;
+        for (position, tag) in (0_i64..).zip(tags) {
+            insert.execute(params![item.id, tag, position])?;
         }
     }
     let seq: i64 = conn
@@ -5260,7 +5270,8 @@ pub(crate) fn sql_value(value: &Value) -> rusqlite::types::Value {
     }
 }
 
-fn tags_for_one(conn: &Connection, id: &str) -> Result<Vec<String>, CoreError> {
+/// The index reads tags in byte order, whatever order the server keeps them in.
+fn tags_for_index(conn: &Connection, id: &str) -> Result<Vec<String>, CoreError> {
     let mut statement =
         conn.prepare_cached("SELECT tag FROM tags WHERE item_id = ?1 ORDER BY tag")?;
     let rows = statement.query_map([id], |row| row.get::<_, String>(0))?;
@@ -5281,7 +5292,7 @@ fn tags_for(conn: &Connection, ids: &[&str]) -> Result<HashMap<String, Vec<Strin
     {
         let wanted: HashSet<&str> = ids.iter().copied().collect();
         let mut statement =
-            conn.prepare_cached("SELECT item_id, tag FROM tags ORDER BY item_id, tag")?;
+            conn.prepare_cached("SELECT item_id, tag FROM tags ORDER BY item_id, position")?;
         let rows = statement.query_map([], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
@@ -5295,7 +5306,7 @@ fn tags_for(conn: &Connection, ids: &[&str]) -> Result<HashMap<String, Vec<Strin
     }
     for (placeholders, chunk) in in_lists(ids) {
         let sql = format!(
-            "SELECT item_id, tag FROM tags WHERE item_id IN ({placeholders}) ORDER BY item_id, tag"
+            "SELECT item_id, tag FROM tags WHERE item_id IN ({placeholders}) ORDER BY item_id, position"
         );
         let mut statement = conn.prepare_cached(&sql)?;
         let rows = statement.query_map(params_from_iter(chunk), |row| {
@@ -6589,7 +6600,6 @@ pub fn lay_waiting_writes_over(
         }
         lay_write(conn, &mut item, &mut tags, &row, read.as_ref())?;
     }
-    tags.sort();
     upsert_item(conn, &item.as_wire(), Some(&tags), &indexing(&item.r#type))
 }
 
@@ -7065,12 +7075,14 @@ pub fn read_of(conn: &Connection, id: &str) -> Result<Option<String>, CoreError>
         .flatten())
 }
 
+/// Each tag the item does not hold goes last, as the server places it.
 pub fn add_tags(conn: &Connection, item_id: &str, tags: &[String]) -> Result<(), CoreError> {
+    let mut insert = conn.prepare_cached(
+        "INSERT OR IGNORE INTO tags (item_id, tag, position)
+         SELECT ?1, ?2, coalesce(max(position) + 1, 0) FROM tags WHERE item_id = ?1",
+    )?;
     for tag in tags {
-        conn.execute(
-            "INSERT OR IGNORE INTO tags (item_id, tag) VALUES (?1, ?2)",
-            params![item_id, tag],
-        )?;
+        insert.execute(params![item_id, tag])?;
     }
     Ok(())
 }
@@ -8098,6 +8110,46 @@ mod tests {
         assert_eq!(item.properties["title"], "Renamed");
         assert_eq!(item.tags, vec!["a", "b"]);
         assert_eq!(count(&conn, "items_fts").unwrap(), 1);
+    }
+
+    #[test]
+    fn tags_read_in_the_order_they_were_first_written() {
+        let conn = conn();
+        let note = note("n1", "Hello", "world", "2026-01-01T00:00:00Z");
+        let written: Vec<String> = ["zeta", "alpha", "mid", "alpha"].map(String::from).into();
+        upsert_item(&conn, &note, Some(&written), &Indexing::default()).unwrap();
+        let tags = |conn: &Connection| item_by_id(conn, "n1").unwrap().unwrap().tags;
+        assert_eq!(tags(&conn), vec!["zeta", "alpha", "mid"]);
+
+        add_tags(&conn, "n1", &["beta".into(), "zeta".into()]).unwrap();
+        assert_eq!(tags(&conn), vec!["zeta", "alpha", "mid", "beta"]);
+        remove_tag(&conn, "n1", "alpha").unwrap();
+        assert_eq!(tags(&conn), vec!["zeta", "mid", "beta"]);
+        add_tags(&conn, "n1", &["alpha".into()]).unwrap();
+        assert_eq!(tags(&conn), vec!["zeta", "mid", "beta", "alpha"]);
+        replace_tags(&conn, "n1", &["b".into(), "a".into(), "b".into()]).unwrap();
+        assert_eq!(tags(&conn), vec!["b", "a"]);
+
+        let ids: Vec<String> = (0..1001).map(|n| format!("x{n}")).collect();
+        let ids: Vec<&str> = ids.iter().map(String::as_str).chain(["n1"]).collect();
+        assert_eq!(tags_for(&conn, &ids).unwrap()["n1"], vec!["b", "a"]);
+        assert_eq!(tags_for(&conn, &["n1"]).unwrap()["n1"], vec!["b", "a"]);
+    }
+
+    #[test]
+    fn the_index_holds_tags_in_byte_order_whatever_order_they_were_written_in() {
+        let conn = conn();
+        let note = note("n1", "Hello", "world", "2026-01-01T00:00:00Z");
+        let written: Vec<String> = ["zeta", "alpha", "mid"].map(String::from).into();
+        upsert_item(&conn, &note, Some(&written), &Indexing::default()).unwrap();
+        let indexed: String = conn
+            .query_row(
+                "SELECT tags FROM items_fts WHERE rowid = (SELECT seq FROM items WHERE id = 'n1')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(indexed, "alpha mid zeta");
     }
 
     #[test]
@@ -9547,7 +9599,7 @@ mod tests {
         ),
         (
             "tags",
-            "INSERT INTO tags (item_id, tag) VALUES ('held', 'x')",
+            "INSERT INTO tags (item_id, tag, position) VALUES ('held', 'x', 0)",
             "UPDATE tags SET tag = 'y' WHERE item_id = 'held'",
             "DELETE FROM tags WHERE item_id = 'held'",
         ),
@@ -10252,6 +10304,44 @@ mod tests {
     }
 
     #[test]
+    fn a_store_the_previous_shape_made_is_refused_with_its_writes_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            queue_one(&conn);
+            conn.execute_batch("ALTER TABLE tags DROP COLUMN position")
+                .unwrap();
+        }
+        at_version(&path, 1);
+        let before = queued(&path);
+        let (reason, unsent, _) = refusal_of(&path);
+        assert!(
+            reason.contains("schema version 1, and this build reads schema version 2"),
+            "{reason}"
+        );
+        assert_eq!(unsent, Some(1));
+        assert!(matches!(
+            open_to_read(&path),
+            Err(CoreError::WrongSchema {
+                unsent: Some(1),
+                ..
+            })
+        ));
+        assert_eq!(
+            queued(&path),
+            before,
+            "refusing the store changed its queue"
+        );
+        let conn = Connection::open(&path).unwrap();
+        assert_eq!(version(&conn).unwrap(), 1);
+        assert!(
+            conn.prepare("SELECT position FROM tags").is_err(),
+            "refusing the store changed its tags"
+        );
+    }
+
+    #[test]
     fn a_store_at_another_version_whose_queue_cannot_be_read_says_so() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("core.sqlite");
@@ -10368,7 +10458,7 @@ mod tests {
                 SCHEMA_VERSION,
                 crate::folder::state::hash(named.as_bytes()).as_str()
             ),
-            (1, "9a505dc1b14cecc6"),
+            (2, "115c1d4def4a3d91"),
             "the shape schema.sql makes changed: raise SCHEMA_VERSION and write the new hash here"
         );
     }
@@ -11001,7 +11091,7 @@ mod tests {
                 Some("new"),
                 r#"{"tags":["new"]}"#,
                 vec!["new", "other"],
-                vec!["keep", "new", "old"],
+                vec!["old", "keep", "new"],
                 true,
             ),
             (

@@ -1085,7 +1085,7 @@ it.each(["replacement", "tag addition"] as const)(
     expect((await harness.folder.push()).ok).toBe(true);
     const observed = await device.get(id);
     expect(observed.ok && observed.value.tags).toEqual(
-      operation === "replacement" ? [] : ["new", "old"],
+      operation === "replacement" ? [] : ["old", "new"],
     );
     expect(reports(harness).at(-1)?.pending_uploads).toBe(
       operation === "replacement" ? 0 : 1,
@@ -1094,7 +1094,7 @@ it.each(["replacement", "tag addition"] as const)(
     expect((await harness.folder.push()).ok).toBe(true);
     const restarted = await device.get(id);
     expect(restarted.ok && restarted.value.tags).toEqual(
-      operation === "replacement" ? [] : ["new", "old"],
+      operation === "replacement" ? [] : ["old", "new"],
     );
     const kept = await device.queue();
     expect(
