@@ -3288,13 +3288,7 @@ impl MarfaCore {
         Ok(count(released as u64))
     }
 
-    /// Takes a write that is `dead`, or blocked `ancestor_unavailable`,
-    /// `conflict_unresolved`, `failing_alone` or `instance_changed`, out of the
-    /// queue, and puts the copy back to what the server holds; each write held
-    /// for it is refused unsent. Answers the ids of every write taken out,
-    /// the others of a row write's batch included, or none where the row is
-    /// not one a withdraw takes. Off the JavaScript thread, because it reads
-    /// each row it puts back from the server.
+    /// Reads rows back off the JavaScript thread; returns every withdrawn ID.
     #[napi(ts_return_type = "Promise<string[]>")]
     pub fn withdraw(&self, id: String) -> AsyncTask<Withdraw> {
         AsyncTask::new(Withdraw {

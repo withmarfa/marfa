@@ -1911,12 +1911,7 @@ impl Core {
         Ok(released)
     }
 
-    /// Answers the ids of every write it took out of the queue, and none for
-    /// any row not `dead` or blocked `ancestor_unavailable`,
-    /// `conflict_unresolved`, `failing_alone` or `instance_changed`. Everything
-    /// it puts back is read from the server before anything changes, so a
-    /// withdraw that cannot read leaves the queue and the copy as they were. A
-    /// row write goes with every write of its batch, or none does.
+    /// Reads every affected row back before changing the queue or copy.
     pub fn withdraw(&self, id: &str) -> Result<Vec<String>> {
         self.lock.refuse_unless_writer()?;
         if store::queued_write(&*self.conn()?, id)?.is_none() {

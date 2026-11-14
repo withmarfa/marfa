@@ -1497,10 +1497,6 @@ impl QueuedWrite {
             )
     }
 
-    /// The commands that take a write still waiting out of its wait: the next
-    /// drain for one that has no verdict or is held behind another write, a
-    /// release for one blocked until something outside the queue changes, and
-    /// a withdraw or a release for one a person may give up on.
     pub fn exits(&self) -> &'static str {
         if self.withdrawable() {
             "withdraw or release"

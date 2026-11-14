@@ -1348,7 +1348,7 @@ If the bytes an upload holds fail to open, for a reason other than that they are
 
 ### `queue-and-verdicts/stuck-upload-unopened-shows`
 
-When a device gives an upload the verdict `failing_alone` because its bytes failed to open, a device MUST report in the queue, as the write's last failure, no status and the text naming the bytes and the cause.
+When a device gives an upload the verdict `blocked` with the reason `failing_alone` because its bytes failed to open, a device MUST report in the queue, as the write's last failure, no status and the text naming the bytes and the cause.
 
 **Reason:** the cause is one a person can usually fix, and the queue is where they look.
 
@@ -1824,7 +1824,7 @@ If a withdraw cannot read the server, then a device MUST refuse the withdraw and
 
 When a caller withdraws a create, a device MUST refuse without sending every write that has no verdict or is `blocked` and waits for it, and every such write that waits for one of those in turn, with the reason `the <kind> it waits for was withdrawn`.
 
-**Reason:** the item each names will never exist on the server.
+**Reason:** the dependent writes cannot rely on a create the caller has withdrawn.
 
 **Tests:** `device/classification.test.ts › refuses unsent the writes held for a withdrawn create, and never releases them`, `› settles a transitive edge dependency with its item create %s`.
 

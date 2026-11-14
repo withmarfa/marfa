@@ -429,10 +429,7 @@ fn set_aside(
     Ok(())
 }
 
-/// Blocks `id`, and every write of its batch, `failing_alone`, and answers
-/// the writes it blocked. None where `id` was released, withdrawn or answered
-/// since it went under `key`: not the same attempt any more, and the verdict
-/// would be about another write.
+/// A verdict belongs only to the attempt that met the failure.
 fn block_failing_alone(
     core: &Core,
     id: &str,
@@ -1604,11 +1601,7 @@ fn send_queue(
                         );
                         continue;
                     }
-                    // A locked file or a process out of handles is not the
-                    // write's fault, so it is not counted as a refusal. The
-                    // same failure in three drains over five minutes is no
-                    // longer a passing one: the upload is set aside, which a
-                    // person can withdraw or release once the cause is fixed.
+                    // A local file error counts toward setting aside, never toward dead.
                     Err(error) => {
                         let reason = format!("the bytes of {hash} could not be opened: {error}");
                         let failure = LastFailure::of(None, reason.as_bytes());
