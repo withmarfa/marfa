@@ -310,6 +310,11 @@ pub fn poll(discovery: &Discovery, client_id: &str, device_code: &str) -> Result
             retry_after_seconds,
             ..
         }) => Ok(Poll::RateLimited(retry_after_seconds)),
+        Err(CliError::Refused { code, .. })
+            if code == "invalid_grant" || code == "expired_token" =>
+        {
+            Err(CliError::DeviceCodeEnded)
+        }
         Err(error) if is_blip(&error) => Ok(Poll::Unavailable(error)),
         Err(error) => Err(error),
     }
@@ -327,13 +332,7 @@ pub fn wait_for_decision(
 /// met where it was one, since the code may have been approved unseen, and
 /// otherwise the expiry.
 fn code_ended(last_blip: Option<CliError>) -> CliError {
-    last_blip.unwrap_or_else(|| CliError::Refused {
-        status: 400,
-        code: "expired_token".to_string(),
-        message: "the code expired before the person decided; run marfa login again".to_string(),
-        retry_after_seconds: None,
-        details: None,
-    })
+    last_blip.unwrap_or(CliError::DeviceCodeEnded)
 }
 
 /// `wait_for_decision` with the pause between polls made by `pause_for`.
@@ -899,10 +898,7 @@ mod tests {
             CliError::Refused { status, .. } => assert_eq!(status, 503),
             other => panic!("{other:?}"),
         }
-        match code_ended(None) {
-            CliError::Refused { code, .. } => assert_eq!(code, "expired_token"),
-            other => panic!("{other:?}"),
-        }
+        assert!(matches!(code_ended(None), CliError::DeviceCodeEnded));
     }
 
     #[test]
@@ -926,14 +922,30 @@ mod tests {
 
     #[test]
     fn a_login_ends_on_a_refusal_that_is_not_a_wait() {
-        for refusal in ["access_denied", "expired_token", "invalid_grant"] {
+        let body = r#"{"error":{"code":"access_denied","message":"no"}}"#;
+        let door = Door::open_at(|_| vec![Answer::json("400 Bad Request", body)]);
+        let discovery = waiting_discovery(&door.url);
+        match wait_with(&discovery, "client", &a_code(600), |_| {}) {
+            Err(CliError::Refused { code, .. }) => assert_eq!(code, "access_denied"),
+            other => panic!("{:?}", other.map(|_| ())),
+        }
+        assert_eq!(door.received().len(), 1, "a refusal is not polled again");
+    }
+
+    #[test]
+    fn a_login_whose_code_is_gone_says_to_run_login_again_and_exits_where_a_retry_can_work() {
+        for refusal in ["expired_token", "invalid_grant"] {
             let body = format!(r#"{{"error":{{"code":"{refusal}","message":"no"}}}}"#);
             let door = Door::open_at(|_| vec![Answer::json("400 Bad Request", &body)]);
             let discovery = waiting_discovery(&door.url);
-            match wait_with(&discovery, "client", &a_code(600), |_| {}) {
-                Err(CliError::Refused { code, .. }) => assert_eq!(code, refusal),
-                other => panic!("{:?}", other.map(|_| ())),
-            }
+            let ended = wait_with(&discovery, "client", &a_code(600), |_| {})
+                .map(|_| ())
+                .unwrap_err();
+            assert!(matches!(ended, CliError::DeviceCodeEnded), "{ended:?}");
+            assert_eq!(ended.exit(), crate::error::Exit::Environment);
+            let message = ended.to_string();
+            assert!(message.contains("no longer valid"), "{message}");
+            assert!(message.contains("marfa login"), "{message}");
             assert_eq!(door.received().len(), 1, "{refusal} is not polled again");
         }
     }
