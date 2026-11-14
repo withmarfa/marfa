@@ -738,8 +738,7 @@ pub(crate) fn forget_all(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
-/// Keeps the row beneath each of `ids` a sent write lays, before `batch`'s
-/// `rows.changed` is applied, since the write's answer may name `batch`.
+/// The answer may identify this event as the write's own batch.
 pub(crate) fn before_batch<'a>(
     conn: &Connection,
     item: &str,
@@ -1035,8 +1034,7 @@ fn sets<'a>(ops: &'a [Op], id: &str, column: &str) -> Option<Option<&'a Value>> 
         })
 }
 
-/// Setting the value another writer already set is not a clash. `replaced`
-/// holds the rows as they were before the batch's own event, where it came first.
+/// Event-first answers are judged against the rows the batch replaced.
 fn clashes(
     conn: &Connection,
     item: &str,
