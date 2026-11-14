@@ -369,7 +369,7 @@ jobs:
         run: pnpm marfa:down --state "$MARFA_SCALE_STATE"
 
   # A job that reaches its timeout ends as cancelled, not failed, so a cancelled
-  # job reports too, and so does a run someone cancels by hand.
+  # job reports too.
   report-failure:
     name: Report a failed scheduled run
     needs: [server, benchmarks, scale]

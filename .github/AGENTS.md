@@ -28,7 +28,7 @@ For changes to a workflow, to `scripts/ci-required.ts` or to the tests in `ci/`.
 
 ## Traps
 
-- **A job that reaches its `timeout-minutes` ends as `cancelled`, not `failure`.** `failure()` is false for it, so a `report-failure` job also tests `contains(needs.*.result, 'cancelled')` (`ci/nightly-report.test.ts`). A scheduled run someone cancels by hand reports too.
+- **A job that reaches its `timeout-minutes` ends as `cancelled`, not `failure`.** `failure()` is false for it, so a `report-failure` job also tests `contains(needs.*.result, 'cancelled')` (`ci/nightly-report.test.ts`).
 - **`release.yml` requires a green `ci.yml` run on the commit, and nothing else.** A check moved out of `ci.yml`, to `core.yml`, the nightly or the benchmarks, stops gating a release.
 - **A pull request runs its own copy of the workflow files.** Prove a change to the gate with a throwaway pull request that fails on purpose.
 - **The Actions cache has a size limit for the whole repository.** Adding a cache can push out one that a slow job depends on.
