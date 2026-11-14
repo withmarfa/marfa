@@ -41,8 +41,6 @@ use crate::app::unit::Unit;
 use crate::app::views;
 
 const COPY_TAG: &str = "conflicted-copy";
-const RESERVED_NAMESPACES: [&str; 3] = ["core", "marfa", "system"];
-const MAX_EXTENSION_LENGTH: usize = 102_400;
 const FILE_TYPE: &str = "core.file";
 const FILE_BYTES: &str = "blob_ref";
 const FILE_SIZE: &str = "size_bytes";
@@ -1809,7 +1807,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
 
     fn extension_row(&self, id: &str, namespace: &str) -> Result<Item> {
         let row = self.gate().writable_row(id)?;
-        if RESERVED_NAMESPACES.contains(&namespace) {
+        if validation::extension_reserved(namespace) {
             return Err(Refusal::new(
                 Code::Forbidden,
                 format!("Namespace \"{namespace}\" is reserved"),
@@ -1840,7 +1838,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     fn set_extension(&self, id: &str, namespace: &str, data: &Map<String, Value>) -> Result<Done> {
         let row = self.extension_row(id, namespace)?;
         let text = number::object(data);
-        if text.chars().count() > MAX_EXTENSION_LENGTH {
+        if validation::extension_too_long(&text) {
             return Err(Refusal::validation(
                 "Extension data exceeds maximum size of 100KB",
             ));

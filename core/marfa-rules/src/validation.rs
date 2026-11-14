@@ -11,6 +11,20 @@ pub const MAX_TAG_LENGTH: usize = 128;
 
 pub const MAX_TAGS_PER_ITEM: usize = 100;
 
+/// Extension namespaces the server keeps for itself, which no caller writes or restores.
+pub const RESERVED_EXTENSION_NAMESPACES: [&str; 3] = ["core", "marfa", "system"];
+
+/// Longest extension, in characters of its JSON text.
+pub const MAX_EXTENSION_LENGTH: usize = 102_400;
+
+pub fn extension_reserved(namespace: &str) -> bool {
+    RESERVED_EXTENSION_NAMESPACES.contains(&namespace)
+}
+
+pub fn extension_too_long(text: &str) -> bool {
+    text.chars().count() > MAX_EXTENSION_LENGTH
+}
+
 /// Longest string field value with no `max_length` of its own.
 const STRING_MAX_LENGTH: u64 = 100_000;
 

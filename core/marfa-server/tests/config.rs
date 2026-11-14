@@ -229,15 +229,21 @@ async fn a_clear_that_exposes_a_default_breaking_a_rule_is_refused_and_changes_n
 }
 
 #[tokio::test]
-async fn reporting_is_turned_on_only_where_a_receiver_is_set() {
+async fn reporting_is_turned_from_off_to_on_only_where_a_receiver_is_set() {
     let bare = Instance::start(&[]).await;
     for field in ["heartbeat_enabled", "error_reporting_enabled"] {
-        let refused = bare.patch(json!({ field: true })).await;
-        assert_eq!(refused.error_paths(), [field], "{field}");
+        // On is the default, so naming it on a server with no receiver changes nothing.
+        assert_eq!(
+            bare.patch(json!({ field: true })).await.status,
+            StatusCode::OK,
+            "{field}"
+        );
         assert_eq!(
             bare.patch(json!({ field: false })).await.status,
             StatusCode::OK
         );
+        let refused = bare.patch(json!({ field: true })).await;
+        assert_eq!(refused.error_paths(), [field], "{field}");
     }
     let heard = Instance::start(&[("MARFA_HEARTBEAT_URL", "https://beat.example/x")]).await;
     assert_eq!(

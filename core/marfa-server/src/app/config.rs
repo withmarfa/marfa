@@ -361,7 +361,12 @@ impl Plan {
     /// Refuses a change that breaks a rule across settings.
     fn judge(&self, app: &App) -> Result<()> {
         self.refuse_unread_rows(app)?;
-        judge_together(app, &pairs(&self.after), &self.touched)
+        judge_together(
+            app,
+            &pairs(&self.before),
+            &pairs(&self.after),
+            &self.touched,
+        )
     }
 
     /// Whether the origins sign-in forms are taken from change. Those forms
@@ -434,11 +439,18 @@ pub fn standing(tx: &Transaction<'_>, own: Option<&Levers>) -> Result<Standing> 
     })
 }
 
-/// Refuses settings `stored` that break a rule across settings naming one of `touched`.
-pub fn judge_together(app: &App, stored: &[(String, String)], touched: &[&str]) -> Result<()> {
-    let after = Arc::new(app.settings.candidate(stored));
+/// Refuses settings `after` that break a rule across settings naming one of `touched`, judged
+/// against the settings `before` they replace.
+pub fn judge_together(
+    app: &App,
+    before: &[(String, String)],
+    after: &[(String, String)],
+    touched: &[&str],
+) -> Result<()> {
+    let before = app.settings.candidate(before);
+    let after = Arc::new(app.settings.candidate(after));
     let sign_in = app.addresses_in(after.clone()).sign_in();
-    let breaches = together::judge(&after, touched, &app.settings.start, Some(sign_in));
+    let breaches = together::judge(&before, &after, touched, &app.settings.start, Some(sign_in));
     if breaches.is_empty() {
         return Ok(());
     }

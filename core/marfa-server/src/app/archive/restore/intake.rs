@@ -10,6 +10,7 @@ use marfa_rules::schema::{Obj, icon_issue};
 use serde_json::{Map, Value, json};
 
 use super::untar::{NotTar, Part, Reader};
+use crate::app::access::Levers;
 use crate::app::archive::{
     BLOBS, EDGES, ENTRIES, FILES, FORMAT, INSTANCE, ITEMS, MANIFEST, ROWS, VERSION, VERSIONS,
     checks,
@@ -97,6 +98,8 @@ pub struct Manifest {
     pub instance_counts: [u64; KINDS.len()],
     /// The `blobs/` entries it says the archive carries.
     pub blob_count: u64,
+    /// The instance that wrote it, where the manifest names one in its canonical form.
+    pub instance_id: Option<String>,
 }
 
 impl Manifest {
@@ -132,6 +135,8 @@ pub struct Registrations {
     pub icons: Vec<(String, Option<String>)>,
     pub sources: Vec<sources::Archived>,
     pub settings: Vec<(String, String)>,
+    /// The text of the instance's enforcement levers, as stored.
+    pub enforcement: Option<String>,
     /// Names of settings this instance does not have, which the restore leaves out.
     pub dropped_settings: Vec<String>,
     pub states: Vec<(String, Map<String, Value>)>,
@@ -247,12 +252,13 @@ struct Rows {
 }
 
 /// Each kind of `instance.ndjson.gz` line, with the manifest field that counts it.
-const KINDS: [(&str, &str); 7] = [
+const KINDS: [(&str, &str); 8] = [
     ("type", "type_count"),
     ("edge_type", "edge_type_count"),
     ("type_icon", "type_icon_count"),
     ("source", "source_count"),
     ("setting", "setting_count"),
+    ("enforcement", "enforcement_count"),
     ("connector_state", "connector_state_count"),
     ("connector_agreement", "connector_agreement_count"),
 ];
@@ -556,6 +562,18 @@ impl Rows {
                 match text {
                     Some(text) => registrations.settings.push((key, text)),
                     None => registrations.dropped_settings.push(key),
+                }
+            }
+            "enforcement" => {
+                let levers = Levers::from_body_at(body, "enforcement")?;
+                if registrations
+                    .enforcement
+                    .replace(levers.to_json().to_string())
+                    .is_some()
+                {
+                    return Err(invalid(format!(
+                        "The archive carries more than one {kind} line."
+                    )));
                 }
             }
             "connector_state" => {
@@ -955,13 +973,15 @@ impl Intake {
                 self.out_of_order(&name);
                 return Ok(());
             }
+            let named = Hash::parse(&format!("sha256:{rest}")).ok();
             let listed = self
                 .rows
                 .as_ref()
-                .and_then(|rows| rows.files.get(rest))
+                .zip(named.as_ref())
+                .and_then(|(rows, hash)| rows.files.get(hash.as_str()))
                 .filter(|listed| listed.state == State::Carried)
                 .and_then(|listed| listed.mime_type.clone());
-            match (Hash::parse(rest).ok(), listed) {
+            match (named, listed) {
                 (Some(hash), Some(mime_type)) => {
                     self.entry = Entry::Blob {
                         name: name.clone(),
@@ -1240,6 +1260,13 @@ fn first(held: &Map<String, Value>) -> Result<Manifest> {
         Some(counted) => manifest.blob_count = counted,
         None => wrong("blob_count".into(), "Must be a non-negative integer."),
     }
+    manifest.instance_id = held
+        .get("instance_id")
+        .and_then(Value::as_str)
+        .filter(|id| {
+            uuid::Uuid::try_parse(id).is_ok_and(|parsed| parsed.hyphenated().to_string() == *id)
+        })
+        .map(str::to_string);
     if !errors.is_empty() {
         let named: Vec<String> = errors
             .iter()

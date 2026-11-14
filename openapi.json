@@ -55562,6 +55562,21 @@
                       },
                       "description": "The names of the settings the archive carried that this instance does not have. Marfa left them out and stored nothing for them."
                     },
+                    "settings_without_receiver": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The reporting switches Marfa stored as on that send nothing, because no receiver is configured where Marfa runs: `heartbeat_enabled` and `error_reporting_enabled`."
+                    },
+                    "enforcement_added": {
+                      "type": "number",
+                      "description": "1 when Marfa stored the archive's enforcement settings (strict mode, the source allowlist and the source filter), for an instance that stored none, and 0 otherwise."
+                    },
+                    "enforcement_skipped": {
+                      "type": "number",
+                      "description": "1 when the archive carried enforcement settings and Marfa skipped them because the instance already stores its own, and 0 otherwise."
+                    },
                     "connector_states_added": {
                       "type": "number",
                       "description": "How many connector state documents Marfa stored, for sources the instance held none for."
@@ -55586,9 +55601,58 @@
                       "type": "number",
                       "description": "How many table rows Marfa skipped because their item was counted as a duplicate."
                     },
-                    "set_up_again": {
-                      "type": "string",
-                      "description": "A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance."
+                    "not_restored": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "sign_in",
+                              "keys",
+                              "apps",
+                              "webhooks",
+                              "inbound_endpoints",
+                              "connector_keys",
+                              "addresses",
+                              "name",
+                              "logs"
+                            ],
+                            "description": "What an archive never holds."
+                          },
+                          "message": {
+                            "type": "string",
+                            "description": "A sentence saying that this kind is not restored and what to do about it."
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "message"
+                        ]
+                      },
+                      "description": "Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs."
+                    },
+                    "previous_instance": {
+                      "type": "object",
+                      "properties": {
+                        "instance_id": {
+                          "type": "string",
+                          "description": "The ID of the instance that wrote the archive."
+                        },
+                        "safe_to_delete": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "The folders that instance keeps its backups and file copies in, as paths inside a backup folder. Delete them once you are satisfied with this restore."
+                        }
+                      },
+                      "required": [
+                        "instance_id",
+                        "safe_to_delete"
+                      ],
+                      "description": "Present when the archive was written by another instance than this one."
                     }
                   },
                   "required": [
@@ -55620,7 +55684,10 @@
                     "connector_agreements_skipped",
                     "rows_imported",
                     "rows_skipped",
-                    "set_up_again"
+                    "settings_without_receiver",
+                    "enforcement_added",
+                    "enforcement_skipped",
+                    "not_restored"
                   ]
                 }
               }
@@ -56722,6 +56789,21 @@
                       },
                       "description": "The names of the settings the archive carried that this instance does not have. Marfa left them out and stored nothing for them."
                     },
+                    "settings_without_receiver": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "The reporting switches Marfa stored as on that send nothing, because no receiver is configured where Marfa runs: `heartbeat_enabled` and `error_reporting_enabled`."
+                    },
+                    "enforcement_added": {
+                      "type": "number",
+                      "description": "1 when Marfa stored the archive's enforcement settings (strict mode, the source allowlist and the source filter), for an instance that stored none, and 0 otherwise."
+                    },
+                    "enforcement_skipped": {
+                      "type": "number",
+                      "description": "1 when the archive carried enforcement settings and Marfa skipped them because the instance already stores its own, and 0 otherwise."
+                    },
                     "connector_states_added": {
                       "type": "number",
                       "description": "How many connector state documents Marfa stored, for sources the instance held none for."
@@ -56746,9 +56828,58 @@
                       "type": "number",
                       "description": "How many table rows Marfa skipped because their item was counted as a duplicate."
                     },
-                    "set_up_again": {
-                      "type": "string",
-                      "description": "A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance."
+                    "not_restored": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "sign_in",
+                              "keys",
+                              "apps",
+                              "webhooks",
+                              "inbound_endpoints",
+                              "connector_keys",
+                              "addresses",
+                              "name",
+                              "logs"
+                            ],
+                            "description": "What an archive never holds."
+                          },
+                          "message": {
+                            "type": "string",
+                            "description": "A sentence saying that this kind is not restored and what to do about it."
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "message"
+                        ]
+                      },
+                      "description": "Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs."
+                    },
+                    "previous_instance": {
+                      "type": "object",
+                      "properties": {
+                        "instance_id": {
+                          "type": "string",
+                          "description": "The ID of the instance that wrote the archive."
+                        },
+                        "safe_to_delete": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          },
+                          "description": "The folders that instance keeps its backups and file copies in, as paths inside a backup folder. Delete them once you are satisfied with this restore."
+                        }
+                      },
+                      "required": [
+                        "instance_id",
+                        "safe_to_delete"
+                      ],
+                      "description": "Present when the archive was written by another instance than this one."
                     },
                     "backup": {
                       "type": "object",
@@ -56799,7 +56930,10 @@
                     "connector_agreements_skipped",
                     "rows_imported",
                     "rows_skipped",
-                    "set_up_again",
+                    "settings_without_receiver",
+                    "enforcement_added",
+                    "enforcement_skipped",
+                    "not_restored",
                     "backup"
                   ]
                 }

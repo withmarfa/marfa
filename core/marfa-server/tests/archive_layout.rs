@@ -488,7 +488,7 @@ async fn the_layout_is_pinned_to_its_version() {
             "versions.ndjson.gz".to_string(),
             "edges.ndjson.gz".to_string(),
             "rows.ndjson.gz".to_string(),
-            format!("blobs/{hash}"),
+            format!("blobs/{}", hash.strip_prefix("sha256:").unwrap()),
         ]
     );
     assert_eq!(
@@ -500,6 +500,7 @@ async fn the_layout_is_pinned_to_its_version() {
             "created_at",
             "edge_count",
             "edge_type_count",
+            "enforcement_count",
             "file_count",
             "format",
             "instance_id",
@@ -534,6 +535,7 @@ async fn the_layout_is_pinned_to_its_version() {
         "connector_agreement",
         "connector_state",
         "edge_type",
+        "enforcement",
         "setting",
         "source",
         "type",
@@ -799,7 +801,7 @@ async fn a_blob_before_the_file_list_is_refused_as_out_of_order() {
         .await;
     assert_eq!(file.status, StatusCode::CREATED, "{}", file.body);
     let held = entries(&origin.archive().await);
-    let blob = format!("blobs/{hash}");
+    let blob = format!("blobs/{}", hash.strip_prefix("sha256:").unwrap());
 
     // The witness: in its place, the blob restores.
     let plain = Instance::start(folder.path(), &[]).await;

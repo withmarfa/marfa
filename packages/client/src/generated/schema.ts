@@ -30713,6 +30713,12 @@ export interface operations {
                         settings_skipped: number;
                         /** @description The names of the settings the archive carried that this instance does not have. Marfa left them out and stored nothing for them. */
                         settings_dropped: string[];
+                        /** @description The reporting switches Marfa stored as on that send nothing, because no receiver is configured where Marfa runs: `heartbeat_enabled` and `error_reporting_enabled`. */
+                        settings_without_receiver: string[];
+                        /** @description 1 when Marfa stored the archive's enforcement settings (strict mode, the source allowlist and the source filter), for an instance that stored none, and 0 otherwise. */
+                        enforcement_added: number;
+                        /** @description 1 when the archive carried enforcement settings and Marfa skipped them because the instance already stores its own, and 0 otherwise. */
+                        enforcement_skipped: number;
                         /** @description How many connector state documents Marfa stored, for sources the instance held none for. */
                         connector_states_added: number;
                         /** @description How many connector state documents Marfa skipped because the instance already holds one for the source. */
@@ -30725,8 +30731,23 @@ export interface operations {
                         rows_imported: number;
                         /** @description How many table rows Marfa skipped because their item was counted as a duplicate. */
                         rows_skipped: number;
-                        /** @description A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance. */
-                        set_up_again: string;
+                        /** @description Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs. */
+                        not_restored: {
+                            /**
+                             * @description What an archive never holds.
+                             * @enum {string}
+                             */
+                            kind: "sign_in" | "keys" | "apps" | "webhooks" | "inbound_endpoints" | "connector_keys" | "addresses" | "name" | "logs";
+                            /** @description A sentence saying that this kind is not restored and what to do about it. */
+                            message: string;
+                        }[];
+                        /** @description Present when the archive was written by another instance than this one. */
+                        previous_instance?: {
+                            /** @description The ID of the instance that wrote the archive. */
+                            instance_id: string;
+                            /** @description The folders that instance keeps its backups and file copies in, as paths inside a backup folder. Delete them once you are satisfied with this restore. */
+                            safe_to_delete: string[];
+                        };
                     };
                 };
             };
@@ -31341,6 +31362,12 @@ export interface operations {
                         settings_skipped: number;
                         /** @description The names of the settings the archive carried that this instance does not have. Marfa left them out and stored nothing for them. */
                         settings_dropped: string[];
+                        /** @description The reporting switches Marfa stored as on that send nothing, because no receiver is configured where Marfa runs: `heartbeat_enabled` and `error_reporting_enabled`. */
+                        settings_without_receiver: string[];
+                        /** @description 1 when Marfa stored the archive's enforcement settings (strict mode, the source allowlist and the source filter), for an instance that stored none, and 0 otherwise. */
+                        enforcement_added: number;
+                        /** @description 1 when the archive carried enforcement settings and Marfa skipped them because the instance already stores its own, and 0 otherwise. */
+                        enforcement_skipped: number;
                         /** @description How many connector state documents Marfa stored, for sources the instance held none for. */
                         connector_states_added: number;
                         /** @description How many connector state documents Marfa skipped because the instance already holds one for the source. */
@@ -31353,8 +31380,23 @@ export interface operations {
                         rows_imported: number;
                         /** @description How many table rows Marfa skipped because their item was counted as a duplicate. */
                         rows_skipped: number;
-                        /** @description A sentence saying that an archive holds no sign-in, keys, apps or webhooks, so you set them up again on this instance. */
-                        set_up_again: string;
+                        /** @description Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs. */
+                        not_restored: {
+                            /**
+                             * @description What an archive never holds.
+                             * @enum {string}
+                             */
+                            kind: "sign_in" | "keys" | "apps" | "webhooks" | "inbound_endpoints" | "connector_keys" | "addresses" | "name" | "logs";
+                            /** @description A sentence saying that this kind is not restored and what to do about it. */
+                            message: string;
+                        }[];
+                        /** @description Present when the archive was written by another instance than this one. */
+                        previous_instance?: {
+                            /** @description The ID of the instance that wrote the archive. */
+                            instance_id: string;
+                            /** @description The folders that instance keeps its backups and file copies in, as paths inside a backup folder. Delete them once you are satisfied with this restore. */
+                            safe_to_delete: string[];
+                        };
                         /** @description The backup Marfa restored. */
                         backup: {
                             /** @description The backup's name. */

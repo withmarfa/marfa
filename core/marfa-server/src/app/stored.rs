@@ -233,26 +233,56 @@ pub fn archived(line: &serde_json::Value) -> Result<(String, Option<String>)> {
     Ok((key.to_string(), Some(text)))
 }
 
+/// What a restore did with the archive's settings.
+#[derive(Debug, Default)]
+pub struct Restored {
+    pub added: usize,
+    pub skipped: usize,
+    /// Reporting switches stored on that send nothing, because this server names no receiver.
+    pub without_receiver: Vec<&'static str>,
+}
+
 /// Stores each archived setting the instance has none stored for, judged together with the
-/// instance's own as `/config` judges them, and answers how many it stored and how many it left.
-pub fn restore(
-    tx: &Transaction<'_>,
-    app: &App,
-    archived: &[(String, String)],
-) -> Result<(usize, usize)> {
-    let mut stored = rows(tx)?;
-    let held = archived.len();
+/// instance's own as `/config` judges them, and counts how many it stored and how many it left.
+pub fn restore(tx: &Transaction<'_>, app: &App, archived: &[(String, String)]) -> Result<Restored> {
+    let before = rows(tx)?;
     let added: Vec<&(String, String)> = archived
         .iter()
-        .filter(|(key, _)| !stored.iter().any(|(held, _)| held == key))
+        .filter(|(key, _)| !before.iter().any(|(held, _)| held == key))
         .collect();
-    stored.extend(added.iter().map(|&row| row.clone()));
+    let mut after = before.clone();
+    after.extend(added.iter().map(|&row| row.clone()));
     let touched: Vec<&str> = added.iter().map(|(key, _)| key.as_str()).collect();
-    super::config::judge_together(app, &stored, &touched)?;
+    super::config::judge_together(app, &before, &after, &touched)?;
     for (key, text) in &added {
         write_row(tx, key, text)?;
     }
-    Ok((added.len(), held - added.len()))
+    let without_receiver = [
+        registry::HEARTBEAT_ENABLED.entry.key,
+        registry::ERROR_REPORTING_ENABLED.entry.key,
+    ]
+    .into_iter()
+    .filter(|switch| {
+        added
+            .iter()
+            .any(|(key, text)| key == switch && text == "true")
+            && crate::settings::together::lacks_receiver(&app.settings.start, switch)
+    })
+    .collect();
+    Ok(Restored {
+        added: added.len(),
+        skipped: archived.len() - added.len(),
+        without_receiver,
+    })
+}
+
+/// Stores the archived enforcement levers where the instance has none, and says whether it did.
+pub fn restore_enforcement(tx: &Transaction<'_>, levers: &str) -> Result<bool> {
+    if get(tx, super::config::ENFORCEMENT_ROW)?.is_some() {
+        return Ok(false);
+    }
+    put(tx, super::config::ENFORCEMENT_ROW, levers)?;
+    Ok(true)
 }
 
 #[cfg(test)]

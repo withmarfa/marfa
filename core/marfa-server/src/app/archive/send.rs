@@ -167,7 +167,7 @@ impl Out<'_> {
             .carried_bytes(&blob, store)
             .await
             .map_err(|refusal| failed(&refusal.message))?;
-        self.header(&format!("blobs/{}", blob.hash.as_str()), blob.size_bytes)
+        self.header(&format!("blobs/{}", blob.hash.hex()), blob.size_bytes)
             .await?;
         let mut digest = Sha256::new();
         let mut read = 0u64;

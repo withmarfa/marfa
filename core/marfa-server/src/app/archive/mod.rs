@@ -19,7 +19,7 @@ use serde_json::{Map, Value, json};
 use tokio::sync::{mpsc, oneshot};
 
 use super::App;
-use super::access::{Caller, Permission};
+use super::access::{Caller, Levers, Permission};
 use super::blobs::carry::{self, Carried, Copy};
 use super::blobs::{Hash, Room, Scratch, references};
 use super::clock::Stamp;
@@ -808,6 +808,21 @@ fn select(
         }
     }
     count("setting_count", &mut instance, settings)?;
+    let mut enforcement = Vec::new();
+    if caller.holds(Permission::ConfigManage)
+        && let Some(text) = stored::get(read.tx, super::config::ENFORCEMENT_ROW)?
+    {
+        let levers = Levers::from_row(&text).ok_or_else(|| {
+            Refusal::internal(
+                "the stored enforcement settings do not read, so no archive holds them",
+            )
+        })?;
+        enforcement.push((
+            print(&json!({ "enforcement": levers.to_json() }))?,
+            needing(Some(Permission::ConfigManage)),
+        ));
+    }
+    count("enforcement_count", &mut instance, enforcement)?;
     let documents = states
         .into_iter()
         .map(|(source, state)| {

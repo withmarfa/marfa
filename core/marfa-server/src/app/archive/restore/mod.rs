@@ -27,9 +27,39 @@ use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{connectors, edge_types, sources, stored, tables, types};
 use intake::{Intake, LineFile, Received};
 
-/// What every answer says of what an archive does not hold.
-pub const SET_UP_AGAIN: &str =
-    "An archive holds no sign-in, keys, apps or webhooks. Set them up again on this instance.";
+/// What an archive never holds, each with the kind a client reads and what the owner does.
+pub const NOT_RESTORED: [(&str, &str); 9] = [
+    (
+        "sign_in",
+        "The owner's sign-in is not restored. Sign in again on this instance.",
+    ),
+    (
+        "keys",
+        "Keys are not restored. Make new keys on this instance.",
+    ),
+    (
+        "apps",
+        "Apps are not restored. Each app signs in again and is approved again.",
+    ),
+    ("webhooks", "Webhooks are not restored. Make them again."),
+    (
+        "inbound_endpoints",
+        "Inbound endpoints are not restored, and the addresses other services hold for them no longer work. Make each endpoint again and give its sender the new address.",
+    ),
+    (
+        "connector_keys",
+        "A connector's state and agreements are restored but not its key. Give each connector a new key.",
+    ),
+    (
+        "addresses",
+        "The instance's addresses are not restored. Set them on this instance.",
+    ),
+    (
+        "name",
+        "The instance's name is not restored. Set it on this instance.",
+    ),
+    ("logs", "The audit log and the event log are not restored."),
+];
 const QUEUED: usize = 8;
 const SETTLE_EVERY: usize = 1000;
 
@@ -194,6 +224,11 @@ impl App {
         let caller = caller.clone();
         let task = async move {
             let absent = received.absent();
+            let previous = received
+                .manifest
+                .instance_id
+                .clone()
+                .filter(|id| *id != app.instance_id);
             let needed: HashSet<String> = if whole {
                 received.manifest.held_files()
             } else {
@@ -278,8 +313,16 @@ impl App {
                             icons.skip("already_set");
                         }
                         let named = sources::restore(tx, &unit.at, &registrations.sources)?;
-                        let (settings_added, settings_skipped) =
+                        let restored_settings =
                             stored::restore(tx, &settings, &registrations.settings)?;
+                        let (settings_added, settings_skipped) =
+                            (restored_settings.added, restored_settings.skipped);
+                        let (enforcement_added, enforcement_skipped) =
+                            match &registrations.enforcement {
+                                None => (0, 0),
+                                Some(levers) if stored::restore_enforcement(tx, levers)? => (1, 0),
+                                Some(_) => (0, 1),
+                            };
                         let mut states = Counted::default();
                         for (source, state) in &registrations.states {
                             if connectors::restore_state(tx, source, state, &unit.at)? {
@@ -379,6 +422,9 @@ impl App {
                             "settings_added": settings_added,
                             "settings_skipped": settings_skipped,
                             "settings_dropped": registrations.dropped_settings,
+                            "settings_without_receiver": restored_settings.without_receiver,
+                            "enforcement_added": enforcement_added,
+                            "enforcement_skipped": enforcement_skipped,
                             "connector_states_added": states.added,
                             "connector_states_skipped": states.skipped,
                             "connector_agreements_added": agreements.added,
@@ -412,7 +458,16 @@ impl App {
                 staged.publish(&app);
             }
             app.publish_catalog().await;
-            answer["set_up_again"] = Value::from(SET_UP_AGAIN);
+            answer["not_restored"] = NOT_RESTORED
+                .iter()
+                .map(|(kind, message)| json!({ "kind": kind, "message": message }))
+                .collect();
+            if let Some(id) = previous {
+                answer["previous_instance"] = json!({
+                    "instance_id": id,
+                    "safe_to_delete": [format!("backups/{id}"), format!("files/{id}")],
+                });
+            }
             Ok(answer)
         };
         tokio::spawn(task)

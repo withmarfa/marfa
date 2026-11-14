@@ -14,6 +14,7 @@ pub struct Breach {
 }
 
 pub struct Judged<'a> {
+    pub before: &'a Snapshot,
     pub after: &'a Snapshot,
     pub touched: &'a [&'a str],
     pub start: &'a Fixed,
@@ -47,7 +48,7 @@ pub const TOGETHER: &[Together] = &[
     },
     Together {
         name: "reporting_needs_a_receiver",
-        description: "Error reporting and the heartbeat can be turned on only where a receiver is set.",
+        description: "Error reporting and the heartbeat can be turned from off to on only where a receiver is set.",
         keys: &["error_reporting_enabled", "heartbeat_enabled"],
         judge: reporting_needs_a_receiver,
     },
@@ -64,12 +65,14 @@ pub fn rules_of(key: &str) -> impl Iterator<Item = &'static Together> + '_ {
 }
 
 pub fn judge(
+    before: &Snapshot,
     after: &Snapshot,
     touched: &[&str],
     start: &Fixed,
     sign_in: Option<Address>,
 ) -> Vec<Breach> {
     let judged = Judged {
+        before,
         after,
         touched,
         start,
@@ -90,11 +93,12 @@ pub fn seed_lines(seeds: &registry::Seeds, start: &Fixed) -> Vec<String> {
 
     use crate::app::addresses::Addresses;
 
+    let before = Snapshot::resolve(&registry::Seeds::new(), &[], 0);
     let after = Arc::new(Snapshot::resolve(seeds, &[], 0));
     let touched: Vec<&str> = seeds.keys().copied().collect();
     let known = start.port != 0 || after.get(registry::SIGN_IN_ADDRESS).is_some();
     let sign_in = known.then(|| Addresses::of(start, after.clone(), None).sign_in());
-    judge(&after, &touched, start, sign_in)
+    judge(&before, &after, &touched, start, sign_in)
         .into_iter()
         .filter_map(|breach| {
             let entry = registry::entry(breach.path)?;
@@ -130,24 +134,34 @@ fn version_windows(judged: &Judged) -> Vec<Breach> {
     breaches
 }
 
+/// Whether `key` is a reporting switch whose receiver this server lacks.
+pub fn lacks_receiver(start: &Fixed, key: &str) -> bool {
+    match key {
+        "heartbeat_enabled" => start.heartbeat_url.is_none(),
+        "error_reporting_enabled" => !start.error_receiver,
+        _ => false,
+    }
+}
+
 fn reporting_needs_a_receiver(judged: &Judged) -> Vec<Breach> {
-    let on = |entry: &registry::Entry| {
-        judged.names(entry.key) && judged.after.stored(entry) == Some(&Value::Boolean(true))
-    };
-    let mut breaches = Vec::new();
-    if on(HEARTBEAT_ENABLED.entry) && judged.start.heartbeat_url.is_none() {
-        breaches.push(Breach {
-            path: "heartbeat_enabled",
-            message: "needs a heartbeat receiver configured where Marfa runs".to_string(),
-        });
-    }
-    if on(ERROR_REPORTING_ENABLED.entry) && !judged.start.error_receiver {
-        breaches.push(Breach {
-            path: "error_reporting_enabled",
-            message: "needs an error receiver configured where Marfa runs".to_string(),
-        });
-    }
-    breaches
+    [HEARTBEAT_ENABLED.entry, ERROR_REPORTING_ENABLED.entry]
+        .into_iter()
+        .filter(|entry| {
+            judged.names(entry.key)
+                && judged.after.stored(entry) == Some(&Value::Boolean(true))
+                && *judged.before.value(entry) != Value::Boolean(true)
+                && lacks_receiver(judged.start, entry.key)
+        })
+        .map(|entry| Breach {
+            path: entry.key,
+            message: if entry.key == HEARTBEAT_ENABLED.entry.key {
+                "needs a heartbeat receiver configured where Marfa runs"
+            } else {
+                "needs an error receiver configured where Marfa runs"
+            }
+            .to_string(),
+        })
+        .collect()
 }
 
 fn sign_in_is_an_address(judged: &Judged) -> Vec<Breach> {

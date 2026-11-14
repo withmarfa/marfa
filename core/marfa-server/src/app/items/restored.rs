@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use marfa_rules::{number, time};
+use marfa_rules::{number, time, validation};
 use rusqlite::Transaction;
 use serde_json::{Map, Value};
 
@@ -100,6 +100,7 @@ pub fn restore(unit: &Unit<'_, '_>, catalog: &Catalog, line: &Value) -> Result<R
     let type_id =
         text(item, "type").ok_or_else(|| Refusal::internal("a checked item has no type"))?;
     let id = text(item, "id").ok_or_else(|| Refusal::internal("a checked item has no id"))?;
+    refuse_extensions(line, id)?;
     let source = restored_source(text(item, "source").unwrap_or(unit.caller.own_source()));
     let source_id = text(item, "source_id");
     let mut properties = item
@@ -232,6 +233,31 @@ pub fn restore(unit: &Unit<'_, '_>, catalog: &Catalog, line: &Value) -> Result<R
         rows::by_seq(tx, row.seq)?.ok_or_else(|| Refusal::internal("a restored row is gone"))?;
     super::write::announce(unit, "item.created", &item)?;
     Ok(Restored::Written(row.seq))
+}
+
+/// Refuses an archive whose item holds an extension that a write refuses, even for an item the
+/// instance already holds.
+fn refuse_extensions(line: &Value, id: &str) -> Result<()> {
+    let held = line
+        .pointer("/metadata/extensions")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten();
+    for (namespace, data) in held {
+        let Some(data) = data.as_object() else {
+            continue;
+        };
+        if validation::extension_reserved(namespace)
+            || validation::extension_too_long(&number::object(data))
+        {
+            return Err(Refusal::validation(format!(
+                "Item {id} carries an extension in \"{namespace}\" that a write would refuse: a reserved namespace, or data over 100 KB."
+            ))
+            .with_detail("item_id", id)
+            .with_detail("namespace", namespace.as_str()));
+        }
+    }
+    Ok(())
 }
 
 /// Requires a checked snapshot; an existing snapshot ID refuses the restore.
