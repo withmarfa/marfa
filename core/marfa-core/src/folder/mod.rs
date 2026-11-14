@@ -889,6 +889,14 @@ impl Folder {
         self.hydrate_until(stop).map(Some)
     }
 
+    /// Whether a hydrated copy no longer answers for the slice its readable
+    /// settings ask for, so a running watch fills it again.
+    pub(super) fn refill_due(&self) -> Result<bool> {
+        Ok(self.settings().is_ok()
+            && crate::store::hydrated(&*self.core.conn()?)?
+            && self.slice_moved()?)
+    }
+
     /// Settings the copy cannot read count as moved, so the hydration that
     /// follows says why.
     fn slice_moved(&self) -> Result<bool> {

@@ -51,6 +51,10 @@ pub enum WatchEvent {
     WatcherFailed(String),
     /// A recoverable failure; the watch will retry after `wait`.
     Retrying { error: CoreError, wait: Duration },
+    /// The folder's settings changed to need items the copy does not hold,
+    /// and fetching them failed for `error`; the watch tries again after
+    /// `wait`, and the changed query waits until then.
+    QueryWaits { error: CoreError, wait: Duration },
     /// The server cannot be reached, for `Some` reason, or answers again,
     /// for `None`. Told only when it changes.
     Reach(Option<String>),
@@ -201,6 +205,7 @@ enum Wake {
     /// the item the change names where it names one.
     Server(Instant, Option<String>),
     Retrying(CoreError, Duration),
+    QueryWaits(CoreError, Duration),
     /// Why the server cannot be reached, or `None` where it answers again.
     Reach(Option<String>),
     /// The changes stream was limited, for the wait the server named.
@@ -254,12 +259,18 @@ impl Folder {
         // Raised as the passes end, whatever ended them, so the follow and a
         // hydration it runs end with them.
         let ended = AtomicBool::new(false);
+        // Raised by a pass whose settings need another slice, and as the
+        // passes end, after `ended`: the follow stops at it and fills the
+        // copy again unless the watch has ended.
+        let refill = AtomicBool::new(false);
         let asked = AtomicBool::new(false);
         let (sender, wakes) = mpsc::channel::<Wake>();
         let health = Mutex::new(FollowHealth::default());
         std::thread::scope(|scope| {
             let server_wakes = sender.clone();
-            let follower = scope.spawn(inheriting(|| follow(self, &ended, server_wakes, &health)));
+            let follower = scope.spawn(inheriting(|| {
+                follow(self, (&ended, &refill), server_wakes, &health)
+            }));
             let reporter = scope.spawn(inheriting(|| self.health_follow(&ended)));
             let looker = requests.map(|requests| {
                 let (wakes, ended, asked) = (sender.clone(), &ended, &asked);
@@ -268,8 +279,10 @@ impl Folder {
             let watched = {
                 // A guard, so a pass or a `tell` that panics still ends the
                 // follow: the scope waits for it before the panic goes on.
+                // Dropped in reverse, so `ended` is raised before `refill`.
+                let _cut = Raise(&refill);
                 let _ending = Raise(&ended);
-                self.watch_files(stop, &asked, sender, &wakes, &mut tell, &health)
+                self.watch_files(stop, &asked, &refill, sender, &wakes, &mut tell, &health)
             };
             if let Some(looker) = looker {
                 looker.join().map_err(|_| {
@@ -286,10 +299,12 @@ impl Folder {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn watch_files<E>(
         &self,
         stop: &AtomicBool,
         asked: &AtomicBool,
+        refill: &AtomicBool,
         sender: mpsc::Sender<Wake>,
         events: &mpsc::Receiver<Wake>,
         tell: &mut impl FnMut(WatchEvent) -> Result<(), E>,
@@ -391,6 +406,11 @@ impl Folder {
                     telling.health_changed = true;
                     tell(WatchEvent::Retrying { error, wait }).map_err(WatchError::Told)?;
                 }
+                Ok(Wake::QueryWaits(error, wait)) => {
+                    changed = true;
+                    telling.health_changed = true;
+                    tell(WatchEvent::QueryWaits { error, wait }).map_err(WatchError::Told)?;
+                }
                 Ok(Wake::Reach(lost)) => {
                     changed = true;
                     if let Some(event) = telling.reach(lost) {
@@ -443,7 +463,7 @@ impl Folder {
             if let Some(passes) = rate.started(crate::clock::now()) {
                 tell(WatchEvent::Busy { passes }).map_err(WatchError::Told)?;
             }
-            let passed = self.pass(full, asked, &mut telling, tell, health);
+            let passed = self.pass(full, (asked, refill), &mut telling, tell, health);
             if let Err(WatchError::Core(error) | WatchError::CredentialRefused(error)) = &passed {
                 let failing = health.lock().expect("follow health lock").failing(error);
                 self.health_observe(
@@ -487,7 +507,7 @@ impl Folder {
     fn pass<E>(
         &self,
         full: bool,
-        asked: &AtomicBool,
+        (asked, refill): (&AtomicBool, &AtomicBool),
         telling: &mut Telling,
         tell: &mut impl FnMut(WatchEvent) -> Result<(), E>,
         health: &Mutex<FollowHealth>,
@@ -538,6 +558,11 @@ impl Folder {
         }
         if asking() {
             return Ok(None);
+        }
+        // The follow fills the copy, as a push does, and its change wakes
+        // the pass that writes the files.
+        if self.refill_due()? {
+            refill.store(true, Ordering::SeqCst);
         }
         telling.pull_began = Some(crate::clock::now());
         let mark = self.mark()?;
@@ -720,7 +745,14 @@ impl Passes {
             }
             Ok::<(), ()>(())
         };
-        let passed = match folder.pass(full, &asked, &mut self.telling, &mut told, &self.health) {
+        let refill = AtomicBool::new(false);
+        let passed = match folder.pass(
+            full,
+            (&asked, &refill),
+            &mut self.telling,
+            &mut told,
+            &self.health,
+        ) {
             Ok(_) => Ok(()),
             Err(WatchError::Core(error)) => Err(error),
             Err(other) => panic!("the pass ended the watch: {other:?}"),
@@ -844,13 +876,14 @@ impl Drop for Raise<'_> {
 
 fn follow(
     folder: &Folder,
-    ended: &AtomicBool,
+    (ended, refill): (&AtomicBool, &AtomicBool),
     wakes: mpsc::Sender<Wake>,
     health: &Mutex<FollowHealth>,
 ) -> Result<(), CoreError> {
     let mut retry = RETRY_FIRST;
-    // Told once for each run of failures, as the reachability is.
-    let mut said = false;
+    // Told once for each run of failures, as the reachability is, and again
+    // where a changed query starts to wait on it: whether that was told.
+    let mut said: Option<bool> = None;
     // Carried into the next follow, which otherwise says nothing of a server
     // it has at once, and the watch would go on telling it unreachable.
     let mut unreachable = false;
@@ -858,6 +891,7 @@ fn follow(
         // Down until this attempt fails, so a retry that is filling shows
         // as filling and only a fresh failure shows `unavailable`.
         let was_failing = health.lock().expect("follow health lock").begin_attempt();
+        let refilling = folder.refill_due().unwrap_or(false);
         let resumed = folder.resume_until(ended);
         if let Err(error) = &resumed {
             health
@@ -868,12 +902,13 @@ fn follow(
         // A run of failures ends only when the work that failed recovers: a
         // hydration that ran, or a follow that reached the server's head.
         let mut recovered = matches!(resumed, Ok(Some(_)));
+        let resumed_ok = resumed.is_ok();
         let followed = resumed.and_then(|hydrated| {
             if hydrated.is_some() || was_failing {
                 let _ = wakes.send(Wake::Server(crate::clock::now(), None));
             }
             folder.core().follow_observed(
-                ended,
+                refill,
                 unreachable,
                 |change| {
                     let _ = wakes.send(match &change.event {
@@ -900,7 +935,11 @@ fn follow(
         });
         if recovered {
             retry = RETRY_FIRST;
-            said = false;
+            said = None;
+        }
+        // A refill asked while an attempt failed is that attempt's retry.
+        if !ended.load(Ordering::SeqCst) && refill.swap(false, Ordering::SeqCst) && resumed_ok {
+            continue;
         }
         match followed {
             Ok(_) => break,
@@ -908,9 +947,13 @@ fn follow(
             Err(CoreError::CopyExpired { .. }) => {}
             Err(error) if error.is_environmental() || matches!(error, CoreError::StoreBusy(_)) => {
                 let (wait, next) = retry_schedule(retry, &error);
-                if !said {
-                    let _ = wakes.send(Wake::Retrying(error, wait));
-                    said = true;
+                if said.is_none() || (said == Some(false) && refilling) {
+                    let _ = wakes.send(if refilling {
+                        Wake::QueryWaits(error, wait)
+                    } else {
+                        Wake::Retrying(error, wait)
+                    });
+                    said = Some(refilling);
                 }
                 wait_unless_stopped(ended, wait);
                 retry = next;

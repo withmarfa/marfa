@@ -194,11 +194,19 @@ When a current settings file omits a setting, a device MUST advise writing an em
 
 **Tests:** `device/folders-contract-a.test.ts › advises empty values when an edit removes a current setting`.
 
-### `folders/settings-watch-slice-delay`
+### `folders/settings-watch-refill`
 
-When the settings change to require another slice during a running watch, a device MUST defer hydration of that slice until the next push or watch restart.
+When changed folder settings require another type or tier slice, or name other member states or another filter, during a running watch, a device MUST fetch the items that slice holds and write their files without the watch being restarted.
 
-**Tests:** `device/folders-contract-a.test.ts › hydrates a changed watch slice at the next push rather than during the watch`.
+**Reason:** a watch started at login can run for days, and a person who widens a query expects its items to appear.
+
+**Tests:** `device/folders-contract-a.test.ts › fetches what a widened query holds at the running watch's next pass`, `› says a widened query waits while the server cannot be reached, and fetches it once it answers`.
+
+### `folders/settings-watch-refill-waits`
+
+If a running watch cannot fetch the items its changed folder settings require, then the CLI MUST say that the changed query waits and why.
+
+**Tests:** `device/folders-contract-a.test.ts › says a widened query waits while the server cannot be reached, and fetches it once it answers`.
 
 ## Local refusals and first sync
 

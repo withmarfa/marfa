@@ -567,47 +567,109 @@ describe("settings and folder reporting", () => {
     expect(sent).toEqual([]);
   });
 
-  it("hydrates a changed watch slice at the next push rather than during the watch", async () => {
-    harness = await folderHarness("contract-watch-slice", {
+  /** A folder of notes whose watch runs, with a bookmark the server holds. */
+  async function watchedBeforeBookmarks(label: string) {
+    harness = await folderHarness(label, {
       events: [copyLiveReplay("1", [])],
+      items: {
+        "core.bookmark": [
+          {
+            item: {
+              id: "01a00000-0000-7000-8000-000000000ac1",
+              type: "core.bookmark",
+              properties: { title: "Saved", body: "kept\n" },
+            },
+          },
+        ],
+      },
     });
-    const sent = changes(harness);
-    const watch = harness.folder.watch();
+    const bookmarksRead = () =>
+      harness!.server.requests.filter(
+        (request) =>
+          request.pathname === "/items" &&
+          request.query.get("type") === "core.bookmark",
+      ).length;
+    // The witness: the notes' folder holds no bookmark, and read none.
+    expect(bookmarksRead()).toBe(0);
+    expect(existsSync(join(harness.dir, "Saved.md"))).toBe(false);
+    return bookmarksRead;
+  }
+
+  function widen(folder: FolderHarness): void {
+    const file = settingsPath(folder);
+    writeFileSync(
+      file,
+      readFileSync(file, "utf8").replace("core.note", "core.bookmark"),
+    );
+  }
+
+  it("fetches what a widened query holds at the running watch's next pass", async () => {
+    const bookmarksRead = await watchedBeforeBookmarks("contract-watch-slice");
+    const sent = changes(harness!);
+    const watch = harness!.folder.watch();
     try {
       await vi.waitFor(() => expect(watch.stderr).toContain("watching"));
-      const file = settingsPath(harness);
-      writeFileSync(
-        file,
-        readFileSync(file, "utf8").replace("core.note", "core.bookmark"),
-      );
+      widen(harness!);
       await vi.waitFor(() => expect(sent).toHaveLength(1), {
         timeout: 10_000,
         interval: 50,
       });
-      await new Promise((resolve) => setTimeout(resolve, 1200));
-      expect(
-        harness.server.requests.filter(
-          (request) =>
-            request.pathname === "/items" &&
-            request.query.get("type") === "core.bookmark",
-        ),
-      ).toEqual([]);
+      await vi.waitFor(
+        () => expect(existsSync(join(harness!.dir, "Saved.md"))).toBe(true),
+        { timeout: 20_000, interval: 100 },
+      );
+      expect(bookmarksRead()).toBeGreaterThan(0);
       expect(watch.running(), watch.stderr).toBe(true);
     } finally {
       await watch.stop();
     }
-    const pushed = await harness.folder.push();
-    expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
-    if (!pushed.ok) return;
-    expect(pushed.value.hydrated).not.toBeNull();
-    expect(
-      harness.server.requests.some(
-        (request) =>
-          request.pathname === "/items" &&
-          request.query.get("type") === "core.bookmark",
-      ),
-    ).toBe(true);
+    expect(readFileSync(join(harness!.dir, "Saved.md"), "utf8")).toContain(
+      "kept",
+    );
   });
+
+  it("says a widened query waits while the server cannot be reached, and fetches it once it answers", async () => {
+    const bookmarksRead = await watchedBeforeBookmarks(
+      "contract-watch-slice-offline",
+    );
+    const folder = harness!;
+    let gone: Promise<void> | undefined;
+    // The server takes the change, and is gone before anything else reaches it.
+    folder.server.answer("PATCH", `/folders/${folder.settings.id}`, (request) => {
+      const { version: _version, ...settings } = JSON.parse(
+        request.body,
+      ) as Record<string, unknown>;
+      folder.settings.settings = { ...folder.settings.settings, ...settings };
+      folder.settings.version += 1;
+      gone = folder.server.offline();
+      return answers.updated(folderItem(folder.settings));
+    });
+    const watch = folder.folder.watch();
+    try {
+      await vi.waitFor(() => expect(watch.stderr).toContain("watching"));
+      widen(folder);
+      await vi.waitFor(() => expect(gone).toBeDefined(), {
+        timeout: 10_000,
+        interval: 50,
+      });
+      await vi.waitFor(
+        () =>
+          expect(watch.stderr).toContain("the folder's changed query waits"),
+        { timeout: 20_000, interval: 100 },
+      );
+      expect(existsSync(join(harness!.dir, "Saved.md"))).toBe(false);
+      await gone;
+      await harness!.server.online();
+      await vi.waitFor(
+        () => expect(existsSync(join(harness!.dir, "Saved.md"))).toBe(true),
+        { timeout: 40_000, interval: 100 },
+      );
+      expect(bookmarksRead()).toBeGreaterThan(0);
+      expect(watch.running(), watch.stderr).toBe(true);
+    } finally {
+      await watch.stop();
+    }
+  }, 90_000);
 
   it.each(["missing", "zero"])(
     "refuses a root with %s birth identity before creating administrative state",
