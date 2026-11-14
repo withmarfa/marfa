@@ -247,8 +247,7 @@ fn too_long(name: &str, most: usize) -> String {
     format!("{name} must be at most {most} characters.")
 }
 
-/// A registration needs no credential, so each value it stores has a bound. A document's
-/// value past it is left out, as an unknown grant type is.
+/// A document's value past the bound is left out, as an unknown grant type is.
 fn short_text<'a>(
     object: &'a Map<String, Value>,
     name: &str,
