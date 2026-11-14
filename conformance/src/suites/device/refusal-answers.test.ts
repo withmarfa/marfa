@@ -8,12 +8,6 @@ import {
   startHarness,
 } from "./harness.js";
 
-/**
- * What a refusal says of the server, through the command line and through
- * the binding: the answer a server sent, whole, beside whatever code the
- * device then gave the refusal, and nothing where no server answered.
- */
-
 interface Door {
   hydrate: (types: string[]) => Promise<Outcome<unknown>>;
 }

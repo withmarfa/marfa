@@ -105,7 +105,7 @@ if (phase === "hydrate") {
   console.log(`system.folder create: ${refused instanceof Error ? refused.message : "queued"}`);
   expect(
     refused instanceof Error &&
-      /** @type {{ serverCode?: string }} */ (refused).serverCode === "type_not_permitted",
+      /** @type {{ local?: { code?: string } }} */ (refused).local?.code === "type_not_permitted",
     "a system.folder create was not refused type_not_permitted before it was queued",
   );
   expect(

@@ -500,8 +500,7 @@ impl CliError {
         }
     }
 
-    /// What a server sent, wherever one answered and whatever the command then
-    /// called the refusal.
+    /// The server's answer, independent of the command's classification.
     fn server(&self) -> Option<ServerAnswer> {
         match self {
             CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {

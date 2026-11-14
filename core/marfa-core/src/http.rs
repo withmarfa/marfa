@@ -320,8 +320,7 @@ impl Answer {
         self.contract_named && self.status == 409 && self.code == INSTANCE_CHANGED
     }
 
-    /// What the server sent: the status, and the envelope's code and details
-    /// where the body holds one.
+    /// The server's answer, without the device's interpretation.
     pub(crate) fn server_answer(&self) -> Box<ServerAnswer> {
         let envelope = serde_json::from_str::<WireErrorEnvelope>(&self.body).ok();
         Box::new(ServerAnswer {

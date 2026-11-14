@@ -5,8 +5,7 @@ use thiserror::Error;
 /// The code the core gives a refusal whose body it could not read.
 pub const UNREAD_CODE: &str = "unknown";
 
-/// What a server sent: its status, and the code and details of its envelope
-/// where it sent a body that carries them.
+/// A server's answer, without the device's interpretation.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ServerAnswer {
     pub status: u16,
@@ -51,9 +50,7 @@ pub enum CoreError {
     Validation {
         code: String,
         message: String,
-        /// The device's own details for a refusal it made itself, on each
-        /// `edge_constraint_violation` and `edge_cycle` the copy gives
-        /// itself. A server's details are in `server`.
+        /// The copy's own details; a server's details belong in `server`.
         details: Option<Box<serde_json::Value>>,
         /// `None` means no server answered: the device refused on its own.
         server: Option<Box<ServerAnswer>>,
@@ -168,8 +165,7 @@ pub enum CoreError {
     #[error("{}", copy_expired(reason))]
     CopyExpired {
         reason: String,
-        /// The server's answer, where one ended the copy: a `409` naming a
-        /// reach or an instance change, or a `401` on the credential.
+        /// The server's answer, where one ended the copy.
         server: Option<Box<ServerAnswer>>,
     },
     #[error("the event stream ended early: {reason}")]
@@ -352,8 +348,7 @@ impl CoreError {
         self
     }
 
-    /// The code, and the details, the device named a refusal by itself: where
-    /// no server answered, or where the code it chose is not the server's own.
+    /// The device's code and details, where no server sent that code.
     pub fn local(&self) -> Option<(&str, Option<&serde_json::Value>)> {
         let (code, details) = match self {
             CoreError::RenewalFailed(cause) => return cause.local(),
@@ -368,8 +363,7 @@ impl CoreError {
         (said.as_deref() != Some(code)).then_some((code, details))
     }
 
-    /// What a server sent, wherever one answered and whatever the device then
-    /// called the refusal; `None` where no server did.
+    /// The server's answer, independent of the device's classification.
     pub fn answer(&self) -> Option<ServerAnswer> {
         match self {
             CoreError::RenewalFailed(cause) => cause.answer(),
