@@ -885,6 +885,16 @@ impl App {
         self.settings.start.tuning.blob_read_idle
     }
 
+    /// A blob's lock, unless this task's writes are refused first: a restore keeps the locks of
+    /// the blobs it carries until it commits.
+    pub(crate) async fn lock_to_write(&self, hash: &Hash) -> Result<store::Held> {
+        tokio::select! {
+            biased;
+            refusal = self.db.writes_refusing() => Err(refusal),
+            held = self.blobs.gate.lock(hash) => Ok(held),
+        }
+    }
+
     /// A refusal is answered only once the staged file is gone.
     async fn place_upload(&self, mut intake: Intake) -> Result<Placed> {
         let Some(staged) = intake.staged.take() else {
@@ -911,7 +921,7 @@ impl App {
         )?
         .map_err(unwritable)?;
         let size = staged.size();
-        let held = self.blobs.gate.lock(&hash).await;
+        let held = self.lock_to_write(&hash).await?;
         if self.blobs.gate.unfinished(&hash) {
             return Err(unavailable());
         }
@@ -1320,7 +1330,7 @@ impl App {
         if (kept as u64) < min_copies {
             return Err(below(kept + 1, min_copies));
         }
-        let _held = self.blobs.gate.lock(hash).await;
+        let _held = self.lock_to_write(hash).await?;
         if self.blobs.gate.unfinished(hash) {
             return Err(unavailable());
         }

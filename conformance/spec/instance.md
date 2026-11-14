@@ -1160,7 +1160,7 @@ If the write that the `database_write` probe makes is refused with `write_conten
 
 ### `instance/health-restore-running`
 
-While a restore holds the write lock, when a credential with `instance.read` sends `GET /health`, the server MUST answer the `database_write` component as `degraded` with an `error` that says a restore is running.
+While a restore runs, when a credential with `instance.read` sends `GET /health`, the server MUST answer the `database_write` component as `degraded` with an `error` that says a restore is running.
 
 **Reason:** a bare `degraded` leaves an owner and a monitor guessing at a fault that is the restore doing its work, and a probe that queued behind the restore would only report a refusal.
 

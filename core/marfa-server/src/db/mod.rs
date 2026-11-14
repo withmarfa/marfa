@@ -18,13 +18,14 @@ use std::time::Duration;
 use rusqlite::Transaction;
 use tokio::sync::watch;
 
-pub use hold::{Begin, Holding};
+pub use hold::{Holding, Permit};
 pub use open::Options;
 pub use writer::{Pulse, Watcher};
 
 use crate::app::faults::{
     FAIL_LOCK, Faults, HOLD_WRITE, REFUSE_READ, REFUSE_WRITE, REFUSE_WRITE_LOCK,
 };
+use crate::app::provenance;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::failure::Failure;
 
@@ -107,14 +108,20 @@ impl Db {
         })
     }
 
-    /// Keeps a refusal armed by `Begin::with` until the returned guard is dropped.
-    pub fn hold_writes(&self) -> Holding {
-        Holding::new(self.held.clone())
+    /// Refuses every write a request makes with `refusal` until the guard is dropped, except
+    /// those its permit runs. A write queued before this returns runs first. Refused with the armed refusal while another hold is armed.
+    pub fn hold_writes(&self, refusal: Refusal) -> Result<Holding> {
+        self.held.arm(refusal)
     }
 
-    /// The refusal a new write meets while the hold is armed.
+    /// The armed hold's refusal, whoever asks.
     pub fn writes_held(&self) -> Option<Refusal> {
-        self.held.refusal()
+        self.held.armed()
+    }
+
+    /// Answers once a write from this task would be refused, for a wait a hold's holder may own.
+    pub async fn writes_refusing(&self) -> Refusal {
+        self.held.refusing().await
     }
 
     /// Whether the file has answered a statement with damage since the server started.
@@ -197,7 +204,9 @@ impl Db {
         T: Send + 'static,
         F: FnOnce(&Transaction<'_>) -> Result<T> + Send + 'static,
     {
-        if let Some(refusal) = self.held.refusal() {
+        // Background work queues behind a hold as behind any long write: it cannot retry a refusal.
+        let held = (write.for_caller || provenance::in_request()).then_some(&*self.held);
+        if let Some(refusal) = held.and_then(|hold| hold.refusal()) {
             return Err(refusal);
         }
         if write.action.is_some() {
@@ -219,9 +228,12 @@ impl Db {
             ));
         }
         self.writer
-            .submit(write, budget, cap, job)
+            .submit(write, budget, cap, held, job)
             .await
-            .map_err(|refusal| self.answered(refusal, budget))
+            .map_err(|turned| match turned {
+                writer::Turned::Held(refusal) => refusal,
+                writer::Turned::Failed(refusal) => self.answered(refusal, budget),
+            })
     }
 
     /// Waits as for a lock another connection holds, until it is let go or the write wait is spent.

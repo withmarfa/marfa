@@ -837,7 +837,7 @@ Every code the server answers over HTTP is a row of the table below, and a serve
 | `inbound_unavailable`                | 503                 | An inbound endpoint cannot take a delivery now, because its connector's backlog is full or the instance holds as many bodies in flight as it allows. Retry later.                                         |
 | `stream_capacity_exhausted`          | 503                 | The instance is serving as many live event streams as it allows. `details.reason` is `viewer_cap`.                                                                                                        |
 | `too_many_connections`               | 503                 | The public listener holds as many open connections as it allows, or the caller's address does. Answered before any request is read; retry later.                                                          |
-| `write_contention`                   | 503                 | A write could not get the store's write lock within the busy budget, or a restore holds it (`details.reason` `restore_running`). Retry it unchanged.                                                      |
+| `write_contention`                   | 503                 | A write could not get the store's write lock within the busy budget, or a restore is running (`details.reason` `restore_running`). Retry it unchanged.                                                    |
 | `insufficient_storage`               | 507                 | The volume the instance writes to has no room for the request, or the request would leave less free than the instance's reserve. Nothing was kept unless `details.write_outcome` is `unknown`.            |
 
 <!-- errors-table:end -->
