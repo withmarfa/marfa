@@ -200,5 +200,33 @@ it.each(["include", "ignore"] as const)(
     expect(await listed("caf?.md")).toEqual(
       named(["caf\u00e9.md", "caf\u00e8.md", "cafe.md"]),
     );
+
+    // A literal compares with a name character by its case fold, and a ?
+    // or a class still takes one character of the name as written.
+    const folded = [
+      "\u00e9\u00df.md",
+      "e\u00df.md",
+      "\u00e9.md",
+      "Stra\u00dfe.md",
+      "witness.md",
+    ];
+    await witness(folded);
+    const foldedListed = (pattern: string) =>
+      scanned(folded, {
+        [kind]: kind === "include" ? [pattern, "witness.md"] : [pattern],
+      });
+    const foldedNamed = (members: string[]) =>
+      kind === "include"
+        ? [...members, "witness.md"].sort()
+        : folded.filter((name) => !members.includes(name)).sort();
+    expect(await foldedListed("\u00c9?.md")).toEqual(
+      foldedNamed(["\u00e9\u00df.md"]),
+    );
+    expect(await foldedListed("\u00c9[\u00df].md")).toEqual(
+      foldedNamed(["\u00e9\u00df.md"]),
+    );
+    expect(await foldedListed("STRASSE.md")).toEqual(
+      foldedNamed(["Stra\u00dfe.md"]),
+    );
   },
 );

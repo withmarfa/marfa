@@ -525,6 +525,52 @@ mod tests {
     }
 
     #[test]
+    fn a_literal_matches_a_name_character_that_folds_with_it_and_a_wildcard_takes_one() {
+        for (pattern, name) in [
+            ("\u{c9}?.md", "\u{e9}\u{df}.md"),
+            ("\u{c9}[\u{df}].md", "\u{e9}\u{df}.md"),
+            ("\u{c9}[\u{df}].md", "\u{e9}\u{1e9e}.md"),
+            ("\u{c9}*.md", "\u{e9}\u{df}\u{df}.md"),
+            ("\u{c9}?.md", "\u{e9}\u{1e9e}.md"),
+            ("S?.md", "\u{17f}\u{df}.md"),
+            ("\u{17f}?.md", "S\u{df}.md"),
+            ("\u{17f}", "S"),
+            ("S", "\u{17f}"),
+            ("K?", "\u{212a}x"),
+            ("STRASSE.md", "Stra\u{df}e.md"),
+            ("stra\u{df}e.md", "STRASSE.md"),
+            ("\u{3a3}?", "\u{3c2}x"),
+        ] {
+            assert!(
+                !lists(&[], &[pattern]).takes(name),
+                "ignore {pattern:?}, {name:?}"
+            );
+            assert!(
+                lists(&[pattern], &[]).takes(name),
+                "include {pattern:?}, {name:?}"
+            );
+        }
+        for (pattern, name) in [
+            ("\u{c9}?.md", "e\u{df}.md"),
+            ("\u{c9}?.md", "\u{e9}.md"),
+            ("\u{c9}[\u{df}].md", "\u{e9}s.md"),
+            ("\u{c9}?.md", "x\u{df}.md"),
+        ] {
+            assert!(
+                lists(&[], &[pattern]).takes(name),
+                "ignore {pattern:?}, {name:?}"
+            );
+            assert!(
+                !lists(&[pattern], &[]).takes(name),
+                "include {pattern:?}, {name:?}"
+            );
+        }
+        let dotted = lists(&[".\u{c9}?/**"], &[]);
+        assert!(dotted.enters(".\u{e9}\u{df}"));
+        assert!(dotted.takes(".\u{e9}\u{df}/note.md"));
+    }
+
+    #[test]
     fn a_wildcard_crosses_a_newline_in_a_name() {
         let bare = lists(&[], &[]);
         assert!(!bare.takes("keys\n/id_rsa"));

@@ -886,6 +886,8 @@ A device MUST NOT take or leave out a file at a folder's top level because an in
 
 When an include or ignore pattern holds a `?` or a bracket class, a device MUST match each against exactly one character of the path, whatever the character's length in bytes.
 
+**Reason:** a device compares a pattern with the path as it compares names. A literal character in the pattern matches a character of the path when the two have the same case fold, so `É` matches `é` and `S` matches `ſ`, and a `?` or a class takes one character of the path as written, so `É?.md` leaves out `éß.md`. A pattern also matches when its whole case-folded text matches the whole case-folded path, so `STRASSE.md` matches `Straße.md`.
+
 **Tests:** `device/folder-patterns.test.ts › matches a class or a ? against one character outside ASCII in %s patterns`.
 
 ### `folders/invalid-pattern-refused`
