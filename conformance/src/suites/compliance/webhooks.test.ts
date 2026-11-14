@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { BulkActionJob, TestContext } from "../../client/types.js";
 import {
@@ -263,8 +263,20 @@ describe("outbound webhooks", () => {
 
       expectSignedBy(delivery, secret);
 
-      const deliveries = await client.listWebhookDeliveries(created.data.id);
-      expect(deliveries.ok).toBe(true);
+      // The receiver answers before the server records the outcome, so the
+      // row stays `pending` until then.
+      const deliveries = await vi.waitFor(
+        async () => {
+          const listed = await client.listWebhookDeliveries(created.data.id);
+          expect(listed.ok).toBe(true);
+          expect(
+            listed.data.data.find((d) => d.event_type === "item.created")
+              ?.status,
+          ).toBe("success");
+          return listed;
+        },
+        { timeout: 20_000, interval: 100 },
+      );
       await expectMatchesSchema(
         "GET",
         "/webhooks/{id}/deliveries",
@@ -419,8 +431,17 @@ describe("outbound webhooks", () => {
       receiver.received.filter((r) => r.path === "/hook/wildcard"),
     ).toEqual([]);
 
-    const rows = await client.listWebhookDeliveries(named.data.id);
-    expect(rows.ok).toBe(true);
+    // The receiver answers before the server records the outcome, so the
+    // row stays `pending` until then.
+    const rows = await vi.waitFor(
+      async () => {
+        const listed = await client.listWebhookDeliveries(named.data.id);
+        expect(listed.ok).toBe(true);
+        expect(listed.data.data.map((d) => d.status)).toEqual(["success"]);
+        return listed;
+      },
+      { timeout: 20_000, interval: 100 },
+    );
     expect(rows.data.data.map((d) => d.event_type)).toEqual(["item.created"]);
     expect(rows.data.data.every((d) => d.succeeded)).toBe(true);
   });

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import {
@@ -259,8 +259,20 @@ describe("edge events", () => {
     expect(payload.edge.id).toBe(edgeId);
     expect(payload.edge.edge_type).toBe("about");
 
-    const rows = await client.listWebhookDeliveries(subscription.data.id);
-    expect(rows.ok).toBe(true);
+    // The receiver answers before the server records the outcome, so a row
+    // stays `pending` until then.
+    const rows = await vi.waitFor(
+      async () => {
+        const listed = await client.listWebhookDeliveries(subscription.data.id);
+        expect(listed.ok).toBe(true);
+        expect(listed.data.data.map((d) => d.status)).toEqual([
+          "success",
+          "success",
+        ]);
+        return listed;
+      },
+      { timeout: 20_000, interval: 100 },
+    );
     expect(rows.data.data.map((d) => d.event_type).sort()).toEqual([
       "edge.created",
       "edge.deleted",
