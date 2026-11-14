@@ -1,8 +1,8 @@
 //! Rules that compare settings, judged on what the settings would be after a change.
 
 use super::registry::{
-    self, ADDRESSES, ERROR_REPORTING_ENABLED, HEARTBEAT_ENABLED, Snapshot,
-    VERSION_DAILY_SNAPSHOT_DAYS, VERSION_RECENT_DAYS, VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
+    ADDRESSES, ERROR_REPORTING_ENABLED, HEARTBEAT_ENABLED, Snapshot, VERSION_DAILY_SNAPSHOT_DAYS,
+    VERSION_RECENT_DAYS, VERSION_WEEKLY_SNAPSHOT_DAYS, Value,
 };
 use super::start::Fixed;
 use crate::app::addresses::Address;
@@ -88,9 +88,10 @@ pub fn judge(
 /// A write through `/config` or a restore is refused, so a seed is the only way a setting can
 /// start outside a rule.
 #[cfg(feature = "test-hooks")]
-pub fn seed_lines(seeds: &registry::Seeds, start: &Fixed) -> Vec<String> {
+pub fn seed_lines(seeds: &super::registry::Seeds, start: &Fixed) -> Vec<String> {
     use std::sync::Arc;
 
+    use super::registry;
     use crate::app::addresses::Addresses;
 
     let before = Snapshot::resolve(&registry::Seeds::new(), &[], 0);
@@ -148,7 +149,7 @@ fn reporting_needs_a_receiver(judged: &Judged) -> Vec<Breach> {
         .into_iter()
         .filter(|entry| {
             judged.names(entry.key)
-                && judged.after.stored(entry) == Some(&Value::Boolean(true))
+                && *judged.after.value(entry) == Value::Boolean(true)
                 && *judged.before.value(entry) != Value::Boolean(true)
                 && lacks_receiver(judged.start, entry.key)
         })

@@ -244,6 +244,10 @@ async fn reporting_is_turned_from_off_to_on_only_where_a_receiver_is_set() {
         );
         let refused = bare.patch(json!({ field: true })).await;
         assert_eq!(refused.error_paths(), [field], "{field}");
+        // Clearing the stored off exposes the default on, which turns reporting on.
+        let cleared = bare.patch(json!({ field: null })).await;
+        assert_eq!(cleared.error_paths(), [field], "{field}");
+        assert_eq!(bare.config().await[field], false, "{field}");
     }
     let heard = Instance::start(&[("MARFA_HEARTBEAT_URL", "https://beat.example/x")]).await;
     assert_eq!(
