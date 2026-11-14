@@ -172,9 +172,7 @@ pub fn direct_when_local(
     }
 }
 
-/// Two agents that follow no redirect themselves, one using the environment's
-/// proxy and one never, so that [`Agents::get`] judges the proxy for each
-/// address a redirect names and not only for the first.
+/// Proxy policy depends on each redirect's destination.
 #[derive(Clone)]
 pub struct Agents {
     proxied: Agent,
@@ -182,8 +180,6 @@ pub struct Agents {
 }
 
 impl Agents {
-    /// `builder` makes the configuration of each agent; its redirect and proxy
-    /// settings are replaced.
     pub fn new(
         builder: impl Fn() -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope>,
     ) -> Self {
@@ -196,8 +192,7 @@ impl Agents {
         }
     }
 
-    /// A `GET` of `url` with `headers`, following at most `limit` redirects,
-    /// each sent with the same headers.
+    /// Follows at most `limit` redirects, sending the same headers at each step.
     pub fn get(
         &self,
         url: &str,
@@ -3633,9 +3628,6 @@ mod tests {
         assert_eq!(server.seen("/edge-types").len(), 1);
     }
 
-    /// Answers one request head per connection with `reply` and records its
-    /// first line. A `CONNECT` is accepted first, and the request sent
-    /// through the tunnel is the one answered.
     fn recording_listener(
         reply: impl Fn(&str) -> String + Send + 'static,
     ) -> (u16, Arc<Mutex<Vec<String>>>) {
@@ -3711,8 +3703,7 @@ mod tests {
         let agents = Agents::new(Agent::config_builder);
         let start = "http://redirect.example.test:9/start";
 
-        // A client that sends everything through the proxy asks it for the
-        // local address, so a request there is producible.
+        // First prove that the proxy can observe a request for the local address.
         let witness = agents.proxied.get(&local).call();
         assert!(witness.is_err(), "the proxy refused the local address");
         assert!(

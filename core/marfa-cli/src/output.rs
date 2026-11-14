@@ -7,10 +7,7 @@ use serde_json::Value;
 
 use crate::error::CliError;
 
-/// What a person is given. Stored text is escaped by [`printable`] where it
-/// enters a line, so the newlines, tabs and `DRAWN` colors that remain are the
-/// CLI's own and pass; this sink shows any other control character as an
-/// escape. JSON passes unchanged.
+/// Stored text needs [`printable`] before this sink, which preserves CLI layout.
 pub struct Terminal<W: Write> {
     to: W,
     text: bool,

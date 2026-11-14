@@ -72,7 +72,6 @@ mod tests {
 
     use super::request;
 
-    /// Answers each connection it takes with `200` and counts it.
     fn listen(counted: Arc<AtomicUsize>) -> u16 {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
