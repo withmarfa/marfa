@@ -2,9 +2,12 @@
 //! archive is the whole of standard output and the progress remarks are
 //! standard error's alone.
 
+#[allow(dead_code)]
+#[path = "../src/door.rs"]
+mod door;
 mod isolated;
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::net::TcpListener;
 use std::process::Output;
 use std::time::Duration;
@@ -46,8 +49,7 @@ fn server(delay: Duration, sent: Vec<u8>, claimed: usize) -> String {
         let Ok((mut socket, _)) = listener.accept() else {
             return;
         };
-        let mut request = [0u8; 4096];
-        let _ = socket.read(&mut request);
+        door::read_request(&mut socket);
         std::thread::sleep(delay);
         let head = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/x-tar\r\nX-Marfa-Contract: {}\r\nContent-Length: {claimed}\r\nConnection: close\r\n\r\n",

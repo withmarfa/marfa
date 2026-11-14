@@ -1881,8 +1881,7 @@ pub(crate) mod tests {
         let url = format!("http://{}/bytes", listener.local_addr().unwrap());
         std::thread::spawn(move || {
             if let Ok((mut socket, _)) = listener.accept() {
-                let mut request = [0u8; 4096];
-                let _ = Read::read(&mut socket, &mut request);
+                crate::scripted::read_request(&mut socket);
                 let length = if then_silent {
                     body.len() + 1000
                 } else {
@@ -1958,9 +1957,7 @@ pub(crate) mod tests {
         std::thread::spawn(move || {
             let mut first = true;
             while let Ok((mut socket, _)) = listener.accept() {
-                let mut request = [0u8; 4096];
-                let read = Read::read(&mut socket, &mut request).unwrap_or(0);
-                let text = String::from_utf8_lossy(&request[..read]).to_lowercase();
+                let text = crate::scripted::read_request(&mut socket).to_lowercase();
                 let from = text
                     .lines()
                     .find_map(|line| line.strip_prefix("range: bytes="))
@@ -2277,8 +2274,7 @@ pub(crate) mod tests {
         let url = format!("http://{}/bytes", listener.local_addr().unwrap());
         std::thread::spawn(move || {
             if let Ok((mut socket, _)) = listener.accept() {
-                let mut request = [0u8; 4096];
-                let _ = Read::read(&mut socket, &mut request);
+                crate::scripted::read_request(&mut socket);
                 let _ = socket.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
                 let _ = socket.write_all(&bytes);
             }
@@ -2964,9 +2960,7 @@ pub(crate) mod tests {
         let record = Arc::clone(&offered);
         std::thread::spawn(move || {
             while let Ok((mut socket, _)) = listener.accept() {
-                let mut request = [0u8; 4096];
-                let read = Read::read(&mut socket, &mut request).unwrap_or(0);
-                let text = String::from_utf8_lossy(&request[..read]).to_lowercase();
+                let text = crate::scripted::read_request(&mut socket).to_lowercase();
                 let encoding = text
                     .lines()
                     .find_map(|line| line.strip_prefix("accept-encoding:"))
@@ -3027,8 +3021,7 @@ pub(crate) mod tests {
         let range = content_range.to_string();
         std::thread::spawn(move || {
             while let Ok((mut socket, _)) = listener.accept() {
-                let mut request = [0u8; 4096];
-                let _ = Read::read(&mut socket, &mut request);
+                crate::scripted::read_request(&mut socket);
                 let head = format!(
                     "HTTP/1.1 206 Partial Content\r\nContent-Range: {range}\r\nContent-Length: 2\r\nConnection: close\r\n\r\nab"
                 );

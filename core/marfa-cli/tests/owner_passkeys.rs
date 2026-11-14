@@ -1,8 +1,11 @@
 #[allow(dead_code)]
+#[path = "../src/door.rs"]
+mod door;
+#[allow(dead_code)]
 #[path = "support/quiet.rs"]
 mod quiet;
 
-use std::io::{Read, Write};
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixListener;
 use std::process::Command;
@@ -73,14 +76,14 @@ fn add_uses_configured_url_without_a_browser_and_survives_opener_failure() {
         let url = "https://configured.example/auth/sign-in?prompt=login&return_to=%2Fauth%2Fowner%2Fpasskeys";
         let handle = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            let mut data = [0u8; 4096];
-            let n = stream.read(&mut data).unwrap();
-            let request = String::from_utf8_lossy(&data[..n]);
+            let request = door::read_request(&mut stream);
             assert!(
-                request.starts_with("GET /_control/owner/passkeys/add-url HTTP/1.1"),
-                "{request}"
+                request
+                    .line
+                    .starts_with("GET /_control/owner/passkeys/add-url HTTP/1.1"),
+                "{request:?}"
             );
-            assert!(!request.to_lowercase().contains("authorization:"));
+            assert!(request.header("authorization").is_none());
             let body = serde_json::json!({"url":url}).to_string();
             write!(stream,"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Marfa-Contract: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",marfa_core::contract::CONTRACT_VERSION,body.len(),body).unwrap();
         });
