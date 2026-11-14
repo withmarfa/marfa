@@ -165,8 +165,7 @@ pub fn hold_to(app: &App, lanes: [Lane; 1], message: &'static str) -> Result<()>
     admit(app, &lanes).map_or(Ok(()), |wait| Err(spent(message, wait)))
 }
 
-/// Leaves every address's counts, its counts at each email included, so no later answer
-/// depends on which email changed its password.
+/// Preserve every email's address counts so password changes affect them equally.
 pub fn clear_for_new_password(limiter: &Limiter) {
     for family in [UNKNOWN_DEVICES, DEVICE, KNOWN_DEVICES] {
         limiter.forget(family, |_| true);

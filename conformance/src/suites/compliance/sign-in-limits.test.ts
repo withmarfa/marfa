@@ -453,7 +453,6 @@ describe("counting only wrong passwords", () => {
         expect(response.status).toBe(401);
       }
     }
-    // The witness: both emails are held before the change.
     for (const email of [OWNER.email, stranger]) {
       expect(
         (await signIn(known, "wrong", address, undefined, email)).status,
