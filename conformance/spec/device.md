@@ -3486,6 +3486,14 @@ If `login` is given an `http` address whose host is not `localhost`, an address 
 
 **Tests:** `cli/cleartext.test.ts › warns before a sign-in sends anything to a plain http address on another host`.
 
+### `device/login-code-ended`
+
+If the server answers the poll of the device code that `login` waits on with `invalid_grant` or `expired_token`, then the CLI MUST end the sign-in with `device_code_ended` and exit 3, saying in its message that the code is no longer valid and to run `marfa login` again.
+
+**Reason:** the server removes an unentered device code when 1000 newer ones are held (`keys-and-oauth/device-code-unentered-bound`), and answers one that ran out `expired_token`. A new `login` can succeed where the same code cannot, so the refusal is not one a retry fails to change (exit 1).
+
+**Tests:** `cli/login.test.ts › ends a login whose device code the server removed with exit 3, saying to run marfa login again`, `› ends a login whose device code ran out with exit 3, saying to run marfa login again`.
+
 ### `device/command-cleartext-loopback`
 
 Where the address of the server is `http` and its host is `localhost`, an address in `127.0.0.0/8` or `::1`, the CLI MUST NOT print the plain `http` warning.
@@ -8119,6 +8127,7 @@ A refusal the CLI reports carries one `code`, a lowercase snake case word. The f
 | `no_store`               | The command names no working copy, or none is at the path it names.                        |
 | `no_credential`          | No credential is held for the server.                                                      |
 | `key_command`            | A profile's key command gave no key.                                                       |
+| `device_code_ended`      | The device code `login` waits on is no longer valid, and a new `login` replaces it.        |
 | `blobs_missing`          | An archive lacks blobs its manifest names.                                                 |
 | `docs_page_not_found`    | The docs site has no page at the path.                                                     |
 | `docs_section_not_found` | The docs page has no heading of that name.                                                 |
