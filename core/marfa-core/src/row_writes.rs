@@ -117,9 +117,7 @@ fn judge_values(
 struct Known {
     /// `None` where the copy cannot tell.
     exists: Option<bool>,
-    /// What the copy holds of the row's values: where a column's value is
-    /// withheld from the key, the size is a lower bound, which only refuses
-    /// what the server would refuse too. `None` where the copy cannot tell.
+    /// Withheld columns make these values a lower bound on the row's size.
     values: Option<Map<String, Value>>,
     /// The columns the server keeps a `put` from replacing, where the copy knows them.
     withheld: Option<Vec<String>>,
@@ -147,10 +145,6 @@ fn known_row(conn: &Connection, item: &str, table: &str, id: &str, laid: bool) -
     })
 }
 
-/// The refusals a device can give before it queues, that need the row as the
-/// copy holds it: a `put` that leaves out a required column the server would not
-/// keep, and a row that would hold more than the server takes. Where the copy
-/// cannot tell, the write is queued for the server to judge.
 fn judge_rows(
     conn: &Connection,
     item: &str,

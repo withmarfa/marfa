@@ -1,5 +1,4 @@
-//! The grammar of a batch of table row writes and its two limits, which the
-//! server's row door, its MCP tool and a device all judge.
+//! Shared grammar and limits for table row batches.
 
 use serde_json::{Map, Value};
 
@@ -25,8 +24,7 @@ pub enum Op {
     },
 }
 
-/// What a batch or an operation breaks. `operation` is `None` where the whole
-/// batch is at fault, and `path` then names `operations`.
+/// A batch refusal has no operation index and names the `operations` path.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Refused {
     pub operation: Option<usize>,
@@ -148,8 +146,6 @@ pub fn printed_len(values: &Map<String, Value>) -> usize {
     serde_json::to_string(values).map_or(0, |text| text.len())
 }
 
-/// Refuses operation `index` where the values it leaves in the row, written
-/// as JSON, are longer than [`MAX_ROW_BYTES`].
 pub fn refuse_wide(index: usize, values: &Map<String, Value>) -> Result<(), Refused> {
     let bytes = printed_len(values);
     if bytes > MAX_ROW_BYTES {
