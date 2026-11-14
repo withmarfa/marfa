@@ -442,6 +442,25 @@ describe("an archive whose blob the instance holds", () => {
   });
 });
 
+/** A write the restore turned away at once, before it waited out the write wait. */
+function expectRefusedForTheRestore(
+  door: string,
+  answer: ApiResponse<unknown>,
+  took: number,
+): void {
+  const where = `${door}: ${JSON.stringify(answer.error)}`;
+  expect(answer.status, where).toBe(503);
+  expect(answer.error?.error.code, where).toBe("write_contention");
+  const details = answer.error?.error.details as
+    Record<string, unknown> | undefined;
+  expect(details?.reason, where).toBe("restore_running");
+  expect(details?.retry_after, where).toBe(5);
+  expect(answer.headers.get("retry-after"), where).toBe("5");
+  // The write wait is five seconds, so a refusal that waited it out would
+  // take longer than this.
+  expect(took, where).toBeLessThan(1_000);
+}
+
 describe("a writer while a restore writes", () => {
   it("refuses each kind of write at once, naming the restore, while reads and the restore itself go on", async () => {
     const rows = carrying();
@@ -545,18 +564,7 @@ describe("a writer while a restore writes", () => {
       for (const [door, write] of Object.entries(writes)) {
         const started = performance.now();
         const answer = await write();
-        const took = performance.now() - started;
-        const where = `${door}: ${JSON.stringify(answer.error)}`;
-        expect(answer.status, where).toBe(503);
-        expect(answer.error?.error.code, where).toBe("write_contention");
-        const details = answer.error?.error.details as
-          Record<string, unknown> | undefined;
-        expect(details?.reason, where).toBe("restore_running");
-        expect(details?.retry_after, where).toBe(5);
-        expect(answer.headers.get("retry-after"), where).toBe("5");
-        // The write wait is five seconds, so a refusal that waited it out
-        // would take longer than this.
-        expect(took, where).toBeLessThan(1_000);
+        expectRefusedForTheRestore(door, answer, performance.now() - started);
       }
 
       // Reads go on.
@@ -591,6 +599,78 @@ describe("a writer while a restore writes", () => {
       ).toBeLessThan(300);
     }
   });
+
+  it("refuses an upload of bytes the restore carries at once, rather than waiting for the restore", async () => {
+    const bytes = new TextEncoder().encode(
+      `bytes a restore and an upload both carry, ${uuidv7()}`,
+    );
+    const rows = carrying(bytes);
+    await server.setFault("hold:restore:before-commit");
+    const restoring = ownerClient().restoreArchive(rows.archive);
+    await server.waitForHold("hold:restore:before-commit");
+    try {
+      const started = performance.now();
+      const answer = await working.uploadBlob(
+        bytes,
+        "application/octet-stream",
+      );
+      expectRefusedForTheRestore(
+        "POST /blobs",
+        answer,
+        performance.now() - started,
+      );
+    } finally {
+      await server.clearFault();
+    }
+    const done = await restoring;
+    expect(done.status, JSON.stringify(done.error)).toBe(200);
+    await expectAllOf(rows);
+
+    // The witness: the same upload is taken once the restore has committed.
+    const landed = await working.uploadBlob(bytes, "application/octet-stream");
+    expect(landed.status, JSON.stringify(landed.error)).toBeLessThan(300);
+  });
+
+  it("refuses a write at once while the restore places its files, before its own write starts", async () => {
+    const rows = carrying();
+    const source = (await working.getCurrentKey()).data.source as string;
+    const baseline = await working.listItems({ source, limit: 500 });
+    expect(baseline.status, JSON.stringify(baseline.error)).toBe(200);
+    const keptIds = baseline.data.data.map((item) => item.id).sort();
+    // The archive's bytes are new to the disk, so the restore writes them
+    // before it queues the write that commits its items.
+    await server.setFault("hold:blob-write");
+    const restoring = ownerClient().restoreArchive(rows.archive);
+    await server.waitForHold("hold:blob-write");
+    try {
+      const started = performance.now();
+      const answer = await working.createItem({
+        type: "core.note",
+        source,
+        properties: { body: "refused: placed while the restore placed files" },
+      });
+      expectRefusedForTheRestore(
+        "POST /items",
+        answer,
+        performance.now() - started,
+      );
+    } finally {
+      await server.clearFault();
+    }
+    const done = await restoring;
+    expect(done.status, JSON.stringify(done.error)).toBe(200);
+    await expectAllOf(rows);
+    const after = await working.listItems({ source, limit: 500 });
+    expect(after.data.data.map((item) => item.id).sort()).toEqual(keptIds);
+
+    // The witness: the same write lands once the restore has committed.
+    const landed = await working.createItem({
+      type: "core.note",
+      source,
+      properties: { body: "written after the restore placed its files" },
+    });
+    expect(landed.status, JSON.stringify(landed.error)).toBe(201);
+  });
 });
 
 describe("a restore that does not commit and removes the bytes it placed", () => {
@@ -622,7 +702,7 @@ describe("a restore that does not commit and removes the bytes it placed", () =>
     await server.clearFault();
   });
 
-  it("keeps the bytes of an upload requested while the failed restore ran", async () => {
+  it("refuses an upload of bytes the failed restore placed while it runs, and keeps that upload sent again", async () => {
     const shared = new TextEncoder().encode(`sent twice, ${uuidv7()}`);
     const rows = carryingBoth(carrying(), shared);
     const sharedHash = blobHash(shared);
@@ -632,21 +712,23 @@ describe("a restore that does not commit and removes the bytes it placed", () =>
     await server.waitForHold("hold:restore:before-commit");
     expect(await diskHolds(server.controlSocket, sharedHash)).toBe(true);
 
-    // The upload meets the bytes the restore placed, and waits for the restore
-    // as it does for any request for the same bytes.
-    // The held restore's own spool files are already in the folder, so the
-    // upload is the one that adds a file.
-    const restoreSpools = new Set(await spooled());
-    const uploading = working.uploadBlob(shared, "application/octet-stream");
-    await waitFor("the upload to be spooled behind the restore", async () =>
-      (await spooled()).some((name) => !restoreSpools.has(name))
-        ? true
-        : undefined,
+    // The upload meets the bytes the restore placed and is turned away at
+    // once, so nothing it carried depends on the restore's clean-up.
+    const started = performance.now();
+    const refused = await working.uploadBlob(
+      shared,
+      "application/octet-stream",
+    );
+    expectRefusedForTheRestore(
+      "POST /blobs",
+      refused,
+      performance.now() - started,
     );
     await server.clearFault("hold:restore:before-commit");
-
     expect((await restoring).status).toBe(500);
-    const stored = await uploading;
+    expect((await operator.downloadBlob(sharedHash)).status).toBe(404);
+
+    const stored = await working.uploadBlob(shared, "application/octet-stream");
     expect(stored.status, JSON.stringify(stored.error)).toBe(201);
     const read = await operator.downloadBlob(sharedHash);
     expect(read.status).toBe(200);

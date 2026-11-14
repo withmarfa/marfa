@@ -282,6 +282,65 @@ async fn a_write_withdrawn_from_the_queue_never_runs() {
 }
 
 #[tokio::test]
+async fn a_hold_refuses_a_callers_write_at_once_and_queues_its_own_and_background_writes() {
+    let place = folder();
+    let db = Arc::new(open(&place.file));
+    let (release, released) = mpsc::channel::<()>();
+    let (started, running) = tokio::sync::oneshot::channel();
+    let busy = {
+        let db = db.clone();
+        tokio::spawn(async move {
+            db.write(WRITE, move |tx| {
+                let _ = started.send(());
+                let _ = released.recv();
+                add(tx, 1)
+            })
+            .await
+        })
+    };
+    running.await.unwrap();
+    let holding = db
+        .hold_writes(Refusal::new(Code::WriteContention, "held"))
+        .unwrap();
+    let own = {
+        let db = db.clone();
+        tokio::spawn(
+            holding
+                .permit()
+                .run(async move { db.write(WRITE, |tx| add(tx, 3)).await }),
+        )
+    };
+    let ran = Arc::new(AtomicBool::new(false));
+    let seen = ran.clone();
+    let asked = std::time::Instant::now();
+    let refusal = db
+        .write(WRITE, move |tx| {
+            seen.store(true, Ordering::SeqCst);
+            add(tx, 2)
+        })
+        .await
+        .unwrap_err();
+    assert!(asked.elapsed() < Duration::from_millis(100));
+    assert_eq!(refusal.message, "held");
+    assert!(refusal.details.is_none());
+    assert!(db.writes_held().is_some());
+    let background = {
+        let db = db.clone();
+        tokio::spawn(async move { db.write(Write::own(), |tx| add(tx, 4)).await })
+    };
+    tokio::task::yield_now().await;
+    release.send(()).unwrap();
+    busy.await.unwrap().unwrap();
+    own.await.unwrap().unwrap();
+    background.await.unwrap().unwrap();
+    drop(holding);
+    assert!(db.writes_held().is_none());
+    db.write(WRITE, |tx| add(tx, 5)).await.unwrap();
+    assert!(!ran.load(Ordering::SeqCst));
+    assert_eq!(ids(&db).await, [1, 3, 4, 5]);
+}
+
+#[tokio::test]
 async fn a_slow_write_does_not_block_a_read() {
     let place = folder();
     let db = Arc::new(open(&place.file));

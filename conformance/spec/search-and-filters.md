@@ -3080,15 +3080,15 @@ While a restore writes, the server MUST NOT show its items, registrations or eve
 
 ### `search-and-filters/restore-writers-refused`
 
-While a restore holds the write lock, when any other request has to write, the server MUST answer that request `503 write_contention` with `details.reason` `restore_running`, within one second of the request arriving.
+While a restore runs, from when it begins to place the archive's files until it commits or fails, when any other request has to write, the server MUST answer that request `503 write_contention` with `details.reason` `restore_running`, within one second of the request arriving.
 
-**Reason:** the restore holds the write lock until it commits, which can take a minute at 250,000 items. A write that waited out the five-second write wait first would spend that wait on each retry and learn nothing about the cause. A device retries any `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`), so the code stays the one it retries.
+**Reason:** the restore holds the write lock until it commits, which can take a minute at 250,000 items, and the files it carries until then. A write that reached the lock or a file after the restore began would wait for all of it. A write that waited out the five-second write wait first would spend that wait on each retry and learn nothing about the cause. A device retries any `5xx` without counting it against the write (`queue-and-verdicts/environmental-uncounted`), so the code stays the one it retries.
 
-**Tests:** `compliance/restore-faults.test.ts › refuses each kind of write at once, naming the restore, while reads and the restore itself go on`.
+**Tests:** `compliance/restore-faults.test.ts › refuses each kind of write at once, naming the restore, while reads and the restore itself go on`, `compliance/restore-faults.test.ts › refuses an upload of bytes the restore carries at once, rather than waiting for the restore`, `compliance/restore-faults.test.ts › refuses a write at once while the restore places its files, before its own write starts`, `compliance/restore-concurrent.test.ts › answers each write 201 or 503 restore_running, and keeps every item it answered 201`.
 
 ### `search-and-filters/restore-writers-retry-after`
 
-While a restore holds the write lock, when the server answers a write `503 write_contention` with `details.reason` `restore_running`, the server MUST carry a `Retry-After` of 5 seconds, and the same number in `details.retry_after`.
+While a restore runs, when the server answers a write `503 write_contention` with `details.reason` `restore_running`, the server MUST carry a `Retry-After` of 5 seconds, and the same number in `details.retry_after`.
 
 **Reason:** the server cannot tell how long a restore will run, so it states no estimate. Each refusal is answered at once, so five seconds costs a client about ten of them across a restore of 250,000 items, and a restore of a few thousand items ends within one.
 
@@ -3096,7 +3096,7 @@ While a restore holds the write lock, when the server answers a write `503 write
 
 ### `search-and-filters/restore-writers-nothing-written`
 
-If the server refuses a write because a restore holds the write lock, then the server MUST write nothing for that request.
+If the server refuses a write because a restore runs, then the server MUST write nothing for that request.
 
 **Reason:** a caller that retries the refused write then cannot make it twice, and a write answered with success during or around a restore is never missing afterwards.
 
@@ -3104,7 +3104,7 @@ If the server refuses a write because a restore holds the write lock, then the s
 
 ### `search-and-filters/restore-readers-served`
 
-While a restore holds the write lock, the server MUST answer a read of the items without waiting for the restore.
+While a restore runs, the server MUST answer a read of the items without waiting for the restore.
 
 **Tests:** `compliance/restore-faults.test.ts › refuses each kind of write at once, naming the restore, while reads and the restore itself go on`.
 
@@ -3112,9 +3112,9 @@ While a restore holds the write lock, the server MUST answer a read of the items
 
 When the server removes the blob bytes of a restore that did not commit, the server MUST NOT remove bytes that a committed item names.
 
-**Reason:** content addressing means that another request can be told the same bytes are stored while the restore runs.
+**Reason:** content addressing means that a committed item can name the same bytes the restore placed.
 
-**Tests:** `compliance/restore-faults.test.ts › keeps the bytes a committed item names, and removes those no item names`, `› keeps the bytes of an upload requested while the failed restore ran`.
+**Tests:** `compliance/restore-faults.test.ts › keeps the bytes a committed item names, and removes those no item names`, `› refuses an upload of bytes the failed restore placed while it runs, and keeps that upload sent again`.
 
 ## Owner item summaries
 

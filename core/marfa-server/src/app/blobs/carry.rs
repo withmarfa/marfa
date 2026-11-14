@@ -178,7 +178,7 @@ impl App {
     /// long as the blob and still does not hash to its name.
     pub async fn judge_damaged(&self, bytes: Bytes, blob: &Blob) -> Result<()> {
         let Bytes { store, object, .. } = bytes;
-        let _held = self.blobs.gate.lock(&blob.hash).await;
+        let _held = self.lock_to_write(&blob.hash).await?;
         if self.blobs.gate.unfinished(&blob.hash) {
             return Ok(());
         }

@@ -191,6 +191,8 @@ impl App {
         whole: bool,
     ) -> Result<Value> {
         caller.require_local()?;
+        let holding = self.db.hold_writes(restore_running::refusal())?;
+        let permit = holding.permit();
         let app = self.clone();
         let caller = caller.clone();
         let task = async move {
@@ -224,12 +226,9 @@ impl App {
             let faults = app.faults.clone();
             let settings = app.clone();
             let cap = app.bulk_cap();
-            let holding = app.db.hold_writes();
-            let begin = holding.begin();
             let written = app
                 .write(&caller, "restore_archive", move |unit| {
                     let began = std::time::Instant::now();
-                    begin.with(restore_running::refusal());
                     unit.caller.require_local()?;
                     unit.caller.require_recent(&started_at)?;
                     unit.fanning(false, |unit| {
@@ -409,7 +408,7 @@ impl App {
             answer["set_up_again"] = Value::from(SET_UP_AGAIN);
             Ok(answer)
         };
-        tokio::spawn(task)
+        tokio::spawn(permit.run(task))
             .await
             .map_err(|error| Refusal::internal(&format!("a restore did not finish: {error}")))?
     }
