@@ -1534,11 +1534,19 @@ If a request with a body is sent to an operation that requires a credential and 
 
 ### `instance/credential-judged-after-body`
 
-If the credential a request carries is revoked, loses the permission its operation needs, or ends, as a revoked key, a revoked app grant or a signed-out owner browser session does, while the server is reading the request's body, then the server MUST answer the request as it answers the same request sent after that change.
+If the credential a request carries is revoked, loses the permission its operation needs, or ends, as a revoked key, a revoked app grant or a signed-out owner browser session does, while the public listener reads the request's body whole, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /owner/picture`, `PUT /profile/picture` or an inbound endpoint, and the body arrives whole within its size and time limits, then the server MUST answer the request as it answers the same request sent after that change.
 
-**Reason:** a credential the server judged when the head arrived proves nothing about the moment the body is whole, and a caller who sends a body slowly must not keep authority the owner has taken away.
+**Reason:** a credential the server judged when the head arrived proves nothing about the moment the body is whole, and a caller who sends a body slowly must not keep authority the owner has taken away. A body that does not arrive whole is answered under `instance/body-deadline` or its own refusals.
 
 **Tests:** `compliance/public-body.test.ts › is answered 401 once the body is whole when its key was revoked meanwhile`, `› is answered as a fresh request is once the body is whole when its key lost the permission meanwhile`, `› is answered 401 once the body is whole when the app's grant was revoked meanwhile`, `› is answered 401 once the body is whole when the owner's browser session was signed out meanwhile`, `› is answered 401 once the body is whole when its key was revoked meanwhile, with the rate limiter on`.
+
+### `instance/credential-judged-before-streamed-commit`
+
+If the credential a `POST /blobs` or `PUT /profile/picture` request carries is revoked while the server is reading the request's body, then the server MUST refuse the request with `401 unauthorized` once the body is whole and valid, and store nothing from it.
+
+**Reason:** these bodies stream, so the server does not judge the caller again when the body is whole, but it judges the caller in the step that stores the upload, and a caller whose authority has ended is not given the result.
+
+**Tests:** `compliance/public-body.test.ts › is refused 401 and stores no picture when the key was revoked while a profile picture streamed in`, `› is refused 401 when the key was revoked while a blob streamed in`.
 
 ### `instance/bodiless-method-body-unread`
 

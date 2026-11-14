@@ -94,7 +94,7 @@ export function heldRequest(
   method: string,
   path: string,
   headers: Record<string, string>,
-  body: string,
+  body: string | Uint8Array,
 ): HeldRequest {
   const req = request({
     ...urlOptions(apiUrl),

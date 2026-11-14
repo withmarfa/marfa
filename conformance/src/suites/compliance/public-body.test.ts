@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   approvedApp,
@@ -5,9 +6,11 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { controlRequest, localFetch } from "../../utils/control-request.js";
 import { HOUR_MS, movedClock, operatorOf } from "../../utils/moved-clock.js";
 import { declareOversizeBody } from "../../utils/oversize.js";
 import { DISK_ONLY } from "../../utils/own-blob-server.js";
+import { png } from "../../utils/pictures.js";
 import { issuerOrigin, signIn } from "../../utils/signed-in.js";
 import {
   heldRequest,
@@ -143,12 +146,12 @@ async function sentWhole(
   method: string,
   path: string,
   headers: Record<string, string>,
-  body: string,
+  body: string | Uint8Array,
 ): Promise<Answered> {
   const response = await fetch(`${on.apiUrl}${path}`, {
     method,
     headers,
-    body,
+    body: typeof body === "string" ? body : new Uint8Array(body),
   });
   return { status: response.status, body: await response.text() };
 }
@@ -336,6 +339,91 @@ describe("a credential whose authority changes while its body arrives", () => {
     expect(held.status, held.body).toBe(401);
     expect(codeOf(held)).toBe("unauthorized");
     expect([after.status, codeOf(after)]).toEqual([held.status, codeOf(held)]);
+  }, 30_000);
+});
+
+describe("a credential revoked while an upload streams in", () => {
+  it("is refused 401 and stores no picture when the key was revoked while a profile picture streamed in", async () => {
+    const minted = await controlRequest(server.controlSocket, "/keys", {
+      method: "POST",
+      body: {
+        label: "held-picture",
+        source: "public-body-held-picture",
+        profile_permissions: { avatar: "write" },
+      },
+    });
+    expect(minted.status).toBe(201);
+    const [id, key] = [minted.body.id as string, minted.body.key as string];
+    const headers = bearer(key);
+    const file = png(10, 10, 0x40);
+    const stored = () =>
+      localFetch(server.controlSocket, `${server.apiUrl}/owner/picture`);
+
+    const held = heldRequest(
+      server.apiUrl,
+      "PUT",
+      "/profile/picture",
+      headers,
+      file,
+    );
+    expect(
+      await held.asked,
+      "the server answered before it asked for the body",
+    ).toBe(true);
+    const revoked = await operatorOf(server).revokeKey(id);
+    expect(revoked.status, JSON.stringify(revoked.error)).toBe(200);
+    held.send();
+    const answered = await held.answered;
+    expect(answered.status, answered.body).toBe(401);
+    expect(codeOf(answered)).toBe("unauthorized");
+    expect((await stored()).status).toBe(404);
+
+    // The witness: the same bytes from a live key are stored.
+    const live = await sentWhole(
+      server,
+      "PUT",
+      "/profile/picture",
+      bearer(server.workingKey),
+      file,
+    );
+    expect(live.status, live.body).toBe(200);
+    expect((await stored()).status).toBe(200);
+  }, 30_000);
+
+  it("is refused 401 when the key was revoked while a blob streamed in", async () => {
+    const key = await keyHolding(server, "held-blob", ["blobs.manage"]);
+    const headers = {
+      "content-type": "application/octet-stream",
+      ...bearer(key.key),
+    };
+    const bytes = Buffer.from("a blob whose key is revoked while it arrives");
+    const hash = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+
+    const held = heldRequest(server.apiUrl, "POST", "/blobs", headers, bytes);
+    expect(
+      await held.asked,
+      "the server answered before it asked for the body",
+    ).toBe(true);
+    const revoked = await operatorOf(server).revokeKey(key.id);
+    expect(revoked.status, JSON.stringify(revoked.error)).toBe(200);
+    held.send();
+    const answered = await held.answered;
+    expect(answered.status, answered.body).toBe(401);
+    expect(codeOf(answered)).toBe("unauthorized");
+    expect((await operatorOf(server).headBlob(hash)).status).toBe(404);
+
+    // The witness: the same bytes from a live key are taken.
+    const live = await sentWhole(
+      server,
+      "POST",
+      "/blobs",
+      {
+        "content-type": "application/octet-stream",
+        ...bearer(server.workingKey),
+      },
+      bytes,
+    );
+    expect(live.status, live.body).toBe(201);
   }, 30_000);
 });
 
