@@ -7,11 +7,21 @@ use super::redirect::{self, AppKind};
 use super::scope::{EMAIL_WRITE_REFUSED, OFFLINE_ACCESS, ScopeSet, data_alone};
 
 pub const MAX_REDIRECT_URIS: usize = 10;
-const MAX_NAME_CHARS: usize = 200;
-const MAX_URI_CHARS: usize = 2_048;
-const MAX_CONTACTS: usize = 10;
+const MAX_REDIRECT_URI_CHARS: usize = 256;
+const MAX_NAME_CHARS: usize = 100;
+const MAX_URI_CHARS: usize = 512;
+const MAX_CONTACTS: usize = 5;
 const MAX_CONTACT_CHARS: usize = 254;
-const MAX_SCOPE_CHARS: usize = 4_096;
+const MAX_SCOPE_CHARS: usize = 1_024;
+/// Every value a registration stores is carried in its body, so this bounds a client's row.
+pub const MAX_REGISTRATION_BYTES: usize = 8 * 1024;
+const MOST_STORED_CHARS: usize = MAX_REDIRECT_URIS * MAX_REDIRECT_URI_CHARS
+    + 3 * MAX_NAME_CHARS
+    + 4 * MAX_URI_CHARS
+    + MAX_CONTACTS * MAX_CONTACT_CHARS
+    + MAX_SCOPE_CHARS;
+// A registration at every bound still fits in a body.
+const _: () = assert!(MOST_STORED_CHARS < MAX_REGISTRATION_BYTES);
 
 const DEVICE_CODE_GRANT: &str = "urn:ietf:params:oauth:grant-type:device_code";
 
@@ -237,17 +247,20 @@ fn too_long(name: &str, most: usize) -> String {
     format!("{name} must be at most {most} characters.")
 }
 
-/// A registration needs no credential, so each value it stores has a bound.
+/// A registration needs no credential, so each value it stores has a bound. A document's
+/// value past it is left out, as an unknown grant type is.
 fn short_text<'a>(
     object: &'a Map<String, Value>,
     name: &str,
     most: usize,
+    source: Source,
 ) -> Reading<Option<&'a str>> {
     let value = text(object, name)?;
-    match value {
-        Some(value) if !within(value, most) => {
+    match (value, source) {
+        (Some(value), Source::Registration) if !within(value, most) => {
             Err(RegistrationError::metadata(too_long(name, most)))
         }
+        (Some(value), Source::Document) if !within(value, most) => Ok(None),
         _ => Ok(value),
     }
 }
@@ -379,17 +392,24 @@ fn redirect_uris(object: &Map<String, Value>) -> Reading<Vec<&str>> {
         .iter()
         .map(|entry| entry.as_str().ok_or_else(not_a_list))
         .collect::<Reading<Vec<&str>>>()?;
-    if uris.iter().any(|uri| !within(uri, MAX_URI_CHARS)) {
+    if uris.iter().any(|uri| !within(uri, MAX_REDIRECT_URI_CHARS)) {
         return Err(RegistrationError::redirect(too_long(
             "Each redirect URI",
-            MAX_URI_CHARS,
+            MAX_REDIRECT_URI_CHARS,
         )));
     }
     Ok(uris)
 }
 
-fn contacts(object: &Map<String, Value>) -> Reading<Vec<String>> {
+fn contacts(object: &Map<String, Value>, source: Source) -> Reading<Vec<String>> {
     let contacts = texts(object, "contacts")?.unwrap_or_default();
+    let within_bounds = contacts.len() <= MAX_CONTACTS
+        && contacts
+            .iter()
+            .all(|contact| within(contact, MAX_CONTACT_CHARS));
+    if source == Source::Document && !within_bounds {
+        return Ok(Vec::new());
+    }
     if contacts.len() > MAX_CONTACTS {
         return Err(RegistrationError::metadata(format!(
             "A client may register at most {MAX_CONTACTS} contacts."
@@ -416,8 +436,8 @@ fn is_scope_token(token: &str) -> bool {
 
 /// An unoffered scope still registers: it is narrowed away at authorization, and a type
 /// registered later may make it grantable.
-fn scope(object: &Map<String, Value>, grants: &[GrantType]) -> Reading<ScopeSet> {
-    let named = short_text(object, "scope", MAX_SCOPE_CHARS)?.unwrap_or_default();
+fn scope(object: &Map<String, Value>, source: Source, grants: &[GrantType]) -> Reading<ScopeSet> {
+    let named = short_text(object, "scope", MAX_SCOPE_CHARS, source)?.unwrap_or_default();
     if !named.split(' ').all(is_scope_token) {
         return Err(RegistrationError::metadata(
             "scope holds a character a scope cannot.",
@@ -443,8 +463,8 @@ fn scope(object: &Map<String, Value>, grants: &[GrantType]) -> Reading<ScopeSet>
 
 /// These URIs reach the approval page as links, so `javascript:` and the like
 /// never register.
-fn web_uri(object: &Map<String, Value>, name: &str) -> Reading<Option<String>> {
-    let Some(uri) = short_text(object, name, MAX_URI_CHARS)? else {
+fn web_uri(object: &Map<String, Value>, name: &str, source: Source) -> Reading<Option<String>> {
+    let Some(uri) = short_text(object, name, MAX_URI_CHARS, source)? else {
         return Ok(None);
     };
     let good = redirect::is_plain(uri)
@@ -499,18 +519,18 @@ pub(super) fn read(object: &Map<String, Value>, source: Source) -> Reading<Regis
     Ok(Registration {
         application_type: kind,
         token_endpoint_auth_method,
-        scope: scope(object, &grants)?,
+        scope: scope(object, source, &grants)?,
         grant_types: grants,
         response_types,
         redirect_uris: uris.into_iter().map(str::to_string).collect(),
-        client_name: short_text(object, "client_name", MAX_NAME_CHARS)?.map(str::to_string),
-        client_uri: web_uri(object, "client_uri")?,
-        logo_uri: web_uri(object, "logo_uri")?,
-        tos_uri: web_uri(object, "tos_uri")?,
-        policy_uri: web_uri(object, "policy_uri")?,
-        contacts: contacts(object)?,
-        software_id: short_text(object, "software_id", MAX_NAME_CHARS)?.map(str::to_string),
-        software_version: short_text(object, "software_version", MAX_NAME_CHARS)?
+        client_name: short_text(object, "client_name", MAX_NAME_CHARS, source)?.map(str::to_string),
+        client_uri: web_uri(object, "client_uri", source)?,
+        logo_uri: web_uri(object, "logo_uri", source)?,
+        tos_uri: web_uri(object, "tos_uri", source)?,
+        policy_uri: web_uri(object, "policy_uri", source)?,
+        contacts: contacts(object, source)?,
+        software_id: short_text(object, "software_id", MAX_NAME_CHARS, source)?.map(str::to_string),
+        software_version: short_text(object, "software_version", MAX_NAME_CHARS, source)?
             .map(str::to_string),
     })
 }
@@ -745,7 +765,11 @@ mod tests {
             "contacts",
             json!(vec![contact; MAX_CONTACTS + 1]),
         ));
-        assert!(error.description.contains("at most 10 contacts"));
+        assert!(
+            error
+                .description
+                .contains(&format!("at most {MAX_CONTACTS} contacts"))
+        );
         let error = refused(with(
             web(),
             "contacts",
@@ -754,11 +778,12 @@ mod tests {
         assert_eq!(error.error, ErrorCode::InvalidClientMetadata);
         assert!(error.description.contains("contact"));
 
-        let long = json!([uri(MAX_URI_CHARS + 1)]);
+        let long = json!([uri(MAX_REDIRECT_URI_CHARS + 1)]);
         let error = refused(with(web(), "redirect_uris", long));
         assert_eq!(error.error, ErrorCode::InvalidRedirectUri);
         assert!(error.description.contains("redirect URI"));
-        assert!(register(with(web(), "redirect_uris", json!([uri(MAX_URI_CHARS)]))).is_ok());
+        let at_bound = json!([uri(MAX_REDIRECT_URI_CHARS)]);
+        assert!(register(with(web(), "redirect_uris", at_bound)).is_ok());
     }
 
     #[test]
