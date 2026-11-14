@@ -194,7 +194,7 @@ mod tests {
         ] {
             db.execute("INSERT INTO items (id,type,state,tier,version,schema_version,source,occurred_at,created_at,updated_at,properties) VALUES (?1,?2,'active','library',1,1,'test',?3,?3,?3,?4)", rusqlite::params![id,kind,"2026-01-01T00:00:00Z",properties.to_string()]).unwrap();
         }
-        db.execute_batch("INSERT INTO tags VALUES ('a','work'); INSERT INTO items_fts(rowid,title) SELECT seq,json_extract(properties,'$.title') FROM items WHERE type='core.note';").unwrap();
+        db.execute_batch("INSERT INTO tags VALUES ('a','work',0); INSERT INTO items_fts(rowid,title) SELECT seq,json_extract(properties,'$.title') FROM items WHERE type='core.note';").unwrap();
         let views = core.list_views().unwrap();
         assert_eq!(views.completeness, Completeness::Complete);
         assert_eq!(views.views.len(), 1);

@@ -6347,18 +6347,20 @@ mod tests {
     fn a_sweep_queues_no_delete_of_an_item_whose_tag_changes_while_it_decides() {
         let (_, _registry) = registry::tests::own_registry();
         // The tag a follow adds moves no version, and the file shows it.
-        let (dir, folder, id, swept) =
-            sweep_while_changed("01a00000-0000-7000-8000-0000000000c4", |folder, id| {
+        let (dir, folder, id, swept) = sweep_while_changed(
+            "01a00000-0000-7000-8000-0000000000c4",
+            |folder, id| {
                 folder
                     .core
                     .conn()
                     .unwrap()
                     .execute(
-                        "INSERT INTO tags (item_id, tag) VALUES (?1, 'added-elsewhere')",
+                        "INSERT INTO tags (item_id, tag, position) VALUES (?1, 'added-elsewhere', 0)",
                         [id],
                     )
                     .unwrap();
-            });
+            },
+        );
         assert_eq!(
             deletes_queued(&folder),
             Vec::<Option<i64>>::new(),

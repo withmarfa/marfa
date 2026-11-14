@@ -612,6 +612,15 @@ mod tests {
     }
 
     #[test]
+    fn a_file_shows_the_tags_in_byte_order_whatever_order_the_item_holds_them() {
+        let made = "2026-09-01T10:00:00.000Z";
+        let mut tagged = item(made, made);
+        tagged.tags = ["zeta", "alpha", "mid"].map(String::from).into();
+        let lines = lines_of(&tagged, None).unwrap();
+        assert_eq!(lines["tags"], json!(["alpha", "mid", "zeta"]));
+    }
+
+    #[test]
     fn an_own_field_no_item_can_hold_is_refused() {
         for bad in [
             json!({ "occurred_at": "yesterday" }),
