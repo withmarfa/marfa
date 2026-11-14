@@ -48,15 +48,17 @@ fn steps(path: &Path) -> impl DoubleEndedIterator<Item = Step> + '_ {
 struct Reached {
     /// The deepest folder that is there, named without a link.
     folder: PathBuf,
-    /// The folders below `folder` that are not there yet, then the last name.
-    below: Vec<OsString>,
+    /// The folders below `folder` that are not there yet.
+    missing: Vec<OsString>,
+    name: OsString,
 }
 
 impl Reached {
     fn path(&self) -> PathBuf {
-        self.below
+        self.missing
             .iter()
             .fold(self.folder.clone(), |path, name| path.join(name))
+            .join(&self.name)
     }
 }
 
@@ -86,15 +88,18 @@ fn walk(path: &Path, me: u32) -> Result<Reached, Failure> {
         let looked = match look(&next, me) {
             Ok(looked) => looked,
             Err(error) if error.kind() == ErrorKind::NotFound => {
-                let mut below = vec![name];
+                let mut missing = vec![name];
                 for step in ahead {
                     let Step::Name(name) = step else {
                         return Err(refused(&next, "is not there, and the path goes on past it"));
                     };
-                    below.push(name);
+                    missing.push(name);
                 }
-                below.push(last);
-                return Ok(Reached { folder, below });
+                return Ok(Reached {
+                    folder,
+                    missing,
+                    name: last,
+                });
             }
             Err(error) => return Err(refused(&next, format_args!("could not be read: {error}"))),
         };
@@ -133,7 +138,8 @@ fn walk(path: &Path, me: u32) -> Result<Reached, Failure> {
     }
     Ok(Reached {
         folder,
-        below: vec![last],
+        missing: Vec::new(),
+        name: last,
     })
 }
 
@@ -146,7 +152,8 @@ fn on_the_way(folder: &Path, me: u32) -> Result<(), Failure> {
 /// A file or folder on the way, unfollowed, and what it says about itself.
 struct Looked {
     found: Metadata,
-    /// Whether its own access control list lets another account change or remove it.
+    /// Whether its own access control list lets another account change it, remove it or, for a
+    /// folder, change what it holds.
     others_may_change: bool,
     /// Where it points, when it is a symbolic link.
     target: Option<PathBuf>,
@@ -190,42 +197,44 @@ fn look(path: &Path, me: u32) -> std::io::Result<Looked> {
     })
 }
 
-/// Read by name: here only the entry's folder, judged first, decides who can replace it.
+/// Read by name: here only the entry's folder, judged first, decides who can replace it, and a
+/// link keeps no access control list.
 #[cfg(not(target_os = "macos"))]
-fn look(path: &Path, _me: u32) -> std::io::Result<Looked> {
+fn look(path: &Path, me: u32) -> std::io::Result<Looked> {
     let found = std::fs::symlink_metadata(path)?;
     let target = if found.file_type().is_symlink() {
         Some(std::fs::read_link(path)?)
     } else {
         None
     };
+    let others_may_change = found.is_dir() && marfa_acl::others_may_write(path, me)?;
     Ok(Looked {
         found,
-        others_may_change: false,
+        others_may_change,
         target,
     })
 }
 
 fn judged_on_the_way(folder: &Path, looked: &Looked, me: u32) -> Result<(), Failure> {
-    let why = marfa_acl::exposure(folder, &looked.found, me)
-        .map_err(|error| unreadable_acl(folder, &error))?
+    let why = marfa_acl::exposure_by_mode(&looked.found, me)
         .or(looked.others_may_change.then_some(marfa_acl::Exposure::Acl));
+    let Some(why) = why else {
+        return Ok(());
+    };
     let fix = match why {
-        None => return Ok(()),
-        Some(marfa_acl::Exposure::Link | marfa_acl::Exposure::NotFolder) => {
+        marfa_acl::Exposure::Link | marfa_acl::Exposure::NotFolder => {
             return Err(refused(folder, "is not a folder"));
         }
-        Some(marfa_acl::Exposure::Owner) => {
+        marfa_acl::Exposure::Owner => {
             "Give it to the server's account or to root, or keep the data in another folder."
                 .to_string()
         }
-        Some(marfa_acl::Exposure::Mode) => format!("Run `chmod go-w {}`.", folder.display()),
-        Some(marfa_acl::Exposure::Acl) => format!(
+        marfa_acl::Exposure::Mode => format!("Run `chmod go-w {}`.", folder.display()),
+        marfa_acl::Exposure::Acl => format!(
             "Remove those entries with {}.",
             marfa_acl::removal_command(false)
         ),
     };
-    let why = why.map(|why| why.to_string()).unwrap_or_default();
     Err(refused(
         folder,
         format_args!("{why}, so another account could replace the server's data. {fix}"),
@@ -265,11 +274,8 @@ pub fn make_data_folder(database: &DatabasePath) -> Result<(), Failure> {
     };
     let me = me();
     let reached = walk(&file, me)?;
-    let Some((_, missing)) = reached.below.split_last() else {
-        return Ok(());
-    };
     let mut folder = reached.folder;
-    for name in missing {
+    for name in &reached.missing {
         let next = folder.join(name);
         match DirBuilder::new().mode(OWNER).create(&next) {
             Ok(()) => {}
@@ -298,20 +304,18 @@ pub struct Kept {
 impl Kept {
     pub fn closed(database_path: &DatabasePath, blobs: &Path) -> Result<Kept, Failure> {
         let me = me();
-        let secrets = walk(&secrets_file(database_path), me)?;
-        let [secrets_name] = secrets.below.as_slice() else {
-            return Err(refused(
-                &secrets.folder.join(&secrets.below[0]),
-                "is not there",
-            ));
-        };
-        holds_new_files(&secrets.folder, me)?;
-        let folder = secrets.folder.clone();
-        let mut files = vec![folder.join(secrets_name)];
+        let mut files = Vec::new();
+        let mut data = None;
         if let Some(database) = database_path.file() {
+            let secrets = walk(&secrets_file(database_path), me)?;
+            if let Some(first) = secrets.missing.first() {
+                return Err(refused(&secrets.folder.join(first), "is not there"));
+            }
+            holds_new_files(&secrets.folder, me)?;
             let name = database
                 .file_name()
                 .ok_or_else(|| refused(&database, "does not end in a file name"))?;
+            files.push(secrets.folder.join(&secrets.name));
             files.extend(
                 [
                     "",
@@ -325,18 +329,29 @@ impl Kept {
                 .map(|suffix| {
                     let mut beside = name.to_os_string();
                     beside.push(suffix);
-                    folder.join(beside)
+                    secrets.folder.join(beside)
                 }),
             );
+            data = Some(secrets.folder);
         }
         let reached = walk(blobs, me)?;
-        let opened = match reached.below.len() {
-            1 => open(&reached.path(), true)?,
-            _ => None,
+        let path = reached.path();
+        if data.as_ref().is_some_and(|data| data.starts_with(&path)) {
+            return Err(refused(
+                &path,
+                "holds the database, and the server makes its blob folder private, which would \
+                 change the other files beside the database. Give the blobs a folder of their \
+                 own.",
+            ));
+        }
+        let opened = if reached.missing.is_empty() {
+            open(&path, true)?
+        } else {
+            None
         };
         let blobs_made = match opened {
             Some(opened) => {
-                secure_blob_folder(&opened, &reached.path(), me)?;
+                secure_blob_folder(&opened, &path, me)?;
                 false
             }
             None => {
@@ -366,7 +381,7 @@ impl Kept {
         let reached = walk(&self.blobs, me)?;
         let path = reached.path();
         match open(&path, true)? {
-            Some(opened) if reached.below.len() == 1 => secure_blob_folder(&opened, &path, me),
+            Some(opened) if reached.missing.is_empty() => secure_blob_folder(&opened, &path, me),
             _ => Err(refused(&path, "is not there")),
         }
     }
@@ -740,5 +755,79 @@ mod tests {
             fs::create_dir(&other).unwrap();
             assert_ne!(reach(&other), marfa_acl::Reach::default());
         }
+    }
+
+    #[test]
+    fn an_in_memory_database_keeps_no_file_and_judges_no_folder_for_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (open, private) = (dir.path().join("open"), dir.path().join("private"));
+        fs::create_dir(&open).unwrap();
+        fs::create_dir(&private).unwrap();
+        // The witness: a database file in this folder is refused.
+        chmod(&open, 0o777);
+        let failure = kept(&open, &private.join("blobs")).err().expect("refused");
+        assert!(
+            failure.message.contains("written by another account"),
+            "{failure}"
+        );
+        std::env::set_current_dir(&open).unwrap();
+        for memory in [
+            DatabasePath::Memory,
+            DatabasePath::Uri("file::memory:".into()),
+            DatabasePath::Uri("file:marfa.db?mode=memory".into()),
+        ] {
+            Kept::closed(&memory, &private.join("blobs")).unwrap();
+        }
+        assert_eq!(fs::read_dir(&open).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_blob_folder_that_holds_the_database_refuses_the_start_and_nothing_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().join("data");
+        fs::create_dir(&data).unwrap();
+        fs::write(data.join("notes.txt"), "").unwrap();
+        chmod(&data, 0o755);
+        chmod(&data.join("notes.txt"), 0o644);
+        // The witness: a blob folder beside the database's folder is made private.
+        let beside = dir.path().join("blobs");
+        fs::create_dir(&beside).unwrap();
+        chmod(&beside, 0o755);
+        kept(&data, &beside).unwrap();
+        assert_eq!(mode(&beside), 0o700);
+        for blobs in [data.clone(), data.join("."), dir.path().to_path_buf()] {
+            let failure = kept(&data, &blobs).err().expect("refused");
+            assert!(failure.message.contains("holds the database"), "{failure}");
+            assert_eq!((mode(&data), mode(&data.join("notes.txt"))), (0o755, 0o644));
+        }
+    }
+
+    #[test]
+    fn a_folder_on_the_way_whose_access_control_list_lets_another_account_write_refuses_the_start()
+    {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("shared");
+        let blobs = shared.join("blobs");
+        fs::create_dir_all(&blobs).unwrap();
+        // The witness: with nothing granted, the folder above leads to the blob folder.
+        kept(dir.path(), &blobs).unwrap();
+        if !let_another_account(&shared, Grant::Write) {
+            eprintln!("skipped: this file system keeps no access control lists");
+            return;
+        }
+        chmod(&blobs, 0o755);
+        let failure = kept(dir.path(), &blobs).err().expect("refused");
+        // Here a grant to a named account also shows as group write, through the mask.
+        let says = if cfg!(target_os = "macos") {
+            "access control list"
+        } else {
+            "written by another account"
+        };
+        assert!(failure.message.contains(says), "{failure}");
+        assert!(
+            failure.message.contains(shared.to_str().unwrap()),
+            "{failure}"
+        );
+        assert_eq!(mode(&blobs), 0o755);
     }
 }

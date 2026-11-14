@@ -116,7 +116,14 @@ impl App {
     pub async fn start(accepted: Accepted) -> Result<Arc<App>, Failure> {
         let fixed = accepted.fixed();
         let (database, blob_path) = (fixed.database.clone(), fixed.blob_path.clone());
-        let kept = Arc::new(blocking(move || Kept::closed(&database, &blob_path)).await?);
+        let kept = blocking(move || Kept::closed(&database, &blob_path)).await?;
+        App::start_kept(accepted, kept).await
+    }
+
+    /// Starts on the files [`Kept::closed`] judged, for a caller that must judge them before it
+    /// makes anything beside the database.
+    pub async fn start_kept(accepted: Accepted, kept: Kept) -> Result<Arc<App>, Failure> {
+        let kept = Arc::new(kept);
         let settings = accepted.open_secrets()?;
         let start = settings.start.clone();
         let faults = Arc::<Faults>::default();

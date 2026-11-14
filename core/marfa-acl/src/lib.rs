@@ -81,17 +81,21 @@ pub fn exposure(
     found: &Metadata,
     trusted: u32,
 ) -> std::io::Result<Option<Exposure>> {
-    let standing = by_mode(
+    match exposure_by_mode(found, trusted) {
+        None => Ok(others_may_write(folder, trusted)?.then_some(Exposure::Acl)),
+        standing => Ok(standing),
+    }
+}
+
+/// [`exposure`] without the access control list, for a caller that read the list itself.
+pub fn exposure_by_mode(found: &Metadata, trusted: u32) -> Option<Exposure> {
+    by_mode(
         found.file_type().is_symlink(),
         found.is_dir(),
         found.uid(),
         found.mode(),
         trusted,
-    );
-    if standing.is_some() {
-        return Ok(standing);
-    }
-    Ok(others_may_write(folder, trusted)?.then_some(Exposure::Acl))
+    )
 }
 
 // Root's sticky folders, such as `/tmp`, let nobody replace what is not theirs.

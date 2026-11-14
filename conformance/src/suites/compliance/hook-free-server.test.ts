@@ -67,10 +67,11 @@ function folder(prefix: string): string {
   return made;
 }
 
+/** A `socket` of `null` leaves the server on its default, beside the database. */
 function start(
   data: string,
   settings: Record<string, string> = {},
-  socket = resolve(folder("marfa-hf-socket-"), "control.sock"),
+  socket: string | null = resolve(folder("marfa-hf-socket-"), "control.sock"),
   umask?: string,
 ): Run {
   const env: NodeJS.ProcessEnv = {};
@@ -84,7 +85,7 @@ function start(
   Object.assign(env, {
     MARFA_PORT: "0",
     MARFA_LISTEN_HOST: "127.0.0.1",
-    MARFA_CONTROL_SOCKET: socket,
+    ...(socket === null ? {} : { MARFA_CONTROL_SOCKET: socket }),
     MARFA_DATABASE_PATH: resolve(data, "marfa.db"),
     MARFA_BLOB_PATH: resolve(data, "blobs"),
     MARFA_ENRICHMENT_ENABLED: "false",
@@ -107,7 +108,7 @@ function start(
   const exit = new Promise<number | null>((done) =>
     child.once("exit", (code) => done(code)),
   );
-  const run = { child, socket, output: () => text, exit };
+  const run = { child, socket: socket ?? "", output: () => text, exit };
   running.push(run);
   return run;
 }
@@ -747,18 +748,65 @@ describe("the files a server keeps", () => {
     expect(granted.status, granted.stderr.toString()).toBe(0);
   }
 
-  it("refuses to start in a database folder that passes access on to another account, and makes nothing there", async () => {
+  it("refuses to start in a database folder that passes access on to another account, and makes nothing there, not even its control socket's folder", async () => {
     const data = folder("marfa-hf-data-");
     const shared = resolve(data, "shared");
     mkdirSync(shared, { mode: 0o700 });
     passOn(shared);
-    const run = start(data, {
-      MARFA_DATABASE_PATH: resolve(shared, "marfa.db"),
-    });
+    const run = start(
+      data,
+      { MARFA_DATABASE_PATH: resolve(shared, "marfa.db") },
+      null,
+    );
     expect(await refusal(run), run.output()).not.toBe(0);
     expect(run.output()).toContain(shared);
     expect(run.output()).toContain("passes access");
     expect(readdirSync(shared)).toEqual([]);
+  });
+
+  it("refuses a blob folder that is the folder holding its database, or one above it, and leaves that folder as it was", async () => {
+    const data = folder("marfa-hf-data-");
+    const shared = resolve(data, "shared");
+    mkdirSync(shared);
+    const other = resolve(shared, "notes.txt");
+    writeFileSync(other, "not the server's");
+    chmodSync(other, 0o644);
+    chmodSync(shared, 0o755);
+    const database = resolve(shared, "marfa.db");
+    // The witness: with a blob folder beside it, the server starts and leaves the folder open.
+    const first = start(data, { MARFA_DATABASE_PATH: database });
+    await listening(first);
+    await stop(first);
+    expect([mode(shared), mode(other)]).toEqual([0o755, 0o644]);
+    for (const blobs of [shared, data]) {
+      const run = start(data, {
+        MARFA_DATABASE_PATH: database,
+        MARFA_BLOB_PATH: blobs,
+      });
+      expect(await refusal(run), run.output()).not.toBe(0);
+      expect(run.output()).toContain(`${blobs} holds the database`);
+      expect([mode(shared), mode(other)]).toEqual([0o755, 0o644]);
+    }
+  });
+
+  it("starts with an in-memory database from a folder other accounts can add files to, and makes nothing there", async () => {
+    const open = folder("marfa-hf-open-");
+    chmodSync(open, 0o777);
+    const blobs = resolve(folder("marfa-hf-data-"), "blobs");
+    // The witness: a database file in that folder is refused.
+    const refused = start(open, {
+      MARFA_DATABASE_PATH: resolve(open, "marfa.db"),
+      MARFA_BLOB_PATH: blobs,
+    });
+    expect(await refusal(refused), refused.output()).not.toBe(0);
+    expect(refused.output()).toContain(open);
+    const run = start(open, {
+      MARFA_DATABASE_PATH: ":memory:",
+      MARFA_BLOB_PATH: blobs,
+    });
+    await listening(run);
+    await stop(run);
+    expect(readdirSync(open)).toEqual([]);
   });
 
   it("refuses to make its blob folder in a folder that passes access on to another account, and makes nothing there", async () => {

@@ -2555,6 +2555,22 @@ If the server's blob folder exists when the server starts and another account ow
 
 **Tests:** `compliance/hook-free-server.test.ts › refuses to start on a blob folder another account owns, and leaves it as it was`.
 
+### `instance/files-blobs-apart`
+
+If the server's blob folder is the folder that holds its database, or a folder above it, when the server starts, then the server MUST refuse to start, name the blob folder and leave it unchanged.
+
+**Reason:** the server makes its blob folder private, and the folder that holds the database, with the other files in it, is not the server's to change (`instance/files-folder-kept`).
+
+**Tests:** `compliance/hook-free-server.test.ts › refuses a blob folder that is the folder holding its database, or one above it, and leaves that folder as it was`.
+
+### `instance/files-memory-none`
+
+While the server's database is held in memory, the server MUST NOT check, make or change a database file, its log files or a secrets file.
+
+**Reason:** a database held in memory keeps nothing in a file, so no folder holds a database the server must guard, and the server keeps its secrets in memory too.
+
+**Tests:** `compliance/hook-free-server.test.ts › starts with an in-memory database from a folder other accounts can add files to, and makes nothing there`.
+
 ### `instance/files-way-guarded`
 
 If another account could replace or remove what a folder on the path to the server's database or blob folder holds when the server starts, because that account owns the folder, may write to it while it is not both owned by the system's administrator account and marked sticky, or owns a symbolic link on that path or may change or remove one through its access control list, then the server MUST refuse to start, name the folder or link and leave the database and the blob folder unchanged.
@@ -2577,7 +2593,7 @@ If the folder that holds the server's database, or the folder the server would m
 
 **Reason:** a file made in such a folder takes the folder's entries whatever the umask, so another account could read the database or a blob before the server could close it.
 
-**Tests:** `compliance/hook-free-server.test.ts › refuses to start in a database folder that passes access on to another account, and makes nothing there`, `› refuses to make its blob folder in a folder that passes access on to another account, and makes nothing there`.
+**Tests:** `compliance/hook-free-server.test.ts › refuses to start in a database folder that passes access on to another account, and makes nothing there, not even its control socket's folder`, `› refuses to make its blob folder in a folder that passes access on to another account, and makes nothing there`.
 
 ### `instance/unknown-setting-warned`
 
