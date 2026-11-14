@@ -822,7 +822,7 @@ A device MUST count in a drain's `undelivered` the write an environmental failur
 
 ### `queue-and-verdicts/count-unsent`
 
-A device MUST count in a drain's `unsent` each write the drain gave a verdict without sending it, other than a write it held or a refused credential parked.
+A device MUST count in a drain's `unsent` each write the drain gave a verdict without sending it, other than a write it held, a refused credential parked or an upload set aside because its held bytes could not be opened.
 
 **Tests:** `device/classification.test.ts › counts the writes it settled without sending apart from those the server answered`, `device/queue.test.ts › refuses an upload whose bytes are no longer held`, `device/folders-placement.test.ts › folder rebase accounts for writes refused in its later pass`.
 

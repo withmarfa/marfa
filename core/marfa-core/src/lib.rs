@@ -2122,9 +2122,10 @@ impl Core {
         }
         if !waiting.is_empty() {
             let queue = store::queued_writes(&*self.conn()?)?;
+            let mut blockers = model::Blockers::new(&queue);
             let exits = waiting
                 .iter()
-                .map(|write| match write.blocker(&queue) {
+                .map(|write| match blockers.of(write) {
                     Some(blocker) => format!(
                         "{} ({}) waits on {} ({}): {}",
                         write.id,
