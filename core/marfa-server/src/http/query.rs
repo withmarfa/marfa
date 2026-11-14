@@ -34,8 +34,6 @@ pub fn only_where(uri: &Uri, allowed: impl Fn(&str) -> bool) -> Result<()> {
     .with_detail("unknown_parameters", unknown))
 }
 
-/// Reads a `true` or `false` parameter. A name given twice is refused, whatever
-/// its values, so no value is picked over another.
 pub fn flag(uri: &Uri, name: &str) -> Result<Option<bool>> {
     let mut named = pairs(uri)?.into_iter().filter(|(key, _)| key == name);
     let Some((_, value)) = named.next() else {
