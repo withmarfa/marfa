@@ -297,12 +297,26 @@ struct Recorded {
     omissions: i64,
 }
 
+/// When the newest backup of `store` was taken, the instant its thinning judged by, unless `now`
+/// is earlier: no thinning yet to come forgets less than one judging by the instant answered.
+fn last_thinned(tx: &Transaction<'_>, store: &str, now: Stamp) -> Result<Option<Stamp>> {
+    let newest: Option<String> = tx
+        .prepare_cached("SELECT name FROM backups WHERE store_id = ?1 ORDER BY seq DESC LIMIT 1")?
+        .query_row([store], |row| row.get(0))
+        .optional()?;
+    Ok(newest
+        .as_deref()
+        .and_then(parse)
+        .map(|taken| taken.min(now)))
+}
+
+/// Forgets an omitted backup only where thinning at `at` deletes it, and none without `at`.
 fn reconcile(
     tx: &Transaction<'_>,
     store: &str,
     listed: &HashSet<String>,
     deleted: &HashSet<String>,
-    now: Stamp,
+    at: Option<Stamp>,
 ) -> Result<()> {
     let recorded: Vec<Recorded> = tx
         .prepare_cached("SELECT seq, name, confirmed, omissions FROM backups WHERE store_id = ?1")?
@@ -338,7 +352,8 @@ fn reconcile(
                 continue;
             }
             let omissions = backup.omissions.saturating_add(1);
-            if omissions >= OMISSIONS && remaining.would_thin(&backup.name, now) {
+            if omissions >= OMISSIONS && at.is_some_and(|at| remaining.would_thin(&backup.name, at))
+            {
                 forget.execute([seq])?;
             } else {
                 omitted.execute(params![seq, omissions])?;
@@ -555,7 +570,8 @@ async fn settle_attempts(app: &Arc<App>, destination: &Destination) -> Result<()
     let now = app.clock.instant();
     app.db
         .write(Write::own(), move |tx| {
-            reconcile(tx, &store, &listed, &HashSet::new(), now)
+            let at = last_thinned(tx, &store, now)?;
+            reconcile(tx, &store, &listed, &HashSet::new(), at)
         })
         .await
 }
@@ -1438,7 +1454,7 @@ async fn thin(app: &Arc<App>, destination: &Destination, taken: Stamp) -> (usize
         }
     };
     let names: Vec<String> = listed.into_iter().map(|(name, _)| name).collect();
-    if let Err(error) = found::survey(app, destination, &names).await {
+    if let Err(error) = found::survey(app, destination, &names, Some(taken)).await {
         tracing::warn!(%error, "The backups this instance did not record were not read");
     }
     let looked = destination.id().to_string();
@@ -1480,7 +1496,7 @@ async fn thin(app: &Arc<App>, destination: &Destination, taken: Stamp) -> (usize
     if let Err(error) = app
         .db
         .write(Write::own(), move |tx| {
-            reconcile(tx, &store, &listed, &deleted, taken)
+            reconcile(tx, &store, &listed, &deleted, Some(taken))
         })
         .await
     {
@@ -1609,7 +1625,7 @@ mod tests {
     }
 
     fn settled(tx: &Transaction<'_>, listed: &[&str], deleted: &[&str], now: Stamp) {
-        reconcile(tx, BUCKET, &names(listed), &names(deleted), now).unwrap();
+        reconcile(tx, BUCKET, &names(listed), &names(deleted), Some(now)).unwrap();
     }
 
     #[test]
@@ -1869,6 +1885,19 @@ mod tests {
     }
 
     #[test]
+    fn outside_thinning_omitted_backups_are_judged_by_the_newest_backup_or_an_earlier_clock() {
+        let mut conn = database();
+        let tx = conn.transaction().unwrap();
+        assert_eq!(last_thinned(&tx, BUCKET, at(9)).unwrap(), None);
+        hold(&tx, BUCKET, &named(7), &[]).unwrap();
+        hold(&tx, BUCKET, &named(5), &[]).unwrap();
+        assert_eq!(last_thinned(&tx, BUCKET, at(9)).unwrap(), Some(at(5)));
+        assert_eq!(last_thinned(&tx, BUCKET, at(3)).unwrap(), Some(at(3)));
+        hold(&tx, BUCKET, "stray.tar", &[]).unwrap();
+        assert_eq!(last_thinned(&tx, BUCKET, at(9)).unwrap(), None);
+    }
+
+    #[test]
     fn interrupted_attempts_hold_rows_bounded_by_retention_and_clear_them_once_forgotten() {
         let mut conn = database();
         let tx = conn.transaction().unwrap();
@@ -1960,11 +1989,18 @@ mod tests {
         let (a1, b1, a2) = (named(0), named(1), named(2));
 
         hold(&tx, "bucket A", &a1, &files(&[&x])).unwrap();
-        reconcile(&tx, "bucket A", &names(&[&a1]), &names(&[]), at(0)).unwrap();
+        reconcile(&tx, "bucket A", &names(&[&a1]), &names(&[]), Some(at(0))).unwrap();
         hold(&tx, "bucket B", &b1, &[]).unwrap();
-        reconcile(&tx, "bucket B", &names(&[&b1]), &names(&[]), at(1)).unwrap();
+        reconcile(&tx, "bucket B", &names(&[&b1]), &names(&[]), Some(at(1))).unwrap();
         hold(&tx, "bucket A", &a2, &[]).unwrap();
-        reconcile(&tx, "bucket A", &names(&[&a1, &a2]), &names(&[]), at(2)).unwrap();
+        reconcile(
+            &tx,
+            "bucket A",
+            &names(&[&a1, &a2]),
+            &names(&[]),
+            Some(at(2)),
+        )
+        .unwrap();
 
         assert_eq!(held_in(&tx, "bucket A", &[&x]), ['a']);
     }
@@ -1993,12 +2029,18 @@ mod tests {
         let mut ahead = daily(1..=30);
         ahead.push(named(400 * 24));
         for now in [at(6), at(7), at(8)] {
-            found::settle(&tx, BUCKET, &names(&refs(&ahead)), now).unwrap();
+            found::settle(&tx, BUCKET, &names(&refs(&ahead)), Some(now)).unwrap();
         }
         assert_eq!(held_of(&tx, &[&a, &b]), ['a']);
-        found::settle(&tx, BUCKET, &names(&refs(&daily(1..=32))), at(9)).unwrap();
+        found::settle(&tx, BUCKET, &names(&refs(&daily(1..=32))), Some(at(9))).unwrap();
         assert_eq!(held_of(&tx, &[&a, &b]), ['a']);
-        found::settle(&tx, BUCKET, &names(&refs(&daily(1..=32))), at(33 * 24)).unwrap();
+        found::settle(
+            &tx,
+            BUCKET,
+            &names(&refs(&daily(1..=32))),
+            Some(at(33 * 24)),
+        )
+        .unwrap();
         assert!(held_of(&tx, &[&a, &b]).is_empty());
         assert_eq!(count(&tx, "SELECT COUNT(*) FROM found_backup_files"), 0);
     }
@@ -2091,6 +2133,92 @@ mod tests {
             "{}",
             refused.message
         );
+    }
+
+    #[cfg(feature = "test-hooks")]
+    #[tokio::test]
+    async fn thinning_judges_a_found_backup_the_listing_omits_by_the_backup_just_put_not_the_clock()
+    {
+        let (dir, folder) = (
+            tempfile::TempDir::new().unwrap(),
+            tempfile::TempDir::new().unwrap(),
+        );
+        let (database, blobs, socket) = (
+            dir.path().join("marfa.db"),
+            dir.path().join("blobs"),
+            dir.path().join("s.sock"),
+        );
+        let pairs = [
+            ("MARFA_DATABASE_PATH", database.to_str().unwrap()),
+            ("MARFA_BLOB_PATH", blobs.to_str().unwrap()),
+            ("MARFA_CONTROL_SOCKET", socket.to_str().unwrap()),
+            ("MARFA_BACKUP_PATH", folder.path().to_str().unwrap()),
+            ("MARFA_BACKUP_INTERVAL_SECONDS", "31536000"),
+        ];
+        let settings =
+            crate::settings::Settings::read(crate::settings::Environment::from_pairs(&pairs))
+                .unwrap();
+        let app = App::start(settings).await.unwrap();
+        app.clock.pause(true);
+        let put = |app: Arc<App>| async move {
+            match back_up(&app, true).await.unwrap() {
+                Outcome::Put { name, taken, .. } => (name, taken),
+                _ => panic!("no backup was put"),
+            }
+        };
+        let (missing, _) = put(app.clone()).await;
+        app.clock.advance(1).unwrap();
+        put(app.clone()).await;
+        let destination = app.destination().unwrap();
+        let (store, found) = (destination.id(), missing.clone());
+        app.db
+            .write(Write::own(), move |tx| {
+                tx.execute(
+                    "INSERT INTO found_backups (store_id, name, files_read, omissions) \
+                     VALUES (?1, ?2, 1, 2)",
+                    params![store, found],
+                )?;
+                tx.execute("DELETE FROM backups WHERE name = ?1", [&found])?;
+                Ok(())
+            })
+            .await
+            .unwrap();
+        destination
+            .delete(&app.instance_id, &missing)
+            .await
+            .unwrap();
+
+        app.clock.advance(23 * HOUR_MS as u64 - 1).unwrap();
+        let (_, taken) = put(app.clone()).await;
+        app.clock.advance(2 * HOUR_MS as u64).unwrap();
+        thin(&app, &destination, taken).await;
+        let omissions = || {
+            let (store, found) = (destination.id(), missing.clone());
+            app.db.read(move |tx| {
+                Ok(tx
+                    .prepare_cached(
+                        "SELECT omissions FROM found_backups WHERE store_id = ?1 AND name = ?2",
+                    )?
+                    .query_row(params![store, found], |row| row.get(0))
+                    .optional()?)
+            })
+        };
+        assert_eq!(
+            omissions().await.unwrap(),
+            Some(4),
+            "{missing} at {taken:?}"
+        );
+
+        app.clock.advance(10 * HOUR_MS as u64).unwrap();
+        found::survey_folder(&app).await.unwrap();
+        assert_eq!(
+            omissions().await.unwrap(),
+            Some(5),
+            "{missing} at {taken:?}"
+        );
+
+        put(app.clone()).await;
+        assert_eq!(omissions().await.unwrap(), None);
     }
 
     #[test]

@@ -343,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn a_backup_a_listing_omits_is_kept_while_it_is_the_newest_or_within_a_day_of_the_clock() {
+    fn a_backup_a_listing_omits_is_kept_while_it_is_the_newest_or_within_a_day_of_the_thinning() {
         let missing = at("2026-11-01T12:00:00.000Z");
         let name = name_of(missing);
         let ahead: Vec<String> = (1..=40)

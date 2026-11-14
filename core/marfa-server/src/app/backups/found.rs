@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 
 use rusqlite::{OptionalExtension, Transaction, params};
 
-use super::{Destination, Listing, OMISSIONS, parse};
+use super::{Destination, Listing, OMISSIONS, last_thinned, parse};
 use crate::app::App;
 use crate::app::archive::restore::named::files_named;
 use crate::app::blobs::Hash;
@@ -77,12 +77,12 @@ fn forget(tx: &Transaction<'_>, seq: i64) -> Result<()> {
 }
 
 /// Counts each found backup the listing omits, forgetting one omitted as `reconcile` forgets a
-/// backup the server put.
+/// backup the server put, judged at `at`.
 pub(super) fn settle(
     tx: &Transaction<'_>,
     store: &str,
     listed: &HashSet<String>,
-    now: Stamp,
+    at: Option<Stamp>,
 ) -> Result<()> {
     let listing = Listing::of(listed);
     let mut counted =
@@ -95,7 +95,7 @@ pub(super) fn settle(
             continue;
         }
         let omissions = backup.omissions.saturating_add(1);
-        if omissions >= OMISSIONS && listing.would_thin(&backup.name, now) {
+        if omissions >= OMISSIONS && at.is_some_and(|at| listing.would_thin(&backup.name, at)) {
             forget(tx, backup.seq)?;
         } else {
             counted.execute(params![backup.seq, omissions])?;
@@ -166,9 +166,15 @@ async fn read(app: &App, destination: &Destination, name: &str) -> Result<()> {
 }
 
 /// Records each backup `listed` in this instance's folder that the database records neither as
-/// put nor as found, with the files it names, and settles the found ones the listing omits. Only
-/// once this has succeeded do the found backups hold every file they name.
-pub(super) async fn survey(app: &App, destination: &Destination, listed: &[String]) -> Result<()> {
+/// put nor as found, with the files it names, and settles the found ones the listing omits at the
+/// thinning `taken`, or else at the last thinning. Only once this has succeeded do the found
+/// backups hold every file they name.
+pub(super) async fn survey(
+    app: &App,
+    destination: &Destination,
+    listed: &[String],
+    taken: Option<Stamp>,
+) -> Result<()> {
     let store = destination.id().to_string();
     let looked = store.clone();
     let (put, held) = app
@@ -196,7 +202,13 @@ pub(super) async fn survey(app: &App, destination: &Destination, listed: &[Strin
     let (listed, now): (HashSet<String>, Stamp) =
         (listed.iter().cloned().collect(), app.clock.instant());
     app.db
-        .write(Write::own(), move |tx| settle(tx, &store, &listed, now))
+        .write(Write::own(), move |tx| {
+            let at = match taken {
+                Some(taken) => Some(taken),
+                None => last_thinned(tx, &store, now)?,
+            };
+            settle(tx, &store, &listed, at)
+        })
         .await
 }
 
@@ -212,5 +224,5 @@ pub async fn survey_folder(app: &App) -> Result<()> {
         .into_iter()
         .map(|(name, _)| name)
         .collect();
-    survey(app, &destination, &listed).await
+    survey(app, &destination, &listed, None).await
 }
