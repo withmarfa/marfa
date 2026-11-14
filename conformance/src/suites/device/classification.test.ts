@@ -2066,9 +2066,9 @@ describe("withdrawing a write that can never be sent", () => {
     ).toBeNull();
 
     const withdrawn = await device.withdraw(blocked.id);
-    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual(
-      [blocked.id],
-    );
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual([
+      blocked.id,
+    ]);
     const after = await device.get(HELD.id);
     expect(after.ok).toBe(true);
     if (!after.ok) return;
@@ -2125,7 +2125,9 @@ describe("withdrawing a write that can never be sent", () => {
     expect((await device.drain()).ok).toBe(true);
     expect((await queueOf(harness))[0]?.reason).toBe("ancestor_unavailable");
     const taken = await device.withdraw(edit.value.id);
-    expect(taken.ok && taken.value, JSON.stringify(taken)).toEqual([edit.value.id]);
+    expect(taken.ok && taken.value, JSON.stringify(taken)).toEqual([
+      edit.value.id,
+    ]);
   });
 
   it("changes nothing when it cannot read the item back", async () => {
@@ -2160,9 +2162,9 @@ describe("withdrawing a write that can never be sent", () => {
 
     // The witness: the same withdraw, once the server answers, goes.
     const withdrawn = await device.withdraw(blocked.id);
-    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual(
-      [blocked.id],
-    );
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual([
+      blocked.id,
+    ]);
   });
 
   it("withdraws a dead write, and puts the item back as the server holds it", async () => {
@@ -2336,9 +2338,9 @@ describe("withdrawing a write that can never be sent", () => {
     expect((await device.get(setup.local)).ok).toBe(true);
 
     const withdrawn = await device.withdraw(setup.create.id);
-    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual(
-      [setup.create.id],
-    );
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual([
+      setup.create.id,
+    ]);
     const queue = await queueOf(harness);
     expect(
       queue.map((row) => [row.id, row.verdict]),
@@ -2511,9 +2513,10 @@ describe("withdrawing a write that can never be sent", () => {
       expect(sentBefore).toHaveLength(1);
       expect(JSON.parse(sentBefore[0]!.body).id).toBe(local);
       const withdrawn = await device.withdraw(created.value.id);
-      expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual(
-        [created.value.id],
-      );
+      expect(
+        withdrawn.ok && withdrawn.value,
+        JSON.stringify(withdrawn),
+      ).toEqual([created.value.id]);
       const refused = await queueOf(harness);
       expect(
         refused.map((row) => [row.id, row.verdict, row.reason, row.depends_on]),

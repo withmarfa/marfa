@@ -199,13 +199,13 @@ describe("a purge refusal names the exits a waiting write has", () => {
     const deleted = await harness.device.deleteItem(ACTIVE);
     expect(deleted.ok, JSON.stringify(deleted)).toBe(true);
     if (!deleted.ok) return;
-    // An answer the device cannot read counts at every drain, and the fifth
-    // makes the write dead.
-    harness.server.answer("DELETE", `/items/${ACTIVE}`, {
-      kind: "json",
-      status: 200,
-      body: "not an answer",
-    });
+    // A key the server reports in flight counts at every drain, and the
+    // fifth makes the write dead.
+    harness.server.answer(
+      "DELETE",
+      `/items/${ACTIVE}`,
+      refusal(409, "idempotency_key_in_flight", "The key is in flight"),
+    );
     for (let pass = 0; pass < 5; pass += 1)
       expect((await harness.device.drain()).ok).toBe(true);
     const queue = await harness.device.queue();
@@ -243,10 +243,12 @@ describe("a purge refusal names the exits a waiting write has", () => {
     expect(await queued(harness.device)).toEqual([]);
     const after = await harness.device.purgeItem(ACTIVE);
     expect(after.ok).toBe(false);
-    if (!after.ok) expect(after.refusal.code).toBe("invalid_transition");
+    if (!after.ok) {
+      expect(after.refusal.code).toBe("validation");
+      expect(after.refusal.raw).toContain("invalid_transition");
+    }
   });
 });
-
 
 describe("a device confirms the instance before it sends a purge", () => {
   it("sends nothing to another instance at the same address, and expires the copy", async () => {

@@ -831,8 +831,7 @@ describe("the write sent to test a write that fails", () => {
     const withdrawn = await own.device.withdraw(queue[0]?.id ?? "");
     expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual([
       queue[0]?.id,
-    ]
-    );
+    ]);
     expect(
       (await queueOf(own)).map((row) => [row.kind, row.verdict]),
       "the writes that waited on a withdrawn upload were left waiting for a write that is gone",
@@ -903,8 +902,7 @@ describe("the write sent to test a write that fails", () => {
     const withdrawn = await own.device.withdraw(queue[0]?.id ?? "");
     expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual([
       queue[0]?.id,
-    ]
-    );
+    ]);
     const after = await queueOf(own);
     expect(
       after.map((row) => [row.kind, row.verdict, row.reason]),

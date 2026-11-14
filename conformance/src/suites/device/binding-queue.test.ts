@@ -281,9 +281,9 @@ describe("a withdraw while the copy changes under it", () => {
 
     reading.open();
     const withdrawn = await withdrawing;
-    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual(
-      [setup.first.id],
-    );
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual([
+      setup.first.id,
+    ]);
     const row = await device.get(HELD.id);
     expect(row.ok, JSON.stringify(row)).toBe(true);
     expect(
@@ -425,9 +425,9 @@ describe("a drain while another call changes the copy", () => {
       ).toHaveLength(1);
     });
     const withdrawn = await device.withdraw(created.value.id);
-    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual(
-      [created.value.id],
-    );
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual([
+      created.value.id,
+    ]);
     deleting.open();
     const drained = await draining;
     expect(drained.ok, JSON.stringify(drained)).toBe(true);

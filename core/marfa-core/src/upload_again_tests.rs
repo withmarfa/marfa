@@ -425,11 +425,13 @@ fn sets_aside_an_upload_whose_bytes_fail_to_open_alike_in_successive_drains() {
         (Some(Verdict::Blocked), Some(BlockedReason::FailingAlone)),
         "{report:?}"
     );
-    assert!(set_aside
+    assert!(
+        set_aside
             .last_failure
             .as_ref()
             .and_then(|failure| failure.text.as_deref())
-            .is_some_and(|text| text.contains("could not be opened")));
+            .is_some_and(|text| text.contains("could not be opened"))
+    );
     assert!(set_aside.withdrawable());
     assert!(uploads_sent(&server) == 0);
     // The cause is fixed and the write released: the bytes go.

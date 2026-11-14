@@ -1624,12 +1624,9 @@ fn send_queue(
                         if streak.count >= ENVIRONMENTAL_STREAK
                             && store::now_millis() - streak.began_ms >= STREAK_FLOOR_MILLIS
                         {
-                            for write in block_failing_alone(
-                                core,
-                                &row.id,
-                                &row.idempotency_key,
-                                &failure,
-                            )? {
+                            for write in
+                                block_failing_alone(core, &row.id, &row.idempotency_key, &failure)?
+                            {
                                 answers.insert(write.id.clone(), Some(Verdict::Blocked));
                                 waiting.insert(write.id.clone());
                                 report.answered += 1;
@@ -6804,7 +6801,9 @@ mod tests {
         };
         let waiting = refusal(&core);
         assert!(
-            waiting.contains("drain") && !waiting.contains("withdraw") && !waiting.contains("discard"),
+            waiting.contains("drain")
+                && !waiting.contains("withdraw")
+                && !waiting.contains("discard"),
             "{waiting}"
         );
         {
