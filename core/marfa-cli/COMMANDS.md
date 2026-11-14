@@ -2206,7 +2206,7 @@ Restore an archive with local authority.
 
 Preserves item and edge IDs, created_at and updated_at dates, current versions, tags, extensions, and the item's earlier versions carried in the archive. Existing items and their history remain unchanged.
 
-The archive contains only data the exporting credential could read, including history allowed by each snapshot's type permissions and blobs that credential could read. It holds no sign-in, keys, apps, or webhooks, so set those up again after a restore; the command says so. Settings, type icons, source names, and connector state come back only where this instance has none. Items in the bin are absent unless explicitly exported, for example with `export --format archive --state any`.
+The archive contains only data the exporting credential could read, including history allowed by each snapshot's type permissions and blobs that credential could read. It holds no sign-in, keys, apps, webhooks, inbound endpoints, connector keys, addresses, name or logs, so set those up again after a restore; the command prints one line for each. Settings, enforcement settings, type icons, source names, and connector state come back only where this instance has none. Items in the bin are absent unless explicitly exported, for example with `export --format archive --state any`.
 
 A build restores every archive version up to its own and refuses a later one, or one written before Marfa 0.1, naming the build that wrote it. An entry the build does not know, such as one a tar tool adds, is skipped, and the answer names it in `entries_skipped`, which the command also prints.
 
@@ -2248,7 +2248,7 @@ marfa backups run [OPTIONS]
 
 ### marfa backups restore
 
-Restore a backup from the instance's backup folder or object store. The server reads it itself, files included, so nothing is downloaded here. It restores as `restore` does an archive, and holds no sign-in, keys, apps or webhooks. Requires private local authority (--socket).
+Restore a backup from the instance's backup folder or object store. The server reads it itself, files included, so nothing is downloaded here. It restores as `restore` does an archive, and holds no sign-in, keys, apps, webhooks or inbound endpoints. Requires private local authority (--socket).
 
 ```text
 marfa backups restore [OPTIONS] <INSTANCE_ID> <NAME>

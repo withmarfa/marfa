@@ -75,11 +75,47 @@ fn notes(answer: &serde_json::Value) -> Vec<String> {
             kinds.join(", ")
         ));
     }
-    if let Some(note) = answer
-        .get("set_up_again")
-        .and_then(serde_json::Value::as_str)
+    for switch in texts(answer, "settings_without_receiver") {
+        notes.push(format!(
+            "Stored {switch}, which sends nothing until a receiver is set where Marfa runs."
+        ));
+    }
+    match answer
+        .get("enforcement_added")
+        .and_then(serde_json::Value::as_u64)
     {
-        notes.push(note.to_string());
+        Some(1) => notes.push("Restored the archive's enforcement settings.".to_string()),
+        _ if answer
+            .get("enforcement_skipped")
+            .and_then(serde_json::Value::as_u64)
+            == Some(1) =>
+        {
+            notes.push(
+                "Skipped the archive's enforcement settings: this instance already stores its own."
+                    .to_string(),
+            );
+        }
+        _ => {}
+    }
+    if let Some(previous) = answer.get("previous_instance") {
+        let id = previous
+            .get("instance_id")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        notes.push(format!(
+            "This archive was written by instance {id}. Once you are satisfied with this restore, delete {} inside its backup folder.",
+            texts(previous, "safe_to_delete").join(" and ")
+        ));
+    }
+    for kind in answer
+        .get("not_restored")
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(message) = kind.get("message").and_then(serde_json::Value::as_str) {
+            notes.push(message.to_string());
+        }
     }
     notes
 }
@@ -94,7 +130,7 @@ mod tests {
     fn names_each_skipped_entry_before_what_to_set_up_again() {
         let answer = json!({
             "entries_skipped": ["._manifest.json", "PaxHeaders.4242/items.ndjson.gz"],
-            "set_up_again": "Set up sign-in again.",
+            "not_restored": [{ "kind": "sign_in", "message": "Set up sign-in again." }],
         });
         assert_eq!(
             notes(&answer),
@@ -113,12 +149,45 @@ mod tests {
 
     #[test]
     fn a_printed_note_cannot_start_a_line_or_move_the_cursor() {
-        let answer = json!({"set_up_again": "keys\nrestored 0 items\u{1b}[2K"});
+        let answer = json!({
+            "not_restored": [{ "kind": "keys", "message": "keys\nrestored 0 items\u{1b}[2K" }]
+        });
         let printed: Vec<String> = notes(&answer)
             .iter()
             .map(|note| crate::output::printable(note))
             .collect();
         assert_eq!(printed, ["keys\\u{a}restored 0 items\\u{1b}[2K"]);
+    }
+
+    #[test]
+    fn prints_one_line_for_each_kind_the_archive_left_out_and_what_the_restore_did() {
+        let answer = json!({
+            "settings_without_receiver": ["heartbeat_enabled"],
+            "enforcement_added": 0,
+            "enforcement_skipped": 1,
+            "previous_instance": {
+                "instance_id": "0190a1b2-0000-7000-8000-000000000001",
+                "safe_to_delete": ["backups/0190a1b2-0000-7000-8000-000000000001", "files/0190a1b2-0000-7000-8000-000000000001"],
+            },
+            "not_restored": [
+                { "kind": "sign_in", "message": "Sign-in line." },
+                { "kind": "inbound_endpoints", "message": "Endpoints line." },
+            ],
+        });
+        assert_eq!(
+            notes(&answer),
+            [
+                "Stored heartbeat_enabled, which sends nothing until a receiver is set where Marfa runs.",
+                "Skipped the archive's enforcement settings: this instance already stores its own.",
+                "This archive was written by instance 0190a1b2-0000-7000-8000-000000000001. Once you are satisfied with this restore, delete backups/0190a1b2-0000-7000-8000-000000000001 and files/0190a1b2-0000-7000-8000-000000000001 inside its backup folder.",
+                "Sign-in line.",
+                "Endpoints line.",
+            ]
+        );
+        assert_eq!(
+            notes(&json!({ "enforcement_added": 1, "enforcement_skipped": 0 })),
+            ["Restored the archive's enforcement settings."]
+        );
     }
 
     #[test]
