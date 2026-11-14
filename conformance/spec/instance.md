@@ -2541,19 +2541,43 @@ When the server starts and the folder that holds its database already exists, th
 
 ### `instance/files-link-refused`
 
-If the server's database, one of the database's log files or its blob folder is a symbolic link when the server starts, then the server MUST refuse to start, name the path and leave what the link points to unchanged.
+If the server's database, one of the database's log files or its blob folder is a symbolic link when the server starts, however its path is written, then the server MUST refuse to start, name the path and leave what the link points to unchanged.
 
 **Reason:** the server changes modes only on what it keeps, and a link can point anywhere.
 
-**Tests:** `compliance/hook-free-server.test.ts › refuses to start on a blob folder that is a symbolic link, and leaves what it points to as it was`.
+**Tests:** `compliance/hook-free-server.test.ts › refuses to start on a blob folder that is a symbolic link, and leaves what it points to as it was`, `› refuses to start on a blob folder named through a symbolic link with a trailing slash, and leaves what it points to as it was`.
+
+### `instance/files-blobs-owned`
+
+If the server's blob folder exists when the server starts and another account owns it, then the server MUST refuse to start, name the folder and leave it unchanged.
+
+**Reason:** the server writes the owner's files inside its blob folder, and only a folder of its own is one it can keep private.
+
+**Tests:** `compliance/hook-free-server.test.ts › refuses to start on a blob folder another account owns, and leaves it as it was`.
+
+### `instance/files-way-guarded`
+
+If another account could replace or remove what a folder on the path to the server's database or blob folder holds when the server starts, because that account owns the folder, may write to it while it is not both owned by the system's administrator account and marked sticky, or owns a symbolic link on that path, then the server MUST refuse to start, name the folder and leave the database and the blob folder unchanged.
+
+**Reason:** whoever can replace a folder on the way decides which files the server makes private and where it writes the owner's data.
+
+**Tests:** `compliance/hook-free-server.test.ts › refuses to start when another account could write to a folder on the way to its blob folder, and leaves the blob folder as it was`.
+
+### `instance/files-holder-shared`
+
+If another account may add files to the folder that holds the server's database, or to the folder the server would make its blob folder in, when the server starts, then the server MUST refuse to start, name the folder and make no file in it.
+
+**Reason:** a file another account made first under a name the server keeps would be the file the server then writes the owner's data in.
+
+**Tests:** `compliance/hook-free-server.test.ts › refuses to start with its database in a folder other accounts can add files to, and makes nothing there`.
 
 ### `instance/files-reach-refused`
 
-If the folder that holds the server's database passes access to another account on to the files made in it, through its access control list, when the server starts, then the server MUST refuse to start, name the folder and make no file in it.
+If the folder that holds the server's database, or the folder the server would make its blob folder in, passes access to another account on to the files made in it, through its access control list, when the server starts, then the server MUST refuse to start, name the folder and make no file in it.
 
-**Reason:** a file made in such a folder takes the folder's entries whatever the umask, so another account could read the database before the server could close it.
+**Reason:** a file made in such a folder takes the folder's entries whatever the umask, so another account could read the database or a blob before the server could close it.
 
-**Tests:** `compliance/hook-free-server.test.ts › refuses to start in a database folder that passes access on to another account, and makes nothing there`.
+**Tests:** `compliance/hook-free-server.test.ts › refuses to start in a database folder that passes access on to another account, and makes nothing there`, `› refuses to make its blob folder in a folder that passes access on to another account, and makes nothing there`.
 
 ### `instance/unknown-setting-warned`
 

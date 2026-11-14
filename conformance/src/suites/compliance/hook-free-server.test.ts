@@ -650,10 +650,64 @@ describe("the files a server keeps", () => {
     expect(mode(outside)).toBe(0o755);
   });
 
-  it("refuses to start in a database folder that passes access on to another account, and makes nothing there", async () => {
+  it("refuses to start on a blob folder named through a symbolic link with a trailing slash, and leaves what it points to as it was", async () => {
+    const data = folder("marfa-hf-data-");
+    const outside = folder("marfa-hf-outside-");
+    chmodSync(outside, 0o755);
+    const linked = resolve(data, "linked");
+    symlinkSync(outside, linked);
+    const run = start(data, { MARFA_BLOB_PATH: `${linked}/` });
+    expect(await refusal(run), run.output()).not.toBe(0);
+    expect(run.output()).toContain(linked);
+    expect(run.output()).toContain("symbolic link");
+    expect(mode(outside)).toBe(0o755);
+  });
+
+  it("refuses to start on a blob folder another account owns, and leaves it as it was", async () => {
+    // As the system's administrator account, the server would own the folder.
+    expect(process.getuid?.(), "the fixture runs as a superuser").not.toBe(0);
+    const theirs = "/usr";
+    const before = mode(theirs);
+    // The witness: the folder is open to the server's account for reading.
+    expect(before & 0o005).toBe(0o005);
+    const run = start(folder("marfa-hf-data-"), { MARFA_BLOB_PATH: theirs });
+    expect(await refusal(run), run.output()).not.toBe(0);
+    expect(run.output()).toContain(theirs);
+    expect(run.output()).toContain("belongs to another account");
+    expect(mode(theirs)).toBe(before);
+  });
+
+  it("refuses to start when another account could write to a folder on the way to its blob folder, and leaves the blob folder as it was", async () => {
     const data = folder("marfa-hf-data-");
     const shared = resolve(data, "shared");
-    mkdirSync(shared, { mode: 0o700 });
+    const blobs = resolve(shared, "blobs");
+    mkdirSync(blobs, { recursive: true });
+    chmodSync(blobs, 0o755);
+    chmodSync(shared, 0o777);
+    const run = start(data, { MARFA_BLOB_PATH: blobs });
+    expect(await refusal(run), run.output()).not.toBe(0);
+    expect(run.output()).toContain(shared);
+    expect(run.output()).toContain("written by another account");
+    expect(mode(blobs)).toBe(0o755);
+  });
+
+  it("refuses to start with its database in a folder other accounts can add files to, and makes nothing there", async () => {
+    const data = folder("marfa-hf-data-");
+    const open = realpathSync("/tmp");
+    // The witness: the system's temporary folder lets every account add files.
+    expect(statSync(open).mode & 0o1777).toBe(0o1777);
+    const database = resolve(
+      open,
+      `marfa-hf-${randomBytes(6).toString("hex")}.db`,
+    );
+    const run = start(data, { MARFA_DATABASE_PATH: database });
+    expect(await refusal(run), run.output()).not.toBe(0);
+    expect(run.output()).toContain(open);
+    expect(run.output()).toContain("lets other accounts add files");
+    expect(existsSync(database)).toBe(false);
+  });
+
+  function passOn(shared: string): void {
     const granted =
       process.platform === "darwin"
         ? spawnSync("chmod", [
@@ -662,11 +716,29 @@ describe("the files a server keeps", () => {
             shared,
           ])
         : spawnSync("setfacl", ["-d", "-m", "o::r", shared]);
-    // The witness: the folder now passes access on.
     expect(granted.status, granted.stderr.toString()).toBe(0);
+  }
+
+  it("refuses to start in a database folder that passes access on to another account, and makes nothing there", async () => {
+    const data = folder("marfa-hf-data-");
+    const shared = resolve(data, "shared");
+    mkdirSync(shared, { mode: 0o700 });
+    passOn(shared);
     const run = start(data, {
       MARFA_DATABASE_PATH: resolve(shared, "marfa.db"),
     });
+    expect(await refusal(run), run.output()).not.toBe(0);
+    expect(run.output()).toContain(shared);
+    expect(run.output()).toContain("passes access");
+    expect(readdirSync(shared)).toEqual([]);
+  });
+
+  it("refuses to make its blob folder in a folder that passes access on to another account, and makes nothing there", async () => {
+    const data = folder("marfa-hf-data-");
+    const shared = resolve(data, "shared");
+    mkdirSync(shared, { mode: 0o700 });
+    passOn(shared);
+    const run = start(data, { MARFA_BLOB_PATH: resolve(shared, "blobs") });
     expect(await refusal(run), run.output()).not.toBe(0);
     expect(run.output()).toContain(shared);
     expect(run.output()).toContain("passes access");

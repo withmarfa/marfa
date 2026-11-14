@@ -1,16 +1,17 @@
-use std::ffi::{CString, OsStr};
+use std::collections::VecDeque;
+use std::ffi::OsString;
 use std::fs::{DirBuilder, File, Metadata, OpenOptions, Permissions};
 use std::io::ErrorKind;
-use std::os::fd::{FromRawFd, OwnedFd};
-use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::failure::Failure;
 use crate::settings::{DatabasePath, secrets_file};
 
 const OTHERS: u32 = 0o077;
+const OTHERS_WRITE: u32 = 0o022;
 const OWNER: u32 = 0o700;
+const MAX_LINKS: usize = 40;
 
 pub fn take_umask() {
     // SAFETY: `umask` takes a mask and cannot fail.
@@ -28,43 +29,192 @@ fn refused(path: &Path, why: impl std::fmt::Display) -> Failure {
     Failure::start(format!("{} {why}", path.display()))
 }
 
+enum Step {
+    Root,
+    Up,
+    Name(OsString),
+}
+
+fn steps(path: &Path) -> impl DoubleEndedIterator<Item = Step> + '_ {
+    path.components().filter_map(|part| match part {
+        Component::RootDir => Some(Step::Root),
+        Component::ParentDir => Some(Step::Up),
+        Component::Normal(name) => Some(Step::Name(name.to_os_string())),
+        Component::CurDir | Component::Prefix(_) => None,
+    })
+}
+
+/// A path with every folder above its last name judged.
+struct Reached {
+    /// The deepest folder that is there, named without a link.
+    folder: PathBuf,
+    /// The folders below `folder` that are not there yet, then the last name.
+    below: Vec<OsString>,
+}
+
+impl Reached {
+    fn path(&self) -> PathBuf {
+        self.below
+            .iter()
+            .fold(self.folder.clone(), |path, name| path.join(name))
+    }
+}
+
+/// No folder on the way may let another account replace what it holds, and a link is
+/// followed only where root or the server's own account made it.
+fn walk(path: &Path, me: u32) -> Result<Reached, Failure> {
+    let absolute = std::path::absolute(path)
+        .map_err(|error| refused(path, format_args!("could not be resolved: {error}")))?;
+    let mut ahead: VecDeque<Step> = steps(&absolute).collect();
+    let Some(Step::Name(last)) = ahead.pop_back() else {
+        return Err(refused(path, "does not end in a file or folder name"));
+    };
+    let mut folder = PathBuf::from("/");
+    on_the_way(&folder, me)?;
+    let mut links = 0;
+    while let Some(step) = ahead.pop_front() {
+        let name = match step {
+            Step::Root => {
+                folder = PathBuf::from("/");
+                continue;
+            }
+            Step::Up => {
+                folder.pop();
+                continue;
+            }
+            Step::Name(name) => name,
+        };
+        let next = folder.join(&name);
+        let found = match std::fs::symlink_metadata(&next) {
+            Ok(found) => found,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                let mut below = vec![name];
+                for step in ahead {
+                    let Step::Name(name) = step else {
+                        return Err(refused(&next, "is not there, and the path goes on past it"));
+                    };
+                    below.push(name);
+                }
+                below.push(last);
+                return Ok(Reached { folder, below });
+            }
+            Err(error) => return Err(refused(&next, format_args!("could not be read: {error}"))),
+        };
+        if found.file_type().is_symlink() {
+            if found.uid() != me && found.uid() != 0 {
+                return Err(refused(
+                    &next,
+                    "is a symbolic link another account made. Name the folder it points to \
+                     instead.",
+                ));
+            }
+            links += 1;
+            let target = std::fs::read_link(&next)
+                .map_err(|error| refused(&next, format_args!("could not be read: {error}")))?;
+            if links > MAX_LINKS || target.as_os_str().is_empty() {
+                return Err(refused(
+                    path,
+                    "could not be followed through its symbolic links",
+                ));
+            }
+            for step in steps(&target).rev() {
+                ahead.push_front(step);
+            }
+            continue;
+        }
+        judged_on_the_way(&next, &found, me)?;
+        folder = next;
+    }
+    Ok(Reached {
+        folder,
+        below: vec![last],
+    })
+}
+
+fn on_the_way(folder: &Path, me: u32) -> Result<(), Failure> {
+    let found = std::fs::symlink_metadata(folder)
+        .map_err(|error| refused(folder, format_args!("could not be read: {error}")))?;
+    judged_on_the_way(folder, &found, me)
+}
+
+fn judged_on_the_way(folder: &Path, found: &Metadata, me: u32) -> Result<(), Failure> {
+    let why =
+        marfa_acl::exposure(folder, found, me).map_err(|error| unreadable_acl(folder, &error))?;
+    let fix = match why {
+        None => return Ok(()),
+        Some(marfa_acl::Exposure::Link | marfa_acl::Exposure::NotFolder) => {
+            return Err(refused(folder, "is not a folder"));
+        }
+        Some(marfa_acl::Exposure::Owner) => {
+            "Give it to the server's account or to root, or keep the data in another folder."
+                .to_string()
+        }
+        Some(marfa_acl::Exposure::Mode) => format!("Run `chmod go-w {}`.", folder.display()),
+        Some(marfa_acl::Exposure::Acl) => format!(
+            "Remove those entries with {}.",
+            marfa_acl::removal_command(false)
+        ),
+    };
+    let why = why.map(|why| why.to_string()).unwrap_or_default();
+    Err(refused(
+        folder,
+        format_args!("{why}, so another account could replace the server's data. {fix}"),
+    ))
+}
+
+/// Root's sticky folders still let another account make a file before the server does.
+fn holds_new_files(folder: &Path, me: u32) -> Result<(), Failure> {
+    let opened = open(folder, true)?.ok_or_else(|| refused(folder, "is not there"))?;
+    let found = read(&opened, folder)?;
+    if found.mode() & OTHERS_WRITE != 0 {
+        return Err(refused(
+            folder,
+            "lets other accounts add files to it, so one could make a file the server would \
+             then write in. Keep the data in a folder of its own.",
+        ));
+    }
+    let reach = marfa_acl::reach(&opened, me).map_err(|error| unreadable_acl(folder, &error))?;
+    if reach.passed_on {
+        return Err(refused(
+            folder,
+            format_args!(
+                "passes access to another account on to the files the server makes in it, \
+                 through its access control list. Remove those entries with {}, or keep the \
+                 data in another folder.",
+                marfa_acl::removal_command(true)
+            ),
+        ));
+    }
+    Ok(())
+}
+
 // An existing database folder may hold files that do not belong to the server.
 pub fn make_data_folder(database: &DatabasePath) -> Result<(), Failure> {
     let Some(file) = database.file() else {
         return Ok(());
     };
-    let Some(folder) = file
-        .parent()
-        .filter(|folder| !folder.as_os_str().is_empty())
-    else {
+    let me = me();
+    let reached = walk(&file, me)?;
+    let Some((_, missing)) = reached.below.split_last() else {
         return Ok(());
     };
-    match std::fs::symlink_metadata(folder) {
-        Err(error) if error.kind() == ErrorKind::NotFound => {}
-        _ => return Ok(()),
-    }
-    let not_made = |error| refused(folder, format_args!("could not be made: {error}"));
-    if let Some(parent) = folder
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-    {
-        DirBuilder::new()
-            .recursive(true)
-            .mode(OWNER)
-            .create(parent)
-            .map_err(not_made)?;
-    }
-    match DirBuilder::new().mode(OWNER).create(folder) {
-        Ok(()) => {}
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => return Ok(()),
-        Err(error) => return Err(not_made(error)),
-    }
-    let Some(made) = open(folder, true)? else {
-        return Ok(());
-    };
-    let found = read(&made, folder)?;
-    if found.uid() == me() {
-        close(&made, &found, folder)?;
+    let mut folder = reached.folder;
+    for name in missing {
+        let next = folder.join(name);
+        match DirBuilder::new().mode(OWNER).create(&next) {
+            Ok(()) => {}
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(refused(&next, format_args!("could not be made: {error}")));
+            }
+        }
+        let made = open(&next, true)?.ok_or_else(|| refused(&next, "could not be made"))?;
+        let found = read(&made, &next)?;
+        if found.uid() == me {
+            close(&made, &found, &next)?;
+        }
+        on_the_way(&next, me)?;
+        folder = next;
     }
     Ok(())
 }
@@ -78,15 +228,23 @@ pub struct Kept {
 impl Kept {
     pub fn closed(database_path: &DatabasePath, blobs: &Path) -> Result<Kept, Failure> {
         let me = me();
-        let mut files = match database_path.file() {
-            Some(database) => {
-                passes_nothing_on(&database_path.folder(), me)?;
-                let beside = |suffix: &str| {
-                    let mut name = database.clone().into_os_string();
-                    name.push(suffix);
-                    PathBuf::from(name)
-                };
-                let mut files: Vec<PathBuf> = [
+        let secrets = walk(&secrets_file(database_path), me)?;
+        let [secrets_name] = secrets.below.as_slice() else {
+            return Err(refused(
+                &secrets.folder.join(&secrets.below[0]),
+                "is not there",
+            ));
+        };
+        holds_new_files(&secrets.folder, me)?;
+        let folder = secrets.folder.clone();
+        let mut files = vec![folder.join(secrets_name)];
+        if let Some(database) = database_path.file() {
+            let name = database
+                .file_name()
+                .ok_or_else(|| refused(&database, "does not end in a file name"))?;
+            files.extend(
+                [
+                    "",
                     "-wal",
                     "-shm",
                     "-journal",
@@ -94,38 +252,53 @@ impl Kept {
                     ".before-upgrade.partial",
                 ]
                 .iter()
-                .map(|suffix| beside(suffix))
-                .collect();
-                files.insert(0, database);
-                files
-            }
-            None => Vec::new(),
+                .map(|suffix| {
+                    let mut beside = name.to_os_string();
+                    beside.push(suffix);
+                    folder.join(beside)
+                }),
+            );
+        }
+        let reached = walk(blobs, me)?;
+        let opened = match reached.below.len() {
+            1 => open(&reached.path(), true)?,
+            _ => None,
         };
-        files.push(secrets_file(database_path));
+        let blobs_made = match opened {
+            Some(opened) => {
+                secure_blob_folder(&opened, &reached.path(), me)?;
+                false
+            }
+            None => {
+                holds_new_files(&reached.folder, me)?;
+                true
+            }
+        };
         let kept = Kept {
             files,
             blobs: blobs.to_path_buf(),
-            blobs_made: open(blobs, true)?.is_none(),
+            blobs_made,
         };
         kept.database_opened()?;
-        if !kept.blobs_made {
-            secure(&kept.blobs, true, me)?;
-        }
         Ok(kept)
     }
 
     pub fn database_opened(&self) -> Result<(), Failure> {
         let me = me();
-        self.files
-            .iter()
-            .try_for_each(|file| secure(file, false, me))
+        self.files.iter().try_for_each(|file| secure(file, me))
     }
 
     pub fn blobs_opened(&self) -> Result<(), Failure> {
-        if self.blobs_made {
-            secure(&self.blobs, true, me())?;
+        if !self.blobs_made {
+            return Ok(());
         }
-        Ok(())
+        let me = me();
+        let reached = walk(&self.blobs, me)?;
+        let path = reached.path();
+        match open(&path, true)? {
+            Some(opened) if reached.below.len() == 1 => secure_blob_folder(&opened, &path, me),
+            _ => Err(refused(&path, "is not there")),
+        }
     }
 }
 
@@ -138,24 +311,6 @@ fn open(path: &Path, folder: bool) -> Result<Option<File>, Failure> {
     }
 }
 
-fn open_at(folder: &File, name: &OsStr, path: &Path, is_folder: bool) -> Result<File, Failure> {
-    let name = CString::new(name.as_bytes())
-        .map_err(|_| refused(path, "has a name the server cannot open"))?;
-    let flags = libc::O_RDONLY
-        | libc::O_NOFOLLOW
-        | libc::O_NONBLOCK
-        | libc::O_CLOEXEC
-        | if is_folder { libc::O_DIRECTORY } else { 0 };
-    use std::os::fd::AsRawFd;
-    // SAFETY: the folder is open and the name is a live C string.
-    let fd = unsafe { libc::openat(folder.as_raw_fd(), name.as_ptr(), flags) };
-    if fd < 0 {
-        return Err(not_opened(path, &std::io::Error::last_os_error()));
-    }
-    // SAFETY: `openat` returned a descriptor that nothing else owns.
-    Ok(File::from(unsafe { OwnedFd::from_raw_fd(fd) }))
-}
-
 fn not_opened(path: &Path, error: &std::io::Error) -> Failure {
     // macOS answers ENOTDIR, not ELOOP, for a link opened as a folder.
     let link = std::fs::symlink_metadata(path).is_ok_and(|found| found.is_symlink());
@@ -166,7 +321,6 @@ fn not_opened(path: &Path, error: &std::io::Error) -> Failure {
              private. Name the file or folder the link points to instead.",
         ),
         Some(libc::ENOTDIR) => refused(path, "is not a folder"),
-        Some(libc::ELOOP) => refused(path, "could not be opened: too many symbolic links"),
         _ => refused(path, format_args!("could not be opened: {error}")),
     }
 }
@@ -208,12 +362,11 @@ enum Exposure {
 
 fn exposure(file: &File, path: &Path) -> Result<Option<Exposure>, Failure> {
     let mode = read(file, path)?.mode();
-    if mode & OTHERS != 0 {
-        return Ok(Some(Exposure::Mode(mode & 0o7777)));
-    }
     let reach = marfa_acl::reach(file, me()).map_err(|error| unreadable_acl(path, &error))?;
     Ok(if reach.passed_on {
         Some(Exposure::PassedOn)
+    } else if mode & OTHERS != 0 {
+        Some(Exposure::Mode(mode & 0o7777))
     } else if reach.itself {
         Some(Exposure::Acl)
     } else {
@@ -250,74 +403,42 @@ fn exposed(path: &Path, why: &Exposure, ours: bool) -> Failure {
     refused(path, format_args!("{what}. {fix}"))
 }
 
-/// The folder files are made in may be another account's and open, but must not pass access on.
-fn passes_nothing_on(folder: &Path, me: u32) -> Result<(), Failure> {
-    let opened = match File::open(folder) {
-        Ok(opened) => opened,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(()),
-        Err(error) => {
-            return Err(refused(
-                folder,
-                format_args!("could not be opened: {error}"),
-            ));
-        }
+fn secure(path: &Path, me: u32) -> Result<(), Failure> {
+    let Some(file) = open(path, false)? else {
+        return Ok(());
     };
-    let reach = marfa_acl::reach(&opened, me).map_err(|error| unreadable_acl(folder, &error))?;
-    if reach.passed_on {
-        return Err(refused(
-            folder,
-            format_args!(
-                "passes access to another account on to the files the server makes in it, \
-                 through its access control list. Remove those entries with {}, or keep the \
-                 database in another folder.",
-                marfa_acl::removal_command(true)
-            ),
-        ));
-    }
-    Ok(())
-}
-
-fn secure(path: &Path, folder: bool, me: u32) -> Result<(), Failure> {
-    match open(path, folder)? {
-        Some(file) => secure_opened(&file, path, folder, me),
-        None => Ok(()),
-    }
-}
-
-// A mounted folder may belong to another account while its contents belong to the server.
-fn secure_opened(file: &File, path: &Path, folder: bool, me: u32) -> Result<(), Failure> {
-    let found = read(file, path)?;
-    if !folder && !found.is_file() {
+    let found = read(&file, path)?;
+    if !found.is_file() {
         return Err(refused(path, "is not a file"));
     }
     let ours = found.uid() == me;
     if ours {
-        close(file, &found, path)?;
+        close(&file, &found, path)?;
     }
-    match exposure(file, path)? {
+    match exposure(&file, path)? {
         None => Ok(()),
-        Some(Exposure::Mode(_) | Exposure::Acl) if folder && !ours => inside(file, path, me),
         Some(why) => Err(exposed(path, &why, ours)),
     }
 }
 
-fn inside(folder: &File, path: &Path, me: u32) -> Result<(), Failure> {
-    let entries = std::fs::read_dir(path)
-        .map_err(|error| refused(path, format_args!("could not be listed: {error}")))?;
-    for entry in entries {
-        let entry =
-            entry.map_err(|error| refused(path, format_args!("could not be listed: {error}")))?;
-        let kind = entry
-            .file_type()
-            .map_err(|error| refused(&entry.path(), format_args!("could not be read: {error}")))?;
-        if !kind.is_dir() && !kind.is_file() {
-            continue;
-        }
-        let child = entry.path();
-        let opened = open_at(folder, &entry.file_name(), &child, kind.is_dir())?;
-        secure_opened(&opened, &child, kind.is_dir(), me)?;
+/// The store writes inside this folder, so it must be one the server can keep private.
+fn secure_blob_folder(file: &File, path: &Path, me: u32) -> Result<(), Failure> {
+    let found = read(file, path)?;
+    if !found.is_dir() {
+        return Err(refused(path, "is not a folder"));
     }
-    Ok(())
+    if found.uid() != me {
+        return Err(refused(
+            path,
+            "belongs to another account, and the server keeps its blobs only in a folder of its \
+             own. Give it to the server's account with `chown`.",
+        ));
+    }
+    close(file, &found, path)?;
+    match exposure(file, path)? {
+        None => Ok(()),
+        Some(why) => Err(exposed(path, &why, true)),
+    }
 }
 
 #[cfg(test)]
@@ -340,6 +461,10 @@ mod tests {
         marfa_acl::reach(&File::open(path).unwrap(), me()).unwrap()
     }
 
+    fn kept(data: &Path, blobs: &Path) -> Result<Kept, Failure> {
+        Kept::closed(&DatabasePath::File(data.join("marfa.db")), blobs)
+    }
+
     #[test]
     fn what_is_the_servers_is_made_private_and_a_link_is_refused_unfollowed() {
         let dir = tempfile::tempdir().unwrap();
@@ -348,8 +473,7 @@ mod tests {
         fs::write(&file, "").unwrap();
         chmod(&folder, 0o755);
         chmod(&file, 0o644);
-        secure(&folder, true, me()).unwrap();
-        secure(&file, false, me()).unwrap();
+        kept(dir.path(), &folder).unwrap();
         assert_eq!((mode(&folder), mode(&file)), (0o700, 0o600));
 
         let outside = dir.path().join("outside");
@@ -357,9 +481,82 @@ mod tests {
         chmod(&outside, 0o755);
         let link = dir.path().join("linked");
         std::os::unix::fs::symlink(&outside, &link).unwrap();
-        let failure = secure(&link, true, me()).unwrap_err();
-        assert!(failure.message.contains("symbolic link"), "{failure}");
+        let mut slashed = link.clone().into_os_string();
+        slashed.push("/");
+        for named in [link.clone(), PathBuf::from(slashed), link.join(".")] {
+            let failure = kept(dir.path(), &named).err().expect("refused");
+            assert!(failure.message.contains("symbolic link"), "{failure}");
+        }
         assert_eq!(mode(&outside), 0o755);
+    }
+
+    #[test]
+    fn a_link_the_servers_account_made_above_the_blob_folder_leads_to_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        fs::create_dir_all(real.join("blobs")).unwrap();
+        chmod(&real.join("blobs"), 0o755);
+        std::os::unix::fs::symlink(&real, dir.path().join("via")).unwrap();
+        kept(dir.path(), &dir.path().join("via/blobs")).unwrap();
+        assert_eq!(mode(&real.join("blobs")), 0o700);
+    }
+
+    #[test]
+    fn a_folder_another_account_could_change_on_the_way_refuses_the_start_and_nothing_changes() {
+        let dir = tempfile::tempdir().unwrap();
+        let shared = dir.path().join("shared");
+        let blobs = shared.join("blobs");
+        fs::create_dir_all(&blobs).unwrap();
+        chmod(&blobs, 0o755);
+        // The witness: while only the server's account can change the folder above, it starts.
+        chmod(&shared, 0o755);
+        kept(dir.path(), &blobs).unwrap();
+        chmod(&blobs, 0o755);
+        for open in [0o777, 0o1777, 0o775] {
+            chmod(&shared, open);
+            let failure = kept(dir.path(), &blobs).err().expect("refused");
+            assert!(
+                failure.message.contains("written by another account"),
+                "{failure}"
+            );
+            assert!(
+                failure.message.contains(shared.to_str().unwrap()),
+                "{failure}"
+            );
+            assert_eq!(mode(&blobs), 0o755);
+        }
+        chmod(&shared, 0o777);
+        let failure = kept(dir.path(), &shared.join("new"))
+            .err()
+            .expect("refused");
+        assert!(
+            failure.message.contains("written by another account"),
+            "{failure}"
+        );
+        assert!(!shared.join("new").exists());
+    }
+
+    #[test]
+    fn a_blob_folder_of_another_account_refuses_the_start_and_is_left_as_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let blobs = dir.path().join("blobs");
+        fs::create_dir(&blobs).unwrap();
+        chmod(&blobs, 0o755);
+        let opened = open(&blobs, true).unwrap().unwrap();
+        // The witness: as the server's own folder, it is made private.
+        secure_blob_folder(&opened, &blobs, me()).unwrap();
+        assert_eq!(mode(&blobs), 0o700);
+        chmod(&blobs, 0o755);
+        let passes_on = let_another_account(&blobs, Grant::InheritReadToFiles);
+        assert_eq!(reach(&blobs).passed_on, passes_on);
+        let another = u32::MAX - 1;
+        let failure = secure_blob_folder(&opened, &blobs, another).unwrap_err();
+        assert!(
+            failure.message.contains("belongs to another account"),
+            "{failure}"
+        );
+        assert_eq!(mode(&blobs), 0o755);
+        assert_eq!(reach(&blobs).passed_on, passes_on);
     }
 
     #[test]
@@ -377,29 +574,37 @@ mod tests {
         assert!(let_another_account(&file, Grant::ReadFile));
         assert!(reach(&folder).itself && reach(&folder).passed_on);
         assert!(reach(&file).itself);
-        secure(&folder, true, me()).unwrap();
-        secure(&file, false, me()).unwrap();
+        kept(dir.path(), &folder).unwrap();
         assert_eq!(reach(&folder), marfa_acl::Reach::default());
         assert_eq!(reach(&file), marfa_acl::Reach::default());
         assert_eq!(mode(&file), 0o600);
     }
 
     #[test]
-    fn a_database_folder_that_passes_access_on_refuses_the_start_and_is_left_as_it_was() {
+    fn a_folder_files_are_made_in_that_passes_access_on_refuses_the_start_and_is_left_as_it_was() {
         let dir = tempfile::tempdir().unwrap();
         let data = dir.path().join("data");
         fs::create_dir(&data).unwrap();
         chmod(&data, 0o755);
-        let database = DatabasePath::File(data.join("marfa.db"));
+        let blobs = data.join("blobs");
         // The witness: an open folder that passes nothing on is kept as it is, and allowed.
-        passes_nothing_on(&data, me()).unwrap();
+        kept(&data, &blobs).unwrap();
         if !let_another_account(&data, Grant::InheritReadToFiles) {
             eprintln!("skipped: this file system keeps no access control lists");
             return;
         }
-        let failure = passes_nothing_on(&data, me()).unwrap_err();
+        for blobs in [blobs, dir.path().join("blobs")] {
+            let failure = kept(&data, &blobs).err().expect("refused");
+            assert!(failure.message.contains("passes access"), "{failure}");
+        }
+        let elsewhere = dir.path().join("elsewhere");
+        fs::create_dir(&elsewhere).unwrap();
+        let failure = kept(&elsewhere, &data.join("blobs"))
+            .err()
+            .expect("refused");
         assert!(failure.message.contains("passes access"), "{failure}");
-        make_data_folder(&database).unwrap();
+        assert!(!data.join("blobs").exists());
+        make_data_folder(&DatabasePath::File(data.join("marfa.db"))).unwrap();
         assert!(reach(&data).passed_on);
         assert_eq!(mode(&data), 0o755);
     }
@@ -412,27 +617,16 @@ mod tests {
         let data = shared.join("data");
         let inherits = let_another_account(&shared, Grant::InheritRead)
             && let_another_account(&shared, Grant::InheritReadToFiles);
-        make_data_folder(&DatabasePath::File(data.join("marfa.db"))).unwrap();
-        assert_eq!(mode(&data), 0o700);
-        assert_eq!(reach(&data), marfa_acl::Reach::default());
+        make_data_folder(&DatabasePath::File(data.join("deeper/marfa.db"))).unwrap();
+        for made in [&data, &data.join("deeper")] {
+            assert_eq!(mode(made), 0o700);
+            assert_eq!(reach(made), marfa_acl::Reach::default());
+        }
         if inherits {
             // The witness: a folder made there by another hand inherits the entries.
             let other = shared.join("other");
             fs::create_dir(&other).unwrap();
             assert_ne!(reach(&other), marfa_acl::Reach::default());
         }
-    }
-
-    #[test]
-    fn inside_an_open_folder_of_another_account_only_its_own_files_are_changed() {
-        let dir = tempfile::tempdir().unwrap();
-        let file = dir.path().join("blob");
-        fs::write(&file, "").unwrap();
-        chmod(&file, 0o644);
-        chmod(dir.path(), 0o755);
-        let opened = open(dir.path(), true).unwrap().unwrap();
-        // As if the folder were another account's: its own mode is never changed.
-        inside(&opened, dir.path(), me()).unwrap();
-        assert_eq!((mode(dir.path()), mode(&file)), (0o755, 0o600));
     }
 }
