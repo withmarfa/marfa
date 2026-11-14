@@ -659,9 +659,10 @@ request nothing checked, so an unreadable line is a failure and not noise.
 `pnpm rust:score --reports <dir> [--platform <name>] [--projects <a,b>] [--markdown <file>]`
 reads every `vitest.json` under `<dir>`, one per shard, and prints the score.
 `--platform` names the machine the reports came from, `process.platform` by
-default, and `--projects` limits the score to some of the five projects. CI
-writes it to the job summary of `Rust contract score` and of
-`Rust contract score on macOS`.
+default, and `--projects` limits the score to some of the five projects. The
+command stops with an error when a report names a file of a project that
+`--projects` leaves out, because that file would go unjudged. CI writes it to
+the job summary of `Rust contract score` and of `Rust contract score on macOS`.
 
 - A test passes when Vitest reports it `passed`. A skipped or todo test is not
   passing, and still counts in the total, with two exceptions, which the
