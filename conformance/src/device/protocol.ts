@@ -254,6 +254,15 @@ export interface KeptFetch {
   attachments: Attachments | null;
 }
 
+/** A write `device unsent` lists (`device/wrong-schema-lists`). */
+export interface UnsentWrite {
+  id: string;
+  kind: string;
+  item_id: string | null;
+  body: string;
+  verdict: string | null;
+}
+
 /** What `device set-aside` answers (`device/set-aside-answer`). */
 export interface SetAsideReport {
   set_aside: string;

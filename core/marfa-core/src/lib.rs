@@ -151,7 +151,7 @@ pub use model::{
     GrantLevel, HydrateReport, HydrateRestart, Hydration, Item, ItemState, LastFailure,
     ListFilters, MetadataWrite, MissingGrant, Outcome, QueuedWrite, Refusal, RowConflict, Rows,
     SearchFilters, SearchHit, Shown, SliceTier, Sort, SortDirection, SortField, Status, Tier,
-    UnregisteredType, Verdict, WriteKind,
+    UnregisteredType, UnsentWrite, Verdict, WriteKind,
 };
 pub use reads::CopyChanges;
 pub use scaffold::{ScaffoldField, scaffold_type};
@@ -514,6 +514,32 @@ impl Core {
             )));
         }
         damage::check(path)
+    }
+
+    /// Every write the store at `path` holds that the server has not taken,
+    /// waiting, blocked, refused or dead, as `WrongSchema` counts them, read
+    /// whatever build made the store, so a person can see what a store this
+    /// build refuses holds. Changes nothing. Refuses with `Store` where the
+    /// queue cannot be read, as in a store SQLite cannot read, and with
+    /// `ReadingHandle` while another process, or another `Core` in this one,
+    /// holds the writer role.
+    pub fn read_unsent(path: impl AsRef<Path>) -> Result<Vec<UnsentWrite>> {
+        let path = path.as_ref();
+        let lock = lock::WriterLock::claim(Some(path))?;
+        lock.refuse_unless_writer()?;
+        if path.symlink_metadata().is_err() {
+            return Err(CoreError::Invalid(format!(
+                "{} holds no store to read",
+                path.display()
+            )));
+        }
+        let conn = store::open_refused(path)?;
+        store::untaken(&conn).ok_or_else(|| {
+            CoreError::Store(format!(
+                "the queue of {} cannot be read: set it aside if it is damaged (`marfa device set-aside`, or `setAsideDamaged` in a binding), which names each write it cannot read",
+                path.display()
+            ))
+        })
     }
 
     /// Sets aside a store SQLite cannot read: moves the store file and its
@@ -8747,6 +8773,7 @@ mod tests {
                     // hold the role from another core and are refused.
                     "remove_agreed",
                     "check_store",
+                    "read_unsent",
                     "set_aside_damaged",
                 ][..],
             ),

@@ -1404,6 +1404,20 @@ impl LastFailure {
     }
 }
 
+/// A write a store holds that the server has not taken, as read from a store
+/// of any build's shape: its kind as the store names it, which may be one
+/// this build does not send.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnsentWrite {
+    pub id: String,
+    pub kind: String,
+    pub item_id: Option<String>,
+    /// The body it sends, as the store holds it.
+    pub body: String,
+    /// `None` while it waits; otherwise `blocked`, `refused` or `dead`.
+    pub verdict: Option<String>,
+}
+
 /// A verdict of `None` is a write not yet answered, and serializes as `null`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QueuedWrite {

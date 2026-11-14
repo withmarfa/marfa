@@ -547,3 +547,58 @@ fn a_file_budget_the_refused_store_cannot_give_is_the_default_and_no_error() {
         no_set_aside_copy(&path);
     }
 }
+
+#[test]
+fn a_refused_store_lists_each_write_it_holds_unsent() {
+    let (_dir, path) = refused_store(true);
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute(
+            "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, queued_at, verdict, sent)
+             VALUES ('q2', 'merge_metadata', 'n1', 'k2', '{\"tags\":[\"a\"]}', '2026-01-01T00:00:01Z', 'dead', 1),
+                    ('q3', 'add_tag', 'n1', 'k3', '{}', '2026-01-01T00:00:02Z', 'accepted', 1)",
+            [],
+        )
+        .unwrap();
+    }
+    let before = files(&path);
+    let listed = Core::read_unsent(&path).unwrap();
+    assert_eq!(
+        listed
+            .iter()
+            .map(|write| (
+                write.id.as_str(),
+                write.kind.as_str(),
+                write.body.as_str(),
+                write.verdict.as_deref()
+            ))
+            .collect::<Vec<_>>(),
+        [
+            ("q1", "create_item", "{}", None),
+            ("q2", "merge_metadata", "{\"tags\":[\"a\"]}", Some("dead")),
+        ]
+    );
+    assert!(matches!(
+        refusal(&path),
+        CoreError::WrongSchema {
+            unsent: Some(2),
+            ..
+        }
+    ));
+    assert_eq!(files(&path), before, "listing the writes changed the store");
+}
+
+#[test]
+fn a_store_another_core_writes_is_not_listed() {
+    let (_dir, path) = refused_store(true);
+    let conn = Connection::open(&path).unwrap();
+    conn.execute_batch(&format!(
+        "PRAGMA user_version = {}",
+        crate::store::SCHEMA_VERSION
+    ))
+    .unwrap();
+    let writer = Core::open(&path, None).unwrap();
+    assert_eq!(Core::read_unsent(&path), Err(CoreError::ReadingHandle));
+    drop(writer);
+    assert_eq!(Core::read_unsent(&path).unwrap().len(), 1);
+}

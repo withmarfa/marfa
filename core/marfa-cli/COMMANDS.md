@@ -3895,6 +3895,18 @@ marfa device set-aside [OPTIONS]
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
+### marfa device unsent
+
+List each write the store holds that the server has not taken, with its kind, item and body, whatever build made the store.
+
+For a store refused wrong_schema, whose writes only the build that made it can send. It changes nothing, and is refused reading_handle while another process holds the store's writer role.
+
+```text
+marfa device unsent [OPTIONS]
+```
+
+Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
+
 ### marfa device types
 
 The item types the copy holds, read from it alone, the ones an app declares for it, and the server's.
