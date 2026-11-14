@@ -237,8 +237,28 @@ CREATE TABLE IF NOT EXISTS queue (
   -- Send order. A timestamp would tie under a fast caller.
   seq INTEGER PRIMARY KEY,
   id TEXT NOT NULL UNIQUE,
-  -- Kinds and verdicts can change without a schema upgrade.
-  kind TEXT NOT NULL,
+  -- The `CHECK`s on this table are here because the file outlives every
+  -- process that writes it, so two builds cannot disagree about a store.
+  kind TEXT NOT NULL CHECK (
+    kind IN (
+      'create_item',
+      'update_item',
+      'delete_item',
+      'restore_item',
+      'transition_item',
+      'create_edge',
+      'update_edge',
+      'delete_edge',
+      'replace_metadata',
+      'add_tag',
+      'remove_tag',
+      'write_extension',
+      'delete_extension',
+      'upload_blob',
+      'write_rows',
+      'undo_rows'
+    )
+  ),
   -- An edge write names both endpoints too: an edge create can wait on two
   -- unanswered local creates, which a single subject cannot say.
   item_id TEXT,
@@ -276,7 +296,10 @@ CREATE TABLE IF NOT EXISTS queue (
   -- `{"properties": {...}}`: the copy's values this edit was made against.
   -- The copy cannot say afterwards, because it lays this edit over the row.
   read TEXT,
-  verdict TEXT,
+  verdict TEXT CHECK (
+    verdict IS NULL
+    OR verdict IN ('accepted', 'merged', 'conflicted', 'refused', 'blocked', 'dead')
+  ),
   -- A blocked reason under `blocked`, the server's refusal code verbatim under
   -- `refused`. Not constrained, because the server's codes are an open set;
   -- the blocked reasons are checked when the row is read.

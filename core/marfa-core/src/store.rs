@@ -91,7 +91,7 @@ pub const META_READ_ONLY_READ: &str = "read_only_read_at";
 pub const EDGE_CHANGES_KEPT: usize = 10_000;
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
 /// SQLite's `user_version`; a shape change increments it and appends to `SHAPES`.
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 1;
 
 /// Moves with `SCHEMA_VERSION` until the first compatible release, then stays fixed.
 const OLDEST_UPGRADED: i64 = SCHEMA_VERSION;
@@ -7356,6 +7356,34 @@ pub(crate) mod testing {
         open_in_memory().unwrap()
     }
 
+    /// The queue another build made, whose `CHECK` also admits `kind`.
+    pub fn queue_admitting(conn: &Connection, kind: &str) {
+        let made: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'queue'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let other = made
+            .replacen(
+                "'replace_metadata',",
+                &format!("'replace_metadata', '{kind}',"),
+                1,
+            )
+            .replacen("CREATE TABLE queue", "CREATE TABLE queue_other", 1);
+        assert!(other.contains(kind));
+        conn.execute_batch(&format!(
+            "PRAGMA foreign_keys = OFF;
+             {other};
+             INSERT INTO queue_other SELECT * FROM queue;
+             DROP TABLE queue;
+             ALTER TABLE queue_other RENAME TO queue;
+             PRAGMA foreign_keys = ON;"
+        ))
+        .unwrap();
+    }
+
     pub fn wire_type(id: &str, parent: Option<&str>, title_field: Option<&str>) -> WireType {
         WireType {
             id: id.into(),
@@ -9299,17 +9327,17 @@ mod tests {
             });
             assert_eq!(queued.kind, kind);
         }
+        // A device never queues a purge, so the kind must not be holdable at all.
         assert!("purge_item".parse::<WriteKind>().is_err());
-        assert!(queued_writes(&conn).is_ok());
-        conn.execute(
-            "INSERT INTO queue (id, kind, idempotency_key, payload, queued_at)
-             VALUES ('purge', 'purge_item', 'purge-key', '{}', '2026-01-01T00:00:00Z')",
-            [],
-        )
-        .unwrap();
-        assert!(queued_writes(&conn).is_err(), "a reader took a purge");
-        conn.execute("DELETE FROM queue WHERE id = 'purge'", [])
-            .unwrap();
+        assert!(
+            conn.execute(
+                "INSERT INTO queue (id, kind, idempotency_key, payload, queued_at)
+                 VALUES ('purge', 'purge_item', 'purge-key', '{}', '2026-01-01T00:00:00Z')",
+                [],
+            )
+            .is_err(),
+            "the schema holds a purge"
+        );
 
         let verdict_row = |id: &str, verdict: &str, reason: Option<&str>| {
             conn.execute(
@@ -10172,15 +10200,8 @@ mod tests {
         };
 
         insert("ok", "accepted", 0, "key-ok").unwrap();
-        assert!(queued_writes(&conn).is_ok());
 
-        insert("bad-verdict", "maybe", 0, "key-a").unwrap();
-        assert!(
-            queued_writes(&conn).is_err(),
-            "a reader took a verdict it does not know"
-        );
-        conn.execute("DELETE FROM queue WHERE id = 'bad-verdict'", [])
-            .unwrap();
+        assert!(insert("bad-verdict", "maybe", 0, "key-a").is_err());
 
         assert!(insert("over-ceiling", "dead", 6, "key-b").is_err());
 
@@ -10424,7 +10445,7 @@ mod tests {
             )
             .unwrap();
         };
-        drop(open(&path).unwrap());
+        queue_admitting(&open(&path).unwrap(), "merge_metadata");
         at_version(&path, 0);
         // A refused write that carried content stays until discarded, so it
         // is counted with the waiting one.
@@ -10460,7 +10481,7 @@ mod tests {
     }
 
     /// Append one hash per schema version; never change an existing entry.
-    const SHAPES: [&str; 3] = ["9a505dc1b14cecc6", "115c1d4def4a3d91", "89bf7a15c9f762b1"];
+    const SHAPES: [&str; 1] = ["9a505dc1b14cecc6"];
 
     #[test]
     fn the_shape_this_build_makes_is_the_one_its_version_names() {

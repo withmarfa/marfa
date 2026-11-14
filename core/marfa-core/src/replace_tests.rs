@@ -553,6 +553,7 @@ fn a_refused_store_lists_each_write_it_holds_unsent() {
     let (_dir, path) = refused_store(true);
     {
         let conn = Connection::open(&path).unwrap();
+        crate::store::testing::queue_admitting(&conn, "merge_metadata");
         conn.execute(
             "INSERT INTO queue (id, kind, item_id, idempotency_key, payload, queued_at, verdict, sent)
              VALUES ('q2', 'merge_metadata', 'n1', 'k2', '{\"tags\":[\"a\"]}', '2026-01-01T00:00:01Z', 'dead', 1),

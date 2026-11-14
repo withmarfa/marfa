@@ -4444,6 +4444,14 @@ When a device upgrades a store, a device MUST keep every write its queue holds, 
 
 **Tests:** waiting on #3065.
 
+### `device/schema-version-names-kinds`
+
+A device MUST make a store whose queue refuses a write kind or a verdict that the store's schema version does not name.
+
+**Reason:** a new write kind or verdict is then a new schema version, upgraded in place (`device/schema-upgrade`). A store another build wrote at the same version then holds only writes this build reads, so no clean-up acts on a write before a reader refuses it.
+
+**Tests:** `device/working-copy.test.ts › holds in its queue no kind and no verdict its schema version does not name`.
+
 ### `device/schema-version-kept`
 
 If a device refuses a store `wrong_schema`, then a device MUST leave the store's version and the writes it holds unchanged.
