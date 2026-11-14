@@ -36,7 +36,7 @@ If `GET /attention` carries a query field, then the server MUST answer `400 vali
 
 ### `instance/attention-concerns`
 
-When `GET /attention` completes its checks, the server MUST include degraded or down health components, housekeeping jobs whose last run failed, connectors whose last run failed or that report problems or have said nothing for more than 24 hours, active folders whose current sign-ins report problems, paused removals or a first sync waiting, and live keys expiring within the next seven days inclusive.
+When `GET /attention` completes its checks, the server MUST include degraded or down health components, housekeeping jobs whose last run failed, connectors whose last run failed or that report problems or have said nothing for more than 24 hours, active folders whose current sign-ins report problems, paused removals or a first sync waiting, live keys expiring within the next seven days inclusive, and a clock more than 7 days later or more than an hour earlier than the newest time the server has stored.
 
 **Reason:** connector silence follows the latest registration, heartbeat, or received run; folder totals exclude historical sign-ins and do not claim that a copy is online.
 
@@ -123,6 +123,22 @@ Where `MARFA_BACKUP_PATH` is set and the file system that holds `<MARFA_BACKUP_P
 Where a destination is set, while it takes copies, no file waits for one, the last backup run was whole, the copy record holds a copy in the destination of each file the last backup put names, `backup_interval_seconds` is above 0 and no entry is listed under `instance/attention-backup-unlocked`, the server MUST NOT include an entry of kind `backup` in `GET /attention`.
 
 **Tests:** `compliance/backup-folder.test.ts › says nothing in health or attention while the folder answers and no file waits for its copy`, `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
+
+### `instance/attention-clock-ahead`
+
+While the server's clock is more than 7 days later than the newest time the server has stored, the server MUST answer `GET /attention` with a concern of kind `clock` and reference `clock_ahead` whose description says how far ahead the clock is and names `marfa housekeeping confirm-clock`.
+
+**Reason:** the jobs that delete do nothing while the clock is that far ahead (`housekeeping/clock-ahead-held`), and the owner is the one who can say whether the clock is right.
+
+**Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`.
+
+### `instance/attention-clock-behind`
+
+While the server's clock is more than an hour earlier than the newest time the server has stored, the server MUST answer `GET /attention` with a concern of kind `clock` and reference `clock_behind`.
+
+**Reason:** the server stamps the newest stored time until the clock catches up (`housekeeping/clock-stamp-not-earlier`), which an owner should know of.
+
+**Tests:** `compliance/clock-hold.test.ts › stamps nothing earlier than the newest time stored when the clock is set back, and keeps that time through a crash`.
 
 ### `instance/attention-unavailable`
 
@@ -1182,7 +1198,7 @@ When `GET /health` is answered, the server MUST answer each component's `status`
 
 ### `instance/health-overall`
 
-When `GET /health` is answered, the server MUST answer the overall `status` as `down` when any component is `down`, otherwise as `degraded` when any component is `degraded`, otherwise as `ok`.
+When `GET /health` is answered, the server MUST answer the overall `status` as `down` when any component is `down`, otherwise as `degraded` when any component is `degraded`, `backups.status` is `failing` or `housekeeping.held` names a hold, otherwise as `ok`.
 
 **Tests:** `compliance/instance.test.ts › answers /health without a credential and names its components`, `compliance/health.test.ts › answers 503 with the database down when the database refuses a read, and 200 once it answers`, `› answers 503 with the database write down when the database refuses a write, and 200 once it takes one`, `› answers 503 with blob storage down when the disk store refuses, and 200 once it answers`, `› answers 200 and degraded while the write is refused, and ok once the lock is released`.
 
@@ -1318,7 +1334,7 @@ When a request that carries a credential the instance does not hold sends `GET /
 
 ### `instance/health-housekeeping`
 
-When a credential holding `instance.read` sends `GET /health`, the server MUST answer a `housekeeping` object with `failed`, the name, finish time and error of each job whose last run failed (`null` when the schedule cannot be read in time), and `unreadable_settings`, the keys of the stored settings that no longer read.
+When a credential holding `instance.read` sends `GET /health`, the server MUST answer a `housekeeping` object with `failed`, the name, finish time and error of each job whose last run failed (`null` when the schedule cannot be read in time), `unreadable_settings`, the keys of the stored settings that no longer read, and `held`, why the jobs that delete are held (`null` while they run).
 
 **Reason:** an owner needs to see that background work has stopped, or that a setting has fallen back to its default, without reading every job. A request without `instance.read` is given no such object, as it is given no `error`.
 
@@ -2200,9 +2216,9 @@ While `MARFA_TEST_HOOKS` is true, the server MUST stamp the stored sign-in and c
 
 ### `instance/test-clock-forward`
 
-If the clock is asked to move back, then the server MUST refuse and keep the time it reads.
+If `advance_ms` asks the clock to move back, then the server MUST refuse and keep the time it reads.
 
-**Reason:** ids, versions and cursors assume time does not go back.
+**Reason:** an advance is time passing, which never runs back. A clock set back is `jump_ms`, and the server stamps nothing earlier than the newest time it has stored (`housekeeping/clock-stamp-not-earlier`).
 
 **Tests:** `compliance/test-hooks.test.ts › refuses to move the clock back, and keeps the time it reads`.
 
