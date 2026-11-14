@@ -262,6 +262,19 @@ fn edge_pattern(pattern: &str) -> bool {
         && parts.all(tail)
 }
 
+/// `app.<vendor>` for an `app.<vendor>.<name>` id, the namespace one vendor's app types share.
+fn vendor_of(id: &str) -> Option<&str> {
+    let segments: Vec<&str> = id.split('.').collect();
+    match segments[..] {
+        ["app", vendor, _] => Some(&id[.."app.".len() + vendor.len()]),
+        _ => None,
+    }
+}
+
+fn vendors(ids: &BTreeSet<String>) -> BTreeSet<&str> {
+    ids.iter().filter_map(|id| vendor_of(id)).collect()
+}
+
 /// What a client that names no scope asks for: the owner's content and the links between items.
 pub fn data_alone(refreshes: bool) -> ScopeSet {
     let mut set = ScopeSet::default();
@@ -416,6 +429,18 @@ impl Registries {
                     verb,
                 });
             }
+            for vendor in vendors(&self.types) {
+                add(Scope::Type {
+                    pattern: format!("{vendor}.*"),
+                    verb,
+                });
+            }
+            for vendor in vendors(&self.edge_types) {
+                add(Scope::Edge {
+                    pattern: format!("{vendor}.*"),
+                    verb,
+                });
+            }
             for id in &self.types {
                 add(Scope::Type {
                     pattern: id.clone(),
@@ -437,15 +462,17 @@ impl Registries {
     /// app can be granted it: a root no type sits under has none. `axis` is `Type` or `Edge`.
     pub fn namespace_write(&self, axis: Axis, name: &str) -> Option<String> {
         let (root, _) = name.split_once('.')?;
-        let pattern = format!("{root}.*");
         let verb = Verb::Write;
-        let scope = match axis {
-            Axis::Type => Scope::Type { pattern, verb },
-            Axis::Edge => Scope::Edge { pattern, verb },
-            _ => return None,
+        let literal_of = |pattern: String| match axis {
+            Axis::Type => Some(Scope::Type { pattern, verb }.literal()),
+            Axis::Edge => Some(Scope::Edge { pattern, verb }.literal()),
+            _ => None,
         };
-        let literal = scope.literal();
-        self.allowed().contains(&literal).then_some(literal)
+        let allowed = self.allowed();
+        let own = vendor_of(name).and_then(|vendor| literal_of(format!("{vendor}.*")));
+        let wide = literal_of(format!("{root}.*"))?;
+        own.filter(|literal| allowed.contains(literal))
+            .or_else(|| allowed.contains(&wide).then_some(wide))
     }
 
     /// Discovery takes no credential, so a type or root the owner made here stays out of it, and
@@ -727,6 +754,49 @@ mod tests {
         assert_eq!(held.namespace_write(Axis::Edge, "unheard.relates"), None);
         assert_eq!(held.namespace_write(Axis::Edge, "relates"), None);
         assert_eq!(held.namespace_write(Axis::Metadata, "acme.thing"), None);
+    }
+
+    #[test]
+    fn a_vendor_namespace_is_grantable_once_a_type_sits_under_it() {
+        let held = Registries::new(["app.acme.widget", "app.acmeco.gadget"], ["app.acme.owns"]);
+        let allowed = held.allowed();
+        for literal in [
+            "app.*:write",
+            "app.acme.*:read",
+            "app.acme.*:write",
+            "app.acmeco.*:write",
+            "edge.app.acme.*:write",
+        ] {
+            assert!(allowed.contains(literal), "{literal}");
+        }
+        // The witnesses: no type sits under these, and no other shape is a vendor.
+        for literal in [
+            "app.other.*:write",
+            "edge.app.acmeco.*:write",
+            "app.acme.widget.*:write",
+        ] {
+            assert!(!allowed.contains(literal), "{literal}");
+        }
+        let text = "app.acme.*:write";
+        assert_eq!(level(text, Axis::Type, "app.acme.later"), Level::Write);
+        assert_eq!(level(text, Axis::Type, "app.acmeco.gadget"), Level::None);
+        assert_eq!(level(text, Axis::Type, "app.other.thing"), Level::None);
+        assert_eq!(level(text, Axis::Type, "user.recipe"), Level::None);
+    }
+
+    #[test]
+    fn a_new_app_type_names_its_vendor_namespace_where_one_exists_else_the_whole_root() {
+        let held = Registries::new(["app.acme.widget"], []);
+        assert_eq!(
+            held.namespace_write(Axis::Type, "app.acme.gizmo")
+                .as_deref(),
+            Some("app.acme.*:write")
+        );
+        assert_eq!(
+            held.namespace_write(Axis::Type, "app.fresh.gizmo")
+                .as_deref(),
+            Some("app.*:write")
+        );
     }
 
     fn level(granted: &str, axis: Axis, name: &str) -> Level {

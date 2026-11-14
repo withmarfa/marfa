@@ -3,7 +3,7 @@
  * for a server booted with test hooks: comma-separated `name=value` pairs.
  * A name is `interval.<job>` or `interval.*` (every job a name does not give)
  * in milliseconds, neither reaching `backup`, whose interval is stored, one of the timings in milliseconds
- * (`housekeeping_poll_ms`, `write_wait_ms`, `upload_idle_ms`,
+ * (`housekeeping_poll_ms`, `write_wait_ms`, `upload_idle_ms`, `body_deadline_ms`,
  * `blob_read_idle_ms`, `inbound_idle_ms`, `connector_hold_ms`), or one of the
  * batch sizes (`enrichment_batch`, `blob_replicate_batch`,
  * `blob_replicate_batch_bytes`, `blob_integrity_batch`,

@@ -765,12 +765,12 @@ pub fn resume_after_credential_kept(origin: &str) {
         marfa_core::folder::follows(&Registry::at(registry), origin)
     };
     match Place::here().and_then(|place| resume(&place, origin, follows).map(|ran| (place, ran))) {
-        Ok((place, true)) => eprintln!(
+        Ok((place, true)) => crate::errln!(
             "restarted {}, so the folder watch uses this credential",
             place.manager.name()
         ),
         Ok((_, false)) => {}
-        Err(error) => eprintln!(
+        Err(error) => crate::errln!(
             "the credential is kept, but the folder watch could not be restarted ({error}); `marfa folders autostart on` starts it"
         ),
     }
@@ -1524,21 +1524,21 @@ fn describe_status(place: &Place, report: &Status) -> String {
                 .iter()
                 .filter(|folder| !folder.watching && folder.reason.as_deref() != Some(MISSING))
             {
-                let reason = folder.reason.as_deref().unwrap_or("not tried yet");
+                let reason = output::printable(folder.reason.as_deref().unwrap_or("not tried yet"));
                 lines.push(if report.credential.contains(&folder.dir) {
                     match &report.key_file {
                         Some(key_file) => format!(
                             "{}: not watched ({reason}): the watch has no credential it can use for this folder's server; the key file {} must name that server, and the keychain is not read",
-                            folder.dir,
+                            output::printable(&folder.dir),
                             key_file.display()
                         ),
                         None => format!(
                             "{}: not watched ({reason}): the watch has no credential it can use for this folder's server; keep one with `marfa keys keep` or `marfa login`, and on Linux unlock the Secret Service keychain at login",
-                            folder.dir
+                            output::printable(&folder.dir)
                         ),
                     }
                 } else {
-                    format!("{}: not watched ({reason})", folder.dir)
+                    format!("{}: not watched ({reason})", output::printable(&folder.dir))
                 });
             }
         } else if running {

@@ -60,7 +60,7 @@ pub fn guard(address: &str) {
         return;
     }
     warned.push(origin);
-    let _ = writeln!(std::io::stderr(), "{text}");
+    let _ = writeln!(crate::output::stderr(), "{text}");
 }
 
 /// The addresses `guard` was called with on this thread, oldest first.

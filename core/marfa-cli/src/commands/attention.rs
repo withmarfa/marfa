@@ -11,7 +11,7 @@ pub fn request() -> Request {
 
 pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let answer = remote.json(&request())?;
-    out.report(&answer, || describe(&answer))
+    out.report(&answer, describe)
 }
 
 fn text<'a>(concern: &'a Value, field: &str) -> &'a str {

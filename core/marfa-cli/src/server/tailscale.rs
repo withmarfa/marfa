@@ -187,7 +187,7 @@ pub fn serve(
     }
     let https = format!("--https={https_port}");
     if trace {
-        eprintln!("  $ tailscale serve --bg {https} {target}");
+        crate::errln!("  $ tailscale serve --bg {https} {target}");
     }
     run(&["serve", "--bg", &https, target]).map(|_| ())
 }
@@ -200,7 +200,7 @@ pub fn unserve(https_port: u16, target: &str, trace: bool) -> Result<bool, CliEr
     }
     let https = format!("--https={https_port}");
     if trace {
-        eprintln!("  $ tailscale serve {https} off");
+        crate::errln!("  $ tailscale serve {https} off");
     }
     run(&["serve", &https, "off"])?;
     Ok(true)

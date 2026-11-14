@@ -129,7 +129,7 @@ enum Sink {
 
 impl Sink {
     fn say(&self, line: &str) {
-        eprintln!("{line}");
+        crate::errln!("{line}");
         if let Sink::File(log) = self
             && let Ok(mut log) = log.lock()
         {

@@ -109,10 +109,11 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
 
 /**
  * Statuses any sign-in route answers through a refusal no route makes
- * itself: the limiter, which a run switches off and a fixture booting its own
- * server with it on draws, and the database's write lock.
+ * itself: the body deadline, on a route that reads a body; the limiter, which
+ * a run switches off and a fixture booting its own server with it on draws;
+ * and the database's write lock.
  */
-export const SIGN_IN_ROUTE_ANY_STATUS: readonly number[] = [429, 503];
+export const SIGN_IN_ROUTE_ANY_STATUS: readonly number[] = [408, 429, 503];
 
 /**
  * Refusals the harness's server cannot be made to answer on most doors, by

@@ -522,6 +522,34 @@ describe("registering a type from /mcp/schema", () => {
     expect(await granted.text()).toContain("user.recipe");
   });
 
+  it("asks for the vendor's own namespace where a type sits under it, and for app.* where none does", async () => {
+    const registered = await fetch(`${server.apiUrl}/types`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${server.workingKey}`,
+      },
+      body: JSON.stringify({
+        id: "app.acme.widget",
+        version: 1,
+        fields: { title: { type: "string" } },
+      }),
+    });
+    expect(registered.status).toBe(201);
+    const challenged = async (id: string): Promise<string> => {
+      const answer = await register(await schemaToken(SCHEMA_APP), id);
+      expect(answer.status, id).toBe(403);
+      await answer.body?.cancel();
+      return answer.headers.get("www-authenticate") ?? "";
+    };
+    expect(await challenged("app.acme.gizmo")).toContain(
+      'scope="app.acme.*:write"',
+    );
+    expect(await challenged("app.fresh.gizmo")).toContain(
+      'scope="app.*:write"',
+    );
+  });
+
   it("answers a name in a namespace nothing grants with the tool's error, not a challenge", async () => {
     const answer = await register(
       await schemaToken(SCHEMA_APP),

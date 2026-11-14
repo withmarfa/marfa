@@ -814,7 +814,7 @@ describe("a credential that is missing, against what the body would be refused f
     }
   });
 
-  it("answers a body nested too deep 400 before a missing credential's 401, and a body over the cap 413", async () => {
+  it("answers a declared body over the cap 413 before a missing credential's 401, and a missing credential 401 before a body nested too deep", async () => {
     const REQUEST_CAP = 1024 * 1024;
     const BULK_CAP = 16 * 1024 * 1024;
     const doors: {
@@ -919,8 +919,8 @@ describe("a credential that is missing, against what the body would be refused f
       ).toBe(413);
 
       const tooDeep = await bare(method, path, JSON.stringify(deep));
-      expect(tooDeep.status, `${label}: deep`).toBe(400);
-      expect(tooDeep.code, label).toBe("validation_error");
+      expect(tooDeep.status, `${label}: deep`).toBe(401);
+      expect(tooDeep.code, label).toBe("unauthorized");
       const sized = await overCap({});
       expect(sized.status, `${label}: over the cap`).toBe(413);
       expect(

@@ -38,7 +38,7 @@ pub fn run(command: PasskeysCommand, remote: &Remote, out: &Printer) -> Result<(
     match command {
         PasskeysCommand::List => {
             let answer = remote.json(&Request::get(&["owner", "passkeys"]))?;
-            out.report(&answer, || listing(&answer))
+            out.report(&answer, listing)
         }
         PasskeysCommand::Rename { id, name } => out.value(
             &remote
@@ -64,10 +64,10 @@ pub fn run(command: PasskeysCommand, remote: &Remote, out: &Printer) -> Result<(
                     .status()
                     .is_ok_and(|s| s.success())
                 {
-                    eprintln!("Could not open a browser; use the sign-in URL below.");
+                    crate::errln!("Could not open a browser; use the sign-in URL below.");
                 }
             }
-            out.report(&answer, || link.to_string())
+            out.report(&answer, |_| link.to_string())
         }
     }
 }

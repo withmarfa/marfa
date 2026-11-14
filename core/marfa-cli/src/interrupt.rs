@@ -252,8 +252,7 @@ pub fn stop_on_interrupt() {
             wait();
         }
         if marfa_core::fault::named("stop-notice").is_some() {
-            use std::io::Write;
-            let _ = std::io::stderr().write_all(format!("{STOP_NOTICE}\n").as_bytes());
+            crate::errln!("{STOP_NOTICE}");
         }
         // Stays to take a second Ctrl-C, which `arrived` ends the process on.
         loop {

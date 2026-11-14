@@ -96,6 +96,8 @@ impl Volume {
 const HIDE_POSITION: &str = "hide:webhook-position";
 const HIDE_EVENTS: &str = "hide:event";
 const RESOLVE: &str = "resolve:";
+/// The argument prefix that makes every lookup of a host take the milliseconds after it.
+const STALL: &str = "stall:";
 /// The argument suffix that has a `fail` fault act on every reach of its write.
 const ALWAYS: &str = "always";
 
@@ -372,8 +374,15 @@ fn judge(name: &str, arg: Option<&str>) -> Result<(Option<Aim>, Option<u64>), St
             {
                 return Err("a resolve fault is named for a host name".to_string());
             }
-            answers(arg.ok_or("a resolve fault takes the addresses the host resolves to")?)?;
-            Ok((None, None))
+            let arg = arg.ok_or("a resolve fault takes the addresses the host resolves to")?;
+            match arg.strip_prefix(STALL) {
+                Some(ms) => milliseconds(Some(ms))
+                    .map(|ms| (None, Some(ms)))
+                    .map_err(|_| {
+                        format!("{STALL} takes a whole number of ms, up to {MAX_DEADLINE_MS}")
+                    }),
+                None => answers(arg).map(|_| (None, None)),
+            }
         }
         "limit" => {
             if !LIMIT_LANES.contains(&rest) {
@@ -631,6 +640,17 @@ impl Faults {
         fault.seen = fault.seen.saturating_add(1);
         fault.fired += 1;
         lookups.into_iter().nth(at)
+    }
+
+    /// How long a lookup of `host` takes before it answers, when a fault stalls it.
+    pub fn stall(&self, host: &str) -> Option<Duration> {
+        let name = format!("{RESOLVE}{}", host.to_ascii_lowercase());
+        let mut armed = self.armed();
+        let fault = armed
+            .iter_mut()
+            .find(|fault| fault.name == name && fault.number.is_some())?;
+        fault.fired += 1;
+        fault.number.map(Duration::from_millis)
     }
 
     pub fn deadline(&self, job: &str) -> Option<Duration> {
@@ -971,6 +991,17 @@ mod tests {
             "resolve:a.test",
             Some("93.184.216.34>127.0.0.1;::1")
         ));
+    }
+
+    #[test]
+    fn a_stalled_host_is_stalled_and_not_scripted() {
+        let faults = Faults::default();
+        faults.set("resolve:Slow.test", Some("stall:250")).unwrap();
+        assert_eq!(faults.stall("slow.test"), Some(Duration::from_millis(250)));
+        assert!(faults.set("resolve:slow.test", Some("stall:soon")).is_err());
+        assert_eq!(faults.resolve("slow.test"), None);
+        assert_eq!(faults.stall("other.test"), None);
+        assert_eq!(faults.list()[0].fired, 1);
     }
 
     #[test]

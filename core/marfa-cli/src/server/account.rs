@@ -179,7 +179,7 @@ pub fn ensure(dir: &Path, trace: bool) -> Result<Identity, CliError> {
         NAME,
     ];
     if trace {
-        eprintln!("  $ useradd {}", arguments.join(" "));
+        crate::errln!("  $ useradd {}", arguments.join(" "));
     }
     let ran = Command::new(useradd())
         .args(arguments)

@@ -77,7 +77,7 @@ describe("DELETE /auth/grants/{id}", () => {
       method: "DELETE",
       headers: authorization,
     });
-    expect(revoked.status).toBe(204);
+    expect(revoked.status).toBe(200);
   });
 });
 

@@ -124,7 +124,7 @@ pub fn run(
     let sentence = approval_sentence(&page, &code.user_code, stream);
     if args.print_token && !out.json {
         // The token set is the one document on stdout.
-        eprintln!("{sentence}");
+        crate::errln!("{sentence}");
     } else {
         out.record(
             &json!({
@@ -134,7 +134,7 @@ pub fn run(
                 "expires_in": code.expires_in,
                 "scope": scope,
             }),
-            || sentence.clone(),
+            |_| sentence.clone(),
         )?;
     }
     if !args.no_browser {
@@ -150,14 +150,14 @@ pub fn run(
         Ok(()) => {
             let recorded = out.record(
                 &json!({ "server": origin, "scope": token.scope, "kept": "keychain" }),
-                || signed_in_text(&origin, token.scope.as_deref()),
+                |_| signed_in_text(&origin, token.scope.as_deref()),
             );
             resume(&origin);
             recorded
         }
         // The person has approved, so the set is printed rather than lost.
         Err(CliError::NoKeychain(reason)) => {
-            eprintln!(
+            crate::errln!(
                 "marfa: the keychain did not take the token ({reason}); it is printed instead"
             );
             print_set(&token, &client_id, out)
@@ -193,7 +193,10 @@ fn approval_sentence(page: &str, user_code: &str, stream: crate::style::Stream) 
         code
     };
     let shown = crate::style::bold(stream, &shown);
-    format!("Open {page} and enter the code {shown}\nWaiting for the approval...")
+    format!(
+        "Open {} and enter the code {shown}\nWaiting for the approval...",
+        crate::output::printable(page)
+    )
 }
 
 fn print_set(token: &auth::TokenSet, client_id: &str, out: &Printer) -> Result<(), CliError> {
@@ -204,7 +207,7 @@ fn print_set(token: &auth::TokenSet, client_id: &str, out: &Printer) -> Result<(
         "scope": token.scope,
         "client_id": client_id,
     });
-    out.record(&set, || {
+    out.record(&set, |set| {
         serde_json::to_string_pretty(&set).unwrap_or_default()
     })
 }

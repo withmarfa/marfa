@@ -1,4 +1,4 @@
-import { request } from "node:http";
+import { type IncomingHttpHeaders, request } from "node:http";
 
 /** Where a request goes: the public listener, or the private control socket. */
 export type Door = { apiUrl: string } | { socketPath: string };
@@ -9,7 +9,11 @@ export interface SlowUpload {
   /** Ends the body. */
   end(): void;
   /** The answer, which can arrive before the body is whole. */
-  answered: Promise<{ status: number; body: string }>;
+  answered: Promise<{
+    status: number;
+    headers: IncomingHttpHeaders;
+    body: string;
+  }>;
 }
 
 /**
@@ -33,21 +37,27 @@ export function slowPost(
     agent: false,
     headers: { ...headers, "transfer-encoding": "chunked" },
   });
-  const answered = new Promise<{ status: number; body: string }>(
-    (resolve, reject) => {
-      req.on("response", (response) => {
-        let body = "";
-        response.setEncoding("utf8");
-        response.on("data", (text: string) => (body += text));
-        response.once("error", reject);
-        response.once("end", () => {
-          resolve({ status: response.statusCode ?? 0, body });
-          req.destroy();
+  const answered = new Promise<{
+    status: number;
+    headers: IncomingHttpHeaders;
+    body: string;
+  }>((resolve, reject) => {
+    req.on("response", (response) => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", (text: string) => (body += text));
+      response.once("error", reject);
+      response.once("end", () => {
+        resolve({
+          status: response.statusCode ?? 0,
+          headers: response.headers,
+          body,
         });
+        req.destroy();
       });
-      req.on("error", reject);
-    },
-  );
+    });
+    req.on("error", reject);
+  });
   // A fixture that stops waiting for the answer must not leave it unhandled.
   answered.catch(() => undefined);
   return {
@@ -63,6 +73,68 @@ export function slowPost(
     },
     answered,
   };
+}
+
+export interface HeldRequest {
+  /** `true` on `100 Continue`; `false` on a final answer before it. */
+  asked: Promise<boolean>;
+  /** Sends the whole body. */
+  send(): void;
+  /** The answer, which can arrive before the body is sent. */
+  answered: Promise<{
+    status: number;
+    headers: IncomingHttpHeaders;
+    body: string;
+  }>;
+}
+
+/** `100 Continue` lets a fixture change authority after admission and before the body. */
+export function heldRequest(
+  apiUrl: string,
+  method: string,
+  path: string,
+  headers: Record<string, string>,
+  body: string | Uint8Array,
+): HeldRequest {
+  const req = request({
+    ...urlOptions(apiUrl),
+    path,
+    method,
+    agent: false,
+    headers: {
+      ...headers,
+      "content-length": String(Buffer.byteLength(body)),
+      expect: "100-continue",
+    },
+  });
+  let ask: (asked: boolean) => void = () => undefined;
+  const asked = new Promise<boolean>((resolve) => (ask = resolve));
+  req.on("continue", () => ask(true));
+  const answered = new Promise<{
+    status: number;
+    headers: IncomingHttpHeaders;
+    body: string;
+  }>((resolve, reject) => {
+    req.on("response", (response) => {
+      ask(false);
+      let text = "";
+      response.setEncoding("utf8");
+      response.on("data", (part: string) => (text += part));
+      response.once("error", reject);
+      response.once("end", () => {
+        resolve({
+          status: response.statusCode ?? 0,
+          headers: response.headers,
+          body: text,
+        });
+        req.destroy();
+      });
+    });
+    req.on("error", reject);
+  });
+  answered.catch(() => undefined);
+  req.flushHeaders();
+  return { asked, send: () => req.end(body), answered };
 }
 
 function urlOptions(apiUrl: string): { hostname: string; port: string } {

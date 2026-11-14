@@ -1,5 +1,6 @@
 //! Credential-owned subscriptions and outbound deliveries.
 
+mod deferred;
 mod request;
 mod schedule;
 mod send;
@@ -17,7 +18,7 @@ use super::access::{Caller, Maker, standing_maker};
 use super::catalog;
 use super::events::fanout;
 use super::housekeeping::{self, DAY_MS};
-use super::outbound::{self, Reach};
+use super::outbound::{self, Asker, Reach};
 use super::refusal::{Code, Refusal, Result};
 use super::unit::Unit;
 use super::{App, keys, oauth};
@@ -116,17 +117,32 @@ fn not_found() -> Refusal {
 }
 
 /// An inconclusive registration lookup leaves the decision to the send attempt.
-pub async fn check_address(app: &App, address: &request::Address) -> Result<()> {
+pub async fn check_address(app: &App, maker: &Maker, address: &request::Address) -> Result<()> {
     if app.settings.start.webhook_private_addresses {
         return Ok(());
     }
-    match outbound::reach(&app.faults, &address.url, false).await {
+    match outbound::reach(
+        &app.faults,
+        &address.url,
+        false,
+        Asker::Registration(&slot_key(maker)),
+    )
+    .await
+    {
         Reach::NotPublic => Err(invalid(
             "url",
             "url names a host that is not a public address. An instance whose receivers are on a \
              private network allows them with MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES=true.",
         )),
-        Reach::Targets(_) | Reach::Unresolved => Ok(()),
+        Reach::Targets(_) | Reach::Unresolved | Reach::NoSlot => Ok(()),
+    }
+}
+
+/// The text that tells one maker's lookups from another's.
+fn slot_key(maker: &Maker) -> String {
+    match maker {
+        Maker::Key(id) => format!("key:{id}"),
+        Maker::Grant(id) => format!("grant:{id}"),
     }
 }
 
@@ -194,8 +210,8 @@ fn read_answer(tx: &Transaction<'_>, subscription: &Subscription) -> Result<Valu
 }
 
 pub async fn create(app: &App, caller: &Caller, request: Create) -> Result<Value> {
-    caller.webhook_maker()?;
-    check_address(app, &request.url).await?;
+    let maker = caller.webhook_maker()?;
+    check_address(app, &maker, &request.url).await?;
     let subscription = app
         .write(caller, "webhook.create", move |unit| {
             insert_new(unit, request)
@@ -274,9 +290,9 @@ pub async fn get(app: &App, caller: &Caller, id: String) -> Result<Value> {
 }
 
 pub async fn update(app: &App, caller: &Caller, id: String, request: Update) -> Result<Value> {
-    caller.webhook_maker()?;
+    let maker = caller.webhook_maker()?;
     if let Some(address) = &request.url {
-        check_address(app, address).await?;
+        check_address(app, &maker, address).await?;
     }
     let cache = app.catalog_handle();
     let subscription = app

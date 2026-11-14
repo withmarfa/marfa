@@ -457,7 +457,7 @@ pub fn run(
             })?;
             return out.report(
                 &json!({ "origin": remote.origin(), "forgotten": had }),
-                || {
+                |_| {
                     if had {
                         format!("forgot the key kept for {}", remote.origin())
                     } else {
@@ -470,9 +470,9 @@ pub fn run(
     let answer = remote.json(&request)?;
     match &command {
         KeysCommand::Create(_) => print_minted(&answer, out),
-        KeysCommand::Revoke { id } => out.report(&answer, || format!("revoked key {id}")),
-        KeysCommand::List => out.report(&answer, || listing(&answer)),
-        _ => out.report(&answer, || key_text(&answer)),
+        KeysCommand::Revoke { id } => out.report(&answer, |_| format!("revoked key {id}")),
+        KeysCommand::List => out.report(&answer, listing),
+        _ => out.report(&answer, key_text),
     }
 }
 
@@ -573,7 +573,7 @@ fn keep(remote: &Remote, out: &Printer, resume: &dyn Fn(&str)) -> Result<(), Cli
         credentials::keep(remote.origin(), &Kept::Key { key })
     })?;
     resume(remote.origin());
-    out.report(&json!({ "origin": remote.origin(), "kept": "key" }), || {
+    out.report(&json!({ "origin": remote.origin(), "kept": "key" }), |_| {
         format!(
             "kept a key for {} in the keychain; it is now the server a bare command talks to",
             remote.origin()
@@ -593,7 +593,7 @@ fn read_line(empty: &str) -> Result<String, CliError> {
 
 /// A minted key is shown once, so the plaintext leads the line.
 fn print_minted(answer: &Value, out: &Printer) -> Result<(), CliError> {
-    out.report(answer, || minted_text(answer))
+    out.report(answer, minted_text)
 }
 
 fn minted_text(answer: &Value) -> String {

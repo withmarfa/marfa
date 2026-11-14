@@ -86,10 +86,10 @@ pub fn run(command: ExtensionsCommand, remote: &Remote, out: &Printer) -> Result
     };
     let answer = remote.json(&request)?;
     match &command {
-        ExtensionsCommand::Write { id, namespace, .. } => out.report(&answer, || {
+        ExtensionsCommand::Write { id, namespace, .. } => out.report(&answer, |_| {
             format!("wrote the namespace {namespace} of {id}")
         }),
-        ExtensionsCommand::Delete { id, namespace, .. } => out.report(&answer, || {
+        ExtensionsCommand::Delete { id, namespace, .. } => out.report(&answer, |_| {
             format!("removed the namespace {namespace} of {id}")
         }),
         _ => out.value(&answer),

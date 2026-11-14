@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::error::CliError;
 use crate::interrupt;
-use crate::output::Printer;
+use crate::output::{Printer, printable};
 use crate::remote::Remote;
 use crate::remote::request::Request;
 
@@ -179,7 +179,7 @@ fn print_frame(frame: &Frame, out: &Printer) -> Result<(), CliError> {
         serde_json::from_str(&frame.data).unwrap_or(Value::String(frame.data.clone()));
     out.record(
         &json!({ "id": frame.id, "event": frame.event, "data": data }),
-        || {
+        |_| {
             let subject = data
                 .get("item")
                 .or_else(|| data.get("edge"))
@@ -190,9 +190,9 @@ fn print_frame(frame: &Frame, out: &Printer) -> Result<(), CliError> {
                 .unwrap_or("");
             format!(
                 "{}  {}  {}",
-                frame.id.as_deref().unwrap_or("-"),
-                frame.event.as_deref().unwrap_or("-"),
-                subject
+                printable(frame.id.as_deref().unwrap_or("-")),
+                printable(frame.event.as_deref().unwrap_or("-")),
+                printable(subject)
             )
             .trim_end()
             .to_string()

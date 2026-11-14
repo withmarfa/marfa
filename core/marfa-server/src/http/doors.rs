@@ -18,11 +18,24 @@ use crate::app::App;
 
 type Inner = Router<Arc<App>>;
 
+pub type Credentials = HashMap<(Method, &'static str), (Asks, Option<Admission>)>;
+
 /// A method and the path pattern it is served at, as the router matches it.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Door {
     pub method: Method,
     pub path: &'static str,
+}
+
+/// What a door needs presented before the server reads its body.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Asks {
+    /// A token, or the private socket.
+    Credential,
+    /// A credential, or the owner's session cookie.
+    Session,
+    /// Nothing: a stranger may send the body, so it is read only to a small fixed cap.
+    Nothing,
 }
 
 /// The handlers of one path, each under its method.
@@ -111,6 +124,7 @@ pub struct Doors {
     unjudged: HashSet<&'static str>,
     refusals: Vec<(Method, &'static str)>,
     admissions: HashMap<(Method, &'static str), Admission>,
+    asks: HashMap<(Method, &'static str), Asks>,
     served: Vec<Door>,
 }
 
@@ -141,6 +155,32 @@ impl Doors {
     pub fn refusing(mut self, method: Method, path: &'static str) -> Self {
         self.refusals.push((method, path));
         self
+    }
+
+    /// The doors held so far ask `asks` rather than a credential.
+    pub fn asking(mut self, asks: Asks) -> Self {
+        for door in &self.served {
+            self.asks.insert((door.method.clone(), door.path), asks);
+        }
+        self
+    }
+
+    pub fn asking_at(mut self, method: Method, path: &'static str, asks: Asks) -> Self {
+        self.asks.insert((method, path), asks);
+        self
+    }
+
+    /// What each door asks before its body is read, and the credentials its group admits.
+    pub(super) fn credentials(&self) -> Credentials {
+        self.served
+            .iter()
+            .map(|door| {
+                let key = (door.method.clone(), door.path);
+                let asks = self.asks.get(&key).copied().unwrap_or(Asks::Credential);
+                let admission = self.admissions.get(&key).copied();
+                (key, (asks, admission))
+            })
+            .collect()
     }
 
     /// Admission and instance checks share the group's credential rule.
@@ -183,6 +223,7 @@ impl Doors {
         self.unjudged.extend(other.unjudged);
         self.refusals.extend(other.refusals);
         self.admissions.extend(other.admissions);
+        self.asks.extend(other.asks);
         self.served.extend(other.served);
         self.router = self.router.merge(other.router);
         self

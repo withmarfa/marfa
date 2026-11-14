@@ -280,5 +280,3 @@ Every other covered operation's success body is validated against the served doc
 - `GET /connectors/{id}/deliveries/{delivery_id}/body`: a delivery's bytes as they arrived, `application/octet-stream`.
 - `GET /export`: newline-delimited JSON, or a gzip archive.
 - `GET /events`: a server-sent event stream.
-
-- `DELETE /auth/grants/{id}`: `204` has no response body.

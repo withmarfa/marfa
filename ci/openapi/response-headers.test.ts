@@ -31,6 +31,9 @@ const AHEAD_OF_THE_LIMITER = new Set(["GET /", "GET /health", "POST /owner"]);
  */
 const ANSWERED_AHEAD = "413";
 
+/** A body that did not arrive in time, refused before the idempotency claim. */
+const BODY_LATE = "408";
+
 /** Statuses an idempotency claim gives back rather than records. */
 const RELEASED = new Set([401, 403]);
 
@@ -235,11 +238,12 @@ describe("the document declares the headers the server sets", () => {
       expect(responses, `${key} is missing from the spec`).toBeDefined();
       for (const [status, response] of Object.entries(responses ?? {})) {
         // 401 and 403 release the claim rather than recording it, and the
-        // body cap refuses before the claim is made, so none of them can
-        // ever be replayed and none carries the marker.
+        // body cap and the body deadline refuse before the claim is made, so
+        // none of them can ever be replayed and none carries the marker.
         const released =
           RELEASED.has(Number.parseInt(status, 10)) ||
-          status === ANSWERED_AHEAD;
+          status === ANSWERED_AHEAD ||
+          status === BODY_LATE;
         expect(
           "Idempotency-Replayed" in (response.headers ?? {}),
           `${key} ${status}`,

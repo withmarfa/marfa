@@ -15,7 +15,7 @@ use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::blobs::{Blob, DEFAULT_TYPE};
 use crate::app::limiter::{FILE_FETCHES, Lane, retry_seconds};
-use crate::app::outbound::{self, Pinned, Reach};
+use crate::app::outbound::{self, Asker, Pinned, Reach};
 use crate::app::provenance;
 use crate::app::refusal::Refusal;
 use crate::settings::registry::{
@@ -139,13 +139,13 @@ fn checked(raw: &str) -> Result<Url, Reason> {
 /// Every DNS answer must be public; only checked addresses may be reached.
 fn resolved(app: &App, handle: &Handle, url: &Url) -> Result<Vec<SocketAddr>, Reason> {
     let port = url.port_or_known_default().ok_or(Reason::BadUrl)?;
-    match handle.block_on(outbound::reach(&app.faults, url, false)) {
+    match handle.block_on(outbound::reach(&app.faults, url, false, Asker::McpFetch)) {
         Reach::Targets(targets) => Ok(targets
             .into_iter()
             .take(MOST_ADDRESSES)
             .map(|target| SocketAddr::new(target.connected, port))
             .collect()),
-        Reach::Unresolved => Err(Reason::Unreachable),
+        Reach::Unresolved | Reach::NoSlot => Err(Reason::Unreachable),
         Reach::NotPublic => Err(Reason::NotPublic),
     }
 }

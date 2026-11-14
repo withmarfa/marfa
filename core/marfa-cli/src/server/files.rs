@@ -629,7 +629,7 @@ mod tests {
             fs::set_permissions(&parent, fs::Permissions::from_mode(0o755)).unwrap();
             check_parents(&dir, me).unwrap();
             if !let_another_account(&parent, grant) {
-                eprintln!("skipped: this file system keeps no ACLs");
+                crate::errln!("skipped: this file system keeps no ACLs");
                 return;
             }
             let checked = check_parents(&dir, me);

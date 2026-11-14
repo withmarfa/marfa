@@ -281,8 +281,8 @@ const COUNT_OR_NONE: Rule = Rule::Whole {
 };
 
 registry! {
-    MAX_REQUEST_BYTES: u64 = "max_request_bytes", BYTES, "1048576", "The largest request body the server accepts, in bytes.";
-    MAX_BULK_REQUEST_BYTES: u64 = "max_bulk_request_bytes", BYTES, "16777216", "The largest body the bulk operations accept, in bytes. A restore refuses a row larger than this.";
+    MAX_REQUEST_BYTES: u64 = "max_request_bytes", BYTES, "1048576", "The largest request body the server accepts, in bytes. The server waits 180 seconds for a body, so a body larger than about 21 MiB can't arrive in time over a 1 Mbit/s link.";
+    MAX_BULK_REQUEST_BYTES: u64 = "max_bulk_request_bytes", BYTES, "16777216", "The largest body the bulk operations accept, in bytes. A restore refuses a row larger than this. The server waits 180 seconds for a body, so a body larger than about 21 MiB can't arrive in time over a 1 Mbit/s link.";
     DISK_RESERVE_BYTES: u64 = "disk_reserve_bytes", BYTES_OR_NONE, "134217728", "Free disk space on the blob volume that an upload must leave, and below which health reports the disk as degraded, in bytes.";
     BLOB_MIN_COPIES: u64 = "blob_min_copies", COUNT, "1", "The fewest live copies the server keeps of each blob.";
     BLOB_CLEANUP_ENABLED: bool = "blob_cleanup_enabled", Rule::Boolean, "true", "Whether the `blob-orphans` job sweeps for blobs nothing references and purges them once they have stood in the orphan report for the grace.";

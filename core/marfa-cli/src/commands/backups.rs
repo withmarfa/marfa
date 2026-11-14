@@ -123,10 +123,10 @@ pub fn run(command: BackupsCommand, remote: &Remote, out: &Printer) -> Result<()
     let answer = remote.json(&request(&command))?;
     match command {
         BackupsCommand::Restore { .. } => super::restore::answered(&answer, out),
-        BackupsCommand::Run => out.report(&answer, || ran_text(&answer)),
+        BackupsCommand::Run => out.report(&answer, ran_text),
         BackupsCommand::Folder {
             command: FolderCommand::Adopt,
-        } => out.report(&answer, || adopted_text(&answer)),
+        } => out.report(&answer, adopted_text),
         BackupsCommand::List => out.value(&answer),
     }
 }

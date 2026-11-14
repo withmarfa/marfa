@@ -102,11 +102,11 @@ fn described(answer: &Value) -> String {
 pub fn run(command: SourcesCommand, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let answer = remote.json(&request(&command))?;
     match &command {
-        SourcesCommand::Set { source, .. } => out.report(&answer, || {
-            format!("updated the source {source}: {}", described(&answer))
+        SourcesCommand::Set { source, .. } => out.report(&answer, |answer| {
+            format!("updated the source {source}: {}", described(answer))
         }),
-        SourcesCommand::Clear { source, .. } => out.report(&answer, || {
-            format!("updated the source {source}: {}", described(&answer))
+        SourcesCommand::Clear { source, .. } => out.report(&answer, |answer| {
+            format!("updated the source {source}: {}", described(answer))
         }),
         _ => out.value(&answer),
     }

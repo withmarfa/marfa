@@ -2684,6 +2684,7 @@ dependencies = [
  "libc",
  "libsqlite3-sys",
  "marfa-rules",
+ "marfa-telemetry",
  "notify",
  "pulldown-cmark",
  "regex",

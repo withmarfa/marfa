@@ -8,7 +8,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use serde_json::{Value, json};
 
 use super::settings::Settings;
-use marfa_telemetry::host::{CONNECT_LIMIT, may_use_proxy};
+use marfa_telemetry::host::CONNECT_LIMIT;
 
 /// A span or an event attribute. The allowlist in `layer` decides which keys
 /// exist; nothing here accepts a key it was not given as a `&'static str`.
@@ -144,18 +144,19 @@ pub fn agent(total: Duration, target: &str) -> ureq::Agent {
     let tls = ureq::tls::TlsConfig::builder()
         .root_certs(ureq::tls::RootCerts::PlatformVerifier)
         .build();
-    let mut config = ureq::Agent::config_builder()
-        .tls_config(tls)
-        .http_status_as_error(false)
-        .max_redirects(0)
-        .max_redirects_will_error(false)
-        .timeout_global(Some(total))
-        .timeout_connect(Some(total.min(CONNECT_LIMIT)))
-        .user_agent(concat!("marfa/", env!("CARGO_PKG_VERSION")));
-    if !may_use_proxy(target) {
-        config = config.proxy(None);
-    }
-    config.build().into()
+    marfa_core::http::direct_when_local(
+        ureq::Agent::config_builder()
+            .tls_config(tls)
+            .http_status_as_error(false)
+            .max_redirects(0)
+            .max_redirects_will_error(false)
+            .timeout_global(Some(total))
+            .timeout_connect(Some(total.min(CONNECT_LIMIT)))
+            .user_agent(concat!("marfa/", env!("CARGO_PKG_VERSION"))),
+        target,
+    )
+    .build()
+    .into()
 }
 
 pub struct Poster {

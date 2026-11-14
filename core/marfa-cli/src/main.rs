@@ -29,6 +29,7 @@ mod values;
 mod watch;
 mod writing;
 
+use std::io::Write as _;
 use std::process::ExitCode;
 
 use clap::{ArgMatches, CommandFactory, FromArgMatches, Parser, Subcommand};
@@ -92,12 +93,14 @@ struct Cli {
     /// beside it. A command that sends a key
     /// from --key or MARFA_API_KEY needs the URL named, and so does any
     /// command with the keychain off.
+    /// With MARFA_API_KEY set, a different server from MARFA_API_URL requires --key.
     #[arg(long, global = true, value_name = "URL", help_heading = "Server")]
     url: Option<String>,
 
     /// A key or a token for that server. Prefer MARFA_API_KEY or the
     /// keychain: a command line is readable by other users of the machine and
-    /// stays in shell history. Falls back to MARFA_API_KEY, then to the
+    /// stays in shell history. Falls back to MARFA_API_KEY, which a --url for
+    /// another server than MARFA_API_URL names does not use, then to the
     /// keychain: the file MARFA_KEYCHAIN names, where it names one, unless
     /// the keychain is off. MARFA_PROFILE is not read beside it.
     #[arg(long, global = true, value_name = "KEY", help_heading = "Server")]
@@ -467,11 +470,15 @@ fn refused(error: &CliError, json: bool) -> ExitCode {
 
 fn print_refusal(error: &CliError, json: bool, aim: Option<&hint::Aim>) {
     if json {
-        eprintln!("{}", error.envelope());
+        let _ = writeln!(output::stderr_json(), "{}", error.envelope());
     } else {
-        eprintln!("{} {error}", style::bad(style::Stream::Err, "marfa:"));
+        crate::errln!(
+            "{} {}",
+            style::bad(style::Stream::Err, "marfa:"),
+            output::printable(&error.to_string())
+        );
         if let Some(hint) = aim.and_then(|aim| hint::for_error(error, aim)) {
-            eprintln!("{hint}");
+            crate::errln!("{hint}");
         }
     }
 }

@@ -7,12 +7,14 @@ use std::time::{Duration, Instant};
 use tokio::sync::watch;
 use tokio::task::{Id, JoinSet};
 
+use super::deferred::Deferred;
 use super::schedule::{self, Context, Gap, Pass};
 use super::{send, store};
 use crate::app::App;
 use crate::app::catalog;
 use crate::app::connectors::read_only;
 use crate::app::faults::HOLD_WEBHOOK_SCHEDULE;
+use crate::app::outbound;
 use crate::app::refusal::{Code, Result};
 use crate::db::Write;
 use crate::log;
@@ -95,9 +97,13 @@ struct Sender {
     app: Arc<App>,
     stopping: watch::Receiver<bool>,
     commits: watch::Receiver<u64>,
-    flying: JoinSet<Result<()>>,
+    flying: JoinSet<Result<send::Ended>>,
     busy: HashMap<Id, Attempt>,
     held_back: HashMap<i64, Instant>,
+    deferred: Deferred,
+    released: watch::Receiver<u64>,
+    /// The count of lookup slots given back that every waiting delivery has been checked against.
+    seen_released: u64,
     reported: Option<(Gap, Option<i64>)>,
 }
 
@@ -110,6 +116,9 @@ impl Sender {
             flying: JoinSet::new(),
             busy: HashMap::new(),
             held_back: HashMap::new(),
+            deferred: Deferred::default(),
+            released: outbound::deliveries_released(),
+            seen_released: 0,
             reported: None,
         }
     }
@@ -141,6 +150,10 @@ impl Sender {
                 }
                 changed = self.commits.changed() => if changed.is_err() { break },
                 changed = moves.changed() => if changed.is_err() { break },
+                () = given_back(&mut self.released, self.seen_released), if self.deferred.any_waiting() => {
+                    self.seen_released = *self.released.borrow();
+                    self.deferred.release(outbound::delivery_share_is_free);
+                }
                 () = sleep(rest) => {}
             }
         }
@@ -240,6 +253,7 @@ impl Sender {
     async fn fill(&mut self) -> Option<i64> {
         let now = Instant::now();
         self.held_back.retain(|_, until| *until > now);
+        self.deferred.expire(now);
         let free = AT_ONCE.saturating_sub(self.busy.len());
         let beyond_share = (AT_ONCE - HEADROOM).saturating_sub(self.busy.len());
         let mut excluded: Vec<i64> = self
@@ -247,6 +261,7 @@ impl Sender {
             .values()
             .map(|attempt| attempt.seq)
             .chain(self.held_back.keys().copied())
+            .chain(self.deferred.waiting())
             .collect();
         let holding: Vec<String> = self
             .busy
@@ -283,23 +298,41 @@ impl Sender {
             }
         };
         for store::Due { seq, maker } in due {
-            let handle = self.flying.spawn(send::attempt(self.app.clone(), seq));
+            let spent = self.deferred.spent(seq, now);
+            let attempt = send::attempt(self.app.clone(), seq, maker.clone(), spent);
+            let handle = self.flying.spawn(attempt);
             self.busy.insert(handle.id(), Attempt { seq, maker });
         }
         next
     }
 
-    fn landed(&mut self, joined: std::result::Result<(Id, Result<()>), tokio::task::JoinError>) {
+    fn landed(
+        &mut self,
+        joined: std::result::Result<(Id, Result<send::Ended>), tokio::task::JoinError>,
+    ) {
         let (id, outcome) = match joined {
             Ok((id, outcome)) => (id, outcome.map_err(|refused| refused.to_string())),
             Err(error) => (error.id(), Err(error.to_string())),
         };
-        let Some(Attempt { seq, .. }) = self.busy.remove(&id) else {
+        let Some(Attempt { seq, maker }) = self.busy.remove(&id) else {
             return;
         };
-        if let Err(error) = outcome {
-            tracing::warn!(%error, seq, "A webhook delivery's attempt did not finish");
-            self.held_back.insert(seq, Instant::now() + HELD_BACK);
+        match outcome {
+            Ok(send::Ended::Settled) => self.deferred.settle(seq),
+            Ok(send::Ended::Deferred) => {
+                // The count is read before the room is checked, so a slot given back between them is seen.
+                let counted = *self.released.borrow();
+                let waiting = !outbound::delivery_share_is_free(&maker);
+                if waiting && !self.deferred.any_waiting() {
+                    self.seen_released = counted;
+                }
+                self.deferred.defer(seq, &maker, Instant::now(), waiting);
+            }
+            Err(error) => {
+                self.deferred.settle(seq);
+                tracing::warn!(%error, seq, "A webhook delivery's attempt did not finish");
+                self.held_back.insert(seq, Instant::now() + HELD_BACK);
+            }
         }
     }
 
@@ -316,10 +349,11 @@ impl Sender {
                 let wait = due.saturating_sub(self.app.clock.now_ms()).max(0);
                 Duration::from_millis(u64::try_from(wait).unwrap_or(u64::MAX))
             });
-        match (held, due) {
-            (Some(held), Some(due)) => Some(held.min(due)),
-            (held, due) => held.or(due),
-        }
+        let limit = self
+            .deferred
+            .next_limit()
+            .map(|limit| limit.saturating_duration_since(Instant::now()));
+        [held, due, limit].into_iter().flatten().min()
     }
 
     /// Lets the attempts under way record what they met, unless the stop's wait runs out first.
@@ -343,6 +377,13 @@ impl Sender {
 
 async fn stopped(raised: &mut watch::Receiver<bool>) {
     let _ = raised.wait_for(|raised| *raised).await;
+}
+
+/// Answers when the count of slots given back is no longer `seen`.
+async fn given_back(released: &mut watch::Receiver<u64>, seen: u64) {
+    if released.wait_for(|count| *count != seen).await.is_err() {
+        std::future::pending::<()>().await;
+    }
 }
 
 async fn sleep(rest: Option<Duration>) {

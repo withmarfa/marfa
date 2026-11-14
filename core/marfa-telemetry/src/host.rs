@@ -7,7 +7,7 @@ pub const CONNECT_LIMIT: Duration = Duration::from_secs(1);
 /// `localhost`, `127.0.0.0/8` and `::1`, which never leave the machine.
 pub fn is_loopback(url: &Url) -> bool {
     match url.host() {
-        Some(Host::Domain(name)) => name == "localhost",
+        Some(Host::Domain(name)) => name.trim_end_matches('.') == "localhost",
         Some(Host::Ipv4(address)) => address.is_loopback(),
         Some(Host::Ipv6(address)) => address.is_loopback(),
         None => false,
@@ -69,6 +69,7 @@ mod tests {
         for address in [
             "http://localhost:8600",
             "http://LOCALHOST",
+            "http://localhost.:8600",
             "http://127.0.0.1",
             "http://127.1.2.3:80",
             "http://[::1]:8600",

@@ -201,4 +201,45 @@ describe("marfa server status", () => {
     expect(got.text).not.toContain("Backups ");
     expect(got.report.backups).toMatchObject({ status: "ok", say: null });
   });
+
+  it("asks the server on this machine directly, whatever proxy the environment names", async () => {
+    answer = {
+      status: 200,
+      body: JSON.stringify({ status: "ok", components: {} }),
+    };
+    const arrivals: string[] = [];
+    const proxy = createServer((request) => {
+      arrivals.push(`${request.method ?? ""} ${request.url ?? ""}`);
+      request.socket.destroy();
+    });
+    proxy.on("connect", (request, socket) => {
+      arrivals.push(`CONNECT ${request.url ?? ""}`);
+      socket.destroy();
+    });
+    await new Promise<void>((done) => proxy.listen(0, "127.0.0.1", done));
+    try {
+      const through = `http://127.0.0.1:${String((proxy.address() as AddressInfo).port)}`;
+      const proxied = cli.withEnv({
+        HTTP_PROXY: through,
+        http_proxy: through,
+        HTTPS_PROXY: through,
+        ALL_PROXY: through,
+        all_proxy: through,
+        NO_PROXY: "",
+        no_proxy: "",
+      });
+      const said = await proxied.run([
+        "server",
+        "status",
+        "--dir",
+        join(dir, "install"),
+      ]);
+      expect(said.code, said.stderr).toBe(0);
+      expect(said.stdout).toContain("running and healthy");
+      expect(arrivals).toEqual([]);
+    } finally {
+      proxy.closeAllConnections();
+      await new Promise((done) => proxy.close(done));
+    }
+  });
 });

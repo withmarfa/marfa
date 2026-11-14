@@ -245,7 +245,13 @@ describe("DELETE /auth/grants/{id}", () => {
     expect(await itemsStatus(server, access)).toBe(200);
 
     const revoked = await revokeGrant(grant.id, server.managementKey);
-    expect(revoked.status).toBe(204);
+    expect(revoked.status).toBe(200);
+    await expectMatchesSchema(
+      "DELETE",
+      "/auth/grants/{id}",
+      200,
+      await revoked.json(),
+    );
     expect(await itemsStatus(server, access)).toBe(401);
     expect(await itemsStatus(server, key.key)).toBe(200);
     expect(await itemsStatus(server, descendant.key)).toBe(200);
@@ -260,7 +266,7 @@ describe("DELETE /auth/grants/{id}", () => {
     expect(asked?.pathname, String(asked)).toBe("/auth/authorize");
   });
 
-  it("with revoke_keys=1 also revokes every key the app minted, a key's descendant included", async () => {
+  it("with revoke_keys=true also revokes every key the app minted, a key's descendant included", async () => {
     const { access, grant } = await approved();
     const key = await mintedBy(access, "grant-taken", {
       permissions: ["keys.mint"],
@@ -292,9 +298,9 @@ describe("DELETE /auth/grants/{id}", () => {
     const revoked = await revokeGrant(
       grant.id,
       server.managementKey,
-      "?revoke_keys=1",
+      "?revoke_keys=true",
     );
-    expect(revoked.status).toBe(204);
+    expect(revoked.status).toBe(200);
     expect(await itemsStatus(server, access)).toBe(401);
     expect(await itemsStatus(server, key.key)).toBe(401);
     expect(await itemsStatus(server, descendant.key)).toBe(401);
@@ -302,6 +308,43 @@ describe("DELETE /auth/grants/{id}", () => {
     expect(await itemsStatus(server, localKey)).toBe(200);
     expect(await itemsStatus(server, otherApp.access)).toBe(200);
     expect(await itemsStatus(server, otherKey.key)).toBe(200);
+  });
+
+  it("refuses a revoke_keys that is neither true nor false, or is named twice, 400, and leaves the grant and the keys working", async () => {
+    const { access, grant } = await approved();
+    const key = await mintedBy(access, "grant-unreadable", {
+      permissions: ["keys.mint"],
+      type_permissions: { "core.note": "read" },
+    });
+    for (const value of [
+      "1",
+      "yes",
+      "True",
+      "",
+      "false&revoke_keys=yes",
+      "yes&revoke_keys=false",
+      "true&revoke_keys=true",
+      "false&revoke_keys=false",
+    ]) {
+      const refused = await revokeGrant(
+        grant.id,
+        server.managementKey,
+        `?revoke_keys=${value}`,
+      );
+      expect(refused.status, value).toBe(400);
+      expect(refused.headers.get("x-error-code")).toBe("validation_error");
+      expect(await itemsStatus(server, access)).toBe(200);
+      expect(await itemsStatus(server, key.key)).toBe(200);
+    }
+    // The witnesses: false reads, and the grant was there to end.
+    const kept = await revokeGrant(
+      grant.id,
+      server.managementKey,
+      "?revoke_keys=false",
+    );
+    expect(kept.status).toBe(200);
+    expect(await itemsStatus(server, access)).toBe(401);
+    expect(await itemsStatus(server, key.key)).toBe(200);
   });
 
   it("refuses a caller without grants.manage 403 whatever query it sends, at both doors", async () => {
@@ -344,7 +387,7 @@ describe("a code whose grant is revoked", () => {
     );
     expect(silent).toBe(true);
     const revoked = await revokeGrant(grant.id, server.managementKey);
-    expect(revoked.status).toBe(204);
+    expect(revoked.status).toBe(200);
     const exchanged = await token(server, {
       grant_type: "authorization_code",
       code,

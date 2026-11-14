@@ -127,7 +127,7 @@ impl Started {
                 When::Before => "before",
                 When::After => "after",
             };
-            eprintln!(
+            crate::errln!(
                 "The service manager gave no process ID {when} the restart, so this run cannot show that the process was replaced. It confirms only that the server answers on port {port}, and the next `marfa server install` restarts it again."
             );
         }

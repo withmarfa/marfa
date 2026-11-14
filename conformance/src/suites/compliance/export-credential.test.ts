@@ -103,7 +103,7 @@ async function connectedApp(): Promise<{
         method: "DELETE",
         headers,
       });
-      expect(revoked.status).toBe(204);
+      expect(revoked.status).toBe(200);
     },
   };
 }

@@ -13,10 +13,11 @@ pub const LEVELS: [(&str, &str); 3] = [
 ];
 
 /// The title of a row that is not one item type, by its pattern.
-pub const ROWS: [(&str, &str); 11] = [
+pub const ROWS: [(&str, &str); 12] = [
     ("*", "All your data"),
     ("content", "Your content"),
     ("user.*", "Your custom types"),
+    ("app.*", "Every app's data"),
     ("edge.*", "Links between items"),
     ("profile", "Profile"),
     ("profile.name", "Name"),
@@ -114,7 +115,7 @@ impl Held {
             .iter()
             .map(|(_, pattern, level)| {
                 let title = word(&ROWS, pattern).unwrap_or(pattern);
-                (title.to_string(), level.word())
+                (crate::output::printable(title), level.word())
             })
             .collect();
         let width = rows.iter().map(|(title, _)| title.chars().count()).max();

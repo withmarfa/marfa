@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, Uri};
-use axum::response::Response;
 use serde_json::{Map, Value, json};
 
 use crate::app::App;
@@ -75,11 +74,7 @@ pub async fn revoke(
 ) -> Answer {
     caller.require(Permission::GrantsManage)?;
     query::only(&uri, &["revoke_keys"])?;
-    let with_keys = query::pairs(&uri)?
-        .iter()
-        .any(|(name, value)| name == "revoke_keys" && matches!(value.as_str(), "1" | "true"));
+    let with_keys = query::flag(&uri, "revoke_keys")?.unwrap_or(false);
     grants::revoke(&app, &caller, id, with_keys).await?;
-    let mut answer = Response::new(axum::body::Body::empty());
-    *answer.status_mut() = StatusCode::NO_CONTENT;
-    Ok(answer)
+    Ok(json_answer(StatusCode::OK, &json!({ "ok": true })))
 }

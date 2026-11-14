@@ -576,8 +576,8 @@ fn classify(answer: &std::result::Result<Answer, CoreError>) -> Classified {
     match (answer.status, answer.code.as_str()) {
         // Naming no contract, it says nothing of the write or the key: were
         // it counted, a proxy restarting under a watch that drains each
-        // second would kill every queued write within seconds. And 408 is a
-        // proxy's about the network, 425 asks for the same request again.
+        // second would kill every queued write within seconds. And 408 says a
+        // body did not arrive in time, 425 asks for the same request again.
         _ if answer.is_environmental() => Classified::Environmental,
         // Looks environmental, but clears only when a person replaces the
         // credential.

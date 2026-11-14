@@ -1382,10 +1382,7 @@ async fn a_purged_grant_takes_the_folder_reports_it_made() {
     assert_eq!(instance.count(reports).await, 1);
 
     let grant = instance.grant_of(&client).await;
-    assert_eq!(
-        instance.end_grant(&grant).await.status,
-        StatusCode::NO_CONTENT
-    );
+    assert_eq!(instance.end_grant(&grant).await.status, StatusCode::OK);
     instance.app.clock.advance(89 * DAY_MS).unwrap();
     cleaned(&instance.app).await;
     assert_eq!(instance.count(WITHDRAWN).await, 1);
@@ -2151,7 +2148,7 @@ async fn only_a_live_grant_can_be_narrowed_or_ended() {
     }
 
     let ended = instance.end_grant(&grant).await;
-    assert_eq!(ended.status, StatusCode::NO_CONTENT, "{}", ended.text);
+    assert_eq!(ended.status, StatusCode::OK, "{}", ended.text);
     not_found(&instance.end_grant(&grant).await);
     not_found(&instance.narrow(&grant, &scopes, &scopes).await);
 }
@@ -2377,7 +2374,7 @@ async fn a_refresh_landing_before_a_revocation_commits_leaves_no_token() {
         renewed
     };
     let (revoked, renewed) = tokio::join!(revoke, refresh);
-    assert_eq!(revoked.status, StatusCode::NO_CONTENT, "{}", revoked.text);
+    assert_eq!(revoked.status, StatusCode::OK, "{}", revoked.text);
     assert_eq!(renewed.status, StatusCode::OK, "{}", renewed.text);
     let renewed = renewed.json();
     let token = text_at(&renewed, "access_token");
@@ -2405,7 +2402,7 @@ async fn a_revocation_landing_before_a_refresh_commits_issues_nothing() {
         revoked
     };
     let (renewed, revoked) = tokio::join!(refresh, revoke);
-    assert_eq!(revoked.status, StatusCode::NO_CONTENT, "{}", revoked.text);
+    assert_eq!(revoked.status, StatusCode::OK, "{}", revoked.text);
     refused_as(&renewed, "invalid_grant");
 }
 
@@ -2496,7 +2493,7 @@ async fn a_key_holding_only_grants_manage_ends_an_app_and_the_audit_names_it() {
     let revoked = instance
         .send(from_token(Method::DELETE, &path, text_at(&key, "key")))
         .await;
-    assert_eq!(revoked.status, StatusCode::NO_CONTENT, "{}", revoked.text);
+    assert_eq!(revoked.status, StatusCode::OK, "{}", revoked.text);
     let token = text_at(&issued, "access_token");
     assert_eq!(instance.reads(token).await, StatusCode::UNAUTHORIZED);
     let named = instance
@@ -2564,7 +2561,7 @@ async fn a_grant_records_its_use_at_most_once_a_minute_and_starts_over_when_stoo
 
     let grant = instance.grant_of(&client).await;
     let ended = instance.end_grant(&grant).await;
-    assert_eq!(ended.status, StatusCode::NO_CONTENT, "{}", ended.text);
+    assert_eq!(ended.status, StatusCode::OK, "{}", ended.text);
     instance.code(&client, NOTES).await;
     assert_eq!(
         instance.grant_of(&client).await["last_used_at"],

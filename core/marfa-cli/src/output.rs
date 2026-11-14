@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::io::{self, Write};
 
 use marfa_core::{Completeness, DrainReport, Item, QueuedWrite, Rows, SearchHit, Shown};
@@ -6,12 +7,132 @@ use serde_json::Value;
 
 use crate::error::CliError;
 
+/// Stored text needs [`printable`] before this sink, which preserves CLI layout.
+pub struct Terminal<W: Write> {
+    to: W,
+    text: bool,
+}
+
+pub fn stdout(json: bool) -> Terminal<io::StdoutLock<'static>> {
+    #[allow(clippy::disallowed_methods)]
+    let to = io::stdout().lock();
+    Terminal { to, text: !json }
+}
+
+pub fn stderr() -> Terminal<io::Stderr> {
+    #[allow(clippy::disallowed_methods)]
+    let to = io::stderr();
+    Terminal { to, text: true }
+}
+
+/// Standard error carrying a command's JSON error, which passes unchanged.
+pub fn stderr_json() -> Terminal<io::Stderr> {
+    #[allow(clippy::disallowed_methods)]
+    let to = io::stderr();
+    Terminal { to, text: false }
+}
+
+/// Raw output for a requested file or document.
+pub fn stdout_bytes() -> io::StdoutLock<'static> {
+    #[allow(clippy::disallowed_methods)]
+    let lock = io::stdout().lock();
+    lock
+}
+
+pub fn stdout_is_terminal() -> bool {
+    use std::io::IsTerminal;
+    #[allow(clippy::disallowed_methods)]
+    io::stdout().is_terminal()
+}
+
+pub fn stderr_is_terminal() -> bool {
+    use std::io::IsTerminal;
+    #[allow(clippy::disallowed_methods)]
+    io::stderr().is_terminal()
+}
+
+/// One line of standard output for a person.
+pub fn say(text: std::fmt::Arguments<'_>) {
+    let _ = writeln!(stdout(false), "{text}");
+}
+
+/// `eprintln!` through [`stderr`].
+#[macro_export]
+macro_rules! errln {
+    ($($arg:tt)*) => {
+        $crate::output::error_line(format_args!($($arg)*))
+    };
+}
+
+pub fn error_line(line: std::fmt::Arguments<'_>) {
+    let _ = writeln!(stderr(), "{line}");
+}
+
+impl<W: Write> Write for Terminal<W> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if self.text {
+            self.to
+                .write_all(safe(&String::from_utf8_lossy(bytes)).as_bytes())?;
+        } else {
+            self.to.write_all(bytes)?;
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.to.flush()
+    }
+}
+
+/// Only the color sequences drawn by `style` pass unchanged.
+const DRAWN: [&str; 5] = [
+    "\u{1b}[1m",
+    "\u{1b}[2m",
+    "\u{1b}[1;32m",
+    "\u{1b}[1;31m",
+    "\u{1b}[0m",
+];
+
+fn needs_escape(c: char) -> bool {
+    c.is_control()
+        || matches!(
+            c,
+            '\u{61C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+        )
+}
+
+/// `text` as a terminal may be given it: see [`Terminal`].
+fn safe(text: &str) -> Cow<'_, str> {
+    if !text
+        .chars()
+        .any(|c| needs_escape(c) && c != '\n' && c != '\t')
+    {
+        return Cow::Borrowed(text);
+    }
+    let mut shown = String::with_capacity(text.len() + 16);
+    let mut rest = text;
+    while let Some(c) = rest.chars().next() {
+        if let Some(drawn) = DRAWN.iter().find(|drawn| rest.starts_with(**drawn)) {
+            shown.push_str(drawn);
+            rest = &rest[drawn.len()..];
+            continue;
+        }
+        if needs_escape(c) && c != '\n' && c != '\t' {
+            shown.extend(c.escape_unicode());
+        } else {
+            shown.push(c);
+        }
+        rest = &rest[c.len_utf8()..];
+    }
+    Cow::Owned(shown)
+}
+
 pub fn report<T: Serialize>(
     value: &T,
     json: bool,
     human: impl FnOnce() -> String,
 ) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(json);
     if json {
         writeln!(out, "{}", serde_json::to_string_pretty(value)?)?;
     } else {
@@ -25,7 +146,7 @@ pub fn line_of<T: Serialize>(
     json: bool,
     human: impl FnOnce() -> String,
 ) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(json);
     if json {
         writeln!(out, "{}", serde_json::to_string(value)?)?;
     } else {
@@ -53,12 +174,12 @@ pub fn listing(listed: Rows<(Item, Shown)>, json: bool) -> Result<(), CliError> 
 
 /// `shown` holds what each item shows, in the same order.
 pub fn item_lines(items: &[Item], shown: &[Shown]) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(false);
     for (item, shown) in items.iter().zip(shown) {
         writeln!(out, "{}", line(item, shown))?;
     }
     if items.is_empty() {
-        eprintln!("(no items)");
+        crate::errln!("(no items)");
     }
     Ok(())
 }
@@ -67,24 +188,28 @@ pub fn item_lines(items: &[Item], shown: &[Shown]) -> Result<(), CliError> {
 pub(crate) fn note_partial(completeness: Completeness) {
     match completeness {
         Completeness::Complete => {}
-        Completeness::Partial => eprintln!(
+        Completeness::Partial => crate::errln!(
             "(partial: a hydration is filling this copy, and items still arriving are not shown)"
         ),
-        Completeness::Stale => eprintln!(
+        Completeness::Stale => crate::errln!(
             "(stale: the server's event log no longer reaches this copy, so items may have changed or gone until a hydration fills it again)"
         ),
     }
 }
 
 pub fn item(item: &Item, shown: &Shown, json: bool) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(json);
     if json {
         writeln!(out, "{}", serde_json::to_string_pretty(item)?)?;
     } else {
         writeln!(out, "{}", line(item, shown))?;
-        writeln!(out, "{}", serde_json::to_string_pretty(&item.properties)?)?;
+        writeln!(
+            out,
+            "{}",
+            printable_lines(&serde_json::to_string_pretty(&item.properties)?)
+        )?;
         if !item.tags.is_empty() {
-            writeln!(out, "tags: {}", item.tags.join(", "))?;
+            writeln!(out, "tags: {}", printable(&item.tags.join(", ")))?;
         }
     }
     Ok(())
@@ -93,7 +218,7 @@ pub fn item(item: &Item, shown: &Shown, json: bool) -> Result<(), CliError> {
 /// No verdict column: the write has not been sent, and "unanswered" here would
 /// read as an answer.
 pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(json);
     if json {
         writeln!(out, "{}", serde_json::to_string_pretty(write)?)?;
         return Ok(());
@@ -102,8 +227,11 @@ pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
         out,
         "queued {} {} as {}",
         write.kind,
-        write.item_id.as_deref().unwrap_or("-"),
-        write.id
+        write
+            .item_id
+            .as_deref()
+            .map_or_else(|| "-".to_string(), printable),
+        printable(&write.id)
     )?;
     if !write.depends_on.is_empty() {
         writeln!(
@@ -115,7 +243,8 @@ pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
     if let Some(ahead) = &write.follows {
         writeln!(
             out,
-            "after {ahead}, the write ahead of it to the same item or edge"
+            "after {}, the write ahead of it to the same item or edge",
+            printable(ahead)
         )?;
     }
     Ok(())
@@ -124,7 +253,7 @@ pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
 /// An edit that changed nothing queued no write: `null` in JSON, so a script
 /// reads it as no write and not as an error.
 pub fn nothing_queued(json: bool) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(json);
     if json {
         writeln!(out, "null")?;
     } else {
@@ -143,7 +272,7 @@ pub fn queued(
     landing: &std::collections::HashMap<String, String>,
     json: bool,
 ) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(json);
     if json {
         writeln!(out, "{}", serde_json::to_string_pretty(writes)?)?;
         return Ok(());
@@ -159,7 +288,7 @@ pub fn queued(
             .verdict
             .map_or("unanswered", marfa_core::Verdict::as_str);
         let reason = match &write.reason {
-            Some(reason) => format!(" ({reason})"),
+            Some(reason) => format!(" ({})", printable(reason)),
             None => String::new(),
         };
         let subject = write
@@ -167,14 +296,14 @@ pub fn queued(
             .as_deref()
             .or(write.edge_id.as_deref())
             .or(write.blob.as_deref())
-            .unwrap_or("-");
+            .map_or_else(|| "-".to_string(), printable);
         let refusals = match write.refusals {
             0 => String::new(),
             n => format!("  {n}/{} refused", marfa_core::CEILING),
         };
         let refusal = write.refusal.as_ref().map(refused).unwrap_or_default();
         let last_failure = match &write.last_failure {
-            Some(failure) => format!("  last answer: {}", failure.describe()),
+            Some(failure) => format!("  last answer: {}", printable(&failure.describe())),
             None => String::new(),
         };
         // One missing from the whole queue was withdrawn or discarded, and
@@ -192,18 +321,19 @@ pub fn queued(
             .collect();
         let held = match pending.len() {
             0 => String::new(),
-            1 => format!("  waiting on {}", pending[0]),
+            1 => format!("  waiting on {}", printable(pending[0])),
             n => format!("  waiting on {n} writes"),
         };
         // A row held with nothing it depends on is held by this.
         let after = match &write.follows {
-            Some(ahead) => format!("  after {ahead}"),
+            Some(ahead) => format!("  after {}", printable(ahead)),
             None => String::new(),
         };
         let unlanded = match landing.get(&write.id) {
             Some(target) => format!(
-                "  its natural key names {target}, which no read has found; \
-                 discard it to refuse the writes waiting on it"
+                "  its natural key names {}, which no read has found; \
+                 discard it to refuse the writes waiting on it",
+                printable(target)
             ),
             None => String::new(),
         };
@@ -223,7 +353,7 @@ pub fn queued(
         )?;
     }
     if writes.is_empty() {
-        eprintln!("(nothing queued)");
+        crate::errln!("(nothing queued)");
     }
     Ok(())
 }
@@ -246,19 +376,19 @@ pub fn found(found: Rows<(SearchHit, Shown)>, json: bool) -> Result<(), CliError
 
 /// `shown` holds what each hit's item shows, in the same order.
 fn hit_lines(hits: &[SearchHit], shown: &[Shown]) -> Result<(), CliError> {
-    let mut out = io::stdout().lock();
+    let mut out = stdout(false);
     for (hit, shown) in hits.iter().zip(shown) {
         writeln!(out, "{:>7.3}  {}", hit.score, line(&hit.item, shown))?;
         if !hit.snippet.is_empty() {
             writeln!(
                 out,
                 "         {}",
-                snippet_text(&hit.snippet).replace('\n', " ")
+                printable(&snippet_text(&hit.snippet).replace('\n', " "))
             )?;
         }
     }
     if hits.is_empty() {
-        eprintln!("(no matches)");
+        crate::errln!("(no matches)");
     }
     Ok(())
 }
@@ -287,10 +417,10 @@ fn line(item: &Item, shown: &Shown) -> String {
         .unwrap_or("");
     format!(
         "{}  {}  {}  {}{}",
-        item.id,
-        item.r#type,
-        item.occurred_at,
-        title,
+        printable(&item.id),
+        printable(&item.r#type),
+        printable(&item.occurred_at),
+        printable(title),
         if item.state.as_str() == "active" {
             String::new()
         } else {
@@ -333,7 +463,7 @@ pub fn drained(drain: &DrainReport, json: bool) -> Result<(), CliError> {
             ));
         }
         if let Some(stopped) = &drain.stopped {
-            lines.push(stopped.clone());
+            lines.push(printable(stopped));
         }
         lines.extend(unclaimed(drain));
         lines.join("\n")
@@ -354,21 +484,29 @@ pub fn verdict_line(
             .verdict
             .map_or("unanswered", marfa_core::Verdict::as_str),
         verdict.kind,
-        subject
-            .or(verdict.item_id.as_deref())
-            .unwrap_or(verdict.id.as_str())
+        printable(
+            subject
+                .or(verdict.item_id.as_deref())
+                .unwrap_or(verdict.id.as_str())
+        )
     );
     if let Some(reason) = &verdict.reason {
-        line.push_str(&format!(" ({reason})"));
+        line.push_str(&format!(" ({})", printable(reason)));
     }
     if let Some(refusal) = &verdict.refusal {
         line.push_str(&refused(refusal));
     }
     if let Some(sibling) = &verdict.conflicted_copy_id {
-        line.push_str(&format!(" conflicted copy {}", copy.unwrap_or(sibling)));
+        line.push_str(&format!(
+            " conflicted copy {}",
+            printable(copy.unwrap_or(sibling))
+        ));
     }
     if !verdict.merged_fields.is_empty() {
-        line.push_str(&format!(" merged {}", verdict.merged_fields.join(",")));
+        line.push_str(&format!(
+            " merged {}",
+            printable(&verdict.merged_fields.join(","))
+        ));
     }
     if verdict.replayed {
         line.push_str(" (answered from the record)");
@@ -396,10 +534,17 @@ fn refused(refusal: &marfa_core::Refusal) -> String {
             marfa_core::GrantLevel::Read => "read",
             marfa_core::GrantLevel::Write => "write",
         };
-        said.push_str(&format!(" needs {level} on the {kind} {}", grant.name));
+        said.push_str(&format!(
+            " needs {level} on the {kind} {}",
+            printable(&grant.name)
+        ));
     }
     for field in &refusal.fields {
-        said.push_str(&format!(" {}: {}", field.field, field.message));
+        said.push_str(&format!(
+            " {}: {}",
+            printable(&field.field),
+            printable(&field.message)
+        ));
     }
     said
 }
@@ -470,7 +615,8 @@ pub fn undelivered(drain: &DrainReport) -> Option<String> {
     match (drain.undelivered, &drain.unavailable) {
         (0, None) => None,
         (count, Some(why)) => Some(format!(
-            "{count} write(s) not delivered, waiting for the next drain: {why}"
+            "{count} write(s) not delivered, waiting for the next drain: {}",
+            printable(why)
         )),
         (count, None) => Some(format!(
             "{count} write(s) not delivered, waiting for the next drain"
@@ -486,11 +632,16 @@ pub fn unclaimed(drain: &DrainReport) -> Vec<String> {
         .iter()
         .map(|source| {
             format!(
-                "this credential's key does not claim the source {source}, so every create naming it is blocked; \
-                 they go on the first drain after the key claims it"
+                "this credential's key does not claim the source {}, so every create naming it is blocked; \
+                 they go on the first drain after the key claims it",
+                printable(source)
             )
         })
         .collect()
+}
+
+pub(crate) fn said(value: &Value, human: impl FnOnce(&Value) -> String) -> String {
+    human(&printable_value(value))
 }
 
 pub struct Printer {
@@ -499,43 +650,53 @@ pub struct Printer {
 
 impl Printer {
     pub fn value(&self, value: &Value) -> Result<(), CliError> {
-        let mut out = io::stdout().lock();
+        let mut out = stdout(self.json);
         if self.json {
             writeln!(out, "{}", serde_json::to_string_pretty(value)?)?;
         } else {
-            writeln!(out, "{}", describe(value)?)?;
+            writeln!(out, "{}", describe(&printable_value(value))?)?;
         }
         Ok(())
     }
 
     pub fn line(&self, text: &str) -> Result<(), CliError> {
-        let mut out = io::stdout().lock();
+        let mut out = stdout(false);
         writeln!(out, "{text}")?;
         Ok(())
     }
 
-    /// Text exactly as given, with nothing added after it.
+    /// Raw text: JSON or a page already made safe for its destination.
     pub fn raw(&self, text: &str) -> Result<(), CliError> {
-        let mut out = io::stdout().lock();
+        let mut out = stdout_bytes();
         out.write_all(text.as_bytes())?;
         out.flush()?;
         Ok(())
     }
 
-    pub fn report(&self, value: &Value, human: impl FnOnce() -> String) -> Result<(), CliError> {
+    /// Use the closure's escaped answer instead of capturing the raw value.
+    pub fn report(
+        &self,
+        value: &Value,
+        human: impl FnOnce(&Value) -> String,
+    ) -> Result<(), CliError> {
         if self.json {
             self.value(value)
         } else {
-            self.line(&human())
+            self.line(&said(value, human))
         }
     }
 
-    pub fn record(&self, value: &Value, human: impl FnOnce() -> String) -> Result<(), CliError> {
-        let mut out = io::stdout().lock();
+    /// As [`Printer::report`], one line of JSON.
+    pub fn record(
+        &self,
+        value: &Value,
+        human: impl FnOnce(&Value) -> String,
+    ) -> Result<(), CliError> {
+        let mut out = stdout(self.json);
         if self.json {
             writeln!(out, "{}", serde_json::to_string(value)?)?;
         } else {
-            writeln!(out, "{}", human())?;
+            writeln!(out, "{}", said(value, human))?;
         }
         out.flush()?;
         Ok(())
@@ -553,8 +714,8 @@ fn describe(value: &Value) -> Result<String, CliError> {
                 for failure in failures {
                     text.push(format!(
                         "{}: {}",
-                        field(failure, "id"),
-                        field(failure, "message")
+                        printable(field(failure, "id")),
+                        printable(field(failure, "message"))
                     ));
                 }
                 if failures.iter().any(|failure| {
@@ -565,7 +726,7 @@ fn describe(value: &Value) -> Result<String, CliError> {
                 }) {
                     text.push("Stopped: a deletion could not be confirmed. Read the bin again before retrying.".into());
                 } else if let Some(cursor) = map.get("next_cursor").and_then(Value::as_str) {
-                    text.push(format!("more: --cursor {cursor}"));
+                    text.push(format!("more: --cursor {}", printable(cursor)));
                 }
                 return Ok(text.join("\n"));
             }
@@ -579,7 +740,7 @@ fn describe(value: &Value) -> Result<String, CliError> {
                     if let Some(resolution) = map.get("conflict_resolution") {
                         text.push_str(&format!(
                             "\nconflict resolution: {}",
-                            serde_json::to_string(resolution)?
+                            printable(&serde_json::to_string(resolution)?)
                         ));
                     }
                     if map.get("acknowledged") == Some(&Value::Bool(true)) {
@@ -663,9 +824,9 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
             row.get("purged_at").and_then(Value::as_str),
         ) {
             let settled = row.get("settled_at").and_then(Value::as_str).unwrap_or("");
-            out.push(Row::Text(format!(
+            out.push(Row::Text(printable(&format!(
                 "tombstone  {key}  purged {purged}  settled {settled}"
-            )));
+            ))));
         } else if let (Some(starts), Some(item)) = (row.get("starts_at"), row.get("item")) {
             let ends = row
                 .get("ends_at")
@@ -692,7 +853,7 @@ fn lines(rows: &[Value], page: &serde_json::Map<String, Value>) -> Result<String
         } else if let Value::Object(_) = row {
             out.push(Row::Cells(flat_columns(row)));
         } else {
-            out.push(Row::Text(scalar_text(row)));
+            out.push(Row::Text(printable(&scalar_text(row))));
         }
     }
     let head: Vec<String> = out
@@ -734,7 +895,7 @@ fn finish(text: &mut Vec<String>, page: &serde_json::Map<String, Value>) {
         });
     }
     if let Some(cursor) = page.get("next_cursor").and_then(Value::as_str) {
-        text.push(format!("more: --cursor {cursor}"));
+        text.push(format!("more: --cursor {}", printable(cursor)));
     }
 }
 
@@ -765,6 +926,10 @@ fn table_with_head(head: &[String], rows: &[Vec<String>]) -> Vec<String> {
 }
 
 fn table(rows: &[Vec<String>]) -> Vec<String> {
+    let rows: Vec<Vec<String>> = rows
+        .iter()
+        .map(|row| row.iter().map(|cell| printable(cell)).collect())
+        .collect();
     let width = |cell: &str| cell.chars().count();
     let columns = rows.iter().map(Vec::len).max().unwrap_or(0);
     let shown: Vec<(usize, usize)> = (0..columns)
@@ -1086,7 +1251,7 @@ fn scalar_text(value: &Value) -> String {
                 words.iter().map(scalar_text).collect::<Vec<_>>().join(", ")
             }
         }
-        other => other.to_string(),
+        other => printable(&other.to_string()),
     }
 }
 
@@ -1224,7 +1389,13 @@ pub fn body_links(links: &marfa_core::BodyLinks) -> String {
         .links
         .iter()
         .chain(&links.embeds)
-        .map(|name| format!("{}\t{}", name.text, named(&name.target)))
+        .map(|name| {
+            format!(
+                "{}\t{}",
+                printable(&name.text),
+                printable(&named(&name.target))
+            )
+        })
         .collect();
     if lines.is_empty() {
         "the body carries no link or embed of a file".into()
@@ -1242,16 +1413,19 @@ pub fn link_parts(parts: &[marfa_core::LinkParts]) -> String {
         .map(|link| {
             let mut line = format!(
                 "{}-{}\t{}\tname: {}",
-                link.start, link.end, link.text, link.name.text
+                link.start,
+                link.end,
+                printable(&link.text),
+                printable(&link.name.text)
             );
             if let Some(heading) = &link.heading {
-                line.push_str(&format!("\theading: {}", heading.text));
+                line.push_str(&format!("\theading: {}", printable(&heading.text)));
             }
             if let Some(row) = &link.row {
-                line.push_str(&format!("\trow: {}", row.text));
+                line.push_str(&format!("\trow: {}", printable(&row.text)));
             }
             if let Some(alias) = &link.alias {
-                line.push_str(&format!("\talias: {}", alias.text));
+                line.push_str(&format!("\talias: {}", printable(&alias.text)));
             }
             line
         })
@@ -1273,7 +1447,11 @@ pub fn link_candidates(answers: &[marfa_core::LinkCandidates]) -> String {
             } else {
                 answer.candidates.join(", ")
             };
-            format!("[[{}]]\t{state}\t{listed}", answer.target)
+            format!(
+                "[[{}]]\t{state}\t{}",
+                printable(&answer.target),
+                printable(&listed)
+            )
         })
         .collect::<Vec<_>>()
         .join("\n")
@@ -1772,6 +1950,26 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn server_text_in_a_listing_or_table_is_shown_escaped() {
+        let hostile = "a\u{1b}]0;x\u{7}\u{1b}[2K\u{85}\u{202e}b\u{2066}c";
+        let rows = json!({ "data": [
+            { "id": "1", "type": "core.note", "properties": { "title": hostile } },
+            { "id": "2", "type": "core.note", "properties": { "body": hostile } },
+            { "name": hostile, "count": 1, "tag": hostile },
+        ], "next_cursor": hostile });
+        let shown = describe(&rows).unwrap();
+        assert!(shown.contains("a\\u{1b}]0;x"), "{shown}");
+        for text in [&shown, &describe(&json!({ "tags": [hostile] })).unwrap()] {
+            assert!(
+                !text.chars().any(|c| c != '\n'
+                    && (c.is_control()
+                        || matches!(c, '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}'))),
+                "{text:?}"
+            );
+        }
+    }
+
+    #[test]
     fn a_text_that_could_move_the_cursor_is_shown_escaped_in_a_document() {
         let text = describe(&json!({"name": "a\u{1b}[2Kb", "note": "two\nlines"})).unwrap();
         assert!(!text.contains('\u{1b}'), "{text}");
@@ -1808,7 +2006,7 @@ pub(crate) mod tests {
 pub fn printable(text: &str) -> String {
     text.chars()
         .map(|c| {
-            if c.is_control() || matches!(c, '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}') {
+            if needs_escape(c) {
                 c.escape_unicode().to_string()
             } else {
                 c.to_string()
@@ -1817,9 +2015,65 @@ pub fn printable(text: &str) -> String {
         .collect()
 }
 
+/// Escape backslashes too so distinct object keys remain distinct.
+fn printable_key(name: &str) -> String {
+    printable(&name.replace('\\', "\\\\"))
+}
+
+/// `value` with every string, and every name in an object, escaped for a line.
+pub fn printable_value(value: &Value) -> Value {
+    match value {
+        Value::String(text) => Value::String(printable(text)),
+        Value::Array(list) => Value::Array(list.iter().map(printable_value).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(name, held)| (printable_key(name), printable_value(held)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// `printable` for each line of `text`, keeping the line breaks between them.
+fn printable_lines(text: &str) -> String {
+    text.lines().map(printable).collect::<Vec<_>>().join("\n")
+}
+
 #[cfg(test)]
 mod printable_tests {
-    use super::printable;
+    use super::{printable, printable_value, said};
+    use serde_json::json;
+
+    #[test]
+    fn two_names_that_differ_only_by_a_control_character_stay_two_entries() {
+        let answer = json!({"a\nb": "the real newline", "a\\u{a}b": "the typed escape"});
+        let shown = printable_value(&answer);
+        assert_eq!(
+            shown.as_object().map(serde_json::Map::len),
+            Some(2),
+            "{shown}"
+        );
+        let text = said(&answer, |shown| shown.to_string());
+        assert!(text.contains("the real newline"), "{text}");
+        assert!(text.contains("the typed escape"), "{text}");
+        assert!(!text.contains('\n'), "{text:?}");
+    }
+
+    #[test]
+    fn a_name_with_a_backslash_shows_it_doubled_and_no_two_names_share_a_form() {
+        let names = ["a\\b", "a\\\\b", "a\nb", "a\\nb", "a\\u{a}b", "a\\\\u{a}b"];
+        let object: serde_json::Map<String, serde_json::Value> = names
+            .iter()
+            .map(|name| ((*name).to_string(), json!(1)))
+            .collect();
+        let shown = printable_value(&serde_json::Value::Object(object));
+        assert_eq!(
+            shown.as_object().map(serde_json::Map::len),
+            Some(names.len())
+        );
+        let keys: Vec<_> = shown.as_object().unwrap().keys().cloned().collect();
+        assert!(keys.contains(&"a\\\\b".to_string()), "{keys:?}");
+    }
 
     #[test]
     fn escapes_control_and_bidirectional_characters_and_keeps_the_rest() {
@@ -1828,5 +2082,52 @@ mod printable_tests {
         assert_eq!(printable("evil\u{202e}txt.exe"), "evil\\u{202e}txt.exe");
         assert_eq!(printable("x\u{2068}y"), "x\\u{2068}y");
         assert_eq!(printable("Café naïve \u{1F600}"), "Café naïve \u{1F600}");
+    }
+}
+
+#[cfg(test)]
+mod terminal_tests {
+    use super::{Terminal, printable, safe};
+    use std::io::Write;
+
+    const HOSTILE: &str = "a\u{1b}]0;x\u{7}\u{1b}[2K\r\u{85}\u{9b}31m\u{202e}b\u{2066}c\u{200f}d";
+
+    fn through(text: bool, said: &str) -> String {
+        let mut sink = Terminal {
+            to: Vec::new(),
+            text,
+        };
+        write!(sink, "{said}").unwrap();
+        String::from_utf8(sink.to).unwrap()
+    }
+
+    fn bare(text: &str) -> bool {
+        !text.chars().any(|c| {
+            c != '\n' && c != '\t' && (c.is_control() || printable(&c.to_string()) != c.to_string())
+        })
+    }
+
+    #[test]
+    fn everything_written_for_a_person_shows_stored_text_without_its_controls() {
+        let shown = through(true, &format!("title {HOSTILE}\n\tnext"));
+        assert!(bare(&shown), "{shown:?}");
+        assert!(shown.contains("title a\\u{1b}]0;x\\u{7}"), "{shown}");
+        assert!(shown.ends_with("\n\tnext"), "{shown}");
+    }
+
+    #[test]
+    fn json_passes_unchanged() {
+        assert_eq!(through(false, HOSTILE), HOSTILE);
+    }
+
+    #[test]
+    fn only_the_colours_the_binary_draws_are_let_through() {
+        let drawn = "\u{1b}[1;31mbad\u{1b}[0m";
+        assert_eq!(safe(drawn), drawn);
+        let forged = "\u{1b}[8mhidden\u{1b}[1;3\u{1b}[1m";
+        let shown = safe(forged);
+        assert!(shown.starts_with("\\u{1b}[8mhidden"), "{shown}");
+        assert!(shown.ends_with("\\u{1b}[1;3\u{1b}[1m"), "{shown}");
+        assert_eq!(shown.matches('\u{1b}').count(), 1, "{shown}");
     }
 }

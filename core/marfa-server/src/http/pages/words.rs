@@ -135,6 +135,7 @@ pub fn title(reach: Reach, pattern: &str, label: Option<&str>) -> String {
         (Reach::Type, "*") => Some("All your data"),
         (Reach::Type, "user.*") => Some("Your custom types"),
         (Reach::Type, "core.*") => Some("Built-in types"),
+        (Reach::Type, "app.*") => Some("Every app's data"),
         (Reach::Content, _) => Some("Your content"),
         (Reach::Edge, "edge.*") => Some("Links between items"),
         (Reach::Metadata, "metadata") => Some("Definitions on your server"),
@@ -153,6 +154,11 @@ pub fn title(reach: Reach, pattern: &str, label: Option<&str>) -> String {
         return label.to_string();
     }
     match (reach, pattern.strip_suffix(".*")) {
+        (Reach::Type, Some(root))
+            if root.strip_prefix("app.").is_some_and(|v| !v.contains('.')) =>
+        {
+            format!("App data from {}", &root["app.".len()..])
+        }
         (Reach::Type, Some(root)) => format!("All types under {root}"),
         (Reach::Edge, Some(root)) => {
             format!("Links under {}", root.strip_prefix("edge.").unwrap_or(root))
@@ -219,4 +225,20 @@ pub fn description(row: &LevelRow) -> Option<String> {
         _ => return None,
     };
     Some(text.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_app_namespace_row_says_whose_data_it_covers() {
+        assert_eq!(title(Reach::Type, "app.*", None), "Every app's data");
+        assert_eq!(title(Reach::Type, "app.acme.*", None), "App data from acme");
+        assert_eq!(
+            title(Reach::Type, "app.acme.widget", Some("Widget")),
+            "Widget"
+        );
+        assert_eq!(title(Reach::Type, "acme.*", None), "All types under acme");
+    }
 }

@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 use crate::access;
 use crate::commands::status;
 use crate::error::CliError;
-use crate::output::Printer;
+use crate::output::{Printer, printable};
 use crate::remote::request::Request;
 use crate::remote::{CredentialSource, Remote};
 
@@ -50,17 +50,17 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
         "contract": status::contract_report(&instance),
         "credential": credential,
     });
-    out.report(&report, || {
+    out.report(&report, |_| {
         let field = |value: &Value, name: &str| {
             value
                 .get(name)
                 .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_string()
+                .map(printable)
+                .unwrap_or_default()
         };
         let mut lines = vec![
             match &profile {
-                Some(name) => format!("server {} (profile {name})", remote.origin()),
+                Some(name) => format!("server {} (profile {})", remote.origin(), printable(name)),
                 None => format!("server {}", remote.origin()),
             },
             status::instance_line(&instance),

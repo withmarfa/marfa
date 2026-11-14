@@ -1511,6 +1511,54 @@ When an authorization request names `<type>:read` or `<type>:write` for a type r
 
 **Tests:** `compliance/oauth-authorize.test.ts › is offered and granted at once, to an app registered before it`.
 
+### `keys-and-oauth/authorize-app-vendor`
+
+When an authorization request names `app.<vendor>.*:read` or `app.<vendor>.*:write` and a type is registered under `app.<vendor>.`, from a client whose registration covers the scope, the server MUST offer the scope on the consent screen and grant it when the person accepts it.
+
+**Reason:** An app that registers types of its own over time asks for its vendor's namespace once, rather than for each type or for `app.*`, which reaches every vendor's app types.
+
+**Tests:** `compliance/oauth-authorize.test.ts › is offered and granted for app.<vendor>.*, reaches that vendor's types registered before and after, and no other vendor's`.
+
+### `keys-and-oauth/app-vendor-reach`
+
+When a token holds `app.<vendor>.*:write`, the server MUST confine the token's writes to the types under `app.<vendor>.`, whether registered before or after the grant.
+
+**Tests:** `compliance/oauth-authorize.test.ts › is offered and granted for app.<vendor>.*, reaches that vendor's types registered before and after, and no other vendor's`.
+
+### `keys-and-oauth/app-vendor-not-named`
+
+When an authorization request names `app.<vendor>.*:read` or `app.<vendor>.*:write` for a vendor under which no type is registered, the server MUST drop that scope.
+
+**Reason:** A namespace is grantable only where a type sits under it.
+
+**Tests:** `compliance/oauth-authorize.test.ts › is offered and granted for app.<vendor>.*, reaches that vendor's types registered before and after, and no other vendor's`.
+
+### `keys-and-oauth/app-vendor-registration`
+
+When an authorization request names `app.<vendor>.*:read` or `app.<vendor>.*:write` from a client whose registration covers only another vendor's namespace, the server MUST drop that scope.
+
+**Reason:** Naming a namespace never widens what the client registered for.
+
+**Tests:** `compliance/oauth-authorize.test.ts › is dropped from a request by an app registered for another vendor's namespace`.
+
+### `keys-and-oauth/device-app-vendor`
+
+When a device code request names `app.<vendor>.*:read` or `app.<vendor>.*:write` and a type is registered under `app.<vendor>.`, from a client whose registration covers the scope, the server MUST issue the code.
+
+**Tests:** `compliance/oauth-authorize.test.ts › is offered on a device code for app.<vendor>.*, and refused for a vendor no type sits under`.
+
+### `keys-and-oauth/device-app-vendor-none`
+
+If a device code request names only `app.<vendor>.*:read` or `app.<vendor>.*:write` for a vendor under which no type is registered, then the server MUST answer `400 invalid_scope`.
+
+**Tests:** `compliance/oauth-authorize.test.ts › is offered on a device code for app.<vendor>.*, and refused for a vendor no type sits under`.
+
+### `keys-and-oauth/approval-app-rows`
+
+When the consent screen offers `app.*` or `app.<vendor>.*`, the server MUST title the row "Every app's data" for `app.*` and "App data from <vendor>" for `app.<vendor>.*`.
+
+**Tests:** `compliance/oauth-authorize.test.ts › titles the rows for every app's data and for one vendor's data on the consent screen`.
+
 ### `keys-and-oauth/authorize-narrowed-types`
 
 When a person approves on the consent screen types chosen under an all-data or content scope the request named, the server MUST NOT let the token the code is exchanged for reach an item type the person left off.
@@ -2085,6 +2133,14 @@ If a tool call to an MCP endpoint the server serves carries an app's access toke
 
 **Tests:** `compliance/oauth-tokens.test.ts › challenges a tool call the token lacks a scope for with 403 insufficient_scope, naming the scope and the endpoint's metadata`, `compliance/oauth-tokens.test.ts › asks an app holding metadata.types:write alone for the namespace wildcard covering the new name, and registers it for an app holding both`.
 
+### `keys-and-oauth/mcp-challenge-app-vendor`
+
+If a tool call to an MCP endpoint the server serves registers a new type `app.<vendor>.<name>` for a token that lacks a scope to write it, then the server MUST name `app.<vendor>.*:write` in the challenge's `scope` where a type is registered under `app.<vendor>.`, and `app.*:write` where none is.
+
+**Reason:** An app is asked for its own vendor's namespace where one can be granted, and never for every vendor's types when a narrower scope exists.
+
+**Tests:** `compliance/oauth-tokens.test.ts › asks for the vendor's own namespace where a type sits under it, and for app.* where none does`.
+
 ### `keys-and-oauth/mcp-challenge-unregistered`
 
 If a tool call to an MCP endpoint the server serves carries an app's access token, and the API refuses the call for a scope no app can be granted, such as the scope of a type or edge type nothing registered, then the server MUST answer with the tool's error and no `insufficient_scope` challenge.
@@ -2229,7 +2285,7 @@ If a credential without `grants.manage` names `system.connection` as a type an i
 
 ### `keys-and-oauth/grant-revoke-answer`
 
-When a caller holding `grants.manage` revokes a grant at `DELETE /auth/grants/{id}`, the server MUST answer `204`.
+When a caller holding `grants.manage` revokes a grant at `DELETE /auth/grants/{id}`, the server MUST answer `200` with `{"ok": true}`.
 
 **Tests:** `compliance/auth-grants.test.ts › ends the app's tokens and the person's consent, and leaves the keys it minted working`, `compliance/oauth-refusals.test.ts › answers 404 oauth_grant_not_found for an id that is no app's grant, and revokes one that is`.
 
@@ -2265,11 +2321,19 @@ When the inactivity retirement retires a grant, the server MUST leave every key 
 
 ### `keys-and-oauth/grant-revoke-keys`
 
-When a grant is revoked with `revoke_keys=1`, the server MUST revoke in the same write every key the app minted and every key those keys minted, whatever the caller's reach.
+When a grant is revoked with `revoke_keys` set to `true`, the server MUST revoke in the same write every key the app minted and every key those keys minted, whatever the caller's reach.
 
 **Reason:** A key an app minted is held to the app's grant, so taking those keys with the grant reaches no further than revoking the grant does.
 
-**Tests:** `compliance/auth-grants.test.ts › with revoke_keys=1 also revokes every key the app minted, a key's descendant included`.
+**Tests:** `compliance/auth-grants.test.ts › with revoke_keys=true also revokes every key the app minted, a key's descendant included`.
+
+### `keys-and-oauth/revoke-keys-unreadable`
+
+If `DELETE /auth/grants/{id}` or `DELETE /owner/sign-ins/{id}` carries a `revoke_keys` value other than `true` or `false`, or names `revoke_keys` more than once, then the server MUST answer `400 validation_error` and end nothing.
+
+**Reason:** An app's keys end only when the caller says so in the one spelling the contract states, so a mistyped flag such as `1` or `yes`, or two values that disagree, never answers success while the keys still work.
+
+**Tests:** `compliance/auth-grants.test.ts › refuses a revoke_keys that is neither true nor false, or is named twice, 400, and leaves the grant and the keys working`, `compliance/owner-sign-ins.test.ts › refuses a revoke_keys that is neither true nor false, or is named twice, 400, and leaves the app and its keys working`.
 
 ### `keys-and-oauth/grant-unknown`
 

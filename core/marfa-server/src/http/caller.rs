@@ -7,8 +7,10 @@ use axum::http::header::{AUTHORIZATION, ORIGIN};
 use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, Method};
 
+use super::admission::{Admission, on_socket};
 use super::answer::Stopped;
 use super::auth::cookies;
+use super::doors::Asks;
 use super::observe::RequestContext;
 use crate::app::access::{self, Caller, unauthorized};
 use crate::app::addresses::Address;
@@ -20,6 +22,10 @@ use crate::listener::Transport;
 
 #[derive(Clone)]
 struct Identified(Result<Option<Caller>>);
+
+/// The session a cookie named, read once whichever asks first.
+#[derive(Clone)]
+struct Named(Option<session::Session>);
 
 /// The request bore a stored key past its `expires_at`, which this holds.
 #[derive(Clone)]
@@ -83,7 +89,11 @@ async fn owner_by_cookie(
     let Some(token) = cookies::session_token(&parts.headers, &address) else {
         return Ok(None);
     };
-    let Some(session) = session::find(app, token).await? else {
+    let named = match parts.extensions.get::<Named>() {
+        Some(Named(named)) => named.clone(),
+        None => session::find(app, token).await?,
+    };
+    let Some(session) = named else {
         return Ok(None);
     };
     if !auth::carries_sessions(&address) {
@@ -185,12 +195,59 @@ impl FromRequestParts<Arc<App>> for OnPage {
     }
 }
 
+async fn names_session(parts: &mut Parts, app: &Arc<App>) -> Result<bool> {
+    let address = app.addresses().sign_in();
+    let Some(token) = cookies::session_token(&parts.headers, &address) else {
+        return Ok(false);
+    };
+    let named = session::find(app, token).await?;
+    let found = named.is_some();
+    parts.extensions.insert(Named(named));
+    Ok(found)
+}
+
+/// Admission checks the presented identity; the door still decides access.
+pub async fn presents(
+    parts: &mut Parts,
+    app: &Arc<App>,
+    asks: Asks,
+    admission: Option<Admission>,
+) -> Result<()> {
+    let socket = on_socket(&parts.extensions);
+    let by_cookie = !socket && matches!(presented(&parts.headers), Presented::Nothing);
+    match asks {
+        Asks::Nothing => Ok(()),
+        Asks::Session if by_cookie => match names_session(parts, app).await? {
+            true => Ok(()),
+            false => Err(unauthorized()),
+        },
+        Asks::Session | Asks::Credential => match identify(parts, app).await? {
+            Some(caller)
+                if admission
+                    .is_none_or(|rule| rule.admits(Some(&caller), &parts.headers, socket)) =>
+            {
+                Ok(())
+            }
+            Some(_) => Err(unauthorized()),
+            None if asks == Asks::Session => Err(unauthorized()),
+            None => Err(refused(parts)),
+        },
+    }
+}
+
 /// What a door that needs a credential answers a request it found none on.
 pub fn refused(parts: &Parts) -> Refusal {
     match parts.extensions.get::<Expired>() {
         Some(Expired(at)) => access::expired(at),
         None => unauthorized(),
     }
+}
+
+/// Drops what was read of the caller, so the next read is of the state now.
+pub fn forget(parts: &mut Parts) {
+    parts.extensions.remove::<Identified>();
+    parts.extensions.remove::<Named>();
+    parts.extensions.remove::<Expired>();
 }
 
 /// Read once however many layers ask. A credential that does not verify is nobody, on the

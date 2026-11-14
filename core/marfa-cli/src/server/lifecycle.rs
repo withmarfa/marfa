@@ -12,8 +12,8 @@ use super::run::{self, REFUSED_DATABASE};
 use super::service::{Control, Manager, Service};
 use super::{
     Access, DirArgs, Folder, IMAGE, PrivateCommand, Runtime, StartArgs, State, Steps,
-    UninstallArgs, UpgradeArgs, checked_release, files, http_agent, launchd, native, own_release,
-    refuse_older, tailscale,
+    UninstallArgs, UpgradeArgs, checked_release, files, health_url, http_agent, launchd, native,
+    own_release, refuse_older, tailscale,
 };
 use crate::error::CliError;
 use crate::output::Printer;
@@ -133,7 +133,7 @@ fn upgrade_native(
             "copy": update.copy,
         })),
     });
-    out.report(&report, || {
+    out.report(&report, |_| {
         let moved = if unchanged {
             format!("Already on {target}.")
         } else {
@@ -213,7 +213,7 @@ fn upgrade_docker(
             "copy": update.copy,
         })),
     });
-    out.report(&report, || {
+    out.report(&report, |_| {
         let moved = if unchanged {
             format!("Already on {target}.")
         } else {
@@ -271,7 +271,7 @@ fn refused_update_note(target: &str, from: &str, dir: &Path) -> String {
 
 pub fn start(args: StartArgs, out: &Printer) -> Result<(), CliError> {
     let (json, text) = started(args, out)?;
-    out.report(&json, || text)
+    out.report(&json, |_| text)
 }
 
 fn started(args: StartArgs, out: &Printer) -> Result<(Value, String), CliError> {
@@ -337,7 +337,7 @@ fn started(args: StartArgs, out: &Printer) -> Result<(Value, String), CliError> 
 
 pub fn stop(args: DirArgs, out: &Printer) -> Result<(), CliError> {
     let (json, text) = stopped(args, out)?;
-    out.report(&json, || text)
+    out.report(&json, |_| text)
 }
 
 fn stopped(args: DirArgs, out: &Printer) -> Result<(Value, String), CliError> {
@@ -388,7 +388,7 @@ pub fn restart(args: StartArgs, out: &Printer) -> Result<(), CliError> {
         out.line(&said)?;
     }
     let (started, text) = started(args, out)?;
-    out.report(&json!({ "stopped": stopped, "started": started }), || text)
+    out.report(&json!({ "stopped": stopped, "started": started }), |_| text)
 }
 
 // ---- status -------------------------------------------------------------
@@ -415,10 +415,7 @@ struct Health {
 
 impl Health {
     fn ask(agent: &ureq::Agent, port: u16) -> Option<Health> {
-        let mut response = agent
-            .get(&format!("http://127.0.0.1:{port}/health"))
-            .call()
-            .ok()?;
+        let mut response = agent.get(&health_url(port)).call().ok()?;
         let http = response.status().as_u16();
         let body = response
             .body_mut()
@@ -488,7 +485,7 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
         (_, Some(container)) => container.status == "running",
         _ => false,
     };
-    let agent = http_agent();
+    let agent = http_agent(state.port);
     let answered = if running {
         Health::ask(&agent, state.port)
     } else {
@@ -578,7 +575,7 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
         "autostart": login,
         "log": tail,
     });
-    out.report(&report, || {
+    out.report(&report, |_| {
         let word = match (running, &answered) {
             (false, _) => style::bad(Stream::Out, "not running"),
             (true, None) => style::bad(Stream::Out, "running, not answering"),
@@ -667,12 +664,12 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
             ));
         }
         if state.external {
-            eprintln!(
+            crate::errln!(
                 "This deletes every item and file in {place}. {} is managed elsewhere and stays.",
                 folder.path(files::SETTINGS).display()
             );
         } else {
-            eprintln!(
+            crate::errln!(
                 "This deletes every item and file in {place}, and the secrets in {}.",
                 folder.path(files::SETTINGS).display()
             );
@@ -706,7 +703,7 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
             !out.json,
         ) {
             Ok(done) => unserved = done,
-            Err(error) => eprintln!(
+            Err(error) => crate::errln!(
                 "The address stays on your tailnet: {error}. Remove it with `tailscale serve --https={https} off`."
             ),
         }
@@ -719,7 +716,7 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
                 docker.remove_volume(&volume)?;
                 // A proxy of the person's may have joined the network.
                 if let Err(error) = docker.remove_network(&net) {
-                    eprintln!("The Docker network {net} stays: {error}");
+                    crate::errln!("The Docker network {net} stays: {error}");
                 }
             }
             Runtime::Native => {
@@ -758,7 +755,7 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
         "data_deleted": args.delete_data,
         "tailscale_unserved": unserved,
     });
-    out.report(&report, || {
+    out.report(&report, |_| {
         if args.delete_data {
             if state.external {
                 format!(

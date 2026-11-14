@@ -4,7 +4,6 @@
 //! `marfa_core::http::Http`: both send a credential and check the contract
 //! header, and the site has neither.
 
-use std::io::IsTerminal;
 use std::time::Duration;
 
 use clap::builder::NonEmptyStringValueParser;
@@ -20,7 +19,9 @@ use crate::output::{Printer, printable};
 use crate::remote::Named;
 
 pub const DEFAULT_SITE: &str = "https://docs.marfa.so";
-pub const SITE_VARIABLE: &str = "MARFA_DOCS_URL";
+const REDIRECTS: u32 = 5;
+
+const SITE_VARIABLE: &str = "MARFA_DOCS_URL";
 
 const CONNECT_BUDGET: Duration = Duration::from_secs(10);
 const RESPONSE_BUDGET: Duration = Duration::from_secs(30);
@@ -118,7 +119,7 @@ struct Answer {
 /// The docs site and a client that holds no credential.
 pub struct Site {
     base: String,
-    agent: ureq::Agent,
+    agents: marfa_core::http::Agents,
     body_limit: u64,
 }
 
@@ -156,19 +157,18 @@ impl Site {
         let tls = ureq::tls::TlsConfig::builder()
             .root_certs(ureq::tls::RootCerts::PlatformVerifier)
             .build();
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .tls_config(tls)
-            .http_status_as_error(false)
-            .max_redirects(5)
-            .timeout_connect(Some(CONNECT_BUDGET))
-            .timeout_recv_response(Some(recv_response))
-            .timeout_recv_body(Some(recv_body))
-            .user_agent(concat!("marfa/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .into();
+        let agents = marfa_core::http::Agents::new(|| {
+            ureq::Agent::config_builder()
+                .tls_config(tls.clone())
+                .http_status_as_error(false)
+                .timeout_connect(Some(CONNECT_BUDGET))
+                .timeout_recv_response(Some(recv_response))
+                .timeout_recv_body(Some(recv_body))
+                .user_agent(concat!("marfa/", env!("CARGO_PKG_VERSION")))
+        });
         Ok(Site {
             base,
-            agent,
+            agents,
             body_limit: BODY_LIMIT,
         })
     }
@@ -190,10 +190,15 @@ impl Site {
             }
         }
         let mut response = self
-            .agent
-            .get(url.as_str())
-            .header("Accept", "application/json, text/markdown;q=0.9, */*;q=0.1")
-            .call()
+            .agents
+            .get(
+                url.as_str(),
+                &[(
+                    "Accept",
+                    "application/json, text/markdown;q=0.9, */*;q=0.1".to_string(),
+                )],
+                REDIRECTS,
+            )
             .map_err(|error| self.unreachable(error.to_string()))?;
         let status = response.status().as_u16();
         let content_type = response
@@ -349,7 +354,7 @@ pub fn page_path(named: &str) -> Result<String, CliError> {
 
 /// A snippet or description on one line, however the site wrapped it.
 fn one_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    printable(&text.split_whitespace().collect::<Vec<_>>().join(" "))
 }
 
 fn describe_hits(query: &str, hits: &Hits, closest: &[&Topic]) -> String {
@@ -358,7 +363,11 @@ fn describe_hits(query: &str, hits: &Hits, closest: &[&Topic]) -> String {
         if !closest.is_empty() {
             text.push_str("\nThe closest pages by title:");
             for page in closest {
-                text.push_str(&format!("\n  {}  {}", page.title, address_path(&page.url)));
+                text.push_str(&format!(
+                    "\n  {}  {}",
+                    printable(&page.title),
+                    printable(&address_path(&page.url))
+                ));
             }
         }
         text.push_str("\n`marfa docs topics` lists every page.");
@@ -367,7 +376,7 @@ fn describe_hits(query: &str, hits: &Hits, closest: &[&Topic]) -> String {
     hits.hits
         .iter()
         .map(|hit| {
-            let mut entry = format!("{}  {}", hit.title, hit.url);
+            let mut entry = format!("{}  {}", printable(&hit.title), printable(&hit.url));
             if let Some(snippet) = hit.snippets.first() {
                 entry.push_str(&format!("\n  {}", one_line(snippet)));
             }
@@ -578,7 +587,7 @@ fn describe_topics(topics: &Topics) -> String {
         .pages
         .iter()
         .map(|page| {
-            let mut entry = format!("{}  {}", page.title, page.url);
+            let mut entry = format!("{}  {}", printable(&page.title), printable(&page.url));
             if let Some(description) = page.description.as_deref().map(one_line)
                 && !description.is_empty()
             {
@@ -601,7 +610,7 @@ pub fn run(args: DocsArgs, named: &Named, out: &Printer) -> Result<(), CliError>
         (Some(DocsCommand::Search { query, limit }), _) => {
             let answer = site.search(&query, limit)?;
             let hits: Hits = serde_json::from_value(answer.clone())?;
-            out.report(&answer, || {
+            out.report(&answer, |_| {
                 // A miss is helped with the page titles nearest the query; a
                 // site that cannot list them still gets the plain miss.
                 let topics: Option<Topics> = hits
@@ -623,7 +632,7 @@ pub fn run(args: DocsArgs, named: &Named, out: &Printer) -> Result<(), CliError>
         (Some(DocsCommand::Topics), _) => {
             let answer = site.topics()?;
             let topics: Topics = serde_json::from_value(answer.clone())?;
-            out.report(&answer, || describe_topics(&topics))
+            out.report(&answer, |_| describe_topics(&topics))
         }
         (None, Some(page)) => {
             let mut page = site.page(&page)?;
@@ -646,7 +655,7 @@ pub fn run(args: DocsArgs, named: &Named, out: &Printer) -> Result<(), CliError>
                     shown["section"] = json!(heading);
                 }
                 out.value(&shown)
-            } else if std::io::stdout().is_terminal() {
+            } else if crate::output::stdout_is_terminal() {
                 out.raw(&for_terminal(&page.markdown))
             } else {
                 out.raw(&page.markdown)

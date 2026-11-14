@@ -1,0 +1,10 @@
+disallowed-macros = [
+    { path = "std::println", reason = "text for a person goes through `output::stdout`, which shows control characters as escapes" },
+    { path = "std::print", reason = "text for a person goes through `output::stdout`, which shows control characters as escapes" },
+    { path = "std::eprintln", reason = "use `errln!`, which shows control characters as escapes" },
+    { path = "std::eprint", reason = "use `errln!`, which shows control characters as escapes" },
+]
+disallowed-methods = [
+    { path = "std::io::stdout", reason = "use `output::stdout` or `output::stdout_bytes`" },
+    { path = "std::io::stderr", reason = "use `output::stderr`" },
+]

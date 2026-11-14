@@ -127,7 +127,7 @@ fn confirm_address(aim: &Aim, details: Option<&Value>) -> String {
         "Nothing was changed. Making the change:"
     });
     for sentence in sentences {
-        text.push_str(&format!("\n  - {sentence}"));
+        text.push_str(&format!("\n  - {}", crate::output::printable(sentence)));
     }
     if matches!(
         aim.command.as_str(),

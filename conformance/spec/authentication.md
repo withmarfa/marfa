@@ -270,13 +270,13 @@ If a passkey assertion sent to `POST /auth/confirm` is not for a passkey registe
 
 ### `authentication/confirm-needs-session`
 
-If a request to `POST /auth/confirm` carries no live owner browser session, whatever its body, or carries a bearer key, then the server MUST answer `401 unauthorized` without making a session.
+If a request to `POST /auth/confirm` carries no live owner browser session, whatever its body or origin, or carries a bearer key, then the server MUST answer `401 unauthorized` without making a session.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › is refused with no cookie, with an ended session, and with a key`.
 
 ### `authentication/confirm-origin`
 
-If a request to `POST /auth/confirm` comes from an origin other than the instance's, then the server MUST answer `403 forbidden` without making a session.
+If a request to `POST /auth/confirm` carries a live owner browser session and comes from an origin other than the instance's, then the server MUST answer `403 forbidden` without making a session.
 
 **Tests:** `compliance/confirm-sign-in.test.ts › is refused from another origin, and sets no session`.
 
@@ -374,7 +374,7 @@ When `POST /auth/owner/password` answers `200`, the server MUST already hold an 
 
 ### `authentication/password-change-needs-session`
 
-If a request to `POST /auth/owner/password` carries no live owner browser session, whatever its body, or carries a bearer key, then the server MUST answer `401 unauthorized` and keep the current password.
+If a request to `POST /auth/owner/password` carries no live owner browser session, whatever its body or origin, or carries a bearer key, then the server MUST answer `401 unauthorized` and keep the current password.
 
 **Tests:** `compliance/owner-pages.test.ts › refuses a change with no session, an ended session and a key, 401`.
 
