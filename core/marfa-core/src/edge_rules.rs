@@ -354,12 +354,29 @@ impl Graph for HeldEdges<'_> {
         )
     }
 
-    fn triple(&self, source: &str, target: &str, edge_type: &str) -> Result<Option<String>> {
-        Ok(self
-            .outbound(source)?
-            .into_iter()
-            .find(|link| link.target == target && link.edge_type == edge_type)
-            .map(|link| link.id))
+    fn triple(
+        &self,
+        source: &str,
+        target: &str,
+        edge_type: &str,
+        except: Option<&str>,
+    ) -> Result<Option<String>> {
+        if self.replaced == Some((source, edge_type)) {
+            return Ok(None);
+        }
+        let mut statement = self.conn.prepare_cached(
+            "SELECT id FROM edges
+              WHERE source_id = ?1 AND edge_type = ?2 AND target_id = ?3
+                AND (?4 IS NULL OR id <> ?4)",
+        )?;
+        let mut rows = statement.query(params![source, edge_type, target, except])?;
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            if !self.refused.contains(&id) {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
     }
 
     fn in_bin(&self, id: &str) -> Result<bool> {
@@ -1107,6 +1124,46 @@ mod tests {
                 ..edge(NOTE_A, NOTE_B, "mock.notes")
             },
             "a repeat of the held edge under its own id",
+        );
+    }
+
+    #[test]
+    fn a_repeat_under_the_held_id_is_refused_when_the_triple_is_held_under_another() {
+        for (first, second) in [(HELD_EDGE, OTHER_EDGE), (OTHER_EDGE, HELD_EDGE)] {
+            let core = copy();
+            hold(&core, first, NOTE_A, NOTE_B, "mock.notes");
+            hold(&core, second, NOTE_A, NOTE_B, "mock.notes");
+            assert_create_refused_for(
+                &core,
+                &EdgeDraft {
+                    id: Some(HELD_EDGE.into()),
+                    ..edge(NOTE_A, NOTE_B, "mock.notes")
+                },
+                DUPLICATE,
+                "a repeat of one held edge while another holds the triple",
+            );
+        }
+    }
+
+    #[test]
+    fn the_duplicate_lookup_reads_one_index_entry_whatever_else_the_source_holds() {
+        let core = copy();
+        let conn = core.conn().unwrap();
+        let plan: Vec<String> = conn
+            .prepare(
+                "EXPLAIN QUERY PLAN SELECT id FROM edges
+                  WHERE source_id = ?1 AND edge_type = ?2 AND target_id = ?3
+                    AND (?4 IS NULL OR id <> ?4)",
+            )
+            .unwrap()
+            .query_map(["a", "b", "c", "d"], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let plan = plan.join(" ");
+        assert!(
+            plan.contains("source_id=? AND edge_type=? AND target_id=?"),
+            "{plan}"
         );
     }
 

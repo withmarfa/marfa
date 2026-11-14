@@ -63,7 +63,9 @@ CREATE TABLE IF NOT EXISTS edges (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS edges_source ON edges (source_id, edge_type);
+-- Ends with the target so the duplicate check finds a triple without reading
+-- the source's other edges of the type.
+CREATE INDEX IF NOT EXISTS edges_source ON edges (source_id, edge_type, target_id);
 CREATE INDEX IF NOT EXISTS edges_target ON edges (target_id, edge_type);
 
 CREATE TABLE IF NOT EXISTS tags (
