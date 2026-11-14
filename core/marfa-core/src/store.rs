@@ -1146,11 +1146,7 @@ pub fn set_drain_owed(conn: &Connection, owed: bool) -> Result<(), CoreError> {
     }
 }
 
-/// The first key after every key that starts with `prefix`, so that
-/// `key >= prefix AND key < prefix_end(prefix)` is a range the primary key
-/// answers, which `LIKE` and `substr` are not. Keys compare by their bytes.
-/// A prefix with nothing above it, or none, ends at a blob, which sorts after
-/// every text.
+/// SQLite sorts UTF-8 text bytewise and blobs after all text.
 pub(crate) fn prefix_end(prefix: &str) -> rusqlite::types::Value {
     let mut end = prefix.to_string();
     while let Some(last) = end.pop() {
@@ -1172,8 +1168,7 @@ pub fn meta_keys(conn: &Connection, prefix: &str) -> Result<Vec<String>, CoreErr
     Ok(found)
 }
 
-/// Each key that starts with `prefix`, without the prefix, and its value, in
-/// key order.
+/// Keys with `prefix` removed and their values, in key order.
 pub fn meta_under(conn: &Connection, prefix: &str) -> Result<Vec<(String, String)>, CoreError> {
     let mut rows = conn.prepare_cached(
         "SELECT substr(key, length(?1) + 1), value FROM meta
@@ -4388,8 +4383,6 @@ fn edge_brought(id: &str) -> String {
 const EDGE_BROUGHT: &str = "edge_brought/";
 const UPLOAD_SENT_AS: &str = "upload_sent_as/";
 
-/// The marks of which rows and edges a walk has listed, found early or
-/// brought, which a walk that starts again begins without.
 fn forget_marks_of_the_walk(conn: &Connection) -> Result<(), CoreError> {
     for prefix in ["item_listed/", "item_early/", EDGE_BROUGHT] {
         meta_delete_under(conn, prefix)?;
