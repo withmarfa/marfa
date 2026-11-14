@@ -26,7 +26,11 @@ test("throws the server's code and message", () => {
   for (const { description, text, code, message } of SHARED.refused) {
     assert.throws(
       () => decodeFilter(text),
-      { code: "validation", serverCode: code, message: `validation: (${code}) ${message}` },
+      {
+        code: "validation",
+        local: { code, details: null },
+        message: `validation: (${code}) ${message}`,
+      },
       description,
     );
   }
@@ -36,7 +40,7 @@ test("throws the server's code and message", () => {
         join: "all",
         conditions: [{ field: { kind: "property", name: "a" }, operator: "eq" }],
       }),
-    { serverCode: "validation_error", message: /takes a value/ },
+    { local: { code: "validation_error", details: null }, message: /takes a value/ },
   );
 });
 

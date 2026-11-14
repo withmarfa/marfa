@@ -828,6 +828,7 @@ fn credential_refused(drain: &Drained) -> Option<CoreError> {
         .as_ref()
         .filter(|_| credential)
         .map(|stopped| CoreError::Unauthorized {
+            server: drain.report.refused_by.clone(),
             code: "unauthorized".into(),
             message: stopped.clone(),
         })
@@ -1642,6 +1643,7 @@ mod tests {
             out(),
             CoreError::RenewalFailed(Box::new(out())),
             CoreError::Unauthorized {
+                server: Some(crate::error::ServerAnswer::status_only(401)),
                 code: "unauthorized".into(),
                 message: "refused".into(),
             },
@@ -1939,6 +1941,7 @@ mod tests {
             code: "rate_limited".into(),
             message: String::new(),
             retry_after_seconds: Some(seconds),
+            details: None,
         };
         assert_eq!(
             retry_schedule(SECOND, &limited(45)),
@@ -2188,6 +2191,7 @@ mod tests {
                 limited: false,
                 verdicts: Vec::new(),
                 stopped: None,
+                refused_by: None,
                 unclaimed_sources: Vec::new(),
                 retry_after_seconds: None,
             },
@@ -2672,19 +2676,49 @@ mod tests {
         });
         assert!(matches!(
             credential_refused(&stopped),
-            Some(CoreError::Unauthorized { message, .. }) if message == "the server refused the credential"
+            Some(CoreError::Unauthorized { message, server: None, .. }) if message == "the server refused the credential"
         ));
         assert_eq!(credential_refused(&drained()), None);
+    }
+
+    #[test]
+    fn a_credential_a_drain_was_refused_with_names_the_answer_the_server_gave() {
+        let answer = crate::error::ServerAnswer {
+            status: 401,
+            code: Some("unauthorized".into()),
+            details: Some(serde_json::json!({ "ended": "revoked" })),
+        };
+        let mut stopped = drained();
+        stopped.report.stopped = Some("the server refused the credential".into());
+        stopped.report.refused_by = Some(Box::new(answer.clone()));
+        stopped.report.verdicts.push(crate::DrainVerdict {
+            id: "w".into(),
+            kind: crate::WriteKind::CreateItem,
+            item_id: None,
+            edge_id: None,
+            verdict: None,
+            reason: Some("credential_refused".into()),
+            refusal: None,
+            conflicted_copy_id: None,
+            refusals: 0,
+            replayed: false,
+            merged_fields: Vec::new(),
+            conflicts: Vec::new(),
+        });
+        let ended = credential_refused(&stopped).expect("a refused credential ends the watch");
+        assert_eq!(ended.answer(), Some(answer));
     }
 
     #[test]
     fn a_pass_waits_out_the_hydration_the_follow_runs() {
         assert!(hydrated_by_the_follow(&CoreError::HydrationIncomplete));
         assert!(hydrated_by_the_follow(&CoreError::CopyExpired {
-            reason: "catchup_too_old".into()
+            reason: "catchup_too_old".into(),
+            server: None,
         }));
         assert!(!hydrated_by_the_follow(&CoreError::NoCursor));
         assert!(!hydrated_by_the_follow(&CoreError::Unauthorized {
+            server: Some(crate::error::ServerAnswer::status_only(401)),
             code: "unauthorized".into(),
             message: "ended".into()
         }));

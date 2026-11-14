@@ -2535,7 +2535,9 @@ describe("withdrawing a write that can never be sent", () => {
         ],
       ]);
       const gone = await device.get(local);
-      expect(gone.ok ? "held" : gone.refusal.code).toBe("not_held");
+      expect(
+        gone.ok ? "held" : [gone.refusal.code, gone.refusal.local],
+      ).toEqual(["not_found", "not_held"]);
       const edges = await device.edgesFrom(local);
       expect(edges.ok && edges.value).toEqual([]);
       for (const row of [edited.value, linked.value]) {

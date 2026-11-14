@@ -6,6 +6,7 @@ import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { Outcome } from "../../device/protocol.js";
+import { refusedCode } from "../../device/refusal.js";
 import {
   cleanup,
   createTestContext,
@@ -92,11 +93,8 @@ function expectRefusedAsTheServerDoes(
 ): void {
   expect(outcome.ok, `${what} was accepted`).toBe(false);
   if (outcome.ok) return;
-  const envelope = JSON.parse(outcome.refusal.raw) as {
-    error: { code: string; server: { code: string | null } | null };
-  };
   expect(
-    [envelope.error.code, envelope.error.server?.code],
+    [outcome.refusal.code, refusedCode(outcome.refusal)],
     `${what} was refused, but not as the server refuses it: ${outcome.refusal.raw}`,
   ).toEqual(["validation", "validation_error"]);
 }

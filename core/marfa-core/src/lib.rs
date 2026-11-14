@@ -112,7 +112,8 @@ pub use catalog::ServerCatalog;
 pub use catch_up::{Change, ChangeEvent, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{
-    CODES as ERROR_CODES, CoreError, CoreErrorKind, FolderStore, environmental_status,
+    CODES as ERROR_CODES, CoreError, CoreErrorKind, FolderStore, NOT_HELD, ServerAnswer,
+    UNREAD_CODE, environmental_status,
 };
 pub use file_cache::{
     Attachments, DEFAULT_FLOOR as FILE_BUDGET_FLOOR, FileBudget, FileCache, KeptFetch, NotHeld,
@@ -933,13 +934,19 @@ impl Core {
             (added, reach::Context::capture(&conn)?)
         };
         let mut trashed = false;
+        let mut gone = None;
         let own_create = |conn: &Connection| -> Result<bool> {
             Ok(store::waiting_writes_for_item(conn, id)?
                 .iter()
                 .any(|row| row.kind == WriteKind::CreateItem)
                 && store::item_held(conn, id)?)
         };
-        let held = hydrate::read_with_edges(&context.http(http), id).and_then(|read| {
+        let held = hydrate::read_with_edges_answered(&context.http(http), id).and_then(|read| {
+            let (read, answer) = match read {
+                crate::http::ByIdRead::Row(read) => (Some(read), None),
+                crate::http::ByIdRead::Absent(answer) => (None, answer),
+            };
+            gone = answer;
             // A read by id answers a row in the bin as one that is gone, and
             // the slice may hold such a row.
             if read.is_none() && !own_create(&*self.conn()?)? {
@@ -974,10 +981,12 @@ impl Core {
         match held.map_err(|error| context.failed(self, error).unwrap_or_else(|error| error))? {
             true => Ok(!added),
             false if trashed => Err(CoreError::NotFound {
+                server: gone,
                 code: "trashed".into(),
                 message: format!("{id} is in the bin; restore it to pin it"),
             }),
             false => Err(CoreError::NotFound {
+                server: gone,
                 code: "not_found".into(),
                 message: format!("the server holds no item {id} to pin"),
             }),
@@ -1373,7 +1382,9 @@ impl Core {
             // stale copy no refill has begun is refused.
             let waits = match &answer {
                 Err(CoreError::NoCursor | CoreError::HydrationIncomplete) => true,
-                Err(CoreError::CopyExpired { reason }) if reason == catch_up::CATCHUP_TOO_OLD => {
+                Err(CoreError::CopyExpired { reason, .. })
+                    if reason == catch_up::CATCHUP_TOO_OLD =>
+                {
                     !store::hydration_complete(&conn)?
                 }
                 _ => false,
@@ -1544,10 +1555,9 @@ impl Core {
         let (item, catalog) = store::read_marked(&mut *self.conn()?, |conn, completeness| {
             let found = store::item_by_id(conn, id)?;
             let Some(item) = store::held_or_refused(found, completeness)? else {
-                return Err(CoreError::NotFound {
-                    code: "not_held".into(),
-                    message: format!("{id} is not held in this working copy"),
-                });
+                return Err(CoreError::not_held(format!(
+                    "{id} is not held in this working copy"
+                )));
             };
             Ok((item, crate::catalog::load(conn)?))
         })?;
@@ -1916,6 +1926,7 @@ impl Core {
         self.lock.refuse_unless_writer()?;
         if store::queued_write(&*self.conn()?, id)?.is_none() {
             return Err(CoreError::NotFound {
+                server: None,
                 code: "queued_write_not_found".into(),
                 message: format!("{id} is not a write this queue holds"),
             });
@@ -2112,6 +2123,7 @@ impl Core {
             && held.state != ItemState::Trashed
         {
             return Err(CoreError::Validation {
+                server: None,
                 code: "invalid_transition".into(),
                 message: format!(
                     "{id} is {}, not in the bin, in this working copy; only a row in the bin can be purged",
@@ -2144,12 +2156,9 @@ impl Core {
             )));
         }
         let Some(version) = version.or(held.as_ref().map(|held| held.version)) else {
-            return Err(CoreError::NotFound {
-                code: "not_held".into(),
-                message: format!(
-                    "{id} is not held in this working copy; name the version it was read at in the bin to purge it"
-                ),
-            });
+            return Err(CoreError::not_held(format!(
+                "{id} is not held in this working copy; name the version it was read at in the bin to purge it"
+            )));
         };
         let http = self.http()?;
         catch_up::refuse_another_instance(self, http)?;
@@ -2348,6 +2357,7 @@ impl Core {
         let Some(held) = store::items_by_ids(&conn, &[id.to_string()])?.pop() else {
             store::refuse_unless_held(completeness)?;
             return Err(CoreError::NotFound {
+                server: None,
                 code: "item_not_found".into(),
                 message: format!("{id} is not a row this copy holds"),
             });
@@ -2538,6 +2548,7 @@ impl Core {
         if !store::item_held(&conn, id)? {
             store::refuse_unless_held(completeness)?;
             return Err(CoreError::NotFound {
+                server: None,
                 code: "item_not_found".into(),
                 message: format!("{id} is not a row this copy holds"),
             });
@@ -2613,6 +2624,7 @@ impl Core {
         if !store::item_held(&conn, id)? {
             store::refuse_unless_held(completeness)?;
             return Err(CoreError::NotFound {
+                server: None,
                 code: "item_not_found".into(),
                 message: format!("{id} is not a row this copy holds"),
             });
@@ -2760,6 +2772,7 @@ impl Core {
             return Ok(());
         }
         Err(CoreError::UnknownType {
+            server: None,
             message: format!("{type} is not a type this copy holds", type = r#type),
         })
     }
@@ -2834,6 +2847,7 @@ impl Core {
             // would be linked to something nobody can open.
             if store::item_by_id(&conn, target)?.is_none() {
                 return Err(CoreError::NotFound {
+                    server: None,
                     code: "item_not_found".into(),
                     message: format!("{target} is not a row this copy holds"),
                 });
@@ -3780,6 +3794,7 @@ fn refuse_system_type(r#type: &str) -> Result<()> {
         ""
     };
     Err(CoreError::Forbidden {
+        server: None,
         code: "type_not_permitted".into(),
         message: format!(
             "{type} is written only through its own operation, never as an item{door}"
@@ -3817,6 +3832,7 @@ fn refuse_unmakeable_create(catalog: &marfa_rules::catalog::Catalog, draft: &Dra
     refuse_system_type(&draft.r#type)?;
     if !catalog.known(&draft.r#type) {
         return Err(CoreError::UnknownType {
+            server: None,
             message: format!("{} is not a type this copy holds", draft.r#type),
         });
     }
@@ -3825,6 +3841,7 @@ fn refuse_unmakeable_create(catalog: &marfa_rules::catalog::Catalog, draft: &Dra
     // (`items/initial-state-refused`).
     if draft.state == Some(ItemState::Revoked) {
         return Err(CoreError::Validation {
+            server: None,
             code: "validation_error".into(),
             message: format!(
                 "{} cannot start in the revoked state; use active, archived or trashed",
@@ -3839,6 +3856,7 @@ fn refuse_unmakeable_create(catalog: &marfa_rules::catalog::Catalog, draft: &Dra
     ] {
         if value.is_some_and(|value| !value.is_finite()) {
             return Err(CoreError::Validation {
+                server: None,
                 code: "validation_error".into(),
                 message: format!("{name} must be a number"),
                 details: None,
@@ -3848,6 +3866,7 @@ fn refuse_unmakeable_create(catalog: &marfa_rules::catalog::Catalog, draft: &Dra
     for (edge_type, targets) in &draft.edges {
         if edge_type.is_empty() {
             return Err(CoreError::NotFound {
+                server: None,
                 code: "edge_type_not_found".into(),
                 message: "edges names an edge type with an empty id, which no edge type has".into(),
             });
@@ -4111,6 +4130,7 @@ fn queue_update(
     marfa_rules::validation::cleared_names(&edit.clear_properties, &edit.properties)?;
     let Some(held) = store::item_by_id(tx, id)? else {
         return Err(CoreError::NotFound {
+            server: None,
             code: "item_not_found".into(),
             message: format!("{id} is not a row this copy holds"),
         });
@@ -4212,6 +4232,7 @@ fn queue_update(
     };
     if let Some(r#type) = edit.r#type.as_ref().filter(|r#type| !catalog.known(r#type)) {
         return Err(CoreError::UnknownType {
+            server: None,
             message: format!("{type} is not a type this copy holds, so {id} cannot move to it"),
         });
     }
@@ -4236,6 +4257,7 @@ fn queue_update(
         .collect();
     if !required.is_empty() {
         return Err(CoreError::Validation {
+            server: None,
             code: "invalid_properties".into(),
             message: required.join("; "),
             details: None,
@@ -4355,6 +4377,7 @@ fn queue_update(
 fn refuse_self_loop(edge_type: &str, source_id: &str, target_id: &str) -> Result<()> {
     if source_id == target_id {
         return Err(CoreError::Validation {
+            server: None,
             code: "edge_cycle".into(),
             message: format!("an edge from {source_id} to itself closes a cycle"),
             details: Some(Box::new(serde_json::json!({ "edge_type": edge_type }))),
@@ -4388,6 +4411,7 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
         (None, None) => return Ok(()),
         (Some(_), Some(_)) => {
             return Err(CoreError::Validation {
+                server: None,
                 code: "validation_error".into(),
                 message: format!(
                     "an update moves one end of edge {} at a time; delete it and create the edge wanted",
@@ -4410,6 +4434,7 @@ fn refuse_edge_move(conn: &Connection, held: &model::Edge, edit: &EdgeEdit) -> R
     match catalog::edge_type(conn, &held.edge_type) {
         Ok(edge_type) if !edge_type.one_at(moved.other()) => {
             return Err(CoreError::Validation {
+                server: None,
                 code: "validation_error".into(),
                 message: format!(
                     "{} is {}, so the end that stays can hold more than this edge and there is none to replace; create the edge wanted and delete this one",
@@ -4586,6 +4611,7 @@ fn conflicted_copies_in(
 
 fn held_edge(conn: &Connection, id: &str) -> Result<model::Edge> {
     store::edge_by_id(conn, id)?.ok_or_else(|| CoreError::NotFound {
+        server: None,
         code: "edge_not_found".into(),
         message: format!("{id} is not an edge this copy holds"),
     })
@@ -6369,7 +6395,7 @@ mod tests {
         let before = core.get("folder").unwrap();
         let held = store::count(&core.conn().unwrap(), "items").unwrap();
         let refused = |result: Result<QueuedWrite>, what: &str| match result {
-            Err(CoreError::Forbidden { code, message }) => {
+            Err(CoreError::Forbidden { code, message, .. }) => {
                 assert_eq!(code, "type_not_permitted", "{what}");
                 assert!(message.contains("folders create"), "{what}: {message}");
             }

@@ -899,7 +899,8 @@ fn a_drain_or_catch_up_of_a_stale_copy_says_its_cursor_aged_out() {
         assert_eq!(
             answer,
             Err(CoreError::CopyExpired {
-                reason: "catchup_too_old".into()
+                reason: "catchup_too_old".into(),
+                server: None,
             }),
             "{call}"
         );
@@ -923,7 +924,8 @@ fn a_drain_or_catch_up_of_a_stale_copy_says_its_cursor_aged_out() {
         assert_eq!(
             answer,
             Err(CoreError::CopyExpired {
-                reason: "catchup_too_old".into()
+                reason: "catchup_too_old".into(),
+                server: None,
             }),
             "{call} part way through a refill"
         );
@@ -1077,7 +1079,8 @@ fn a_follow_waits_out_a_refill_begun_and_refuses_a_stale_copy_none_has_begun() {
     assert_eq!(
         core.follow(&stop, false, |_| {}),
         Err(CoreError::CopyExpired {
-            reason: "catchup_too_old".into()
+            reason: "catchup_too_old".into(),
+            server: None,
         })
     );
 
@@ -1128,16 +1131,18 @@ fn a_refusal_of_the_credential_or_reach_before_a_refill_reads_a_page_ends_the_st
     assert!(hydrate(&core).is_err());
     assert_eq!(listed(&core).unwrap().0, Completeness::Stale);
 
-    for (path, answer, reason) in [
+    for (path, answer, reason, status) in [
         (
             "/events",
             scripted::refusal(401, "unauthorized"),
             "credential_ended",
+            401,
         ),
         (
             "/types",
             scripted::refusal(409, "reach_changed"),
             "reach_changed",
+            409,
         ),
     ] {
         let server = Scripted::start();
@@ -1145,11 +1150,11 @@ fn a_refusal_of_the_credential_or_reach_before_a_refill_reads_a_page_ends_the_st
         server.on("/events", vec![head("60")]);
         server.on(path, vec![answer]);
 
-        assert_eq!(
-            hydrate(&core),
-            Err(CoreError::CopyExpired {
-                reason: reason.into()
-            })
+        let ended = hydrate(&core).unwrap_err();
+        assert!(matches!(&ended, CoreError::CopyExpired { reason: said, .. } if said == reason));
+        assert!(
+            ended.answer().is_some_and(|answer| answer.status == status),
+            "{reason}"
         );
 
         assert_eq!(

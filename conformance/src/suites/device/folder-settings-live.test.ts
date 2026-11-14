@@ -38,7 +38,11 @@ function value<T>(result: Outcome<T>): T {
   return result.value;
 }
 
-function refused<T>(result: Outcome<T>): { code: string; raw: string } {
+function refused<T>(result: Outcome<T>): {
+  code: string;
+  local: string | null;
+  raw: string;
+} {
   expect(result.ok, JSON.stringify(result)).toBe(false);
   if (result.ok) throw new Error("answered");
   return result.refusal;
@@ -240,12 +244,12 @@ describe("a copy reads a folder's settings and answers its query", () => {
     value(await unheld.hydrate([typeId], "library"));
     const notHeld = refused(await listInFolder(unheld, id("shelf")));
     expect(notHeld.code, notHeld.raw).toBe("not_found");
-    expect(notHeld.raw).toContain("not_held");
+    expect(notHeld.local, notHeld.raw).toBe("not_held");
     const notHeldSearch = refused(
       await searchInFolder(unheld, "marmalade", id("shelf")),
     );
     expect(notHeldSearch.code, notHeldSearch.raw).toBe("not_found");
-    expect(notHeldSearch.raw).toContain("not_held");
+    expect(notHeldSearch.local, notHeldSearch.raw).toBe("not_held");
 
     const parents = copy("parents");
     value(

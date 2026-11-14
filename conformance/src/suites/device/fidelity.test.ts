@@ -38,6 +38,7 @@ import {
 } from "../../device/scripted-server.js";
 import { v7 as uuidv7 } from "uuid";
 import { FolderDoor, type DoorCreate } from "../../device/folder-door.js";
+import { refusedCode } from "../../device/refusal.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import { requireBinary } from "./harness.js";
 
@@ -3222,11 +3223,8 @@ describe("a local read answers the listing grammar as the server does", () => {
       if (local.ok) continue;
       // The binary's class is its own closed set; the code beside it is the
       // one the server answers with, and that is what has to agree.
-      const envelope = JSON.parse(local.refusal.raw) as {
-        error: { server: { code: string | null } | null };
-      };
       expect(
-        envelope.error.server?.code,
+        refusedCode(local.refusal),
         `the device refuses ${filter} otherwise than the server does`,
       ).toBe(served.error?.error.code);
     }

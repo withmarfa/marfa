@@ -40,6 +40,7 @@ export interface Refusal {
     code: string;
     message: string;
     server: { status: number | null; code: string; details?: unknown } | null;
+    local: { code: string; details?: unknown } | null;
     retry_after_seconds: number | null;
   };
   exit: number;

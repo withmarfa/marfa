@@ -2121,6 +2121,73 @@ pub(in crate::folder) mod tests {
         assert_eq!(std::fs::read(shut.path()).unwrap(), b"");
     }
 
+    /// Adds `folder` against a server that answers its row with `status` and
+    /// `body`, and answers the refusal the add ends in.
+    fn add_refused_with(status: u16, body: &str) -> CoreError {
+        let temp = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+        let (_registry, _own) = own_registry();
+        let folder = "01a00000-0000-7000-8000-000000000003";
+        let server = crate::scripted::Scripted::start();
+        served(&server, folder);
+        server.on(
+            &format!("/items/{folder}"),
+            vec![crate::scripted::json(status, body)],
+        );
+        crate::Folder::add(
+            temp.path().join("fresh"),
+            folder,
+            Some(crate::Server {
+                url: server.url(),
+                key: "fixture".into(),
+            }),
+            None,
+        )
+        .err()
+        .expect("the add was refused")
+    }
+
+    #[test]
+    fn an_add_for_a_folder_the_server_does_not_hold_names_the_answer_the_server_gave() {
+        let refused = add_refused_with(
+            404,
+            r#"{"error":{"code":"item_not_found","message":"no such row","details":{"id":"x"}}}"#,
+        );
+        assert!(
+            matches!(&refused, CoreError::NotFound { code, .. } if code == "item_not_found"),
+            "{refused:?}"
+        );
+        assert_eq!(
+            refused.answer(),
+            Some(crate::error::ServerAnswer {
+                status: 404,
+                code: Some("item_not_found".into()),
+                details: Some(serde_json::json!({ "id": "x" })),
+            })
+        );
+    }
+
+    #[test]
+    fn an_add_for_a_folder_a_key_cannot_read_names_the_answer_the_server_gave() {
+        let refused = add_refused_with(
+            403,
+            r#"{"error":{"code":"type_not_permitted","message":"no","details":{"grant":{"kind":"type","name":"system.folder","level":"read"}}}}"#,
+        );
+        assert!(
+            matches!(&refused, CoreError::Forbidden { code, .. } if code == "type_not_permitted"),
+            "{refused:?}"
+        );
+        assert_eq!(
+            refused.answer(),
+            Some(crate::error::ServerAnswer {
+                status: 403,
+                code: Some("type_not_permitted".into()),
+                details: Some(
+                    serde_json::json!({ "grant": { "kind": "type", "name": "system.folder", "level": "read" } })
+                ),
+            })
+        );
+    }
+
     /// Answers an add of `folder` as a server holding it does, up to the
     /// listing: its row, the catalog its query reads, and a credential that
     /// is not a key, of which no placement grant is asked.

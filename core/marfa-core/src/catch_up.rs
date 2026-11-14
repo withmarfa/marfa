@@ -287,6 +287,7 @@ pub(crate) fn refuse_unless_current(conn: &mut rusqlite::Connection) -> Result<(
     if store::refilling(conn)? {
         return Err(CoreError::CopyExpired {
             reason: CATCHUP_TOO_OLD.into(),
+            server: None,
         });
     }
     if !store::hydration_complete(conn)? {
@@ -679,12 +680,13 @@ pub(crate) fn replay_build(
                 let payload = reach::event_payload(name.as_deref(), id.as_deref(), &data)?;
                 let kind = name.as_deref().unwrap_or(&payload.event_type);
                 if let Some(reason) = diverged(kind, &payload, &report.cursor) {
-                    return Err(CoreError::CopyExpired { reason });
+                    return Err(CoreError::expired(reason));
                 }
                 match kind {
                     "reach_changed" => {
                         return Err(CoreError::CopyExpired {
                             reason: "reach_changed".into(),
+                            server: None,
                         });
                     }
                     "stream_cursor" => {
@@ -724,6 +726,7 @@ pub(crate) fn replay_build(
                     "stream_incomplete" => {
                         return Err(CoreError::StreamIncomplete {
                             reason: payload.reason.unwrap_or_default(),
+                            server: None,
                         });
                     }
                     kind => {
@@ -773,6 +776,7 @@ pub(crate) fn replay_build(
     if !reached_head {
         return Err(CoreError::StreamIncomplete {
             reason: "read_failed".into(),
+            server: None,
         });
     }
     report.catalog_changed = *catalog_changed;
@@ -947,13 +951,18 @@ pub(crate) fn naming_instance(core: &Core, http: &Http) -> Result<(Http, u64)> {
 pub(crate) fn expire_for_another_instance(
     tx: &rusqlite::Transaction<'_>,
     generation: u64,
+    server: Option<Box<crate::error::ServerAnswer>>,
 ) -> Result<CoreError> {
     if reach::generation(tx)? != generation {
-        return Ok(Context::changed());
+        return Ok(CoreError::StreamIncomplete {
+            reason: "local_copy_changed".into(),
+            server,
+        });
     }
     reach::expire(tx)?;
     Ok(CoreError::CopyExpired {
         reason: crate::http::INSTANCE_CHANGED.into(),
+        server,
     })
 }
 
@@ -967,10 +976,12 @@ pub(crate) fn write_naming_instance<T>(
 ) -> Result<T> {
     let (named, generation) = naming_instance(core, http)?;
     match write(&named) {
-        Err(CoreError::CopyExpired { reason }) if reason == crate::http::INSTANCE_CHANGED => {
+        Err(CoreError::CopyExpired { reason, server })
+            if reason == crate::http::INSTANCE_CHANGED =>
+        {
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
-            let error = expire_for_another_instance(&tx, generation)?;
+            let error = expire_for_another_instance(&tx, generation, server)?;
             tx.commit()?;
             Err(error)
         }
@@ -998,7 +1009,7 @@ fn same_instance(core: &Core, served: &str, generation: u64) -> Result<()> {
     };
     reach::expire(&tx)?;
     tx.commit()?;
-    Err(CoreError::CopyExpired { reason })
+    Err(CoreError::expired(reason))
 }
 
 /// How a follow starts, beyond the stop that ends it.
@@ -1600,12 +1611,13 @@ fn read_stream(
         let payload = reach::event_payload(name.as_deref(), id.as_deref(), &data)?;
         let kind = name.as_deref().unwrap_or(&payload.event_type);
         if let Some(reason) = diverged(kind, &payload, &report.cursor) {
-            return Err(CoreError::CopyExpired { reason });
+            return Err(CoreError::expired(reason));
         }
         match kind {
             "reach_changed" => {
                 return Err(CoreError::CopyExpired {
                     reason: "reach_changed".into(),
+                    server: None,
                 });
             }
             "stream_cursor" => {
@@ -2449,7 +2461,7 @@ mod tests {
         crate::fault::release(&point);
         let (adopted, changed) = run.join().unwrap();
         assert!(
-            matches!(&adopted, Err(CoreError::CopyExpired { reason }) if reason == "catalog_changed"),
+            matches!(&adopted, Err(CoreError::CopyExpired { reason, .. }) if reason == "catalog_changed"),
             "{adopted:?}"
         );
         assert!(changed);
@@ -5253,7 +5265,7 @@ mod tests {
 
     fn expired(ended: Result<impl std::fmt::Debug>, core: &Core, named: &str) {
         match ended {
-            Err(CoreError::CopyExpired { reason }) => {
+            Err(CoreError::CopyExpired { reason, .. }) => {
                 assert!(reason.contains(named), "{reason}");
             }
             other => panic!("a server that does not continue the copy's log ended {other:?}"),

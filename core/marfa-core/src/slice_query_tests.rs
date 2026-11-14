@@ -504,7 +504,7 @@ fn a_change_to_a_status_field_the_query_reads_ends_the_copy() {
 
         if ends {
             match ended {
-                Err(CoreError::CopyExpired { reason }) => {
+                Err(CoreError::CopyExpired { reason, .. }) => {
                     assert!(reason.contains("catalog_changed"), "{reason}");
                 }
                 other => panic!("a changed status field ended {other:?}"),
@@ -2031,7 +2031,7 @@ fn an_unpin_while_a_refill_lists_its_items_lets_go_of_nothing_under_the_root() {
     // A change to the pins ends the attempt, which the next one resumes.
     let ended = refill.join().unwrap();
     assert!(
-        matches!(&ended, Err(CoreError::StreamIncomplete { reason }) if reason == "local_copy_changed"),
+        matches!(&ended, Err(CoreError::StreamIncomplete { reason, .. }) if reason == "local_copy_changed"),
         "{:?}",
         ended.map(|_| ())
     );

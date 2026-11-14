@@ -27,6 +27,7 @@ pub(crate) fn cursor(value: &str) -> Option<u64> {
 pub(crate) fn invalid() -> CoreError {
     CoreError::CopyExpired {
         reason: "reach_invalid".into(),
+        server: None,
     }
 }
 
@@ -192,6 +193,7 @@ impl Context {
     pub(crate) fn changed() -> CoreError {
         CoreError::StreamIncomplete {
             reason: "local_copy_changed".into(),
+            server: None,
         }
     }
 
@@ -226,12 +228,14 @@ impl Context {
         }
         Ok(CoreError::CopyExpired {
             reason: reason.into(),
+            server: None,
         })
     }
 
     pub(crate) fn failed(&self, core: &Core, error: CoreError) -> Result<CoreError> {
-        if let CoreError::CopyExpired { reason } = &error {
+        if let CoreError::CopyExpired { reason, server } = &error {
             self.expire(core, reason)
+                .map(|expired| expired.told_by(server.clone()))
         } else {
             Ok(error)
         }
@@ -270,11 +274,13 @@ impl Before {
     }
 
     pub(crate) fn failed(&self, core: &Core, error: CoreError) -> Result<CoreError> {
-        let CoreError::CopyExpired { reason } = &error else {
+        let CoreError::CopyExpired { reason, server } = &error else {
             return Ok(error);
         };
         if let Some(context) = &self.context {
-            return context.expire(core, reason);
+            return context
+                .expire(core, reason)
+                .map(|expired| expired.told_by(server.clone()));
         }
         let mut conn = core.conn()?;
         let tx = conn.transaction()?;
@@ -631,18 +637,20 @@ mod tests {
             assert!(http.item("x").unwrap_err().is_environmental());
         }
         server.on("/items/x", vec![refusal(409, "reach_changed")]);
-        assert_eq!(
-            http.item("x").unwrap_err(),
-            CoreError::CopyExpired {
-                reason: "reach_changed".into()
-            }
+        let ended = http.item("x").unwrap_err();
+        assert!(
+            matches!(&ended, CoreError::CopyExpired { reason, .. } if reason == "reach_changed")
         );
+        assert_eq!(ended.answer().map(|answer| answer.status), Some(409));
         server.on("/items/x", vec![refusal(401, "unauthorized")]);
+        let ended = http.item("x").unwrap_err();
+        assert!(
+            matches!(&ended, CoreError::CopyExpired { reason, .. } if reason == "credential_ended")
+        );
+        let answer = ended.answer().unwrap();
         assert_eq!(
-            http.item("x").unwrap_err(),
-            CoreError::CopyExpired {
-                reason: "credential_ended".into()
-            }
+            (answer.status, answer.code.as_deref()),
+            (401, Some("unauthorized"))
         );
     }
 

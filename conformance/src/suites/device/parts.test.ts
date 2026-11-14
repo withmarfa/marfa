@@ -11,6 +11,7 @@ import {
   type WireItemOptions,
 } from "../../device/marfa-answers.js";
 import type { DeviceUnderTest, Item, Outcome } from "../../device/protocol.js";
+import { refusedCode } from "../../device/refusal.js";
 import type { SseFrame } from "../../device/scripted-server.js";
 import { scriptHydration, startHarness, type Harness } from "./harness.js";
 
@@ -242,20 +243,12 @@ describe("a working copy answers the part term from what it holds", () => {
       );
       expect(answer.ok, filter).toBe(false);
       if (answer.ok) return "";
-      const error = (
-        JSON.parse(answer.refusal.raw) as {
-          error: {
-            code: string;
-            message: string;
-            server: { code: string | null } | null;
-          };
-        }
-      ).error;
-      expect([error.code, error.server?.code], filter).toEqual([
-        "validation",
-        "validation_error",
-      ]);
-      return error.message;
+      expect(
+        [answer.refusal.code, refusedCode(answer.refusal)],
+        filter,
+      ).toEqual(["validation", "validation_error"]);
+      return (JSON.parse(answer.refusal.raw) as { error: { message: string } })
+        .error.message;
     };
     expect(await refused("part exists")).toContain(
       'Operator "exists" is not valid for "part". Use: eq, neq, with true or false',

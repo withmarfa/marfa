@@ -13,6 +13,7 @@ import type {
   QueuedWrite,
 } from "../../device/protocol.js";
 import { refusalLine } from "../../device/cli-adapter.js";
+import { refusedCode } from "../../device/refusal.js";
 import type { Responder } from "../../device/scripted-server.js";
 import {
   queuedEdit,
@@ -101,11 +102,8 @@ function value<T>(outcome: Outcome<T>): T {
 function refusedAs(outcome: Outcome<unknown>, code: string, what: string) {
   expect(outcome.ok, `${what} was queued`).toBe(false);
   if (outcome.ok) return;
-  const envelope = JSON.parse(outcome.refusal.raw) as {
-    error: { code: string; server: { code: string | null } | null };
-  };
   expect(
-    [envelope.error.code, envelope.error.server?.code],
+    [outcome.refusal.code, refusedCode(outcome.refusal)],
     `${what} was refused, but not as the server refuses it: ${outcome.refusal.raw}`,
   ).toEqual(["validation", code]);
 }

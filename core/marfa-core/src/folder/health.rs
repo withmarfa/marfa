@@ -828,6 +828,7 @@ impl Folder {
             snapshot.problems.iter().find_map(|p| match p.code {
                 Code::Unavailable => Some(CoreError::Network("unavailable".into())),
                 Code::CredentialRefused => Some(CoreError::Unauthorized {
+                    server: None,
                     code: "unauthorized".into(),
                     message: "credential refused".into(),
                 }),
@@ -1431,6 +1432,7 @@ mod tests {
             retry_after_seconds: Some(90),
             code: "rate_limited".into(),
             message: "limited".into(),
+            details: None,
         });
         assert!(state.retry_at >= millis() + 89_000);
     }

@@ -156,6 +156,117 @@ describe("the exit codes", () => {
     expect(refused.envelope.exit).toBe(1);
     expect(refused.envelope.error.code).toBe("not_found");
     expect(refused.envelope.error.server?.status).toBe(404);
+    expect(refused.envelope.error.server?.code).toBe("item_not_found");
+    expect(refused.envelope.error.local).toBeNull();
+    expect(Object.keys(refused.envelope.error).sort()).toEqual([
+      "code",
+      "local",
+      "message",
+      "retry_after_seconds",
+      "server",
+    ]);
+  });
+
+  it("names no server in a refusal the working copy made itself, and the code it gave it", async () => {
+    const store = join(dir, "local-refusal");
+    const device = ["device", "--db", store];
+    await c.cli.json([
+      ...device,
+      "hydrate",
+      "--types",
+      "core.note",
+      "--tier",
+      "library",
+    ]);
+    const id = "00000000-0000-7000-8000-000000000000";
+    for (const command of [
+      ["items", "get", id],
+      ["items", "purge", id],
+      [
+        "items",
+        "create",
+        "--type",
+        "nope.thing",
+        "--properties",
+        '{"title":"x"}',
+      ],
+    ]) {
+      const refused = await c.cli.refused([...device, ...command]);
+      const { error } = refused.envelope;
+      expect(refused.code, command.join(" ")).toBe(1);
+      expect(error.server, command.join(" ")).toBeNull();
+      expect(error.local?.code, command.join(" ")).toBeTypeOf("string");
+      expect(error.code, command.join(" ")).not.toBe("not_held");
+    }
+    const held = (await c.cli.refused([...device, "items", "get", id])).envelope
+      .error;
+    expect([held.code, held.local?.code]).toEqual(["not_found", "not_held"]);
+    const purged = (await c.cli.refused([...device, "items", "purge", id]))
+      .envelope.error;
+    expect([purged.code, purged.local?.code]).toEqual([
+      "not_found",
+      "not_held",
+    ]);
+    const unknown = (
+      await c.cli.refused([
+        ...device,
+        "items",
+        "create",
+        "--type",
+        "nope.thing",
+        "--properties",
+        '{"title":"x"}',
+      ])
+    ).envelope.error;
+    expect([unknown.code, unknown.local?.code]).toEqual([
+      "unknown_type",
+      "unknown_type",
+    ]);
+  });
+
+  it("reports a server's refusal to a device command in server, with no local code", async () => {
+    const store = join(dir, "server-refusal");
+    const device = ["device", "--db", store];
+    await c.cli.json([
+      ...device,
+      "hydrate",
+      "--types",
+      "core.note",
+      "--tier",
+      "library",
+    ]);
+    const refused = await c.cli.refused([
+      ...device,
+      "items",
+      "purge",
+      "00000000-0000-7000-8000-000000000000",
+      "--version",
+      "1",
+    ]);
+    expect(refused.code).toBe(1);
+    expect(refused.envelope.error.code).toBe("not_found");
+    expect(refused.envelope.error.server?.status).toBe(404);
+    expect(refused.envelope.error.server?.code).toBe("item_not_found");
+    expect(refused.envelope.error.local).toBeNull();
+  });
+
+  it("carries the server's own 401 beside the copy_expired a refused key ends a hydration with", async () => {
+    const refused = await c.cli
+      .as("marfa_k1_refused_fixture")
+      .refused([
+        "device",
+        "--db",
+        join(dir, "refused-key"),
+        "hydrate",
+        "--types",
+        "core.note",
+        "--tier",
+        "library",
+      ]);
+    expect(refused.envelope.error.code).toBe("copy_expired");
+    expect(refused.envelope.error.server?.status).toBe(401);
+    expect(refused.envelope.error.server?.code).toBe("unauthorized");
+    expect(refused.envelope.error.local).toBeNull();
   });
 
   it("leaves by 2 when the command line is wrong, with the envelope under --json and the usage text without it", async () => {

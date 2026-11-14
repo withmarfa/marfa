@@ -86,6 +86,7 @@ fn hydrate_inner(
             Attempt::NotInPlace(reason) => {
                 return Err(CoreError::CopyExpired {
                     reason: reason.into(),
+                    server: None,
                 });
             }
             // Only an attempt that would resume asks to start again, and one
@@ -712,10 +713,10 @@ fn attempt(
             // The head a resumed hydration kept is older than this call, so
             // the log may have let it go; filled again, the copy starts from
             // a head read now.
-            Err(CoreError::CopyExpired { reason }) if resumed => {
+            Err(CoreError::CopyExpired { reason, server }) if resumed => {
                 match crate::catch_up::divergence(&reason) {
                     Some(gap) => return Ok(Attempt::Again(gap)),
-                    None => return Err(CoreError::CopyExpired { reason }),
+                    None => return Err(CoreError::CopyExpired { reason, server }),
                 }
             }
             replay => replay?,
@@ -1027,7 +1028,7 @@ fn head_held(http: &Http, head: &str, stop: &AtomicBool) -> Result<Option<Hydrat
         let reader = match crate::catch_up::ask_unless_stopped(stop, http, move |http| {
             http.open_events(Some(&asked), HEAD_READ_TIMEOUT)
         }) {
-            Err(CoreError::CopyExpired { reason }) if reason == "reach_changed" => {
+            Err(CoreError::CopyExpired { reason, .. }) if reason == "reach_changed" => {
                 return Ok(Some(HydrateRestart::ReachChanged));
             }
             reader => reader?,
@@ -1055,6 +1056,7 @@ fn head_held(http: &Http, head: &str, stop: &AtomicBool) -> Result<Option<Hydrat
                         "stream_incomplete" => {
                             return Err(CoreError::StreamIncomplete {
                                 reason: payload.reason.unwrap_or_default(),
+                                server: None,
                             });
                         }
                         "stream_cursor" if !opened => opened = true,
@@ -1070,6 +1072,7 @@ fn head_held(http: &Http, head: &str, stop: &AtomicBool) -> Result<Option<Hydrat
     }
     Err(CoreError::StreamIncomplete {
         reason: "read_failed".into(),
+        server: None,
     })
 }
 
@@ -1456,6 +1459,7 @@ fn refuse_unreadable(
             .and_then(serde_json::Value::as_str)
             .map(str::to_string)
     });
+    let mut said = None;
     let unreadable: Vec<&str> = match &key {
         Some(key) => named
             .into_iter()
@@ -1466,7 +1470,10 @@ fn refuse_unreadable(
             let mut refused = Vec::new();
             for name in named {
                 match http.lists(name, listed_tier(Some(name), tier)) {
-                    Err(CoreError::Forbidden { code, .. }) if code == "type_not_permitted" => {
+                    Err(CoreError::Forbidden { code, server, .. })
+                        if code == "type_not_permitted" =>
+                    {
+                        said = said.or(server);
                         refused.push(name);
                     }
                     Err(error) => return Err(error),
@@ -1480,6 +1487,7 @@ fn refuse_unreadable(
         return Ok(Some(learned));
     }
     Err(CoreError::Forbidden {
+        server: said,
         code: "type_not_permitted".into(),
         message: format!(
             "this credential cannot read {}, nor any type under it, so a slice naming it would hold none of it: hydrate with a credential that reads it, or leave it out",
@@ -1529,6 +1537,7 @@ fn refuse_unheld(catalog: &WireCatalog, types: &[String], edge_types: &[String])
             && !catalog.types.iter().any(|held| &held.id == *name)
     }) {
         return Err(CoreError::UnknownType {
+            server: None,
             message: format!(
                 "the server holds no type {unheld}, so a slice naming it would hold none of it: register it, or leave it out"
             ),
@@ -1541,6 +1550,7 @@ fn refuse_unheld(catalog: &WireCatalog, types: &[String], edge_types: &[String])
             .any(|held| held.get("id").and_then(|id| id.as_str()) == Some(name.as_str()))
     }) {
         return Err(CoreError::UnknownType {
+            server: None,
             message: format!(
                 "the server holds no edge type {unheld}, so a slice holding it whole would hold none of it: register it, or leave it out"
             ),
@@ -1574,8 +1584,17 @@ pub(crate) fn read_with_edges(
     http: &Http,
     id: &str,
 ) -> Result<Option<(WireItemWithMetadata, Vec<WireEdge>)>> {
-    let Some(read) = http.item_with_edges(id)? else {
-        return Ok(None);
+    Ok(read_with_edges_answered(http, id)?.row())
+}
+
+/// `read_with_edges`, keeping the server's `404` where the row is gone.
+pub(crate) fn read_with_edges_answered(
+    http: &Http,
+    id: &str,
+) -> Result<crate::http::ByIdRead<(WireItemWithMetadata, Vec<WireEdge>)>> {
+    let read = match http.item_with_edges(id)? {
+        crate::http::ByIdRead::Row(read) => read,
+        crate::http::ByIdRead::Absent(answer) => return Ok(crate::http::ByIdRead::Absent(answer)),
     };
     let mut edges = Vec::new();
     for (edge_type, block) in read.item.edges.iter().flatten() {
@@ -1588,7 +1607,7 @@ pub(crate) fn read_with_edges(
             block,
         )?);
     }
-    Ok(Some((read, edges)))
+    Ok(crate::http::ByIdRead::Row((read, edges)))
 }
 
 /// The edges `row` draws of each type not in `whole`, its overflow read
@@ -1787,11 +1806,13 @@ fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)>
                     if payload.event_type == "stream_incomplete" {
                         return Err(CoreError::StreamIncomplete {
                             reason: payload.reason.unwrap_or_default(),
+                            server: None,
                         });
                     }
                     if payload.event_type == "reach_changed" {
                         return Err(CoreError::CopyExpired {
                             reason: "reach_changed".into(),
+                            server: None,
                         });
                     }
                     if payload.event_type != "stream_cursor" {
@@ -1815,6 +1836,7 @@ fn read_head(http: &Http, stop: &AtomicBool) -> Result<(String, String, String)>
     }
     Err(CoreError::StreamIncomplete {
         reason: "read_failed".into(),
+        server: None,
     })
 }
 
@@ -2393,11 +2415,14 @@ mod tests {
             let server = Scripted::start();
             let (core, pinned) = pinned_copy(&server, 2);
             server.on("/items/bulk-get", vec![answer]);
+            let ended = hydrate(&core).unwrap_err();
+            assert!(
+                matches!(&ended, CoreError::CopyExpired { reason: said, .. } if said == reason),
+                "{case}"
+            );
             assert_eq!(
-                hydrate(&core).unwrap_err(),
-                CoreError::CopyExpired {
-                    reason: reason.into()
-                },
+                ended.answer().map(|answer| answer.status),
+                (reason == "reach_changed").then_some(409),
                 "{case}"
             );
             let conn = core.conn().unwrap();
@@ -2539,7 +2564,8 @@ mod tests {
             assert_eq!(
                 hydrate(&core).unwrap_err(),
                 CoreError::CopyExpired {
-                    reason: "reach_invalid".into()
+                    reason: "reach_invalid".into(),
+                    server: None,
                 },
                 "{path}: {body}"
             );
@@ -2634,10 +2660,23 @@ mod tests {
             )
             .unwrap_err();
         match refused {
-            CoreError::Forbidden { code, message } => {
+            CoreError::Forbidden {
+                code,
+                message,
+                server,
+            } => {
                 assert_eq!(code, "type_not_permitted");
                 assert!(message.contains("core.bookmark"), "{message}");
                 assert!(!message.contains("core.note,"), "{message}");
+                assert_eq!(
+                    server.as_deref(),
+                    Some(&crate::error::ServerAnswer {
+                        status: 403,
+                        code: Some("type_not_permitted".into()),
+                        details: None,
+                    }),
+                    "the listing's refusal was a server's answer"
+                );
             }
             other => panic!("expected the listing's refusal, got {other:?}"),
         }
@@ -2765,10 +2804,15 @@ mod tests {
             &[],
             &AtomicBool::new(false),
         ) {
-            Err(CoreError::Forbidden { code, message }) => {
+            Err(CoreError::Forbidden {
+                code,
+                message,
+                server,
+            }) => {
                 assert_eq!(code, "type_not_permitted");
                 assert!(message.contains("core.entity"), "{message}");
                 assert!(!message.contains("core.note,"), "{message}");
+                assert_eq!(server, None, "the key's own map refused, not a server");
             }
             other => panic!("a key reading nothing under the type was not refused: {other:?}"),
         }
@@ -3646,6 +3690,7 @@ mod tests {
             code: "rate_limited".into(),
             message: String::new(),
             retry_after_seconds: None,
+            details: None,
         }));
         assert!(!ends(CoreError::Server {
             status: 503,

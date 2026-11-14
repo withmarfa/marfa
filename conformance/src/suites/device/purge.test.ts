@@ -93,7 +93,7 @@ describe("a device sends a purge only for an item it holds in the bin", () => {
     expect(refused.ok).toBe(false);
     if (!refused.ok) {
       expect(refused.refusal.code).toBe("not_found");
-      expect(refused.refusal.raw).toContain("not_held");
+      expect(refused.refusal.local).toBe("not_held");
     }
     expect(
       purges(harness),

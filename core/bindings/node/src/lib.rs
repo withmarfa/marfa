@@ -1493,10 +1493,11 @@ fn server_of(url: Option<String>, key: Option<String>) -> Result<Option<marfa_co
 /// A core error as a JS error. The message starts with the error's code,
 /// `not_found: …`, `wrong_server: …`, and the error carries what the Swift
 /// binding's carries as properties: `code`, the core's own name for it, and
-/// whichever of `serverCode`, `details`, `status`, `retryAfterSeconds`,
-/// `origin`, `location`, `path`, `reason`, `unsent`, `agreed`, `expected`,
-/// `got`, `served`, `writeSent` and `hash` it has. `details` is the object a
-/// refused write's `answer` holds under `error.details`.
+/// whichever of `server`, `local`, `retryAfterSeconds`, `origin`, `location`,
+/// `path`, `reason`, `unsent`, `agreed`, `expected`, `got`, `served`,
+/// `writeSent` and `hash` it has. `server` is what a server sent (`status`,
+/// `code` and `details`), present only where one answered; `local` is the
+/// code and details the device named the refusal by itself.
 fn failure(env: Env, error: marfa_core::CoreError) -> Error {
     match error_value(&env, &error) {
         Ok(thrown) => Error::from(thrown),
@@ -1545,12 +1546,12 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
     let code = error.code();
     let detail = match error {
         E::RenewalFailed(_) => unreachable!("renewal cause was unwrapped"),
-        E::NotFound { code, message }
-        | E::Unauthorized { code, message }
-        | E::Forbidden { code, message }
+        E::NotFound { code, message, .. }
+        | E::Unauthorized { code, message, .. }
+        | E::Forbidden { code, message, .. }
         | E::Validation { code, message, .. }
         | E::RateLimited { code, message, .. } => server_detail(error.code(), Some(code), message),
-        E::UnknownType { message } => server_detail(error.code(), None, message),
+        E::UnknownType { message, .. } => server_detail(error.code(), None, message),
         E::Server {
             status,
             code,
@@ -1586,48 +1587,28 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::FirstSyncWaiting
         | E::Canceled => error.to_string(),
     };
-    let fields = match error {
-        E::NotFound { code, .. } | E::Unauthorized { code, .. } | E::Forbidden { code, .. } => {
-            vec![("serverCode", json!(code))]
-        }
-        E::Validation { code, details, .. } => {
-            let mut fields = vec![("serverCode", json!(code))];
-            if let Some(details) = details {
-                fields.push(("details", (**details).clone()));
-            }
-            fields
-        }
-        E::UnknownType { .. } => vec![("serverCode", json!("unknown_type"))],
+    let mut fields = match error {
+        E::NotFound { .. }
+        | E::Unauthorized { .. }
+        | E::Forbidden { .. }
+        | E::Validation { .. }
+        | E::UnknownType { .. }
+        | E::Server { .. } => Vec::new(),
         E::RateLimited {
-            code,
+            retry_after_seconds,
+            ..
+        } => vec![("retryAfterSeconds", json!(retry_after_seconds))],
+        E::Unnamed {
+            origin,
             retry_after_seconds,
             ..
         } => vec![
-            ("serverCode", json!(code)),
-            ("status", json!(429)),
-            ("retryAfterSeconds", json!(retry_after_seconds)),
-        ],
-        E::Server { status, code, .. } => {
-            vec![("status", json!(status)), ("serverCode", json!(code))]
-        }
-        E::Unnamed {
-            origin,
-            status,
-            retry_after_seconds,
-        } => vec![
             ("origin", json!(origin)),
-            ("status", json!(status)),
             ("retryAfterSeconds", json!(retry_after_seconds)),
         ],
         E::Redirected {
-            origin,
-            status,
-            location,
-        } => vec![
-            ("origin", json!(origin)),
-            ("status", json!(status)),
-            ("location", json!(location)),
-        ],
+            origin, location, ..
+        } => vec![("origin", json!(origin)), ("location", json!(location))],
         E::SignedOut { origin } => vec![("origin", json!(origin))],
         E::WrongSchema {
             path,
@@ -1648,7 +1629,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
             ("unsent", json!(unsent)),
             ("agreed", json!(agreed)),
         ],
-        E::CopyExpired { reason } | E::StreamIncomplete { reason } => {
+        E::CopyExpired { reason, .. } | E::StreamIncomplete { reason, .. } => {
             vec![("reason", json!(reason))]
         }
         E::WrongServer { expected, got } => {
@@ -1668,13 +1649,12 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
             origin,
             served,
             expected,
-            status,
             write_sent,
+            ..
         } => vec![
             ("origin", json!(origin)),
             ("served", json!(served)),
             ("expected", json!(expected)),
-            ("status", json!(status)),
             ("writeSent", json!(write_sent)),
         ],
         E::RenewalFailed(_)
@@ -1696,6 +1676,15 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::Invalid(_)
         | E::Fault(_) => Vec::new(),
     };
+    if let Some(answer) = error.answer() {
+        fields.push((
+            "server",
+            json!({ "status": answer.status, "code": answer.code, "details": answer.details }),
+        ));
+    }
+    if let Some((code, details)) = error.local() {
+        fields.push(("local", json!({ "code": code, "details": details })));
+    }
     (format!("{code}: {detail}"), fields)
 }
 
@@ -3576,6 +3565,7 @@ mod tests {
         use marfa_core::CoreError as E;
         assert_eq!(
             describe(&E::Unauthorized {
+                server: None,
                 code: "unauthorized".into(),
                 message: "Authentication required".into()
             })
@@ -3584,6 +3574,7 @@ mod tests {
         );
         assert_eq!(
             describe(&E::UnknownType {
+                server: None,
                 message: "Unknown type: acme.absent".into()
             })
             .0,
@@ -3591,6 +3582,7 @@ mod tests {
         );
         assert_eq!(
             describe(&E::Validation {
+                server: None,
                 code: "invalid_properties".into(),
                 message: "read: Expected boolean".into(),
                 details: None,
@@ -3610,11 +3602,14 @@ mod tests {
                 code: "rate_limited".into(),
                 message: String::new(),
                 retry_after_seconds: Some(7),
+                details: Some(Box::new(json!({ "scope": "key" }))),
             }),
             vec![
-                ("serverCode", json!("rate_limited")),
-                ("status", json!(429)),
                 ("retryAfterSeconds", json!(7)),
+                (
+                    "server",
+                    json!({ "status": 429, "code": "rate_limited", "details": { "scope": "key" } })
+                ),
             ]
         );
         assert_eq!(
@@ -3642,20 +3637,57 @@ mod tests {
                 ("origin", json!("https://marfa.example")),
                 ("served", json!("4")),
                 ("expected", json!(3)),
-                ("status", json!(201)),
                 ("writeSent", json!(true)),
+                (
+                    "server",
+                    json!({ "status": 201, "code": null, "details": null })
+                ),
             ]
         );
         assert_eq!(
             fields(E::Validation {
+                server: None,
                 code: "edge_constraint_violation".into(),
                 message: String::new(),
                 details: Some(Box::new(json!({ "constraint": "duplicate" }))),
             }),
-            vec![
-                ("serverCode", json!("edge_constraint_violation")),
-                ("details", json!({ "constraint": "duplicate" })),
-            ]
+            vec![(
+                "local",
+                json!({ "code": "edge_constraint_violation", "details": { "constraint": "duplicate" } })
+            )]
+        );
+        let answered = fields(E::NotFound {
+            server: Some(Box::new(marfa_core::ServerAnswer {
+                status: 404,
+                code: Some("item_not_found".into()),
+                details: Some(json!({ "trashed": true })),
+            })),
+            code: "item_not_found".into(),
+            message: String::new(),
+        });
+        assert_eq!(
+            answered,
+            vec![(
+                "server",
+                json!({ "status": 404, "code": "item_not_found", "details": { "trashed": true } })
+            )]
+        );
+        let reworded = fields(E::Unauthorized {
+            server: Some(Box::new(marfa_core::ServerAnswer {
+                status: 401,
+                code: Some("unauthorized".into()),
+                details: None,
+            })),
+            code: "credential_refused".into(),
+            message: String::new(),
+        });
+        assert_eq!(reworded.len(), 2, "{reworded:?}");
+        assert_eq!(
+            reworded[1],
+            (
+                "local",
+                json!({ "code": "credential_refused", "details": null })
+            )
         );
         // A failed renewal carries its cause's fields, as it carries its code.
         let cause = E::BytesAbsent {

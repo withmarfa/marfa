@@ -17,12 +17,11 @@ pub fn error(error: &CliError) -> &'static str {
             self::error(error)
         }
         CliError::Io(_) => "reading or writing a file or a stream failed",
-        CliError::NotHeld(_) => "the item asked for is not in the local working copy",
         CliError::FolderHeld(_) => "another process is working the folder",
         CliError::FolderNotHandedOver(_) => {
             "another process is working the folder, and did not let it go when asked"
         }
-        CliError::Watch(_) => "the folder watch failed",
+        CliError::Watch(..) => "the folder watch failed",
         CliError::ClosedOutput => "the output was closed",
         CliError::Refused { status, .. } => refused(refused_code(*status)),
         CliError::Usage(_) => "the command line was wrong",
@@ -72,6 +71,13 @@ fn refused(code: &str) -> &'static str {
 
 fn core_error(error: &CoreError) -> &'static str {
     match error {
+        CoreError::NotFound { server: None, .. }
+        | CoreError::Unauthorized { server: None, .. }
+        | CoreError::Forbidden { server: None, .. }
+        | CoreError::Validation { server: None, .. }
+        | CoreError::UnknownType { server: None, .. } => {
+            "the working copy refused the request without asking the server"
+        }
         CoreError::NotFound { .. } => "the server has nothing at what the request named",
         CoreError::Unauthorized { .. } => "the server did not accept the credential",
         CoreError::Forbidden { .. } => {
@@ -149,7 +155,7 @@ mod tests {
             retry_after_seconds: None,
             details: Some(Box::new(serde_json::json!({ "field": secret }))),
         };
-        let echoed = CliError::NotHeld(format!("item-{secret}"));
+        let echoed = CliError::not_held(&format!("item-{secret}"));
         let renewal = CliError::from(CoreError::RenewalFailed(Box::new(CoreError::Network(
             secret.into(),
         ))));

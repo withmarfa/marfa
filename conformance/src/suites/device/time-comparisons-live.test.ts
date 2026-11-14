@@ -5,6 +5,7 @@ import type { TestContext } from "../../client/types.js";
 import { MarfaClient } from "../../client/api.js";
 import { CliDevice, newStore } from "../../device/cli-adapter.js";
 import type { Outcome } from "../../device/protocol.js";
+import { refusedCode } from "../../device/refusal.js";
 import { createTestContext, cleanup, trackItem } from "../../utils/setup.js";
 import { requireBinary } from "./harness.js";
 
@@ -143,9 +144,7 @@ it("normalizes exclusive time bounds as the server does", async () => {
       });
       expect(local.ok, bound).toBe(false);
       if (!local.ok)
-        expect(JSON.parse(local.refusal.raw).error.server.code, bound).toBe(
-          "validation_error",
-        );
+        expect(refusedCode(local.refusal), bound).toBe("validation_error");
     }
   }
 });
@@ -170,10 +169,9 @@ it.each(["listing", "search"] as const)(
         expect(served.status, expression).toBe(400);
         expect(served.error?.error.code, expression).toBe("validation_error");
         if (!local.ok)
-          expect(
-            JSON.parse(local.refusal.raw).error.server.code,
-            expression,
-          ).toBe("validation_error");
+          expect(refusedCode(local.refusal), expression).toBe(
+            "validation_error",
+          );
         return;
       }
       const servedIds = served.data.data

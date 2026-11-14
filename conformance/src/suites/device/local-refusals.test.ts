@@ -7,6 +7,7 @@ import {
   wireType,
 } from "../../device/marfa-answers.js";
 import type { DeviceUnderTest, Outcome } from "../../device/protocol.js";
+import { refusedCode } from "../../device/refusal.js";
 import { BUILT_FOR } from "../../device/scripted-server.js";
 import {
   hydratedHarness,
@@ -101,11 +102,8 @@ function expectRefusedAsTheServerDoes(
     `${why} was accepted, so the read answered as though the filter matched`,
   ).toBe(false);
   if (outcome.ok) return;
-  const envelope = JSON.parse(outcome.refusal.raw) as {
-    error: { code: string; server: { code: string | null } | null };
-  };
   expect(
-    [envelope.error.code, envelope.error.server?.code],
+    [outcome.refusal.code, refusedCode(outcome.refusal)],
     `${why} was refused, but not as the server refuses it: ${outcome.refusal.raw}`,
   ).toEqual(["validation", "validation_error"]);
 }
@@ -416,20 +414,16 @@ describe("a device refuses a write only the server may make", () => {
       ).toBe(false);
       if (outcome.ok) return;
       const envelope = JSON.parse(outcome.refusal.raw) as {
-        error: {
-          code: string;
-          message: string;
-          server: { status: number; code: string } | null;
-        };
+        error: { message: string };
       };
       expect(
         [
-          envelope.error.code,
-          envelope.error.server?.status,
-          envelope.error.server?.code,
+          outcome.refusal.code,
+          outcome.refusal.server,
+          refusedCode(outcome.refusal),
         ],
         `${what} was refused, but not as the server refuses it: ${outcome.refusal.raw}`,
-      ).toEqual(["forbidden", 403, "type_not_permitted"]);
+      ).toEqual(["forbidden", null, "type_not_permitted"]);
       expect(
         envelope.error.message,
         `${what} was refused without naming the folder operations a folder is written through`,

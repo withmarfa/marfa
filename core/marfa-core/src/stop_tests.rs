@@ -130,7 +130,8 @@ fn a_stopped_head_read_does_not_retry_after_eof_or_a_broken_frame() {
         assert_eq!(
             hydrate(&core, &AtomicBool::new(false)).unwrap_err(),
             CoreError::StreamIncomplete {
-                reason: "read_failed".into()
+                reason: "read_failed".into(),
+                server: None,
             }
         );
         assert_eq!(witness.seen("/events").len(), 3);

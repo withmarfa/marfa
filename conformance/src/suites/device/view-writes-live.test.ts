@@ -48,12 +48,8 @@ function refused<T>(
   expect(answer.ok, JSON.stringify(answer)).toBe(false);
   if (answer.ok) throw new Error("answered");
   expect(answer.refusal.code, answer.refusal.raw).toBe(code);
-  const error = JSON.parse(answer.refusal.raw) as {
-    serverCode?: string;
-    status?: number;
-  };
-  if (detail !== undefined) expect(error.serverCode).toBe(detail);
-  if (status !== undefined) expect(error.status).toBe(status);
+  if (detail !== undefined) expect(answer.refusal.server?.code).toBe(detail);
+  if (status !== undefined) expect(answer.refusal.server?.status).toBe(status);
 }
 
 async function copy(name: string, url?: string, key?: string) {

@@ -51,6 +51,9 @@ pub struct DrainReport {
     /// Set when a refused credential parks the queue. An answer on another
     /// contract ends the drain as an error instead.
     pub stopped: Option<String>,
+    /// The server's answer behind `stopped`.
+    #[serde(skip)]
+    pub refused_by: Option<Box<crate::error::ServerAnswer>>,
     /// Reported because `credential_refused` alone reads as a key that no
     /// longer works.
     pub unclaimed_sources: Vec<String>,
@@ -71,6 +74,7 @@ impl DrainReport {
             limited: false,
             verdicts: Vec::new(),
             stopped: None,
+            refused_by: None,
             unclaimed_sources: Vec::new(),
             retry_after_seconds: None,
         }
@@ -98,6 +102,7 @@ impl DrainReport {
         self.limited = later.limited;
         self.verdicts.extend(later.verdicts);
         self.stopped = later.stopped;
+        self.refused_by = later.refused_by;
         for source in later.unclaimed_sources {
             if !self.unclaimed_sources.contains(&source) {
                 self.unclaimed_sources.push(source);
@@ -1013,9 +1018,7 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
         contract_named: reply.contract.is_some(),
     };
     if answer.instance_changed() {
-        return Err(CoreError::CopyExpired {
-            reason: INSTANCE_CHANGED.into(),
-        });
+        return Err(answer.instance_changed_error());
     }
     Ok(answer)
 }
@@ -1123,9 +1126,9 @@ fn drain_inner(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainRepor
     let result = match sent {
         // From a request that settled nothing, a lookup among them: a write
         // the refusal answered expired the copy as it settled.
-        Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
+        Err(CoreError::CopyExpired { reason, server }) if reason == INSTANCE_CHANGED => {
             expire_for_another_instance(core, generation)
-                .and(Err(CoreError::CopyExpired { reason }))
+                .and(Err(CoreError::CopyExpired { reason, server }))
         }
         result => result,
     };
@@ -1152,7 +1155,7 @@ fn expire_for_another_instance(core: &Core, generation: u64) -> Result<()> {
     let mut conn = core.conn()?;
     let tx = conn.transaction()?;
     if reach::generation(&tx)? == generation {
-        crate::catch_up::expire_for_another_instance(&tx, generation)?;
+        crate::catch_up::expire_for_another_instance(&tx, generation, None)?;
     }
     tx.commit()?;
     Ok(())
@@ -1528,8 +1531,8 @@ fn send_queue(
         let payload = match payload_to_send(core, http, row, &all, &mut lookups)? {
             Ok(_) if row.kind == WriteKind::WriteRows => rows::body(row, &batched),
             Ok(payload) => payload,
-            Err(CoreError::Unauthorized { .. }) => {
-                park_for_credential(core, report)?;
+            Err(CoreError::Unauthorized { server, .. }) => {
+                park_for_credential(core, report, server)?;
                 break;
             }
             Err(error) => {
@@ -1720,11 +1723,11 @@ fn send_queue(
             // good. The copy is built again from the instance now at the
             // origin, which holds the write until a person releases it, and
             // has seen no attempt of it, so it is judged there afresh.
-            Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
+            Err(CoreError::CopyExpired { reason, server }) if reason == INSTANCE_CHANGED => {
                 let mut conn = core.conn()?;
                 let tx = conn.transaction()?;
                 crate::row_writes::leave_unsent(&tx, &row.id)?;
-                let error = crate::catch_up::expire_for_another_instance(&tx, generation)?;
+                let error = crate::catch_up::expire_for_another_instance(&tx, generation, server)?;
                 tx.commit()?;
                 return Err(error);
             }
@@ -1962,7 +1965,8 @@ fn send_queue(
             carry_on = true;
         }
         if stop {
-            park_for_credential(core, report)?;
+            let refusal = answer.as_ref().ok().map(Answer::server_answer);
+            park_for_credential(core, report, refusal)?;
             break;
         }
         if settled.unavailable.is_some() && !carry_on {
@@ -2042,8 +2046,13 @@ fn refuse_unsent(
 
 /// Parks every unanswered write until the credential is replaced, and says
 /// so: the rest of the pass would meet the same refusal.
-fn park_for_credential(core: &Core, report: &mut DrainReport) -> Result<()> {
+fn park_for_credential(
+    core: &Core,
+    report: &mut DrainReport,
+    refusal: Option<Box<crate::error::ServerAnswer>>,
+) -> Result<()> {
     let parked = store::block_unanswered(&*core.conn()?, BlockedReason::CredentialRefused)?;
+    report.refused_by = refusal;
     report.stopped = Some(format!(
         "the server refused the credential, so every queued write is blocked and the drain stopped; {parked} row(s) parked"
     ));
@@ -2780,6 +2789,7 @@ fn same_attempt(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<()> {
     }) {
         return Err(CoreError::StreamIncomplete {
             reason: "local_queue_changed".into(),
+            server: None,
         });
     }
     Ok(())
@@ -3730,7 +3740,11 @@ enum Bin {
 struct ReachChange {
     /// The copy as it stood when the server first said its reach had
     /// changed under a source move or a retype, and the reason it gave.
-    seen: Option<(reach::Context, String)>,
+    seen: Option<(
+        reach::Context,
+        String,
+        Option<Box<crate::error::ServerAnswer>>,
+    )>,
     /// Set when an answer queued a write of its own, which the pass read
     /// the queue too early to send.
     follow_up: bool,
@@ -3745,7 +3759,11 @@ impl ReachChange {
     /// answers came after it. Answers the expiry to tell.
     fn expire(self, core: &Core) -> Result<Option<CoreError>> {
         self.seen
-            .map(|(context, reason)| context.expire(core, &reason))
+            .map(|(context, reason, server)| {
+                context
+                    .expire(core, &reason)
+                    .map(|expired| expired.told_by(server))
+            })
             .transpose()
     }
 }
@@ -3788,8 +3806,10 @@ fn read_owed(
         )
     };
     match read_held(core, owed, bin, &context, before) {
-        Err(CoreError::CopyExpired { reason }) if reach_write && reason == "reach_changed" => {
-            pass.seen = Some((context, reason));
+        Err(CoreError::CopyExpired { reason, server })
+            if reach_write && reason == "reach_changed" =>
+        {
+            pass.seen = Some((context, reason, server));
             Ok(ReadBack::Unread)
         }
         Err(error) => Err(context.failed(core, error)?),
@@ -5065,9 +5085,7 @@ mod tests {
     }
 
     fn reach_changed() -> CoreError {
-        CoreError::CopyExpired {
-            reason: "reach_changed".into(),
-        }
+        CoreError::expired_by("reach_changed", 409, "reach_changed")
     }
 
     #[test]
@@ -5247,9 +5265,7 @@ mod tests {
     }
 
     fn instance_changed() -> CoreError {
-        CoreError::CopyExpired {
-            reason: INSTANCE_CHANGED.into(),
-        }
+        CoreError::expired_by(INSTANCE_CHANGED, 409, INSTANCE_CHANGED)
     }
 
     #[test]
@@ -7374,6 +7390,7 @@ mod tests {
                     code: "rate_limited".into(),
                     message: "wait before renewing".into(),
                     retry_after_seconds: requested,
+                    details: None,
                 })
             }));
             let before = core.queue().unwrap();
@@ -7490,6 +7507,7 @@ mod tests {
 
         assert_eq!(
             refused(CoreError::Unauthorized {
+                server: None,
                 code: "signed_out".into(),
                 message: "the sign-in ended".into(),
             }),
@@ -7604,6 +7622,7 @@ mod tests {
             limited: false,
             verdicts: Vec::new(),
             stopped: None,
+            refused_by: None,
             unclaimed_sources: Vec::new(),
             retry_after_seconds: None,
         }

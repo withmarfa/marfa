@@ -1,6 +1,12 @@
 import { fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import type { Outcome, Refusal, SliceTier, Tier } from "./protocol.js";
+import type {
+  Outcome,
+  Refusal,
+  ServerAnswer,
+  SliceTier,
+  Tier,
+} from "./protocol.js";
 
 /**
  * The device's binding, driven as the device under test.
@@ -829,8 +835,21 @@ export class BindingDevice {
 }
 
 function refusalOf(error: BindingError): Refusal {
+  const local = (error.local as { code?: unknown } | undefined)?.code;
+  const answered = error.server as
+    { status?: unknown; code?: unknown; details?: unknown } | undefined;
+  const server: ServerAnswer | null =
+    answered && typeof answered.status === "number"
+      ? {
+          status: answered.status,
+          code: typeof answered.code === "string" ? answered.code : null,
+          details: answered.details ?? null,
+        }
+      : null;
   return {
     code: typeof error.code === "string" ? error.code : "unclassified",
+    local: typeof local === "string" ? local : null,
+    server,
     raw: JSON.stringify(error),
   };
 }

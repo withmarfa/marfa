@@ -507,13 +507,13 @@ fn send_page(
     let answer = match answer {
         // Another instance took none of the page, so each write is judged
         // there afresh, as one on its own door is.
-        Err(CoreError::CopyExpired { reason }) if reason == INSTANCE_CHANGED => {
+        Err(CoreError::CopyExpired { reason, server }) if reason == INSTANCE_CHANGED => {
             let mut conn = core.conn()?;
             let tx = conn.transaction()?;
             for row in sent.iter().chain(carrying()) {
                 store::mark_unsent(&tx, &row.id)?;
             }
-            let error = crate::catch_up::expire_for_another_instance(&tx, generation)?;
+            let error = crate::catch_up::expire_for_another_instance(&tx, generation, server)?;
             tx.commit()?;
             return Err(error);
         }
@@ -552,7 +552,8 @@ fn send_page(
         // A write sent on its own door would meet the same refusal, under a
         // key that then keeps it out of every later page.
         Classified::BlockQueue(_) => {
-            park_for_credential(core, report)?;
+            let refusal = answer.as_ref().ok().map(crate::http::Answer::server_answer);
+            park_for_credential(core, report, refusal)?;
             return Ok(false);
         }
         _ => return Ok(false),

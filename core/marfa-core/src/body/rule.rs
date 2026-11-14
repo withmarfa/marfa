@@ -1690,6 +1690,7 @@ pub(crate) fn candidates(
     let host = match host {
         Some(id) => Some(
             store::item_by_id(conn, id)?.ok_or_else(|| CoreError::NotFound {
+                server: None,
                 code: "item_not_found".into(),
                 message: format!("{id} is not a row this copy holds"),
             })?,
@@ -1768,6 +1769,7 @@ pub(crate) fn candidates(
 pub(crate) fn read(conn: &Connection, id: &str) -> Result<BodyLinks> {
     let Some(item) = store::item_by_id(conn, id)? else {
         return Err(CoreError::NotFound {
+            server: None,
             code: "item_not_found".into(),
             message: format!("{id} is not a row this copy holds"),
         });
@@ -1895,12 +1897,14 @@ pub(crate) fn embed_text(conn: &Connection, host: &str, file: &str) -> Result<St
     let catalog = crate::catalog::load(conn)?;
     if store::item_by_id(conn, host)?.is_none() {
         return Err(CoreError::NotFound {
+            server: None,
             code: "item_not_found".into(),
             message: format!("{host} is not a row this copy holds"),
         });
     }
     let Some(item) = store::item_by_id(conn, file)? else {
         return Err(CoreError::NotFound {
+            server: None,
             code: "item_not_found".into(),
             message: format!("{file} is not a row this copy holds"),
         });

@@ -168,6 +168,7 @@ fn terminal_refusal(frame: &Frame) -> Option<CliError> {
         ))),
         "stream_incomplete" => Some(CliError::from(marfa_core::CoreError::StreamIncomplete {
             reason: text("reason").to_string(),
+            server: None,
         })),
         _ => None,
     }

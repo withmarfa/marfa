@@ -10,6 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
+import { v7 as uuidv7 } from "uuid";
 import { parse as parseYaml } from "yaml";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -24,7 +25,7 @@ import {
 import { withFault } from "./folders.shared.js";
 import { FolderDoor } from "../../device/folder-door.js";
 import { folderHarness, folderItem, scriptWrites } from "./harness.js";
-import type { FolderHarness } from "./harness.js";
+import type { FolderHarness, FolderItem } from "./harness.js";
 
 function treeBytes(root: string): Record<string, string> {
   const entries: Record<string, string> = {};
@@ -200,6 +201,59 @@ describe("folder settings contract", () => {
       expect(sent).toHaveLength(2);
     },
   );
+
+  it("names the answer a server gave when it accepts a settings edit and then does not return the folder", async () => {
+    let gone = false;
+    const row: FolderItem = {
+      id: uuidv7(),
+      version: 1,
+      settings: { query: { types: ["core.note"] } },
+    };
+    harness = await folderHarness("contract-settings-not-returned", {
+      folder: row,
+      events: [copyLiveReplay("1", [])],
+      beforeAdd: (server) =>
+        server.copyAnswer("GET", `/items/${row.id}`, () =>
+          gone
+            ? refusal(404, "item_not_found", "No such item", { id: row.id })
+            : answers.updated(folderItem(row)),
+        ),
+    });
+    harness.server.answer("PATCH", `/folders/${row.id}`, (request) => {
+      const { version: _version, ...settings } = JSON.parse(
+        request.body,
+      ) as Record<string, unknown>;
+      row.settings = { ...row.settings, ...settings };
+      row.version += 1;
+      return answers.updated(folderItem(row));
+    });
+    const file = settingsPath(harness);
+    const edit = (title: string) =>
+      writeFileSync(
+        file,
+        readFileSync(file, "utf8").replace(/^title:.*$/m, `title: ${title}`),
+      );
+    // The witness: the same edit is taken where the folder is returned.
+    edit("returned");
+    const taken = await harness.folder.push();
+    expect(taken.ok, JSON.stringify(taken)).toBe(true);
+    if (!taken.ok) return;
+    expect(taken.value.settings.sent).toBe(true);
+
+    gone = true;
+    edit("not returned");
+    const refused = await harness.folder.push();
+    expect(refused.ok, "a folder the server did not return was taken").toBe(
+      false,
+    );
+    if (refused.ok) return;
+    expect(refused.refusal.code).toBe("not_found");
+    expect(refused.refusal.server, refused.refusal.raw).toEqual({
+      status: 404,
+      code: "item_not_found",
+      details: { id: row.id },
+    });
+  });
 
   it.each([401, 429, 503])(
     "retries a settings edit after status %s",

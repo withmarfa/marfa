@@ -214,7 +214,7 @@ impl Folder {
         match self.drain_keeping(false) {
             Ok(drained) => Ok(drained),
             Err(Cut {
-                error: CoreError::CopyExpired { reason },
+                error: CoreError::CopyExpired { reason, .. },
                 settled,
             }) if reason == "reach_changed" && rebuilt.is_none() => {
                 *rebuilt = Some(self.hydrate()?);
@@ -356,6 +356,7 @@ fn stopped_by(drain: &crate::DrainReport) -> Option<CoreError> {
         .map(|_| CoreError::Network("unavailable".into()))
         .or_else(|| {
             drain.stopped.as_ref().map(|_| CoreError::Unauthorized {
+                server: drain.refused_by.clone(),
                 code: "unauthorized".into(),
                 message: "credential refused".into(),
             })
@@ -390,6 +391,7 @@ mod tests {
             limited: false,
             verdicts: Vec::new(),
             stopped: None,
+            refused_by: None,
             unclaimed_sources: Vec::new(),
             retry_after_seconds: None,
         }
