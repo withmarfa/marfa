@@ -353,28 +353,7 @@ pub(crate) fn write(
     let seq: i64 = tx.query_row("SELECT seq FROM queue WHERE id = ?1", [&queued.id], |row| {
         row.get(0)
     })?;
-    let mut named = tx.prepare_cached(
-        "INSERT INTO rows_laid (write_id, seq, item_id, name, id, ops, at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-    )?;
-    let ids: BTreeSet<&str> = ops.iter().map(Op::id).collect();
-    for id in &ids {
-        let on_row: Vec<Value> = ops
-            .iter()
-            .filter(|op| op.id() == *id)
-            .map(Op::printed)
-            .collect();
-        named.execute(params![
-            queued.id,
-            seq,
-            item,
-            table,
-            id,
-            Value::Array(on_row).to_string(),
-            queued.queued_at
-        ])?;
-    }
-    drop(named);
+    let ids = record_laid(&tx, &queued.id, seq, item, table, &ops, &queued.queued_at)?;
     if laid {
         for id in &ids {
             lay(&tx, item, table, id)?;
@@ -383,6 +362,41 @@ pub(crate) fn write(
     }
     tx.commit()?;
     Ok(queued)
+}
+
+/// Records the rows the row write `write_id` names, with the operations it
+/// makes on each, for laying over each row while it waits.
+pub(crate) fn record_laid(
+    conn: &Connection,
+    write_id: &str,
+    seq: i64,
+    item: &str,
+    table: &str,
+    ops: &[Op],
+    at: &str,
+) -> Result<BTreeSet<String>> {
+    let mut named = conn.prepare_cached(
+        "INSERT INTO rows_laid (write_id, seq, item_id, name, id, ops, at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+    )?;
+    let ids: BTreeSet<String> = ops.iter().map(|op| op.id().to_string()).collect();
+    for id in &ids {
+        let on_row: Vec<Value> = ops
+            .iter()
+            .filter(|op| op.id() == id)
+            .map(Op::printed)
+            .collect();
+        named.execute(params![
+            write_id,
+            seq,
+            item,
+            table,
+            id,
+            Value::Array(on_row).to_string(),
+            at
+        ])?;
+    }
+    Ok(ids)
 }
 
 pub(crate) fn undo(

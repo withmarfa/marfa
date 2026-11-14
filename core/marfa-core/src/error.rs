@@ -110,6 +110,18 @@ pub enum CoreError {
         /// can do with it.
         folder: Option<FolderStore>,
     },
+    /// A store SQLite cannot read, whole or in part, or one whose set-aside
+    /// stopped part way.
+    #[error("{}", store_damaged(path, reason, *unsent))]
+    StoreDamaged {
+        /// Empty where the damage was met part way through a read, which
+        /// does not know the store's path: `Core::check_store` names it.
+        path: String,
+        reason: String,
+        /// Writes in its queue the server has not taken, as `WrongSchema`
+        /// counts them; `None` where the queue cannot be read whole.
+        unsent: Option<u64>,
+    },
     /// A removal of a store was refused, leaving it as it was, because the
     /// writes it holds that the server has not taken are not the number the
     /// caller agreed to lose.
@@ -232,6 +244,7 @@ codes! {
     NoCatalog: CoreError::NoCatalog => "no_catalog",
     ReadingHandle: CoreError::ReadingHandle => "reading_handle",
     WrongSchema: CoreError::WrongSchema { .. } => "wrong_schema",
+    StoreDamaged: CoreError::StoreDamaged { .. } => "store_damaged",
     UnsentDiffers: CoreError::UnsentDiffers { .. } => "unsent_differs",
     CopyExpired: CoreError::CopyExpired { .. } => "copy_expired",
     StreamIncomplete: CoreError::StreamIncomplete { .. } => "stream_incomplete",
@@ -431,6 +444,30 @@ fn wrong_schema(
     format!("{path} was made by another build of the core: {reason}. {holds}")
 }
 
+/// Never advises deleting the store: a set-aside keeps it, and carries what
+/// it can read of its queue.
+fn store_damaged(path: &str, reason: &str, unsent: Option<u64>) -> String {
+    const SET_ASIDE: &str = "Set it aside (`marfa device set-aside`, or `setAsideDamaged` in a binding), which keeps it under a new name beside it and makes a new store in its place";
+    if path.is_empty() {
+        return format!(
+            "the store cannot be read: {reason}. Check it (`marfa device check`, or `checkStore` in a binding), which names it and counts the writes its queue holds that the server has not taken. {SET_ASIDE}, carrying every write it can read"
+        );
+    }
+    let holds = match unsent {
+        Some(0) => format!(
+            "Its queue holds no write the server has not taken. {SET_ASIDE}; hydrate the new store to fill it"
+        ),
+        Some(count) => format!(
+            "Its queue holds {count} {} the server has not taken. {SET_ASIDE}, carrying them; they are sent once the new store is hydrated",
+            if count == 1 { "write" } else { "writes" }
+        ),
+        None => format!(
+            "Its queue cannot be read whole, so how many writes it holds that the server has not taken is not known. {SET_ASIDE}, carrying every write it can read and naming the ones it cannot"
+        ),
+    };
+    format!("{path} cannot be opened: {reason}. {holds}")
+}
+
 fn unsent_differs(path: &str, unsent: Option<u64>, agreed: u64) -> String {
     let writes = |count: u64| if count == 1 { "write" } else { "writes" };
     match unsent {
@@ -479,6 +516,13 @@ impl From<rusqlite::Error> for CoreError {
     fn from(error: rusqlite::Error) -> Self {
         match error.sqlite_error_code() {
             Some(rusqlite::ErrorCode::DiskFull) => CoreError::StorageFull(error.to_string()),
+            Some(rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase) => {
+                CoreError::StoreDamaged {
+                    path: String::new(),
+                    reason: error.to_string(),
+                    unsent: None,
+                }
+            }
             Some(rusqlite::ErrorCode::DatabaseBusy) => CoreError::StoreBusy(error.to_string()),
             _ => CoreError::Store(error.to_string()),
         }

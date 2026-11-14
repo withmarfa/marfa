@@ -1451,6 +1451,18 @@ pub enum MarfaError {
     ReadingHandle {
         message: String,
     },
+    /// A store SQLite cannot read, or one whose set-aside stopped part way:
+    /// `setAsideDamaged` keeps it and carries the writes it can read.
+    StoreDamaged {
+        /// Empty where the damage was met part way through a call, which
+        /// does not know the store's path: `checkStore` names it.
+        path: String,
+        reason: String,
+        /// Writes in its queue the server has not taken; `None` where the
+        /// queue cannot be read whole.
+        unsent: Option<u64>,
+        message: String,
+    },
     /// A removal of a store was refused, leaving it as it was, because the
     /// writes it holds that the server has not taken are not the number the
     /// caller agreed to lose. Carried so an app can show the person the
@@ -1546,6 +1558,7 @@ impl MarfaError {
             | MarfaError::HydrationIncomplete { message }
             | MarfaError::NoCatalog { message }
             | MarfaError::WrongSchema { message, .. }
+            | MarfaError::StoreDamaged { message, .. }
             | MarfaError::ReadingHandle { message }
             | MarfaError::UnsentDiffers { message, .. }
             | MarfaError::CopyExpired { message, .. }
@@ -1593,6 +1606,7 @@ impl MarfaError {
             MarfaError::NoCatalog { .. } => marfa_core::CoreErrorKind::NoCatalog,
             MarfaError::ReadingHandle { .. } => marfa_core::CoreErrorKind::ReadingHandle,
             MarfaError::WrongSchema { .. } => marfa_core::CoreErrorKind::WrongSchema,
+            MarfaError::StoreDamaged { .. } => marfa_core::CoreErrorKind::StoreDamaged,
             MarfaError::UnsentDiffers { .. } => marfa_core::CoreErrorKind::UnsentDiffers,
             MarfaError::CopyExpired { .. } => marfa_core::CoreErrorKind::CopyExpired,
             MarfaError::StreamIncomplete { .. } => marfa_core::CoreErrorKind::StreamIncomplete,
@@ -1679,6 +1693,16 @@ impl From<marfa_core::CoreError> for MarfaError {
                 message,
             },
             E::ReadingHandle => MarfaError::ReadingHandle { message },
+            E::StoreDamaged {
+                path,
+                reason,
+                unsent,
+            } => MarfaError::StoreDamaged {
+                path,
+                reason,
+                unsent,
+                message,
+            },
             E::UnsentDiffers {
                 path,
                 unsent,
@@ -3161,6 +3185,69 @@ pub fn remove_store(path: String, unsent: u64) -> Result<(), MarfaError> {
     Ok(marfa_core::Core::remove_store(path, unsent)?)
 }
 
+/// Removes the store at `path` as `removeStore` does, agreeing to lose every
+/// write it holds that the server has not taken, however many there are and
+/// whether or not they can be counted, as for a store `open` refuses with
+/// `StoreDamaged`. Throws as `removeStore` does but for the count.
+#[uniffi::export]
+pub fn remove_store_losing_all(path: String) -> Result<(), MarfaError> {
+    Ok(marfa_core::Core::remove_store_losing_all(path)?)
+}
+
+/// Reads every page of the store at `path`. Throws `StoreDamaged`, naming it
+/// and how many writes its queue holds that the server has not taken, where
+/// SQLite cannot read it, `WrongSchema` where another build made it, and
+/// `ReadingHandle` while another process, or another `Core` in this one,
+/// writes it. Changes nothing, and reads the whole file, so it takes longer
+/// the larger the store.
+#[uniffi::export]
+pub fn check_store(path: String) -> Result<(), MarfaError> {
+    Ok(marfa_core::Core::check_store(path)?)
+}
+
+/// What `setAsideDamaged` did.
+#[derive(uniffi::Record)]
+pub struct SetAside {
+    /// Where the damaged store now is, with its logs beside it.
+    pub set_aside: String,
+    /// The writes the new store holds that the server has not taken.
+    pub carried: u64,
+    /// The writes found in the old queue that could not be read.
+    pub unread: u64,
+    /// The id of each unread write whose id could be read.
+    pub unread_ids: Vec<String>,
+    /// Whether every write the old queue holds was found; where not, the
+    /// store set aside may hold more.
+    pub whole: bool,
+    /// The carried writes held blocked `instanceChanged`, because the old
+    /// store did not say which instance it was built from; release one to
+    /// send it to the instance the new store is hydrated from.
+    pub held: u64,
+}
+
+/// Sets aside the store at `path`, which `open` refuses with `StoreDamaged`:
+/// moves it and its logs to `<path>.damaged-<n>` beside it, never deleting
+/// them, and makes a new store at `path` that carries every write its queue
+/// lets be read, under its id and idempotency key, with its body, base
+/// version and verdict, and the server and instance it was built from. Drop
+/// every `Core` on the store first. The new store holds no copy: hydrate it,
+/// then drain, to send what it carries. Throws `Invalid` for a store that
+/// opens as it is or a folder's store, `WrongSchema` for a store another
+/// build made, and `ReadingHandle` while another process writes it. One that
+/// stopped part way is finished by calling again.
+#[uniffi::export]
+pub fn set_aside_damaged(path: String) -> Result<SetAside, MarfaError> {
+    let done = marfa_core::Core::set_aside_damaged(path)?;
+    Ok(SetAside {
+        set_aside: done.set_aside,
+        carried: done.carried,
+        unread: done.unread,
+        unread_ids: done.unread_ids,
+        whole: done.whole,
+        held: done.held,
+    })
+}
+
 /// Every link in `text` in order, repeats included, split as Marfa reads
 /// it, with each part's place in the text. Needs no store.
 #[uniffi::export]
@@ -3238,6 +3325,11 @@ mod tests {
                 reason: text(),
                 unsent: None,
                 folder: None,
+            },
+            E::StoreDamaged {
+                path: text(),
+                reason: text(),
+                unsent: None,
             },
             E::UnsentDiffers {
                 path: text(),
@@ -3604,6 +3696,15 @@ mod tests {
                 }
                 .into(),
                 "WrongSchema",
+            ),
+            (
+                E::StoreDamaged {
+                    path: text(),
+                    reason: text(),
+                    unsent: Some(1),
+                }
+                .into(),
+                "StoreDamaged",
             ),
             (
                 E::UnsentDiffers {

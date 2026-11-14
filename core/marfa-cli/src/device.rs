@@ -345,6 +345,35 @@ pub enum DeviceCommand {
     /// that fills a stale copy in place keeps it until that hydration
     /// completes.
     Status,
+    /// Read every page of the store, and refuse one SQLite cannot read
+    /// store_damaged, naming it and how many writes its queue holds that the
+    /// server has not taken, or that its queue cannot be read whole.
+    ///
+    /// It reads the whole file, so it takes longer the larger the store. It
+    /// changes nothing, and is refused reading_handle while another process
+    /// holds the store's writer role.
+    Check,
+    /// Set aside a store SQLite cannot read, and make a new one in its place
+    /// that carries every write its queue lets be read.
+    ///
+    /// The damaged store and its logs move to `PATH.damaged-N` beside it, for
+    /// the first N no file holds, and are never deleted. Each write carried
+    /// keeps its id and idempotency key, its body, its base version and its
+    /// verdict, and the new store keeps the server and instance the old one
+    /// was built from and the bytes kept beside the store. The answer counts
+    /// the writes carried that the server has not taken and the writes it
+    /// could not read, names each of those by id where it can, and says
+    /// whether the whole queue was found.
+    ///
+    /// The new store holds no copy: hydrate it, and then drain, to send what
+    /// it carries; a drain before then sends nothing. Where the old store
+    /// does not say which instance it was built from, each carried write is
+    /// held blocked instance_changed until released. A store that opens as it
+    /// is, or a folder's store, is refused invalid. A set-aside that stopped
+    /// part way is finished by running it again, and until then the store is
+    /// refused store_damaged.
+    #[command(name = "set-aside")]
+    SetAside,
     /// The item types the copy holds, read from it alone, the ones an app
     /// declares for it, and the server's.
     Types {
@@ -1141,7 +1170,28 @@ pub enum DeviceFoldersCommand {
     },
 }
 
+/// A store found damaged part way through a read is named, with what its
+/// queue holds, where the store can be read to say so.
 pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError> {
+    let db = args.db.clone();
+    run_on(args, named, json).map_err(|error| match (error, db) {
+        (CliError::Core(marfa_core::CoreError::StoreDamaged { path, reason, unsent }), Some(db))
+            if path.is_empty() =>
+        {
+            match Core::check_store(&db) {
+                Err(named @ marfa_core::CoreError::StoreDamaged { .. }) => CliError::Core(named),
+                _ => CliError::Core(marfa_core::CoreError::StoreDamaged {
+                    path,
+                    reason,
+                    unsent,
+                }),
+            }
+        }
+        (error, _) => error,
+    })
+}
+
+fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError> {
     let store = Store {
         db: args.db,
         reader: args.reader,
@@ -2034,6 +2084,46 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 }
             })
         }
+        DeviceCommand::Check => {
+            let path = store.path()?;
+            Core::check_store(path)?;
+            output::report(
+                &serde_json::json!({ "path": path, "whole": true }),
+                json,
+                || format!("{} reads whole", path.display()),
+            )
+        }
+        DeviceCommand::SetAside => {
+            let done = Core::set_aside_damaged(store.path()?)?;
+            output::report(&done, json, || {
+                let mut line = format!(
+                    "set aside as {}; carried {} write(s) the server has not taken",
+                    done.set_aside, done.carried
+                );
+                if done.unread > 0 {
+                    line.push_str(&format!(
+                        "\n{} write(s) could not be read{}",
+                        done.unread,
+                        if done.unread_ids.is_empty() {
+                            String::new()
+                        } else {
+                            format!(": {}", done.unread_ids.join(", "))
+                        }
+                    ));
+                }
+                if !done.whole {
+                    line.push_str("\nthe queue could not be read whole, so the store set aside may hold more writes");
+                }
+                if done.held > 0 {
+                    line.push_str(&format!(
+                        "\n{} write(s) held blocked instance_changed, since the store did not say which instance it was built from: release them to send them",
+                        done.held
+                    ));
+                }
+                line.push_str("\nhydrate the new store, then drain, to send what it carries");
+                line
+            })
+        }
         DeviceCommand::Status => {
             let status = store.open(None)?.status()?;
             output::report(&status, json, || {
@@ -2594,6 +2684,10 @@ struct Store {
 }
 
 impl Store {
+    fn path(&self) -> Result<&std::path::Path, CliError> {
+        self.db.as_deref().ok_or(CliError::NoStoreNamed)
+    }
+
     fn open(&self, session: Option<Session>) -> Result<Core, CliError> {
         let Some(path) = &self.db else {
             return Err(CliError::NoStoreNamed);

@@ -102,7 +102,7 @@ pub fn open(path: &Path) -> Result<Connection, CoreError> {
     let conn = Connection::open(path)?;
     // The store may have been named by an environment variable rather than
     // typed, so the refusal names its path.
-    prepare(&conn).map_err(|error| at_path(error, path))?;
+    prepare(&conn).map_err(|error| crate::damage::at_path(at_path(error, path), path))?;
     Ok(conn)
 }
 
@@ -121,7 +121,7 @@ pub(crate) fn open_directory(
     Ok(conn)
 }
 
-fn at_path(error: CoreError, path: &Path) -> CoreError {
+pub(crate) fn at_path(error: CoreError, path: &Path) -> CoreError {
     match error {
         CoreError::WrongSchema {
             reason,
@@ -157,6 +157,13 @@ fn in_folder(error: CoreError, label: &Path, conn: &Connection) -> CoreError {
             },
             Err(error) => error,
         },
+        CoreError::StoreDamaged { path, reason, .. } if path.is_empty() => {
+            CoreError::StoreDamaged {
+                path: label.display().to_string(),
+                reason,
+                unsent: folder_unsent(conn),
+            }
+        }
         other => other,
     }
 }
@@ -227,7 +234,7 @@ pub(crate) fn refusal(path: &Path) -> Result<Option<CoreError>, CoreError> {
 /// The store at `path` opened to read, whatever its shape, for the caller
 /// that holds its writer lock. SQLite may make a `-shm` index beside a log to
 /// read it.
-fn open_refused(path: &Path) -> Result<Connection, CoreError> {
+pub(crate) fn open_refused(path: &Path) -> Result<Connection, CoreError> {
     let flags =
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let logged = ["-wal", "-journal"]
@@ -284,23 +291,32 @@ pub(crate) fn removal_count(path: &Path) -> Result<Option<u64>, CoreError> {
     if tables == 0 {
         return Ok(Some(0));
     }
-    // A folder's store is bound to the folder, and is also known by where
-    // the folder keeps it, so one a crash left before it was bound is still
-    // the folder's.
-    let kept_by_folder = path.file_name() == Some(FOLDER_STORE.as_ref())
-        && path.parent().and_then(Path::file_name) == Some(crate::folder::STATE_DIR.as_ref());
-    if kept_by_folder
-        || meta_get(&conn, crate::folder::settings_file::META_FOLDER)
-            .ok()
-            .flatten()
-            .is_some()
-    {
+    if kept_by_folder(path) {
         return Err(CoreError::Invalid(format!(
             "{} is a folder's store: remove the folder instead (`marfa folders remove`), which keeps its registry and its files in step",
             path.display()
         )));
     }
     Ok(untaken_count(&conn))
+}
+
+/// Whether the store at `path` is a folder's. A folder's store is bound to
+/// the folder, and is also known by where the folder keeps it, so one a
+/// crash left before it was bound, or one whose meta does not read, is still
+/// the folder's.
+pub(crate) fn kept_by_folder(path: &Path) -> bool {
+    #[cfg(unix)]
+    if path.file_name() == Some(FOLDER_STORE.as_ref())
+        && path.parent().and_then(Path::file_name) == Some(crate::folder::STATE_DIR.as_ref())
+    {
+        return true;
+    }
+    open_refused(path).is_ok_and(|conn| {
+        meta_get(&conn, crate::folder::settings_file::META_FOLDER)
+            .ok()
+            .flatten()
+            .is_some()
+    })
 }
 
 /// Removes the store at `path` and the logs beside it, logs first, so a log
@@ -315,9 +331,9 @@ pub(crate) fn remove(path: &Path) -> Result<(), CoreError> {
 
 /// The store file, then the logs SQLite keeps beside it. A log is read into
 /// whatever store holds its name, so each one moves with its store.
-const STORE_FILES: [&str; 4] = ["", "-journal", "-wal", "-shm"];
+pub(crate) const STORE_FILES: [&str; 4] = ["", "-journal", "-wal", "-shm"];
 
-fn suffixed(path: &Path, suffix: &str) -> std::path::PathBuf {
+pub(crate) fn suffixed(path: &Path, suffix: &str) -> std::path::PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(suffix);
     name.into()
@@ -327,12 +343,12 @@ fn suffixed(path: &Path, suffix: &str) -> std::path::PathBuf {
 /// only where something other than a copy keeps taking the names.
 const MOST_SET_ASIDE: u32 = 1000;
 
-/// The name, `<store>.refused-<n>` for the first `n` from 1 whose store file
-/// and logs are all absent, so a copy a replacement left is never overwritten
+/// The name, `<store><label>-<n>` for the first `n` from 1 whose store file
+/// and logs are all absent, so a copy set aside before is never overwritten
 /// or mistaken for part of this one.
-pub(crate) fn free_set_aside(path: &Path) -> Result<std::path::PathBuf, CoreError> {
+pub(crate) fn free_set_aside(path: &Path, label: &str) -> Result<std::path::PathBuf, CoreError> {
     for n in 1..=MOST_SET_ASIDE {
-        let aside = suffixed(path, &format!(".refused-{n}"));
+        let aside = suffixed(path, &format!("{label}-{n}"));
         let mut free = true;
         for suffix in STORE_FILES {
             let name = suffixed(&aside, suffix);
@@ -340,7 +356,7 @@ pub(crate) fn free_set_aside(path: &Path) -> Result<std::path::PathBuf, CoreErro
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => {
                     return Err(CoreError::Store(format!(
-                        "{} cannot be replaced: {} cannot be checked: {error}",
+                        "{} cannot be set aside: {} cannot be checked: {error}",
                         path.display(),
                         name.display()
                     )));
@@ -353,7 +369,7 @@ pub(crate) fn free_set_aside(path: &Path) -> Result<std::path::PathBuf, CoreErro
         }
     }
     Err(CoreError::Store(format!(
-        "{} cannot be replaced: {MOST_SET_ASIDE} copies set aside beside it are left; remove them first",
+        "{} cannot be set aside: {MOST_SET_ASIDE} copies set aside beside it are left; remove them first",
         path.display()
     )))
 }
@@ -364,7 +380,7 @@ pub(crate) fn free_set_aside(path: &Path) -> Result<std::path::PathBuf, CoreErro
 /// log is never left beside a store that is not its own; it is put back if
 /// the new store cannot be made, and removed only once it has been.
 pub(crate) fn replace(path: &Path) -> Result<Connection, CoreError> {
-    let aside = free_set_aside(path)?;
+    let aside = free_set_aside(path, ".refused")?;
     let mut moved = Vec::new();
     for suffix in STORE_FILES.iter().rev() {
         let (from, to) = (suffixed(path, suffix), suffixed(&aside, suffix));
@@ -473,8 +489,7 @@ fn meta_of(conn: &Connection, keys: &[&str]) -> Result<HashMap<String, String>, 
 
 /// Leaves the store `conn` opened as one file, with no log beside it that a
 /// store later at its name would read as its own.
-#[cfg(unix)]
-fn without_log(conn: &Connection) -> Result<(), CoreError> {
+pub(crate) fn without_log(conn: &Connection) -> Result<(), CoreError> {
     let mode: String = conn.query_row("PRAGMA journal_mode = DELETE", [], |row| row.get(0))?;
     if !mode.eq_ignore_ascii_case("delete") {
         return Err(CoreError::Store(
@@ -732,20 +747,16 @@ fn read_checked(conn: &Connection, path: &Path) -> Result<(), CoreError> {
             path.display()
         ))
     };
-    let found = version(conn).map_err(|error| match &error {
-        rusqlite::Error::SqliteFailure(_, Some(message))
-            if message.contains("file is not a database") =>
-        {
-            no_schema()
-        }
-        _ => CoreError::from(error),
-    })?;
+    let found = version(conn)
+        .map_err(|error| crate::damage::at_path(CoreError::from(error), path))?;
     if found != SCHEMA_VERSION {
-        let has_meta: bool = conn.query_row(
-            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta')",
-            [],
-            |row| row.get(0),
-        )?;
+        let has_meta: bool = conn
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| crate::damage::at_path(error.into(), path))?;
         if !has_meta {
             return Err(no_schema());
         }
@@ -807,11 +818,11 @@ fn make(conn: &Connection) -> Result<(), CoreError> {
     Ok(())
 }
 
-fn version(conn: &Connection) -> rusqlite::Result<i64> {
+pub(crate) fn version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |row| row.get(0))
 }
 
-fn holds_tables(conn: &Connection) -> rusqlite::Result<bool> {
+pub(crate) fn holds_tables(conn: &Connection) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table')",
         [],
@@ -820,7 +831,7 @@ fn holds_tables(conn: &Connection) -> rusqlite::Result<bool> {
 }
 
 /// The refusal of a store at version `found`, with what it holds.
-fn refused(conn: &Connection, found: i64) -> CoreError {
+pub(crate) fn refused(conn: &Connection, found: i64) -> CoreError {
     CoreError::WrongSchema {
         path: String::new(),
         reason: format!(
@@ -966,7 +977,7 @@ pub fn queued_ids(conn: &Connection) -> Result<HashSet<String>, CoreError> {
 /// a file's state waits on, which a store without the queue would leave
 /// waiting for ever. `None` where a queue or a folder's record of another
 /// shape cannot be counted.
-fn untaken_count(conn: &Connection) -> Option<u64> {
+pub(crate) fn untaken_count(conn: &Connection) -> Option<u64> {
     let counted = (|| -> Result<i64, CoreError> {
         conn.execute_batch("CREATE TEMP TABLE queue AS SELECT * FROM main.queue")?;
         forget_answered_inner(conn, None, None, false)?;
@@ -3278,7 +3289,7 @@ pub fn kept_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
     Ok(hashes)
 }
 
-fn upload_sent_as_key(id: &str) -> String {
+pub(crate) fn upload_sent_as_key(id: &str) -> String {
     format!("upload_sent_as/{id}")
 }
 
