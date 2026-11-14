@@ -871,3 +871,173 @@ async fn a_line_kind_or_field_a_restore_does_not_know_is_skipped_and_the_kind_na
         read.body
     );
 }
+
+impl Instance {
+    /// An archive written by a key that holds `config.manage`.
+    async fn local_archive(&self) -> Vec<u8> {
+        let minted = self
+            .local(
+                Method::POST,
+                "/keys",
+                json!({
+                    "label": "manager",
+                    "source": format!("manager-{}", uuid::Uuid::now_v7()),
+                    "permissions": ["config.manage"],
+                    "type_permissions": { "*": "read" },
+                }),
+            )
+            .await;
+        assert_eq!(minted.status, StatusCode::CREATED, "{}", minted.body);
+        let exported = self
+            .call(
+                &self.public,
+                minted.body["key"].as_str(),
+                Method::GET,
+                "/export?format=archive",
+                Body::empty(),
+                "application/json",
+            )
+            .await;
+        assert_eq!(exported.status, StatusCode::OK, "{}", exported.body);
+        exported.bytes
+    }
+
+    async fn levers(&self) -> Value {
+        let config = self.local(Method::GET, "/config", json!({})).await;
+        assert_eq!(config.status, StatusCode::OK, "{}", config.body);
+        config.body["enforcement"].clone()
+    }
+
+    async fn set_levers(&self, levers: Value) {
+        let set = self
+            .local(Method::PATCH, "/config", json!({ "enforcement": levers }))
+            .await;
+        assert_eq!(set.status, StatusCode::OK, "{}", set.body);
+    }
+}
+
+#[tokio::test]
+async fn a_restore_stores_each_enforcement_setting_the_instance_lacks_and_keeps_each_it_has() {
+    let folder = TempDir::new().unwrap();
+    let origin = Instance::start(folder.path(), &[]).await;
+    let allowlist = json!({ "types": ["core.note"], "sources": ["origin"] });
+    let filter = json!({ "types": ["core.note"], "sources": ["origin", "other"] });
+    origin
+        .set_levers(json!({
+            "strict_mode": { "types": ["core.task"] },
+            "source_allowlist": allowlist,
+            "source_filter": filter,
+        }))
+        .await;
+    let archive = origin.local_archive().await;
+
+    // An empty row holds no setting, so each comes back.
+    let empty = Instance::start(folder.path(), &[]).await;
+    empty.set_levers(json!({})).await;
+    let restored = empty.restore(archive.clone()).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+    assert_eq!(
+        restored.body["enforcement_added"],
+        json!(["strict_mode", "source_allowlist", "source_filter"])
+    );
+    assert_eq!(restored.body["enforcement_skipped"], json!([]));
+    assert_eq!(empty.levers().await, origin.levers().await);
+    let again = empty.restore(archive.clone()).await;
+    assert_eq!(again.status, StatusCode::OK, "{}", again.body);
+    assert_eq!(again.body["enforcement_added"], json!([]));
+    assert_eq!(
+        again.body["enforcement_skipped"],
+        json!(["strict_mode", "source_allowlist", "source_filter"])
+    );
+
+    // A setting the instance holds stays its own, and the ones it lacks are added.
+    let partial = Instance::start(folder.path(), &[]).await;
+    let own = json!({ "types": ["core.note"] });
+    partial.set_levers(json!({ "strict_mode": own })).await;
+    let restored = partial.restore(archive).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+    assert_eq!(
+        restored.body["enforcement_added"],
+        json!(["source_allowlist", "source_filter"])
+    );
+    assert_eq!(restored.body["enforcement_skipped"], json!(["strict_mode"]));
+    assert_eq!(
+        partial.levers().await,
+        json!({ "strict_mode": own, "source_allowlist": allowlist, "source_filter": filter })
+    );
+}
+
+#[tokio::test]
+async fn enforcement_settings_that_do_not_read_are_left_out_of_an_export_and_a_backup_and_named() {
+    let folder = TempDir::new().unwrap();
+    let origin = Instance::start(folder.path(), &[]).await;
+    origin
+        .set_levers(json!({ "strict_mode": { "types": ["core.task"] } }))
+        .await;
+    // The witness: a row that reads travels.
+    let readable = manifest_of(&entries(&origin.local_archive().await));
+    assert_eq!(readable["enforcement_count"], 1);
+    assert!(readable.get("unreadable").is_none(), "{readable:?}");
+
+    origin
+        .app
+        .db
+        .write(marfa_server::db::Write::own(), |tx| {
+            tx.execute(
+                "UPDATE settings SET value = '{ not levers' WHERE key = 'enforcement'",
+                [],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let archive = origin.local_archive().await;
+    let manifest = manifest_of(&entries(&archive));
+    assert_eq!(manifest["enforcement_count"], 0);
+    assert_eq!(manifest["unreadable"], json!(["enforcement"]));
+    let backed_up = origin.back_up().await;
+    assert_eq!(backed_up.status, StatusCode::OK, "{}", backed_up.body);
+
+    let fresh = Instance::start(folder.path(), &[]).await;
+    let restored = fresh.restore(archive).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+    let named = restored.body["not_restored"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["kind"] == "enforcement")
+        .cloned()
+        .expect("the unreadable settings named");
+    assert!(
+        named["message"].as_str().unwrap().contains("strict mode"),
+        "{named}"
+    );
+    assert_eq!(restored.body["enforcement_added"], json!([]));
+    assert_eq!(fresh.levers().await, Value::Null);
+}
+
+#[tokio::test]
+async fn a_restore_from_another_instance_names_its_backup_folders_and_calls_none_safe() {
+    let folder = TempDir::new().unwrap();
+    let origin = Instance::start(folder.path(), &[]).await;
+    let archive = origin.local_archive().await;
+    let id = manifest_of(&entries(&archive))["instance_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let fresh = Instance::start(folder.path(), &[]).await;
+    let restored = fresh.restore(archive).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+    let previous = &restored.body["previous_instance"];
+    assert_eq!(previous["instance_id"], id.as_str());
+    assert_eq!(previous["destination"], "folder");
+    assert_eq!(
+        previous["kept_by_previous_instance"],
+        json!([format!("backups/{id}"), format!("files/{id}")])
+    );
+    assert!(previous.get("safe_to_delete").is_none(), "{previous}");
+    let message = previous["message"].as_str().unwrap();
+    assert!(message.contains("no longer runs"), "{message}");
+    assert!(message.contains(&format!("backups/{id}")), "{message}");
+}

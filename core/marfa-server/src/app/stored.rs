@@ -6,6 +6,7 @@ use std::sync::Arc;
 use rusqlite::{OptionalExtension, Transaction, params};
 
 use super::App;
+use super::access::Levers;
 use super::refusal::{Refusal, Result};
 use crate::db::Write;
 use crate::settings::registry::{self, Kind, Reading, Seeds, Setting};
@@ -276,13 +277,53 @@ pub fn restore(tx: &Transaction<'_>, app: &App, archived: &[(String, String)]) -
     })
 }
 
-/// Stores the archived enforcement levers where the instance has none, and says whether it did.
-pub fn restore_enforcement(tx: &Transaction<'_>, levers: &str) -> Result<bool> {
-    if get(tx, super::config::ENFORCEMENT_ROW)?.is_some() {
-        return Ok(false);
+/// What a restore did with the archive's enforcement settings, each by name.
+#[derive(Debug, Default)]
+pub struct RestoredLevers {
+    pub added: Vec<String>,
+    pub skipped: Vec<String>,
+}
+
+/// Stores each archived enforcement setting the instance does not store and keeps each it does.
+/// Stored levers that do not read keep every one, since what they hold is not known.
+pub fn restore_enforcement(
+    tx: &Transaction<'_>,
+    archived: &serde_json::Map<String, serde_json::Value>,
+) -> Result<RestoredLevers> {
+    let names = || archived.keys().cloned().collect::<Vec<_>>();
+    let mut held = match get(tx, super::config::ENFORCEMENT_ROW)? {
+        None => serde_json::Map::new(),
+        Some(text) => match Levers::from_row(&text) {
+            Some(levers) => match levers.to_json() {
+                serde_json::Value::Object(held) => held,
+                _ => return Err(Refusal::internal("stored levers read as no object")),
+            },
+            None => {
+                return Ok(RestoredLevers {
+                    added: Vec::new(),
+                    skipped: names(),
+                });
+            }
+        },
+    };
+    let mut restored = RestoredLevers::default();
+    for (name, setting) in archived {
+        if held.contains_key(name) {
+            restored.skipped.push(name.clone());
+        } else {
+            held.insert(name.clone(), setting.clone());
+            restored.added.push(name.clone());
+        }
     }
-    put(tx, super::config::ENFORCEMENT_ROW, levers)?;
-    Ok(true)
+    if !restored.added.is_empty() {
+        let levers = Levers::from_body_at(&serde_json::Value::Object(held), "enforcement")?;
+        put(
+            tx,
+            super::config::ENFORCEMENT_ROW,
+            &levers.to_json().to_string(),
+        )?;
+    }
+    Ok(restored)
 }
 
 #[cfg(test)]

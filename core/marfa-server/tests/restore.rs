@@ -408,3 +408,27 @@ async fn a_copy_a_restore_found_in_the_bucket_counts_toward_the_minimum_once_thi
     assert_eq!(read.status, StatusCode::OK);
     assert!(read.bytes == bytes);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_restore_from_another_instance_names_only_its_backups_in_the_bucket_and_keeps_the_shared_files()
+ {
+    let s3 = FakeS3::start().await;
+    let origin = Instance::start(&s3.settings(BUCKET, "tenant/marfa")).await;
+    let archive = origin.archive("").await;
+    let id = origin.app.instance_id.clone();
+
+    let fresh = Instance::start(&s3.settings(BUCKET, "tenant/marfa")).await;
+    let restored = fresh.restore(archive).await;
+    assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+    let previous = &restored.body["previous_instance"];
+    assert_eq!(previous["instance_id"], id.as_str());
+    assert_eq!(previous["destination"], "bucket");
+    assert_eq!(
+        previous["kept_by_previous_instance"],
+        json!([format!("tenant/marfa/backups/{id}")])
+    );
+    let message = previous["message"].as_str().unwrap();
+    assert!(message.contains("no longer runs"), "{message}");
+    assert!(message.contains("tenant/marfa/blobs/"), "{message}");
+    assert!(!message.contains(&format!("files/{id}")), "{message}");
+}

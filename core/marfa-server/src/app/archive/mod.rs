@@ -285,6 +285,8 @@ struct Selected {
     edges: Spooled<EdgeNeed>,
     rows: Spooled<RowNeed>,
     counts: Map<String, Value>,
+    /// The stored values left out because they do not read.
+    unreadable: Vec<&'static str>,
     listed: Vec<Carried>,
     /// The files a carried `blob_ref` names that no blob record holds.
     missing: BTreeSet<String>,
@@ -482,6 +484,9 @@ impl App {
         manifest.insert("row_count".into(), selected.rows.lines.into());
         manifest.insert("blob_count".into(), blobs.len().into());
         manifest.extend(selected.counts);
+        if !selected.unreadable.is_empty() {
+            manifest.insert("unreadable".into(), selected.unreadable.into());
+        }
         let manifest = print(&Value::Object(manifest))?;
         fits(MANIFEST, 1, &manifest, caps.line)?;
         let listing: Vec<FileLine> = listing.into_values().collect();
@@ -809,18 +814,17 @@ fn select(
     }
     count("setting_count", &mut instance, settings)?;
     let mut enforcement = Vec::new();
+    let mut unreadable = Vec::new();
     if caller.holds(Permission::ConfigManage)
         && let Some(text) = stored::get(read.tx, super::config::ENFORCEMENT_ROW)?
     {
-        let levers = Levers::from_row(&text).ok_or_else(|| {
-            Refusal::internal(
-                "the stored enforcement settings do not read, so no archive holds them",
-            )
-        })?;
-        enforcement.push((
-            print(&json!({ "enforcement": levers.to_json() }))?,
-            needing(Some(Permission::ConfigManage)),
-        ));
+        match Levers::from_row(&text) {
+            Some(levers) => enforcement.push((
+                print(&json!({ "enforcement": levers.to_json() }))?,
+                needing(Some(Permission::ConfigManage)),
+            )),
+            None => unreadable.push(super::config::ENFORCEMENT_ROW),
+        }
     }
     count("enforcement_count", &mut instance, enforcement)?;
     let documents = states
@@ -877,6 +881,7 @@ fn select(
         edges: edges.finish()?,
         rows: rows.finish()?,
         counts,
+        unreadable,
         listed,
         missing,
         backup,

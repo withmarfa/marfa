@@ -100,6 +100,8 @@ pub struct Manifest {
     pub blob_count: u64,
     /// The instance that wrote it, where the manifest names one in its canonical form.
     pub instance_id: Option<String>,
+    /// The stored values the writer left out because they did not read.
+    pub unreadable: Vec<String>,
 }
 
 impl Manifest {
@@ -135,8 +137,8 @@ pub struct Registrations {
     pub icons: Vec<(String, Option<String>)>,
     pub sources: Vec<sources::Archived>,
     pub settings: Vec<(String, String)>,
-    /// The text of the instance's enforcement levers, as stored.
-    pub enforcement: Option<String>,
+    /// The instance's enforcement levers, each setting by name.
+    pub enforcement: Option<Map<String, Value>>,
     /// Names of settings this instance does not have, which the restore leaves out.
     pub dropped_settings: Vec<String>,
     pub states: Vec<(String, Map<String, Value>)>,
@@ -565,12 +567,11 @@ impl Rows {
                 }
             }
             "enforcement" => {
-                let levers = Levers::from_body_at(body, "enforcement")?;
-                if registrations
-                    .enforcement
-                    .replace(levers.to_json().to_string())
-                    .is_some()
-                {
+                let Value::Object(levers) = Levers::from_body_at(body, "enforcement")?.to_json()
+                else {
+                    return Err(Refusal::internal("checked levers read as no object"));
+                };
+                if registrations.enforcement.replace(levers).is_some() {
                     return Err(invalid(format!(
                         "The archive carries more than one {kind} line."
                     )));
@@ -1267,6 +1268,17 @@ fn first(held: &Map<String, Value>) -> Result<Manifest> {
             uuid::Uuid::try_parse(id).is_ok_and(|parsed| parsed.hyphenated().to_string() == *id)
         })
         .map(str::to_string);
+    match held.get("unreadable") {
+        None => {}
+        Some(Value::Array(named)) if named.iter().all(Value::is_string) => {
+            manifest.unreadable = named
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_string)
+                .collect();
+        }
+        Some(_) => wrong("unreadable".into(), "Must be a list of strings."),
+    }
     if !errors.is_empty() {
         let named: Vec<String> = errors
             .iter()

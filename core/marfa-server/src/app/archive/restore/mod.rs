@@ -60,7 +60,57 @@ pub const NOT_RESTORED: [(&str, &str); 9] = [
     ),
     ("logs", "The audit log and the event log are not restored."),
 ];
+/// What the writer of an archive could not read and so left out, each with what the owner does.
+const UNREADABLE: [(&str, &str); 1] = [(
+    "enforcement",
+    "The instance that wrote this archive could not read its enforcement settings, so the archive does not hold them. Set strict mode, the source allowlist and the source filter on this instance.",
+)];
 const QUEUED: usize = 8;
+
+/// The instance that wrote an archive, and where the backup destination in use keeps what it
+/// wrote. Nothing here is known to be unused: that instance may still run, or be restored again.
+fn previous_instance(app: &App, id: &str) -> Value {
+    const WHEN: &str =
+        "Delete them only once that instance no longer runs and nothing else restores from them.";
+    let start = &app.settings.start;
+    let (destination, kept, message) = match (&start.object_store, &start.backup_path) {
+        (Some(bucket), _) => {
+            let backups = format!("{}/{}/{id}", bucket.prefix, crate::app::backups::FOLDER);
+            let message = format!(
+                "Instance {id} wrote this archive. Its backups are under {backups} in the object \
+                 store. {WHEN} Its file copies are under {}/{}/, shared with this instance, so \
+                 keep them.",
+                bucket.prefix,
+                crate::app::blobs::s3::BLOBS,
+            );
+            (json!("bucket"), vec![backups], message)
+        }
+        (None, Some(_)) => {
+            use crate::app::blobs::folder::{BACKUPS, FILES};
+            let kept = vec![format!("{BACKUPS}/{id}"), format!("{FILES}/{id}")];
+            let message = format!(
+                "Instance {id} wrote this archive. Its backups and file copies are in {} and {} \
+                 in the backup folder. {WHEN}",
+                kept[0], kept[1],
+            );
+            (json!("folder"), kept, message)
+        }
+        (None, None) => (
+            Value::Null,
+            Vec::new(),
+            format!(
+                "Instance {id} wrote this archive. This instance has no backup destination, so \
+                 the places that instance keeps its backups are not known here. {WHEN}"
+            ),
+        ),
+    };
+    json!({
+        "instance_id": id,
+        "destination": destination,
+        "kept_by_previous_instance": kept,
+        "message": message,
+    })
+}
 const SETTLE_EVERY: usize = 1000;
 
 pub(crate) fn conflicting(ids: Vec<String>) -> Refusal {
@@ -229,6 +279,7 @@ impl App {
                 .instance_id
                 .clone()
                 .filter(|id| *id != app.instance_id);
+            let unreadable = received.manifest.unreadable.clone();
             let needed: HashSet<String> = if whole {
                 received.manifest.held_files()
             } else {
@@ -317,12 +368,10 @@ impl App {
                             stored::restore(tx, &settings, &registrations.settings)?;
                         let (settings_added, settings_skipped) =
                             (restored_settings.added, restored_settings.skipped);
-                        let (enforcement_added, enforcement_skipped) =
-                            match &registrations.enforcement {
-                                None => (0, 0),
-                                Some(levers) if stored::restore_enforcement(tx, levers)? => (1, 0),
-                                Some(_) => (0, 1),
-                            };
+                        let levers = match &registrations.enforcement {
+                            None => stored::RestoredLevers::default(),
+                            Some(levers) => stored::restore_enforcement(tx, levers)?,
+                        };
                         let mut states = Counted::default();
                         for (source, state) in &registrations.states {
                             if connectors::restore_state(tx, source, state, &unit.at)? {
@@ -423,8 +472,8 @@ impl App {
                             "settings_skipped": settings_skipped,
                             "settings_dropped": registrations.dropped_settings,
                             "settings_without_receiver": restored_settings.without_receiver,
-                            "enforcement_added": enforcement_added,
-                            "enforcement_skipped": enforcement_skipped,
+                            "enforcement_added": levers.added,
+                            "enforcement_skipped": levers.skipped,
                             "connector_states_added": states.added,
                             "connector_states_skipped": states.skipped,
                             "connector_agreements_added": agreements.added,
@@ -460,13 +509,15 @@ impl App {
             app.publish_catalog().await;
             answer["not_restored"] = NOT_RESTORED
                 .iter()
+                .chain(
+                    UNREADABLE
+                        .iter()
+                        .filter(|(kind, _)| unreadable.iter().any(|named| named == kind)),
+                )
                 .map(|(kind, message)| json!({ "kind": kind, "message": message }))
                 .collect();
             if let Some(id) = previous {
-                answer["previous_instance"] = json!({
-                    "instance_id": id,
-                    "safe_to_delete": [format!("backups/{id}"), format!("files/{id}")],
-                });
+                answer["previous_instance"] = previous_instance(&app, &id);
             }
             Ok(answer)
         };
