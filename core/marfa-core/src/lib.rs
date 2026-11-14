@@ -1266,6 +1266,7 @@ impl Core {
     /// An unreadable head does not prevent sending the write.
     pub(crate) fn catch_up_before_rows(&self, stop: &AtomicBool) -> Result<()> {
         let deadline = std::time::Instant::now() + ROWS_CAUGHT_UP_WAIT;
+        let _ends_by = http::EndsBy::hold(Some(deadline));
         let target = match catch_up::last_carried(self, self.http()?, deadline, stop) {
             Ok(target) => target,
             Err(error) => {

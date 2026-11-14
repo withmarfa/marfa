@@ -1,7 +1,8 @@
+use std::cell::Cell;
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::de::DeserializeOwned;
 use ureq::Agent;
@@ -74,6 +75,54 @@ const AWAIT_100: Duration = Duration::from_secs(2);
 /// proportion (`Http::page_budget`), and a page of large notes on a slow link
 /// is not cut off for being larger than it used to be.
 const ROWS_PER_BODY_BUDGET: u32 = 200;
+
+thread_local! {
+    static ENDS_BY: Cell<Option<Instant>> = const { Cell::new(None) };
+}
+
+/// While held, every request its thread starts ends by the deadline: its
+/// connection, its answer's headers and its body alike.
+pub(crate) struct EndsBy(Option<Instant>);
+
+impl EndsBy {
+    /// An earlier deadline the thread already holds stays.
+    pub(crate) fn hold(deadline: Option<Instant>) -> Self {
+        let before = ENDS_BY.get();
+        ENDS_BY.set(match (before, deadline) {
+            (Some(held), Some(deadline)) => Some(held.min(deadline)),
+            (held, deadline) => held.or(deadline),
+        });
+        Self(before)
+    }
+
+    /// The thread's deadline, to hold on a thread it hands a request to.
+    pub(crate) fn here() -> Option<Instant> {
+        ENDS_BY.get()
+    }
+
+    /// A renewal is spent when the server answers it, so it is never cut off.
+    fn lifted() -> Self {
+        Self(ENDS_BY.replace(None))
+    }
+}
+
+impl Drop for EndsBy {
+    fn drop(&mut self) {
+        ENDS_BY.set(self.0);
+    }
+}
+
+/// The least of `budget` and what is left of the thread's deadline.
+fn global_budget(budget: Option<Duration>) -> Result<Option<Duration>, ureq::Error> {
+    let Some(deadline) = ENDS_BY.get() else {
+        return Ok(budget);
+    };
+    let left = deadline.saturating_duration_since(Instant::now());
+    if left.is_zero() {
+        return Err(ureq::Error::Timeout(ureq::Timeout::Global));
+    }
+    Ok(Some(budget.map_or(left, |budget| budget.min(left))))
+}
 
 /// A server's address as the core keeps it: no trailing slash, query or
 /// fragment.
@@ -739,10 +788,11 @@ impl Http {
         if current != sent {
             return Ok(Some(current));
         }
-        let header = format!(
-            "Bearer {}",
+        let renewed = {
+            let _lifted = EndsBy::lifted();
             renew(sent.strip_prefix("Bearer ").unwrap_or(sent))?
-        );
+        };
+        let header = format!("Bearer {renewed}");
         self.authorization
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1114,12 +1164,14 @@ impl Http {
         let mut url = self.url(&[], &[]);
         let _ = url.set_username("");
         let _ = url.set_password(None);
+        let global = global_budget(None).map_err(|error| self.unreached(error))?;
         let response = self
             .agent
             .get(url.as_str())
             .header("Accept", "application/json")
             .config()
             .max_redirects(0)
+            .timeout_global(global)
             .build()
             .call()
             .map_err(|error| self.unreached(error))?;
@@ -1432,8 +1484,14 @@ impl Http {
             let request = request.body(outgoing.body).map_err(|error| {
                 CoreError::Invalid(format!("this write cannot be sent: {error}"))
             })?;
+            let global = global_budget(None).map_err(|error| self.unreached(error))?;
             self.agent
-                .run(request)
+                .run(
+                    self.agent
+                        .configure_request(request)
+                        .timeout_global(global)
+                        .build(),
+                )
                 .map_err(|error| self.unreached(error))
         })?;
         let status = response.status().as_u16();
@@ -1569,12 +1627,14 @@ impl Http {
     ) -> Result<Box<dyn Read + Send>, CoreError> {
         let url = self.url(&["events"], &[("edges", "all"), ("copy", "1")]);
         let response = self.authorized(|authorization| {
+            let global = global_budget(None).map_err(|error| self.unreached(error))?;
             let mut request = self
                 .agent
                 .get(url.as_str())
                 .header("Accept", "text/event-stream")
                 .config()
                 .timeout_recv_body(Some(body_timeout))
+                .timeout_global(global)
                 .build()
                 .header("Authorization", authorization);
             if let Some(cursor) = last_event_id {
@@ -1776,18 +1836,18 @@ impl Http {
         budget: Budget,
     ) -> Result<Response, ureq::Error> {
         match budget {
-            Budget::Whole => match self.call_budget {
-                Some(budget) => self.agent.run(
-                    self.agent
-                        .configure_request(request)
-                        .timeout_global(Some(budget))
-                        .build(),
-                ),
-                None => self.agent.run(request),
-            },
+            Budget::Whole => self.agent.run(
+                self.agent
+                    .configure_request(request)
+                    .timeout_global(global_budget(self.call_budget)?)
+                    .build(),
+            ),
             Budget::Stream(deadline) => {
                 let agent = (self.stream_agent)(deadline);
-                let mut configured = agent.configure_request(request).timeout_recv_body(None);
+                let mut configured = agent
+                    .configure_request(request)
+                    .timeout_recv_body(None)
+                    .timeout_global(global_budget(None)?);
                 if let Some(wait) = self.stream_wait {
                     configured = configured.timeout_recv_response(Some(wait));
                 }
@@ -1799,6 +1859,7 @@ impl Http {
                     .timeout_recv_response(None)
                     .timeout_recv_body(None)
                     .timeout_await_100(Some(AWAIT_100))
+                    .timeout_global(global_budget(None)?)
                     .build(),
             ),
         }
@@ -1916,6 +1977,7 @@ impl Http {
             "a listing under a reach asks for include=metadata: {params:?}"
         );
         let response = self.authorized(|authorization| {
+            let global = global_budget(None).map_err(|error| self.unreached(error))?;
             let sent = match body {
                 None => {
                     let mut request = self
@@ -1926,14 +1988,12 @@ impl Http {
                     if let Some(reach) = conditional {
                         request = request.header("X-Marfa-Reach", reach);
                     }
-                    match budget {
-                        Some(budget) => request
-                            .config()
-                            .timeout_recv_body(Some(budget))
-                            .build()
-                            .call(),
-                        None => request.call(),
-                    }
+                    request
+                        .config()
+                        .timeout_recv_body(budget.or(self.agent.config().timeouts().recv_body))
+                        .timeout_global(global)
+                        .build()
+                        .call()
                 }
                 Some(body) => {
                     let mut request = self
@@ -1948,7 +2008,7 @@ impl Http {
                     if let Some(instance) = &self.instance {
                         request = request.header(INSTANCE_HEADER, instance);
                     }
-                    request.send(body)
+                    request.config().timeout_global(global).build().send(body)
                 }
             };
             sent.map_err(|error| self.unreached(error))
@@ -3555,5 +3615,47 @@ mod tests {
         // Neither read went on to ask for a page the doors do not have.
         assert_eq!(server.seen("/types").len(), 1);
         assert_eq!(server.seen("/edge-types").len(), 1);
+    }
+
+    #[test]
+    fn a_request_started_while_a_deadline_is_held_ends_by_it_while_it_waits_for_the_answer() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let serving = std::thread::spawn(move || {
+            let mut held = Vec::new();
+            for _ in 0..3 {
+                if let Ok((socket, _)) = listener.accept() {
+                    held.push(socket);
+                }
+            }
+            std::thread::sleep(Duration::from_secs(3));
+        });
+        let http = Http::new(&url, "k").unwrap();
+        let soon = || EndsBy::hold(Some(Instant::now() + Duration::from_millis(300)));
+        let started = Instant::now();
+        {
+            let _ends_by = soon();
+            assert!(matches!(
+                http.open_events(None, Duration::from_secs(60)),
+                Err(CoreError::Network(_))
+            ));
+        }
+        {
+            let _ends_by = soon();
+            assert!(matches!(http.item_tables("i"), Err(CoreError::Network(_))));
+        }
+        {
+            let _ends_by = soon();
+            let _later = EndsBy::hold(Some(Instant::now() + Duration::from_secs(60)));
+            assert!(matches!(
+                http.fetch(get(&["events"], true), true),
+                Err(CoreError::Network(_))
+            ));
+        }
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(EndsBy::here(), None);
+        let _passed = EndsBy::hold(Some(Instant::now()));
+        assert!(matches!(http.item_tables("i"), Err(CoreError::Network(_))));
+        serving.join().unwrap();
     }
 }
