@@ -58,9 +58,11 @@ pub(crate) fn refusal(path: &Path, reason: String) -> CoreError {
 /// damage that names neither.
 pub(crate) fn at_path(error: CoreError, path: &Path) -> CoreError {
     match error {
-        CoreError::StoreDamaged { path: named, reason, .. } if named.is_empty() => {
-            refusal(path, reason)
-        }
+        CoreError::StoreDamaged {
+            path: named,
+            reason,
+            ..
+        } if named.is_empty() => refusal(path, reason),
         other => other,
     }
 }
@@ -111,7 +113,9 @@ pub(crate) fn check(path: &Path) -> Result<(), CoreError> {
         Some(ok) if said.len() == 1 && ok == "ok" => Ok(()),
         first => Err(refusal(
             path,
-            first.cloned().unwrap_or_else(|| "its pages do not read".into()),
+            first
+                .cloned()
+                .unwrap_or_else(|| "its pages do not read".into()),
         )),
     }
 }
@@ -229,10 +233,7 @@ fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
     store::meta_set(
         &tx,
         META_SET_ASIDE_TO,
-        &aside
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy(),
+        &aside.file_name().unwrap_or_default().to_string_lossy(),
     )?;
     store::meta_set(&tx, META_SET_ASIDE, &serde_json::to_string(&done)?)?;
     tx.commit()?;
@@ -282,7 +283,10 @@ fn finish(path: &Path) -> Result<Option<SetAside>, CoreError> {
     let _ = std::fs::remove_file(store::suffixed(&made, "-shm"));
     let aside = path.with_file_name(&to);
     for suffix in store::STORE_FILES.iter().rev() {
-        let (from, onto) = (store::suffixed(path, suffix), store::suffixed(&aside, suffix));
+        let (from, onto) = (
+            store::suffixed(path, suffix),
+            store::suffixed(&aside, suffix),
+        );
         if from.symlink_metadata().is_err() {
             continue;
         }
@@ -305,7 +309,10 @@ fn finish(path: &Path) -> Result<Option<SetAside>, CoreError> {
             path.display()
         ))
     })?;
-    if let Some(holder) = path.parent().filter(|holder| !holder.as_os_str().is_empty()) {
+    if let Some(holder) = path
+        .parent()
+        .filter(|holder| !holder.as_os_str().is_empty())
+    {
         let _ = std::fs::File::open(holder).and_then(|dir| dir.sync_all());
     }
     let conn = store::open(path)?;
@@ -552,7 +559,9 @@ fn lay_rows(tx: &Connection, carried: &[String]) -> Result<(), CoreError> {
 }
 
 fn row_table(tx: &Connection, id: &str) -> Result<Option<String>, CoreError> {
-    Ok(tx.query_row("SELECT row_table FROM queue WHERE id = ?1", [id], |row| {
-        row.get(0)
-    })?)
+    Ok(
+        tx.query_row("SELECT row_table FROM queue WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })?,
+    )
 }

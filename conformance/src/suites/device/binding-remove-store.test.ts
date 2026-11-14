@@ -209,6 +209,21 @@ describe("removing a store", () => {
     }
   });
 
+  it("removes a store whose unsent writes it cannot count when every write is agreed lost", async () => {
+    const { device } = await storeWithOneUnsent("remove-all");
+    edit(
+      device.store,
+      "ALTER TABLE queue RENAME COLUMN verdict TO answer_kind",
+    );
+    // The witness: no count removes it.
+    expect(refusalOf(await device.removeStore(1)).unsent).toBeNull();
+    expect(Object.keys(held(device.store))).toContain("");
+
+    const removed = await device.removeStoreLosingAll();
+    expect(removed.ok, JSON.stringify(removed)).toBe(true);
+    expect(held(device.store)).toEqual({});
+  });
+
   it("removes a store the writer refuses wrong_schema under its own count", async () => {
     const { device } = await storeWithOneUnsent("remove-schema");
     edit(device.store, "PRAGMA user_version = 0");

@@ -616,6 +616,20 @@ export class BindingDevice {
       : { ok: false, refusal: refusalOf(reply.error) };
   }
 
+  /**
+   * Removes the store, agreeing to lose every write it holds, however many
+   * and whether or not they can be counted. Call `forget` first.
+   */
+  async removeStoreLosingAll(): Promise<Outcome<null>> {
+    const reply = await this.request({
+      op: "remove-store-all",
+      path: this.store,
+    });
+    return reply.ok
+      ? { ok: true, value: null }
+      : { ok: false, refusal: refusalOf(reply.error) };
+  }
+
   /** Opens the store as a writer would, and says the role it was given. */
   async tryOpen(url?: string, key?: string): Promise<OpenAttempt> {
     const reply = await this.request({
