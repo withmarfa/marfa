@@ -2174,7 +2174,7 @@ When a caller reads an edge by id that its copy holds, a device MUST answer the 
 
 ### `device/edge-get-unheld`
 
-If a read of one edge by id names an edge its copy does not hold, then the CLI MUST refuse it `not_held`.
+If a read of one edge by id names an edge its copy does not hold, then the CLI MUST refuse it `not_found` with `not_held` as the envelope's `local` code.
 
 **Tests:** `device/batch-reads.test.ts › answers one edge, many in the order named, and refuses one not held`.
 
@@ -3693,6 +3693,42 @@ When a command sends a server only requests that change no data, including a rea
 While `--json` is given, if a command is refused, then the CLI MUST print the refusal as one JSON object on the last line of standard error, after any plain line such as a warning or the line of `device/command-write-line`.
 
 **Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, under --json too, and nothing for a read`.
+
+### `device/command-json-refusal-members`
+
+While `--json` is given, if a command is refused, then the CLI MUST give the refusal object an `exit` member and an `error` member holding `code`, `message`, `server`, `local` and `retry_after_seconds`.
+
+**Tests:** `cli/exits.test.ts › leaves by 1 when the server refuses, carrying the server's answer`, `› names no server in a refusal the working copy made itself, and the code it gave it`.
+
+### `device/command-json-server-answered`
+
+If a server answered the request a command is refused for, then the CLI MUST give the refusal's `server` member the answer's `status` and `code`.
+
+**Reason:** a script reads `server.status` to learn what the server said, so the member holds only what a server sent.
+
+**Tests:** `cli/exits.test.ts › leaves by 1 when the server refuses, carrying the server's answer`, `› reports a server's refusal to a device command in server, with no local code`.
+
+### `device/command-json-server-null`
+
+If a command is refused without a server having answered the request, then the CLI MUST set the refusal's `server` member to `null`.
+
+**Reason:** a refusal the working copy makes itself says nothing of the server, and a script that read a status from it would conclude the server was asked.
+
+**Tests:** `cli/exits.test.ts › names no server in a refusal the working copy made itself, and the code it gave it`.
+
+### `device/command-json-local-code`
+
+If the working copy refuses a command with a code of its own, then the CLI MUST give the refusal's `local` member that `code`.
+
+**Reason:** the code says why the copy refused, such as `not_held` for an item outside it, and has no place in `server`, which holds only a server's words.
+
+**Tests:** `cli/exits.test.ts › names no server in a refusal the working copy made itself, and the code it gave it`.
+
+### `device/command-json-local-null`
+
+If a server answered the request a command is refused for, or the refusal carries no code of the working copy's own, then the CLI MUST set the refusal's `local` member to `null`.
+
+**Tests:** `cli/exits.test.ts › reports a server's refusal to a device command in server, with no local code`.
 
 ### `device/profile-socket-refused`
 
@@ -6044,7 +6080,7 @@ If the item a list in a folder names is not a `system.folder`, then a device MUS
 
 ### `device/folder-not-held`
 
-If the copy does not hold a folder, then a device MUST refuse a list or a search in it `not_found` with the code `not_held`.
+If the copy does not hold a folder, then a device MUST refuse a list or a search in it `not_found`, with `not_held` as the envelope's `local` code.
 
 **Reason:** the remedy is to hold the folder, by a pin or by naming `system.folder` in the slice, not to change the slice's types.
 
@@ -6522,7 +6558,7 @@ A purge goes from a device to `POST /items/{id}/purge` at once, at the version t
 
 ### `device/purge-not-held`
 
-If the copy does not hold an item and the caller names no version for it, then a device MUST refuse to purge it `not_found` with the code `not_held`, sending nothing.
+If the copy does not hold an item and the caller names no version for it, then a device MUST refuse to purge it `not_found`, with `not_held` as the envelope's `local` code, sending nothing.
 
 **Reason:** an item the copy does not hold, named with no version, is one nobody can say the person was shown.
 

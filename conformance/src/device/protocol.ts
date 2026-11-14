@@ -17,6 +17,8 @@ export type SliceTier = Tier | "all";
 export interface Refusal {
   /** The adapter's reading of the device's refusal. `unclassified` when it could not read one. */
   code: string;
+  /** The code the device gave a refusal it made itself, such as `not_held`, from the envelope's `local` member; null when a server answered. */
+  local: string | null;
   /** Everything the device said, kept so a failing assertion can print it. */
   raw: string;
 }

@@ -829,8 +829,13 @@ export class BindingDevice {
 }
 
 function refusalOf(error: BindingError): Refusal {
+  const local =
+    typeof error.status !== "number" && typeof error.serverCode === "string"
+      ? error.serverCode
+      : null;
   return {
     code: typeof error.code === "string" ? error.code : "unclassified",
+    local,
     raw: JSON.stringify(error),
   };
 }

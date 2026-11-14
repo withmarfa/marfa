@@ -545,7 +545,12 @@ describe("the server took the write", () => {
       before.ok,
       "the copy held the sibling before any event brought it, so it was made up from an answer that carries only the item written to",
     ).toBe(false);
-    if (!before.ok) expect(before.refusal.code).toBe("not_held");
+    if (!before.ok) {
+      expect([before.refusal.code, before.refusal.local]).toEqual([
+        "not_found",
+        "not_held",
+      ]);
+    }
 
     const caught = await device.catchUp();
     expect(caught.ok, JSON.stringify(caught)).toBe(true);
@@ -977,9 +982,9 @@ describe("the server did not take the write", () => {
 
     const gone = await harness.device.get(id);
     expect(
-      gone.ok ? "held" : gone.refusal.code,
+      gone.ok ? "held" : [gone.refusal.code, gone.refusal.local],
       "the read-back refused for its id was read as a failure, so the item the create showed stays in the copy",
-    ).toBe("not_held");
+    ).toEqual(["not_found", "not_held"]);
     const discarded = await harness.device.discard(created.value.id);
     expect(discarded.ok).toBe(true);
     if (discarded.ok)
@@ -1019,9 +1024,9 @@ describe("the server did not take the write", () => {
       expect(drained.ok && drained.value.verdicts[0]?.verdict).toBe("refused");
       const gone = await harness.device.get(id);
       expect(
-        gone.ok ? "held" : gone.refusal.code,
+        gone.ok ? "held" : [gone.refusal.code, gone.refusal.local],
         "a read-back saying the server holds no item the key reads left the refused create's item in the copy",
-      ).toBe("not_held");
+      ).toEqual(["not_found", "not_held"]);
     },
   );
 

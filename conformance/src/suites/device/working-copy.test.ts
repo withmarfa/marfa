@@ -412,9 +412,9 @@ describe("the working copy holds one slice", () => {
     expect(none.ok && none.value.thumbnail).toBeNull();
     const absent = await device.thumbnail("not-held", `${out}.absent`);
     expect(
-      absent.ok ? "answered" : absent.refusal.code,
+      absent.ok ? "answered" : [absent.refusal.code, absent.refusal.local],
       "the thumbnail of an item the copy does not hold was answered, or refused as though the server had said so",
-    ).toBe("not_held");
+    ).toEqual(["not_found", "not_held"]);
 
     // The image's base64 is not searchable. The witness: the same image
     // held as a note's text is found.
@@ -2269,9 +2269,9 @@ describe("the working copy says what it is", () => {
     }
     const got = await device.get("whatever");
     expect(
-      got.ok ? "answered" : got.refusal.code,
+      got.ok ? "answered" : [got.refusal.code, got.refusal.local],
       "an item the copy does not hold was answered or refused for a reason other than that it is not held",
-    ).toBe("not_held");
+    ).toEqual(["not_found", "not_held"]);
 
     // The witness: what the app saves is what a read then answers, so the
     // empty answers above were of a copy that holds nothing and not of one
@@ -2458,7 +2458,9 @@ describe("the working copy says what it is", () => {
     const arrived = await device.get("partial-two");
     expect(arrived.ok && arrived.value.id).toBe("partial-two");
     const absent = await device.get("never-listed");
-    expect(absent.ok ? "answered" : absent.refusal.code).toBe("not_held");
+    expect(
+      absent.ok ? "answered" : [absent.refusal.code, absent.refusal.local],
+    ).toEqual(["not_found", "not_held"]);
   });
 
   it("refuses a read of edges part way through a hydration, and answers it once the copy is whole", async () => {

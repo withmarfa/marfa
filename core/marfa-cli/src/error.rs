@@ -566,19 +566,13 @@ impl CliError {
             }
             CliError::Core(core) => match core {
                 CoreError::NotFound {
-                    code,
-                    status: None,
-                    ..
+                    code, status: None, ..
                 }
                 | CoreError::Unauthorized {
-                    code,
-                    status: None,
-                    ..
+                    code, status: None, ..
                 }
                 | CoreError::Forbidden {
-                    code,
-                    status: None,
-                    ..
+                    code, status: None, ..
                 } => Some((code, None)),
                 CoreError::Validation {
                     code,
@@ -1116,7 +1110,10 @@ mod tests {
         });
         let envelope = edge.envelope();
         assert!(envelope["error"]["server"].is_null());
-        assert_eq!(envelope["error"]["local"]["code"], "edge_constraint_violation");
+        assert_eq!(
+            envelope["error"]["local"]["code"],
+            "edge_constraint_violation"
+        );
         assert_eq!(
             envelope["error"]["local"]["details"]["constraint"],
             "duplicate"

@@ -3561,10 +3561,14 @@ mod tests {
                 .into(),
                 "Validation",
             ),
-            (E::UnknownType {
-                message: text(),
-                status: None,
-            }.into(), "UnknownType"),
+            (
+                E::UnknownType {
+                    message: text(),
+                    status: None,
+                }
+                .into(),
+                "UnknownType",
+            ),
             (
                 E::RateLimited {
                     code: text(),

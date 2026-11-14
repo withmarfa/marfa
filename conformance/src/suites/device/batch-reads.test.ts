@@ -166,9 +166,9 @@ describe("a read of edges by id", () => {
 
     const one = value(await device.edge(AB));
     expect([one.source_id, one.target_id, one.version]).toEqual([A, B, 1]);
-    expect(
-      code(await device.edge("01b00000-0000-7000-8000-0000000000ef")),
-    ).toBe("not_held");
+    const absent = await device.edge("01b00000-0000-7000-8000-0000000000ef");
+    expect(code(absent)).toBe("not_found");
+    expect(absent.ok ? null : absent.refusal.local).toBe("not_held");
     const many = value(
       await device.bulkGetEdges([
         BA,

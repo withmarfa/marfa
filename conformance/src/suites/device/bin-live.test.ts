@@ -375,7 +375,7 @@ it("purges an item read from the bin at the version it was read at", async () =>
   const copy = await device("purge", "feed");
   const refused = await copy.purgeItem(doomed.id);
   expect(refused.ok).toBe(false);
-  if (!refused.ok) expect(refused.refusal.raw).toContain("not_held");
+  if (!refused.ok) expect(refused.refusal.local).toBe("not_held");
 
   const entry = (await findInBin(copy, [doomed.id])).found.get(doomed.id);
   expect(entry, "the item was not in the bin").toBeDefined();

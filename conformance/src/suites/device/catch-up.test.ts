@@ -361,7 +361,9 @@ describe("catch-up replays from the cursor", () => {
       expect(caught.value).toMatchObject({ applied: 1, skipped: 0, cursor });
       const held = await device.get("row");
       if (state === "trashed") {
-        expect(held.ok ? null : held.refusal.code).toBe("not_held");
+        expect(
+          held.ok ? null : [held.refusal.code, held.refusal.local],
+        ).toEqual(["not_found", "not_held"]);
         const listed = await device.list();
         expect(listed.ok && listed.value).toEqual([]);
       } else {

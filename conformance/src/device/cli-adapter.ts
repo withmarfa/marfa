@@ -79,17 +79,23 @@ function rows<T, R>(outcome: Outcome<T>, of: (answer: T) => R): Outcome<R> {
 function classify(stderr: string, exitCode: number | null): Refusal {
   const raw = stderr.trim();
   const last = refusalLine(raw);
-  if (exitCode === 2 && !last.startsWith("{")) return { code: "usage", raw };
-  let envelope: { error?: { code?: unknown } };
+  if (exitCode === 2 && !last.startsWith("{")) {
+    return { code: "usage", local: null, raw };
+  }
+  type Envelope = {
+    error?: { code?: unknown; local?: { code?: unknown } | null };
+  };
+  let envelope: Envelope;
   try {
-    envelope = JSON.parse(last) as { error?: { code?: unknown } };
+    envelope = JSON.parse(last) as Envelope;
   } catch {
-    return { code: "unclassified", raw };
+    return { code: "unclassified", local: null, raw };
   }
   const code = envelope.error?.code;
+  const local = envelope.error?.local?.code;
   return typeof code === "string"
-    ? { code, raw }
-    : { code: "unclassified", raw };
+    ? { code, local: typeof local === "string" ? local : null, raw }
+    : { code: "unclassified", local: null, raw };
 }
 
 /** The last line of stderr, where `--json` puts a refusal (`device/command-json-refusal-last`). */
