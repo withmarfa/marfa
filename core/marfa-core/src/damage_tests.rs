@@ -376,7 +376,7 @@ fn a_carried_row_write_lays_its_rows_again() {
         conn.execute(
             "INSERT INTO queue (id, kind, item_id, row_table, idempotency_key, payload, queued_at)
              VALUES ('rows', 'write_rows', 'n1', 'lines', 'k-rows',
-                     '{\"operations\":[{\"op\":\"put\",\"id\":\"r1\",\"values\":{\"a\":1}},{\"op\":\"delete\",\"id\":\"r2\"}]}',
+                     '{\"operations\":[{\"op\":\"put\",\"id\":\"01890000-0000-7000-8000-000000000001\",\"values\":{\"a\":1}},{\"op\":\"delete\",\"id\":\"01890000-0000-7000-8000-000000000002\"}]}',
                      '2026-01-01T00:00:00Z')",
             [],
         )
@@ -389,14 +389,32 @@ fn a_carried_row_write_lays_its_rows_again() {
         .prepare("SELECT write_id, item_id, name, id FROM rows_laid ORDER BY id")
         .unwrap();
     let laid: Vec<(String, String, String, String)> = laid
-        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+        .query_map([], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))
+        })
         .unwrap()
         .collect::<rusqlite::Result<_>>()
         .unwrap();
     assert_eq!(
         laid,
-        ["r1", "r2"]
-            .map(|id| ("rows".into(), "n1".into(), "lines".into(), id.to_string()))
-            .to_vec()
+        [
+            "01890000-0000-7000-8000-000000000001",
+            "01890000-0000-7000-8000-000000000002"
+        ]
+        .map(|id| ("rows".into(), "n1".into(), "lines".into(), id.to_string()))
+        .to_vec()
     );
+}
+
+#[test]
+fn a_store_another_core_writes_is_neither_checked_nor_set_aside() {
+    let (_dir, path, _) = store_with(1);
+    let writer = Core::open(&path, None).unwrap();
+    assert_eq!(Core::check_store(&path), Err(CoreError::ReadingHandle));
+    assert_eq!(
+        Core::set_aside_damaged(&path),
+        Err(CoreError::ReadingHandle)
+    );
+    drop(writer);
+    Core::check_store(&path).unwrap();
 }

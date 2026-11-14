@@ -545,8 +545,7 @@ fn lay_one(tx: &Connection, id: &str) -> Result<(), CoreError> {
     let Some(write) = store::queued_write(tx, id)? else {
         return Ok(());
     };
-    if write.kind != WriteKind::WriteRows
-        || !matches!(write.verdict, None | Some(Verdict::Blocked))
+    if write.kind != WriteKind::WriteRows || !matches!(write.verdict, None | Some(Verdict::Blocked))
     {
         return Ok(());
     }
