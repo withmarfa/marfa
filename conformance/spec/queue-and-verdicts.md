@@ -296,6 +296,22 @@ When the server answers a batch `200` before the device has applied the batch's 
 
 **Tests:** `device/table-writes-live.test.ts › records a write conflicted where it replaced a value the copy had not shown, and the value it replaced stays in the batch's change log`.
 
+### `queue-and-verdicts/rows-caught-up-first`
+
+When a drain has a `write_rows` write to send for a table a device holds whole, a device MUST apply every event the stream holds up to that moment before it sends any write of the drain.
+
+**Reason:** a device judges a clash by the value the copy last took from the server, so a write sent before the copy applied another writer's batch is reported `accepted` or `conflicted` by timing alone. The device does this itself, in a drain the CLI runs, in a drain a held stream starts (`device/follow-drains-reachable`) and in a folder's sync, and a queue with no such write is sent as it was, with the stream not asked.
+
+**Tests:** `device/table-writes-live.test.ts › reports a write conflicted where a drain with no catch-up before it replaced another writer's value`, `› reports a write conflicted where a held stream drains it once its server is back`, `› asks the stream for nothing where no row write waits for a table the copy holds whole`.
+
+### `queue-and-verdicts/rows-caught-up-unreached`
+
+If a device cannot apply the stream's events before a drain sends a `write_rows` write, because the stream cannot be had or ends before it is live, then a device MUST send the write and judge it as `queue-and-verdicts/rows-conflicted` states, by what the copy has applied.
+
+**Reason:** holding a person's edit until a stream the server answers badly can be read would leave it unsent for as long as the stream stays down, and an unreported clash loses nothing: the value the write replaced stays in the batch's change log (`tables/undo`).
+
+**Tests:** `device/table-writes-live.test.ts › sends the write and judges it by what the copy has applied where the stream cannot be had or ends before it is live`.
+
 ### `queue-and-verdicts/rows-conflict-unjudged`
 
 When a device takes a row from the server by a read or a fill after a `write_rows` write that names the row was sent, a device MUST NOT give that write the verdict `conflicted` for the row.
