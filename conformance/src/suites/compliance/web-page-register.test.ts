@@ -5,7 +5,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import {
-  DAY_MS,
+  HOUR_MS,
   MINUTE_MS,
   QUIET_SCHEDULE,
   quiet,
@@ -282,7 +282,7 @@ describe("registrations nobody approves", () => {
     const offered = "https://offered.web-page-register.test";
     // What earlier cases registered and nobody approved is idle by now, and the
     // sweep below is to remove the one registration this case leaves idle.
-    await server.advanceClock(2 * DAY_MS);
+    await server.advanceClock(2 * HOUR_MS);
     expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
     const idleId = await registeredClient(idle);
     const approvedId = await registeredClient(approved);
@@ -303,8 +303,8 @@ describe("registrations nobody approves", () => {
     });
     expect(ended.status).toBe(204);
 
-    // Past the retention, a day.
-    await server.advanceClock(2 * DAY_MS);
+    // Past the retention, an hour.
+    await server.advanceClock(2 * HOUR_MS);
     // The owner opens the approval for one of them after it aged.
     const consent = await authorizeLandsAt(offeredId, offered);
     expect(consent?.pathname).toBe("/auth/authorize");
@@ -344,9 +344,9 @@ describe("registrations nobody approves", () => {
     const { client_id: clientId } = (await registered.json()) as {
       client_id: string;
     };
-    // The code lives ten minutes and the retention is a day, so the code is
-    // asked for just short of the day, and the day passes while it stands.
-    await server.advanceClock(DAY_MS - 5 * MINUTE_MS);
+    // The code lives ten minutes and the retention is an hour, so the code is
+    // asked for just short of the hour, and the hour passes while it stands.
+    await server.advanceClock(HOUR_MS - 5 * MINUTE_MS);
     const code = await fetch(`${server.apiUrl}/auth/device/code`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },

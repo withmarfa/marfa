@@ -336,15 +336,15 @@ Where a retention setting is at the largest value it accepts, the server MUST fi
 
 ### `housekeeping/retention-setting-days-range`
 
-If `MARFA_AUDIT_RETENTION_DAYS`, `MARFA_TRASH_RETENTION_DAYS`, `MARFA_INBOUND_HANDLED_RETENTION_DAYS`, `MARFA_INBOUND_PENDING_RETENTION_DAYS`, `MARFA_REVOKED_GRANT_RETENTION_DAYS`, `MARFA_GRANT_INACTIVITY_DAYS` or `MARFA_DCR_CLIENT_RETENTION_DAYS` holds a value that is neither empty nor an integer from 0 through 36500 when the server starts, then the server MUST refuse to start and name the setting.
+If `MARFA_AUDIT_RETENTION_DAYS`, `MARFA_TRASH_RETENTION_DAYS`, `MARFA_INBOUND_HANDLED_RETENTION_DAYS`, `MARFA_INBOUND_PENDING_RETENTION_DAYS`, `MARFA_REVOKED_GRANT_RETENTION_DAYS` or `MARFA_GRANT_INACTIVITY_DAYS` holds a value that is neither empty nor an integer from 0 through 36500 when the server starts, then the server MUST refuse to start and name the setting.
 
 **Tests:** `compliance/housekeeping-settings.test.ts › refuses a value of the day settings that is not a whole number from 0 through 36500, and names the setting`, `› starts with each setting empty, and with each at its smallest`.
 
 ### `housekeeping/retention-setting-hours-range`
 
-If `MARFA_EVENT_LOG_RETENTION_HOURS` holds a value that is neither empty nor an integer from 0 through 876000 when the server starts, then the server MUST refuse to start and name the setting.
+If `MARFA_EVENT_LOG_RETENTION_HOURS` or `MARFA_DCR_CLIENT_RETENTION_HOURS` holds a value that is neither empty nor an integer from 0 through 876000 when the server starts, then the server MUST refuse to start and name the setting.
 
-**Tests:** `compliance/housekeeping-settings.test.ts › refuses MARFA_EVENT_LOG_RETENTION_HOURS outside 0 through 876000, and names the setting`, `› starts with each setting empty, and with each at its smallest`.
+**Tests:** `compliance/housekeeping-settings.test.ts › refuses a value of the hour settings that is not a whole number from 0 through 876000, and names the setting`, `› starts with each setting empty, and with each at its smallest`.
 
 ### `housekeeping/unreadable-setting-deletes-nothing`
 

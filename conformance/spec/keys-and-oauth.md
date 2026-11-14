@@ -1433,9 +1433,9 @@ When a registration at `POST /auth/oauth2/register` carries the owner's browser 
 
 ### `keys-and-oauth/register-idle-removed`
 
-When the `credential-cleanup` job runs, the server MUST remove each registered client that no grant names, that holds no access or refresh token, and that was neither registered nor offered on the consent screen or the device approval page within `dcr_client_retention_days`.
+When the `credential-cleanup` job runs, the server MUST remove each registered client that no grant names, that holds no access or refresh token, and that was neither registered nor offered on the consent screen or the device approval page within `dcr_client_retention_hours`.
 
-**Reason:** Registration takes no credential and answers every origin, so any page the owner visits can add registrations; a short retention bounds what is left behind without a cap that a page could fill to block real registrations.
+**Reason:** Registration takes no credential and answers every origin, so any page the owner visits can add registrations. Nothing caps registrations for every address together, because a full cap would also refuse the owner's own apps, and the limit for one address (`keys-and-oauth/register-address-limit`) slows that address without bounding what many addresses send. The clients nobody approved therefore grow with the rate registrations arrive, and this retention bounds how long each is kept: until the first run of the job that reaches it after it has been idle for the retention. Each run that removes clients writes one `auth.clients.purged` audit record for each batch of up to 200 it removes.
 
 **Tests:** `compliance/web-page-register.test.ts › removes a registration nobody approved once it is idle past the retention, and keeps an approved, a revoked and an offered one`, `compliance/oauth-refusals.test.ts › answers 400 invalid_client for a pending code whose client is no longer registered`.
 
@@ -1449,7 +1449,7 @@ While a grant names a registered client, live or revoked, the server MUST keep t
 
 ### `keys-and-oauth/register-offered-kept`
 
-When the consent screen or the device approval page offers a registered client, the server MUST keep the client registered for `dcr_client_retention_days` from then, however long ago it registered.
+When the consent screen or the device approval page offers a registered client, the server MUST keep the client registered for `dcr_client_retention_hours` from then, however long ago it registered.
 
 **Reason:** A page may keep its registration between visits, so a registration older than the retention can be the one the owner is deciding on; the job must not remove it from under the decision.
 
@@ -2463,9 +2463,17 @@ Where a device code names a scope other than `offline_access` that the app's sta
 
 ### `keys-and-oauth/device-expired`
 
-When a client polls with a device code past its expiry, the server MUST answer `400 expired_token`.
+When a client polls with a device code that expired less than ten minutes before, the server MUST answer `400 expired_token`.
 
 **Tests:** `compliance/device-grant.test.ts › answers expired_token to a poll of a code past its expiry`.
+
+### `keys-and-oauth/device-code-removed`
+
+When the `credential-cleanup` job runs, the server MUST remove each device code that expired ten minutes or more before.
+
+**Reason:** A device code request takes no credential, and nothing caps requests for every address together, because a full cap would also refuse the owner's `marfa login`. The limit for one address (`keys-and-oauth/device-code-address-limit`) slows that address without bounding what many addresses send, so the codes stored grow with the rate requests arrive, and each is kept until the first run of the job that reaches it ten minutes or more after it expired.
+
+**Tests:** `compliance/credential-cleanup.test.ts › removes a device code ten minutes after it expires, and not before`.
 
 ### `keys-and-oauth/device-approved`
 

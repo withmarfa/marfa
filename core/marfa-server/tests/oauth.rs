@@ -19,7 +19,7 @@ use marfa_server::app::{App, housekeeping};
 use marfa_server::db::Write;
 use marfa_server::http::{control, public};
 use marfa_server::settings::registry::{
-    DCR_CLIENT_RETENTION_DAYS, GRANT_INACTIVITY_DAYS, REVOKED_GRANT_RETENTION_DAYS,
+    DCR_CLIENT_RETENTION_HOURS, GRANT_INACTIVITY_DAYS, REVOKED_GRANT_RETENTION_DAYS,
 };
 use marfa_server::settings::{Environment, Settings};
 use serde_json::{Value, json};
@@ -1440,7 +1440,7 @@ async fn the_cleanup_keeps_what_a_retention_committed_before_it_is_live_keeps() 
     for (key, next) in [
         ("grant_inactivity_days", Some("auth.grants.purged")),
         ("revoked_grant_retention_days", Some("auth.clients.purged")),
-        ("dcr_client_retention_days", None),
+        ("dcr_client_retention_hours", None),
     ] {
         instance.when_held().await;
         commit_unpublished(app, key, "0").await;
@@ -1453,7 +1453,7 @@ async fn the_cleanup_keeps_what_a_retention_committed_before_it_is_live_keeps() 
     let live = app.settings.live();
     assert_eq!(live.get(GRANT_INACTIVITY_DAYS), 365);
     assert_eq!(live.get(REVOKED_GRANT_RETENTION_DAYS), 90);
-    assert_eq!(live.get(DCR_CLIENT_RETENTION_DAYS), 1);
+    assert_eq!(live.get(DCR_CLIENT_RETENTION_HOURS), 1);
     assert_eq!(instance.count(STANDING).await, 1);
     assert_eq!(instance.count(WITHDRAWN).await, 1);
     assert_eq!(instance.count(CLIENTS).await, 3);
@@ -1472,7 +1472,7 @@ async fn a_retention_that_does_not_read_ends_the_cleanup_in_error_and_deletes_no
     let keys = [
         "grant_inactivity_days",
         "revoked_grant_retention_days",
-        "dcr_client_retention_days",
+        "dcr_client_retention_hours",
     ];
     for key in keys {
         commit_unpublished(app, key, "soon").await;
@@ -2736,7 +2736,7 @@ async fn registrations_from_one_address_stop_at_their_limit() {
 async fn an_expired_device_code_answers_its_poll_then_goes() {
     let instance = Instance::signed_in().await;
     let app = &instance.app;
-    commit_unpublished(app, "dcr_client_retention_days", "0").await;
+    commit_unpublished(app, "dcr_client_retention_hours", "0").await;
     let client = instance.register_device(NOTES).await;
     let device_code = instance.device_requested(&client, NOTES).await;
     let left_alone = instance.device_requested(&client, NOTES).await;
@@ -2750,7 +2750,7 @@ async fn an_expired_device_code_answers_its_poll_then_goes() {
     assert_eq!(instance.count(codes).await, 1);
     refused_as(&instance.poll(&client, &device_code).await, "invalid_grant");
 
-    app.clock.advance(DAY_MS - 2 * 60_000).unwrap();
+    app.clock.advance(8 * 60_000).unwrap();
     cleaned(app).await;
     assert_eq!(instance.count(codes).await, 1);
     app.clock.advance(2 * 60_000).unwrap();
