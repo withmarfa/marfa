@@ -596,13 +596,23 @@ If a run that outlived its deadline later finishes, then the server MUST NOT rec
 
 **Tests:** `compliance/housekeeping-restart.test.ts › does not record what the run finishes with if it later finishes`.
 
-## A clock far from the newest stored time
+## While a restore runs
 
-The server keeps the newest time it has stored. The fixtures here set the server's clock without time passing, through the test hook `POST /_control/test/clock` with `jump_ms` (`conformance/TARGET-INTERFACE.md`, "The clock"), and pass time with the adapter's `clock advance`.
+### `housekeeping/restore-heartbeat`
+
+Where `MARFA_HEARTBEAT_URL` is set, while a restore runs, the server MUST send the heartbeat at its interval.
+
+**Reason:** a receiver that hears nothing reports the instance down, and a restore of a large archive can hold every write for minutes. The heartbeat writes nothing, so the restore gives it no reason to stop.
+
+**Tests:** `compliance/restore-faults.test.ts › keeps sending the heartbeat while the restore runs`.
+
+## A clock far from the trusted time
+
+The server's time is the time it stamps writes with and judges age by. The trusted time is the newest server time the server used while clean-up was not held or, if it has used none since, the time last confirmed (`housekeeping/clock-confirm`, `housekeeping/clock-steady-day`). The fixtures here set the server's clock without time passing, through the test hook `POST /_control/test/clock` with `jump_ms` (`conformance/TARGET-INTERFACE.md`, "The clock"), and pass time with the adapter's `clock advance`.
 
 ### `housekeeping/clock-ahead-held`
 
-While the server's clock is more than 7 days later than the newest time the server has stored, the server MUST NOT delete, purge, thin, retire or move to the bin anything in a run of a job that the table of registered jobs marks as held while the clock is ahead.
+While the server's clock is more than 7 days later than the trusted time, the server MUST NOT delete, purge, thin, retire or move to the bin anything in a run of a job that the table of registered jobs marks as held while the clock is ahead.
 
 **Reason:** a clock set wrong would otherwise make one run judge everything old enough to remove, and nothing removed comes back when the clock is set right.
 
@@ -610,68 +620,84 @@ While the server's clock is more than 7 days later than the newest time the serv
 
 ### `housekeeping/clock-ahead-recorded`
 
-While the server's clock is more than 7 days later than the newest time the server has stored, when a job that the table of registered jobs marks as held while the clock is ahead runs, the server MUST record the run with `outcome` and `last_outcome` `held` and a `result` of `{"held": "clock_ahead"}`.
+While the server's clock is more than 7 days later than the trusted time, when a job that the table of registered jobs marks as held while the clock is ahead runs, the server MUST record the run with `outcome` and `last_outcome` `held` and a `result` of `{"held": "clock_ahead"}`.
 
 **Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`.
 
 ### `housekeeping/clock-ahead-others-run`
 
-While the server's clock is more than 7 days later than the newest time the server has stored, the server MUST run the jobs that the table of registered jobs marks as not held while the clock is ahead.
+While the server's clock is more than 7 days later than the trusted time, the server MUST run the jobs that the table of registered jobs marks as not held while the clock is ahead.
 
 **Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`.
 
 ### `housekeeping/clock-ahead-health`
 
-While the server's clock is more than 7 days later than the newest time the server has stored, the server MUST answer `GET /health` with an overall `status` no better than `degraded`.
+While the server's clock is more than 7 days later than the trusted time, the server MUST answer `GET /health` with an overall `status` no better than `degraded`.
 
 **Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`.
 
 ### `housekeeping/clock-ahead-health-held`
 
-While the server's clock is more than 7 days later than the newest time the server has stored, when a credential holding `instance.read` sends `GET /health`, the server MUST answer `housekeeping.held` with `reason` `clock_ahead`, the clock's time as `clock_at`, the newest stored time as `newest_committed_at`, and as `ends_at` the time the hold ends if the clock runs on without a jump.
+While the server's clock is more than 7 days later than the trusted time, when a credential holding `instance.read` sends `GET /health`, the server MUST answer `housekeeping.held` with `reason` `clock_ahead`, the clock's time as `clock_at`, the trusted time as `trusted_at`, and as `ends_at` the time the hold ends if the clock runs on without a jump.
 
 **Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`.
 
 ### `housekeeping/clock-confirm`
 
-When the private local command sends `POST /_control/clock/confirm` (`marfa housekeeping confirm-clock`), the server MUST take the clock's time as the newest time it has stored, and answer it as `confirmed_at`.
+When the private local command sends `POST /_control/clock/confirm` (`marfa housekeeping confirm-clock`), the server MUST take the clock's time as the trusted time, and answer it as `confirmed_at`.
 
 **Reason:** an instance that was off for months looks the same as a clock set wrong, and only the owner can say which it is.
 
-**Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`, `› stamps nothing earlier than the newest time stored when the clock is set back, and keeps that time through a crash`.
+**Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`, `› stamps nothing earlier than the trusted time when the clock is set back, and keeps that time through a crash`.
 
 ### `housekeeping/clock-steady-day`
 
-When the server's clock has run for 24 hours without a jump while it is more than 7 days later than the newest time the server has stored, the server MUST take the clock's time as the newest time it has stored.
+When the server's clock has run for 24 hours without a jump while it is more than 7 days later than the trusted time, the server MUST take the clock's time as the trusted time.
 
 **Reason:** a host that starts again after months away holds its clean-up for a day and then cleans up by its rules, with no owner at hand.
 
-**Tests:** `compliance/clock-hold.test.ts › holds an instance whose newest time is six months old for a day after it starts, then cleans up by its rules`.
+**Tests:** `compliance/clock-hold.test.ts › holds an instance whose trusted time is six months old for a day after it starts, then cleans up by its rules`, `› counts the day it holds clean-up across a restart, and ends the hold a day after it began`.
+
+### `housekeeping/clock-steady-day-restart`
+
+If the server restarts while its clock is more than 7 days later than the trusted time, then the server MUST count toward the 24 hours of `housekeeping/clock-steady-day` the time since they began, the time it was stopped included, unless its clock at the start is earlier than its clock was at the last write it committed.
+
+**Reason:** a supervisor, an upgrade or a crash restarts a server, and a day that began again at each restart might never end. A clock set forward while the server was stopped cannot be told from the time it was stopped, so it counts, and the 7-day margin of `housekeeping/clock-ahead-held` still holds clean-up for a clock set far forward. A clock set back while the server was stopped only shortens the time counted, and one set back past the last write begins the day again.
+
+**Tests:** `compliance/clock-hold.test.ts › counts the day it holds clean-up across a restart, and ends the hold a day after it began`.
 
 ### `housekeeping/clock-stamp-not-earlier`
 
-The server MUST NOT stamp a write earlier than the newest time it has stored.
+When the server commits a write, the server MUST NOT stamp what the write changes earlier than the trusted time when the write began.
 
-**Reason:** a clock set back would otherwise stamp a change before the changes it follows, and a client that reads by `updated_after` would miss it.
+**Reason:** a clock set back would otherwise stamp a change before the changes it follows, and a client that reads by `updated_after` would miss it. A time the server reads before a write begins, such as a key's `last_used_at`, can be a few milliseconds earlier than a write that committed in the meantime.
 
-**Tests:** `compliance/clock-hold.test.ts › stamps nothing earlier than the newest time stored when the clock is set back, and keeps that time through a crash`.
+**Tests:** `compliance/clock-hold.test.ts › stamps nothing earlier than the trusted time when the clock is set back, and keeps that time through a crash`.
 
 ### `housekeeping/clock-kept-through-crash`
 
 If the server stops without warning after it has answered a write, then the server MUST NOT stamp a later write earlier than that write.
 
-**Tests:** `compliance/clock-hold.test.ts › stamps nothing earlier than the newest time stored when the clock is set back, and keeps that time through a crash`.
+**Tests:** `compliance/clock-hold.test.ts › stamps nothing earlier than the trusted time when the clock is set back, and keeps that time through a crash`.
 
 ### `housekeeping/clock-set-right`
 
-When a clock that was more than 7 days later than the newest time the server has stored is set right, the server MUST stamp later writes by the clock and not by the time it read while the clock was ahead.
+When a clock that was more than 7 days later than the trusted time is set right, the server MUST stamp later writes by the clock and not by the time it read while the clock was ahead.
 
 **Tests:** `compliance/clock-hold.test.ts › stamps by the clock again once a clock set far ahead is set right`.
 
+### `housekeeping/clock-behind-runs-on`
+
+While the server's clock is earlier than the trusted time, the server MUST move the server's time on from the trusted time at the rate time passes.
+
+**Reason:** a server time that stood still until the clock caught up would stop every schedule, retry wait, rate-limit window and expiry for that long. The server's time stays ahead of the clock by the step back until the clock is set forward or the owner confirms it (`housekeeping/clock-confirm`).
+
+**Tests:** `compliance/clock-hold.test.ts › runs its jobs on schedule while the clock is a day behind`, `› ends a rate-limit window while the clock is a day behind`.
+
 ### `housekeeping/clock-behind-runs`
 
-While the server's clock is earlier than the newest time the server has stored, the server MUST run every job by its rules.
+While the server's clock is earlier than the trusted time, the server MUST run every job by its rules.
 
 **Reason:** a clock behind only moves every cutoff earlier, so it removes less, never more.
 
-**Tests:** `compliance/clock-hold.test.ts › stamps nothing earlier than the newest time stored when the clock is set back, and keeps that time through a crash`.
+**Tests:** `compliance/clock-hold.test.ts › stamps nothing earlier than the trusted time when the clock is set back, and keeps that time through a crash`, `› runs its jobs on schedule while the clock is a day behind`.

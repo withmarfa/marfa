@@ -45,6 +45,8 @@ import {
   withStream,
 } from "../../utils/stream.js";
 import { waitFor } from "../../utils/wait.js";
+import { beatReceiver } from "../../utils/beat-receiver.js";
+import { QUIET_TUNING, tuning } from "../../utils/tuning.js";
 
 /**
  * What a restore leaves when it does not finish, and what other requests see
@@ -754,6 +756,41 @@ describe("a writer while a restore writes", () => {
     // The witness: the same run is taken once the restore has committed.
     await runJob(operator, "blob-integrity");
   });
+
+  it(
+    "keeps sending the heartbeat while the restore runs",
+    async () => {
+      const beats = await beatReceiver();
+      const own = await bootFreshServer("restore-faults-heartbeat", {
+        ...DISK_ONLY,
+        ...tuning(...QUIET_TUNING, "interval.heartbeat=1000"),
+        MARFA_HEARTBEAT_URL: beats.url,
+      });
+      try {
+        // The witness: the heartbeat runs every second before the restore.
+        await beats.more(2, "two heartbeats before the restore");
+
+        const rows = carrying();
+        await own.setFault("hold:restore:before-commit");
+        const restoring = new MarfaClient({
+          baseUrl: own.apiUrl,
+          controlSocket: own.controlSocket,
+        }).restoreArchive(rows.archive);
+        await own.waitForHold("hold:restore:before-commit");
+        try {
+          await beats.more(3, "three heartbeats while the restore runs");
+        } finally {
+          await own.clearFault();
+        }
+        const done = await restoring;
+        expect(done.status, JSON.stringify(done.error)).toBe(200);
+      } finally {
+        await own.stop();
+        await beats.close();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS * 2 + 60_000,
+  );
 
   it("refuses an upload that finishes a queued deletion of its bytes while the restore runs, at once and naming the restore", async () => {
     const bytes = new TextEncoder().encode(

@@ -19,12 +19,15 @@ import {
 } from "../../utils/moved-clock.js";
 import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStream } from "../../utils/stream.js";
+import { QUIET_TUNING, tuning } from "../../utils/tuning.js";
+import { beatReceiver } from "../../utils/beat-receiver.js";
 
 /**
- * A server's clock set far ahead of the newest time it stored holds every job
- * that deletes, and a clock set back stamps nothing earlier than what is
- * stored. The clock is set, without time passing, through the test hook's
- * `jump_ms`; `advanceClock` is time passing, which the server follows.
+ * A server's clock set far ahead of the trusted time holds every job that
+ * deletes, and a clock set back stamps nothing earlier and runs the server's
+ * time on from the trusted time. The clock is set, without time passing,
+ * through the test hook's `jump_ms`; `advanceClock` is time passing, which
+ * the server follows.
  */
 
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
@@ -70,7 +73,7 @@ interface Health {
     held: {
       reason: string;
       clock_at: string;
-      newest_committed_at: string;
+      trusted_at: string;
       ends_at: string;
     } | null;
   };
@@ -256,7 +259,7 @@ describe("the clean-up jobs while the clock is far ahead", () => {
           expect(report.housekeeping.held?.reason).toBe("clock_ahead");
           const at = report.housekeeping.held!;
           expect(
-            Date.parse(at.clock_at) - Date.parse(at.newest_committed_at),
+            Date.parse(at.clock_at) - Date.parse(at.trusted_at),
           ).toBeGreaterThan(7 * DAY_MS);
           expect(Date.parse(at.ends_at)).toBeGreaterThan(
             Date.parse(at.clock_at),
@@ -299,7 +302,7 @@ describe("the clean-up jobs while the clock is far ahead", () => {
   );
 
   it(
-    "holds an instance whose newest time is six months old for a day after it starts, then cleans up by its rules",
+    "holds an instance whose trusted time is six months old for a day after it starts, then cleans up by its rules",
     async () => {
       const server = await bootFreshServer("clock-hold-asleep", QUIET_SCHEDULE);
       const writer = writerOf(server);
@@ -330,11 +333,109 @@ describe("the clean-up jobs while the clock is far ahead", () => {
     },
     FRESH_SERVER_TIMEOUT_MS * 2 + 120_000,
   );
+
+  it(
+    "counts the day it holds clean-up across a restart, and ends the hold a day after it began",
+    async () => {
+      const server = await bootFreshServer(
+        "clock-hold-restarted",
+        QUIET_SCHEDULE,
+      );
+      const writer = writerOf(server);
+      const made = await writer.createItem(
+        createNote({ properties: { title: "binned" } }),
+      );
+      expect(made.status).toBe(201);
+      expect((await writer.trashItems([made.data.item.id])).status).toBe(200);
+
+      await server.restart({
+        env: { MARFA_TEST_CLOCK_OFFSET_MS: String(182 * DAY_MS) },
+      });
+      server.clockOffsetMs = 182 * DAY_MS;
+      expect((await runJob(server, "trash-purge")).outcome).toBe("held");
+      await server.advanceClock(12 * HOUR_MS);
+
+      // A restart halfway through the day, as a supervisor or a release makes.
+      await server.restart();
+      expect((await runJob(server, "trash-purge")).outcome).toBe("held");
+      expect(await binnedOn(server)).toBe(1);
+
+      await server.advanceClock(12 * HOUR_MS);
+      expect((await runJob(server, "trash-purge")).outcome).toBe("ok");
+      expect((await health(server)).housekeeping.held).toBeNull();
+      expect(await binnedOn(server)).toBe(0);
+    },
+    FRESH_SERVER_TIMEOUT_MS * 3 + 120_000,
+  );
+});
+
+describe("the server's time while the clock is behind", () => {
+  it(
+    "runs its jobs on schedule while the clock is a day behind",
+    async () => {
+      const beats = await beatReceiver();
+      try {
+        const server = await bootFreshServer("clock-hold-behind-jobs", {
+          ...tuning(...QUIET_TUNING, "interval.heartbeat=1000"),
+          MARFA_HEARTBEAT_URL: beats.url,
+        });
+        // The witness: the heartbeat runs every second with the clock right.
+        await beats.more(2, "two heartbeats with the clock right");
+
+        await jump(server, -DAY_MS);
+        expect((await clockConcerns(server)).map((c) => c.reference)).toEqual([
+          "clock_behind",
+        ]);
+        await beats.more(3, "three heartbeats with the clock a day behind");
+      } finally {
+        await beats.close();
+      }
+    },
+    FRESH_SERVER_TIMEOUT_MS + 120_000,
+  );
+
+  it(
+    "ends a rate-limit window while the clock is a day behind",
+    async () => {
+      const server = await bootFreshServer("clock-hold-behind-limit", {
+        ...QUIET_SCHEDULE,
+        MARFA_RATE_LIMIT_ENABLED: "true",
+        MARFA_RATE_LIMIT_REQUESTS: "3",
+        MARFA_RATE_LIMIT_WINDOW_SECONDS: "5",
+      });
+      await jump(server, -DAY_MS);
+      const listed = () =>
+        fetch(`${server.apiUrl}/items?type=core.note&limit=1`, {
+          headers: { authorization: `Bearer ${server.workingKey}` },
+        });
+
+      let refused: Response | undefined;
+      for (let sent = 0; sent < 5 && refused === undefined; sent += 1) {
+        const answer = await listed();
+        await answer.body?.cancel();
+        if (answer.status === 429) refused = answer;
+        else expect(answer.status).toBe(200);
+      }
+      expect(
+        refused,
+        "the fourth request in a window was not refused",
+      ).toBeDefined();
+      const wait = Number(refused!.headers.get("retry-after"));
+      expect(wait).toBeGreaterThan(0);
+      expect(wait).toBeLessThanOrEqual(5);
+
+      await new Promise((resolve) => setTimeout(resolve, (wait + 1) * 1000));
+      const after = await listed();
+      await after.body?.cancel();
+      expect(after.status).toBe(200);
+    },
+    FRESH_SERVER_TIMEOUT_MS + 120_000,
+  );
 });
 
 describe("the times the server stamps", () => {
   it(
-    "stamps nothing earlier than the newest time stored when the clock is set back, and keeps that time through a crash",
+    "stamps nothing earlier than the trusted time when the clock is set back, and keeps that time through a crash",
     async () => {
       const server = await bootFreshServer("clock-hold-stamps", QUIET_SCHEDULE);
 
