@@ -530,12 +530,46 @@ fn a_lookup_refusing_the_credential_parks_the_queue_and_sends_nothing() {
     );
     let report = core.drain().unwrap();
     assert!(report.stopped.is_some(), "{report:?}");
+    assert_eq!(
+        report.refused_by.as_deref(),
+        Some(&crate::error::ServerAnswer {
+            status: 401,
+            code: Some("unauthorized".into()),
+            details: None,
+        })
+    );
     assert!(server.seen("/items").is_empty());
     let row = core.queue().unwrap().pop().unwrap();
     assert_eq!(row.verdict, Some(crate::Verdict::Blocked));
     assert_eq!(row.reason.as_deref(), Some("credential_refused"));
     // Released, it is decided again, since it never went.
     assert!(store::unsent(&core.conn().unwrap(), &queued.id).unwrap());
+}
+
+#[test]
+fn a_write_refused_for_its_credential_parks_the_queue_naming_the_answer_the_server_gave() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let core = library_copy(&server, dir.path());
+    core.create_item(&keyed("article-1", None)).unwrap();
+    server.on("/items/lookup", vec![found(&[])]);
+    server.on(
+        "/items",
+        vec![scripted::json(
+            401,
+            r#"{"error":{"code":"unauthorized","message":"ended","details":{"ended":"revoked"}}}"#,
+        )],
+    );
+    let report = core.drain().unwrap();
+    assert!(report.stopped.is_some(), "{report:?}");
+    assert_eq!(
+        report.refused_by.as_deref(),
+        Some(&crate::error::ServerAnswer {
+            status: 401,
+            code: Some("unauthorized".into()),
+            details: Some(json!({ "ended": "revoked" })),
+        })
+    );
 }
 
 #[test]

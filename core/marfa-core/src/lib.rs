@@ -113,7 +113,7 @@ pub use catch_up::{Change, ChangeEvent, FollowReport};
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{
     CODES as ERROR_CODES, CoreError, CoreErrorKind, FolderStore, NOT_HELD, ServerAnswer,
-    environmental_status,
+    UNREAD_CODE, environmental_status,
 };
 pub use file_cache::{
     Attachments, DEFAULT_FLOOR as FILE_BUDGET_FLOOR, FileBudget, FileCache, KeptFetch, NotHeld,

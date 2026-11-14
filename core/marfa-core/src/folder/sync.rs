@@ -356,7 +356,7 @@ fn stopped_by(drain: &crate::DrainReport) -> Option<CoreError> {
         .map(|_| CoreError::Network("unavailable".into()))
         .or_else(|| {
             drain.stopped.as_ref().map(|_| CoreError::Unauthorized {
-                server: None,
+                server: drain.refused_by.clone(),
                 code: "unauthorized".into(),
                 message: "credential refused".into(),
             })
@@ -391,6 +391,7 @@ mod tests {
             limited: false,
             verdicts: Vec::new(),
             stopped: None,
+            refused_by: None,
             unclaimed_sources: Vec::new(),
             retry_after_seconds: None,
         }

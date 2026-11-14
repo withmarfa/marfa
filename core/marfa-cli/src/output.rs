@@ -1315,6 +1315,7 @@ pub(crate) mod tests {
             limited: false,
             verdicts,
             stopped: None,
+            refused_by: None,
             unclaimed_sources: Vec::new(),
             retry_after_seconds: None,
         }
@@ -1437,6 +1438,7 @@ pub(crate) mod tests {
             limited: false,
             verdicts: Vec::new(),
             stopped: None,
+            refused_by: None,
             unclaimed_sources: Vec::new(),
             retry_after_seconds: None,
         };

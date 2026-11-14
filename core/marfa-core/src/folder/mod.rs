@@ -813,8 +813,8 @@ impl Folder {
     }
 
     fn row_on_server(&self) -> Result<crate::wire::WireItemWithMetadata> {
-        let cannot_read = || CoreError::Forbidden {
-            server: None,
+        let cannot_read = |server: Option<Box<crate::error::ServerAnswer>>| CoreError::Forbidden {
+            server,
             code: "type_not_permitted".into(),
             message: format!(
                 "this key cannot read {FOLDER_TYPE}, so the folder cannot follow its settings: it needs `{FOLDER_TYPE}:read`"
@@ -822,30 +822,39 @@ impl Folder {
         };
         let http = self.core.http()?;
         let read =
-            crate::hydrate::read_with_edges(http, &self.folder).map_err(|error| match error {
-                CoreError::Forbidden { code, .. } if code == "type_not_permitted" => cannot_read(),
-                other => other,
+            crate::hydrate::read_with_edges_answered(http, &self.folder).map_err(|error| {
+                match error {
+                    CoreError::Forbidden { code, server, .. } if code == "type_not_permitted" => {
+                        cannot_read(server)
+                    }
+                    other => other,
+                }
             })?;
-        let Some((row, _)) = read else {
-            // The server answers a folder the key cannot read as no folder at
-            // all, so the key's own map says which of the two this is.
-            let message = match http.current_key()? {
-                Some(key) if !placement::reads(&key, FOLDER_TYPE) => return Err(cannot_read()),
-                Some(_) => format!(
-                    "the server holds no folder {}; `folders create` makes one",
-                    self.folder
-                ),
-                // A credential that is not a key cannot read its own map.
-                None => format!(
-                    "the server holds no folder {} that this credential may read: it needs `{FOLDER_TYPE}:read`, or `folders create` makes one",
-                    self.folder
-                ),
-            };
-            return Err(CoreError::NotFound {
-                server: None,
-                code: "item_not_found".into(),
-                message,
-            });
+        let (row, _) = match read {
+            crate::http::ByIdRead::Row(read) => read,
+            crate::http::ByIdRead::Absent(gone) => {
+                // The server answers a folder the key cannot read as no folder at
+                // all, so the key's own map says which of the two this is.
+                let message = match http.current_key()? {
+                    Some(key) if !placement::reads(&key, FOLDER_TYPE) => {
+                        return Err(cannot_read(gone));
+                    }
+                    Some(_) => format!(
+                        "the server holds no folder {}; `folders create` makes one",
+                        self.folder
+                    ),
+                    // A credential that is not a key cannot read its own map.
+                    None => format!(
+                        "the server holds no folder {} that this credential may read: it needs `{FOLDER_TYPE}:read`, or `folders create` makes one",
+                        self.folder
+                    ),
+                };
+                return Err(CoreError::NotFound {
+                    server: gone,
+                    code: "item_not_found".into(),
+                    message,
+                });
+            }
         };
         Settings::read(
             &row.item.id,

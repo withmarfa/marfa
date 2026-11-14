@@ -53,6 +53,9 @@ pub struct DrainReport {
     /// Set when a refused credential parks the queue. An answer on another
     /// contract ends the drain as an error instead.
     pub stopped: Option<String>,
+    /// The server's answer behind `stopped`.
+    #[serde(skip)]
+    pub refused_by: Option<Box<crate::error::ServerAnswer>>,
     /// Reported because `credential_refused` alone reads as a key that no
     /// longer works.
     pub unclaimed_sources: Vec<String>,
@@ -73,6 +76,7 @@ impl DrainReport {
             limited: false,
             verdicts: Vec::new(),
             stopped: None,
+            refused_by: None,
             unclaimed_sources: Vec::new(),
             retry_after_seconds: None,
         }
@@ -100,6 +104,7 @@ impl DrainReport {
         self.limited = later.limited;
         self.verdicts.extend(later.verdicts);
         self.stopped = later.stopped;
+        self.refused_by = later.refused_by;
         for source in later.unclaimed_sources {
             if !self.unclaimed_sources.contains(&source) {
                 self.unclaimed_sources.push(source);
@@ -1519,8 +1524,8 @@ fn send_queue(
         let payload = match payload_to_send(core, http, row, &all, &mut lookups)? {
             Ok(_) if row.kind == WriteKind::WriteRows => rows::body(row, &batched),
             Ok(payload) => payload,
-            Err(CoreError::Unauthorized { .. }) => {
-                park_for_credential(core, report)?;
+            Err(CoreError::Unauthorized { server, .. }) => {
+                park_for_credential(core, report, server)?;
                 break;
             }
             Err(error) => {
@@ -1924,7 +1929,8 @@ fn send_queue(
             carry_on = true;
         }
         if stop {
-            park_for_credential(core, report)?;
+            let refusal = answer.as_ref().ok().map(Answer::server_answer);
+            park_for_credential(core, report, refusal)?;
             break;
         }
         if settled.unavailable.is_some() && !carry_on {
@@ -2004,8 +2010,13 @@ fn refuse_unsent(
 
 /// Parks every unanswered write until the credential is replaced, and says
 /// so: the rest of the pass would meet the same refusal.
-fn park_for_credential(core: &Core, report: &mut DrainReport) -> Result<()> {
+fn park_for_credential(
+    core: &Core,
+    report: &mut DrainReport,
+    refusal: Option<Box<crate::error::ServerAnswer>>,
+) -> Result<()> {
     let parked = store::block_unanswered(&*core.conn()?, BlockedReason::CredentialRefused)?;
+    report.refused_by = refusal;
     report.stopped = Some(format!(
         "the server refused the credential, so every queued write is blocked and the drain stopped; {parked} row(s) parked"
     ));
@@ -7459,6 +7470,7 @@ mod tests {
             limited: false,
             verdicts: Vec::new(),
             stopped: None,
+            refused_by: None,
             unclaimed_sources: Vec::new(),
             retry_after_seconds: None,
         }

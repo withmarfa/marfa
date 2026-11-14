@@ -515,7 +515,7 @@ impl CliError {
                 ..
             } => Some(ServerAnswer {
                 status: *status,
-                code: Some(code.clone()),
+                code: (code != marfa_core::UNREAD_CODE).then(|| code.clone()),
                 details: details.as_deref().cloned(),
             }),
             // The body, and so the code, was not read.
@@ -1150,6 +1150,30 @@ mod tests {
         .envelope();
         assert_eq!(refused["error"]["server"]["details"], details);
         assert!(refused["error"]["local"].is_null());
+    }
+
+    #[test]
+    fn an_answer_whose_body_did_not_read_names_no_code_as_the_core_does() {
+        let text = "<html>bad gateway</html>";
+        let unread = crate::remote::refused(502, text, None).envelope();
+        assert_eq!(unread["error"]["server"]["status"], 502);
+        assert!(unread["error"]["server"]["code"].is_null(), "{unread}");
+        let through_core = CliError::Core(CoreError::Server {
+            status: 502,
+            code: marfa_core::UNREAD_CODE.into(),
+            message: text.into(),
+            details: None,
+        })
+        .envelope();
+        assert_eq!(unread["error"]["server"], through_core["error"]["server"]);
+        // The witness: a body that read names its code.
+        let read = crate::remote::refused(
+            502,
+            r#"{"error":{"code":"upstream_failed","message":"m"}}"#,
+            None,
+        )
+        .envelope();
+        assert_eq!(read["error"]["server"]["code"], "upstream_failed");
     }
 
     #[test]

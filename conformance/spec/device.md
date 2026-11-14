@@ -3736,7 +3736,7 @@ If a server answered the request a call is refused for, then a device MUST carry
 
 **Reason:** the member is what an app reads to tell the server's word from the device's own, and the same answer reads the same through the command line and a binding.
 
-**Tests:** `device/refusal-answers.test.ts › names the answer behind a copy a hydration expired, with the details the server sent`, `› names the answer a server gave a refused read of its types`.
+**Tests:** `device/refusal-answers.test.ts › names the answer behind a copy a hydration expired, with the details the server sent`, `› names the answer a server gave a refused read of its types`, `› names the answer a server gave for a folder it does not hold, where a folder is added`.
 
 ### `device/refusal-server-absent`
 

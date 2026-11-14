@@ -552,7 +552,8 @@ fn send_page(
         // A write sent on its own door would meet the same refusal, under a
         // key that then keeps it out of every later page.
         Classified::BlockQueue(_) => {
-            park_for_credential(core, report)?;
+            let refusal = answer.as_ref().ok().map(crate::http::Answer::server_answer);
+            park_for_credential(core, report, refusal)?;
             return Ok(false);
         }
         _ => return Ok(false),

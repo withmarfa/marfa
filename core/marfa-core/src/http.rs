@@ -1215,9 +1215,19 @@ impl Http {
     }
 
     pub fn item(&self, id: &str) -> Result<Option<WireItemWithMetadata>, CoreError> {
+        Ok(self.item_answered(id)?.row())
+    }
+
+    /// `item`, keeping the server's `404` where the row is gone.
+    pub(crate) fn item_answered(
+        &self,
+        id: &str,
+    ) -> Result<ByIdRead<WireItemWithMetadata>, CoreError> {
         match self.get_json::<WireItemWithMetadata>(&["items", id], &[("include", "metadata")]) {
-            Ok(item) => Ok(Some(item)),
-            Err(CoreError::NotFound { .. }) => Ok(None),
+            Ok(item) => Ok(ByIdRead::Row(item)),
+            Err(absent @ CoreError::NotFound { .. }) => {
+                Ok(ByIdRead::Absent(absent.answer().map(Box::new)))
+            }
             Err(error) => Err(error),
         }
     }

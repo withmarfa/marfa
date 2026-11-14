@@ -1459,6 +1459,7 @@ fn refuse_unreadable(
             .and_then(serde_json::Value::as_str)
             .map(str::to_string)
     });
+    let mut said = None;
     let unreadable: Vec<&str> = match &key {
         Some(key) => named
             .into_iter()
@@ -1469,7 +1470,10 @@ fn refuse_unreadable(
             let mut refused = Vec::new();
             for name in named {
                 match http.lists(name, listed_tier(Some(name), tier)) {
-                    Err(CoreError::Forbidden { code, .. }) if code == "type_not_permitted" => {
+                    Err(CoreError::Forbidden { code, server, .. })
+                        if code == "type_not_permitted" =>
+                    {
+                        said = said.or(server);
                         refused.push(name);
                     }
                     Err(error) => return Err(error),
@@ -1483,7 +1487,7 @@ fn refuse_unreadable(
         return Ok(Some(learned));
     }
     Err(CoreError::Forbidden {
-        server: None,
+        server: said,
         code: "type_not_permitted".into(),
         message: format!(
             "this credential cannot read {}, nor any type under it, so a slice naming it would hold none of it: hydrate with a credential that reads it, or leave it out",
@@ -2656,10 +2660,23 @@ mod tests {
             )
             .unwrap_err();
         match refused {
-            CoreError::Forbidden { code, message, .. } => {
+            CoreError::Forbidden {
+                code,
+                message,
+                server,
+            } => {
                 assert_eq!(code, "type_not_permitted");
                 assert!(message.contains("core.bookmark"), "{message}");
                 assert!(!message.contains("core.note,"), "{message}");
+                assert_eq!(
+                    server.as_deref(),
+                    Some(&crate::error::ServerAnswer {
+                        status: 403,
+                        code: Some("type_not_permitted".into()),
+                        details: None,
+                    }),
+                    "the listing's refusal was a server's answer"
+                );
             }
             other => panic!("expected the listing's refusal, got {other:?}"),
         }
@@ -2787,10 +2804,15 @@ mod tests {
             &[],
             &AtomicBool::new(false),
         ) {
-            Err(CoreError::Forbidden { code, message, .. }) => {
+            Err(CoreError::Forbidden {
+                code,
+                message,
+                server,
+            }) => {
                 assert_eq!(code, "type_not_permitted");
                 assert!(message.contains("core.entity"), "{message}");
                 assert!(!message.contains("core.note,"), "{message}");
+                assert_eq!(server, None, "the key's own map refused, not a server");
             }
             other => panic!("a key reading nothing under the type was not refused: {other:?}"),
         }

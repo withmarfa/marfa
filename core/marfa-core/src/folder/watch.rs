@@ -828,7 +828,7 @@ fn credential_refused(drain: &Drained) -> Option<CoreError> {
         .as_ref()
         .filter(|_| credential)
         .map(|stopped| CoreError::Unauthorized {
-            server: None,
+            server: drain.report.refused_by.clone(),
             code: "unauthorized".into(),
             message: stopped.clone(),
         })
@@ -2191,6 +2191,7 @@ mod tests {
                 limited: false,
                 verdicts: Vec::new(),
                 stopped: None,
+                refused_by: None,
                 unclaimed_sources: Vec::new(),
                 retry_after_seconds: None,
             },
@@ -2675,9 +2676,37 @@ mod tests {
         });
         assert!(matches!(
             credential_refused(&stopped),
-            Some(CoreError::Unauthorized { message, .. }) if message == "the server refused the credential"
+            Some(CoreError::Unauthorized { message, server: None, .. }) if message == "the server refused the credential"
         ));
         assert_eq!(credential_refused(&drained()), None);
+    }
+
+    #[test]
+    fn a_credential_a_drain_was_refused_with_names_the_answer_the_server_gave() {
+        let answer = crate::error::ServerAnswer {
+            status: 401,
+            code: Some("unauthorized".into()),
+            details: Some(serde_json::json!({ "ended": "revoked" })),
+        };
+        let mut stopped = drained();
+        stopped.report.stopped = Some("the server refused the credential".into());
+        stopped.report.refused_by = Some(Box::new(answer.clone()));
+        stopped.report.verdicts.push(crate::DrainVerdict {
+            id: "w".into(),
+            kind: crate::WriteKind::CreateItem,
+            item_id: None,
+            edge_id: None,
+            verdict: None,
+            reason: Some("credential_refused".into()),
+            refusal: None,
+            conflicted_copy_id: None,
+            refusals: 0,
+            replayed: false,
+            merged_fields: Vec::new(),
+            conflicts: Vec::new(),
+        });
+        let ended = credential_refused(&stopped).expect("a refused credential ends the watch");
+        assert_eq!(ended.answer(), Some(answer));
     }
 
     #[test]

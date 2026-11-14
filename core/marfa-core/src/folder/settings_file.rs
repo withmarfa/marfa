@@ -406,19 +406,23 @@ impl Folder {
                 format!("the folder door refused it: {refused}{back}"),
             );
         }
-        let row = context
+        let row = match context
             .http(self.core.http()?)
-            .item(&self.folder)
+            .item_answered(&self.folder)
             .map_err(|error| {
                 context
                     .failed(&self.core, error)
                     .unwrap_or_else(|error| error)
-            })?
-            .ok_or_else(|| CoreError::NotFound {
-                server: None,
-                code: "item_not_found".into(),
-                message: "The accepted folder settings are not returned to this reach.".into(),
-            })?;
+            })? {
+            crate::http::ByIdRead::Row(row) => row,
+            crate::http::ByIdRead::Absent(gone) => {
+                return Err(CoreError::NotFound {
+                    server: gone,
+                    code: "item_not_found".into(),
+                    message: "The accepted folder settings are not returned to this reach.".into(),
+                });
+            }
+        };
         {
             let mut conn = self.core.conn()?;
             let tx = conn.transaction()?;
