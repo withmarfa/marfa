@@ -2842,9 +2842,9 @@ If an archive records an item in a state that its type's lifecycle cannot produc
 
 ### `search-and-filters/restore-cascade-marks`
 
-If an item line of an archive records `trashed_by_cascade` as other than `true`, records it on an item that is not in the bin, records `trashed_with` as other than the ID of another item, records `trashed_with` without `trashed_by_cascade`, or names in `trashed_with` an item the archive does not hold, then the server MUST answer `400 validation_error` naming the line in `details.line`, the item in `details.item_id` and the field in `details.field`, and write nothing.
+If an item line of an archive records `trashed_by_cascade` as other than `true`, records it on an item that is not in the bin, records `trashed_with` as other than the ID of another item, or records `trashed_with` without `trashed_by_cascade`, then the server MUST answer `400 validation_error` naming the line in `details.line`, the item in `details.item_id` and the field in `details.field`, and write nothing.
 
-**Reason:** an export writes `trashed_with` only beside `trashed_by_cascade`, and both only on an item a cascade took into the bin, and the item `trashed_with` names is in the same archive.
+**Reason:** an export writes `trashed_with` only beside `trashed_by_cascade`, and both only on an item a cascade took into the bin. An export may leave out the item `trashed_with` names, so a name the archive does not hold is not refused (`items/restore-archive-marks-unheld`).
 
 **Tests:** `compliance/restore-cascade-marks.test.ts › refuses an item line whose %s is %j, %s, naming the line and the field, and writes nothing`.
 

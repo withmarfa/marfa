@@ -154,16 +154,188 @@ describe("a restore of items a cascade trashed", () => {
   });
 });
 
+/** A task parent trashed with a note child and a note grandchild. */
+async function taskBin(client: MarfaClient) {
+  const made = await client.createItem({
+    type: "core.task",
+    properties: { title: "parent" },
+  });
+  expect(made.status, JSON.stringify(made.error)).toBe(201);
+  const parent = made.data.item.id;
+  const child = await note(client, "child");
+  const grandchild = await note(client, "grandchild");
+  for (const [source_id, target_id] of [
+    [parent, child],
+    [child, grandchild],
+  ]) {
+    const edge = await client.createEdge({
+      source_id: source_id!,
+      target_id: target_id!,
+      edge_type: "parent-of",
+    });
+    expect(edge.status, JSON.stringify(edge.error)).toBe(201);
+  }
+  expect((await client.deleteItem(parent)).ok).toBe(true);
+  return { parent, child, grandchild };
+}
+
+const lineOf = (archive: Uint8Array, id: string) =>
+  archiveLines<{ item: Record<string, unknown> }>(archive, "items").find(
+    (held) => held.item.id === id,
+  )?.item;
+
+describe("a restore of an archive that names an item it does not hold", () => {
+  it("holds a child as its own trash when its parent was purged from the bin before the export", async () => {
+    const source = working(origin);
+    const held = await taskBin(source);
+    // The witness: before the purge the export names the parent, and the parent's restore takes the child.
+    const whole = await archiveOf(source);
+    expect(lineOf(whole, held.child)?.trashed_with).toBe(held.parent);
+    expect((await source.purgeItem(held.parent)).ok).toBe(true);
+    const archive = await archiveOf(source);
+    expect(lineOf(archive, held.parent)).toBeUndefined();
+    expect(lineOf(archive, held.child)?.trashed_with).toBe(held.parent);
+
+    const restored = await owner(destination).restoreArchive(archive);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data).toMatchObject({ imported: 2, duplicates: 0 });
+
+    const target = working(destination);
+    const child = await stateOf(target, held.child);
+    expect(child.state).toBe("trashed");
+    expect(child).not.toHaveProperty("trashed_with");
+    expect(child).not.toHaveProperty("trashed_by_cascade");
+    expect(await stateOf(target, held.grandchild)).not.toHaveProperty(
+      "trashed_with",
+    );
+    expect((await target.restoreItem(held.child)).ok).toBe(true);
+    expect((await stateOf(target, held.child)).state).toBe("active");
+    expect((await stateOf(target, held.grandchild)).state).toBe("trashed");
+  });
+
+  it("holds a child as its own trash when a type filter left its parent out of the export", async () => {
+    const source = working(origin);
+    const held = await taskBin(source);
+    const archive = await source.exportArchive({
+      type: "core.note",
+      state: "any",
+    });
+    expect(archive.status).toBe(200);
+    expect(lineOf(archive.data, held.parent)).toBeUndefined();
+    expect(lineOf(archive.data, held.child)?.trashed_with).toBe(held.parent);
+
+    const restored = await owner(destination).restoreArchive(archive.data);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    expect(restored.data).toMatchObject({ imported: 2, duplicates: 0 });
+    const child = await stateOf(working(destination), held.child);
+    expect(child.state).toBe("trashed");
+    expect(child).not.toHaveProperty("trashed_with");
+    expect(child).not.toHaveProperty("trashed_by_cascade");
+  });
+
+  it("marks a child with a parent the instance holds and the archive leaves out", async () => {
+    const source = working(origin);
+    const held = await taskBin(source);
+    const parents = await source.exportArchive({
+      type: "core.task",
+      state: "any",
+    });
+    const children = await source.exportArchive({
+      type: "core.note",
+      state: "any",
+    });
+    expect(parents.status).toBe(200);
+    expect(children.status).toBe(200);
+    expect(lineOf(children.data, held.parent)).toBeUndefined();
+
+    const first = await owner(destination).restoreArchive(parents.data);
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    const second = await owner(destination).restoreArchive(children.data);
+    expect(second.status, JSON.stringify(second.error)).toBe(200);
+    const target = working(destination);
+    const child = await stateOf(target, held.child);
+    expect(child.trashed_with).toBe(held.parent);
+    expect(child.trashed_by_cascade).toBe(true);
+
+    expect((await target.restoreItem(held.parent)).ok).toBe(true);
+    for (const id of [held.parent, held.child, held.grandchild]) {
+      expect((await stateOf(target, id)).state, id).toBe("active");
+    }
+  });
+
+  it("holds an item as its own trash when its line records trashed_by_cascade without trashed_with", async () => {
+    const source = working(origin);
+    const held = await bin(source);
+    const archive = await archiveOf(source);
+    // The witness: the line as exported carries both.
+    expect(lineOf(archive, held.child)?.trashed_with).toBe(held.parent);
+    const damaged = editLineFile(archive, "items", (text) =>
+      ndjson(
+        text
+          .split("\n")
+          .filter((line) => line !== "")
+          .map((line) => {
+            const parsed = JSON.parse(line) as {
+              item: Record<string, unknown>;
+            };
+            if (parsed.item.id === held.child) delete parsed.item.trashed_with;
+            return parsed;
+          }),
+      ),
+    );
+    expect(lineOf(damaged, held.child)?.trashed_by_cascade).toBe(true);
+    expect(lineOf(damaged, held.child)).not.toHaveProperty("trashed_with");
+
+    const restored = await owner(destination).restoreArchive(damaged);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    const target = working(destination);
+    const child = await stateOf(target, held.child);
+    expect(child.state).toBe("trashed");
+    expect(child).not.toHaveProperty("trashed_with");
+    expect(child).not.toHaveProperty("trashed_by_cascade");
+    expect((await target.restoreItem(held.parent)).ok).toBe(true);
+    expect((await stateOf(target, held.child)).state).toBe("trashed");
+  });
+});
+
+describe("a restore of a part a with-hosts edge took into the bin", () => {
+  it("holds the part as trashed with the host the line names, not as a part waiting for its other hosts", async () => {
+    const source = working(origin);
+    const part = await note(source, "part");
+    const first = await note(source, "first host");
+    const last = await note(source, "last host");
+    for (const target_id of [first, last]) {
+      const made = await source.createEdge({
+        source_id: part,
+        target_id,
+        edge_type: "attached-to",
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+    }
+    expect((await source.deleteItem(first)).ok).toBe(true);
+    expect((await stateOf(source, part)).state).toBe("active");
+    expect((await source.deleteItem(last)).ok).toBe(true);
+    const archive = await archiveOf(source);
+    expect(lineOf(archive, part)?.trashed_with).toBe(last);
+    // The witness: on the instance that was backed up, either host brings the part back.
+    expect((await source.restoreItem(first)).ok).toBe(true);
+    expect((await stateOf(source, part)).state).toBe("active");
+
+    const restored = await owner(destination).restoreArchive(archive);
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    const target = working(destination);
+    expect((await stateOf(target, part)).trashed_with).toBe(last);
+    expect((await target.restoreItem(first)).ok).toBe(true);
+    expect((await stateOf(target, part)).state).toBe("trashed");
+    expect((await target.restoreItem(last)).ok).toBe(true);
+    expect((await stateOf(target, part)).state).toBe("active");
+  });
+});
+
 describe("a restore of an archive whose cascade marks are wrong", () => {
   it.each([
     ["trashed_with", "not an id", "trashed_with", "that is no item ID"],
     ["trashed_with", 7, "trashed_with", "that is no text"],
-    [
-      "trashed_with",
-      "01a1da77-dc43-7355-8516-a07ece14b904",
-      "trashed_with",
-      "that names an item the archive does not hold",
-    ],
     ["trashed_by_cascade", "yes", "trashed_by_cascade", "that is no boolean"],
     [
       "trashed_by_cascade",

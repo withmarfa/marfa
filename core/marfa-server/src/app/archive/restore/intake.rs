@@ -242,8 +242,8 @@ struct Rows {
     files: BTreeMap<String, Listed>,
     icon_types: HashSet<String>,
     items_held: HashMap<u128, HeldItem>,
-    /// Each item a `trashed_with` names, with the first line that names it and that line's item.
-    marked_with: HashMap<u128, (usize, u128)>,
+    /// Each item a `trashed_with` names.
+    marked_with: HashSet<u128>,
     type_ids: HashSet<String>,
     edge_type_ids: HashSet<String>,
     setting_keys: HashSet<String>,
@@ -677,48 +677,26 @@ impl Rows {
                 .with_detail("field", "id"));
             }
         }
-        if let (Some(child), Some(named)) = (
-            id.and_then(bits),
-            item.get("trashed_with")
-                .and_then(Value::as_str)
-                .and_then(bits),
-        ) {
-            self.marked_with.entry(named).or_insert((row, child));
+        if let Some(named) = item
+            .get("trashed_with")
+            .and_then(Value::as_str)
+            .and_then(bits)
+        {
+            self.marked_with.insert(named);
         }
         Ok(())
     }
 
-    /// The type of each item a cascade mark names, or a refusal naming the first line whose mark
-    /// names an item the archive does not hold.
-    fn mark_types(&self) -> Result<HashMap<String, String>> {
-        let mut types = HashMap::new();
-        let mut missing: Option<(usize, u128, u128)> = None;
-        for (named, (line, child)) in &self.marked_with {
-            match self.items_held.get(named) {
-                Some(held) => {
-                    if let Some(type_id) = self.type_names.get(held.type_index as usize) {
-                        types.insert(hyphenated(*named), type_id.clone());
-                    }
-                }
-                None if missing.is_none_or(|(first, ..)| *line < first) => {
-                    missing = Some((*line, *child, *named));
-                }
-                None => {}
-            }
-        }
-        match missing {
-            None => Ok(types),
-            Some((line, child, named)) => {
-                let (child, named) = (hyphenated(child), hyphenated(named));
-                Err(invalid(format!(
-                    "Item {child} on line {line} of {ITEMS} names item {named} in trashed_with, which the archive does not hold."
-                ))
-                .with_detail("entry", ITEMS)
-                .with_detail("line", line)
-                .with_detail("item_id", child.as_str())
-                .with_detail("field", "trashed_with"))
-            }
-        }
+    /// The type of each item a cascade mark names that the archive holds.
+    fn mark_types(&self) -> HashMap<String, String> {
+        self.marked_with
+            .iter()
+            .filter_map(|named| {
+                let held = self.items_held.get(named)?;
+                let type_id = self.type_names.get(held.type_index as usize)?;
+                Some((hyphenated(*named), type_id.clone()))
+            })
+            .collect()
     }
 
     fn edge_line(&mut self, line: &Value, row: usize) -> Result<()> {
@@ -932,7 +910,7 @@ impl Intake {
                 files: BTreeMap::new(),
                 icon_types: HashSet::new(),
                 items_held: HashMap::new(),
-                marked_with: HashMap::new(),
+                marked_with: HashSet::new(),
                 type_ids: HashSet::new(),
                 edge_type_ids: HashSet::new(),
                 setting_keys: HashSet::new(),
@@ -1190,7 +1168,7 @@ impl Intake {
                 .with_detail("field", *count));
             }
         }
-        let mark_types = rows.mark_types()?;
+        let mark_types = rows.mark_types();
         if self.blob_entries != manifest.blob_count {
             return Err(invalid(format!(
                 "{MANIFEST} counts {} in blob_count, and the archive carries {} blobs/ entries.",

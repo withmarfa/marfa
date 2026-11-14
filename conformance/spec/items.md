@@ -1540,11 +1540,35 @@ The server MUST NOT carry `restored_with` on the `item.restored` of the item a r
 
 ### `items/restore-archive-marks`
 
-When an archive restore writes an item into the bin, the server MUST keep the `trashed_by_cascade` and `trashed_with` that the archive records for it, so that restoring the item named from the bin brings the item back with it.
+When an archive restore writes an item into the bin whose line records `trashed_by_cascade` and `trashed_with`, and the instance or the archive holds the item named, the server MUST keep both, so that restoring the item named from the bin brings the item back with it.
 
 **Reason:** a restore that dropped the marks would leave each item a cascade trashed in the bin when its parent comes back, which the instance that was backed up would not.
 
-**Tests:** `compliance/restore-cascade-marks.test.ts › brings the children back with their parent after a restore into a fresh server, as on the instance that was backed up`, `› skips an item the instance already holds and leaves it as it is`.
+**Tests:** `compliance/restore-cascade-marks.test.ts › brings the children back with their parent after a restore into a fresh server, as on the instance that was backed up`, `› skips an item the instance already holds and leaves it as it is`, `› marks a child with a parent the instance holds and the archive leaves out`.
+
+### `items/restore-archive-marks-unheld`
+
+When an archive restore writes an item into the bin whose line names in `trashed_with` an item that neither the instance nor the archive holds, the server MUST hold the item as its own trash, with no cascade marks.
+
+**Reason:** an export names an item a purge removed, or one a `type`, `source` or time filter, or a key's reach, left out of the archive, and the instance that was backed up keeps the mark.
+
+**Tests:** `compliance/restore-cascade-marks.test.ts › holds a child as its own trash when its parent was purged from the bin before the export`, `› holds a child as its own trash when a type filter left its parent out of the export`.
+
+### `items/restore-archive-marks-alone`
+
+When an archive restore writes an item into the bin whose line records `trashed_by_cascade` without `trashed_with`, the server MUST hold the item as its own trash, with no cascade marks.
+
+**Reason:** an export names `trashed_with` only to a key that may read the type of the item named, so a line may record the cascade and not its host.
+
+**Tests:** `compliance/restore-cascade-marks.test.ts › holds an item as its own trash when its line records trashed_by_cascade without trashed_with`.
+
+### `items/restore-archive-marks-hosts`
+
+When an archive restore writes an item into the bin that went there with its hosts through a `with-hosts` edge, the server MUST hold it as trashed with the item `trashed_with` names, and not as a part that waits for its other hosts.
+
+**Reason:** an export records no `with-hosts` edge's part in a trash, so a restore cannot tell a part from any other item a cascade took.
+
+**Tests:** `compliance/restore-cascade-marks.test.ts › holds the part as trashed with the host the line names, not as a part waiting for its other hosts`.
 
 ### `items/purge`
 

@@ -86,7 +86,8 @@ pub fn held_snapshots(
 }
 
 /// The cascade mark a line holds: the item its trash was keyed to, with that item's type, which
-/// the instance's own row gives where it holds one and `archived_types` gives otherwise.
+/// the instance's own row gives where it holds one and `archived_types` gives otherwise. A name
+/// held by neither leaves the item its own trash.
 fn mark_of(
     tx: &Transaction<'_>,
     item: &Map<String, Value>,
@@ -97,10 +98,10 @@ fn mark_of(
     };
     let with_type = match rows::by_id(tx, with)? {
         Some(held) => held.type_id,
-        None => archived_types
-            .get(with)
-            .cloned()
-            .ok_or_else(|| Refusal::internal("a checked mark names an item the archive lacks"))?,
+        None => match archived_types.get(with) {
+            Some(type_id) => type_id.clone(),
+            None => return Ok(None),
+        },
     };
     Ok(Some(Mark {
         with: with.to_string(),
