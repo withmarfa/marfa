@@ -1205,6 +1205,13 @@ pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) 
         Some(Named::Rows(read)) => Some(read),
         None => None,
     };
+    crate::row_writes::before_batch(
+        conn,
+        item,
+        table,
+        &event.batch,
+        event.rows.iter().map(|row| row.id.as_str()),
+    )?;
     for row in &event.rows {
         if row.deleted {
             crate::row_writes::take_server_row(conn, item, table, &row.id, None)?;

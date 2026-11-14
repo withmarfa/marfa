@@ -211,6 +211,19 @@ CREATE TABLE IF NOT EXISTS rows_seen (
   name TEXT NOT NULL
 ) WITHOUT ROWID;
 
+-- The row beneath a sent write before such an event, so the write is judged
+-- by what its batch replaced if the event was its own.
+CREATE TABLE IF NOT EXISTS rows_seen_beneath (
+  batch TEXT NOT NULL,
+  id TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  body TEXT,
+  withheld TEXT,
+  updated_at TEXT,
+  PRIMARY KEY (batch, id)
+) WITHOUT ROWID;
+
 -- Keyed by rowid = items.seq: an FTS5 column cannot be indexed for a lookup,
 -- so deleting by an item_id column would scan the whole index per write.
 -- The columns and the tokenizer are the server's, so a query matches the same
