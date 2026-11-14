@@ -335,6 +335,14 @@ fn unrestorable(refused: &checks::Refused) -> Refusal {
     .with_detail("entry", refused.entry())
 }
 
+fn enforcement_unreadable() -> Refusal {
+    Refusal::new(
+        Code::EnforcementUnreadable,
+        "No archive was sent, because this instance's enforcement settings do not read. Set them \
+         again with PATCH /config, then export again.",
+    )
+}
+
 impl App {
     /// The most one archive line may hold, which the writer and the reader both keep to.
     pub fn archive_line_cap(&self) -> usize {
@@ -813,6 +821,9 @@ fn select(
         }
     }
     count("setting_count", &mut instance, settings)?;
+    if !matches!(caller, Caller::Server) && super::config::levers_unreadable(read.tx)? {
+        return Err(enforcement_unreadable());
+    }
     let mut enforcement = Vec::new();
     let mut unreadable = Vec::new();
     if caller.holds(Permission::ConfigManage)

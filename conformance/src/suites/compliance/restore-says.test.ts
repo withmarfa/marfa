@@ -20,7 +20,7 @@ import {
 } from "../../utils/own-blob-server.js";
 import { QUIET_TUNING, tuning } from "../../utils/tuning.js";
 import { v7 as uuidv7 } from "uuid";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { withInstanceDatabase } from "../../utils/instance-database.js";
@@ -166,17 +166,31 @@ describe("what a restore says", () => {
     expect(after.enforcement).toEqual({ ...ENFORCEMENT, strict_mode: own });
   });
 
-  it("leaves enforcement settings that do not read out of an export, and the restore names them", async () => {
-    const spoiled = await bootFreshServer("restore-says-unread", DISK_ONLY);
+  it("refuses an export while the enforcement settings do not read, and a backup holds the items and names them", async () => {
+    const folder = mkdtempSync(join(tmpdir(), "restore-says-unread-"));
+    const spoiled = await bootFreshServer("restore-says-unread", {
+      ...DISK_ONLY,
+      MARFA_BACKUP_PATH: folder,
+      MARFA_BACKUP_INTERVAL_SECONDS: "0",
+    });
     try {
-      const set = await clientsFor(spoiled).operator.patchConfig({
-        enforcement: ENFORCEMENT,
+      const { operator, working } = clientsFor(spoiled);
+      const made = await working.createItem({
+        type: "core.note",
+        properties: { body: "kept through a backup" },
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      const set = await operator.patchConfig({
+        enforcement: { strict_mode: { types: ["core.task"] } },
       });
       expect(set.status, JSON.stringify(set.error)).toBe(200);
-      // The witness: a row that reads travels.
+      // The witness: a row that reads travels, and the export holds the item.
       const readable = await (await everythingClient(spoiled)).exportArchive();
-      expect(archiveManifest(readable.data).enforcement_count).toBe(1);
-      expect(archiveManifest(readable.data).unreadable).toBeUndefined();
+      expect(readable.status, JSON.stringify(readable.error)).toBe(200);
+      const witness = archiveManifest(readable.data);
+      expect(witness.enforcement_count).toBe(1);
+      expect(witness.unreadable).toBeUndefined();
+      expect(witness.item_count).toBeGreaterThanOrEqual(1);
 
       await spoiled.restart(() => {
         withInstanceDatabase(spoiled.sqlitePath, (db) => {
@@ -186,20 +200,48 @@ describe("what a restore says", () => {
           );
         });
       });
-      const exported = await (await everythingClient(spoiled)).exportArchive();
-      expect(exported.status, JSON.stringify(exported.error)).toBe(200);
-      const manifest = archiveManifest(exported.data);
+      for (const client of [
+        await everythingClient(spoiled),
+        clientsFor(spoiled).working,
+      ]) {
+        const refused = await client.exportArchive();
+        expect(refused.status).toBe(409);
+        expect(
+          (
+            JSON.parse(new TextDecoder().decode(refused.data)) as {
+              error: { code: string };
+            }
+          ).error.code,
+        ).toBe("enforcement_unreadable");
+      }
+
+      const run = await localOf(spoiled).runBackup();
+      expect(run.status, JSON.stringify(run.error)).toBe(200);
+      const backup = new Uint8Array(
+        readFileSync(
+          join(
+            folder,
+            "backups",
+            run.data.backup.instance_id,
+            run.data.backup.name,
+          ),
+        ),
+      );
+      const manifest = archiveManifest(backup);
+      expect(manifest.item_count).toBe(witness.item_count);
       expect(manifest.enforcement_count).toBe(0);
       expect(manifest.unreadable).toEqual(["enforcement"]);
 
-      const restored = await localOf(target).restoreArchive(exported.data);
+      const restored = await localOf(target).restoreArchive(backup);
       expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      expect(restored.data.imported).toBe(witness.item_count);
       expect(restored.data.not_restored.at(-1)).toEqual({
         kind: "enforcement",
         message: expect.stringContaining("strict mode"),
       });
     } finally {
       await spoiled.stop();
+      rmSync(folder, { recursive: true, force: true });
     }
   });
 

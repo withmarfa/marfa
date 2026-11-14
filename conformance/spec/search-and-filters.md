@@ -2084,11 +2084,19 @@ When the credential requesting `GET /export?format=archive` holds `config.manage
 
 ### `search-and-filters/archive-enforcement-unreadable`
 
-If the enforcement settings the instance stores do not read, then the server MUST answer `GET /export?format=archive` and take a backup with no `enforcement` line, naming `enforcement` in the manifest's `unreadable`.
+If the enforcement settings the instance stores do not read, then the server MUST answer `GET /export?format=archive` with `409 enforcement_unreadable` and send no archive.
 
-**Reason:** the server already treats stored enforcement settings that do not read as a known state, holding every key closed and naming them on `GET /health`, so they are no reason to stop every export and backup. The manifest says what the archive left out, so a restore can say so.
+**Reason:** unreadable enforcement settings hold every key closed (and name themselves on `GET /health`), so a key's archive would hold no items and a restore of it would import nothing, which a move by export would not notice. The owner sets the settings again and exports again.
 
-**Tests:** `compliance/restore-says.test.ts › leaves enforcement settings that do not read out of an export, and the restore names them`.
+**Tests:** `compliance/restore-says.test.ts › refuses an export while the enforcement settings do not read, and a backup holds the items and names them`.
+
+### `search-and-filters/backup-enforcement-unreadable`
+
+If the enforcement settings the instance stores do not read, then the server MUST take a backup with every item and no `enforcement` line, naming `enforcement` in the manifest's `unreadable`.
+
+**Reason:** a backup is the server's own and reads every item whatever the settings say, so it goes on. Its manifest says what it left out, so a restore can say so.
+
+**Tests:** `compliance/restore-says.test.ts › refuses an export while the enforcement settings do not read, and a backup holds the items and names them`.
 
 ### `search-and-filters/archive-manifest-unreadable`
 
@@ -2096,7 +2104,7 @@ If an archive leaves out no line because it did not read, then the server MUST N
 
 **Reason:** `unreadable` names only what an archive left out (`search-and-filters/archive-enforcement-unreadable`), so an archive that holds everything carries no such list.
 
-**Tests:** `compliance/restore-says.test.ts › leaves enforcement settings that do not read out of an export, and the restore names them`.
+**Tests:** `compliance/restore-says.test.ts › refuses an export while the enforcement settings do not read, and a backup holds the items and names them`.
 
 ### `search-and-filters/restore-enforcement`
 
@@ -2404,7 +2412,7 @@ When `POST /restore` succeeds with an archive whose manifest names `enforcement`
 
 **Reason:** the archive does not hold the enforcement settings of the instance that wrote it, so the owner sets strict mode and the source lists again, and the answer says so where the owner reads the outcome.
 
-**Tests:** `compliance/restore-says.test.ts › leaves enforcement settings that do not read out of an export, and the restore names them`.
+**Tests:** `compliance/restore-says.test.ts › refuses an export while the enforcement settings do not read, and a backup holds the items and names them`.
 
 ### `search-and-filters/restore-previous-instance`
 

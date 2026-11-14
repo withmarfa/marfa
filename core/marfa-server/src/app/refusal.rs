@@ -93,6 +93,7 @@ codes! {
     BackupFilesMissing = "backup_files_missing", 409;
     CopyHeldByBackup = "copy_held_by_backup", 409;
     EdgeTypeInUse = "edge_type_in_use", 409;
+    EnforcementUnreadable = "enforcement_unreadable", 409;
     ExportEntryUnrestorable = "export_entry_unrestorable", 409;
     HousekeepingJobRunning = "housekeeping_job_running", 409;
     IdReused = "id_reused", 409;

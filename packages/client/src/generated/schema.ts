@@ -6260,6 +6260,23 @@ export interface components {
                 };
             };
         };
+        /** @description An error response. */
+        EnforcementUnreadableOrExportItemsUnrestorableRefusal: {
+            /** @description What went wrong. */
+            error: {
+                /**
+                 * @description A machine-readable code for the error. Use it in your logic.
+                 * @enum {string}
+                 */
+                code: "enforcement_unreadable" | "export_entry_unrestorable";
+                /** @description A description of the error for a person to read. It can change, so don't match on it. */
+                message: string;
+                /** @description More about the error, such as the field it concerns. Each code defines its own details. */
+                details?: {
+                    [key: string]: unknown;
+                };
+            };
+        };
         /**
          * @description The active app grants.
          * @example {
@@ -30595,7 +30612,10 @@ export interface operations {
                     "application/json": components["schemas"]["TypeNotPermittedRefusal"];
                 };
             };
-            /** @description - `export_entry_unrestorable`: with `format=archive`, a restore would refuse or skip an item or edge this instance holds, or its line is longer than the 64 MiB a restore reads, so no archive was sent. `details.entry` names it by `kind`, `id`, `type` and `field`, with the `code` a restore refuses it with or the reason it skips it. Correct it or its type, then export again. */
+            /**
+             * @description - `enforcement_unreadable`: with `format=archive`, the instance's enforcement settings do not read. Set them again with `PATCH /config`, then export again.
+             *     - `export_entry_unrestorable`: with `format=archive`, a restore would refuse or skip an item or edge, or its line is over the 64 MiB a restore reads. `details.entry` names it and why. Correct it or its type, then export again.
+             */
             409: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -30604,7 +30624,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ExportItemsUnrestorableRefusal"];
+                    "application/json": components["schemas"]["EnforcementUnreadableOrExportItemsUnrestorableRefusal"];
                 };
             };
             /** @description `rate_limited`: you sent too many requests. Wait for the number of seconds in `Retry-After`, then try again. */

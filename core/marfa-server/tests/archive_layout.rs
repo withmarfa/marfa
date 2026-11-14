@@ -875,6 +875,12 @@ async fn a_line_kind_or_field_a_restore_does_not_know_is_skipped_and_the_kind_na
 impl Instance {
     /// An archive written by a key that holds `config.manage`.
     async fn local_archive(&self) -> Vec<u8> {
+        let exported = self.manager_export().await;
+        assert_eq!(exported.status, StatusCode::OK, "{}", exported.body);
+        exported.bytes
+    }
+
+    async fn manager_export(&self) -> Reply {
         let minted = self
             .local(
                 Method::POST,
@@ -888,18 +894,15 @@ impl Instance {
             )
             .await;
         assert_eq!(minted.status, StatusCode::CREATED, "{}", minted.body);
-        let exported = self
-            .call(
-                &self.public,
-                minted.body["key"].as_str(),
-                Method::GET,
-                "/export?format=archive",
-                Body::empty(),
-                "application/json",
-            )
-            .await;
-        assert_eq!(exported.status, StatusCode::OK, "{}", exported.body);
-        exported.bytes
+        self.call(
+            &self.public,
+            minted.body["key"].as_str(),
+            Method::GET,
+            "/export?format=archive",
+            Body::empty(),
+            "application/json",
+        )
+        .await
     }
 
     async fn levers(&self) -> Value {
@@ -968,16 +971,27 @@ async fn a_restore_stores_each_enforcement_setting_the_instance_lacks_and_keeps_
 }
 
 #[tokio::test]
-async fn enforcement_settings_that_do_not_read_are_left_out_of_an_export_and_a_backup_and_named() {
+async fn unreadable_enforcement_settings_refuse_an_export_and_a_backup_names_them() {
     let folder = TempDir::new().unwrap();
     let origin = Instance::start(folder.path(), &[]).await;
     origin
         .set_levers(json!({ "strict_mode": { "types": ["core.task"] } }))
         .await;
-    // The witness: a row that reads travels.
+    let task = origin
+        .keyed(
+            Method::POST,
+            "/items",
+            json!({ "type": "core.task", "properties": { "title": "kept" } }),
+        )
+        .await;
+    assert_eq!(task.status, StatusCode::CREATED, "{}", task.body);
+    // The witness: a row that reads travels, and an export holds the item.
     let readable = manifest_of(&entries(&origin.local_archive().await));
     assert_eq!(readable["enforcement_count"], 1);
     assert!(readable.get("unreadable").is_none(), "{readable:?}");
+    let held = readable["item_count"].clone();
+    assert!(held.as_u64().unwrap() >= 1, "{readable:?}");
+    assert_eq!(origin.export().await.status, StatusCode::OK);
 
     origin
         .app
@@ -991,16 +1005,32 @@ async fn enforcement_settings_that_do_not_read_are_left_out_of_an_export_and_a_b
         })
         .await
         .unwrap();
-    let archive = origin.local_archive().await;
-    let manifest = manifest_of(&entries(&archive));
-    assert_eq!(manifest["enforcement_count"], 0);
-    assert_eq!(manifest["unreadable"], json!(["enforcement"]));
+    for refused in [origin.export().await, origin.manager_export().await] {
+        assert_eq!(refused.status, StatusCode::CONFLICT, "{}", refused.body);
+        assert_eq!(refused.body["error"]["code"], "enforcement_unreadable");
+        assert!(refused.bytes.len() < 1024, "{}", refused.body);
+    }
+
     let backed_up = origin.back_up().await;
     assert_eq!(backed_up.status, StatusCode::OK, "{}", backed_up.body);
+    let name = backed_up.body["backup"]["name"].as_str().unwrap();
+    let archive = std::fs::read(
+        folder
+            .path()
+            .join("backups")
+            .join(&origin.app.instance_id)
+            .join(name),
+    )
+    .unwrap();
+    let manifest = manifest_of(&entries(&archive));
+    assert_eq!(manifest["item_count"], held, "{manifest:?}");
+    assert_eq!(manifest["enforcement_count"], 0);
+    assert_eq!(manifest["unreadable"], json!(["enforcement"]));
 
     let fresh = Instance::start(folder.path(), &[]).await;
     let restored = fresh.restore(archive).await;
     assert_eq!(restored.status, StatusCode::OK, "{}", restored.body);
+    assert_eq!(restored.body["imported"], held, "{}", restored.body);
     let named = restored.body["not_restored"]
         .as_array()
         .unwrap()
