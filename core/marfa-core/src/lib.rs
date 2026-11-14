@@ -2333,12 +2333,18 @@ impl Core {
         })
     }
 
-    /// `revoked` is refused: only the server can reach it.
+    /// `revoked` is refused as the server refuses it: only the server can
+    /// reach it.
     pub fn transition_item(&self, id: &str, state: ItemState) -> Result<QueuedWrite> {
         if state == ItemState::Revoked {
-            return Err(CoreError::Invalid(format!(
-                "a device cannot move {id} to the revoked state; it is reachable only on a reserved type and on the server's authority"
-            )));
+            return Err(CoreError::Validation {
+                server: None,
+                code: "validation_error".into(),
+                message: format!(
+                    "state: a device cannot move {id} to the revoked state; it is reachable only on a reserved type and on the server's authority"
+                ),
+                details: None,
+            });
         }
         let payload = serde_json::to_string(&serde_json::json!({ "state": state.as_str() }))?;
         self.transition_locally(id, WriteKind::TransitionItem, state, &payload)
@@ -6453,6 +6459,32 @@ mod tests {
         })
         .unwrap();
         assert_eq!(core.queue().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn a_move_to_the_revoked_state_is_refused_as_the_server_refuses_it() {
+        let core = Core::open_in_memory(None).unwrap();
+        let held = core
+            .create_item(&Draft {
+                r#type: "core.note".into(),
+                properties: properties(serde_json::json!({ "title": "Held" })),
+                ..Default::default()
+            })
+            .unwrap();
+        let id = held.item_id.unwrap();
+        let queued = core.queue().unwrap().len();
+        match core.transition_item(&id, ItemState::Revoked) {
+            Err(CoreError::Validation {
+                code,
+                details: None,
+                server: None,
+                ..
+            }) => assert_eq!(code, "validation_error"),
+            other => panic!("a move to revoked was answered {other:?}"),
+        }
+        // The witness: a state a device may name is queued.
+        core.transition_item(&id, ItemState::Archived).unwrap();
+        assert_eq!(core.queue().unwrap().len(), queued + 1);
     }
 
     #[test]

@@ -310,6 +310,20 @@ When a device gives a `write_rows` write the verdict `conflicted`, a device MUST
 
 **Tests:** `device/table-writes-live.test.ts › records a write conflicted where it replaced a value the copy had not shown, and the value it replaced stays in the batch's change log`.
 
+### `queue-and-verdicts/rows-conflicts-no-sibling`
+
+When a device gives a `write_rows` write the verdict `conflicted`, a device MUST give the verdict no sibling item id.
+
+**Reason:** a row write conflicts over cells, which no sibling item holds, so the verdict stays one of the six and names the cells instead.
+
+**Tests:** `device/table-writes-live.test.ts › records a write conflicted where it replaced a value the copy had not shown, and the value it replaced stays in the batch's change log`.
+
+### `queue-and-verdicts/conflicted-item-sibling`
+
+When a device gives an item write the verdict `conflicted`, a device MUST give the verdict the id of the sibling item that holds the values the server replaced, and no rows under `conflicts`.
+
+**Tests:** `device/binding-queue.test.ts › names the sibling item an item write conflicted into and lists no rows`.
+
 ### `queue-and-verdicts/rows-refused-operation`
 
 If the server refuses a batch the device had not sent before, or answers a batch with a refusal from its record, naming in `details.operation` an operation of one of its writes, then a device MUST refuse that write with the server's code, naming in its refusal's `details.operation` the operation's place in that write.

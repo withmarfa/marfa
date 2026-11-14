@@ -859,6 +859,14 @@ describe("what a verdict does to the rows a copy holds", () => {
     const kept = await queued(device, edits[0]!.id);
     expect(kept.verdict).toBe("conflicted");
     expect(kept.conflicts).toEqual([{ row: first, column: "note" }]);
+    expect(
+      [
+        kept.conflicted_copy_id,
+        report.verdicts.find((entry) => entry.id === edits[0]!.id)
+          ?.conflicted_copy_id,
+      ],
+      "a row write conflict was given a sibling item",
+    ).toEqual([null, null]);
     expect(await serverRows(item)).toEqual({
       [first]: { count: 10, note: "offline" },
       [second]: { count: 20 },

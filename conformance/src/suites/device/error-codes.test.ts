@@ -8,12 +8,7 @@ import { SPEC_DIR } from "../../utils/spec-statements.js";
 import { refusalLine } from "../../device/cli-adapter.js";
 import { requireBinary } from "./harness.js";
 
-/**
- * The codes a refusal carries are the two tables of `device.md`, and the
- * help lists the codes the binary can give. The help is generated from the
- * lists the core and the binary give their codes from, so a code added to
- * either appears in it and fails here until the tables list it.
- */
+// The help's generated list makes a new core or CLI code observable here.
 
 const run = promisify(execFile);
 const dir = mkdtempSync(join(tmpdir(), "marfa-error-codes-"));
@@ -47,7 +42,6 @@ async function marfa(args: string[]) {
   }
 }
 
-/** Every code in the two tables of the section. */
 function contractCodes(): string[] {
   const text = readFileSync(join(SPEC_DIR, "device.md"), "utf8");
   const start = text.indexOf("\n## The codes a refusal carries\n");
@@ -67,7 +61,6 @@ describe("the codes a refusal carries", () => {
     expect(listed, "the help names no codes").toBeDefined();
     const named = listed!.split(", ").sort();
     const contract = contractCodes().sort();
-    // The witness: both lists were read.
     expect(contract).toContain("not_found");
     expect(named).toContain("not_found");
     expect(new Set(contract).size, "a code is listed twice").toBe(
@@ -76,7 +69,7 @@ describe("the codes a refusal carries", () => {
     expect(named).toEqual(contract);
   });
 
-  it("gives a refusal of each kind a code from the contract's tables", async () => {
+  it("gives representative refusals codes from the contract's tables", async () => {
     const codes = new Set(contractCodes());
     const store = join(dir, "copy");
     const made = await marfa(["--json", "device", "--db", store, "status"]);
@@ -111,7 +104,6 @@ describe("the codes a refusal carries", () => {
       expect(code, args.join(" ")).toBe(expected);
       expect(codes.has(code), `${code} is in neither table`).toBe(true);
     }
-    // The witness: a word no table lists is not taken for a code.
     expect(codes.has("not_held")).toBe(false);
   });
 });

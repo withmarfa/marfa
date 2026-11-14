@@ -159,7 +159,7 @@ describe("a write refused unsent for its size, as a binding shows it", () => {
     expect(created.ok, JSON.stringify(created)).toBe(true);
     if (!created.ok) return;
     scriptWrites(server, {
-      read: [refusal(404, "item_not_found")],
+      read: [refusal(404, "item_not_found", "gone")],
     });
     const drained = await device.drain();
     expect(drained.ok, JSON.stringify(drained)).toBe(true);
@@ -182,6 +182,62 @@ describe("a write refused unsent for its size, as a binding shows it", () => {
     expect(verdict?.refusal?.code ?? null).toBeNull();
     expect(verdict?.refusal?.reason).not.toContain("over_request_limit");
     expect(createsSent(server)).toEqual([]);
+  });
+});
+
+describe("a conflicted write, as a binding shows it", () => {
+  it("names the sibling item an item write conflicted into and lists no rows", async () => {
+    harness = await bindingHarness("binding-conflicted-item", {
+      items: held(),
+    });
+    const { device, server } = harness;
+    const sibling = "01a00000-0000-7000-8000-0000000000bb";
+    const edit = await device.updateItem(HELD.id, {
+      properties: { title: "edited", body: "edited" },
+      baseVersion: HELD.version,
+    });
+    expect(edit.ok, JSON.stringify(edit)).toBe(true);
+    if (!edit.ok) return;
+    const row = wireItem({
+      id: HELD.id,
+      version: 5,
+      properties: { title: "held", body: "the server's" },
+    });
+    scriptWrites(server, {
+      update: [answers.resolved(row, { body: "keep_both_copies" }, sibling)],
+      read: [answers.updated(row)],
+    });
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    const settled = (await queueOf(device)).find((r) => r.id === edit.value.id);
+    expect(settled?.verdict).toEqual({
+      verdict: "conflicted",
+      siblingId: sibling,
+      fields: ["body"],
+      conflicts: [],
+    });
+  });
+});
+
+describe("a move to the revoked state, as a binding refuses it", () => {
+  it("refuses it as a value that breaks a rule, naming no server, and queues nothing", async () => {
+    harness = await bindingHarness("binding-transition-revoked", {
+      items: held(),
+    });
+    const { device } = harness;
+    const before = (await queueOf(device)).length;
+    const refused = await device.call("transitionItem", HELD.id, "revoked");
+    expect(refused.ok, "a move to the revoked state was queued").toBe(false);
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("validation");
+      expect(refused.refusal.local).toBe("validation_error");
+      expect(refused.refusal.server, refused.refusal.raw).toBeNull();
+    }
+    expect((await queueOf(device)).length).toBe(before);
+    // The witness: a state a device may name is queued.
+    const archived = await device.call("transitionItem", HELD.id, "archived");
+    expect(archived.ok, JSON.stringify(archived)).toBe(true);
+    expect((await queueOf(device)).length).toBe(before + 1);
   });
 });
 

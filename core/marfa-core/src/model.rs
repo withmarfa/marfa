@@ -1093,13 +1093,11 @@ pub enum Outcome {
     Merged {
         fields: Vec<String>,
     },
+    /// An item write has the sibling that holds what it replaced; a row write
+    /// has none, and names the rows and columns it replaced unseen.
     Conflicted {
-        sibling_id: String,
+        sibling_id: Option<String>,
         fields: Vec<String>,
-    },
-    /// A row write the server applied over cells changed since, which it
-    /// replaced unseen: no sibling item holds them.
-    RowsConflicted {
         conflicts: Vec<RowConflict>,
     },
     Refused(Refusal),
@@ -1129,14 +1127,10 @@ impl Outcome {
             None => return Ok(None),
             Some(Verdict::Accepted) => Outcome::Accepted,
             Some(Verdict::Merged) => Outcome::Merged { fields },
-            Some(Verdict::Conflicted) => match sibling_id {
-                Some(sibling_id) => Outcome::Conflicted {
-                    sibling_id: sibling_id.to_string(),
-                    fields,
-                },
-                None => Outcome::RowsConflicted {
-                    conflicts: conflicts.to_vec(),
-                },
+            Some(Verdict::Conflicted) => Outcome::Conflicted {
+                sibling_id: sibling_id.map(str::to_string),
+                fields,
+                conflicts: conflicts.to_vec(),
             },
             Some(Verdict::Refused) => Outcome::Refused(
                 refusal
@@ -1169,8 +1163,7 @@ pub struct Refusal {
     pub trashed: bool,
     /// `details.grant`: the permission the credential's key lacks.
     pub grant: Option<MissingGrant>,
-    /// Set where the device refused the write without sending it, because
-    /// its request body is larger than the server takes.
+    /// An unsent write exceeded the server's request limit.
     pub request_limit: Option<RequestLimit>,
 }
 
@@ -1297,8 +1290,7 @@ pub(crate) const OVER_REQUEST_LIMIT: &str = "over_request_limit";
 /// How the reason for such a write starts, ahead of `over_request_limit`'s words.
 pub(crate) const OVER_REQUEST_LIMIT_WRITE: &str = "This write is ";
 
-/// What a write refused unsent for its size was, and what the server takes:
-/// the bytes of its request body and the most the root named.
+/// An unsent write's request size and the server's limit, in bytes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RequestLimit {
     pub size: u64,
@@ -1306,8 +1298,7 @@ pub struct RequestLimit {
 }
 
 impl RequestLimit {
-    /// How a body of `size` bytes stands against `limit`, where it is larger.
-    /// A limit not known holds nothing.
+    /// An unknown limit cannot justify refusing a write.
     pub(crate) fn over(size: usize, limit: Option<usize>) -> Option<RequestLimit> {
         let limit = limit.filter(|limit| size > *limit)?;
         Some(RequestLimit {
@@ -2056,11 +2047,11 @@ mod tests {
                 .outcome()
                 .unwrap(),
             Some(Outcome::Conflicted {
-                sibling_id: "sibling".into(),
-                fields: vec!["title".into(), "body".into()]
+                sibling_id: Some("sibling".into()),
+                fields: vec!["title".into(), "body".into()],
+                conflicts: Vec::new(),
             })
         );
-        // A conflicted row write has no sibling item, and says which cells it replaced.
         let mut rows = row(Some(Verdict::Conflicted), None, None);
         rows.conflicted_copy_id = None;
         rows.conflicts = vec![RowConflict {
@@ -2069,8 +2060,10 @@ mod tests {
         }];
         assert_eq!(
             rows.outcome().unwrap(),
-            Some(Outcome::RowsConflicted {
-                conflicts: rows.conflicts.clone()
+            Some(Outcome::Conflicted {
+                sibling_id: None,
+                fields: Vec::new(),
+                conflicts: rows.conflicts.clone(),
             })
         );
         assert_eq!(
