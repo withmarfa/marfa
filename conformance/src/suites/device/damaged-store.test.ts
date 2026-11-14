@@ -115,7 +115,10 @@ describe("a store that cannot be read", () => {
     expect(whole.ok && whole.value.whole, JSON.stringify(whole)).toBe(true);
 
     damageTable(device.store, "items");
-    inLogOnly(device.store, "INSERT INTO meta (key, value) VALUES ('logged', 'x')");
+    inLogOnly(
+      device.store,
+      "INSERT INTO meta (key, value) VALUES ('logged', 'x')",
+    );
     const before = digest(device.store);
     const log = digest(`${device.store}-wal`);
     for (const [named, refused] of [
@@ -132,7 +135,10 @@ describe("a store that cannot be read", () => {
       expect(refused.refusal.raw).not.toMatch(/delete/i);
     }
     expect(digest(device.store), "refusing the store changed it").toBe(before);
-    expect(digest(`${device.store}-wal`), "refusing the store changed its log").toBe(log);
+    expect(
+      digest(`${device.store}-wal`),
+      "refusing the store changed its log",
+    ).toBe(log);
     expect(existsSync(`${device.store}.damaged-1`)).toBe(false);
   });
 
@@ -167,6 +173,7 @@ describe("setting a damaged store aside", () => {
       unread_ids: [],
       whole: true,
       held: 0,
+      record_unread: 0,
     });
     expect(digest(aside), "the store set aside is not the damaged one").toBe(
       damaged,
@@ -310,9 +317,10 @@ describe("setting a damaged store aside", () => {
     const id = queued[0]?.id ?? "a";
     const held = await device.queue();
     expect(held.ok && held.value.map(sent)).toEqual(queued.map(sent));
-    expect(
-      held.ok && [held.value[0]?.verdict, held.value[0]?.reason],
-    ).toEqual(["blocked", "record_unread"]);
+    expect(held.ok && [held.value[0]?.verdict, held.value[0]?.reason]).toEqual([
+      "blocked",
+      "record_unread",
+    ]);
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const drained = await device.drain();

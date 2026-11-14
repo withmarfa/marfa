@@ -304,7 +304,7 @@ fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
                 Said::Known(None) => {}
                 Said::Unknown => {
                     whole = false;
-                    known &= !guards.contains(kind);
+                    known &= !guarded(guards, *kind);
                 }
             }
         }
@@ -322,7 +322,7 @@ fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
         for (id, kind) in &carried {
             if !copied.contains(id) {
                 whole = false;
-                if guards.contains(kind) {
+                if guarded(guards, *kind) {
                     unchecked.push(id.clone());
                 }
             }
@@ -361,8 +361,9 @@ fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// The kind of each write the new store carries, by its id.
-fn kinds(tx: &Connection) -> Result<BTreeMap<String, WriteKind>, CoreError> {
+/// The kind of each write the new store carries, by its id, `None` where
+/// this build names no such kind.
+fn kinds(tx: &Connection) -> Result<BTreeMap<String, Option<WriteKind>>, CoreError> {
     let mut query = tx.prepare("SELECT id, kind FROM queue")?;
     let rows = query.query_map([], |row| {
         Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -370,9 +371,15 @@ fn kinds(tx: &Connection) -> Result<BTreeMap<String, WriteKind>, CoreError> {
     let mut kinds = BTreeMap::new();
     for row in rows {
         let (id, kind) = row?;
-        kinds.insert(id, kind.parse()?);
+        kinds.insert(id, kind.parse().ok());
     }
     Ok(kinds)
+}
+
+/// Whether a record kept for `guards` may decide how a write of `kind` is
+/// sent: a kind this build does not name may be one.
+fn guarded(guards: &[WriteKind], kind: Option<WriteKind>) -> bool {
+    kind.is_none_or(|kind| guards.contains(&kind))
 }
 
 fn finish(path: &Path) -> Result<Option<SetAside>, CoreError> {
@@ -686,7 +693,7 @@ fn copy_by_write(
     old: &Connection,
     new: &Connection,
     table: &str,
-    carried: &BTreeMap<String, WriteKind>,
+    carried: &BTreeMap<String, Option<WriteKind>>,
 ) -> (BTreeSet<String>, bool) {
     let mut copied = BTreeSet::new();
     let Ok(columns) = columns(new, table) else {
