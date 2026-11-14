@@ -1,0 +1,558 @@
+//! A store SQLite cannot read: what its queue still holds, and setting it
+//! aside for a new store that carries every write it can read.
+
+use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
+
+use rusqlite::{Connection, types::Value};
+use serde::{Deserialize, Serialize};
+
+use crate::error::CoreError;
+use crate::model::{Verdict, WriteKind};
+use crate::store::{self, SCHEMA_VERSION};
+
+/// What a set-aside did.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetAside {
+    /// Where the damaged store now is, with its logs beside it.
+    pub set_aside: String,
+    /// The writes the new store holds that the server has not taken.
+    pub carried: u64,
+    /// The writes found in the old queue that could not be read.
+    pub unread: u64,
+    /// The id of each unread write whose id could be read.
+    pub unread_ids: Vec<String>,
+    /// Whether every write the old queue holds was found. Where not, the
+    /// store set aside may hold writes that `carried` and `unread` miss.
+    pub whole: bool,
+    /// The carried writes held `blocked` with the reason `instance_changed`,
+    /// because which instance the old store was built from could not be
+    /// read. A caller releases one to send it to the instance the new store
+    /// is hydrated from.
+    pub held: u64,
+}
+
+/// Where a set-aside makes the new store before it takes the old one's name.
+fn carrying(path: &Path) -> PathBuf {
+    store::suffixed(path, ".carrying")
+}
+
+/// In the new store until it takes the old one's name: the name of the
+/// store set aside, beside it, and what the set-aside answers.
+const META_SET_ASIDE_TO: &str = "set_aside_to";
+const META_SET_ASIDE: &str = "set_aside";
+
+/// The refusal of the store at `path`, which cannot be read for `reason`,
+/// with what its queue holds.
+pub(crate) fn refusal(path: &Path, reason: String) -> CoreError {
+    CoreError::StoreDamaged {
+        path: path.display().to_string(),
+        reason,
+        unsent: store::open_refused(path)
+            .ok()
+            .and_then(|conn| store::untaken_count(&conn)),
+    }
+}
+
+/// `error` with the path and count of the store at `path`, where it is
+/// damage that names neither.
+pub(crate) fn at_path(error: CoreError, path: &Path) -> CoreError {
+    match error {
+        CoreError::StoreDamaged { path: named, reason, .. } if named.is_empty() => {
+            refusal(path, reason)
+        }
+        other => other,
+    }
+}
+
+/// Refuses a writer the store at `path` while a set-aside of it has stopped
+/// part way: the writes it carries are in the new store, which has not yet
+/// taken the path.
+pub(crate) fn refuse_unfinished(path: &Path) -> Result<(), CoreError> {
+    let made = carrying(path);
+    if made.symlink_metadata().is_err() {
+        return Ok(());
+    }
+    let unsent = store::open_refused(&made)
+        .ok()
+        .filter(|conn| matches!(store::meta_get(conn, META_SET_ASIDE_TO), Ok(Some(_))))
+        .and_then(|conn| store::untaken_count(&conn));
+    Err(CoreError::StoreDamaged {
+        path: path.display().to_string(),
+        reason: format!(
+            "setting it aside stopped part way, and {} holds what it carried",
+            made.display()
+        ),
+        unsent,
+    })
+}
+
+/// Reads every page of the store at `path` for the caller that holds its
+/// writer lock, and refuses one SQLite cannot read `store_damaged`, or one
+/// of another schema version `wrong_schema`.
+pub(crate) fn check(path: &Path) -> Result<(), CoreError> {
+    let damaged = |error: CoreError| match error {
+        CoreError::StoreDamaged { reason, .. } => refusal(path, reason),
+        other => other,
+    };
+    let conn = store::open_refused(path).map_err(damaged)?;
+    let found = store::version(&conn).map_err(|error| damaged(error.into()))?;
+    let empty = found == 0 && !store::holds_tables(&conn).map_err(|error| damaged(error.into()))?;
+    if found != SCHEMA_VERSION && !empty {
+        return Err(store::at_path(store::refused(&conn, found), path));
+    }
+    let said = (|| -> rusqlite::Result<Vec<String>> {
+        let mut query = conn.prepare("PRAGMA quick_check")?;
+        let rows = query.query_map([], |row| row.get::<_, String>(0))?;
+        rows.collect()
+    })()
+    .map_err(|error| damaged(error.into()))?;
+    match said.first() {
+        Some(ok) if said.len() == 1 && ok == "ok" => Ok(()),
+        first => Err(refusal(
+            path,
+            first.cloned().unwrap_or_else(|| "its pages do not read".into()),
+        )),
+    }
+}
+
+/// Sets the damaged store at `path` aside, for the caller that holds its
+/// writer lock, or finishes a set-aside that stopped part way.
+pub(crate) fn set_aside(path: &Path) -> Result<SetAside, CoreError> {
+    if let Some(done) = finish(path)? {
+        return Ok(done);
+    }
+    if path.symlink_metadata().is_err() {
+        return Err(CoreError::Invalid(format!(
+            "{} holds no store to set aside",
+            path.display()
+        )));
+    }
+    if store::kept_by_folder(path) {
+        return Err(CoreError::Invalid(format!(
+            "{} is a folder's store, which is not set aside: remove the folder instead (`marfa folders remove`), which leaves its files, and add it again",
+            path.display()
+        )));
+    }
+    match check(path) {
+        Err(CoreError::StoreDamaged { .. }) => {}
+        Ok(()) => {
+            return Err(CoreError::Invalid(format!(
+                "{} opens as it is, so there is nothing to set aside",
+                path.display()
+            )));
+        }
+        Err(other) => return Err(other),
+    }
+    let aside = store::free_set_aside(path, ".damaged")?;
+    let made = carrying(path);
+    store::remove(&made)?;
+    carry(path, &made, &aside).inspect_err(|_| {
+        let _ = store::remove(&made);
+    })?;
+    finish(path)?.ok_or_else(|| {
+        CoreError::Store(format!(
+            "{} was made but does not say what it carries",
+            made.display()
+        ))
+    })
+}
+
+/// Makes the new store at `made`, holding what the damaged store at `path`
+/// lets be read of its queue, and the name `aside` it is to be set aside
+/// under.
+fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
+    let old = store::open_refused(path).ok();
+    crate::owner_only(made)?;
+    let mut conn = store::open(made)?;
+    let columns = columns(&conn, "queue")?;
+    let read = old
+        .as_ref()
+        .map_or_else(Read::none, |old| read_queue(old, &columns));
+    let instance = old.as_ref().and_then(|old| {
+        store::meta_get(old, store::META_INSTANCE_ID)
+            .ok()
+            .map(|_| ())
+    });
+    let tx = conn.transaction()?;
+    let id_at = columns.iter().position(|column| column == "id");
+    let mut unread_ids: Vec<String> = read.unread.iter().flatten().cloned().collect();
+    let mut unread = read.unread.len() as u64;
+    let mut carried = Vec::new();
+    {
+        let list = columns
+            .iter()
+            .map(|column| format!("\"{column}\""))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let marks = (1..=columns.len())
+            .map(|at| format!("?{at}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let mut insert = tx.prepare(&format!("INSERT INTO queue ({list}) VALUES ({marks})"))?;
+        for row in read.rows {
+            let id = id_at.and_then(|at| match &row[at] {
+                Value::Text(id) => Some(id.clone()),
+                _ => None,
+            });
+            match (insert.execute(rusqlite::params_from_iter(row)), id) {
+                (Ok(_), Some(id)) => carried.push(id),
+                (Ok(_), None) => {}
+                (Err(_), id) => {
+                    unread += 1;
+                    unread_ids.extend(id);
+                }
+            }
+        }
+    }
+    if let Some(old) = &old {
+        carry_meta(old, &tx, &carried);
+        for table in ["body_edges", "body_checks"] {
+            carry_by_write(old, &tx, table, &carried);
+        }
+        let _ = copy_rows(old, &tx, "declared_types", None);
+    }
+    lay_rows(&tx, &carried)?;
+    let held = if instance.is_none() && !carried.is_empty() {
+        store::block_for_another_instance(&tx)? as u64
+    } else {
+        0
+    };
+    let done = SetAside {
+        set_aside: aside.display().to_string(),
+        carried: 0,
+        unread,
+        unread_ids,
+        whole: read.whole,
+        held,
+    };
+    store::meta_set(
+        &tx,
+        META_SET_ASIDE_TO,
+        &aside
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy(),
+    )?;
+    store::meta_set(&tx, META_SET_ASIDE, &serde_json::to_string(&done)?)?;
+    tx.commit()?;
+    store::without_log(&conn)?;
+    Ok(())
+}
+
+/// Ends a set-aside whose new store at `carrying(path)` says what it carries:
+/// moves what is left of the old store to the name it records, logs first,
+/// then gives the new store the path. A new store that says nothing is a
+/// set-aside's that stopped before it was made, and is removed. `None` where
+/// there is none.
+fn finish(path: &Path) -> Result<Option<SetAside>, CoreError> {
+    let made = carrying(path);
+    if made.symlink_metadata().is_err() {
+        return Ok(None);
+    }
+    let said = (|| -> Result<Option<(String, SetAside)>, CoreError> {
+        let conn = Connection::open(&made)?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        let (Some(to), Some(done)) = (
+            store::meta_get(&conn, META_SET_ASIDE_TO)?,
+            store::meta_get(&conn, META_SET_ASIDE)?,
+        ) else {
+            return Ok(None);
+        };
+        store::without_log(&conn)?;
+        Ok(Some((to, serde_json::from_str(&done)?)))
+    })();
+    let (to, mut done) = match said {
+        Ok(Some(said)) => said,
+        Ok(None) | Err(CoreError::StoreDamaged { .. }) => {
+            store::remove(&made)?;
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
+    for log in ["-wal", "-journal"] {
+        if store::suffixed(&made, log).symlink_metadata().is_ok() {
+            return Err(CoreError::Store(format!(
+                "{} still has its log beside it, so it cannot take {}",
+                made.display(),
+                path.display()
+            )));
+        }
+    }
+    let _ = std::fs::remove_file(store::suffixed(&made, "-shm"));
+    let aside = path.with_file_name(&to);
+    for suffix in store::STORE_FILES.iter().rev() {
+        let (from, onto) = (store::suffixed(path, suffix), store::suffixed(&aside, suffix));
+        if from.symlink_metadata().is_err() {
+            continue;
+        }
+        if onto.symlink_metadata().is_ok() {
+            return Err(CoreError::Store(format!(
+                "{} cannot be set aside: {} is taken",
+                from.display(),
+                onto.display()
+            )));
+        }
+        std::fs::rename(&from, &onto).map_err(|error| {
+            CoreError::Store(format!("{} cannot be set aside: {error}", from.display()))
+        })?;
+        stop_if_asked(suffix)?;
+    }
+    std::fs::rename(&made, path).map_err(|error| {
+        CoreError::Store(format!(
+            "{} cannot take {}: {error}",
+            made.display(),
+            path.display()
+        ))
+    })?;
+    if let Some(holder) = path.parent().filter(|holder| !holder.as_os_str().is_empty()) {
+        let _ = std::fs::File::open(holder).and_then(|dir| dir.sync_all());
+    }
+    let conn = store::open(path)?;
+    done.carried = store::untaken_count(&conn).unwrap_or_default();
+    store::meta_delete(&conn, META_SET_ASIDE_TO)?;
+    store::meta_delete(&conn, META_SET_ASIDE)?;
+    Ok(Some(done))
+}
+
+/// Where a debug fixture asks, ends the process, or for a unit test fails,
+/// once the store file or log `suffix` names has been set aside, as a crash
+/// there would.
+#[allow(unused_variables)]
+fn stop_if_asked(suffix: &str) -> Result<(), CoreError> {
+    #[cfg(debug_assertions)]
+    {
+        let named = if suffix.is_empty() { "store" } else { suffix };
+        if crate::fault::named("set-aside-crash").as_deref() == Some(named) {
+            eprintln!("crashing after setting aside {named} as MARFA_TEST_FAULT asks");
+            std::process::abort();
+        }
+        if crate::fault::fails(|| format!("set-aside-stop:{named}")) {
+            return Err(CoreError::Store(format!("set-aside-stop:{named}")));
+        }
+    }
+    Ok(())
+}
+
+/// What could be read of a damaged queue.
+struct Read {
+    rows: Vec<Vec<Value>>,
+    /// Each write found but not read, with its id where an index names it.
+    unread: Vec<Option<String>>,
+    whole: bool,
+}
+
+impl Read {
+    fn none() -> Read {
+        Read {
+            rows: Vec::new(),
+            unread: Vec::new(),
+            whole: false,
+        }
+    }
+}
+
+fn columns(conn: &Connection, table: &str) -> rusqlite::Result<Vec<String>> {
+    let mut query = conn.prepare("SELECT name FROM pragma_table_info(?1)")?;
+    let rows = query.query_map([table], |row| row.get(0))?;
+    rows.collect()
+}
+
+/// The writes of `old`'s queue, found by walking the table and each of its
+/// indexes, since damage to one leaves the others to say which writes there
+/// are, then read one by one. Only a queue of this build's columns is read.
+fn read_queue(old: &Connection, columns: &[String]) -> Read {
+    let same = store::version(old).ok() == Some(SCHEMA_VERSION)
+        && columns_of_queue(old).as_deref() == Some(columns);
+    if !same {
+        return Read::none();
+    }
+    let mut found: BTreeMap<i64, Option<String>> = BTreeMap::new();
+    let mut whole = walk(old, "SELECT seq, NULL FROM queue NOT INDEXED", &mut found);
+    for (index, partial, by_id) in queue_indexes(old) {
+        let id = if by_id { "id" } else { "NULL" };
+        let walked = walk(
+            old,
+            &format!("SELECT seq, {id} FROM queue INDEXED BY \"{index}\""),
+            &mut found,
+        );
+        whole |= walked && !partial;
+    }
+    let list = columns
+        .iter()
+        .map(|column| format!("\"{column}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let one = format!("SELECT {list} FROM queue NOT INDEXED WHERE seq = ?1");
+    let mut read = Read {
+        rows: Vec::new(),
+        unread: Vec::new(),
+        whole,
+    };
+    for (seq, id) in found {
+        let row = old.query_row(&one, [seq], |row| {
+            (0..columns.len())
+                .map(|at| row.get::<_, Value>(at))
+                .collect::<rusqlite::Result<Vec<_>>>()
+        });
+        match row {
+            Ok(row) => read.rows.push(row),
+            Err(_) => read.unread.push(id),
+        }
+    }
+    read
+}
+
+fn columns_of_queue(old: &Connection) -> Option<Vec<String>> {
+    columns(old, "queue").ok().filter(|held| !held.is_empty())
+}
+
+/// Each index of the queue: its name, whether it is partial, and whether it
+/// is the one on `id`, which can name a write whose row does not read.
+fn queue_indexes(old: &Connection) -> Vec<(String, bool, bool)> {
+    let listed = (|| -> rusqlite::Result<Vec<(String, bool)>> {
+        let mut query = old.prepare("SELECT name, partial FROM pragma_index_list('queue')")?;
+        let rows = query.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
+    })()
+    .unwrap_or_default();
+    listed
+        .into_iter()
+        .map(|(name, partial)| {
+            let by_id = columns_of_index(old, &name).as_deref() == Some(&["id".to_string()][..]);
+            (name, partial, by_id)
+        })
+        .collect()
+}
+
+fn columns_of_index(old: &Connection, index: &str) -> Option<Vec<String>> {
+    let mut query = old
+        .prepare("SELECT name FROM pragma_index_info(?1) ORDER BY seqno")
+        .ok()?;
+    let rows = query.query_map([index], |row| row.get(0)).ok()?;
+    rows.collect::<rusqlite::Result<_>>().ok()
+}
+
+/// Adds each `(seq, id)` that `sql` answers to `found`, and says whether it
+/// answered to the end.
+fn walk(old: &Connection, sql: &str, found: &mut BTreeMap<i64, Option<String>>) -> bool {
+    let Ok(mut query) = old.prepare(sql) else {
+        return false;
+    };
+    let Ok(mut rows) = query.query([]) else {
+        return false;
+    };
+    loop {
+        match rows.next() {
+            Ok(Some(row)) => {
+                let Ok(seq) = row.get::<_, i64>(0) else {
+                    return false;
+                };
+                let id = row.get::<_, Option<String>>(1).ok().flatten();
+                let named = found.entry(seq).or_default();
+                if id.is_some() {
+                    *named = id;
+                }
+            }
+            Ok(None) => return true,
+            Err(_) => return false,
+        }
+    }
+}
+
+/// The meta the new store needs to send the carried writes as the old store
+/// would: the server and instance it was built from, the file budget, and
+/// the credential each carried upload was sent with. What does not read is
+/// left, as in a store that never held it.
+fn carry_meta(old: &Connection, new: &Connection, carried: &[String]) {
+    let mut keys = vec![
+        store::META_SERVER_ORIGIN.to_string(),
+        store::META_INSTANCE_ID.to_string(),
+        crate::file_cache::META_BUDGET.to_string(),
+    ];
+    keys.extend(carried.iter().map(|id| store::upload_sent_as_key(id)));
+    for key in keys {
+        if let Ok(Some(value)) = store::meta_get(old, &key) {
+            let _ = store::meta_set(new, &key, &value);
+        }
+    }
+}
+
+/// Copies the rows of `table` that name a carried write as `write_id`.
+fn carry_by_write(old: &Connection, new: &Connection, table: &str, carried: &[String]) {
+    for id in carried {
+        let _ = copy_rows(old, new, table, Some(id));
+    }
+}
+
+/// Copies every row of `table`, or each whose `write_id` is `write`, from
+/// `old` to `new`, whose tables are of the same shape. A row that does not
+/// read or write is left.
+fn copy_rows(
+    old: &Connection,
+    new: &Connection,
+    table: &str,
+    write: Option<&str>,
+) -> rusqlite::Result<()> {
+    let columns = columns(new, table)?;
+    let list = columns
+        .iter()
+        .map(|column| format!("\"{column}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let marks = (1..=columns.len())
+        .map(|at| format!("?{at}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let filter = if write.is_some() {
+        " WHERE write_id = ?1"
+    } else {
+        ""
+    };
+    let mut read = old.prepare(&format!("SELECT {list} FROM \"{table}\"{filter}"))?;
+    let mut insert = new.prepare(&format!(
+        "INSERT OR IGNORE INTO \"{table}\" ({list}) VALUES ({marks})"
+    ))?;
+    let mut rows = match write {
+        Some(write) => read.query([write])?,
+        None => read.query([])?,
+    };
+    while let Some(row) = rows.next()? {
+        let values = (0..columns.len())
+            .map(|at| row.get::<_, Value>(at))
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        let _ = insert.execute(rusqlite::params_from_iter(values));
+    }
+    Ok(())
+}
+
+/// Records the rows each carried row write that still waits lays over, read
+/// from its body.
+fn lay_rows(tx: &Connection, carried: &[String]) -> Result<(), CoreError> {
+    for id in carried {
+        let Some(write) = store::queued_write(tx, id)? else {
+            continue;
+        };
+        if write.kind != WriteKind::WriteRows
+            || !matches!(write.verdict, None | Some(Verdict::Blocked))
+        {
+            continue;
+        }
+        let (Some(item), Some(table)) = (&write.item_id, row_table(tx, id)?) else {
+            continue;
+        };
+        let seq: i64 = tx.query_row("SELECT seq FROM queue WHERE id = ?1", [id], |row| {
+            row.get(0)
+        })?;
+        let body: serde_json::Value = serde_json::from_str(&store::payload_of(tx, id)?)?;
+        let ops = crate::row_writes::queued_ops(&body)?;
+        crate::row_writes::record_laid(tx, id, seq, item, &table, &ops, &write.queued_at)?;
+    }
+    Ok(())
+}
+
+fn row_table(tx: &Connection, id: &str) -> Result<Option<String>, CoreError> {
+    Ok(tx.query_row("SELECT row_table FROM queue WHERE id = ?1", [id], |row| {
+        row.get(0)
+    })?)
+}

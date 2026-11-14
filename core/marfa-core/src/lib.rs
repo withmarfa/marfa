@@ -5,6 +5,9 @@ mod body;
 mod busy;
 mod catalog;
 mod catch_up;
+mod damage;
+#[cfg(test)]
+mod damage_tests;
 /// Public so a debug build's binding can move the clock it waits by.
 pub mod clock;
 pub mod contract;
@@ -110,6 +113,7 @@ pub use body::{
 };
 pub use catalog::ServerCatalog;
 pub use catch_up::{Change, ChangeEvent, FollowReport};
+pub use damage::SetAside;
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{
     CODES as ERROR_CODES, CoreError, CoreErrorKind, FolderStore, NOT_HELD, ServerAnswer,
@@ -476,10 +480,53 @@ impl Core {
         let lock = lock::WriterLock::claim(Some(path))?;
         let cache = blob::Cache::beside(path);
         if lock.handle() == Handle::Writer {
+            damage::refuse_unfinished(path)?;
             owner_only(path)?;
         }
         Self::from_connection(store::open(path)?, server, Arc::new(lock), Some(cache))
             .map(Core::swept)
+            .map_err(|error| damage::at_path(error, path))
+    }
+
+    /// Reads every page of the store at `path`. Refuses, leaving it as it
+    /// is, with `StoreDamaged`, its path and what its queue holds where
+    /// SQLite cannot read it, with `WrongSchema` where another build made it,
+    /// and with `ReadingHandle` while another process, or another `Core` in
+    /// this one, holds the writer role. Reads the whole file, so it takes
+    /// longer the larger the store: for a store a call refused
+    /// `StoreDamaged` without naming it.
+    pub fn check_store(path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+        let lock = lock::WriterLock::claim(Some(path))?;
+        lock.refuse_unless_writer()?;
+        if path.symlink_metadata().is_err() {
+            return Err(CoreError::Invalid(format!(
+                "{} holds no store to check",
+                path.display()
+            )));
+        }
+        damage::check(path)
+    }
+
+    /// Sets aside a store SQLite cannot read: moves the store file and its
+    /// logs to `<store>.damaged-<n>` beside it, for the first `n` no file
+    /// holds, never deleting them, and makes a new store at `path` that
+    /// carries every write the old queue lets be read, under its id and
+    /// idempotency key, with its body, base version and verdict. The new
+    /// store keeps the server and instance the old one was built from, and
+    /// the fetched and uploaded bytes beside the path, which are addressed by
+    /// content. It holds no copy: a drain sends nothing until it is
+    /// hydrated, and a hydration from another instance holds the carried
+    /// writes, as for any store. Refuses with `Invalid` a store that opens
+    /// as it is and a folder's store, with `WrongSchema` a store another
+    /// build made, and with `ReadingHandle` while another process holds the
+    /// writer role. A set-aside that stopped part way is finished by asking
+    /// again, and until then a writer's open is refused `StoreDamaged`.
+    pub fn set_aside_damaged(path: impl AsRef<Path>) -> Result<SetAside> {
+        let path = path.as_ref();
+        let lock = lock::WriterLock::claim(Some(path))?;
+        lock.refuse_unless_writer()?;
+        damage::set_aside(path)
     }
 
     /// For a writer, lets go of old changes of removed edges and takes what
@@ -570,17 +617,27 @@ impl Core {
     /// stop the removal. A path with no store holds
     /// none, so it answers as removed, taking any lock or bytes left there.
     pub fn remove_store(path: impl AsRef<Path>, unsent: u64) -> Result<()> {
-        let path = path.as_ref();
-        let differs = |held: Option<u64>| {
-            if held == Some(unsent) {
-                Ok(())
-            } else {
-                Err(CoreError::UnsentDiffers {
-                    path: path.display().to_string(),
-                    unsent: held,
-                    agreed: unsent,
-                })
-            }
+        Self::remove_agreed(path.as_ref(), Some(unsent))
+    }
+
+    /// Removes the store at `path` as `remove_store` does, agreeing to lose
+    /// every write it holds that the server has not taken, however many there
+    /// are and whether or not they can be counted, as for a store SQLite
+    /// cannot read. Refuses as `remove_store` does but for the count.
+    pub fn remove_store_losing_all(path: impl AsRef<Path>) -> Result<()> {
+        Self::remove_agreed(path.as_ref(), None)
+    }
+
+    /// `agreed` is `None` where every write is agreed to be lost.
+    fn remove_agreed(path: &Path, agreed: Option<u64>) -> Result<()> {
+        let differs = |held: Option<u64>| match agreed {
+            None => Ok(()),
+            Some(unsent) if held == Some(unsent) => Ok(()),
+            Some(unsent) => Err(CoreError::UnsentDiffers {
+                path: path.display().to_string(),
+                unsent: held,
+                agreed: unsent,
+            }),
         };
         let holder = path
             .parent()

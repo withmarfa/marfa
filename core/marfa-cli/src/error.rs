@@ -433,6 +433,7 @@ impl CliError {
                 | CoreError::NoCatalog
                 | CoreError::ReadingHandle
                 | CoreError::WrongSchema { .. }
+                | CoreError::StoreDamaged { .. }
                 | CoreError::UnsentDiffers { .. }
                 | CoreError::CopyExpired { .. }
                 | CoreError::WrongServer { .. }
