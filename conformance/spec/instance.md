@@ -1512,15 +1512,15 @@ If the public listener reads a request body whole, other than one sent to `POST 
 
 ### `instance/open-door-body-declared`
 
-If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/authorize/decision`, `POST /auth/oauth2/token`, `POST /auth/oauth2/revoke`, `POST /auth/oauth2/register`, `POST /auth/device/code`, `POST /auth/device` or `POST /auth/device/consent` declares a body longer than 32768 bytes, then the server MUST answer `413 request_too_large` before it reads any of the body.
+If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/authorize/decision`, `POST /auth/oauth2/token`, `POST /auth/oauth2/revoke`, `POST /auth/device/code`, `POST /auth/device` or `POST /auth/device/consent` declares a body longer than 32768 bytes, then the server MUST answer `413 request_too_large` before it reads any of the body.
 
-**Reason:** these operations judge no credential before they read the body, so any caller can send them, and the general cap, which an owner can set up to a terabyte, would let such a caller make the server hold a body for the whole of the deadline in `instance/body-deadline`. The largest real body at these operations is about half a kilobyte, a consent decision that carries an authorization's signed query, so 32768 bytes leaves room for any.
+**Reason:** these operations judge no credential before they read the body, so any caller can send them, and the general cap, which an owner can set up to a terabyte, would let such a caller make the server hold a body for the whole of the deadline in `instance/body-deadline`. The largest real body at these operations is about half a kilobyte, a consent decision that carries an authorization's signed query, so 32768 bytes leaves room for any. Registration, the other operation of this kind, has a smaller cap of its own (`keys-and-oauth/register-body-cap`).
 
 **Tests:** `compliance/public-body.test.ts › answers 413 to a body over 32768 bytes declared to it, before any of it is sent`.
 
 ### `instance/open-door-body-streamed`
 
-If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/authorize/decision`, `POST /auth/oauth2/token`, `POST /auth/oauth2/revoke`, `POST /auth/oauth2/register`, `POST /auth/device/code`, `POST /auth/device` or `POST /auth/device/consent` sends more than 32768 bytes of body without declaring its length, then the server MUST answer `413 request_too_large`.
+If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/authorize/decision`, `POST /auth/oauth2/token`, `POST /auth/oauth2/revoke`, `POST /auth/device/code`, `POST /auth/device` or `POST /auth/device/consent` sends more than 32768 bytes of body without declaring its length, then the server MUST answer `413 request_too_large`.
 
 **Reason:** a body with no declared length cannot be refused at the head, so the server stops reading at the cap.
 
