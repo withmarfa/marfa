@@ -6584,7 +6584,7 @@ export interface components {
                     /** @description The milliseconds the write waited for the write lock. Absent when a restore turned the write away at once. */
                     budget_ms?: number;
                     /**
-                     * @description Why Marfa turned the write away without a wait. `restore_running` means a restore holds every write.
+                     * @description Why Marfa turned the write away without a wait. `restore_running` means a restore is running.
                      * @enum {string}
                      */
                     reason?: "restore_running";

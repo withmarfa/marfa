@@ -108,8 +108,7 @@ impl Db {
         })
     }
 
-    /// Refuses every write a request makes with `refusal` until the guard is dropped, except
-    /// those its permit runs. A write queued before this returns runs first. Refused with the armed refusal while another hold is armed.
+    /// The permit admits the holder's writes; dropping the guard admits other requests again.
     pub fn hold_writes(&self, refusal: Refusal) -> Result<Holding> {
         self.held.arm(refusal)
     }
@@ -204,7 +203,7 @@ impl Db {
         T: Send + 'static,
         F: FnOnce(&Transaction<'_>) -> Result<T> + Send + 'static,
     {
-        // Background work queues behind a hold as behind any long write: it cannot retry a refusal.
+        // A hold must not interrupt background bookkeeping between its claim and completion.
         let held = (write.for_caller || provenance::in_request()).then_some(&*self.held);
         if let Some(refusal) = held.and_then(|hold| hold.refusal()) {
             return Err(refusal);

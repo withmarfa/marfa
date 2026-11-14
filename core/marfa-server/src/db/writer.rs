@@ -260,7 +260,6 @@ impl Writer {
 
     /// A job withdrawn after `budget` never ran; a started job always finishes. With a `cap`,
     /// the wait to start is that long at most, however long the running job beats the pulse.
-    /// With a `hold`, the job is queued only if the hold admits it.
     pub async fn submit<T, F>(
         &self,
         write: Write,
