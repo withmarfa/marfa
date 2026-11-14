@@ -3,8 +3,9 @@
  * issue, and each failure after it comments on that issue instead of opening
  * another. The job that does it, `report-failure`, is the last job of every
  * scheduled workflow but CodeQL's (whose findings are code scanning alerts),
- * runs only for a schedule, and calls `scripts/report-nightly-failure.sh`. The script is run here against a
- * stand-in for `gh`; nothing in these tests reaches GitHub.
+ * runs only for a schedule, and calls `scripts/report-nightly-failure.sh`. The
+ * script is run here against a stand-in for `gh`; nothing in these tests
+ * reaches GitHub.
  */
 import { execFileSync } from "node:child_process";
 import {
