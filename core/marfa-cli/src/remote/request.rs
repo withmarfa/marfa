@@ -24,6 +24,9 @@ pub struct Request {
     /// How long a streamed call waits for the server to begin its answer, where
     /// the server does its work first. Unset, the transport's answer budget.
     pub wait: Option<std::time::Duration>,
+    /// Set where the server does its work before it answers, and says how
+    /// to check on it: the call waits as long as the connection holds.
+    pub working: Option<String>,
     pub mints: bool,
     /// Whether the request can change data, which every method but `GET`
     /// can unless it is marked `reading`.
@@ -41,6 +44,7 @@ impl Request {
             credential: true,
             stream: false,
             wait: None,
+            working: None,
             mints: false,
             writes: method != Method::Get,
         }
@@ -137,6 +141,11 @@ impl Request {
 
     pub fn awaiting(mut self, wait: std::time::Duration) -> Request {
         self.wait = Some(wait);
+        self
+    }
+
+    pub fn working(mut self, check: &str) -> Request {
+        self.working = Some(check.to_string());
         self
     }
 

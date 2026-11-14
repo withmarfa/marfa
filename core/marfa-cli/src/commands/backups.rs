@@ -42,16 +42,20 @@ pub enum FolderCommand {
     Adopt,
 }
 
+const CHECK_BACKUPS: &str =
+    "Run `marfa backups list` to see whether the backup was taken before you run this again.";
+const CHECK_STATUS: &str = "Run `marfa status` once the server answers, and check what it holds before you run this again.";
+
 pub fn request(command: &BackupsCommand) -> Request {
     match command {
         BackupsCommand::List => Request::get(&["backups"]),
-        BackupsCommand::Run => Request::post(&["backups"]),
+        BackupsCommand::Run => Request::post(&["backups"]).working(CHECK_BACKUPS),
         BackupsCommand::Restore { instance_id, name } => {
-            Request::post(&["backups", instance_id, name, "restore"])
+            Request::post(&["backups", instance_id, name, "restore"]).working(CHECK_STATUS)
         }
         BackupsCommand::Folder {
             command: FolderCommand::Adopt,
-        } => Request::post(&["backups", "folder", "adopt"]),
+        } => Request::post(&["backups", "folder", "adopt"]).working(CHECK_BACKUPS),
     }
 }
 
@@ -139,5 +143,25 @@ pub fn run(command: BackupsCommand, remote: &Remote, out: &Printer) -> Result<()
             command: FolderCommand::Adopt,
         } => out.report(&answer, adopted_text),
         BackupsCommand::List => out.value(&answer),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_command_the_server_works_on_before_it_answers_waits_for_it() {
+        let restore = BackupsCommand::Restore {
+            instance_id: "i".into(),
+            name: "n".into(),
+        };
+        let adopt = BackupsCommand::Folder {
+            command: FolderCommand::Adopt,
+        };
+        for command in [&BackupsCommand::Run, &restore, &adopt] {
+            assert!(request(command).working.is_some(), "{command:?}");
+        }
+        assert!(request(&BackupsCommand::List).working.is_none());
     }
 }

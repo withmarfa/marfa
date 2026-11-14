@@ -665,6 +665,10 @@ impl Remote {
             Some(wait) => http.awaiting(wait),
             None => http,
         };
+        let http = match &request.working {
+            Some(check) => http.working(check),
+            None => http,
+        };
         if sends_key && self.bearer().is_none() {
             return Err(self.no_credential());
         }
