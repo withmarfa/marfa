@@ -344,6 +344,14 @@ When a device takes a row from the server by a read or a fill after a `write_row
 
 **Tests:** `device/table-writes-live.test.ts › judges no conflict from a fill made after a write was sent whose answer was lost, taking the write as its own`, `› judges a write whose own rows.changed came first by the row its batch replaced while 7 later batches changed the row, and judges no conflict after 8`.
 
+### `queue-and-verdicts/rows-evidence-let-go`
+
+When the last `write_rows` write on a table that a device sent and holds no answer for is answered, withdrawn or discarded, a device MUST keep none of the earlier rows or applied batches it kept to judge such a write on that table.
+
+**Reason:** a write the device holds no answer for, whether it waits, is `blocked` or `dead`, keeps what it is judged by (`queue-and-verdicts/rows-conflicted`), and every batch another writer applies to the table adds to that. Kept no longer than a write needs it, and at most 8 states of each row (`queue-and-verdicts/rows-conflict-unjudged`), it costs the store nothing once the queue is answered.
+
+**Tests:** `device/table-writes-live.test.ts › keeps at most 8 earlier states of a row while a write that changes it waits for its answer, and none once no sent write waits`.
+
 ### `queue-and-verdicts/rows-conflicts-named`
 
 When a device gives a `write_rows` write the verdict `conflicted`, a device MUST name in the drain and in the queue, under `conflicts`, each row and column whose value the write replaced unseen.
