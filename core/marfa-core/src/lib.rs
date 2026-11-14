@@ -8717,9 +8717,11 @@ mod tests {
                     // handle can reach it; `replace_tests` claims the role
                     // first and is refused.
                     "replace_refused",
-                    // Takes no core either; `remove_tests` holds the role
-                    // from another core and is refused.
-                    "remove_store",
+                    // Take no core either; `remove_tests` and `damage_tests`
+                    // hold the role from another core and are refused.
+                    "remove_agreed",
+                    "check_store",
+                    "set_aside_damaged",
                 ][..],
             ),
             (include_str!("drain.rs"), &["drain_checked"][..]),
@@ -9403,7 +9405,11 @@ mod tests {
         assert!(not_a_store(&tableless).contains("has no schema to read"));
         let words = at("words.sqlite");
         std::fs::write(&words, "words, not a database. ".repeat(40)).unwrap();
-        assert!(not_a_store(&words).contains("has no schema to read"));
+        assert!(matches!(
+            refusal(&words),
+            CoreError::StoreDamaged { path, reason, unsent: None }
+                if path == words.display().to_string() && reason.contains("not a database")
+        ));
 
         let meta = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
         let older = made(
