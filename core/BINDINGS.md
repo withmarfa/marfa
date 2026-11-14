@@ -89,7 +89,11 @@ Each binding takes a `Stop` on the calls that can be stopped, such as a hydratio
 
 ## A store that cannot be read
 
-A store SQLite cannot read, whole or in part, is refused with the error coded `store_damaged`. One met as the store opens names its `path` and gives `unsent`, the writes its queue holds that the server has not taken, or none where its queue cannot be read whole. One met part way through a later call has an empty `path`: call `checkStore`, which reads every page and refuses the same way with both. `setAsideDamaged` then keeps the damaged file under `<store>.damaged-<n>` beside it, makes a new store at the path that carries every write it can read, and answers how many it carried, how many it could not read and their ids. Close every handle on the store first. Hydrate the new store before a drain sends what it carries. `removeStoreLosingAll` removes a store whose writes cannot be counted, where the person agrees to lose them all.
+A store SQLite cannot read, whole or in part, is refused with the error code `store_damaged`. A refusal at open names its `path` and gives `unsent`, the number of writes its queue holds that the server has not taken, or none if the queue cannot be read in full.
+
+A refusal during a later call has an empty `path`. Close every handle on the store, then call `checkStore` to read its pages and obtain a refusal with the path and count. `setAsideDamaged` keeps the damaged file under `<store>.damaged-<n>` beside it and creates a store at the original path with each write it can read. Its result gives the number of carried and unread writes, the unread IDs it could identify, and whether it found the whole queue. Hydrate the new store before draining it. If `held` is nonzero, writes whose original instance could not be read remain blocked until released.
+
+Use `removeStoreLosingAll` only when the person agrees to lose every write, including writes that cannot be counted.
 
 ## Folders in an app
 
