@@ -5578,12 +5578,14 @@ export interface components {
                 [key: string]: string[];
             };
         };
-        /** @description A removal waits to be confirmed when it takes more than `files` files and more than `fraction` of the folder's files. */
+        /** @description A removal waits to be confirmed when it takes more than `files` files and more than `fraction` of the folder's files, or more than `ceiling` files. Each scan or pull is judged on the files it removes. */
         FolderRemovalThreshold: {
-            /** @description A removal waits to be confirmed only if it takes more than this many files. Absent means 10. */
+            /** @description A removal exceeding both this count and `fraction` waits for confirmation. The independent `ceiling` also applies. Absent means 10. */
             files?: number;
-            /** @description A removal waits to be confirmed only if it takes more than this fraction of the folder's files. Absent means 0.25. */
+            /** @description A removal exceeding both this fraction of bound files and `files` waits for confirmation. The independent `ceiling` also applies. Absent means 0.25. */
             fraction?: number;
+            /** @description A removal that takes more than this many files waits to be confirmed, whatever share of the folder's files they are. Absent means 100. */
+            ceiling?: number;
         };
         /** @description New files wait to be confirmed when a scan would add more than `files` files and more than `fraction` of the folder's files. */
         FolderAdditionThreshold: {

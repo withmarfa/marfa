@@ -1560,6 +1560,7 @@ impl Folder {
             }
             return Ok(None);
         }
+        landing::crash_if_named(&to, "crash-after-move-rename");
         let swap = conn.unchecked_transaction()?;
         rendering.bind(&swap, &moved)?;
         rendering.unbind(&swap, &bound.path)?;
@@ -1573,6 +1574,11 @@ impl Folder {
                 version: item.version,
             },
         )?;
+        if landing::named_for(&to, "move-record-fails") {
+            return Err(CoreError::Store(
+                "the move's record failed as MARFA_TEST_FAULT asks".into(),
+            ));
+        }
         swap.commit()?;
         Ok(Some((moved, placed)))
     }

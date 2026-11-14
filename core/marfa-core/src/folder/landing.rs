@@ -397,14 +397,19 @@ pub(crate) fn crash_if_asked(target: &Path) {
 }
 
 pub(crate) fn crash_if_named(target: &Path, fault: &str) {
-    if crate::fault::named(fault).is_some_and(|name| {
-        target
-            .file_name()
-            .is_some_and(|file| file.to_string_lossy() == name)
-    }) {
+    if named_for(target, fault) {
         eprintln!("crashing at {} as MARFA_TEST_FAULT asks", target.display());
         std::process::abort();
     }
+}
+
+/// Whether `MARFA_TEST_FAULT` names `fault` with the target's file name.
+pub(crate) fn named_for(target: &Path, fault: &str) -> bool {
+    crate::fault::named(fault).is_some_and(|name| {
+        target
+            .file_name()
+            .is_some_and(|file| file.to_string_lossy() == name)
+    })
 }
 
 /// A competing file arriving after the last check, where a debug fixture asks.

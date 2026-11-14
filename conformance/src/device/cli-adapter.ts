@@ -1297,7 +1297,7 @@ export interface FolderSettings {
   include?: string[];
   ignore?: string[];
   first_placement?: Record<string, string>;
-  removal_threshold?: { files?: number; fraction?: number };
+  removal_threshold?: { files?: number; fraction?: number; ceiling?: number };
   full_pass_interval_seconds?: number;
   addition_threshold?: { files?: number; fraction?: number };
   /** What the folder does with a new file its query would not hold

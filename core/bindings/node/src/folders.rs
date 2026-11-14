@@ -736,7 +736,7 @@ fn event_of(event: marfa_core::WatchEvent) -> std::result::Result<FolderEvent, C
             storage: storage_of(storage),
         },
         W::WatcherFailed(message) => FolderEvent::WatcherFailed { message },
-        W::Retrying { error, wait } => FolderEvent::Retrying {
+        W::Retrying { error, wait } | W::QueryWaits { error, wait } => FolderEvent::Retrying {
             error: error_report(error),
             wait_ms: i64::try_from(wait.as_millis()).unwrap_or(i64::MAX),
         },

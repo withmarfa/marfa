@@ -2984,6 +2984,52 @@ describe("where a file sits", () => {
       ).toBe(before);
     });
 
+    it.each([
+      ["a crash", "crash-after-move-rename=Plan.md"],
+      ["a failed record", "move-record-fails=Plan.md"],
+    ])(
+      "keeps the item when %s cuts off another Mac's move after the rename",
+      async (_how, fault) => {
+        const { held } = await notePlaced(`placement-move-cut-${fault}`);
+        second = await anotherMac(
+          harness!,
+          `placement-move-cut-second-${fault}`,
+        );
+        expect((await second.folder.pull()).ok).toBe(true);
+        // A path that sorts after the one it left.
+        mkdirSync(join(second.dir, "Projects"));
+        renameSync(
+          join(second.dir, "Plan.md"),
+          join(second.dir, "Projects", "Plan.md"),
+        );
+        expect((await second.folder.push()).ok).toBe(true);
+        const cut = await withFault(fault, () => harness!.folder.push()).catch(
+          (error: unknown) => error,
+        );
+        expect(
+          cut instanceof Error || !(cut as { ok: boolean }).ok,
+          JSON.stringify(cut),
+        ).toBe(true);
+        // The witness that the move was cut off after its rename.
+        expect(existsSync(join(harness!.dir, "Plan.md"))).toBe(false);
+        expect(idIn(harness!, "Projects/Plan.md")).toBe(NOTE);
+        for (let pass = 0; pass < 2; pass += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 6_000));
+          const pushed = await harness!.folder.push();
+          expect(pushed.ok, JSON.stringify(pushed)).toBe(true);
+          expect(pushed.ok && pushed.value.scan.trashed).toEqual([]);
+        }
+        expect(
+          harness!.server.requests.filter(
+            (r) => r.method === "DELETE" && r.pathname === `/items/${NOTE}`,
+          ),
+          "the path the move left was taken for a deleted file",
+        ).toEqual([]);
+        expect(held.get(NOTE)?.state).toBeUndefined();
+        expect(idIn(harness!, "Projects/Plan.md")).toBe(NOTE);
+      },
+    );
+
     it("takes an old buffer saved where another Mac moved the file from as a save of its note, never a new item", async () => {
       const { held } = await notePlaced("placement-move-old-buffer");
       second = await anotherMac(harness!, "placement-move-old-buffer-second");

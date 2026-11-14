@@ -87,7 +87,7 @@ describe("the folder door", () => {
       include: ["*.md"],
       ignore: ["drafts/"],
       first_placement: { "core.note": "Notes" },
-      removal_threshold: { files: 20, fraction: 0.5 },
+      removal_threshold: { files: 20, fraction: 0.5, ceiling: 200 },
       full_pass_interval_seconds: 3600,
       addition_threshold: { files: 80, fraction: 0.5 },
       outside_query: "hold",
@@ -422,6 +422,16 @@ describe("the folder door", () => {
       "removal_threshold.files",
     ],
     [
+      { removal_threshold: { ceiling: -1 } },
+      "validation_error",
+      "removal_threshold.ceiling",
+    ],
+    [
+      { removal_threshold: { ceiling: 2.5 } },
+      "validation_error",
+      "removal_threshold.ceiling",
+    ],
+    [
       { full_pass_interval_seconds: 59 },
       "validation_error",
       "full_pass_interval_seconds",
@@ -525,11 +535,13 @@ describe("the folder door", () => {
       await client.createFolder({
         title: "refused",
         query: { tags: ["x"] },
+        addition_threshold: { ceiling: 1 },
         owner: "x",
       } as never),
       await client.updateFolder(id, {
         version: 1,
         query: { tags: ["x"] },
+        addition_threshold: { ceiling: 1 },
         owner: "x",
       } as never),
     ]) {
@@ -539,6 +551,7 @@ describe("the folder door", () => {
       };
       expect(refusal.error.code).toBe("validation_error");
       expect(refusal.error.details?.unknown_body_fields).toEqual([
+        "addition_threshold.ceiling",
         "owner",
         "query.tags",
       ]);
