@@ -498,8 +498,7 @@ impl CliError {
         }
     }
 
-    /// What a server answered, where one did: never for a refusal the device
-    /// made itself.
+    /// Local refusals provide no evidence of a server answer.
     fn server(&self) -> Option<(Option<u16>, Option<&str>, Option<&serde_json::Value>)> {
         match self {
             CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
@@ -557,8 +556,6 @@ impl CliError {
         }
     }
 
-    /// The code and details of a refusal the device made itself, such as
-    /// `not_held`, where it made one with a code of its own.
     fn local(&self) -> Option<(&str, Option<&serde_json::Value>)> {
         match self {
             CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
@@ -1160,7 +1157,6 @@ mod tests {
             assert!(envelope["error"]["server"]["status"].is_u64(), "{envelope}");
             assert!(envelope["error"]["local"].is_null(), "{envelope}");
         }
-        // The witness: the same variants, refused by the copy, name no server.
         let refused_by_the_copy = [
             CoreError::not_held("x is not held"),
             CoreError::NotFound {
@@ -1187,7 +1183,6 @@ mod tests {
         assert_eq!(held["error"]["code"], "not_found");
         assert_eq!(held["error"]["local"]["code"], "not_held");
         assert_eq!(held["exit"], 1);
-        // An error that is neither names neither.
         let network = answered(CoreError::Network("down".into()));
         assert!(network["error"]["server"].is_null() && network["error"]["local"].is_null());
     }

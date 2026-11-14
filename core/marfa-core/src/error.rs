@@ -8,24 +8,21 @@ pub enum CoreError {
     NotFound {
         code: String,
         message: String,
-        /// The status of the server's answer; `None` for a refusal the device
-        /// made itself, which no server was asked.
+        /// `None` means the device refused without asking the server.
         status: Option<u16>,
     },
     #[error("{}", classified("unauthorized", Some(code), message))]
     Unauthorized {
         code: String,
         message: String,
-        /// The status of the server's answer; `None` for a refusal the device
-        /// made itself, which no server was asked.
+        /// `None` means the device refused without asking the server.
         status: Option<u16>,
     },
     #[error("{}", classified("forbidden", Some(code), message))]
     Forbidden {
         code: String,
         message: String,
-        /// The status of the server's answer; `None` for a refusal the device
-        /// made itself, which no server was asked.
+        /// `None` means the device refused without asking the server.
         status: Option<u16>,
     },
     #[error("{}", classified("validation", Some(code), message))]
@@ -37,15 +34,13 @@ pub enum CoreError {
         /// itself. `None` on every other refusal, one read from the server
         /// among them.
         details: Option<Box<serde_json::Value>>,
-        /// The status of the server's answer; `None` for a refusal the device
-        /// made itself, which no server was asked.
+        /// `None` means the device refused without asking the server.
         status: Option<u16>,
     },
     #[error("{}", classified("unknown type", None, message))]
     UnknownType {
         message: String,
-        /// The status of the server's answer; `None` for a refusal the device
-        /// made itself, which no server was asked.
+        /// `None` means the device refused without asking the server.
         status: Option<u16>,
     },
     #[error("{}", classified("rate limited", Some(code), message))]
@@ -271,8 +266,7 @@ codes! {
     Fault: CoreError::Fault(_) => "fault",
 }
 
-/// The code of a refusal for a row the working copy does not hold, which no
-/// server was asked.
+/// A local refusal that says nothing about whether the server holds the row.
 pub const NOT_HELD: &str = "not_held";
 
 fn classified(kind: &str, code: Option<&str>, message: &str) -> String {
@@ -291,8 +285,6 @@ fn classified(kind: &str, code: Option<&str>, message: &str) -> String {
 }
 
 impl CoreError {
-    /// What the copy refuses for a row it does not hold, naming the code
-    /// `NOT_HELD` and carrying no server status.
     pub fn not_held(message: impl Into<String>) -> Self {
         CoreError::NotFound {
             code: NOT_HELD.into(),
