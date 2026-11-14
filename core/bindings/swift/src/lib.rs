@@ -1415,6 +1415,7 @@ pub enum MarfaError {
         code: String,
         message: String,
         details: Option<JsonValue>,
+        server: Option<ServerAnswer>,
     },
     Io {
         message: String,
@@ -1427,6 +1428,7 @@ pub enum MarfaError {
     Unnamed {
         status: u16,
         message: String,
+        server: Option<ServerAnswer>,
     },
     Decoding {
         message: String,
@@ -1442,6 +1444,7 @@ pub enum MarfaError {
         status: u16,
         location: Option<String>,
         message: String,
+        server: Option<ServerAnswer>,
     },
     StorageFull {
         message: String,
@@ -1533,6 +1536,8 @@ pub enum MarfaError {
         /// The answer was to a write, which may have taken effect.
         write_sent: bool,
         message: String,
+        /// The answer's status, where it was read; its body was not.
+        server: Option<ServerAnswer>,
     },
     /// The `Stop` the call was given was raised before it finished.
     Canceled {
@@ -1696,10 +1701,15 @@ impl From<marfa_core::CoreError> for MarfaError {
                 code,
                 message,
                 details: details.map(|details| JsonValue::from(*details)),
+                server,
             },
             E::Io(_) => MarfaError::Io { message },
             E::Network(_) | E::ConnectionRefused { .. } => MarfaError::Network { message },
-            E::Unnamed { status, .. } => MarfaError::Unnamed { status, message },
+            E::Unnamed { status, .. } => MarfaError::Unnamed {
+                status,
+                message,
+                server,
+            },
             E::Decoding(_) => MarfaError::Decoding { message },
             E::Store(_) => MarfaError::Store { message },
             E::StoreBusy(_) => MarfaError::StoreBusy { message },
@@ -1712,6 +1722,7 @@ impl From<marfa_core::CoreError> for MarfaError {
                 status,
                 location,
                 message,
+                server,
             },
             E::StorageFull(_) => MarfaError::StorageFull { message },
             E::SignedOut { origin } => MarfaError::SignedOut { origin, message },
@@ -1780,6 +1791,7 @@ impl From<marfa_core::CoreError> for MarfaError {
                 status,
                 write_sent,
                 message,
+                server,
             },
             E::Canceled => MarfaError::Canceled { message },
             E::FirstSyncWaiting => MarfaError::FirstSyncWaiting { message },
@@ -3406,6 +3418,7 @@ mod tests {
             limited: false,
             verdicts: Vec::new(),
             stopped: None,
+            refused_by: None,
             unclaimed_sources: Vec::new(),
             retry_after_seconds: None,
         };
@@ -3846,6 +3859,98 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// What a Swift error says a server sent, as an app reads it.
+    fn said_by_server(error: &MarfaError) -> Option<ServerAnswer> {
+        match error {
+            MarfaError::NotFound { server, .. }
+            | MarfaError::Unauthorized { server, .. }
+            | MarfaError::Forbidden { server, .. }
+            | MarfaError::Validation { server, .. }
+            | MarfaError::UnknownType { server, .. }
+            | MarfaError::RateLimited { server, .. }
+            | MarfaError::Server { server, .. }
+            | MarfaError::Unnamed { server, .. }
+            | MarfaError::Redirected { server, .. }
+            | MarfaError::ContractMismatch { server, .. }
+            | MarfaError::CopyExpired { server, .. }
+            | MarfaError::StreamIncomplete { server, .. } => server.clone(),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn every_error_a_server_answer_reached_crosses_with_that_answer() {
+        use marfa_core::CoreError as E;
+        let details = || Box::new(serde_json::json!({ "current_version": 4 }));
+        let server = || E::Server {
+            status: 409,
+            code: "version_conflict".into(),
+            message: "stale".into(),
+            details: Some(details()),
+        };
+        let answered = [
+            server(),
+            E::RenewalFailed(Box::new(server())),
+            E::RateLimited {
+                code: "rate_limited".into(),
+                message: "slow".into(),
+                retry_after_seconds: Some(3),
+                details: Some(details()),
+            },
+            E::Unnamed {
+                origin: "https://marfa.example".into(),
+                status: 502,
+                retry_after_seconds: None,
+            },
+            E::Redirected {
+                origin: "https://marfa.example".into(),
+                status: 308,
+                location: Some("https://elsewhere.example".into()),
+            },
+            E::ContractMismatch {
+                origin: "https://marfa.example".into(),
+                served: Some("4".into()),
+                expected: 3,
+                status: Some(409),
+                write_sent: true,
+            },
+        ];
+        for error in answered {
+            let said = error.answer().expect("the core says a server answered");
+            let crossed = MarfaError::from(error);
+            assert_eq!(
+                said_by_server(&crossed),
+                Some(ServerAnswer::from(said)),
+                "{crossed:?}"
+            );
+        }
+        let conflict = said_by_server(&MarfaError::from(server())).unwrap();
+        assert_eq!(
+            (conflict.status, conflict.code.as_deref()),
+            (409, Some("version_conflict"))
+        );
+        assert_eq!(
+            conflict.details,
+            Some(JsonValue::from(serde_json::json!({ "current_version": 4 })))
+        );
+
+        // The witnesses: no answer was read where the core read none.
+        for unanswered in [
+            E::Network("down".into()),
+            E::ContractMismatch {
+                origin: "https://marfa.example".into(),
+                served: None,
+                expected: 3,
+                status: None,
+                write_sent: false,
+            },
+            E::Decoding("not JSON".into()),
+        ] {
+            assert_eq!(unanswered.answer(), None);
+            assert_eq!(said_by_server(&MarfaError::from(unanswered)), None);
+        }
     }
 
     #[test]
@@ -4508,6 +4613,7 @@ mod tests {
             limited: false,
             verdicts: Vec::new(),
             stopped: None,
+            refused_by: None,
             unclaimed_sources: vec!["notes".into()],
             retry_after_seconds: Some(7),
         })
