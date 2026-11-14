@@ -35,6 +35,26 @@ impl std::fmt::Display for Exposure {
     }
 }
 
+/// What an open file's or folder's access control list gives accounts other than its own.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Reach {
+    /// Reading, writing or entering the file or folder itself.
+    pub itself: bool,
+    /// Access passed on to what is made inside the folder.
+    pub passed_on: bool,
+}
+
+/// The command a person runs to remove the entries behind a [`Reach`].
+pub fn removal_command(passed_on: bool) -> &'static str {
+    if cfg!(target_os = "macos") {
+        "`chmod -N`"
+    } else if passed_on {
+        "`setfacl -k`"
+    } else {
+        "`setfacl -b`"
+    }
+}
+
 /// `/` and each folder below it, down to `path` itself: the folders a check
 /// of what `path` holds walks. `None` unless `path` is absolute and plain.
 pub fn folders_from_root(path: &Path) -> Option<Vec<PathBuf>> {
@@ -61,17 +81,21 @@ pub fn exposure(
     found: &Metadata,
     trusted: u32,
 ) -> std::io::Result<Option<Exposure>> {
-    let standing = by_mode(
+    match exposure_by_mode(found, trusted) {
+        None => Ok(others_may_write(folder, trusted)?.then_some(Exposure::Acl)),
+        standing => Ok(standing),
+    }
+}
+
+/// [`exposure`] without the access control list, for a caller that read the list itself.
+pub fn exposure_by_mode(found: &Metadata, trusted: u32) -> Option<Exposure> {
+    by_mode(
         found.file_type().is_symlink(),
         found.is_dir(),
         found.uid(),
         found.mode(),
         trusted,
-    );
-    if standing.is_some() {
-        return Ok(standing);
-    }
-    Ok(others_may_write(folder, trusted)?.then_some(Exposure::Acl))
+    )
 }
 
 // Root's sticky folders, such as `/tmp`, let nobody replace what is not theirs.
@@ -104,10 +128,22 @@ mod darwin {
     const ACL_NEXT_ENTRY: c_int = -1;
     const ACL_EXTENDED_ALLOW: c_int = 1;
     const ID_TYPE_UID: c_int = 0;
+    const ACL_ENTRY_FILE_INHERIT: c_int = 1 << 5;
+    const ACL_ENTRY_DIRECTORY_INHERIT: c_int = 1 << 6;
+    const ACL_ENTRY_ONLY_INHERIT: c_int = 1 << 8;
 
     // Darwin's mutation rights, as defined by `sys/acl.h`.
     pub const WRITE_RIGHTS: u64 =
         (1 << 2) | (1 << 4) | (1 << 5) | (1 << 6) | (1 << 8) | (1 << 10) | (1 << 12) | (1 << 13);
+    /// Reading the data, listing a folder, or running or entering it, as well as any write.
+    pub const REACH_RIGHTS: u64 = (1 << 1) | (1 << 3) | WRITE_RIGHTS;
+
+    /// Where an allow entry applies.
+    #[derive(Clone, Copy)]
+    pub struct Applies {
+        pub itself: bool,
+        pub passed_on: bool,
+    }
 
     unsafe extern "C" {
         fn acl_get_link_np(path: *const c_char, kind: c_int) -> acl_t;
@@ -117,6 +153,10 @@ mod darwin {
         fn acl_get_permset_mask_np(entry: acl_entry_t, mask: *mut u64) -> c_int;
         fn acl_get_qualifier(entry: acl_entry_t) -> *mut c_void;
         fn acl_free(object: *mut c_void) -> c_int;
+        fn acl_init(count: c_int) -> acl_t;
+        fn acl_set_fd_np(fd: c_int, acl: acl_t, kind: c_int) -> c_int;
+        fn acl_get_flagset_np(object: *mut c_void, flagset: *mut *mut c_void) -> c_int;
+        fn acl_get_flag_np(flagset: *mut c_void, flag: c_int) -> c_int;
         fn mbr_uuid_to_id(uuid: *const u8, id: *mut libc::id_t, id_type: *mut c_int) -> c_int;
     }
 
@@ -163,6 +203,15 @@ mod darwin {
             &self,
             counts: impl Fn(acl_entry_t, u64) -> bool,
         ) -> std::io::Result<bool> {
+            let mut found = false;
+            self.each_allow(|entry, rights, _| found |= counts(entry, rights))?;
+            Ok(found)
+        }
+
+        pub fn each_allow(
+            &self,
+            mut visit: impl FnMut(acl_entry_t, u64, Applies),
+        ) -> std::io::Result<()> {
             let mut entry: acl_entry_t = std::ptr::null_mut();
             let mut which = ACL_FIRST_ENTRY;
             // SAFETY: the ACL is live and `entry` is written before it is read.
@@ -170,20 +219,44 @@ mod darwin {
                 which = ACL_NEXT_ENTRY;
                 let mut tag = 0;
                 let mut rights = 0u64;
-                // SAFETY: `entry` belongs to the ACL, which outlives it.
+                let mut flags: *mut c_void = std::ptr::null_mut();
+                // SAFETY: `entry` belongs to the ACL, which outlives it and its flag set.
                 unsafe {
                     if acl_get_tag_type(entry, &mut tag) != 0
                         || acl_get_permset_mask_np(entry, &mut rights) != 0
+                        || acl_get_flagset_np(entry, &mut flags) != 0
                     {
                         return Err(std::io::Error::last_os_error());
                     }
                 }
-                if tag == ACL_EXTENDED_ALLOW && counts(entry, rights) {
-                    return Ok(true);
+                if tag == ACL_EXTENDED_ALLOW {
+                    // SAFETY: the flag set belongs to `entry`, which the ACL outlives.
+                    let flag = |flag| unsafe { acl_get_flag_np(flags, flag) == 1 };
+                    let applies = Applies {
+                        itself: !flag(ACL_ENTRY_ONLY_INHERIT),
+                        passed_on: flag(ACL_ENTRY_FILE_INHERIT)
+                            || flag(ACL_ENTRY_DIRECTORY_INHERIT),
+                    };
+                    visit(entry, rights, applies);
                 }
             }
-            Ok(false)
+            Ok(())
         }
+    }
+
+    /// Leaves the file with no extended entries.
+    pub fn clear_fd(fd: c_int) -> std::io::Result<()> {
+        // SAFETY: `acl_init` allocates an empty ACL, freed when `empty` drops.
+        let acl = unsafe { acl_init(0) };
+        if acl.is_null() {
+            return Err(std::io::Error::last_os_error());
+        }
+        let empty = Freed(acl);
+        // SAFETY: the caller keeps the descriptor open, and the ACL is live.
+        if unsafe { acl_set_fd_np(fd, empty.0, ACL_TYPE_EXTENDED) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        Ok(())
     }
 
     /// Groups and unresolved names are not trusted as the user `uid`.
@@ -234,21 +307,41 @@ fn writes_for_others(entry: darwin::acl_entry_t, rights: u64, own: u32) -> bool 
     rights & darwin::WRITE_RIGHTS != 0 && !darwin::names_user(entry, own)
 }
 
+/// Group, `everyone` and deny entries aside, an entry for the user `own` reaches nobody else.
+#[cfg(target_os = "macos")]
+pub fn reach(file: &impl std::os::fd::AsRawFd, own: u32) -> std::io::Result<Reach> {
+    let mut reach = Reach::default();
+    if let Some(acl) = darwin::Acl::of_fd(file.as_raw_fd())? {
+        acl.each_allow(|entry, rights, applies| {
+            if rights & darwin::REACH_RIGHTS != 0 && !darwin::names_user(entry, own) {
+                reach.itself |= applies.itself;
+                reach.passed_on |= applies.passed_on;
+            }
+        })?;
+    }
+    Ok(reach)
+}
+
+/// Removes every entry of an open file's or folder's access control list; its mode stays.
+#[cfg(target_os = "macos")]
+pub fn clear(file: &impl std::os::fd::AsRawFd) -> std::io::Result<()> {
+    darwin::clear_fd(file.as_raw_fd())
+}
+
 /// Counts named users, named groups and default ACLs, regardless of the mask.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn grants_by_acl(path: &Path) -> std::io::Result<bool> {
-    if read_xattr(path, c"system.posix_acl_default")?.is_some_and(|value| value.len() > 4) {
+    if read_xattr(path, DEFAULT)?.is_some_and(|value| value.len() > 4) {
         return Ok(true);
     }
-    Ok(read_xattr(path, c"system.posix_acl_access")?
-        .is_some_and(|value| posix::names_others(&value)))
+    Ok(read_xattr(path, ACCESS)?.is_some_and(|value| posix::names_others(&value)))
 }
 
 /// Counts other accounts' effective write grants, including default ACLs.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn others_may_write(path: &Path, own: u32) -> std::io::Result<bool> {
-    let access = read_xattr(path, c"system.posix_acl_access")?;
-    let default = read_xattr(path, c"system.posix_acl_default")?;
+    let access = read_xattr(path, ACCESS)?;
+    let default = read_xattr(path, DEFAULT)?;
     Ok(
         access.is_some_and(|value| posix::lets_others_write(&value, own, false))
             || default.is_some_and(|value| posix::lets_others_write(&value, own, true)),
@@ -258,10 +351,21 @@ pub fn others_may_write(path: &Path, own: u32) -> std::io::Result<bool> {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn read_xattr(path: &Path, name: &std::ffi::CStr) -> std::io::Result<Option<Vec<u8>>> {
     let file = c_path(path)?;
+    // SAFETY: both C strings are live; the buffer has the supplied size.
+    xattr(|value, size| unsafe { libc::lgetxattr(file.as_ptr(), name.as_ptr(), value, size) })
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn read_fd_xattr(fd: libc::c_int, name: &std::ffi::CStr) -> std::io::Result<Option<Vec<u8>>> {
+    // SAFETY: the caller keeps the descriptor open; the buffer has the supplied size.
+    xattr(|value, size| unsafe { libc::fgetxattr(fd, name.as_ptr(), value, size) })
+}
+
+/// `get` is asked for the size with a null buffer, then for the value.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn xattr(get: impl Fn(*mut libc::c_void, usize) -> isize) -> std::io::Result<Option<Vec<u8>>> {
     loop {
-        // SAFETY: both C strings are live; the buffer has the supplied size.
-        let size =
-            unsafe { libc::lgetxattr(file.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0) };
+        let size = get(std::ptr::null_mut(), 0);
         if size < 0 {
             let error = std::io::Error::last_os_error();
             return match error.raw_os_error() {
@@ -270,14 +374,7 @@ fn read_xattr(path: &Path, name: &std::ffi::CStr) -> std::io::Result<Option<Vec<
             };
         }
         let mut value = vec![0u8; size.unsigned_abs()];
-        let read = unsafe {
-            libc::lgetxattr(
-                file.as_ptr(),
-                name.as_ptr(),
-                value.as_mut_ptr().cast(),
-                value.len(),
-            )
-        };
+        let read = get(value.as_mut_ptr().cast(), value.len());
         if read >= 0 {
             value.truncate(read.unsigned_abs());
             return Ok(Some(value));
@@ -289,6 +386,42 @@ fn read_xattr(path: &Path, name: &std::ffi::CStr) -> std::io::Result<Option<Vec<
             _ => return Err(error),
         }
     }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const ACCESS: &std::ffi::CStr = c"system.posix_acl_access";
+#[cfg(any(target_os = "linux", target_os = "android"))]
+const DEFAULT: &std::ffi::CStr = c"system.posix_acl_default";
+
+/// Mode bits cover access ACL group and other entries; default ACLs need a separate check.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn reach(file: &impl std::os::fd::AsRawFd, own: u32) -> std::io::Result<Reach> {
+    let fd = file.as_raw_fd();
+    Ok(Reach {
+        itself: read_fd_xattr(fd, ACCESS)?
+            .is_some_and(|value| posix::grants(&value, own, false, 0o7)),
+        passed_on: read_fd_xattr(fd, DEFAULT)?
+            .is_some_and(|value| posix::grants(&value, own, true, 0o7)),
+    })
+}
+
+/// Removes an open file's or folder's access and default ACLs; its mode stays.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+pub fn clear(file: &impl std::os::fd::AsRawFd) -> std::io::Result<()> {
+    let fd = file.as_raw_fd();
+    for name in [ACCESS, DEFAULT] {
+        if read_fd_xattr(fd, name)?.is_none() {
+            continue;
+        }
+        // SAFETY: the descriptor is open and the name is a live C string.
+        if unsafe { libc::fremovexattr(fd, name.as_ptr()) } != 0 {
+            let error = std::io::Error::last_os_error();
+            if error.raw_os_error() != Some(libc::ENODATA) {
+                return Err(error);
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
@@ -330,6 +463,10 @@ mod posix {
 
     // Callers check access ACL group/other mode bits; default ACLs need a separate check.
     pub fn lets_others_write(value: &[u8], own: u32, default: bool) -> bool {
+        grants(value, own, default, WRITE)
+    }
+
+    pub fn grants(value: &[u8], own: u32, default: bool, wanted: u16) -> bool {
         let mask = entries(value)
             .find(|entry| entry.tag == MASK)
             .map_or(0o7, |entry| entry.permissions);
@@ -341,7 +478,7 @@ mod posix {
                 OTHER if default => entry.permissions,
                 _ => 0,
             };
-            effective & WRITE != 0
+            effective & wanted != 0
         })
     }
 }
@@ -357,10 +494,20 @@ pub fn others_may_write(_path: &Path, _own: u32) -> std::io::Result<bool> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+pub fn reach(_file: &impl std::os::fd::AsRawFd, _own: u32) -> std::io::Result<Reach> {
+    Err(unsupported())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
+pub fn clear(_file: &impl std::os::fd::AsRawFd) -> std::io::Result<()> {
+    Err(unsupported())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "android")))]
 fn unsupported() -> std::io::Error {
     std::io::Error::new(
         ErrorKind::Unsupported,
-        "a private control socket needs macOS or Linux",
+        "access control lists are read only on macOS and Linux",
     )
 }
 
@@ -379,12 +526,18 @@ pub mod testing {
         InheritRead,
         /// Add and remove inside what is made inside.
         InheritWrite,
+        /// Read a file.
+        ReadFile,
+        /// Read the files made inside.
+        InheritReadToFiles,
     }
 
-    /// Sets `grant` on an owned folder; failure to set the ACL fails the test.
+    /// Returns whether the requested grant could be set on the file or folder.
     #[cfg(target_os = "macos")]
     pub fn let_another_account(folder: &Path, grant: Grant) -> bool {
         let entry = match grant {
+            Grant::ReadFile => "everyone allow read",
+            Grant::InheritReadToFiles => "everyone allow read,file_inherit,only_inherit",
             Grant::Read => "everyone allow list,search",
             Grant::Write => "everyone allow list,search,add_file,delete_child",
             Grant::InheritRead => "everyone allow list,search,directory_inherit,only_inherit",
@@ -414,7 +567,7 @@ pub mod testing {
             (mode & 7) as u16,
         );
         let (name, entries): (&std::ffi::CStr, [(u16, u16, u32); 5]) = match grant {
-            Grant::Read => (
+            Grant::Read | Grant::ReadFile => (
                 c"system.posix_acl_access",
                 [
                     (USER_OBJ, owner, NONE),
@@ -434,8 +587,8 @@ pub mod testing {
                     (OTHER, others, NONE),
                 ],
             ),
-            Grant::InheritRead | Grant::InheritWrite => {
-                let named = if matches!(grant, Grant::InheritRead) {
+            Grant::InheritRead | Grant::InheritWrite | Grant::InheritReadToFiles => {
+                let named = if matches!(grant, Grant::InheritRead | Grant::InheritReadToFiles) {
                     5
                 } else {
                     7
@@ -732,6 +885,37 @@ mod tests {
             assert_eq!(others_may_write(&path, me()).unwrap(), writes, "{grant:?}");
             std::fs::remove_dir_all(&path).unwrap();
         }
+    }
+
+    #[test]
+    fn what_reaches_another_account_is_seen_on_an_open_file_and_cleared() {
+        use std::os::unix::fs::PermissionsExt;
+        use testing::{Grant, let_another_account};
+        let at = folder("reach");
+        let file = at.join("file");
+        std::fs::write(&file, "x").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let opened = |path: &Path| std::fs::File::open(path).unwrap();
+        assert_eq!(reach(&opened(&at), me()).unwrap(), Reach::default());
+        assert_eq!(reach(&opened(&file), me()).unwrap(), Reach::default());
+        if !let_another_account(&file, Grant::ReadFile) {
+            eprintln!("skipped: this file system keeps no POSIX ACLs");
+            std::fs::remove_dir_all(&at).unwrap();
+            return;
+        }
+        assert!(let_another_account(&at, Grant::InheritReadToFiles));
+        let file_reach = reach(&opened(&file), me()).unwrap();
+        assert!(file_reach.itself, "{file_reach:?}");
+        let folder_reach = reach(&opened(&at), me()).unwrap();
+        assert!(
+            folder_reach.passed_on && !folder_reach.itself,
+            "{folder_reach:?}"
+        );
+        clear(&opened(&file)).unwrap();
+        clear(&opened(&at)).unwrap();
+        assert_eq!(reach(&opened(&at), me()).unwrap(), Reach::default());
+        assert_eq!(reach(&opened(&file), me()).unwrap(), Reach::default());
+        std::fs::remove_dir_all(&at).unwrap();
     }
 
     #[cfg(target_os = "macos")]

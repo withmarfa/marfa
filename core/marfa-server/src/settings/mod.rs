@@ -23,6 +23,7 @@ use start::Fixed;
 
 pub use environment::Environment;
 pub use registry::{Entry, Snapshot};
+pub(crate) use secrets::path_of as secrets_file;
 pub use start::{DatabasePath, Start};
 
 #[derive(Debug, PartialEq, Eq)]

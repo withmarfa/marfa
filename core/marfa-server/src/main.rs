@@ -48,6 +48,7 @@ fn start() -> Result<u8, Failure> {
 }
 
 fn main() -> ExitCode {
+    marfa_server::private_files::take_umask();
     marfa_allocator::route_sqlite();
     marfa_enrichment::serve_child_if_asked();
     Cli::parse();

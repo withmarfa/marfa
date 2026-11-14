@@ -9,6 +9,7 @@ pub mod http;
 pub mod listener;
 pub mod log;
 pub mod open_files;
+pub mod private_files;
 pub mod run;
 pub mod settings;
 pub mod telemetry;
