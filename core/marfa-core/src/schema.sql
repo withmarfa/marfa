@@ -211,8 +211,7 @@ CREATE TABLE IF NOT EXISTS rows_seen (
   name TEXT NOT NULL
 ) WITHOUT ROWID;
 
--- The row beneath a sent write before such an event, so the write is judged
--- by what its batch replaced if the event was its own.
+-- Before-event rows for judging a write whose event precedes its answer.
 CREATE TABLE IF NOT EXISTS rows_seen_beneath (
   batch TEXT NOT NULL,
   id TEXT NOT NULL,
