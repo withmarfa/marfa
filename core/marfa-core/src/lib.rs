@@ -1216,7 +1216,7 @@ impl Core {
     }
 
     /// Ended with `Canceled` soon after `stop` is raised, keeping the cursor
-    /// of the last event applied.
+    /// of the last event taken.
     pub fn catch_up_until(
         &self,
         stop: &AtomicBool,
