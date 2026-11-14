@@ -237,8 +237,7 @@ CREATE TABLE IF NOT EXISTS queue (
   -- Send order. A timestamp would tie under a fast caller.
   seq INTEGER PRIMARY KEY,
   id TEXT NOT NULL UNIQUE,
-  -- No `CHECK` lists the kinds or the verdicts: a reader refuses one it does
-  -- not know, and a new one is then no change of the store's shape.
+  -- Kinds and verdicts can change without a schema upgrade.
   kind TEXT NOT NULL,
   -- An edge write names both endpoints too: an edge create can wait on two
   -- unanswered local creates, which a single subject cannot say.

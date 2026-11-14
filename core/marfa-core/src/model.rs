@@ -1404,9 +1404,7 @@ impl LastFailure {
     }
 }
 
-/// A write a store holds that the server has not taken, as read from a store
-/// of any build's shape: its kind as the store names it, which may be one
-/// this build does not send.
+/// An unsent write with the kind and verdict recorded by the store's build.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct UnsentWrite {
     pub id: String,
@@ -1414,7 +1412,7 @@ pub struct UnsentWrite {
     pub item_id: Option<String>,
     /// The body it sends, as the store holds it.
     pub body: String,
-    /// `None` while it waits; otherwise `blocked`, `refused` or `dead`.
+    /// The stored verdict, including values this build does not recognize.
     pub verdict: Option<String>,
 }
 

@@ -3211,8 +3211,7 @@ pub fn check_store(path: String) -> Result<(), MarfaError> {
     Ok(marfa_core::Core::check_store(path)?)
 }
 
-/// A write a store holds that the server has not taken, read from a store of
-/// any build's shape.
+/// An unsent write with the kind and verdict recorded by the store's build.
 #[derive(uniffi::Record)]
 pub struct UnsentWrite {
     pub id: String,
@@ -3221,15 +3220,11 @@ pub struct UnsentWrite {
     pub item_id: Option<String>,
     /// The body it sends, as the store holds it.
     pub body: String,
-    /// `nil` while it waits; otherwise `blocked`, `refused` or `dead`.
+    /// The stored verdict, including values this build does not recognize.
     pub verdict: Option<String>,
 }
 
-/// Every write the store at `path` holds that the server has not taken,
-/// whatever build made it, such as one `open` refuses with `WrongSchema`,
-/// whose writes only that build can send. Changes nothing. Throws `Store`
-/// where the queue cannot be read, and `ReadingHandle` while another process,
-/// or another `Core` in this one, writes the store.
+/// Lists unsent writes from a refused store; see BINDINGS.md for refusals.
 #[uniffi::export]
 pub fn read_unsent(path: String) -> Result<Vec<UnsentWrite>, MarfaError> {
     Ok(marfa_core::Core::read_unsent(path)?

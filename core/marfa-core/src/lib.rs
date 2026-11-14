@@ -516,13 +516,7 @@ impl Core {
         damage::check(path)
     }
 
-    /// Every write the store at `path` holds that the server has not taken,
-    /// waiting, blocked, refused or dead, as `WrongSchema` counts them, read
-    /// whatever build made the store, so a person can see what a store this
-    /// build refuses holds. Changes nothing. Refuses with `Store` where the
-    /// queue cannot be read, as in a store SQLite cannot read, and with
-    /// `ReadingHandle` while another process, or another `Core` in this one,
-    /// holds the writer role.
+    /// Lists unsent writes from a refused store; see BINDINGS.md for refusals.
     pub fn read_unsent(path: impl AsRef<Path>) -> Result<Vec<UnsentWrite>> {
         let path = path.as_ref();
         let lock = lock::WriterLock::claim(Some(path))?;
