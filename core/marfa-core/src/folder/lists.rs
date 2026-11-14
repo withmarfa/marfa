@@ -525,6 +525,52 @@ mod tests {
     }
 
     #[test]
+    fn a_literal_matches_a_name_character_that_folds_with_it_and_a_wildcard_takes_one() {
+        for (pattern, name) in [
+            ("\u{c9}?.md", "\u{e9}\u{df}.md"),
+            ("\u{c9}[\u{df}].md", "\u{e9}\u{df}.md"),
+            ("\u{c9}[\u{df}].md", "\u{e9}\u{1e9e}.md"),
+            ("\u{c9}*.md", "\u{e9}\u{df}\u{df}.md"),
+            ("\u{c9}?.md", "\u{e9}\u{1e9e}.md"),
+            ("S?.md", "\u{17f}\u{df}.md"),
+            ("\u{17f}?.md", "S\u{df}.md"),
+            ("\u{17f}", "S"),
+            ("S", "\u{17f}"),
+            ("K?", "\u{212a}x"),
+            ("STRASSE.md", "Stra\u{df}e.md"),
+            ("stra\u{df}e.md", "STRASSE.md"),
+            ("\u{3a3}?", "\u{3c2}x"),
+        ] {
+            assert!(
+                !lists(&[], &[pattern]).takes(name),
+                "ignore {pattern:?}, {name:?}"
+            );
+            assert!(
+                lists(&[pattern], &[]).takes(name),
+                "include {pattern:?}, {name:?}"
+            );
+        }
+        for (pattern, name) in [
+            ("\u{c9}?.md", "e\u{df}.md"),
+            ("\u{c9}?.md", "\u{e9}.md"),
+            ("\u{c9}[\u{df}].md", "\u{e9}s.md"),
+            ("\u{c9}?.md", "x\u{df}.md"),
+        ] {
+            assert!(
+                lists(&[], &[pattern]).takes(name),
+                "ignore {pattern:?}, {name:?}"
+            );
+            assert!(
+                !lists(&[pattern], &[]).takes(name),
+                "include {pattern:?}, {name:?}"
+            );
+        }
+        let dotted = lists(&[".\u{c9}?/**"], &[]);
+        assert!(dotted.enters(".\u{e9}\u{df}"));
+        assert!(dotted.takes(".\u{e9}\u{df}/note.md"));
+    }
+
+    #[test]
     fn a_wildcard_crosses_a_newline_in_a_name() {
         let bare = lists(&[], &[]);
         assert!(!bare.takes("keys\n/id_rsa"));
@@ -537,11 +583,14 @@ mod tests {
 
     #[test]
     fn case_is_ignored_as_names_compare_and_no_further() {
-        // Unicode's own case pairs that the name comparison does not fold.
-        assert!(lists(&[], &["S"]).takes("\u{17f}"));
-        assert!(lists(&[], &["*\u{3c3}.md"]).takes("\u{3bb}\u{3cc}\u{3b3}\u{3bf}\u{3c2}.md"));
+        // A case pair the name comparison does not fold: it has no locale rule.
+        assert!(lists(&[], &["I"]).takes("\u{131}"));
         // What it does fold, through the folded form.
         assert!(!lists(&[], &["k"]).takes("\u{212a}"));
+        assert!(!lists(&[], &["S"]).takes("\u{17f}"));
+        assert!(!lists(&[], &["[s]x"]).takes("\u{17f}x"));
+        assert!(!lists(&[], &["*\u{3c3}.md"]).takes("\u{3bb}\u{3cc}\u{3b3}\u{3bf}\u{3c2}.md"));
+        assert!(!lists(&[], &["stra\u{df}e.md"]).takes("STRASSE.md"));
         assert!(!lists(&[], &["CAF\u{c9}.md"]).takes("caf\u{e9}.md"));
         // ASCII case in classes and literals alike.
         assert!(!lists(&[], &["[a-c]*.MD"]).takes("B.md"));
