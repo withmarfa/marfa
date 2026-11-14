@@ -86,8 +86,11 @@ updates:
       - "dependencies"
   # The Node binding is outside the pnpm workspace on purpose, so the root
   # entry never reads it. It has its own manifest and lockfile and needs its
-  # own entry. A single group: a major is a separate pull request, so it can
-  # be read on its own and does not hold up the minor and patch updates.
+  # own entry, and a `pnpm-workspace.yaml` of its own: Dependabot runs `pnpm
+  # update -r` here, which without that file works in the root workspace and
+  # changes nothing in this folder (`ci/dependabot.test.ts`). A single group: a
+  # major is a separate pull request, so it can be read on its own and does not
+  # hold up the minor and patch updates.
   - package-ecosystem: "npm"
     directory: "/core/bindings/node"
     schedule:

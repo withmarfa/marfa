@@ -1,0 +1,6 @@
+# Makes this folder its own workspace root. pnpm looks upward for the nearest
+# `pnpm-workspace.yaml`, and without this file it finds the repository's, which
+# does not list this folder. Dependabot cannot pass `--ignore-workspace`, so
+# its `pnpm update -r` then ran on the repository's packages and found nothing
+# to change here.
+packages: []
