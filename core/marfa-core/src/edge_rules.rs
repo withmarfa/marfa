@@ -23,8 +23,7 @@
 //! refuse, which is kept with its verdict. Once the read lands, the copy
 //! shows the server's row and counts it as it is.
 //!
-//! The rules themselves are `marfa_rules::edges`, read through [`HeldEdges`], which
-//! leaves out the edges above that a check does not count.
+//! [`HeldEdges`] applies these exclusions before the shared rules judge a write.
 //!
 //! Each `edge_constraint_violation` and `edge_cycle` carries the `details`
 //! the server's answer to the same write carries, so an app reads it one way
@@ -136,13 +135,7 @@ impl Lineages {
     }
 }
 
-/// Refuses the edges one write makes where the server would refuse one, in
-/// the server's order (`edges/create-order`): for each edge, an end in the
-/// bin, an end of a type the edge type does not admit and a source a flat
-/// edge type does not take; then, edge by edge, a triple the copy holds, an
-/// end that already holds the one edge of the type it may, a cycle through
-/// the type's own edges and a cycle through parts. Each edge is counted with
-/// those before it in the same write, as the server counts a batch.
+/// Ends are judged before graph constraints to match the server's refusal order.
 pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> Result<()> {
     let mut lineages = Lineages::default();
     let unread = shown_by_unread_refusals(conn)?;
@@ -236,10 +229,7 @@ fn refused_cardinality(edge_type: &EdgeType, end: End, at: &str) -> CoreError {
     refused(edges::refused_cardinality(edge_type, end, at))
 }
 
-/// The edges the copy shows only because of a write the server refused,
-/// while a read of the server's row is owed for it (see the module). A refused edge create, move or other edit
-/// shows its edge; a refused item create shows its inline edges, under the
-/// item's own id or, for a keyed create, the row it landed on.
+/// A refused write's effects cannot count until its server read-back lands.
 fn shown_by_unread_refusals(conn: &Connection) -> Result<HashSet<String>> {
     let mut owed: HashSet<(Subject, String)> = HashSet::new();
     for read in store::owed_read_backs(conn)? {
@@ -301,7 +291,6 @@ fn shown_by_unread_refusals(conn: &Connection) -> Result<HashSet<String>> {
     Ok(shown)
 }
 
-/// The edge types the copy holds, by id.
 fn held_edge_types(conn: &Connection) -> Result<HashMap<String, EdgeType>> {
     match catalog::edge_types(conn) {
         Ok(held) => Ok(held
@@ -313,10 +302,7 @@ fn held_edge_types(conn: &Connection) -> Result<HashMap<String, EdgeType>> {
     }
 }
 
-/// The edges the copy holds, as the rules read a graph: the server's and its
-/// own waiting writes as they leave them, without those only a refused write
-/// shows and without the edges of `replaced.1` that a create replaces at
-/// `replaced.0`.
+/// Refused writes and outbound edges replaced by a create cannot block a write.
 struct HeldEdges<'a> {
     conn: &'a Connection,
     catalog: &'a HashMap<String, EdgeType>,
@@ -527,7 +513,6 @@ mod tests {
         })
     }
 
-    /// An edge type whose source is a part of its target.
     fn with_hosts(id: &str, cardinality: &str, acyclic: bool) -> Value {
         let mut held = edge_type(id, cardinality, [&[], &[]], acyclic, false);
         held["cascade_on_delete"] = json!("with-hosts");
@@ -1815,7 +1800,6 @@ mod tests {
         .unwrap();
     }
 
-    /// The server's `details` for a part that would be its own part.
     fn parts_cycle(draft: &EdgeDraft) -> Value {
         json!({
             "edge_type": draft.edge_type,
@@ -1848,8 +1832,7 @@ mod tests {
             &edge(NOTE_C, NOTE_A, "mock.other-part"),
             "the same edge of the other part type",
         );
-        // The witnesses: an item outside the chain, and the chain's reverse
-        // direction on an edge type that deletes nothing with its hosts.
+        // Both witnesses remove the part cycle while preserving the proposed source.
         assert_create_queued(&core, &edge(NOTE_C, NOTE_D, "mock.part"), "c to d");
         assert_create_queued(&core, &edge(NOTE_C, NOTE_A, "mock.loose"), "a loose edge");
     }

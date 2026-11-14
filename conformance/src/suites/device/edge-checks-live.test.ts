@@ -436,8 +436,7 @@ it("refuses locally an edge that would make an item a part of its own part, acro
     CONSTRAINT,
     "the same edge as a comments-on edge",
   );
-  // The witnesses: the same edge to an item outside the chain is queued, and
-  // so is a reference closing the same loop, which makes no item a part.
+  // Both witnesses remove the part cycle while preserving the proposed source.
   await queuedAfterCheck(
     device,
     { source: third, target: other, type: "attached-to" },
