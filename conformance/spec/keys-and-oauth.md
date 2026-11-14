@@ -2329,11 +2329,11 @@ When a grant is revoked with `revoke_keys` set to `true`, the server MUST revoke
 
 ### `keys-and-oauth/revoke-keys-unreadable`
 
-If `DELETE /auth/grants/{id}` or `DELETE /owner/sign-ins/{id}` carries a `revoke_keys` value other than `true` or `false`, then the server MUST answer `400 validation_error` and end nothing.
+If `DELETE /auth/grants/{id}` or `DELETE /owner/sign-ins/{id}` carries a `revoke_keys` value other than `true` or `false`, or names `revoke_keys` more than once, then the server MUST answer `400 validation_error` and end nothing.
 
-**Reason:** An app's keys end only when the caller says so in the one spelling the contract states, so a mistyped flag such as `1` or `yes` never answers success while the keys still work.
+**Reason:** An app's keys end only when the caller says so in the one spelling the contract states, so a mistyped flag such as `1` or `yes`, or two values that disagree, never answers success while the keys still work.
 
-**Tests:** `compliance/auth-grants.test.ts › refuses a revoke_keys that is neither true nor false 400, and leaves the grant and the keys working`, `compliance/owner-sign-ins.test.ts › refuses a revoke_keys that is neither true nor false 400, and leaves the app and its keys working`.
+**Tests:** `compliance/auth-grants.test.ts › refuses a revoke_keys that is neither true nor false, or is named twice, 400, and leaves the grant and the keys working`, `compliance/owner-sign-ins.test.ts › refuses a revoke_keys that is neither true nor false, or is named twice, 400, and leaves the app and its keys working`.
 
 ### `keys-and-oauth/grant-unknown`
 

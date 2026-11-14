@@ -310,13 +310,22 @@ describe("DELETE /auth/grants/{id}", () => {
     expect(await itemsStatus(server, otherKey.key)).toBe(200);
   });
 
-  it("refuses a revoke_keys that is neither true nor false 400, and leaves the grant and the keys working", async () => {
+  it("refuses a revoke_keys that is neither true nor false, or is named twice, 400, and leaves the grant and the keys working", async () => {
     const { access, grant } = await approved();
     const key = await mintedBy(access, "grant-unreadable", {
       permissions: ["keys.mint"],
       type_permissions: { "core.note": "read" },
     });
-    for (const value of ["1", "yes", "True", ""]) {
+    for (const value of [
+      "1",
+      "yes",
+      "True",
+      "",
+      "false&revoke_keys=yes",
+      "yes&revoke_keys=false",
+      "true&revoke_keys=true",
+      "false&revoke_keys=false",
+    ]) {
       const refused = await revokeGrant(
         grant.id,
         server.managementKey,

@@ -26051,7 +26051,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take, or `revoke_keys` is neither `true` nor `false`. Nothing is revoked. */
+            /** @description - `validation_error`: the query has a parameter this endpoint doesn't take, or `revoke_keys` is neither `true` nor `false`, or is named more than once. Nothing is revoked. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
@@ -27572,7 +27572,7 @@ export interface operations {
                     "application/json": components["schemas"]["Ok"];
                 };
             };
-            /** @description - `validation_error`: `revoke_keys` is neither `true` nor `false`, or it is `true` and the ID names a browser or a key. Nothing ends. */
+            /** @description - `validation_error`: `revoke_keys` is neither `true` nor `false`, or is named more than once, or it is `true` and the ID names a browser or a key. Nothing ends. */
             400: {
                 headers: {
                     "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
