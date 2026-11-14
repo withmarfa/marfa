@@ -9,11 +9,11 @@ use tokio::sync::mpsc;
 use super::{Body, EDGE_PAGE, Sender, channel, reads_row};
 use crate::app::App;
 use crate::app::access::Caller;
+use crate::app::edges;
 use crate::app::faults::{FAIL_EXPORT_READ, HOLD_EXPORT_CHECK, HOLD_EXPORT_PAGE};
 use crate::app::items::{self, reading};
 use crate::app::query::{self, Ask};
 use crate::app::refusal::Result;
-use crate::app::{edges, provenance};
 use crate::db::io_refusal;
 
 /// The most items one credential check selects.
@@ -138,13 +138,13 @@ impl App {
         self.audit_export(caller, "ndjson").await?;
         let (sender, body) = channel(1);
         let app = self.clone();
-        tokio::spawn(provenance::carried(async move {
+        tokio::spawn(async move {
             match send(&app, &admitted, &ask, first, &sender).await {
                 Ok(()) => sender.finish(),
                 Err(None) => tracing::info!("An NDJSON export's client left or stopped reading"),
                 Err(Some(error)) => tracing::warn!(%error, "An NDJSON export ended short"),
             }
-        }));
+        });
         Ok(body)
     }
 }

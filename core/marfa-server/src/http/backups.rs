@@ -25,10 +25,6 @@ pub async fn list(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answ
 pub async fn run(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     caller.require_local()?;
     query::only(&uri, &[])?;
-    // The backup records itself as the server's work, behind a restore, so it is refused here.
-    if let Some(refusal) = app.db.writes_held() {
-        return Err(refusal.into());
-    }
     let answer = app.run_backup(&caller).await?;
     Ok(json_answer(StatusCode::OK, &answer))
 }

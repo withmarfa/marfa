@@ -1124,6 +1124,10 @@ async fn back_up(app: &Arc<App>, forced: bool) -> Result<Outcome> {
     let Ok(_running) = app.backups.running.try_lock() else {
         return Ok(Outcome::Running);
     };
+    // A backup records itself as the server's work, which queues behind a restore.
+    if forced && let Some(refusal) = app.db.writes_held() {
+        return Err(refusal);
+    }
     let held = app.db.read(state).await?;
     let current = held.backed_up == Some(held.changes)
         && held.backed_up_version == Some(archive::VERSION as i64);
