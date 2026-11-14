@@ -69,10 +69,29 @@ function fires(condition: string, event: string, results: string[]): boolean {
       (_, wanted: string) => String(results.includes(wanted)),
     )
     .replace(/'schedule'/g, JSON.stringify("schedule"));
-  if (!/^[\w"&|()=!\s]+$/.test(js)) {
+  const steps: [RegExp, (...parts: string[]) => string][] = [
+    [/"([^"]*)"\s*==\s*"([^"]*)"/, (_, a, b) => String(a === b)],
+    [/!\s*(true|false)\b/, (_, a) => String(a !== "true")],
+    [/\(\s*(true|false)\s*\)/, (_, a) => a],
+    [
+      /\b(true|false)\s*&&\s*(true|false)\b/,
+      (_, a, b) => String(a === "true" && b === "true"),
+    ],
+    [
+      /(?<!&&\s*)\b(true|false)\s*\|\|\s*(true|false)\b(?!\s*&&)/,
+      (_, a, b) => String(a === "true" || b === "true"),
+    ],
+  ];
+  let expression = js.trim();
+  for (;;) {
+    const step = steps.find(([pattern]) => pattern.test(expression));
+    if (!step) break;
+    expression = expression.replace(step[0], step[1]).trim();
+  }
+  if (expression !== "true" && expression !== "false") {
     throw new Error(`Cannot evaluate: ${body}`);
   }
-  return new Function(`return (${js});`)() as boolean;
+  return expression === "true";
 }
 
 const workflows = readdirSync(WORKFLOWS)
