@@ -2072,7 +2072,7 @@ When the credential requesting `GET /export?format=archive` holds `config.manage
 
 **Reason:** an owner's settings are their own choices, and a restore that reset them would change the instance without saying so. The two addresses name where this instance answers, which a move changes, and the instance's name is its own to set again, so no `setting` line carries it. No setting holds a secret.
 
-**Tests:** `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`, `compliance/restore-says.test.ts › restores the enforcement settings onto an instance with none, skips them on one that has them, and does not carry the name`.
+**Tests:** `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`, `compliance/restore-says.test.ts › restores each enforcement setting an instance lacks, an empty block included, keeps each it has, and does not carry the name`.
 
 ### `search-and-filters/archive-enforcement`
 
@@ -2080,15 +2080,31 @@ When the credential requesting `GET /export?format=archive` holds `config.manage
 
 **Reason:** strict mode and the source lists are what keeps a restored instance from taking writes the original refused, so a move that dropped them would open it.
 
-**Tests:** `compliance/restore-says.test.ts › restores the enforcement settings onto an instance with none, skips them on one that has them, and does not carry the name`.
+**Tests:** `compliance/restore-says.test.ts › restores each enforcement setting an instance lacks, an empty block included, keeps each it has, and does not carry the name`.
+
+### `search-and-filters/archive-enforcement-unreadable`
+
+If the enforcement settings the instance stores do not read, then the server MUST answer `GET /export?format=archive` and take a backup with no `enforcement` line, naming `enforcement` in the manifest's `unreadable`.
+
+**Reason:** the server already treats stored enforcement settings that do not read as a known state, holding every key closed and naming them on `GET /health`, so they are no reason to stop every export and backup. The manifest says what the archive left out, so a restore can say so.
+
+**Tests:** `compliance/restore-says.test.ts › leaves enforcement settings that do not read out of an export, and the restore names them`.
+
+### `search-and-filters/archive-manifest-unreadable`
+
+If an archive leaves out no line because it did not read, then the server MUST NOT write `unreadable` into its manifest.
+
+**Reason:** `unreadable` names only what an archive left out (`search-and-filters/archive-enforcement-unreadable`), so an archive that holds everything carries no such list.
+
+**Tests:** `compliance/restore-says.test.ts › leaves enforcement settings that do not read out of an export, and the restore names them`.
 
 ### `search-and-filters/restore-enforcement`
 
-When `POST /restore` reads an `enforcement` line, the server MUST store it only where the instance stores no enforcement settings, count it in `enforcement_added` or `enforcement_skipped`, and replace nothing the instance holds.
+When `POST /restore` reads an `enforcement` line, the server MUST store each of its settings (`strict_mode`, `source_allowlist`, `source_filter`) that the instance does not store, keep each that it does, and name each stored setting in `enforcement_added` and each kept one in `enforcement_skipped`.
 
-**Reason:** a restore adds what the instance lacks and replaces nothing (`search-and-filters/restore-settings`).
+**Reason:** a restore adds what the instance lacks and replaces nothing (`search-and-filters/restore-settings`). An empty enforcement block holds no setting, so each archived one is added to it. Enforcement settings the instance stores that do not read keep every archived one out, since what they hold is not known.
 
-**Tests:** `compliance/restore-says.test.ts › restores the enforcement settings onto an instance with none, skips them on one that has them, and does not carry the name`.
+**Tests:** `compliance/restore-says.test.ts › restores each enforcement setting an instance lacks, an empty block included, keeps each it has, and does not carry the name`.
 
 ### `search-and-filters/restore-settings`
 
@@ -2370,7 +2386,7 @@ When local authority sends `POST /restore` with an archive that `GET /export?for
 
 ### `search-and-filters/restore-counts`
 
-When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `settings_dropped`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `rows_imported`, `rows_skipped`, `enforcement_added` and `enforcement_skipped`, each for the kind of thing it counts.
+When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `settings_dropped`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts, and the lists `enforcement_added` and `enforcement_skipped`, each naming the enforcement settings it counts.
 
 **Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
 
@@ -2380,23 +2396,63 @@ When `POST /restore` succeeds, the server MUST answer in `not_restored` one entr
 
 **Reason:** an archive holds no credential, webhook, endpoint or log, and not the instance's name or addresses (`search-and-filters/archive-only`), so after a move the owner signs in, makes keys, approves apps, makes webhooks and endpoints again and gives each sender the new address of an endpoint, and the answer says so where the owner reads the outcome.
 
-**Tests:** `compliance/restore-says.test.ts › restores the enforcement settings onto an instance with none, skips them on one that has them, and does not carry the name`, `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
+**Tests:** `compliance/restore-says.test.ts › restores each enforcement setting an instance lacks, an empty block included, keeps each it has, and does not carry the name`, `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
+
+### `search-and-filters/restore-not-restored-unreadable`
+
+When `POST /restore` succeeds with an archive whose manifest names `enforcement` in `unreadable`, the server MUST answer in `not_restored`, after the entries `search-and-filters/restore-not-restored` names, an entry whose `kind` is `enforcement`.
+
+**Reason:** the archive does not hold the enforcement settings of the instance that wrote it, so the owner sets strict mode and the source lists again, and the answer says so where the owner reads the outcome.
+
+**Tests:** `compliance/restore-says.test.ts › leaves enforcement settings that do not read out of an export, and the restore names them`.
 
 ### `search-and-filters/restore-previous-instance`
 
-When `POST /restore` succeeds with an archive whose manifest names an `instance_id` other than this instance's, the server MUST answer in `previous_instance` that `instance_id` and, in `safe_to_delete`, the folders `backups/<instance id>` and `files/<instance id>` of the instance it names.
+When `POST /restore` succeeds with an archive whose manifest names an `instance_id` other than this instance's, the server MUST answer in `previous_instance` that `instance_id`.
 
-**Reason:** a restore into a new instance leaves the old instance's backups in the backup destination, where they cost room and are taken for current ones, and only the old instance's id names them.
+**Reason:** a restore into a new instance leaves the old instance's backups in the backup destination, where they cost room and are taken for current ones, and only the old instance's ID names them.
 
-**Tests:** `compliance/restore-says.test.ts › names the old instance's backup folder as safe to delete after a restore into another instance, and not after a restore into the same one`.
+**Tests:** `compliance/restore-says.test.ts › names the old instance's folders in the backup folder after a restore into another instance, never as safe to delete, and nothing after a restore into the same one`, `compliance/restore-says.test.ts › names the old instance and no place for it where the instance has no backup destination`.
+
+### `search-and-filters/restore-previous-folder`
+
+Where `MARFA_BACKUP_PATH` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `folder` in its `destination` and the folders `backups/<instance id>` and `files/<instance id>` of the backup folder in `kept_by_previous_instance`.
+
+**Reason:** the backup folder keeps each instance's backups and its copy of each file in folders of that instance's own (`instance/backup-object`).
+
+**Tests:** `compliance/restore-says.test.ts › names the old instance's folders in the backup folder after a restore into another instance, never as safe to delete, and nothing after a restore into the same one`.
+
+### `search-and-filters/restore-previous-bucket`
+
+Where `S3_BUCKET` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `bucket` in its `destination` and only `<S3_PREFIX>/backups/<instance id>` in `kept_by_previous_instance`.
+
+**Reason:** the object store keeps every instance's file copies under `<S3_PREFIX>/blobs/`, shared with this instance, so no file copy belongs to the old instance alone.
+
+**Tests:** `compliance/backups.test.ts › restores a named backup into a fresh server on the same bucket, files included`.
+
+### `search-and-filters/restore-previous-nowhere`
+
+Where neither `S3_BUCKET` nor `MARFA_BACKUP_PATH` is set, when `POST /restore` answers `previous_instance`, the server MUST answer `null` in its `destination` and no path in `kept_by_previous_instance`.
+
+**Reason:** an instance with no backup destination does not know where the old instance kept its backups.
+
+**Tests:** `compliance/restore-says.test.ts › names the old instance and no place for it where the instance has no backup destination`.
+
+### `search-and-filters/restore-previous-not-safe`
+
+When `POST /restore` answers `previous_instance`, the server MUST say in its `message` that what the old instance keeps may be deleted only once that instance no longer runs and nothing else restores from it.
+
+**Reason:** an archive's `instance_id` says only which instance wrote it. That instance may still run, sharing the backup destination, or another instance may restore its backups again, so no answer can know that its backups are unused.
+
+**Tests:** `compliance/restore-says.test.ts › names the old instance's folders in the backup folder after a restore into another instance, never as safe to delete, and nothing after a restore into the same one`, `compliance/backups.test.ts › restores a named backup into a fresh server on the same bucket, files included`, `compliance/restore-says.test.ts › names the old instance and no place for it where the instance has no backup destination`.
 
 ### `search-and-filters/restore-own-archive-no-previous`
 
 When `POST /restore` succeeds with an archive whose manifest names this instance's own `instance_id`, the server MUST NOT answer `previous_instance`.
 
-**Reason:** the backup folder of the instance restoring is the one in use, and an answer that called it safe to delete would invite its loss.
+**Reason:** the backups of the instance restoring are the ones in use, and an answer that named them as another instance's would invite their loss.
 
-**Tests:** `compliance/restore-says.test.ts › names the old instance's backup folder as safe to delete after a restore into another instance, and not after a restore into the same one`.
+**Tests:** `compliance/restore-says.test.ts › names the old instance's folders in the backup folder after a restore into another instance, never as safe to delete, and nothing after a restore into the same one`.
 
 ### `search-and-filters/cli-restore-refused`
 
@@ -2411,6 +2467,14 @@ When `POST /restore` refuses an archive that `marfa restore` sends, whether befo
 When `POST /restore` answers `marfa restore` with `not_restored`, the CLI MUST print the `message` of each entry on its own line on standard error.
 
 **Reason:** the person running the command learns there and then each thing that is not restored, and what to do about it.
+
+**Tests:** `cli/restore-says.test.ts › prints one line on standard error for each kind a restore left out, and what it did with the settings`.
+
+### `search-and-filters/cli-restore-previous-instance`
+
+When `POST /restore` answers `marfa restore` with `previous_instance`, the CLI MUST print its `message` on standard error.
+
+**Reason:** the person running the command learns where the old instance's backups stay, and that they may be deleted only once that instance no longer runs and nothing else restores from them.
 
 **Tests:** `cli/restore-says.test.ts › prints one line on standard error for each kind a restore left out, and what it did with the settings`.
 

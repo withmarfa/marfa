@@ -1357,8 +1357,8 @@ describe("what a restore answers", () => {
       entries_skipped: [],
       line_kinds_skipped: [],
       settings_without_receiver: [],
-      enforcement_added: 0,
-      enforcement_skipped: 0,
+      enforcement_added: [],
+      enforcement_skipped: [],
       not_restored: expect.any(Array),
     });
     await expectMatchesSchema("POST", "/restore", 200, first.data);
@@ -1411,8 +1411,8 @@ describe("what a restore answers", () => {
       entries_skipped: [],
       line_kinds_skipped: [],
       settings_without_receiver: [],
-      enforcement_added: 0,
-      enforcement_skipped: 0,
+      enforcement_added: [],
+      enforcement_skipped: [],
       not_restored: expect.any(Array),
     });
     await expectMatchesSchema("POST", "/restore", 200, again.data);

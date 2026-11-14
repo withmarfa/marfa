@@ -21,9 +21,13 @@ let dir: string;
 
 beforeAll(async () => {
   origin = await bootFreshServer("cli-restore-says-origin", DISK_ONLY);
-  target = await bootFreshServer("cli-restore-says-target", DISK_ONLY);
-  cli = new Cli(requireBinary(), target.apiUrl, target.workingKey);
   dir = mkdtempSync(join(tmpdir(), "marfa-cli-restore-says-"));
+  target = await bootFreshServer("cli-restore-says-target", {
+    ...DISK_ONLY,
+    MARFA_BACKUP_PATH: join(dir, "backups"),
+    MARFA_BACKUP_INTERVAL_SECONDS: "0",
+  });
+  cli = new Cli(requireBinary(), target.apiUrl, target.workingKey);
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -58,5 +62,7 @@ describe("marfa restore", () => {
     }
     expect(outcome.stderr).toMatch(/backups\/[0-9a-f-]{36}/);
     expect(outcome.stderr).toMatch(/files\/[0-9a-f-]{36}/);
+    expect(outcome.stderr).toContain("no longer runs");
+    expect(outcome.stderr).not.toMatch(/safe to delete/i);
   });
 });

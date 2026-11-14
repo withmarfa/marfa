@@ -321,7 +321,9 @@ describe("a backup in the object store", () => {
     expect(restored.data.not_restored.map((one) => one.kind)).toContain("keys");
     expect(restored.data.previous_instance).toEqual({
       instance_id: originId,
-      safe_to_delete: [`backups/${originId}`, `files/${originId}`],
+      destination: "bucket",
+      kept_by_previous_instance: [`${store.S3_PREFIX}/backups/${originId}`],
+      message: expect.stringContaining(`${store.S3_PREFIX}/blobs/`),
     });
     expect((await working.getItem(made.note)).status).toBe(200);
     const read = await operator.downloadBlob(made.hash);

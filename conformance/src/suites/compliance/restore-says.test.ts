@@ -20,6 +20,10 @@ import {
 } from "../../utils/own-blob-server.js";
 import { QUIET_TUNING, tuning } from "../../utils/tuning.js";
 import { v7 as uuidv7 } from "uuid";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { withInstanceDatabase } from "../../utils/instance-database.js";
 
 /**
  * What a restore says about itself: the enforcement settings an archive
@@ -37,6 +41,7 @@ const ENFORCEMENT = {
 let origin: FreshServer;
 let target: FreshServer;
 let heard: ReturnType<typeof createServer>;
+const backupFolder = mkdtempSync(join(tmpdir(), "restore-says-backups-"));
 
 beforeAll(async () => {
   heard = createServer((_req, res) => res.writeHead(200).end());
@@ -47,14 +52,21 @@ beforeAll(async () => {
     ...tuning(...QUIET_TUNING, "interval.heartbeat=3600000"),
     MARFA_HEARTBEAT_URL: `http://127.0.0.1:${String(address.port)}/receiver`,
   });
-  target = await bootFreshServer("restore-says-target", DISK_ONLY);
+  target = await bootFreshServer("restore-says-target", {
+    ...DISK_ONLY,
+    MARFA_BACKUP_PATH: backupFolder,
+    MARFA_BACKUP_INTERVAL_SECONDS: "0",
+  });
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await origin?.stop();
   await target?.stop();
   await new Promise<void>((resolve) => heard.close(() => resolve()));
+  rmSync(backupFolder, { recursive: true, force: true });
 }, FRESH_SERVER_TIMEOUT_MS);
+
+const ALL_LEVERS = ["strict_mode", "source_allowlist", "source_filter"];
 
 const localOf = (server: FreshServer) =>
   new MarfaClient({
@@ -72,7 +84,7 @@ const withSettings = (settings: Record<string, unknown>) =>
   );
 
 describe("what a restore says", () => {
-  it("restores the enforcement settings onto an instance with none, skips them on one that has them, and does not carry the name", async () => {
+  it("restores each enforcement setting an instance lacks, an empty block included, keeps each it has, and does not carry the name", async () => {
     const { operator } = clientsFor(origin);
     const set = await operator.patchConfig({
       name: "Origin shelf",
@@ -96,10 +108,14 @@ describe("what a restore says", () => {
     expect(keys).toContain("heartbeat_enabled");
 
     const owner = localOf(target);
+    const targetOperator = clientsFor(target).operator;
+    // An empty block is stored and holds no setting.
+    const empty = await targetOperator.patchConfig({ enforcement: {} });
+    expect(empty.status, JSON.stringify(empty.error)).toBe(200);
     const first = await owner.restoreArchive(exported.data);
     expect(first.status, JSON.stringify(first.error)).toBe(200);
-    expect(first.data.enforcement_added).toBe(1);
-    expect(first.data.enforcement_skipped).toBe(0);
+    expect(first.data.enforcement_added).toEqual(ALL_LEVERS);
+    expect(first.data.enforcement_skipped).toEqual([]);
     expect(first.data.settings_without_receiver).toEqual(["heartbeat_enabled"]);
     expect(first.data.not_restored.map((one) => one.kind)).toEqual([
       "sign_in",
@@ -128,11 +144,66 @@ describe("what a restore says", () => {
 
     const again = await owner.restoreArchive(exported.data);
     expect(again.status, JSON.stringify(again.error)).toBe(200);
-    expect(again.data.enforcement_added).toBe(0);
-    expect(again.data.enforcement_skipped).toBe(1);
+    expect(again.data.enforcement_added).toEqual([]);
+    expect(again.data.enforcement_skipped).toEqual(ALL_LEVERS);
+
+    const own = { types: ["core.task"] };
+    const partial = await targetOperator.patchConfig({
+      enforcement: { strict_mode: own },
+    });
+    expect(partial.status, JSON.stringify(partial.error)).toBe(200);
+    const merged = await owner.restoreArchive(exported.data);
+    expect(merged.status, JSON.stringify(merged.error)).toBe(200);
+    expect(merged.data.enforcement_added).toEqual([
+      "source_allowlist",
+      "source_filter",
+    ]);
+    expect(merged.data.enforcement_skipped).toEqual(["strict_mode"]);
+    const after = (await targetOperator.getConfig()).data as unknown as Record<
+      string,
+      unknown
+    >;
+    expect(after.enforcement).toEqual({ ...ENFORCEMENT, strict_mode: own });
   });
 
-  it("names the old instance's backup folder as safe to delete after a restore into another instance, and not after a restore into the same one", async () => {
+  it("leaves enforcement settings that do not read out of an export, and the restore names them", async () => {
+    const spoiled = await bootFreshServer("restore-says-unread", DISK_ONLY);
+    try {
+      const set = await clientsFor(spoiled).operator.patchConfig({
+        enforcement: ENFORCEMENT,
+      });
+      expect(set.status, JSON.stringify(set.error)).toBe(200);
+      // The witness: a row that reads travels.
+      const readable = await (await everythingClient(spoiled)).exportArchive();
+      expect(archiveManifest(readable.data).enforcement_count).toBe(1);
+      expect(archiveManifest(readable.data).unreadable).toBeUndefined();
+
+      await spoiled.restart(() => {
+        withInstanceDatabase(spoiled.sqlitePath, (db) => {
+          db.prepare("UPDATE settings SET value = ? WHERE key = ?").run(
+            "{ not levers",
+            "enforcement",
+          );
+        });
+      });
+      const exported = await (await everythingClient(spoiled)).exportArchive();
+      expect(exported.status, JSON.stringify(exported.error)).toBe(200);
+      const manifest = archiveManifest(exported.data);
+      expect(manifest.enforcement_count).toBe(0);
+      expect(manifest.unreadable).toEqual(["enforcement"]);
+
+      const restored = await localOf(target).restoreArchive(exported.data);
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      expect(restored.data.not_restored.at(-1)).toEqual({
+        kind: "enforcement",
+        message: expect.stringContaining("strict mode"),
+      });
+    } finally {
+      await spoiled.stop();
+    }
+  });
+
+  it("names the old instance's folders in the backup folder after a restore into another instance, never as safe to delete, and nothing after a restore into the same one", async () => {
     const exported = await (await everythingClient(origin)).exportArchive();
     expect(exported.status).toBe(200);
     const originId = archiveManifest(exported.data).instance_id as string;
@@ -142,8 +213,11 @@ describe("what a restore says", () => {
     expect(restored.status, JSON.stringify(restored.error)).toBe(200);
     expect(restored.data.previous_instance).toEqual({
       instance_id: originId,
-      safe_to_delete: [`backups/${originId}`, `files/${originId}`],
+      destination: "folder",
+      kept_by_previous_instance: [`backups/${originId}`, `files/${originId}`],
+      message: expect.stringContaining("no longer runs"),
     });
+    expect(JSON.stringify(restored.data)).not.toContain("safe");
 
     const own = await (await everythingClient(target)).exportArchive();
     const same = await localOf(target).restoreArchive(own.data);
@@ -170,7 +244,30 @@ describe("what a restore says", () => {
         expect(refused.error?.error.details?.errors).toEqual([
           { path: key, message: expect.any(String) },
         ]);
+        // Clearing the stored off exposes the default on.
+        const cleared = await operator.patchConfig({ [key]: null });
+        expect(cleared.status).toBe(400);
+        expect(cleared.error?.error.details?.errors).toEqual([
+          { path: key, message: expect.any(String) },
+        ]);
       }
+    } finally {
+      await bare.stop();
+    }
+  });
+
+  it("names the old instance and no place for it where the instance has no backup destination", async () => {
+    const bare = await bootFreshServer("restore-says-nowhere", DISK_ONLY);
+    try {
+      const exported = await (await everythingClient(origin)).exportArchive();
+      const named = await localOf(bare).restoreArchive(exported.data);
+      expect(named.status, JSON.stringify(named.error)).toBe(200);
+      expect(named.data.previous_instance).toEqual({
+        instance_id: archiveManifest(exported.data).instance_id,
+        destination: null,
+        kept_by_previous_instance: [],
+        message: expect.stringContaining("no longer runs"),
+      });
     } finally {
       await bare.stop();
     }

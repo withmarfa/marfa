@@ -11954,9 +11954,10 @@
               "connector_keys",
               "addresses",
               "name",
-              "logs"
+              "logs",
+              "enforcement"
             ],
-            "description": "What an archive never holds."
+            "description": "What the archive doesn't hold. `enforcement` appears only when the instance that wrote the archive couldn't read its enforcement settings."
           },
           "message": {
             "type": "string",
@@ -11967,7 +11968,7 @@
           "kind",
           "message"
         ],
-        "description": "One kind of thing an archive never holds, with what to do about it."
+        "description": "One kind of thing the archive doesn't hold, with what to do about it."
       },
       "PreviousInstance": {
         "type": "object",
@@ -11976,19 +11977,37 @@
             "type": "string",
             "description": "The ID of the instance that wrote the archive."
           },
-          "safe_to_delete": {
+          "destination": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "enum": [
+              "folder",
+              "bucket",
+              null
+            ],
+            "description": "Where this instance takes its backups: `folder` for a backup folder, `bucket` for an object store, or `null` when it has no backup destination."
+          },
+          "kept_by_previous_instance": {
             "type": "array",
             "items": {
               "type": "string"
             },
-            "description": "The folders that instance keeps its backups and file copies in, as paths inside a backup folder. Delete them once you are satisfied with this restore."
+            "description": "Its `backups/<id>` and `files/<id>` folders in a backup folder, or only `<prefix>/backups/<id>` in a bucket, whose `<prefix>/blobs/` is shared. Empty with none. Delete only once that instance no longer runs and nothing else restores from them."
+          },
+          "message": {
+            "type": "string",
+            "description": "A sentence naming that instance and what it keeps, and saying to delete it only once that instance no longer runs and nothing else restores from it."
           }
         },
         "required": [
           "instance_id",
-          "safe_to_delete"
+          "destination",
+          "kept_by_previous_instance",
+          "message"
         ],
-        "description": "The instance that wrote an archive, and the folders it keeps in a backup folder. Present when the archive was written by another instance than this one."
+        "description": "The instance that wrote an archive, and what it keeps in this instance's backup destination. Present when the archive was written by another instance than this one."
       }
     },
     "parameters": {},
@@ -55485,7 +55504,7 @@
         "description": "Restores an exported archive atomically and returns counts of written and skipped records. Other writes wait until it finishes. Requires the private local command.",
         "requestBody": {
           "required": true,
-          "description": "The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`. Only the build that wrote an archive is sure to read it.",
+          "description": "The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `files.ndjson.gz`, `instance.ndjson.gz`, `items.ndjson.gz`, `versions.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`, in that order. Only the build that wrote an archive is sure to read it.",
           "content": {
             "application/x-tar": {
               "schema": {
@@ -55620,12 +55639,28 @@
                       "description": "The reporting switches Marfa stored as on that send nothing, because no receiver is configured where Marfa runs: `heartbeat_enabled` and `error_reporting_enabled`."
                     },
                     "enforcement_added": {
-                      "type": "number",
-                      "description": "1 when Marfa stored the archive's enforcement settings (strict mode, the source allowlist and the source filter), for an instance that stored none, and 0 otherwise."
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "strict_mode",
+                          "source_allowlist",
+                          "source_filter"
+                        ]
+                      },
+                      "description": "The archive's enforcement settings Marfa stored, each one the instance didn't store."
                     },
                     "enforcement_skipped": {
-                      "type": "number",
-                      "description": "1 when the archive carried enforcement settings and Marfa skipped them because the instance already stores its own, and 0 otherwise."
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "strict_mode",
+                          "source_allowlist",
+                          "source_filter"
+                        ]
+                      },
+                      "description": "The archive's enforcement settings Marfa skipped, because the instance already stores each one or stores enforcement settings that don't read."
                     },
                     "connector_states_added": {
                       "type": "number",
@@ -55656,7 +55691,7 @@
                       "items": {
                         "$ref": "#/components/schemas/NotRestored"
                       },
-                      "description": "Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs."
+                      "description": "Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs. Then `enforcement` when the instance that wrote the archive couldn't read its enforcement settings, so the archive doesn't hold them."
                     },
                     "previous_instance": {
                       "$ref": "#/components/schemas/PreviousInstance"
@@ -56804,12 +56839,28 @@
                       "description": "The reporting switches Marfa stored as on that send nothing, because no receiver is configured where Marfa runs: `heartbeat_enabled` and `error_reporting_enabled`."
                     },
                     "enforcement_added": {
-                      "type": "number",
-                      "description": "1 when Marfa stored the archive's enforcement settings (strict mode, the source allowlist and the source filter), for an instance that stored none, and 0 otherwise."
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "strict_mode",
+                          "source_allowlist",
+                          "source_filter"
+                        ]
+                      },
+                      "description": "The archive's enforcement settings Marfa stored, each one the instance didn't store."
                     },
                     "enforcement_skipped": {
-                      "type": "number",
-                      "description": "1 when the archive carried enforcement settings and Marfa skipped them because the instance already stores its own, and 0 otherwise."
+                      "type": "array",
+                      "items": {
+                        "type": "string",
+                        "enum": [
+                          "strict_mode",
+                          "source_allowlist",
+                          "source_filter"
+                        ]
+                      },
+                      "description": "The archive's enforcement settings Marfa skipped, because the instance already stores each one or stores enforcement settings that don't read."
                     },
                     "connector_states_added": {
                       "type": "number",
@@ -56840,7 +56891,7 @@
                       "items": {
                         "$ref": "#/components/schemas/NotRestored"
                       },
-                      "description": "Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs."
+                      "description": "Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs. Then `enforcement` when the instance that wrote the archive couldn't read its enforcement settings, so the archive doesn't hold them."
                     },
                     "previous_instance": {
                       "$ref": "#/components/schemas/PreviousInstance"

@@ -2522,7 +2522,7 @@ If a configuration write would make the effective recent, daily and weekly versi
 
 **Reason:** validation includes the defaults exposed by clearing a stored setting. The receivers' addresses and credentials are start-only settings.
 
-**Tests:** `compliance/instance-config.test.ts › keeps live settings across restart, preserves omitted choices and clears to the environment`.
+**Tests:** `compliance/instance-config.test.ts › keeps live settings across restart, preserves omitted choices and clears to the environment`, `compliance/restore-says.test.ts › restores a reporting setting that is turned on where no receiver is set, names it, and still refuses turning it on again from off`.
 
 ### `instance/live-work`
 

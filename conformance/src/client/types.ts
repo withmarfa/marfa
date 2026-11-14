@@ -833,10 +833,15 @@ export interface RestoreArchiveResponse {
   entries_skipped: string[];
   line_kinds_skipped: string[];
   settings_without_receiver: string[];
-  enforcement_added: number;
-  enforcement_skipped: number;
+  enforcement_added: string[];
+  enforcement_skipped: string[];
   not_restored: { kind: string; message: string }[];
-  previous_instance?: { instance_id: string; safe_to_delete: string[] };
+  previous_instance?: {
+    instance_id: string;
+    destination: "folder" | "bucket" | null;
+    kept_by_previous_instance: string[];
+    message: string;
+  };
 }
 
 export interface PerfResult {

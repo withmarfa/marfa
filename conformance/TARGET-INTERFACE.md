@@ -134,6 +134,10 @@ stays because that thing is what it checks.
   release that narrows a bound, leaves one.
 - `compliance/health.test.ts`, "names a stored setting that no longer reads",
   writes one such `settings` row before a restart, for the same reason.
+- `compliance/restore-says.test.ts`, "leaves enforcement settings that do not
+  read out of an export, and the restore names them", writes the `settings`
+  table's `enforcement` row to a value that does not read before a restart.
+  `PUT /config` refuses such a value, and no fault damages a stored setting.
 - `compliance/settings-seed.test.ts`, "starts with a row the server has no
   setting for", writes a `settings` row for a setting the server does not
   have before a restart. No door stores a setting the server does not know.

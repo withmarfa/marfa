@@ -7307,22 +7307,29 @@ export interface components {
                 outcome: "created" | "replaced" | "deleted" | "unchanged";
             }[];
         };
-        /** @description One kind of thing an archive never holds, with what to do about it. */
+        /** @description One kind of thing the archive doesn't hold, with what to do about it. */
         NotRestored: {
             /**
-             * @description What an archive never holds.
+             * @description What the archive doesn't hold. `enforcement` appears only when the instance that wrote the archive couldn't read its enforcement settings.
              * @enum {string}
              */
-            kind: "sign_in" | "keys" | "apps" | "webhooks" | "inbound_endpoints" | "connector_keys" | "addresses" | "name" | "logs";
+            kind: "sign_in" | "keys" | "apps" | "webhooks" | "inbound_endpoints" | "connector_keys" | "addresses" | "name" | "logs" | "enforcement";
             /** @description A sentence saying that this kind is not restored and what to do about it. */
             message: string;
         };
-        /** @description The instance that wrote an archive, and the folders it keeps in a backup folder. Present when the archive was written by another instance than this one. */
+        /** @description The instance that wrote an archive, and what it keeps in this instance's backup destination. Present when the archive was written by another instance than this one. */
         PreviousInstance: {
             /** @description The ID of the instance that wrote the archive. */
             instance_id: string;
-            /** @description The folders that instance keeps its backups and file copies in, as paths inside a backup folder. Delete them once you are satisfied with this restore. */
-            safe_to_delete: string[];
+            /**
+             * @description Where this instance takes its backups: `folder` for a backup folder, `bucket` for an object store, or `null` when it has no backup destination.
+             * @enum {string|null}
+             */
+            destination: "folder" | "bucket" | null;
+            /** @description Its `backups/<id>` and `files/<id>` folders in a backup folder, or only `<prefix>/backups/<id>` in a bucket, whose `<prefix>/blobs/` is shared. Empty with none. Delete only once that instance no longer runs and nothing else restores from them. */
+            kept_by_previous_instance: string[];
+            /** @description A sentence naming that instance and what it keeps, and saying to delete it only once that instance no longer runs and nothing else restores from it. */
+            message: string;
         };
     };
     responses: never;
@@ -30664,7 +30671,7 @@ export interface operations {
             path?: never;
             cookie?: never;
         };
-        /** @description The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `instance.ndjson.gz`, `items.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`. Only the build that wrote an archive is sure to read it. */
+        /** @description The archive file, as `GET /export?format=archive` returned it, with its `manifest.json`, `files.ndjson.gz`, `instance.ndjson.gz`, `items.ndjson.gz`, `versions.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`, in that order. Only the build that wrote an archive is sure to read it. */
         requestBody: {
             content: {
                 "application/x-tar": Blob | ArrayBuffer | ArrayBufferView | ReadableStream<Uint8Array>;
@@ -30732,10 +30739,10 @@ export interface operations {
                         settings_dropped: string[];
                         /** @description The reporting switches Marfa stored as on that send nothing, because no receiver is configured where Marfa runs: `heartbeat_enabled` and `error_reporting_enabled`. */
                         settings_without_receiver: string[];
-                        /** @description 1 when Marfa stored the archive's enforcement settings (strict mode, the source allowlist and the source filter), for an instance that stored none, and 0 otherwise. */
-                        enforcement_added: number;
-                        /** @description 1 when the archive carried enforcement settings and Marfa skipped them because the instance already stores its own, and 0 otherwise. */
-                        enforcement_skipped: number;
+                        /** @description The archive's enforcement settings Marfa stored, each one the instance didn't store. */
+                        enforcement_added: ("strict_mode" | "source_allowlist" | "source_filter")[];
+                        /** @description The archive's enforcement settings Marfa skipped, because the instance already stores each one or stores enforcement settings that don't read. */
+                        enforcement_skipped: ("strict_mode" | "source_allowlist" | "source_filter")[];
                         /** @description How many connector state documents Marfa stored, for sources the instance held none for. */
                         connector_states_added: number;
                         /** @description How many connector state documents Marfa skipped because the instance already holds one for the source. */
@@ -30748,7 +30755,7 @@ export interface operations {
                         rows_imported: number;
                         /** @description How many table rows Marfa skipped because their item was counted as a duplicate. */
                         rows_skipped: number;
-                        /** @description Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs. */
+                        /** @description Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs. Then `enforcement` when the instance that wrote the archive couldn't read its enforcement settings, so the archive doesn't hold them. */
                         not_restored: components["schemas"]["NotRestored"][];
                         previous_instance?: components["schemas"]["PreviousInstance"];
                     };
@@ -31367,10 +31374,10 @@ export interface operations {
                         settings_dropped: string[];
                         /** @description The reporting switches Marfa stored as on that send nothing, because no receiver is configured where Marfa runs: `heartbeat_enabled` and `error_reporting_enabled`. */
                         settings_without_receiver: string[];
-                        /** @description 1 when Marfa stored the archive's enforcement settings (strict mode, the source allowlist and the source filter), for an instance that stored none, and 0 otherwise. */
-                        enforcement_added: number;
-                        /** @description 1 when the archive carried enforcement settings and Marfa skipped them because the instance already stores its own, and 0 otherwise. */
-                        enforcement_skipped: number;
+                        /** @description The archive's enforcement settings Marfa stored, each one the instance didn't store. */
+                        enforcement_added: ("strict_mode" | "source_allowlist" | "source_filter")[];
+                        /** @description The archive's enforcement settings Marfa skipped, because the instance already stores each one or stores enforcement settings that don't read. */
+                        enforcement_skipped: ("strict_mode" | "source_allowlist" | "source_filter")[];
                         /** @description How many connector state documents Marfa stored, for sources the instance held none for. */
                         connector_states_added: number;
                         /** @description How many connector state documents Marfa skipped because the instance already holds one for the source. */
@@ -31383,7 +31390,7 @@ export interface operations {
                         rows_imported: number;
                         /** @description How many table rows Marfa skipped because their item was counted as a duplicate. */
                         rows_skipped: number;
-                        /** @description Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs. */
+                        /** @description Each kind of thing an archive never holds, so the owner sets it up again on this instance: the owner's sign-in, keys, apps, webhooks, inbound endpoints, connector keys, the instance's addresses and name, and the logs. Then `enforcement` when the instance that wrote the archive couldn't read its enforcement settings, so the archive doesn't hold them. */
                         not_restored: components["schemas"]["NotRestored"][];
                         previous_instance?: components["schemas"]["PreviousInstance"];
                         /** @description The backup Marfa restored. */
