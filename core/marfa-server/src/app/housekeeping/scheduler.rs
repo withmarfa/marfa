@@ -10,6 +10,7 @@ use futures_util::FutureExt;
 use serde_json::json;
 use tokio::sync::watch;
 
+use super::super::clock::Stamp;
 use super::super::refusal::{Code, Refusal, Result};
 use super::super::{App, restore_running};
 use super::jobs::JOBS;
@@ -123,6 +124,7 @@ pub fn start(app: Arc<App>) {
             if app.db.writes_held().is_some() {
                 tracing::info!("Housekeeping waits until the restore ends");
                 tokio::select! {
+                    () = while_restoring(&app) => {}
                     () = app.db.writes_released() => {}
                     _ = stopping.wait_for(|stopping| *stopping) => {}
                 }
@@ -148,6 +150,72 @@ pub fn start(app: Arc<App>) {
             rest(&app, &mut stopping, &mut moves, left).await;
         }
     });
+}
+
+/// Runs the jobs that write nothing, such as the heartbeat, while a restore holds writes. It
+/// keeps their schedule in memory and records no run, since a record is a write; once the
+/// restore ends, the table's schedule takes them up again.
+async fn while_restoring(app: &Arc<App>) {
+    let rows = app.db.read(schedule::rows).await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "The housekeeping schedule could not be read during a restore");
+        Vec::new()
+    });
+    let now = app.clock.now_ms();
+    let mut due: Vec<(&'static Job, i64)> = JOBS
+        .iter()
+        .filter(|job| !job.statements && job.runs_here(app))
+        .map(|job| {
+            let at = rows
+                .iter()
+                .find(|row| row.name == job.name)
+                .and_then(|row| Stamp::parsed(&row.next_run_at))
+                .map_or(now, Stamp::ms);
+            (job, at)
+        })
+        .collect();
+    loop {
+        let now = app.clock.now_ms();
+        for (job, at) in &mut due {
+            if *at > now {
+                continue;
+            }
+            let run = Run {
+                job: job.name,
+                given_up: Arc::new(AtomicBool::new(false)),
+                stopping: app.housekeeping.stopping.subscribe(),
+                kept_unread: Arc::new(AtomicI64::new(0)),
+            };
+            let given_up = run.given_up.clone();
+            let deadline = app.faults.deadline(job.name).unwrap_or(job.deadline);
+            let body = tokio::spawn(perform(app.clone(), job, run));
+            match tokio::time::timeout(deadline, body).await {
+                Ok(Ok(Ok(_))) => {}
+                Ok(Ok(Err(failed))) => {
+                    tracing::warn!(job = job.name, error = %failed.message, "A housekeeping run during a restore failed");
+                }
+                Ok(Err(_)) => {
+                    tracing::warn!(
+                        job = job.name,
+                        "A housekeeping run's task during a restore ended early"
+                    );
+                }
+                Err(_) => {
+                    given_up.store(true, Ordering::Release);
+                    tracing::warn!(
+                        job = job.name,
+                        "A housekeeping run during a restore did not finish in time"
+                    );
+                }
+            }
+            let interval = i64::try_from(job.interval.ms(job.name, app)).unwrap_or(i64::MAX);
+            *at = app.clock.now_ms().saturating_add(interval);
+        }
+        let Some(next) = due.iter().map(|(_, at)| *at).min() else {
+            return std::future::pending().await;
+        };
+        let left = u64::try_from(next.saturating_sub(app.clock.now_ms())).unwrap_or(0);
+        tokio::time::sleep(Duration::from_millis(left)).await;
+    }
 }
 
 /// Polls `future` so that a panic in it is caught on the thread the panic hook
