@@ -2350,6 +2350,14 @@ When the private local process sends `confirm_sign_in_address_change` set to `tr
 
 **Tests:** `compliance/instance-addresses.test.ts › ends every browser session, so a session token from before the move opens nothing under either cookie name`.
 
+### `instance/sign-in-address-forgets-devices`
+
+When the private local process confirms a move of the sign-in address, the server MUST count each later password sign-in that carries a device cookie set before the move as one with no device cookie.
+
+**Reason:** a device cookie is signed for the owner's credentials as they stand, and the move renews them with the browser sessions it ends, so no browser stays known.
+
+**Tests:** `compliance/sign-in-limits.test.ts › counts a device cookie set before a confirmed move of the sign-in address as no device cookie`.
+
 ### `instance/sign-in-needs-address`
 
 While no sign-in address is set, if a caller sends `POST /auth/sign-in` over a connection whose own address is not on the loopback, or names through a trusted proxy an address that is not on the loopback, then the server MUST answer `403 forbidden` with a message that says how to set the sign-in address.

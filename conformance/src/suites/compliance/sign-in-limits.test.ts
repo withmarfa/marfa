@@ -387,6 +387,39 @@ describe("counting only wrong passwords", () => {
   }, 240_000);
 });
 
+describe("a confirmed move of the sign-in address", () => {
+  it("counts a device cookie set before a confirmed move of the sign-in address as no device cookie", async () => {
+    // Its own server: the move changes the address every later sign-in names.
+    const own = await bootFreshServer("sign-in-limits-address-move", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    });
+    try {
+      const before = await deviceCookie(own, "172.18.0.1");
+      const moved = await controlRequest(own.controlSocket, "/config", {
+        method: "PATCH",
+        body: {
+          sign_in_address: "https://moved.example",
+          confirm_sign_in_address_change: true,
+        },
+      });
+      expect(moved.status, JSON.stringify(moved.body)).toBe(200);
+      // An https address reads its device cookie under another name.
+      const old = `__Host-marfa_device=${before.slice(before.indexOf("=") + 1)}`;
+      const after = await deviceCookie(own, "172.18.0.2");
+      await fillAccount(own, 3);
+      expect(
+        (await signIn(own, OWNER.password, "172.18.0.3", old)).status,
+      ).toBe(429);
+      // The witness: a cookie set after the move is still known.
+      expect(
+        (await signIn(own, OWNER.password, "172.18.0.4", after)).status,
+      ).toBe(200);
+    } finally {
+      await own.stop();
+    }
+  }, 240_000);
+});
+
 describe("device code lookups", () => {
   it("hold every address together to a hundred in fifteen minutes, counting none an address made past its own limit", async () => {
     for (let i = 0; i < 15; i++) {
