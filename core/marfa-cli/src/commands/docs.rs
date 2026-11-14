@@ -236,9 +236,7 @@ impl Site {
         };
         let bytes = body
             .with_config()
-            // The reader refuses when the limit is spent before the end, so a
-            // body of exactly the limit needs one byte more than it.
-            .limit(self.body_limit + 1)
+            .limit(self.body_limit)
             .read_to_vec()
             .map_err(|error| match error {
                 ureq::Error::BodyExceedsLimit(_) => {
