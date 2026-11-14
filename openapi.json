@@ -7793,10 +7793,15 @@
             "minimum": 0,
             "maximum": 1,
             "description": "A removal waits to be confirmed only if it takes more than this fraction of the folder's files. Absent means 0.25."
+          },
+          "ceiling": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "A removal that takes more than this many files waits to be confirmed, whatever share of the folder's files they are. Absent means 100."
           }
         },
         "additionalProperties": false,
-        "description": "A removal waits to be confirmed when it takes more than `files` files and more than `fraction` of the folder's files."
+        "description": "A removal waits to be confirmed when it takes more than `files` files and more than `fraction` of the folder's files, or more than `ceiling` files. Each scan or pull is judged on the files it removes."
       },
       "FolderAdditionThreshold": {
         "type": "object",

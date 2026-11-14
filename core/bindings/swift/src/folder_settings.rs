@@ -114,6 +114,9 @@ pub struct RemovalThreshold {
     /// `None` is 0.25.
     #[uniffi(default = None)]
     pub fraction: Option<f64>,
+    /// More files than this wait whatever their share. `None` is 100.
+    #[uniffi(default = None)]
+    pub ceiling: Option<u64>,
 }
 
 /// How large a drop of new files must be to wait for confirmation.
@@ -303,6 +306,7 @@ fn settings(settings: Settings) -> Result<FolderSettings, MarfaError> {
         removal_threshold: RemovalThreshold {
             files: removal_threshold.files,
             fraction: removal_threshold.fraction,
+            ceiling: removal_threshold.ceiling,
         },
         full_pass_interval_seconds,
         addition_threshold: AdditionThreshold {
@@ -358,6 +362,7 @@ fn core_threshold(threshold: RemovalThreshold) -> CoreRemovalThreshold {
     CoreRemovalThreshold {
         files: threshold.files,
         fraction: threshold.fraction,
+        ceiling: threshold.ceiling,
     }
 }
 
@@ -447,7 +452,7 @@ mod tests {
             "include": ["*.md"],
             "ignore": ["drafts/"],
             "first_placement": { "core.note": "Notes" },
-            "removal_threshold": { "files": 4, "fraction": 0.5 },
+            "removal_threshold": { "files": 4, "fraction": 0.5, "ceiling": 40 },
             "full_pass_interval_seconds": 3600,
             "addition_threshold": { "files": 80, "fraction": 0.5 },
             "outside_query": "hold",

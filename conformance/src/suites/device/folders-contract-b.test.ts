@@ -231,6 +231,48 @@ it.each([
   },
 );
 
+it("pauses a pass that removes more than 100 files whatever their share, judging each pass alone", async () => {
+  const many = Array.from({ length: 1000 }, (_, n) => ({
+    item: {
+      id: `01a00000-0000-7000-8000-0000000${String(n).padStart(5, "0")}`,
+      version: 1,
+      properties: { title: `Many ${String(n)}`, body: "body\n" },
+    },
+  }));
+  harness = await folderHarness("contract-b-ceiling", {
+    items: { "core.note": many },
+  });
+  scriptFolderWrites(harness);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  const deletes = () =>
+    harness!.server.requests.filter(
+      (request) =>
+        request.method === "DELETE" && /^\/items\/[^/]+$/.test(request.pathname),
+    ).length;
+  const grace = () => new Promise((resolve) => setTimeout(resolve, 6_000));
+  const remove = (from: number, count: number) => {
+    for (let n = from; n < from + count; n += 1)
+      rmSync(join(harness!.dir, `Many ${String(n)}.md`));
+  };
+  // Two passes of 100 each: neither is past the ceiling, and the second is
+  // not counted with the first, whose deletions were sent.
+  for (const from of [0, 100]) {
+    remove(from, 100);
+    const scanned = await harness.folder.scan();
+    expect(scanned.ok && scanned.value.paused).toBe(0);
+    await grace();
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(deletes()).toBe(from + 100);
+  }
+  remove(200, 101);
+  const scanned = await harness.folder.scan();
+  expect(scanned.ok && scanned.value.paused).toBe(101);
+  await grace();
+  const pushed = await harness.folder.push();
+  expect(pushed.ok && pushed.value.scan.paused).toBe(101);
+  expect(deletes(), "a removal past the ceiling was sent").toBe(200);
+});
+
 it("reads status from disk and the held copy without contacting the server", async () => {
   harness = await folderHarness("contract-b-status-local", {
     items: { "core.note": [row(0)] },

@@ -100,6 +100,8 @@ pub struct RemovalThreshold {
     pub files: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fraction: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceiling: Option<u64>,
 }
 
 impl RemovalThreshold {
@@ -111,8 +113,13 @@ impl RemovalThreshold {
         self.fraction.unwrap_or(0.25)
     }
 
+    /// The most files one pass removes without asking, whatever their share.
+    pub fn ceiling(&self) -> u64 {
+        self.ceiling.unwrap_or(100)
+    }
+
     pub fn exceeded(&self, count: usize, of: usize) -> bool {
-        past(self.files(), self.fraction(), count, of)
+        past(self.files(), self.fraction(), count, of) || count as u64 > self.ceiling()
     }
 }
 
@@ -256,10 +263,12 @@ impl Settings {
                 removal: marfa_rules::folder::Threshold {
                     files: count(self.removal_threshold.files),
                     fraction: self.removal_threshold.fraction,
+                    ceiling: count(self.removal_threshold.ceiling),
                 },
                 addition: marfa_rules::folder::Threshold {
                     files: count(self.addition_threshold.files),
                     fraction: self.addition_threshold.fraction,
+                    ceiling: None,
                 },
                 full_pass_interval_seconds: count(self.full_pass_interval_seconds),
             },
@@ -705,6 +714,20 @@ mod tests {
             .removal_threshold;
         assert!(set.exceeded(3, 4));
         assert!(!set.exceeded(2, 4));
+    }
+
+    #[test]
+    fn a_removal_past_its_ceiling_waits_whatever_its_share() {
+        let default = RemovalThreshold::default();
+        assert!(!default.exceeded(100, 1000), "a tenth, and not past 100");
+        assert!(default.exceeded(101, 1000));
+        let set = read(json!({ "removal_threshold": { "fraction": 1.0, "ceiling": 3 } }))
+            .unwrap()
+            .removal_threshold;
+        assert!(!set.exceeded(3, 4));
+        assert!(set.exceeded(4, 4));
+        assert!(read(json!({ "removal_threshold": { "ceiling": -1 } })).is_err());
+        assert!(read(json!({ "addition_threshold": { "ceiling": 1 } })).is_err());
     }
 
     #[test]

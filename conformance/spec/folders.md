@@ -6748,9 +6748,23 @@ If an unmatched file is missing from the directory or has changed when its remov
 
 ### `folders/removal-threshold`
 
-When a folder assesses a large removal, a device MUST pause it only when its file count exceeds both `removal_threshold.files` and `removal_threshold.fraction` of bound files, defaulting to 10 and 0.25.
+When a folder assesses a large removal, a device MUST pause it only when its file count exceeds both `removal_threshold.files` and `removal_threshold.fraction` of bound files, defaulting to 10 and 0.25, or exceeds `removal_threshold.ceiling`, defaulting to 100.
 
-**Tests:** `device/folders.test.ts › pauses a large removal made on disk`, `device/folders.test.ts › follows the settings' removal threshold`, `device/folders-contract-b.test.ts › pauses only past both default removal thresholds ($missing of $total)`.
+**Tests:** `device/folders.test.ts › pauses a large removal made on disk`, `device/folders.test.ts › follows the settings' removal threshold`, `device/folders-contract-b.test.ts › pauses only past both default removal thresholds ($missing of $total)`, `› pauses a pass that removes more than 100 files whatever their share, judging each pass alone`.
+
+### `folders/removal-ceiling`
+
+When a folder assesses a large removal whose file count exceeds `removal_threshold.ceiling`, defaulting to 100, a device MUST pause it, whatever share of bound files it is.
+
+**Reason:** in a large folder a quarter is hundreds of files, too many to lose without being asked.
+
+**Tests:** `device/folders-contract-b.test.ts › pauses a pass that removes more than 100 files whatever their share, judging each pass alone`.
+
+### `folders/removal-judged-per-pass`
+
+When a folder assesses a large removal, a device MUST NOT count the files whose deletions an earlier pass sent.
+
+**Tests:** `device/folders-contract-b.test.ts › pauses a pass that removes more than 100 files whatever their share, judging each pass alone`.
 
 ### `folders/disk-removal-paused`
 
