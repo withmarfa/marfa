@@ -29,19 +29,22 @@ const DAYS = [
   "MARFA_INBOUND_PENDING_RETENTION_DAYS",
   "MARFA_REVOKED_GRANT_RETENTION_DAYS",
   "MARFA_GRANT_INACTIVITY_DAYS",
-  "MARFA_DCR_CLIENT_RETENTION_DAYS",
 ] as const;
-const HOURS = "MARFA_EVENT_LOG_RETENTION_HOURS";
+/** Counted in hours, 0 through 876000. */
+const HOURS = [
+  "MARFA_EVENT_LOG_RETENTION_HOURS",
+  "MARFA_DCR_CLIENT_RETENTION_HOURS",
+] as const;
 
 const MAX_DAYS = 36_500;
 const MAX_HOURS = 876_000;
 
-const ALL = [...DAYS, HOURS];
+const ALL = [...DAYS, ...HOURS];
 
 /** The largest value each setting accepts. */
 const WIDEST: Record<string, string> = {
   ...Object.fromEntries(DAYS.map((name) => [name, String(MAX_DAYS)])),
-  [HOURS]: String(MAX_HOURS),
+  ...Object.fromEntries(HOURS.map((name) => [name, String(MAX_HOURS)])),
 };
 
 /** Each setting's way outside its range: past the largest value, below 0,
@@ -55,12 +58,12 @@ const OUTSIDE = (max: number): string[] => [
 
 const RANGE: Record<string, string> = {
   ...Object.fromEntries(DAYS.map((name) => [name, "from 0 to 36500"])),
-  [HOURS]: "from 0 to 876000",
+  ...Object.fromEntries(HOURS.map((name) => [name, "from 0 to 876000"])),
 };
 
 /** The largest value of each setting, to put one step past. */
 const LARGEST = (name: string): number =>
-  name === HOURS ? MAX_HOURS : MAX_DAYS;
+  (HOURS as readonly string[]).includes(name) ? MAX_HOURS : MAX_DAYS;
 
 /**
  * Four boots, each with every one of the eight settings outside its range at
@@ -110,8 +113,8 @@ describe("a retention setting outside its range", () => {
     expectRefused(DAYS);
   });
 
-  it("refuses MARFA_EVENT_LOG_RETENTION_HOURS outside 0 through 876000, and names the setting", () => {
-    expectRefused([HOURS]);
+  it("refuses a value of the hour settings that is not a whole number from 0 through 876000, and names the setting", () => {
+    expectRefused(HOURS);
   });
 });
 

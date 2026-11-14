@@ -21,13 +21,15 @@ let account: FreshServer;
 let every: FreshServer;
 let timed: FreshServer;
 let known: FreshServer;
+let noted: FreshServer;
+let uncertain: FreshServer;
 
 const DAY = 24 * 60 * 60 * 1000;
 
 const CLIENT_HEADER = "x-conformance-client";
 
 beforeAll(async () => {
-  [shared, account, every, timed, known] = await Promise.all([
+  [shared, account, every, timed, known, noted, uncertain] = await Promise.all([
     bootFreshServer("sign-in-limits", {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
       MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
@@ -48,8 +50,16 @@ beforeAll(async () => {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
       MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     }),
+    bootFreshServer("sign-in-limits-noted", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+    }),
+    bootFreshServer("sign-in-limits-uncertain", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+    }),
   ]);
-}, 5 * FRESH_SERVER_TIMEOUT_MS);
+}, 7 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await Promise.allSettled([
@@ -58,8 +68,10 @@ afterAll(async () => {
     every.stop(),
     timed.stop(),
     known.stop(),
+    noted.stop(),
+    uncertain.stop(),
   ]);
-}, 5 * FRESH_SERVER_TIMEOUT_MS);
+}, 7 * FRESH_SERVER_TIMEOUT_MS);
 
 async function signIn(
   server: FreshServer,
@@ -101,6 +113,30 @@ async function deviceCookie(
   const device = setCookie(response, "marfa_device");
   expect(device, "the sign-in set no device cookie").toBeDefined();
   return device!;
+}
+
+/** The refused sign-ins the audit log holds with `reason`, newest first. */
+async function refusals(
+  server: FreshServer,
+  reason: string,
+): Promise<{ details?: { reason?: string; unrecorded_before?: number } }[]> {
+  const response = await fetch(
+    `${server.apiUrl}/audit?${new URLSearchParams({ action: "auth.sign_in.failed", limit: "200" })}`,
+    { headers: { authorization: `Bearer ${server.managementKey}` } },
+  );
+  expect(response.status).toBe(200);
+  const { data } = (await response.json()) as {
+    data: { details?: { reason?: string; unrecorded_before?: number } }[];
+  };
+  return data.filter((entry) => entry.details?.reason === reason);
+}
+
+/** How many refused sign-ins the audit log holds with `reason`. */
+async function refusalsLogged(
+  server: FreshServer,
+  reason: string,
+): Promise<number> {
+  return (await refusals(server, reason)).length;
 }
 
 /** Spends the window every address shares with ten wrong passwords from each of ten addresses. */
@@ -285,6 +321,85 @@ describe("password sign-in", () => {
     expect(
       (await signIn(every, OWNER.password, "203.0.113.52", device)).status,
     ).toBe(200);
+  }, 120_000);
+
+  it("records the first sign-in a filled limit refuses in fifteen minutes, and no other, from any number of addresses", async () => {
+    // The witness: each wrong password that fills the window is recorded,
+    // and so is the first refusal, which shows the window spent.
+    await fillAccount(noted, 7);
+    expect(await refusalsLogged(noted, "invalid_credentials")).toBe(100);
+    expect(await refusalsLogged(noted, "too_many_attempts")).toBe(1);
+
+    for (let n = 1; n <= 50; n++) {
+      const refused = await signIn(
+        noted,
+        OWNER.password,
+        `198.51.100.${String(n)}`,
+      );
+      expect(refused.status).toBe(429);
+    }
+    expect(await refusalsLogged(noted, "too_many_attempts")).toBe(1);
+
+    // The shared window runs an hour, so it still refuses, and a new quarter
+    // hour records its first refusal.
+    await noted.advanceClock(15 * 60 * 1000);
+    for (let n = 1; n <= 10; n++) {
+      const refused = await signIn(
+        noted,
+        "not the password",
+        `203.0.113.${String(n)}`,
+      );
+      expect(refused.status).toBe(429);
+    }
+    expect(await refusalsLogged(noted, "too_many_attempts")).toBe(2);
+    expect(await refusalsLogged(noted, "invalid_credentials")).toBe(100);
+  }, 120_000);
+
+  it("records the next refused sign-in when the record of the one before could not be written", async () => {
+    // A new quarter hour; the shared window the case before filled still refuses.
+    await noted.advanceClock(15 * 60 * 1000);
+    const before = await refusalsLogged(noted, "too_many_attempts");
+    await noted.setFault("fail:lock=1");
+    const unrecorded = await signIn(noted, OWNER.password, "192.0.2.61");
+    expect(unrecorded.status).toBe(503);
+    expect(await refusalsLogged(noted, "too_many_attempts")).toBe(before);
+    const refused = await signIn(noted, OWNER.password, "192.0.2.62");
+    expect(refused.status).toBe(429);
+    const held = await refusals(noted, "too_many_attempts");
+    expect(held).toHaveLength(before + 1);
+    // Nine omissions from the previous case, plus the failed write.
+    expect(held[0]?.details?.unrecorded_before).toBe(10);
+  }, 120_000);
+
+  it("treats the record of a refused sign-in whose write may have committed as written, and writes none for fifteen minutes after it", async () => {
+    await fillAccount(uncertain, 7);
+    await uncertain.advanceClock(15 * 60 * 1000);
+    expect(await refusalsLogged(uncertain, "too_many_attempts")).toBe(1);
+    await uncertain.setFault("fail:commit=auth.sign_in.failed");
+    expect((await signIn(uncertain, OWNER.password, "192.0.2.71")).status).toBe(
+      429,
+    );
+    const failed = (await uncertain.faults()).find(
+      (fault) => fault.name === "fail:commit",
+    );
+    // The witness that this refusal's record was written and its commit failed.
+    expect(failed?.fired).toBe(1);
+    for (let n = 72; n <= 76; n++) {
+      expect(
+        (await signIn(uncertain, OWNER.password, `192.0.2.${String(n)}`))
+          .status,
+      ).toBe(429);
+    }
+    expect(await refusalsLogged(uncertain, "too_many_attempts")).toBe(1);
+
+    await uncertain.advanceClock(15 * 60 * 1000);
+    expect((await signIn(uncertain, OWNER.password, "192.0.2.77")).status).toBe(
+      429,
+    );
+    const held = await refusals(uncertain, "too_many_attempts");
+    expect(held).toHaveLength(2);
+    // The five after it, and not the one whose commit could not be told.
+    expect(held[0]?.details?.unrecorded_before).toBe(5);
   }, 120_000);
 });
 

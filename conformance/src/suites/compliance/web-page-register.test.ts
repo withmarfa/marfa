@@ -5,7 +5,7 @@ import {
   type FreshServer,
 } from "../../utils/fresh-server.js";
 import {
-  DAY_MS,
+  HOUR_MS,
   MINUTE_MS,
   QUIET_SCHEDULE,
   quiet,
@@ -282,7 +282,7 @@ describe("registrations nobody approves", () => {
     const offered = "https://offered.web-page-register.test";
     // What earlier cases registered and nobody approved is idle by now, and the
     // sweep below is to remove the one registration this case leaves idle.
-    await server.advanceClock(2 * DAY_MS);
+    await server.advanceClock(2 * HOUR_MS);
     expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
     const idleId = await registeredClient(idle);
     const approvedId = await registeredClient(approved);
@@ -303,8 +303,8 @@ describe("registrations nobody approves", () => {
     });
     expect(ended.status).toBe(204);
 
-    // Past the retention, a day.
-    await server.advanceClock(2 * DAY_MS);
+    // Past the retention, an hour.
+    await server.advanceClock(2 * HOUR_MS);
     // The owner opens the approval for one of them after it aged.
     const consent = await authorizeLandsAt(offeredId, offered);
     expect(consent?.pathname).toBe("/auth/authorize");
@@ -344,9 +344,9 @@ describe("registrations nobody approves", () => {
     const { client_id: clientId } = (await registered.json()) as {
       client_id: string;
     };
-    // The code lives ten minutes and the retention is a day, so the code is
-    // asked for just short of the day, and the day passes while it stands.
-    await server.advanceClock(DAY_MS - 5 * MINUTE_MS);
+    // The code lives ten minutes and the retention is an hour, so the code is
+    // asked for just short of the hour, and the hour passes while it stands.
+    await server.advanceClock(HOUR_MS - 5 * MINUTE_MS);
     const code = await fetch(`${server.apiUrl}/auth/device/code`, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -380,7 +380,8 @@ describe("the size of a registration", () => {
       grant_types: ["authorization_code"],
       response_types: ["code"],
       token_endpoint_auth_method: "none",
-      software_version: "x".repeat(padding),
+      // A member the server ignores, so no bound on a stored value applies.
+      padding: "x".repeat(padding),
     });
   const register = (text: string) =>
     fetch(`${server.apiUrl}/auth/oauth2/register`, {
@@ -389,14 +390,14 @@ describe("the size of a registration", () => {
       body: text,
     });
 
-  it("refuses a registration over 32768 bytes, and takes one just under it", async () => {
-    const under = body(1, 32_000);
-    expect(Buffer.byteLength(under)).toBeLessThanOrEqual(32_768);
+  it("refuses a registration over 8192 bytes, and takes one just under it", async () => {
+    const under = body(1, 7_800);
+    expect(Buffer.byteLength(under)).toBeLessThanOrEqual(8_192);
     const taken = await register(under);
     await taken.body?.cancel();
     expect(taken.status).toBe(201);
-    const over = body(1, 33_000);
-    expect(Buffer.byteLength(over)).toBeGreaterThan(32_768);
+    const over = body(1, 8_000);
+    expect(Buffer.byteLength(over)).toBeGreaterThan(8_192);
     const refused = await register(over);
     expect(refused.status).toBe(413);
     expect(
@@ -418,5 +419,62 @@ describe("the size of a registration", () => {
     };
     expect(answer.error).toBe("invalid_redirect_uri");
     expect(answer.error_description).toContain("10");
+  });
+
+  it("refuses each registered value past its bound with a description that names it, and takes one at the bound", async () => {
+    const base = {
+      client_name: "Bounded Page",
+      redirect_uris: ["https://bounded.web-page-register.test/callback"],
+      grant_types: ["authorization_code"],
+      response_types: ["code"],
+      token_endpoint_auth_method: "none",
+    };
+    const uri = (length: number) => {
+      const head = "https://bounded.web-page-register.test/";
+      return head + "a".repeat(length - head.length);
+    };
+    // Characters, not bytes: each "é" is two bytes.
+    const text = (length: number) => "é".repeat(length);
+    const sent = async (metadata: Record<string, unknown>) => {
+      const response = await register(JSON.stringify({ ...base, ...metadata }));
+      const answer = (await response.json()) as {
+        error?: string;
+        error_description?: string;
+      };
+      return { status: response.status, ...answer };
+    };
+    const bounds: [string, number, (length: number) => string][] = [
+      ["client_name", 100, text],
+      ["software_id", 100, text],
+      ["software_version", 100, text],
+      ["client_uri", 512, uri],
+      ["logo_uri", 512, uri],
+      ["tos_uri", 512, uri],
+      ["policy_uri", 512, uri],
+      ["scope", 1024, (length) => "s".repeat(length)],
+    ];
+    for (const [member, most, value] of bounds) {
+      expect((await sent({ [member]: value(most) })).status, member).toBe(201);
+      const over = await sent({ [member]: value(most + 1) });
+      expect(over.status, member).toBe(400);
+      expect(over.error, member).toBe("invalid_client_metadata");
+      expect(over.error_description, member).toContain(member);
+    }
+
+    const contact = "c".repeat(254);
+    const fiveContacts = Array<string>(5).fill(contact);
+    expect((await sent({ contacts: fiveContacts })).status).toBe(201);
+    for (const contacts of [[...fiveContacts, contact], ["c".repeat(255)]]) {
+      const over = await sent({ contacts });
+      expect(over.status).toBe(400);
+      expect(over.error).toBe("invalid_client_metadata");
+      expect(over.error_description).toContain("contact");
+    }
+
+    expect((await sent({ redirect_uris: [uri(256)] })).status).toBe(201);
+    const long = await sent({ redirect_uris: [uri(257)] });
+    expect(long.status).toBe(400);
+    expect(long.error).toBe("invalid_redirect_uri");
+    expect(long.error_description).toContain("redirect URI");
   });
 });

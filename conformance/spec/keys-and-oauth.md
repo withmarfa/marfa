@@ -1375,11 +1375,11 @@ If a registration names a redirect URI that does not parse, then the server MUST
 
 ### `keys-and-oauth/register-body-cap`
 
-If a body sent to `POST /auth/oauth2/register` is larger than 32768 bytes, then the server MUST answer `413 request_too_large`.
+If a body sent to `POST /auth/oauth2/register` is larger than 8192 bytes, then the server MUST answer `413 request_too_large`.
 
-**Reason:** Registration takes no credential and answers every origin, and what it stores lives until the reaper removes it, so one request is bounded well below the general cap. Marfa's own clients register in about 200 bytes.
+**Reason:** Registration takes no credential and answers every origin. Every value a registered client keeps is a value its body carries, so the body cap bounds the metadata one client holds to 8192 bytes. The bounds on the values themselves add up to 7202 characters, so a registration at every bound still fits. Marfa's own clients register in about 200 bytes.
 
-**Tests:** `compliance/web-page-register.test.ts › refuses a registration over 32768 bytes, and takes one just under it`.
+**Tests:** `compliance/web-page-register.test.ts › refuses a registration over 8192 bytes, and takes one just under it`.
 
 ### `keys-and-oauth/register-redirect-limit`
 
@@ -1388,6 +1388,40 @@ If a registration at `POST /auth/oauth2/register` names more than 10 redirect UR
 **Reason:** The consent screen names every origin a client's redirect URIs span, and a web page or hosted assistant registers one or two.
 
 **Tests:** `compliance/web-page-register.test.ts › refuses a registration naming more than 10 redirect URIs, and takes one naming 10`.
+
+### `keys-and-oauth/register-redirect-uri-bound`
+
+If a registration at `POST /auth/oauth2/register` names a redirect URI of more than 256 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_redirect_uri`.
+
+**Reason:** Registration takes no credential, and each value it stores is kept and shown on the consent screen, so each has a bound of its own.
+
+**Tests:** `compliance/web-page-register.test.ts › refuses each registered value past its bound with a description that names it, and takes one at the bound`.
+
+### `keys-and-oauth/register-name-bound`
+
+If a registration at `POST /auth/oauth2/register` sets `client_name`, `software_id` or `software_version` to more than 100 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata` and whose `error_description` names the member.
+
+**Reason:** Registration takes no credential, and the audit log keeps the name for as long as it keeps the registration's record.
+
+**Tests:** `compliance/web-page-register.test.ts › refuses each registered value past its bound with a description that names it, and takes one at the bound`.
+
+### `keys-and-oauth/register-uri-bound`
+
+If a registration at `POST /auth/oauth2/register` sets `client_uri`, `logo_uri`, `tos_uri` or `policy_uri` to more than 512 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata` and whose `error_description` names the member.
+
+**Tests:** `compliance/web-page-register.test.ts › refuses each registered value past its bound with a description that names it, and takes one at the bound`.
+
+### `keys-and-oauth/register-scope-bound`
+
+If a registration at `POST /auth/oauth2/register` sets `scope` to more than 1024 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata` and whose `error_description` names `scope`.
+
+**Tests:** `compliance/web-page-register.test.ts › refuses each registered value past its bound with a description that names it, and takes one at the bound`.
+
+### `keys-and-oauth/register-contacts-bound`
+
+If a registration at `POST /auth/oauth2/register` names more than 5 `contacts`, or a contact of more than 254 characters, then the server MUST answer `400` with an RFC 7591 error object whose `error` is `invalid_client_metadata`.
+
+**Tests:** `compliance/web-page-register.test.ts › refuses each registered value past its bound with a description that names it, and takes one at the bound`.
 
 ### `keys-and-oauth/register-session-ignored`
 
@@ -1399,11 +1433,19 @@ When a registration at `POST /auth/oauth2/register` carries the owner's browser 
 
 ### `keys-and-oauth/register-idle-removed`
 
-When the `credential-cleanup` job runs, the server MUST remove each registered client that no grant names, that holds no access or refresh token, and that was neither registered nor offered on the consent screen or the device approval page within `dcr_client_retention_days`.
+When the `credential-cleanup` job runs, the server MUST remove each registered client that no grant names, that holds no access or refresh token, and that was neither registered nor offered on the consent screen or the device approval page within `dcr_client_retention_hours`.
 
-**Reason:** Registration takes no credential and answers every origin, so any page the owner visits can add registrations; a short retention bounds what is left behind without a cap that a page could fill to block real registrations.
+**Reason:** Registration takes no credential and answers every origin, so any page the owner visits can add registrations. `keys-and-oauth/register-unoffered-bound` holds how many are kept at once, and this retention how long each is kept: until the first run of the job that reaches it after it has been idle for the retention. Each run that removes clients writes one `auth.clients.purged` audit record for each batch of up to 200 it removes.
 
 **Tests:** `compliance/web-page-register.test.ts › removes a registration nobody approved once it is idle past the retention, and keeps an approved, a revoked and an offered one`, `compliance/oauth-refusals.test.ts › answers 400 invalid_client for a pending code whose client is no longer registered`.
+
+### `keys-and-oauth/register-unoffered-bound`
+
+When the server stores a client from a registration or a client ID metadata document while it holds 1000 other clients that no grant names, that hold no access or refresh token, and that neither the consent screen nor the device approval page has offered, the server MUST, in the same write, remove the one of those 1000 it stored first.
+
+**Reason:** A registration or a metadata document takes no credential, and the limit for one address (`keys-and-oauth/register-address-limit`) does not bound what many addresses send. Refusing registrations past a count for every address together would also refuse the owner's own apps, so the oldest client nobody has looked at makes room instead, and a client the owner was offered is never removed this way. The server holds at most 1000 such clients, each with at most 8192 bytes of metadata (`keys-and-oauth/register-body-cap`), or what a metadata document of at most 5120 bytes names.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › keeps at most 1000 clients no approval page has offered, removing the oldest, and keeps an offered one`.
 
 ### `keys-and-oauth/register-granted-kept`
 
@@ -1415,7 +1457,7 @@ While a grant names a registered client, live or revoked, the server MUST keep t
 
 ### `keys-and-oauth/register-offered-kept`
 
-When the consent screen or the device approval page offers a registered client, the server MUST keep the client registered for `dcr_client_retention_days` from then, however long ago it registered.
+When the consent screen or the device approval page offers a registered client, the server MUST keep the client registered for `dcr_client_retention_hours` from then, however long ago it registered.
 
 **Reason:** A page may keep its registration between visits, so a registration older than the retention can be the one the owner is deciding on; the job must not remove it from under the decision.
 
@@ -1436,6 +1478,14 @@ If an authorization request names as `client_id` an `https` URL whose host is `l
 **Reason:** The server fetches the document a `client_id` URL names, so a host on its own network would let any page make the server read from that network.
 
 **Tests:** `compliance/oauth-authorize.test.ts › is refused 400 invalid_client at %s`.
+
+### `keys-and-oauth/metadata-document-long-value`
+
+When a client ID metadata document sets `client_uri`, `logo_uri`, `tos_uri`, `policy_uri`, `software_id`, `software_version`, `scope` or `contacts` past the bound a registration is held to (`keys-and-oauth/register-name-bound`, `keys-and-oauth/register-uri-bound`, `keys-and-oauth/register-scope-bound`, `keys-and-oauth/register-contacts-bound`), the server MUST accept the client as if the document left that member out.
+
+**Reason:** A document is published for every server, so a value past this server's bound is ignored, as a grant type it does not support is, rather than refusing the client. A `client_name` or a redirect URI past its bound still refuses the document, because the document must name the client and list where it may be sent.
+
+**Tests:** waiting on #2892.
 
 ## Authorization with consent
 
@@ -2429,9 +2479,25 @@ Where a device code names a scope other than `offline_access` that the app's sta
 
 ### `keys-and-oauth/device-expired`
 
-When a client polls with a device code past its expiry, the server MUST answer `400 expired_token`.
+When a client polls with a device code that expired less than ten minutes before, the server MUST answer `400 expired_token`.
 
 **Tests:** `compliance/device-grant.test.ts › answers expired_token to a poll of a code past its expiry`.
+
+### `keys-and-oauth/device-code-removed`
+
+When the `credential-cleanup` job runs, the server MUST remove each device code that expired ten minutes or more before.
+
+**Reason:** A device code request takes no credential. `keys-and-oauth/device-code-unentered-bound` holds how many codes nobody has entered are kept at once, and this rule how long any code is kept: until the first run of the job that reaches it ten minutes or more after it expired.
+
+**Tests:** `compliance/credential-cleanup.test.ts › removes a device code ten minutes after it expires, and not before`.
+
+### `keys-and-oauth/device-code-unentered-bound`
+
+When the server stores a device code while it holds 1000 other device codes that the device approval page has not shown for its user code and that nobody has decided, the server MUST, in the same write, remove the one of those 1000 it stored first.
+
+**Reason:** A device code request takes no credential, and the limit for one address (`keys-and-oauth/device-code-address-limit`) does not bound what many addresses send. Refusing requests past a count for every address together would also refuse the owner's `marfa login`, so the oldest code nobody has entered makes room instead, and a code the owner has entered is never removed this way. A removed code is answered as a code the server never issued: a poll gets `400 invalid_grant`, and the approval page does not know its user code.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › keeps at most 1000 device codes nobody has entered, removing the oldest, and keeps an entered one`.
 
 ### `keys-and-oauth/device-approved`
 
@@ -3431,9 +3497,77 @@ When `DELETE /owner/sign-ins/{id}` answers `200`, the server MUST already hold t
 
 ### `keys-and-oauth/audit-failed-sign-in`
 
-When the server refuses a password sign-in, the server MUST already hold the audit record of the failure, readable at `GET /audit`.
+When the server refuses a password sign-in because the email or the password is wrong, the server MUST already hold the audit record of the failure, readable at `GET /audit`.
 
 **Tests:** `compliance/credential-audit.test.ts › is in the audit log when the refusal of a failed sign-in answers`.
+
+### `keys-and-oauth/audit-limited-sign-in`
+
+When a password sign-in limit or the queue `keys-and-oauth/sign-in-decoy-queue` names refuses a password sign-in, and the server is not writing the record of another such refusal, has not finished a write of the record of one in the fifteen minutes before that committed or whose outcome it could not tell, and has not had such a write fail in the minute before, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `details.reason` `too_many_attempts`, readable at `GET /audit`.
+
+**Reason:** The owner sees in the audit log that the sign-in limits are refusing attempts.
+
+**Tests:** `compliance/sign-in-limits.test.ts › records the first sign-in a filled limit refuses in fifteen minutes, and no other, from any number of addresses`.
+
+### `keys-and-oauth/audit-limited-sign-in-once`
+
+While fewer than fifteen minutes have passed since the server, in its current run, finished a write of the record of a password sign-in that a password sign-in limit or the queue `keys-and-oauth/sign-in-decoy-queue` names refused, and that write committed or its outcome could not be told, the server MUST NOT write an audit record of another such refusal.
+
+**Reason:** A refusal by a limit judges no password, and anyone can send one from as many addresses as they hold, so the audit log would otherwise grow with every one. A wrong password is still recorded each time, by `keys-and-oauth/audit-failed-sign-in`, and the sign-in limits bound how many arrive. The server writes the record of one such refusal at a time, so two cannot both commit. The fifteen minutes start once the write has answered, so they never start before its commit. A write whose outcome could not be told counts as written, so a record that may exist is never written twice.
+
+**Tests:** `compliance/sign-in-limits.test.ts › records the first sign-in a filled limit refuses in fifteen minutes, and no other, from any number of addresses`, `› treats the record of a refused sign-in whose write may have committed as written, and writes none for fifteen minutes after it`.
+
+### `keys-and-oauth/audit-limited-retried`
+
+If the server's write of the audit record of a refusal that `keys-and-oauth/audit-limited-sign-in`, `authentication/confirm-locked-audit` or `authentication/password-change-locked-audit` requires fails without committing, and its write of the record before at that door did not fail, then the server MUST write the record of the next such refusal at that door.
+
+**Reason:** A write that failed without committing records nothing, so it must not keep the next refusal out of the record. After a second failure in a row the server waits before it tries again, counted from the failure and doubling up to a minute, so a store that keeps failing is not asked to write each refusal.
+
+**Tests:** `compliance/sign-in-limits.test.ts › records the next refused sign-in when the record of the one before could not be written`, `compliance/confirm-sign-in.test.ts › records the next refused confirmation when the record of the one before could not be written`, `compliance/owner-pages.test.ts › records the next refused change when the record of the one before could not be written`.
+
+### `keys-and-oauth/audit-limited-unrecorded`
+
+When the server writes an audit record that `keys-and-oauth/audit-limited-sign-in`, `authentication/confirm-locked-audit` or `authentication/password-change-locked-audit` requires, after refusals at that door that it left out, or whose record's write failed without committing, since its previous such record there in its current run, or since it started, the server MUST give the record a `details.unrecorded_before` that holds their number.
+
+**Reason:** The owner sees how many refusals the bound kept out of the audit log, including one whose own record failed. A refusal whose record's write could not be told counts as recorded, and is not in the number. A refusal left out writes nothing, so its count waits in memory for the next record and is lost when the server stops.
+
+**Tests:** `compliance/sign-in-limits.test.ts › records the next refused sign-in when the record of the one before could not be written`, `› treats the record of a refused sign-in whose write may have committed as written, and writes none for fifteen minutes after it`.
+
+### `keys-and-oauth/audit-register`
+
+When `POST /auth/oauth2/register` answers `201`, and the audit log held fewer than ten `auth.client.created` records of registrations written in the fifteen minutes before the registration was stored, the server MUST already hold an `auth.client.created` audit record of the registration with `details.source` `registration`, readable at `GET /audit`.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › registers every client from every address, records ten in fifteen minutes, and counts the rest on the newest record`, `› measures the fifteen minutes from when a registration's record is written`.
+
+### `keys-and-oauth/audit-register-bound`
+
+While the audit log holds ten `auth.client.created` records of registrations written in the fifteen minutes before, the server MUST NOT write an `auth.client.created` audit record of another registration.
+
+**Reason:** Registration takes no credential, and anyone can send one from as many addresses as they hold, so the audit log, which keeps a record for `audit_retention_days`, would otherwise grow with every one. The server decides in the write that stores the registration, from the records already committed, so no more than ten are written in any fifteen minutes, however the requests end. The client itself is still stored, within `keys-and-oauth/register-unoffered-bound`, until `keys-and-oauth/register-idle-removed` removes it.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › registers every client from every address, records ten in fifteen minutes, and counts the rest on the newest record`, `› measures the fifteen minutes from when a registration's record is written`, `› writes no more than ten registration records when the callers leave before their writes`.
+
+### `keys-and-oauth/audit-device-code`
+
+When `POST /auth/device/code` answers `200`, and the audit log held fewer than ten `auth.device_code.issued` records written in the fifteen minutes before the code was stored, the server MUST already hold an `auth.device_code.issued` audit record of the code, readable at `GET /audit`.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › issues every device code from every address, records ten in fifteen minutes, and counts the rest on the newest record`.
+
+### `keys-and-oauth/audit-device-code-bound`
+
+While the audit log holds ten `auth.device_code.issued` records written in the fifteen minutes before, the server MUST NOT write an `auth.device_code.issued` audit record of another device code.
+
+**Reason:** A device code request takes no credential, and anyone can send one from as many addresses as they hold, so the audit log would otherwise grow with every one. The code itself is still stored, within `keys-and-oauth/device-code-unentered-bound`, until `keys-and-oauth/device-code-removed` removes it.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › issues every device code from every address, records ten in fifteen minutes, and counts the rest on the newest record`.
+
+### `keys-and-oauth/audit-stored-unrecorded`
+
+When the server stores a registration or a device code without the record `keys-and-oauth/audit-register` or `keys-and-oauth/audit-device-code` would require, the server MUST, in the same write, add one to `details.unrecorded_after` of the newest record of its kind.
+
+**Reason:** The owner sees, on the newest record, how many more the bound kept out of the audit log since it. The count is written with the client or the code, so it counts only what was stored.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › registers every client from every address, records ten in fifteen minutes, and counts the rest on the newest record`, `› issues every device code from every address, records ten in fifteen minutes, and counts the rest on the newest record`, `› writes no more than ten registration records when the callers leave before their writes`.
 
 ### `keys-and-oauth/audit-refresh-replay`
 

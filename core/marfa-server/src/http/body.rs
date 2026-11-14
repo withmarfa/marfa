@@ -20,6 +20,7 @@ use super::mcp;
 use super::observe::RequestContext;
 use crate::app::App;
 use crate::app::items::write::ruled;
+use crate::app::oauth::client::MAX_REGISTRATION_BYTES;
 use crate::app::oauth::resource::MCP_PATHS;
 use crate::app::refusal::{Code, Refusal};
 use crate::listener::Transport;
@@ -32,7 +33,6 @@ const STATE_REQUEST_BYTES: usize = 2 * 512 * 1024 + 100 * 6 + 35;
 const CONNECTORS_PATH: &str = "/connectors";
 const REGISTER_PATH: &str = "/auth/oauth2/register";
 const PLAIN_JSON: &str = "application/json";
-const REGISTER_REQUEST_BYTES: usize = 32 * 1024;
 const CONFIG_PATH: &str = "/config";
 
 /// `finish` keeps reading so a refusal that leaves a body unread still arrives.
@@ -217,7 +217,7 @@ fn cap_on(app: &App, path: &str, extensions: &Extensions) -> usize {
         return app.bulk_cap();
     }
     if path == REGISTER_PATH {
-        return REGISTER_REQUEST_BYTES;
+        return MAX_REGISTRATION_BYTES;
     }
     if let Some(cap) = connector_cap(app, path) {
         return cap;
