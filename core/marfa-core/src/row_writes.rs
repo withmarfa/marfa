@@ -933,8 +933,7 @@ pub(crate) fn taken(
     Ok(conflicts)
 }
 
-/// What `ops` leave in `column` of row `id`, a null being no value: none
-/// where no operation names the column.
+/// Null means no value; outer `None` means no operation sets the column.
 fn sets<'a>(ops: &'a [Op], id: &str, column: &str) -> Option<Option<&'a Value>> {
     ops.iter()
         .rev()
@@ -948,8 +947,7 @@ fn sets<'a>(ops: &'a [Op], id: &str, column: &str) -> Option<Option<&'a Value>> 
         })
 }
 
-/// Where the server's value before `write` differs from what the copy showed
-/// it and from what the write sets: a value the write replaced unseen.
+/// Setting the value another writer already set is not a clash.
 fn clashes(
     conn: &Connection,
     item: &str,

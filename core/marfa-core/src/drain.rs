@@ -1024,8 +1024,7 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
     Ok(answer)
 }
 
-/// Judged by `queue-and-verdicts/rows-conflicted`: made while the copy held its
-/// table whole, which it still does.
+/// Judging needs the original read and a table that is still held whole.
 fn judged(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<bool> {
     let (WriteKind::WriteRows, Some(item), Some(table)) =
         (row.kind, row.item_id.as_deref(), row.table.as_deref())
