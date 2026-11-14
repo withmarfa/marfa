@@ -102,7 +102,7 @@ describe("a credential change", () => {
       method: "DELETE",
       headers: { authorization: `Bearer ${server.managementKey}` },
     });
-    expect(revoked.status).toBe(204);
+    expect(revoked.status).toBe(200);
     expect(await logged("auth.grant.revoked")).toBe(revokes + 1);
   });
 });

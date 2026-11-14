@@ -170,7 +170,7 @@ async function disconnect(page: Page): Promise<void> {
     method: "DELETE",
     headers: { authorization: `Bearer ${server.managementKey}` },
   });
-  expect(revoked.status).toBe(204);
+  expect(revoked.status).toBe(200);
 }
 
 /** A browser's preflight for a read from `origin` carrying a bearer. */

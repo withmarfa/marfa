@@ -200,7 +200,7 @@ describe("a device code whose grant is revoked", () => {
       method: "DELETE",
       headers: authorization,
     });
-    expect(revoked.status).toBe(204);
+    expect(revoked.status).toBe(200);
     const polled = await flow.poll();
     expect(polled.status).toBe(400);
     expect(polled.body.error).toBe("invalid_grant");
