@@ -60,8 +60,6 @@ impl Reached {
     }
 }
 
-/// No folder on the way may let another account replace what it holds, and a link is
-/// followed only where root or the server's own account made it.
 fn walk(path: &Path, me: u32) -> Result<Reached, Failure> {
     let absolute = std::path::absolute(path)
         .map_err(|error| refused(path, format_args!("could not be resolved: {error}")))?;
