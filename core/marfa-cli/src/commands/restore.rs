@@ -80,32 +80,25 @@ fn notes(answer: &serde_json::Value) -> Vec<String> {
             "Stored {switch}, which sends nothing until a receiver is set where Marfa runs."
         ));
     }
-    match answer
-        .get("enforcement_added")
-        .and_then(serde_json::Value::as_u64)
-    {
-        Some(1) => notes.push("Restored the archive's enforcement settings.".to_string()),
-        _ if answer
-            .get("enforcement_skipped")
-            .and_then(serde_json::Value::as_u64)
-            == Some(1) =>
-        {
-            notes.push(
-                "Skipped the archive's enforcement settings: this instance already stores its own."
-                    .to_string(),
-            );
-        }
-        _ => {}
-    }
-    if let Some(previous) = answer.get("previous_instance") {
-        let id = previous
-            .get("instance_id")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or_default();
+    let added = texts(answer, "enforcement_added");
+    if !added.is_empty() {
         notes.push(format!(
-            "This archive was written by instance {id}. Once you are satisfied with this restore, delete {} inside its backup folder.",
-            texts(previous, "safe_to_delete").join(" and ")
+            "Restored the archive's enforcement settings: {}.",
+            added.join(", ")
         ));
+    }
+    let skipped = texts(answer, "enforcement_skipped");
+    if !skipped.is_empty() {
+        notes.push(format!(
+            "Skipped the archive's enforcement settings this instance already stores: {}.",
+            skipped.join(", ")
+        ));
+    }
+    if let Some(message) = answer
+        .pointer("/previous_instance/message")
+        .and_then(serde_json::Value::as_str)
+    {
+        notes.push(message.to_string());
     }
     for kind in answer
         .get("not_restored")
@@ -163,11 +156,13 @@ mod tests {
     fn prints_one_line_for_each_kind_the_archive_left_out_and_what_the_restore_did() {
         let answer = json!({
             "settings_without_receiver": ["heartbeat_enabled"],
-            "enforcement_added": 0,
-            "enforcement_skipped": 1,
+            "enforcement_added": ["source_filter"],
+            "enforcement_skipped": ["strict_mode", "source_allowlist"],
             "previous_instance": {
                 "instance_id": "0190a1b2-0000-7000-8000-000000000001",
-                "safe_to_delete": ["backups/0190a1b2-0000-7000-8000-000000000001", "files/0190a1b2-0000-7000-8000-000000000001"],
+                "destination": "folder",
+                "kept_by_previous_instance": ["backups/0190a1b2-0000-7000-8000-000000000001", "files/0190a1b2-0000-7000-8000-000000000001"],
+                "message": "Previous instance line.",
             },
             "not_restored": [
                 { "kind": "sign_in", "message": "Sign-in line." },
@@ -178,16 +173,14 @@ mod tests {
             notes(&answer),
             [
                 "Stored heartbeat_enabled, which sends nothing until a receiver is set where Marfa runs.",
-                "Skipped the archive's enforcement settings: this instance already stores its own.",
-                "This archive was written by instance 0190a1b2-0000-7000-8000-000000000001. Once you are satisfied with this restore, delete backups/0190a1b2-0000-7000-8000-000000000001 and files/0190a1b2-0000-7000-8000-000000000001 inside its backup folder.",
+                "Restored the archive's enforcement settings: source_filter.",
+                "Skipped the archive's enforcement settings this instance already stores: strict_mode, source_allowlist.",
+                "Previous instance line.",
                 "Sign-in line.",
                 "Endpoints line.",
             ]
         );
-        assert_eq!(
-            notes(&json!({ "enforcement_added": 1, "enforcement_skipped": 0 })),
-            ["Restored the archive's enforcement settings."]
-        );
+        assert!(notes(&json!({ "enforcement_added": [], "enforcement_skipped": [] })).is_empty());
     }
 
     #[test]

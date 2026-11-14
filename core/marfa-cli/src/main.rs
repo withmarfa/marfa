@@ -292,10 +292,14 @@ enum Command {
     /// including history allowed by each snapshot's type permissions and blobs
     /// that credential could read. It holds no sign-in, keys, apps, webhooks,
     /// inbound endpoints, connector keys, addresses, name or logs, so set those
-    /// up again after a restore; the command prints one line for each. Settings,
-    /// enforcement settings, type icons, source names, and connector state come
-    /// back only where this instance has none. Items in the bin are absent unless explicitly exported,
-    /// for example with `export --format archive --state any`.
+    /// up again after a restore; the command prints one line for each. Each
+    /// setting, enforcement setting, type icon, source name, and connector state
+    /// comes back only where this instance has none of its own. After a restore
+    /// of another instance's archive, the command names where the backup
+    /// destination keeps that instance's backups: delete them only once that
+    /// instance no longer runs and nothing else restores from them. Items in
+    /// the bin are absent unless explicitly exported, for example with
+    /// `export --format archive --state any`.
     ///
     /// A build restores every archive version up to its own and refuses a later
     /// one, or one written before Marfa 0.1, naming the build that wrote it.
