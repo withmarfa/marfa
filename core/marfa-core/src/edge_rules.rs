@@ -23,6 +23,8 @@
 //! refuse, which is kept with its verdict. Once the read lands, the copy
 //! shows the server's row and counts it as it is.
 //!
+//! [`HeldEdges`] applies these exclusions before the shared rules judge a write.
+//!
 //! Each `edge_constraint_violation` and `edge_cycle` carries the `details`
 //! the server's answer to the same write carries, so an app reads it one way
 //! whichever refused it.
@@ -37,7 +39,7 @@ use crate::error::CoreError;
 use crate::model::{Draft, Subject, Verdict, WriteKind};
 use crate::store;
 use marfa_rules::catalog::{EdgeType, End, Lineage};
-use marfa_rules::edges;
+use marfa_rules::edges::{self, Graph, Link, OnDelete};
 
 type Result<T> = std::result::Result<T, CoreError>;
 
@@ -77,15 +79,6 @@ pub(crate) struct Proposed<'a> {
     /// create names by id, which the server acknowledges or refuses by its
     /// id before it counts edges. The write's own checks leave it out.
     pub replacing: Option<&'a str>,
-}
-
-/// The edge type, where the copy holds it.
-fn held_edge_type(conn: &Connection, id: &str) -> Result<Option<EdgeType>> {
-    match catalog::edge_type(conn, id) {
-        Ok(edge_type) => Ok(Some(edge_type)),
-        Err(CoreError::NotFound { .. } | CoreError::NoCatalog) => Ok(None),
-        Err(error) => Err(error),
-    }
 }
 
 /// The type of a held row and whether it is in the bin.
@@ -144,26 +137,36 @@ impl Lineages {
     }
 }
 
-/// Refuses the edges one write makes where the server would refuse one, in
-/// the server's order (`edges/create-order`): for each edge, an end in the
-/// bin, an end of a type the edge type does not admit and a source a flat
-/// edge type does not take; then, edge by edge, a triple the copy holds, an
-/// end that already holds the one edge of the type it may, and a cycle. Each
-/// edge is counted with those before it in the same write, as the server
-/// counts a batch.
+/// Ends are judged before graph constraints to match the server's refusal order.
 pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> Result<()> {
     let mut lineages = Lineages::default();
-    let refused = shown_by_unread_refusals(conn)?;
+    let unread = shown_by_unread_refusals(conn)?;
+    let catalog = held_edge_types(conn)?;
     let mut judged = Vec::with_capacity(edges.len());
     for edge in edges {
-        if let Some(edge_type) = held_edge_type(conn, edge.edge_type)? {
-            refuse_unfitting_ends(conn, &mut lineages, edge, &edge_type)?;
+        if let Some(edge_type) = catalog.get(edge.edge_type) {
+            refuse_unfitting_ends(conn, &mut lineages, edge, edge_type)?;
             judged.push((edge, edge_type));
         }
     }
     for (index, (edge, edge_type)) in judged.iter().enumerate() {
         let earlier = || judged[..index].iter().map(|(earlier, _)| *earlier);
-        if holds_triple(conn, edge, &refused)?
+        let copy = HeldEdges {
+            conn,
+            catalog: &catalog,
+            refused: &unread,
+            replaced: edge
+                .source
+                .replaced()
+                .map(|source| (source, edge.edge_type)),
+        };
+        let proposed = edges::Proposed {
+            edge_type: edge.edge_type,
+            source: edge.source.id(),
+            target: edge.target_id,
+            moving: edge.replacing,
+        };
+        if edges::duplicate(&copy, &proposed)?.is_some()
             || earlier().any(|earlier| {
                 earlier.edge_type == edge.edge_type
                     && earlier.source.id() == edge.source.id()
@@ -183,6 +186,7 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
                 }),
             ));
         }
+        let full = edges::full_end(&copy, edge_type, &proposed)?;
         for end in [End::Source, End::Target] {
             if !edge_type.one_at(end) {
                 continue;
@@ -191,14 +195,16 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
                 End::Source => edge.source.id().to_string(),
                 End::Target => edge.target_id.to_string(),
             };
-            if holds_at(conn, edge, end, &refused)?
+            if full == Some(end)
                 || earlier()
                     .any(|earlier| earlier.edge_type == edge.edge_type && at(earlier) == at(edge))
             {
                 return Err(refused_cardinality(edge_type, end, &at(edge)));
             }
         }
-        if edge_type.acyclic && closes_cycle(conn, edge, &refused)? {
+        if edge_type.acyclic
+            && edges::closes_cycle(&copy, &proposed, |held| held == edge.edge_type)?
+        {
             return Err(CoreError::Validation {
                 server: None,
                 code: "edge_cycle".into(),
@@ -210,6 +216,14 @@ pub(crate) fn refuse_unwritable_edges(conn: &Connection, edges: &[Proposed]) -> 
                 }))),
             });
         }
+        let part = |held: &str| copy.on_delete(held) == OnDelete::WithHosts;
+        if part(edge.edge_type) && edges::closes_cycle(&copy, &proposed, part)? {
+            return Err(refused(edges::refused_parts_cycle(
+                edge.edge_type,
+                edge.source.id(),
+                edge.target_id,
+            )));
+        }
     }
     Ok(())
 }
@@ -218,18 +232,14 @@ fn refused_cardinality(edge_type: &EdgeType, end: End, at: &str) -> CoreError {
     refused(edges::refused_cardinality(edge_type, end, at))
 }
 
-/// The edges the copy shows only because of a write the server refused,
-/// while a read of the server's row is owed for it (see the module), as a
-/// JSON array for `json_each`. A refused edge create, move or other edit
-/// shows its edge; a refused item create shows its inline edges, under the
-/// item's own id or, for a keyed create, the row it landed on.
-fn shown_by_unread_refusals(conn: &Connection) -> Result<String> {
+/// A refused write's effects cannot count until its server read-back lands.
+fn shown_by_unread_refusals(conn: &Connection) -> Result<HashSet<String>> {
     let mut owed: HashSet<(Subject, String)> = HashSet::new();
     for read in store::owed_read_backs(conn)? {
         owed.insert((read.subject, read.id));
     }
     if owed.is_empty() {
-        return Ok("[]".into());
+        return Ok(HashSet::new());
     }
     let mut statement = conn.prepare_cached(
         "SELECT id, kind, item_id, edge_id FROM queue
@@ -254,13 +264,13 @@ fn shown_by_unread_refusals(conn: &Connection) -> Result<String> {
         )?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let landings = store::pending_landings(conn)?;
-    let mut shown = Vec::new();
+    let mut shown = HashSet::new();
     for (row, kind, item_id, edge_id) in refused {
         if kind != WriteKind::CreateItem.as_str() {
             if let Some(edge_id) = edge_id
                 && owed.contains(&(Subject::Edge, edge_id.clone()))
             {
-                shown.push(edge_id);
+                shown.insert(edge_id);
             }
             continue;
         }
@@ -281,54 +291,112 @@ fn shown_by_unread_refusals(conn: &Connection) -> Result<String> {
             );
         }
     }
-    Ok(serde_json::to_string(&shown)?)
+    Ok(shown)
 }
 
-/// The held edges the write leaves standing beside the proposed one: every
-/// edge of its type but the one the write is, those a create replaces and
-/// those only a refused write shows.
-const STANDING: &str = "edge_type = ?2 AND id IS NOT ?3 AND source_id IS NOT ?4
-    AND id NOT IN (SELECT value FROM json_each(?1))";
-
-/// Whether the copy holds an edge of the proposed triple.
-fn holds_triple(conn: &Connection, edge: &Proposed, refused: &str) -> Result<bool> {
-    let mut statement = conn.prepare_cached(&format!(
-        "SELECT EXISTS (SELECT 1 FROM edges
-          WHERE {STANDING} AND source_id = ?5 AND target_id = ?6)"
-    ))?;
-    Ok(statement.query_row(
-        params![
-            refused,
-            edge.edge_type,
-            edge.replacing,
-            edge.source.replaced(),
-            edge.source.id(),
-            edge.target_id
-        ],
-        |row| row.get(0),
-    )?)
+fn held_edge_types(conn: &Connection) -> Result<HashMap<String, EdgeType>> {
+    match catalog::edge_types(conn) {
+        Ok(held) => Ok(held
+            .into_iter()
+            .map(|edge_type| (edge_type.id.clone(), edge_type))
+            .collect()),
+        Err(CoreError::NoCatalog) => Ok(HashMap::new()),
+        Err(error) => Err(error),
+    }
 }
 
-/// Whether the copy holds an edge of the proposed type at the proposed
-/// edge's `end`.
-fn holds_at(conn: &Connection, edge: &Proposed, end: End, refused: &str) -> Result<bool> {
-    let (column, id) = match end {
-        End::Source => ("source_id", edge.source.id()),
-        End::Target => ("target_id", edge.target_id),
-    };
-    let mut statement = conn.prepare_cached(&format!(
-        "SELECT EXISTS (SELECT 1 FROM edges WHERE {STANDING} AND {column} = ?5)"
-    ))?;
-    Ok(statement.query_row(
-        params![
-            refused,
-            edge.edge_type,
-            edge.replacing,
-            edge.source.replaced(),
-            id
-        ],
-        |row| row.get(0),
-    )?)
+/// Refused writes and outbound edges replaced by a create cannot block a write.
+struct HeldEdges<'a> {
+    conn: &'a Connection,
+    catalog: &'a HashMap<String, EdgeType>,
+    refused: &'a HashSet<String>,
+    replaced: Option<(&'a str, &'a str)>,
+}
+
+impl HeldEdges<'_> {
+    fn standing(&self, found: Vec<Link>) -> Vec<Link> {
+        found
+            .into_iter()
+            .filter(|link| {
+                !self.refused.contains(&link.id)
+                    && self.replaced != Some((link.source.as_str(), link.edge_type.as_str()))
+            })
+            .collect()
+    }
+
+    fn links(&self, statement: &str, id: &str) -> Result<Vec<Link>> {
+        let mut statement = self.conn.prepare_cached(statement)?;
+        let found = statement
+            .query_map([id], |row| {
+                Ok(Link {
+                    id: row.get(0)?,
+                    edge_type: row.get(1)?,
+                    source: row.get(2)?,
+                    target: row.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(self.standing(found))
+    }
+}
+
+impl Graph for HeldEdges<'_> {
+    type Error = CoreError;
+
+    fn outbound(&self, id: &str) -> Result<Vec<Link>> {
+        self.links(
+            "SELECT id, edge_type, source_id, target_id FROM edges WHERE source_id = ?1",
+            id,
+        )
+    }
+
+    fn inbound(&self, id: &str) -> Result<Vec<Link>> {
+        self.links(
+            "SELECT id, edge_type, source_id, target_id FROM edges WHERE target_id = ?1",
+            id,
+        )
+    }
+
+    fn triple(
+        &self,
+        source: &str,
+        target: &str,
+        edge_type: &str,
+        except: Option<&str>,
+    ) -> Result<Option<String>> {
+        if self.replaced == Some((source, edge_type)) {
+            return Ok(None);
+        }
+        let mut statement = self.conn.prepare_cached(
+            "SELECT id FROM edges
+              WHERE source_id = ?1 AND edge_type = ?2 AND target_id = ?3
+                AND (?4 IS NULL OR id <> ?4)",
+        )?;
+        let mut rows = statement.query(params![source, edge_type, target, except])?;
+        while let Some(row) = rows.next()? {
+            let id: String = row.get(0)?;
+            if !self.refused.contains(&id) {
+                return Ok(Some(id));
+            }
+        }
+        Ok(None)
+    }
+
+    fn in_bin(&self, id: &str) -> Result<bool> {
+        Ok(held_row(self.conn, id)?.is_some_and(|(_, binned)| binned))
+    }
+
+    fn holds(&self, id: &str) -> Result<bool> {
+        Ok(held_row(self.conn, id)?.is_some())
+    }
+
+    fn on_delete(&self, edge_type: &str) -> OnDelete {
+        OnDelete::of(
+            self.catalog
+                .get(edge_type)
+                .map(|held| held.cascade_on_delete.as_str()),
+        )
+    }
 }
 
 /// Refuses an edge the server would refuse for its ends: an end in the bin,
@@ -375,32 +443,6 @@ fn refuse_unfitting_ends(
     Ok(())
 }
 
-/// Whether the target reaches the source through the held edges of the type,
-/// those still waiting to be sent among them and those only a refused write
-/// shows left out.
-fn closes_cycle(conn: &Connection, edge: &Proposed, refused: &str) -> Result<bool> {
-    let mut statement = conn.prepare_cached(
-        "WITH RECURSIVE reached(id) AS (
-            SELECT ?1
-            UNION
-            SELECT e.target_id FROM edges e JOIN reached r ON e.source_id = r.id
-             WHERE e.edge_type = ?3 AND e.id IS NOT ?4
-               AND e.id NOT IN (SELECT value FROM json_each(?5))
-         )
-         SELECT EXISTS (SELECT 1 FROM reached WHERE id = ?2)",
-    )?;
-    Ok(statement.query_row(
-        params![
-            edge.target_id,
-            edge.source.id(),
-            edge.edge_type,
-            edge.replacing,
-            refused
-        ],
-        |row| row.get(0),
-    )?)
-}
-
 /// Refuses a move of an item to `next_type` that an edge the copy holds at
 /// the item would not admit, as the server holds a retype to every edge
 /// standing at the item.
@@ -414,28 +456,24 @@ pub(crate) fn refuse_retype_breaking_edges(
         return Ok(());
     };
     let refused = shown_by_unread_refusals(conn)?;
+    let catalog = held_edge_types(conn)?;
     let mut statement = conn.prepare_cached(
-        "SELECT edge_type, source_id = ?1, target_id = ?1 FROM edges
+        "SELECT id, edge_type, source_id = ?1, target_id = ?1 FROM edges
           WHERE (source_id = ?1 OR target_id = ?1) AND source_id != target_id
-            AND id NOT IN (SELECT value FROM json_each(?2))
           ORDER BY created_at, id",
     )?;
     let edges = statement
-        .query_map(params![item_id, refused], |row| {
+        .query_map([item_id], |row| {
             Ok((
                 row.get::<_, String>(0)?,
-                row.get::<_, bool>(1)?,
+                row.get::<_, String>(1)?,
                 row.get::<_, bool>(2)?,
+                row.get::<_, bool>(3)?,
             ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut edge_types: HashMap<String, Option<EdgeType>> = HashMap::new();
-    for (id, from, to) in edges {
-        if !edge_types.contains_key(&id) {
-            let held = held_edge_type(conn, &id)?;
-            edge_types.insert(id.clone(), held);
-        }
-        let Some(Some(edge_type)) = edge_types.get(&id) else {
+    for (id, name, from, to) in edges {
+        let Some(edge_type) = catalog.get(&name).filter(|_| !refused.contains(&id)) else {
             continue;
         };
         if from && lineage.admitted_by(&edge_type.source_type_constraints) == Some(false) {
@@ -445,7 +483,7 @@ pub(crate) fn refuse_retype_breaking_edges(
             && edge_type.flat
             && lineage.admitted_by(&edge_type.target_type_constraints) == Some(true)
         {
-            return Err(refused_nesting(&id, item_id, next_type));
+            return Err(refused_nesting(&name, item_id, next_type));
         }
         if to && lineage.admitted_by(&edge_type.target_type_constraints) == Some(false) {
             return Err(refused_end(edge_type, End::Target, next_type));
@@ -493,6 +531,12 @@ mod tests {
             "acyclic": acyclic,
             "flat": flat,
         })
+    }
+
+    fn with_hosts(id: &str, cardinality: &str, acyclic: bool) -> Value {
+        let mut held = edge_type(id, cardinality, [&[], &[]], acyclic, false);
+        held["cascade_on_delete"] = json!("with-hosts");
+        held
     }
 
     fn item_type(id: &str, parent: Option<&str>, roles: &[&str]) -> WireType {
@@ -574,6 +618,10 @@ mod tests {
                             edge_type("mock.under", "many-to-one", [&[], &[]], true, false),
                             edge_type("mock.child", "one-to-many", [&[], &[]], true, false),
                             edge_type("mock.loose", many, [&[], &[]], false, false),
+                            with_hosts("mock.part", many, false),
+                            with_hosts("mock.other-part", many, false),
+                            with_hosts("mock.acyclic-part", many, true),
+                            with_hosts("mock.moving-part", "many-to-one", false),
                         ])
                         .collect(),
                 },
@@ -1080,6 +1128,46 @@ mod tests {
                 ..edge(NOTE_A, NOTE_B, "mock.notes")
             },
             "a repeat of the held edge under its own id",
+        );
+    }
+
+    #[test]
+    fn a_repeat_under_the_held_id_is_refused_when_the_triple_is_held_under_another() {
+        for (first, second) in [(HELD_EDGE, OTHER_EDGE), (OTHER_EDGE, HELD_EDGE)] {
+            let core = copy();
+            hold(&core, first, NOTE_A, NOTE_B, "mock.notes");
+            hold(&core, second, NOTE_A, NOTE_B, "mock.notes");
+            assert_create_refused_for(
+                &core,
+                &EdgeDraft {
+                    id: Some(HELD_EDGE.into()),
+                    ..edge(NOTE_A, NOTE_B, "mock.notes")
+                },
+                DUPLICATE,
+                "a repeat of one held edge while another holds the triple",
+            );
+        }
+    }
+
+    #[test]
+    fn the_duplicate_lookup_reads_one_index_entry_whatever_else_the_source_holds() {
+        let core = copy();
+        let conn = core.conn().unwrap();
+        let plan: Vec<String> = conn
+            .prepare(
+                "EXPLAIN QUERY PLAN SELECT id FROM edges
+                  WHERE source_id = ?1 AND edge_type = ?2 AND target_id = ?3
+                    AND (?4 IS NULL OR id <> ?4)",
+            )
+            .unwrap()
+            .query_map(["a", "b", "c", "d"], |row| row.get::<_, String>(3))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap();
+        let plan = plan.join(" ");
+        assert!(
+            plan.contains("source_id=? AND edge_type=? AND target_id=?"),
+            "{plan}"
         );
     }
 
@@ -1771,5 +1859,143 @@ mod tests {
             ("mock.child", &[NOTE_C]),
         ]))
         .unwrap();
+    }
+
+    fn parts_cycle(draft: &EdgeDraft) -> Value {
+        json!({
+            "edge_type": draft.edge_type,
+            "source_id": draft.source_id,
+            "target_id": draft.target_id,
+            "constraint": "cycle",
+        })
+    }
+
+    fn assert_parts_cycle(core: &Core, draft: &EdgeDraft, what: &str) {
+        let before = queued(core);
+        let want = parts_cycle(draft);
+        assert_eq!(details_of(core.check_edge(draft), what), want, "{what}");
+        assert_eq!(details_of(core.create_edge(draft), what), want, "{what}");
+        assert_eq!(queued(core), before, "{what}: a refused edge was queued");
+    }
+
+    #[test]
+    fn an_edge_that_makes_an_item_a_part_of_its_own_part_is_refused_across_types() {
+        let core = copy();
+        hold(&core, "ab", NOTE_A, NOTE_B, "mock.part");
+        hold(&core, "bc", NOTE_B, NOTE_C, "mock.other-part");
+        assert_parts_cycle(
+            &core,
+            &edge(NOTE_C, NOTE_A, "mock.part"),
+            "c to a closes a, b, c through two part types",
+        );
+        assert_parts_cycle(
+            &core,
+            &edge(NOTE_C, NOTE_A, "mock.other-part"),
+            "the same edge of the other part type",
+        );
+        // Both witnesses remove the part cycle while preserving the proposed source.
+        assert_create_queued(&core, &edge(NOTE_C, NOTE_D, "mock.part"), "c to d");
+        assert_create_queued(&core, &edge(NOTE_C, NOTE_A, "mock.loose"), "a loose edge");
+    }
+
+    #[test]
+    fn a_part_cycle_runs_through_queued_edges_and_not_through_a_queued_delete() {
+        let core = copy();
+        core.create_edge(&edge(NOTE_A, NOTE_B, "mock.part"))
+            .unwrap();
+        hold(&core, "bc", NOTE_B, NOTE_C, "mock.other-part");
+        assert_parts_cycle(
+            &core,
+            &edge(NOTE_C, NOTE_A, "mock.part"),
+            "c to a closes a queued edge and a held one",
+        );
+        core.delete_edge("bc").unwrap();
+        assert_create_queued(
+            &core,
+            &edge(NOTE_C, NOTE_A, "mock.part"),
+            "c to a once the edge b to c waits to be deleted",
+        );
+    }
+
+    #[test]
+    fn a_part_cycle_through_an_edge_the_copy_does_not_hold_or_cannot_read_is_left_to_the_server() {
+        let core = copy();
+        hold(&core, "ab", NOTE_A, NOTE_B, "mock.part");
+        // The server also holds b to c, which this copy was never sent.
+        assert_create_queued(
+            &core,
+            &edge(NOTE_C, NOTE_A, "mock.part"),
+            "a cycle through an edge outside the copy",
+        );
+        // An edge type the catalog does not hold is followed by nothing.
+        hold(&core, "bd", NOTE_B, NOTE_D, "mock.unknown");
+        assert_create_queued(
+            &core,
+            &edge(NOTE_D, NOTE_A, "mock.part"),
+            "a cycle through an edge of a type the catalog does not hold",
+        );
+    }
+
+    #[test]
+    fn a_part_cycle_is_judged_after_a_full_end_and_an_acyclic_cycle() {
+        let core = copy();
+        hold(&core, "ab", NOTE_A, NOTE_B, "mock.acyclic-part");
+        hold(&core, "bc", NOTE_B, NOTE_C, "mock.acyclic-part");
+        assert_create_refused(
+            &core,
+            &edge(NOTE_C, NOTE_A, "mock.acyclic-part"),
+            "edge_cycle",
+            "an acyclic part type's own cycle, before the part cycle",
+        );
+        hold(&core, "cd", NOTE_C, NOTE_D, "mock.moving-part");
+        hold(&core, "da", NOTE_D, NOTE_A, "mock.moving-part");
+        assert_create_refused_for(
+            &core,
+            &edge(NOTE_D, NOTE_C, "mock.moving-part"),
+            SOURCE_FULL,
+            "a second part edge from d that also closes c, d, c",
+        );
+        // The witness: with d's edge gone, the same edge is the part cycle.
+        core.delete_edge("da").unwrap();
+        assert_parts_cycle(
+            &core,
+            &edge(NOTE_D, NOTE_C, "mock.moving-part"),
+            "the edge from d that closes c, d, c",
+        );
+    }
+
+    #[test]
+    fn a_part_cycle_is_judged_for_a_move_and_for_an_inline_edge() {
+        let core = copy();
+        hold(&core, "ab", NOTE_A, NOTE_B, "mock.moving-part");
+        hold(&core, "cd", NOTE_C, NOTE_D, "mock.moving-part");
+        let target = |id: &str| EdgeEdit {
+            base_version: Some(1),
+            target_id: Some(id.into()),
+            ..EdgeEdit::default()
+        };
+        // c to a is no cycle yet; a to c then closes a, c, a.
+        core.update_edge("cd", &target(NOTE_A)).unwrap();
+        let draft = Draft {
+            r#type: "core.note".into(),
+            properties: json!({ "title": "made" }).as_object().unwrap().clone(),
+            edges: [("mock.moving-part".to_string(), vec![NOTE_A.to_string()])].into(),
+            ..Draft::default()
+        };
+        core.create_item(&draft).unwrap();
+        let before = queued(&core);
+        assert_eq!(
+            details_of(
+                core.update_edge("ab", &target(NOTE_C)),
+                "a move of a's host onto c, which a already hosts"
+            ),
+            json!({
+                "edge_type": "mock.moving-part",
+                "source_id": NOTE_A,
+                "target_id": NOTE_C,
+                "constraint": "cycle",
+            }),
+        );
+        assert_eq!(queued(&core), before, "a refused move was queued");
     }
 }

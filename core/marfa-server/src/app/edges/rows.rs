@@ -326,8 +326,22 @@ impl Graph for Store<'_, '_> {
         links(self.tx, "target_id", id)
     }
 
-    fn triple(&self, source: &str, target: &str, edge_type: &str) -> Result<Option<String>> {
-        Ok(by_triple(self.tx, source, target, edge_type)?.map(|edge| edge.id))
+    fn triple(
+        &self,
+        source: &str,
+        target: &str,
+        edge_type: &str,
+        except: Option<&str>,
+    ) -> Result<Option<String>> {
+        Ok(self
+            .tx
+            .prepare_cached(
+                "SELECT id FROM edges
+                  WHERE source_id = ?1 AND target_id = ?2 AND edge_type = ?3
+                    AND (?4 IS NULL OR id <> ?4)",
+            )?
+            .query_row(params![source, target, edge_type, except], |row| row.get(0))
+            .optional()?)
     }
 
     fn in_bin(&self, id: &str) -> Result<bool> {

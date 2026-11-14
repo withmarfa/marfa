@@ -411,17 +411,9 @@ impl<'c> Writing<'_, '_, 'c> {
         let parts =
             |held: &str| marfa_rules::edges::Graph::on_delete(&store, held) == OnDelete::WithHosts;
         if parts(&kind.id) && edges::closes_cycle(&store, &proposed, parts)? {
-            return Err(Refusal::new(
-                Code::EdgeConstraintViolation,
-                format!(
-                    "Edge \"{}\" would make an item a part of its own part",
-                    kind.id
-                ),
-            )
-            .with_detail("edge_type", kind.id.as_str())
-            .with_detail("source_id", source.id.as_str())
-            .with_detail("target_id", target_id)
-            .with_detail("constraint", "cycle"));
+            return Err(constraint(edges::refused_parts_cycle(
+                &kind.id, &source.id, target_id,
+            )));
         }
         Ok(())
     }
@@ -684,10 +676,7 @@ impl<'c> Writing<'_, '_, 'c> {
         if parts(&kind.id) && edges::closes_cycle(&store, &proposed, parts)? {
             return Err(Refusal::new(
                 Code::EdgeConstraintViolation,
-                format!(
-                    "Edge \"{}\" would make an item a part of its own part",
-                    kind.id
-                ),
+                edges::refused_parts_cycle(&kind.id, &source.id, &target.id).message,
             ));
         }
         Ok(())

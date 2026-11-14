@@ -40,11 +40,13 @@ pub trait Graph {
 
     fn outbound(&self, id: &str) -> Result<Vec<Link>, Self::Error>;
     fn inbound(&self, id: &str) -> Result<Vec<Link>, Self::Error>;
+    /// The id of an edge of the triple other than `except`.
     fn triple(
         &self,
         source: &str,
         target: &str,
         edge_type: &str,
+        except: Option<&str>,
     ) -> Result<Option<String>, Self::Error>;
     /// A row the store does not hold is not in the bin.
     fn in_bin(&self, id: &str) -> Result<bool, Self::Error>;
@@ -61,9 +63,7 @@ pub struct Proposed<'a> {
 }
 
 pub fn duplicate<G: Graph>(graph: &G, edge: &Proposed<'_>) -> Result<Option<String>, G::Error> {
-    Ok(graph
-        .triple(edge.source, edge.target, edge.edge_type)?
-        .filter(|held| Some(held.as_str()) != edge.moving))
+    graph.triple(edge.source, edge.target, edge.edge_type, edge.moving)
 }
 
 /// The source is judged first.
@@ -401,6 +401,18 @@ pub fn refused_nesting(edge_type: &str, source_id: &str, source_type: &str) -> R
     }
 }
 
+pub fn refused_parts_cycle(edge_type: &str, source_id: &str, target_id: &str) -> Refused {
+    Refused {
+        message: format!("Edge \"{edge_type}\" would make an item a part of its own part"),
+        details: json!({
+            "edge_type": edge_type,
+            "source_id": source_id,
+            "target_id": target_id,
+            "constraint": "cycle",
+        }),
+    }
+}
+
 pub fn refused_cardinality(edge_type: &EdgeType, end: End, at: &str) -> Refused {
     let (end, edge) = match end {
         End::Source => ("source", "outbound"),
@@ -486,10 +498,19 @@ mod tests {
             Ok(self.links(|link| link.target == id))
         }
 
-        fn triple(&self, source: &str, target: &str, kind: &str) -> Result<Option<String>, ()> {
+        fn triple(
+            &self,
+            source: &str,
+            target: &str,
+            kind: &str,
+            except: Option<&str>,
+        ) -> Result<Option<String>, ()> {
             Ok(self
                 .links(|link| {
-                    link.source == source && link.target == target && link.edge_type == kind
+                    link.source == source
+                        && link.target == target
+                        && link.edge_type == kind
+                        && Some(link.id.as_str()) != except
                 })
                 .first()
                 .map(|link| link.id.clone()))
@@ -554,6 +575,8 @@ mod tests {
             ..edge
         };
         assert_eq!(duplicate(&held, &moving), Ok(None));
+        let twice = graph(&[("about", "a", "b"), ("about", "a", "b")], &[]);
+        assert_eq!(duplicate(&twice, &moving), Ok(Some("e1".to_string())));
     }
 
     #[test]
