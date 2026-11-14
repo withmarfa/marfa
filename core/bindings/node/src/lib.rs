@@ -265,9 +265,9 @@ pub struct SetAside {
     pub held: i64,
     /// The carried writes held blocked `record_unread`, because a record that
     /// decides how each is sent could not be read; release one to send it
-    /// without that record. Where the store is built from
-    /// another instance than the one it was made against, or the set-aside
-    /// could not tell which, a release holds it `instance_changed` instead.
+    /// without that record. Where the store is built from another instance
+    /// than the one it was made against, or the set-aside could not tell
+    /// which, a release holds it `instance_changed` instead.
     pub record_unread: i64,
 }
 

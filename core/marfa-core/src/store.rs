@@ -5926,7 +5926,7 @@ pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usiz
 /// never held. A refused write stays refused, and one held `record_unread`
 /// keeps that reason, so its release still says what it goes without; that
 /// release compares the instance with the one its set-aside recorded
-/// (`release`). Answers how many it held.
+/// (`hold_for_instance`). Answers how many it held.
 pub fn block_for_another_instance(conn: &Connection) -> Result<usize, CoreError> {
     Ok(conn.execute(
         &format!(

@@ -35,9 +35,10 @@ pub struct SetAside {
     pub held: u64,
     /// The carried writes held `blocked` with the reason `record_unread`,
     /// because a record that decides how each is sent could not be read. A
-    /// caller releases one to send it without that record. Where the store is built from
-    /// another instance than the one it was made against, or the set-aside
-    /// could not tell which, a release holds it `instance_changed` instead.
+    /// caller releases one to send it without that record. Where the store
+    /// is built from another instance than the one it was made against, or
+    /// the set-aside could not tell which, a release holds it
+    /// `instance_changed` instead.
     pub record_unread: u64,
 }
 
@@ -376,8 +377,8 @@ fn commits(log: std::io::Result<File>) -> bool {
 const WAL_HEADER: u64 = 32;
 const FRAME_HEADER: u64 = 24;
 
-/// The page size a write-ahead log's header names, where it is one. Unlike
-/// a database header, the log's states 65,536 as itself.
+/// The page size a write-ahead log's header names, where it is one. Unlike a
+/// database header, a log's header states 65,536 as itself.
 fn log_page(log: &mut File) -> Option<u64> {
     let mut header = [0; 12];
     log.seek(SeekFrom::Start(0)).ok()?;
