@@ -177,10 +177,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
 
   // The contract's statements are cited by ID and checked by the offline
   // lane, and the error code census test holds `errors.md` to the codes the
-  // server sends. Two chapters are also read by a fixture while it runs:
+  // server sends. Three chapters are also read by a fixture while it runs:
   // `compliance/error-codes.test.ts` holds every refusal's code to the error
-  // table, and `compliance/instance.test.ts` holds the published operations
-  // to the coverage table. No other server fixture reads the contract, and
+  // table, `compliance/instance.test.ts` holds the published operations to
+  // the coverage table, and `device/error-codes.test.ts` holds the device's
+  // codes to the table in `device.md`. No other server fixture reads the
+  // contract, and
   // `ci/ci-required.test.ts` fails when one starts to. A unit test of the Rust
   // server holds its refusal codes to `errors.md`, three more hold its
   // settings to the tables of `instance.md`, and one holds its jobs to the
@@ -190,7 +192,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     ["workspace", "conformance-offline", "core-checks-linux", "rust-contract"],
   ],
   [
-    /^conformance\/spec\/coverage\.md$/,
+    /^conformance\/spec\/(coverage|device)\.md$/,
     ["workspace", "conformance-offline", "rust-contract"],
   ],
   [
