@@ -1545,12 +1545,12 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
     let code = error.code();
     let detail = match error {
         E::RenewalFailed(_) => unreachable!("renewal cause was unwrapped"),
-        E::NotFound { code, message }
-        | E::Unauthorized { code, message }
-        | E::Forbidden { code, message }
+        E::NotFound { code, message, .. }
+        | E::Unauthorized { code, message, .. }
+        | E::Forbidden { code, message, .. }
         | E::Validation { code, message, .. }
         | E::RateLimited { code, message, .. } => server_detail(error.code(), Some(code), message),
-        E::UnknownType { message } => server_detail(error.code(), None, message),
+        E::UnknownType { message, .. } => server_detail(error.code(), None, message),
         E::Server {
             status,
             code,
@@ -3580,6 +3580,7 @@ mod tests {
         use marfa_core::CoreError as E;
         assert_eq!(
             describe(&E::Unauthorized {
+                status: None,
                 code: "unauthorized".into(),
                 message: "Authentication required".into()
             })
@@ -3588,6 +3589,7 @@ mod tests {
         );
         assert_eq!(
             describe(&E::UnknownType {
+                status: None,
                 message: "Unknown type: acme.absent".into()
             })
             .0,
@@ -3595,6 +3597,7 @@ mod tests {
         );
         assert_eq!(
             describe(&E::Validation {
+                status: None,
                 code: "invalid_properties".into(),
                 message: "read: Expected boolean".into(),
                 details: None,
@@ -3652,6 +3655,7 @@ mod tests {
         );
         assert_eq!(
             fields(E::Validation {
+                status: None,
                 code: "edge_constraint_violation".into(),
                 message: String::new(),
                 details: Some(Box::new(json!({ "constraint": "duplicate" }))),

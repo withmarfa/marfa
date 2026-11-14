@@ -1459,7 +1459,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 }
                 ItemsCommand::Get { id } => match core.get_shown(&id)? {
                     Some((item, shown)) => output::item(&item, &shown, json),
-                    None => Err(CliError::NotHeld(id)),
+                    None => Err(CliError::not_held(&id)),
                 },
                 ItemsCommand::BulkGet { ids, include_bin } => {
                     output::listing(core.get_items_shown(&ids, include_bin)?, json)
@@ -1582,7 +1582,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 }
                 ItemsCommand::Thumbnail { id, out } => {
                     if core.get(&id)?.is_none() {
-                        return Err(CliError::NotHeld(id));
+                        return Err(CliError::not_held(&id));
                     }
                     let Some(thumbnail) = core.thumbnail(&id)? else {
                         return output::report(
@@ -1817,7 +1817,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     )
                 }
                 DeviceViewsCommand::Get { id } => {
-                    let row = core.view(&id)?.ok_or(CliError::NotHeld(id))?;
+                    let row = core.view(&id)?.ok_or(CliError::not_held(&id))?;
                     output::report(&row, json, || view_line(&row))
                 }
                 DeviceViewsCommand::Groups { id, time_zone } => {
@@ -1836,7 +1836,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             let row = match command {
                 DeviceFoldersCommand::Get { id } => match store.open(None)?.folder(&id)? {
                     Some(row) => row,
-                    None => return Err(CliError::NotHeld(id)),
+                    None => return Err(CliError::not_held(&id)),
                 },
                 DeviceFoldersCommand::Create(args) => store.open_with_server(named)?.create_folder(
                     &args.settings.read()?,
@@ -1859,7 +1859,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             match command {
                 EdgesCommand::Get { id } => match core.get_edge(&id)? {
                     Some(edge) => edge_one(&edge, json),
-                    None => Err(CliError::NotHeld(id)),
+                    None => Err(CliError::not_held(&id)),
                 },
                 EdgesCommand::BulkGet { ids } => edge_list(&core.get_edges(&ids)?, json),
                 EdgesCommand::List { item } => edge_list(&core.edges_from(&item)?, json),

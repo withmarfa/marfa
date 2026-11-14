@@ -828,6 +828,7 @@ fn credential_refused(drain: &Drained) -> Option<CoreError> {
         .as_ref()
         .filter(|_| credential)
         .map(|stopped| CoreError::Unauthorized {
+            status: Some(401),
             code: "unauthorized".into(),
             message: stopped.clone(),
         })
@@ -1642,6 +1643,7 @@ mod tests {
             out(),
             CoreError::RenewalFailed(Box::new(out())),
             CoreError::Unauthorized {
+                status: Some(401),
                 code: "unauthorized".into(),
                 message: "refused".into(),
             },
@@ -2685,6 +2687,7 @@ mod tests {
         }));
         assert!(!hydrated_by_the_follow(&CoreError::NoCursor));
         assert!(!hydrated_by_the_follow(&CoreError::Unauthorized {
+            status: Some(401),
             code: "unauthorized".into(),
             message: "ended".into()
         }));

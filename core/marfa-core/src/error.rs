@@ -5,11 +5,29 @@ use thiserror::Error;
 #[derive(Debug, Clone, PartialEq, Error)]
 pub enum CoreError {
     #[error("{}", classified("not found", Some(code), message))]
-    NotFound { code: String, message: String },
+    NotFound {
+        code: String,
+        message: String,
+        /// The status of the server's answer; `None` for a refusal the device
+        /// made itself, which no server was asked.
+        status: Option<u16>,
+    },
     #[error("{}", classified("unauthorized", Some(code), message))]
-    Unauthorized { code: String, message: String },
+    Unauthorized {
+        code: String,
+        message: String,
+        /// The status of the server's answer; `None` for a refusal the device
+        /// made itself, which no server was asked.
+        status: Option<u16>,
+    },
     #[error("{}", classified("forbidden", Some(code), message))]
-    Forbidden { code: String, message: String },
+    Forbidden {
+        code: String,
+        message: String,
+        /// The status of the server's answer; `None` for a refusal the device
+        /// made itself, which no server was asked.
+        status: Option<u16>,
+    },
     #[error("{}", classified("validation", Some(code), message))]
     Validation {
         code: String,
@@ -19,9 +37,17 @@ pub enum CoreError {
         /// itself. `None` on every other refusal, one read from the server
         /// among them.
         details: Option<Box<serde_json::Value>>,
+        /// The status of the server's answer; `None` for a refusal the device
+        /// made itself, which no server was asked.
+        status: Option<u16>,
     },
     #[error("{}", classified("unknown type", None, message))]
-    UnknownType { message: String },
+    UnknownType {
+        message: String,
+        /// The status of the server's answer; `None` for a refusal the device
+        /// made itself, which no server was asked.
+        status: Option<u16>,
+    },
     #[error("{}", classified("rate limited", Some(code), message))]
     RateLimited {
         code: String,
@@ -245,6 +271,10 @@ codes! {
     Fault: CoreError::Fault(_) => "fault",
 }
 
+/// The code of a refusal for a row the working copy does not hold, which no
+/// server was asked.
+pub const NOT_HELD: &str = "not_held";
+
 fn classified(kind: &str, code: Option<&str>, message: &str) -> String {
     if message.to_lowercase().starts_with(&format!("{kind}:")) {
         return message.into();
@@ -261,6 +291,16 @@ fn classified(kind: &str, code: Option<&str>, message: &str) -> String {
 }
 
 impl CoreError {
+    /// What the copy refuses for a row it does not hold, naming the code
+    /// `NOT_HELD` and carrying no server status.
+    pub fn not_held(message: impl Into<String>) -> Self {
+        CoreError::NotFound {
+            code: NOT_HELD.into(),
+            message: message.into(),
+            status: None,
+        }
+    }
+
     /// Whether asking again can clear it. A 404 or a 405 cannot: it may come
     /// from a server that is not Marfa's.
     pub fn is_environmental(&self) -> bool {
@@ -526,12 +566,14 @@ impl From<marfa_rules::RuleError> for CoreError {
         match error.code {
             Code::ValidationError | Code::InvalidProperties | Code::InvalidId => {
                 CoreError::Validation {
+                    status: None,
                     code: error.code.as_str().into(),
                     message: error.message,
                     details: None,
                 }
             }
             Code::UnknownType => CoreError::UnknownType {
+                status: None,
                 message: error.message,
             },
             Code::Invalid => CoreError::Invalid(error.message),
@@ -649,10 +691,12 @@ mod tests {
     #[test]
     fn server_refusal_display_does_not_repeat_its_classification() {
         let unknown = CoreError::UnknownType {
+            status: None,
             message: "Unknown type: acme.missing".into(),
         };
         assert_eq!(unknown.to_string(), "Unknown type: acme.missing");
         let unauthorized = CoreError::Unauthorized {
+            status: None,
             code: "unauthorized".into(),
             message: "Authentication required".into(),
         };
@@ -662,6 +706,7 @@ mod tests {
         );
         assert!(!unauthorized.is_environmental());
         let validation = CoreError::Validation {
+            status: None,
             code: "invalid_properties".into(),
             message: "read: Expected boolean".into(),
             details: None,
@@ -737,6 +782,7 @@ mod tests {
         assert!(answered(507).is_environmental());
         assert!(!answered(405).is_environmental());
         let refused = CoreError::Forbidden {
+            status: None,
             code: "type_not_permitted".into(),
             message: String::new(),
         };
@@ -795,6 +841,7 @@ mod tests {
             assert_eq!(
                 CoreError::from(RuleError::new(code, "words")),
                 CoreError::Validation {
+                    status: None,
                     code: wire.into(),
                     message: "words".into(),
                     details: None,
@@ -804,6 +851,7 @@ mod tests {
         assert_eq!(
             CoreError::from(RuleError::new(Code::UnknownType, "words")),
             CoreError::UnknownType {
+                status: None,
                 message: "words".into()
             }
         );

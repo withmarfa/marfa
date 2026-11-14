@@ -495,6 +495,7 @@ impl Folder {
             && !placement::places(&key)
         {
             return Err(CoreError::Forbidden {
+                status: None,
                 code: "edge_permission_denied".into(),
                 message: format!(
                     "this key cannot write the {PLACEMENT_EDGE} edges that say where each file sits, so the folder cannot place its files: it needs `edge.{PLACEMENT_EDGE}:write`"
@@ -813,6 +814,7 @@ impl Folder {
 
     fn row_on_server(&self) -> Result<crate::wire::WireItemWithMetadata> {
         let cannot_read = || CoreError::Forbidden {
+            status: None,
             code: "type_not_permitted".into(),
             message: format!(
                 "this key cannot read {FOLDER_TYPE}, so the folder cannot follow its settings: it needs `{FOLDER_TYPE}:read`"
@@ -840,6 +842,7 @@ impl Folder {
                 ),
             };
             return Err(CoreError::NotFound {
+                status: None,
                 code: "item_not_found".into(),
                 message,
             });

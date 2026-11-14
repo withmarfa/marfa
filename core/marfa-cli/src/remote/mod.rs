@@ -284,7 +284,11 @@ fn renewal_error(error: CliError) -> CoreError {
             code,
             message,
             ..
-        } => CoreError::Unauthorized { code, message },
+        } => CoreError::Unauthorized {
+            code,
+            message,
+            status: Some(401),
+        },
         CliError::Refused {
             status: 429,
             code,

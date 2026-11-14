@@ -300,11 +300,10 @@ fn scope(conn: &Connection, id: &str, completeness: Completeness) -> Result<Scop
     if completeness != Completeness::Complete {
         return Err(CoreError::HydrationIncomplete);
     }
-    let item = store::item_by_id(conn, id)?.ok_or_else(|| CoreError::NotFound {
-        code: "not_held".into(),
-        message: format!(
+    let item = store::item_by_id(conn, id)?.ok_or_else(|| {
+        CoreError::not_held(format!(
             "view {id} is not held in this working copy: pin it or hydrate with {VIEW_TYPE}"
-        ),
+        ))
     })?;
     let view = ViewRow::of(item)?;
     if view.state != ItemState::Active {

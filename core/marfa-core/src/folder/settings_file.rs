@@ -415,6 +415,7 @@ impl Folder {
                     .unwrap_or_else(|error| error)
             })?
             .ok_or_else(|| CoreError::NotFound {
+                status: None,
                 code: "item_not_found".into(),
                 message: "The accepted folder settings are not returned to this reach.".into(),
             })?;

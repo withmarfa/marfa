@@ -645,6 +645,7 @@ fn tell(
 /// sends can land until a person replaces it.
 fn refused_credential(server: &str, said: &CoreError) -> CliError {
     CliError::Core(CoreError::Unauthorized {
+        status: Some(401),
         code: "credential_refused".into(),
         message: format!(
             "the server at {server} refused this watch's credential ({said}), so the watch stopped; \

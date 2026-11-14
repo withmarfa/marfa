@@ -3181,23 +3181,30 @@ mod tests {
         let text = || "text".to_string();
         let all = vec![
             E::NotFound {
+                status: None,
                 code: text(),
                 message: text(),
             },
             E::Unauthorized {
+                status: None,
                 code: text(),
                 message: text(),
             },
             E::Forbidden {
+                status: None,
                 code: text(),
                 message: text(),
             },
             E::Validation {
+                status: None,
                 code: text(),
                 message: text(),
                 details: None,
             },
-            E::UnknownType { message: text() },
+            E::UnknownType {
+                message: text(),
+                status: None,
+            },
             E::RateLimited {
                 code: text(),
                 message: text(),
@@ -3279,6 +3286,7 @@ mod tests {
         listed.sort_unstable();
         assert_eq!(named, listed, "a code of the core's has no case here");
         let wrapped = E::RenewalFailed(Box::new(E::Forbidden {
+            status: None,
             code: text(),
             message: text(),
         }));
@@ -3518,6 +3526,7 @@ mod tests {
         let crossed: Vec<(MarfaError, &str)> = vec![
             (
                 E::NotFound {
+                    status: None,
                     code: text(),
                     message: text(),
                 }
@@ -3526,6 +3535,7 @@ mod tests {
             ),
             (
                 E::Unauthorized {
+                    status: None,
                     code: text(),
                     message: text(),
                 }
@@ -3534,6 +3544,7 @@ mod tests {
             ),
             (
                 E::Forbidden {
+                    status: None,
                     code: text(),
                     message: text(),
                 }
@@ -3542,6 +3553,7 @@ mod tests {
             ),
             (
                 E::Validation {
+                    status: None,
                     code: text(),
                     message: text(),
                     details: None,
@@ -3549,7 +3561,10 @@ mod tests {
                 .into(),
                 "Validation",
             ),
-            (E::UnknownType { message: text() }.into(), "UnknownType"),
+            (E::UnknownType {
+                message: text(),
+                status: None,
+            }.into(), "UnknownType"),
             (
                 E::RateLimited {
                     code: text(),

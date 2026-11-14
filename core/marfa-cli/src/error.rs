@@ -27,8 +27,6 @@ pub enum CliError {
     BinPartlyEmptied { purged: u64, error: Box<CliError> },
     #[error("{0}")]
     Io(io::Error),
-    #[error("{0} is not in the local copy")]
-    NotHeld(String),
     /// The core's `ReadingHandle`, said of the folder rather than its store.
     #[error("{}", marfa_core::folder::held_by_another(.0))]
     FolderHeld(std::path::PathBuf),
@@ -165,6 +163,14 @@ pub enum CliError {
 }
 
 impl CliError {
+    /// A refusal for a row the working copy does not hold, which no server
+    /// was asked.
+    pub fn not_held(id: &str) -> Self {
+        CliError::Core(CoreError::not_held(format!(
+            "{id} is not held in this working copy"
+        )))
+    }
+
     /// For an error from a command's own request, where a mismatch is
     /// worded for the CLI. A device command keeps the core's own
     /// words, which say what became of a queued write.
@@ -312,7 +318,6 @@ macro_rules! own_codes {
 
 own_codes! {
     CliError::Io(_) => "io",
-    CliError::NotHeld(_) => "not_held",
     CliError::FolderHeld(_) | CliError::FolderNotHandedOver(_) => "reading_handle",
     CliError::Watch(_) => "watch",
     CliError::ClosedOutput => "closed_output",
@@ -435,8 +440,7 @@ impl CliError {
             | CliError::Watch(_)
             | CliError::Install(_)
             | CliError::DocsUnreachable { .. } => Exit::Environment,
-            CliError::NotHeld(_)
-            | CliError::Invalid(_)
+            CliError::Invalid(_)
             | CliError::ArchiveLacksBlobs(_)
             | CliError::ArchiveKeptApart { .. }
             | CliError::RestoreLacksBlobs(_)
@@ -494,20 +498,39 @@ impl CliError {
         }
     }
 
+    /// What a server answered, where one did: never for a refusal the device
+    /// made itself.
     fn server(&self) -> Option<(Option<u16>, Option<&str>, Option<&serde_json::Value>)> {
         match self {
             CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
                 error.server()
             }
             CliError::Core(core) => match core {
-                CoreError::NotFound { code, .. } => Some((Some(404), Some(code), None)),
-                CoreError::Unauthorized { code, .. } => Some((Some(401), Some(code), None)),
-                CoreError::Forbidden { code, .. } => Some((Some(403), Some(code), None)),
-                // The variant folds 400 and 422 together, so no status.
-                CoreError::Validation { code, details, .. } => {
-                    Some((None, Some(code), details.as_deref()))
+                CoreError::NotFound {
+                    code,
+                    status: Some(status),
+                    ..
                 }
-                CoreError::UnknownType { .. } => Some((Some(400), Some("unknown_type"), None)),
+                | CoreError::Unauthorized {
+                    code,
+                    status: Some(status),
+                    ..
+                }
+                | CoreError::Forbidden {
+                    code,
+                    status: Some(status),
+                    ..
+                } => Some((Some(*status), Some(code), None)),
+                CoreError::Validation {
+                    code,
+                    details,
+                    status: Some(status),
+                    ..
+                } => Some((Some(*status), Some(code), details.as_deref())),
+                CoreError::UnknownType {
+                    status: Some(status),
+                    ..
+                } => Some((Some(*status), Some("unknown_type"), None)),
                 CoreError::RateLimited { code, .. } => Some((Some(429), Some(code), None)),
                 CoreError::Server { status, code, .. } => Some((Some(*status), Some(code), None)),
                 CoreError::ContractMismatch {
@@ -534,6 +557,42 @@ impl CliError {
         }
     }
 
+    /// The code and details of a refusal the device made itself, such as
+    /// `not_held`, where it made one with a code of its own.
+    fn local(&self) -> Option<(&str, Option<&serde_json::Value>)> {
+        match self {
+            CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
+                error.local()
+            }
+            CliError::Core(core) => match core {
+                CoreError::NotFound {
+                    code,
+                    status: None,
+                    ..
+                }
+                | CoreError::Unauthorized {
+                    code,
+                    status: None,
+                    ..
+                }
+                | CoreError::Forbidden {
+                    code,
+                    status: None,
+                    ..
+                } => Some((code, None)),
+                CoreError::Validation {
+                    code,
+                    details,
+                    status: None,
+                    ..
+                } => Some((code, details.as_deref())),
+                CoreError::UnknownType { status: None, .. } => Some(("unknown_type", None)),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn retry_after_seconds(&self) -> Option<u64> {
         match self {
             CliError::CatchUp { error, .. } | CliError::BinPartlyEmptied { error, .. } => {
@@ -555,11 +614,15 @@ impl CliError {
         let server = self
             .server()
             .map(|(status, code, details)| serde_json::json!({ "status": status, "code": code, "details": details }));
+        let local = self
+            .local()
+            .map(|(code, details)| serde_json::json!({ "code": code, "details": details }));
         let mut envelope = serde_json::json!({
             "error": {
                 "code": self.code(),
                 "message": self.to_string(),
                 "server": server,
+                "local": local,
                 "retry_after_seconds": self.retry_after_seconds(),
             },
             "exit": self.exit() as u8,
@@ -675,7 +738,7 @@ pub const CATCH_UP_FAILED: &str = "When `marfa device catch-up` fails, the refus
 /// The refusal `--json` prints, said after the drain and the catch-up: what
 /// it is, its shape, and the words before the codes its `error.code` can be.
 pub const JSON_REFUSAL: &str = "With --json a refusal is the last line of stderr, one JSON object, after any plain lines such as a warning or the write line:";
-pub const JSON_REFUSAL_SHAPE: &str = r#"{"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}"#;
+pub const JSON_REFUSAL_SHAPE: &str = r#"{"error":{"code":...,"message":...,"server":{"status":...,"code":...,"details":...}|null,"local":{"code":...,"details":...}|null,"retry_after_seconds":...},"exit":N}"#;
 pub const JSON_REFUSAL_CODES: &str = "where error.code is one of:";
 
 /// The width the help wraps an exit code's meaning to, continuing under its first word.
@@ -868,7 +931,6 @@ mod tests {
             "usage",
             "conflict",
             "too_large",
-            "not_held",
             "watch",
             "no_store",
             "no_credential",
@@ -901,7 +963,6 @@ mod tests {
         let listed = listed();
         let errors = [
             CliError::Io(io::Error::other("x")),
-            CliError::NotHeld(String::new()),
             CliError::FolderHeld(std::path::PathBuf::new()),
             CliError::FolderNotHandedOver(std::path::PathBuf::new()),
             CliError::Watch(String::new()),
@@ -1037,21 +1098,27 @@ mod tests {
         assert_eq!(envelope["exit"], 4);
 
         let validation = CliError::Core(CoreError::Validation {
+            status: Some(422),
             code: "invalid_properties".into(),
             message: "body is required".into(),
             details: None,
         });
-        assert!(validation.envelope()["error"]["server"]["status"].is_null());
+        assert_eq!(validation.envelope()["error"]["server"]["status"], 422);
         assert!(validation.envelope()["error"]["server"]["details"].is_null());
+        assert!(validation.envelope()["error"]["local"].is_null());
         assert_eq!(validation.envelope()["exit"], 1);
 
         let edge = CliError::Core(CoreError::Validation {
+            status: None,
             code: "edge_constraint_violation".into(),
             message: "Edge \"supersedes\" already exists between these items".into(),
             details: Some(Box::new(serde_json::json!({ "constraint": "duplicate" }))),
         });
+        let envelope = edge.envelope();
+        assert!(envelope["error"]["server"].is_null());
+        assert_eq!(envelope["error"]["local"]["code"], "edge_constraint_violation");
         assert_eq!(
-            edge.envelope()["error"]["server"]["details"]["constraint"],
+            envelope["error"]["local"]["details"]["constraint"],
             "duplicate"
         );
 
@@ -1069,6 +1136,63 @@ mod tests {
         assert_eq!(envelope["error"]["server"]["details"]["index"], 3);
         assert_eq!(envelope["exit"], 1);
         assert!(direct.to_string().ends_with(r#"{"index":3}"#));
+    }
+
+    #[test]
+    fn only_an_answer_a_server_sent_fills_server_and_only_a_local_refusal_fills_local() {
+        let answered = |error: CoreError| CliError::Core(error).envelope();
+        let message = || String::from("words");
+        let asked = [
+            CoreError::NotFound {
+                code: "item_not_found".into(),
+                message: message(),
+                status: Some(404),
+            },
+            CoreError::Forbidden {
+                code: "type_not_permitted".into(),
+                message: message(),
+                status: Some(403),
+            },
+            CoreError::UnknownType {
+                message: message(),
+                status: Some(400),
+            },
+        ];
+        for error in asked {
+            let envelope = answered(error);
+            assert!(envelope["error"]["server"]["status"].is_u64(), "{envelope}");
+            assert!(envelope["error"]["local"].is_null(), "{envelope}");
+        }
+        // The witness: the same variants, refused by the copy, name no server.
+        let refused_by_the_copy = [
+            CoreError::not_held("x is not held"),
+            CoreError::NotFound {
+                code: "item_not_found".into(),
+                message: message(),
+                status: None,
+            },
+            CoreError::Forbidden {
+                code: "type_not_permitted".into(),
+                message: message(),
+                status: None,
+            },
+            CoreError::UnknownType {
+                message: message(),
+                status: None,
+            },
+        ];
+        for error in refused_by_the_copy {
+            let envelope = answered(error);
+            assert!(envelope["error"]["server"].is_null(), "{envelope}");
+            assert!(envelope["error"]["local"]["code"].is_string(), "{envelope}");
+        }
+        let held = CliError::not_held("item-1").envelope();
+        assert_eq!(held["error"]["code"], "not_found");
+        assert_eq!(held["error"]["local"]["code"], "not_held");
+        assert_eq!(held["exit"], 1);
+        // An error that is neither names neither.
+        let network = answered(CoreError::Network("down".into()));
+        assert!(network["error"]["server"].is_null() && network["error"]["local"].is_null());
     }
 
     #[test]
@@ -1096,7 +1220,7 @@ mod tests {
             .exit(),
             Exit::Credential
         );
-        assert_eq!(CliError::NotHeld("x".into()).exit(), Exit::Refused);
+        assert_eq!(CliError::not_held("x").exit(), Exit::Refused);
         assert_eq!(
             CliError::DocsPageNotFound { path: "x".into() }.exit(),
             Exit::Refused
@@ -1135,6 +1259,7 @@ mod tests {
         assert_eq!(CliError::RestoreLacksBlobs(vec![]).exit(), Exit::Refused);
         assert_eq!(
             CliError::Core(CoreError::Unauthorized {
+                status: None,
                 code: "unauthorized".into(),
                 message: String::new(),
             })

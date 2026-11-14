@@ -1508,8 +1508,8 @@ impl Http {
         match refused {
             error if error.is_environmental() => Err(error),
             CoreError::Validation { code, message, .. }
-            | CoreError::Forbidden { code, message }
-            | CoreError::NotFound { code, message }
+            | CoreError::Forbidden { code, message, .. }
+            | CoreError::NotFound { code, message, .. }
             | CoreError::Server { code, message, .. } => Ok((code, message)),
             other => Err(other),
         }
@@ -2103,15 +2103,31 @@ fn refusal(status: u16, text: &str, retry_after_seconds: Option<u64>) -> CoreErr
         409 if code == INSTANCE_CHANGED => CoreError::CopyExpired {
             reason: INSTANCE_CHANGED.into(),
         },
-        400 if code == "unknown_type" => CoreError::UnknownType { message },
+        400 if code == "unknown_type" => CoreError::UnknownType {
+            message,
+            status: Some(status),
+        },
         400 | 422 => CoreError::Validation {
             code,
             message,
             details: None,
+            status: Some(status),
         },
-        401 => CoreError::Unauthorized { code, message },
-        403 => CoreError::Forbidden { code, message },
-        404 => CoreError::NotFound { code, message },
+        401 => CoreError::Unauthorized {
+            code,
+            message,
+            status: Some(status),
+        },
+        403 => CoreError::Forbidden {
+            code,
+            message,
+            status: Some(status),
+        },
+        404 => CoreError::NotFound {
+            code,
+            message,
+            status: Some(status),
+        },
         429 => CoreError::RateLimited {
             code,
             message,
@@ -2450,6 +2466,7 @@ mod tests {
         assert_eq!(
             refusal(400, body, None),
             CoreError::UnknownType {
+                status: Some(400),
                 message: "no such type".into()
             }
         );
@@ -2460,6 +2477,7 @@ mod tests {
                 None
             ),
             CoreError::NotFound {
+                status: Some(404),
                 code: "item_not_found".into(),
                 message: "gone".into()
             }

@@ -7338,6 +7338,7 @@ mod tests {
 
         assert_eq!(
             refused(CoreError::Unauthorized {
+                status: None,
                 code: "signed_out".into(),
                 message: "the sign-in ended".into(),
             }),

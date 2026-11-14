@@ -1480,6 +1480,7 @@ fn refuse_unreadable(
         return Ok(Some(learned));
     }
     Err(CoreError::Forbidden {
+        status: None,
         code: "type_not_permitted".into(),
         message: format!(
             "this credential cannot read {}, nor any type under it, so a slice naming it would hold none of it: hydrate with a credential that reads it, or leave it out",
@@ -1529,6 +1530,7 @@ fn refuse_unheld(catalog: &WireCatalog, types: &[String], edge_types: &[String])
             && !catalog.types.iter().any(|held| &held.id == *name)
     }) {
         return Err(CoreError::UnknownType {
+            status: None,
             message: format!(
                 "the server holds no type {unheld}, so a slice naming it would hold none of it: register it, or leave it out"
             ),
@@ -1541,6 +1543,7 @@ fn refuse_unheld(catalog: &WireCatalog, types: &[String], edge_types: &[String])
             .any(|held| held.get("id").and_then(|id| id.as_str()) == Some(name.as_str()))
     }) {
         return Err(CoreError::UnknownType {
+            status: None,
             message: format!(
                 "the server holds no edge type {unheld}, so a slice holding it whole would hold none of it: register it, or leave it out"
             ),
@@ -2634,7 +2637,7 @@ mod tests {
             )
             .unwrap_err();
         match refused {
-            CoreError::Forbidden { code, message } => {
+            CoreError::Forbidden { code, message, .. } => {
                 assert_eq!(code, "type_not_permitted");
                 assert!(message.contains("core.bookmark"), "{message}");
                 assert!(!message.contains("core.note,"), "{message}");
@@ -2765,7 +2768,7 @@ mod tests {
             &[],
             &AtomicBool::new(false),
         ) {
-            Err(CoreError::Forbidden { code, message }) => {
+            Err(CoreError::Forbidden { code, message, .. }) => {
                 assert_eq!(code, "type_not_permitted");
                 assert!(message.contains("core.entity"), "{message}");
                 assert!(!message.contains("core.note,"), "{message}");

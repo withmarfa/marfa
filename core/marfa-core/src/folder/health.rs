@@ -828,6 +828,7 @@ impl Folder {
             snapshot.problems.iter().find_map(|p| match p.code {
                 Code::Unavailable => Some(CoreError::Network("unavailable".into())),
                 Code::CredentialRefused => Some(CoreError::Unauthorized {
+                    status: Some(401),
                     code: "unauthorized".into(),
                     message: "credential refused".into(),
                 }),

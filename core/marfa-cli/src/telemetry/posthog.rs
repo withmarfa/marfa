@@ -253,7 +253,7 @@ mod tests {
     #[test]
     fn an_event_is_personless_and_carries_the_fixed_sentence_and_the_codes() {
         let reporter = Reporter::new(on("https://eu.i.posthog.com"), "marfa items create");
-        let error = CliError::NotHeld("item-secret".into());
+        let error = CliError::not_held("item-secret");
         let event: Value =
             serde_json::from_slice(&reporter.event(1, Fault::Error(&error))).unwrap();
         assert_eq!(event["api_key"], "phc_token");
@@ -263,11 +263,11 @@ mod tests {
         assert_eq!(properties["$process_person_profile"], false);
         assert_eq!(properties["$geoip_disable"], true);
         assert_eq!(properties["command"], "items create");
-        assert_eq!(properties["error_code"], "not_held");
+        assert_eq!(properties["error_code"], "not_found");
         assert_eq!(properties["exit_code"], 1);
         assert_eq!(properties["service.name"], "marfa-cli");
         let exception = &properties["$exception_list"][0];
-        assert_eq!(exception["type"], "not_held");
+        assert_eq!(exception["type"], "not_found");
         assert_eq!(exception["value"], describe::error(&error));
         assert!(exception.get("stacktrace").is_none());
         assert!(!event.to_string().contains("secret"));

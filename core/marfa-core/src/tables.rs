@@ -1754,6 +1754,7 @@ pub(crate) fn row(core: &Core, item: &str, table: &str, row: &str) -> Result<Val
                     true,
                 )),
                 None => Err(CoreError::NotFound {
+                    status: None,
                     code: "row_not_found".into(),
                     message: format!("the table {table} holds no row {row}"),
                 }),

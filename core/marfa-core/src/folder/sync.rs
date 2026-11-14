@@ -356,6 +356,7 @@ fn stopped_by(drain: &crate::DrainReport) -> Option<CoreError> {
         .map(|_| CoreError::Network("unavailable".into()))
         .or_else(|| {
             drain.stopped.as_ref().map(|_| CoreError::Unauthorized {
+                status: Some(401),
                 code: "unauthorized".into(),
                 message: "credential refused".into(),
             })

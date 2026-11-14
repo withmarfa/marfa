@@ -423,12 +423,9 @@ fn folder_scope(
     completeness: Completeness,
 ) -> Result<(marfa_rules::catalog::Catalog, Vec<String>, Vec<Value>)> {
     let Some(row) = store::held_or_refused(store::item_by_id(conn, id)?, completeness)? else {
-        return Err(CoreError::NotFound {
-            code: "not_held".into(),
-            message: format!(
-                "{id} is not held in this working copy: pin it, or hydrate with {FOLDER_TYPE} in the slice"
-            ),
-        });
+        return Err(CoreError::not_held(format!(
+            "{id} is not held in this working copy: pin it, or hydrate with {FOLDER_TYPE} in the slice"
+        )));
     };
     let settings = Settings::of(&row)?;
     let catalog = crate::catalog::load(conn)?;
@@ -651,7 +648,7 @@ mod tests {
         assert!(revoked.contains("revoked"), "{revoked}");
         assert!(matches!(
             notes.list_in_folder("absent", Sort::default(), None, None),
-            Err(CoreError::NotFound { code, .. }) if code == "not_held"
+            Err(CoreError::NotFound { code, .. }) if code == crate::error::NOT_HELD
         ));
 
         let whole = copy(None, &["*", FOLDER_TYPE], "library", &["parent-of"]);
