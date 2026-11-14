@@ -522,8 +522,9 @@ describe("a write the copy shows at once", () => {
     ] as [Operation[], string][]) {
       const judged = refused(await device.writeRows(item, "steps", operations));
       expect(judged.code, JSON.stringify(operations).slice(0, 80)).toBe(
-        "invalid",
+        "validation",
       );
+      expect(judged.raw).toContain("validation_error");
       expect(judged.raw).toContain(named);
     }
     await unchanged(device, item);
@@ -1790,7 +1791,7 @@ describe("the table an item of core.table keeps", () => {
         { op: "patch", id: first, values: { paid: true } },
       ]),
     );
-    expect(unknown.code).toBe("invalid");
+    expect(unknown.code).toBe("validation");
     expect(unknown.raw).toContain("operations.0.values.paid");
 
     const columns = { ...COLUMNS, paid: { type: "boolean" } };

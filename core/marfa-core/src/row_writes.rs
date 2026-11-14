@@ -66,7 +66,16 @@ fn refused_at(index: usize, path: &str, message: &str) -> CoreError {
     } else {
         format!("operations.{index}.{path}")
     };
-    CoreError::Invalid(format!("{path}: {message}"))
+    refused(format!("{path}: {message}"))
+}
+
+fn refused(message: String) -> CoreError {
+    CoreError::Validation {
+        server: None,
+        code: "validation_error".into(),
+        message,
+        details: None,
+    }
 }
 
 fn row_id(index: usize, value: Option<&Value>) -> Result<Option<String>> {
@@ -97,12 +106,12 @@ fn values_of(index: usize, value: Option<&Value>) -> Result<Map<String, Value>> 
 /// An id-less `put` is given one here, so every send is the same batch.
 fn operations(sent: &[Value]) -> Result<Vec<Op>> {
     if sent.is_empty() {
-        return Err(CoreError::Invalid(
+        return Err(refused(
             "operations: operations names at least one operation.".into(),
         ));
     }
     if sent.len() > MAX_OPERATIONS {
-        return Err(CoreError::Invalid(format!(
+        return Err(refused(format!(
             "operations: A batch holds at most {MAX_OPERATIONS} operations; this holds {}.",
             sent.len()
         )));
@@ -111,9 +120,7 @@ fn operations(sent: &[Value]) -> Result<Vec<Op>> {
         .enumerate()
         .map(|(index, entry)| {
             let Value::Object(entry) = entry else {
-                return Err(CoreError::Invalid(
-                    "operations: Each operation is an object.".into(),
-                ));
+                return Err(refused("operations: Each operation is an object.".into()));
             };
             if let Some(unknown) = entry.keys().find(|key| !OP_MEMBERS.contains(&key.as_str())) {
                 return Err(refused_at(
@@ -1021,5 +1028,48 @@ mod tests {
             refused.to_string().contains("operations.1.values"),
             "{refused}"
         );
+    }
+    #[test]
+    fn a_batch_the_server_would_refuse_is_a_validation_naming_the_operation() {
+        let id = "01a1b75e-2d9d-775a-930a-6b3d1207edae";
+        let columns = values(json!({ "count": { "type": "integer" } }));
+        let too_many = vec![json!({ "op": "put", "values": {} }); MAX_OPERATIONS + 1];
+        for (sent, named) in [
+            (vec![], "operations"),
+            (too_many, "operations"),
+            (vec![json!({ "op": "move", "id": id })], "operations.0.op"),
+            (
+                vec![json!({ "op": "put", "id": "not-a-row" })],
+                "operations.0.id",
+            ),
+            (
+                vec![json!({ "op": "delete", "id": id, "values": {} })],
+                "operations.0.values",
+            ),
+            (
+                vec![json!({ "op": "put", "values": "count" })],
+                "operations.0.values",
+            ),
+        ] {
+            let refused = operations(&sent).unwrap_err();
+            assert!(
+                matches!(&refused, CoreError::Validation { code, server: None, .. }
+                    if code == "validation_error"),
+                "{refused:?}"
+            );
+            assert!(refused.to_string().contains(named), "{refused}");
+        }
+        for (sent, named) in [
+            (json!({ "count": "many" }), "operations.2.values.count"),
+            (json!({ "other": 1 }), "operations.2.values.other"),
+        ] {
+            let refused = judge_values(2, &columns, &values(sent)).unwrap_err();
+            assert!(
+                matches!(&refused, CoreError::Validation { code, server: None, .. }
+                    if code == "validation_error"),
+                "{refused:?}"
+            );
+            assert!(refused.to_string().contains(named), "{refused}");
+        }
     }
 }
