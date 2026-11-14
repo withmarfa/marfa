@@ -1098,7 +1098,7 @@ mod tests {
             (json!({ "count": "many" }), "operations.2.values.count"),
             (json!({ "other": 1 }), "operations.2.values.other"),
         ] {
-            let refused = judge_values(2, &columns, &values(sent)).unwrap_err();
+            let refused = judge_values(2, &columns, &values(sent), false, &[]).unwrap_err();
             assert!(
                 matches!(&refused, CoreError::Validation { code, server: None, .. }
                     if code == "validation_error"),
@@ -1107,7 +1107,6 @@ mod tests {
             assert!(refused.to_string().contains(named), "{refused}");
         }
     }
-
 
     fn judged(columns: &Value, sent: Vec<Value>) -> Result<()> {
         let conn = Connection::open_in_memory().unwrap();
