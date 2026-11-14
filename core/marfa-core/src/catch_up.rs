@@ -541,10 +541,7 @@ fn pass_withheld(
     Ok(Some(live.to_string()))
 }
 
-/// Reads the copy's stream from its cursor to `stream_live`, applying
-/// nothing, and answers the id of the last event it carries up to the head of
-/// the server's log: none where it carries none past the cursor. A stream that
-/// has not gone live by `deadline` is an error.
+/// The head probe must not apply events or advance the copy's cursor.
 pub(crate) fn last_carried(
     core: &Core,
     http: &Http,

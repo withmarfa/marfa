@@ -254,9 +254,6 @@ fn streaming_of(streaming: &Mutex<Streaming>) -> MutexGuard<'_, Streaming> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// Long enough for a reachable server to name its head and for a copy to
-/// apply a few thousand events, short enough that a person waiting on a drain
-/// is not kept.
 const ROWS_CAUGHT_UP_WAIT: Duration = Duration::from_secs(5);
 
 fn one_at_a_time() -> CoreError {
@@ -1266,10 +1263,7 @@ impl Core {
         })
     }
 
-    /// Waits until the copy has applied every event its stream carries up to
-    /// the head of the server's log, by watching whoever moves the cursor or,
-    /// where nobody does, by catching up. Past `ROWS_CAUGHT_UP_WAIT`, or where
-    /// the head cannot be read, it returns and the write is judged as it stands.
+    /// An unreadable head does not prevent sending the write.
     pub(crate) fn catch_up_before_rows(&self, stop: &AtomicBool) -> Result<()> {
         let deadline = std::time::Instant::now() + ROWS_CAUGHT_UP_WAIT;
         let target = match catch_up::last_carried(self, self.http()?, deadline, stop) {
