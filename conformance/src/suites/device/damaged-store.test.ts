@@ -185,6 +185,7 @@ describe("a store that cannot be read", () => {
       expect(refused.ok, `${named} read a damaged store`).toBe(false);
       if (refused.ok) continue;
       expect(refused.refusal.code, refused.refusal.raw).toBe("store_damaged");
+      expect(refused.refusal.server, refused.refusal.raw).toBeNull();
       expect(refused.refusal.raw).toContain(device.store);
       expect(refused.refusal.raw).toContain(
         "holds 2 writes the server has not taken",
@@ -424,9 +425,9 @@ describe("setting a damaged store aside", () => {
     );
     scriptWrites(harness.server, { read: [answers.itemNotFound()] });
     const withdrawn = await device.withdraw(id);
-    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toBe(
-      true,
-    );
+    expect(withdrawn.ok && withdrawn.value, JSON.stringify(withdrawn)).toEqual([
+      id,
+    ]);
     const left = await device.queue();
     expect(left.ok && left.value).toEqual([]);
   });
