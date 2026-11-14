@@ -249,7 +249,11 @@ pub enum DeviceCommand {
     Queue,
     /// Send what the queue holds and record what came back.
     ///
-    /// One pass. A write that met a network rather than an answer is left
+    /// One pass. Where the queue holds a row write for a table the copy holds
+    /// whole, it first applies every event the server's stream holds, so a
+    /// clash with another writer's change is told; where the stream cannot be
+    /// read, it sends the write and judges it by what the copy has applied.
+    /// A write that met a network rather than an answer is left
     /// where it was, uncounted, for the next drain. A write that has met one
     /// in three drains in a row, no two more than 15 minutes apart and the
     /// first at least five minutes ago, is tested: the drain sends the write

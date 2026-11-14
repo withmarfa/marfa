@@ -1284,11 +1284,9 @@ impl Core {
         })
     }
 
-    /// Applies every event the stream holds, before a drain sends a row write
-    /// judged against the copy (`queue-and-verdicts/rows-caught-up-first`). Where a follow
-    /// holds the stream, it waits for that stream to be live. Where the stream
-    /// cannot be had, or ends first, the drain goes on and the write is
-    /// judged by what the copy has applied.
+    /// `queue-and-verdicts/rows-caught-up-first`. Beside a follow it waits for
+    /// the follow's stream to be live; where the stream cannot be had or ends
+    /// first, the drain goes on (`queue-and-verdicts/rows-caught-up-unreached`).
     pub(crate) fn catch_up_before_rows(&self, stop: &AtomicBool) -> Result<()> {
         loop {
             catch_up::refuse_if_stopped(stop)?;
