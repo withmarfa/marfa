@@ -29,15 +29,19 @@ beforeAll(async () => {
   [shared, account, timed, known] = await Promise.all([
     bootFreshServer("sign-in-limits", {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     }),
     bootFreshServer("sign-in-limits-account", {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     }),
     bootFreshServer("sign-in-limits-timed", {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     }),
     bootFreshServer("sign-in-limits-known-device", {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     }),
   ]);
 }, 4 * FRESH_SERVER_TIMEOUT_MS);

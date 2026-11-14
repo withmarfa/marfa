@@ -11,7 +11,7 @@ use crate::server::envfile::EnvFile;
 use crate::server::names;
 
 /// The proxy on the same machine reaches the server over the loopback.
-pub const LOOPBACK_PROXIES: &str = "127.0.0.1/32,::1/128";
+pub const LOOPBACK_PROXIES: &str = "127.0.0.0/8,::1/128";
 
 /// What the range above must contain for a settings file that something else
 /// owns.

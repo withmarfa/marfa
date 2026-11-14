@@ -47,7 +47,7 @@ case "$1" in
     case "$2" in
       ls) n=$(named "$@"); [ -e "$S/net-$n" ] && echo "$n"; exit 0 ;;
       create) touch "$S/net-$3"; echo id ;;
-      inspect) echo '[{"Subnet":"172.30.0.0/24","Gateway":"172.30.0.1"}]' ;;
+      inspect) if [ -e "$S/ipam" ]; then cat "$S/ipam"; else echo '[{"Subnet":"172.30.0.0/24","Gateway":"172.30.0.1"}]'; fi ;;
       rm) if [ -e "$S/netbusy-$3" ]; then echo "network $3 has active endpoints" >&2; exit 1; fi; rm -f "$S/net-$3" ;;
     esac ;;
   volume)
@@ -823,7 +823,7 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(
         rig.setting("MARFA_TRUSTED_PROXY_CIDRS").as_deref(),
-        Some("172.30.0.0/24")
+        Some("172.30.0.1/32")
     );
     assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_HEADER"), None);
     assert_eq!(rig.address().as_deref(), Some("https://marfa.example.com"));
@@ -837,7 +837,10 @@ fn each_way_of_reaching_it_sets_the_proxy_trust_it_needs() {
         "https://marfa.example.com",
     ]);
     assert_eq!(code, 0, "{stderr}");
-    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(
+        rig.setting("MARFA_TRUSTED_PROXY_CIDRS").as_deref(),
+        Some("172.30.0.1/32")
+    );
     assert_eq!(
         rig.setting("MARFA_TRUSTED_PROXY_HEADER").as_deref(),
         Some("CF-Connecting-IP")
@@ -1472,6 +1475,15 @@ const CLOUDFLARE_FILE: &str =
     "MARFA_KEY_SALT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 MARFA_AUTH_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 MARFA_TRUSTED_PROXY_HEADER=CF-Connecting-IP
+MARFA_TRUSTED_PROXY_CIDRS=172.30.0.1/32
+OTEL_RESOURCE_ATTRIBUTES=service.instance.id=mine
+";
+
+const NATIVE_CLOUDFLARE_FILE: &str =
+    "MARFA_KEY_SALT=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+MARFA_AUTH_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+MARFA_TRUSTED_PROXY_HEADER=CF-Connecting-IP
+MARFA_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128
 OTEL_RESOURCE_ATTRIBUTES=service.instance.id=mine
 ";
 
@@ -1525,6 +1537,7 @@ const QUOTED_FILE: &str =
     "MARFA_KEY_SALT='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 MARFA_AUTH_SECRET='bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
 MARFA_TRUSTED_PROXY_HEADER='CF-Connecting-IP'
+MARFA_TRUSTED_PROXY_CIDRS='172.30.0.0/24'
 ";
 
 #[test]
@@ -1605,6 +1618,7 @@ fn a_settings_file_that_lacks_what_the_install_needs_is_refused_without_its_valu
     for said in [
         "MARFA_AUTH_SECRET is not set",
         "MARFA_TRUSTED_PROXY_HEADER must be CF-Connecting-IP",
+        "MARFA_TRUSTED_PROXY_CIDRS must include 172.30.0.1/32, the gateway of the Docker network",
     ] {
         assert!(stderr.contains(said), "{said}\n{stderr}");
     }
@@ -1619,12 +1633,11 @@ fn a_settings_file_that_lacks_what_the_install_needs_is_refused_without_its_valu
 }
 
 #[test]
-fn a_proxy_range_in_a_settings_file_must_cover_the_dockers_network() {
+fn a_proxy_range_in_a_settings_file_must_cover_the_docker_networks_gateway() {
     let rig = Rig::new("external-range");
-    let base = CLOUDFLARE_FILE.replace("MARFA_TRUSTED_PROXY_HEADER=CF-Connecting-IP\n", "");
-    managed_elsewhere(
-        &rig,
-        &format!("{base}MARFA_TRUSTED_PROXY_CIDRS=10.0.0.0/8\n"),
+    let base = CLOUDFLARE_FILE.replace(
+        "MARFA_TRUSTED_PROXY_HEADER=CF-Connecting-IP\nMARFA_TRUSTED_PROXY_CIDRS=172.30.0.1/32\n",
+        "",
     );
     let proxy = [
         "--access",
@@ -1633,15 +1646,57 @@ fn a_proxy_range_in_a_settings_file_must_cover_the_dockers_network() {
         "--address",
         "https://marfa.example.com",
     ];
-    let (code, _, stderr) = rig.install(&proxy);
-    assert_eq!(code, 2, "{stderr}");
-    assert!(stderr.contains("172.30.0.0/24"), "{stderr}");
-    managed_elsewhere(
-        &rig,
-        &format!("{base}MARFA_TRUSTED_PROXY_CIDRS=10.0.0.0/8,172.30.0.0/16\n"),
+    for (ranges, code) in [
+        ("10.0.0.0/8", 2),
+        ("172.30.0.3/32", 2),
+        ("172.30.0.1/32", 0),
+        ("10.0.0.0/8,172.30.0.0/16", 0),
+    ] {
+        managed_elsewhere(&rig, &format!("{base}MARFA_TRUSTED_PROXY_CIDRS={ranges}\n"));
+        let (said, _, stderr) = rig.install(&proxy);
+        assert_eq!(said, code, "{ranges}: {stderr}");
+        if code == 2 {
+            assert!(stderr.contains("172.30.0.1/32"), "{stderr}");
+        }
+    }
+}
+
+#[test]
+fn a_docker_install_trusts_each_gateway_of_its_network_and_no_other_address() {
+    let rig = Rig::new("gateways");
+    fs::write(
+        rig.state.join("ipam"),
+        r#"[{"Subnet":"172.30.0.0/24","Gateway":"172.30.0.1"},{"Subnet":"fd07::/64","Gateway":"fd07::1"}]"#,
+    )
+    .unwrap();
+    rig.installed(&[
+        "--access",
+        "cloudflare",
+        "--address",
+        "https://marfa.example.com",
+    ]);
+    assert_eq!(
+        rig.setting("MARFA_TRUSTED_PROXY_CIDRS").as_deref(),
+        Some("172.30.0.1/32,fd07::1/128")
     );
-    let (code, _, stderr) = rig.install(&proxy);
-    assert_eq!(code, 0, "{stderr}");
+}
+
+#[test]
+fn a_docker_network_that_names_no_gateway_is_refused() {
+    let rig = Rig::new("no-gateway");
+    fs::write(rig.state.join("ipam"), r#"[{"Subnet":"172.30.0.0/24"}]"#).unwrap();
+    let (code, _, stderr) = rig.install(&[
+        "--access",
+        "cloudflare",
+        "--address",
+        "https://marfa.example.com",
+    ]);
+    assert_ne!(code, 0, "{stderr}");
+    assert!(
+        stderr.contains("the Docker network marfa-net names no gateway"),
+        "{stderr}"
+    );
+    assert!(!rig.dir.join("marfa.env").exists(), "{stderr}");
 }
 
 #[test]
@@ -1893,7 +1948,7 @@ fn the_tailnet_address_follows_the_install() {
     );
     assert_eq!(
         rig.setting("MARFA_TRUSTED_PROXY_CIDRS").as_deref(),
-        Some("172.30.0.0/24")
+        Some("172.30.0.1/32")
     );
 
     // Its own mapping is replaced, not mistaken for a stranger's, when the port changes.
@@ -2210,7 +2265,10 @@ fn changing_how_a_native_server_is_reached_restarts_it_and_an_unchanged_run_does
         "--address",
         "https://marfa.example.com",
     ]);
-    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(
+        rig.setting("MARFA_TRUSTED_PROXY_HEADER").as_deref(),
+        Some("CF-Connecting-IP")
+    );
     assert_eq!(rig.restarts(), restarts + 1, "{}", rig.manager_log());
     assert_ne!(rig.service_pid("marfa"), pid);
 }
@@ -2234,7 +2292,7 @@ fn a_native_run_that_finds_the_service_not_answering_on_its_port_restarts_it() {
 #[test]
 fn settings_managed_elsewhere_are_applied_by_running_install_again() {
     let rig = Rig::new("n-external-restart");
-    managed_elsewhere(&rig, CLOUDFLARE_FILE);
+    managed_elsewhere(&rig, NATIVE_CLOUDFLARE_FILE);
     let external = [
         "--access",
         "cloudflare",
@@ -2246,7 +2304,7 @@ fn settings_managed_elsewhere_are_applied_by_running_install_again() {
     let (restarts, pid) = (rig.restarts(), rig.service_pid("marfa"));
     fs::write(
         rig.dir.join("marfa.env"),
-        CLOUDFLARE_FILE.replace("mine", "other"),
+        NATIVE_CLOUDFLARE_FILE.replace("mine", "other"),
     )
     .unwrap();
     rig.native_installed(&external);
@@ -2257,7 +2315,7 @@ fn settings_managed_elsewhere_are_applied_by_running_install_again() {
 #[test]
 fn settings_managed_elsewhere_that_have_not_changed_leave_the_running_server_alone() {
     let rig = Rig::new("n-external-same");
-    managed_elsewhere(&rig, CLOUDFLARE_FILE);
+    managed_elsewhere(&rig, NATIVE_CLOUDFLARE_FILE);
     let external = [
         "--access",
         "cloudflare",
@@ -2276,7 +2334,7 @@ fn settings_managed_elsewhere_that_have_not_changed_leave_the_running_server_alo
 #[test]
 fn what_the_running_server_was_started_with_is_kept_as_a_hash_and_survives_a_stop_and_start() {
     let rig = Rig::new("n-applied");
-    managed_elsewhere(&rig, CLOUDFLARE_FILE);
+    managed_elsewhere(&rig, NATIVE_CLOUDFLARE_FILE);
     let external = [
         "--access",
         "cloudflare",
@@ -2429,7 +2487,7 @@ fn a_native_server_trusts_the_loopback_proxy_and_the_address_is_set_on_its_socke
     ]);
     assert_eq!(
         rig.setting("MARFA_TRUSTED_PROXY_CIDRS").as_deref(),
-        Some("127.0.0.1/32,::1/128")
+        Some("127.0.0.0/8,::1/128")
     );
     assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_HEADER"), None);
     assert_eq!(rig.address().as_deref(), Some("https://marfa.example.com"));
@@ -2442,7 +2500,10 @@ fn a_native_server_trusts_the_loopback_proxy_and_the_address_is_set_on_its_socke
         "--address",
         "https://marfa.example.com",
     ]);
-    assert_eq!(rig.setting("MARFA_TRUSTED_PROXY_CIDRS"), None);
+    assert_eq!(
+        rig.setting("MARFA_TRUSTED_PROXY_CIDRS").as_deref(),
+        Some("127.0.0.0/8,::1/128")
+    );
     assert_eq!(
         rig.setting("MARFA_TRUSTED_PROXY_HEADER").as_deref(),
         Some("CF-Connecting-IP")
@@ -2813,7 +2874,7 @@ fn run_starts_the_server_with_the_settings_of_its_folder() {
             "MARFA_CONTROL_SOCKET={}/data/control/marfa.sock",
             dir.display()
         ),
-        "MARFA_TRUSTED_PROXY_CIDRS=127.0.0.1/32,::1/128".to_string(),
+        "MARFA_TRUSTED_PROXY_CIDRS=127.0.0.0/8,::1/128".to_string(),
         format!("MARFA_KEY_SALT={}", secrets(&rig)[0]),
     ] {
         assert!(

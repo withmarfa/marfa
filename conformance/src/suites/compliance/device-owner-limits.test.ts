@@ -17,6 +17,7 @@ const CLIENT_HEADER = "x-conformance-client";
 beforeEach(async () => {
   server = await bootFreshServer("device-owner-limits", {
     MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
   });
   clock = movedClock(server);
   origin = await issuerOrigin(server);

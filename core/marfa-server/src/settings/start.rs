@@ -191,13 +191,23 @@ impl Reader<'_> {
     }
 
     fn trust(&mut self) -> Trust {
+        let named = self.environment.get("MARFA_TRUSTED_PROXY_CIDRS").is_some();
         let ranges = self.take("MARFA_TRUSTED_PROXY_CIDRS", listener::proxy_ranges);
         let header = self.take("MARFA_TRUSTED_PROXY_HEADER", listener::header_name);
         match (header, ranges) {
-            (Some(header), Some(ranges)) => Trust::EdgeHeaderFrom { header, ranges },
-            (Some(header), None) => Trust::EdgeHeader(header),
+            (Some(header), Some(ranges)) => Trust::EdgeHeader { header, ranges },
+            (Some(_), None) if !named => {
+                self.refuse(
+                    "MARFA_TRUSTED_PROXY_HEADER is believed only from the proxies that write it; \
+                     set MARFA_TRUSTED_PROXY_CIDRS to the ranges they connect from, which \
+                     `marfa server install` writes, such as 127.0.0.0/8,::1/128 for a tunnel \
+                     to a native server on this machine"
+                        .to_string(),
+                );
+                Trust::Nothing
+            }
             (None, Some(ranges)) => Trust::Proxies(ranges),
-            (None, None) => Trust::Nothing,
+            _ => Trust::Nothing,
         }
     }
 

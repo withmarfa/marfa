@@ -33,6 +33,7 @@ beforeAll(async () => {
   server = await bootFreshServer("version-writers", {
     ...QUIET_SCHEDULE,
     MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     MARFA_ENRICHMENT_ENABLED: "true",
   });
   origin = await issuerOrigin(server);

@@ -49,7 +49,7 @@ pub const DECLARED: &[Declared] = &[
     ),
     plain(
         "MARFA_TRUSTED_PROXY_HEADER",
-        "The header an edge in front of the server puts the caller's address in.",
+        "The header an edge in front of the server puts the caller's address in, believed only from the ranges MARFA_TRUSTED_PROXY_CIDRS names.",
     ),
     plain("MARFA_DATABASE_PATH", "Where the database is."),
     plain(

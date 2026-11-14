@@ -2648,6 +2648,7 @@ dependencies = [
  "fd-lock",
  "getrandom 0.4.3",
  "hex",
+ "ipnet",
  "keyring",
  "libc",
  "marfa-acl",

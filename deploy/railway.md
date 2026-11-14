@@ -8,7 +8,7 @@ You need a Railway account with permission to deploy services and volumes in you
 
 1. Open the [Marfa Railway template](https://railway.com/new/template/5z9-Ja).
 2. Choose your workspace and create a project for this instance.
-3. Review the resources: one Marfa server with a volume mounted at `/data`. Check that the server's image is a version tag, such as `ghcr.io/withmarfa/marfa-server:0.0.70`, and not `latest`. Deploy.
+3. Review the resources: one Marfa server with a volume mounted at `/data`. Check that the server's image is a version tag, such as `ghcr.io/withmarfa/marfa-server:0.0.70`, and not `latest`. Set `MARFA_TRUSTED_PROXY_CIDRS=0.0.0.0/0,::/0` alongside `MARFA_TRUSTED_PROXY_HEADER=x-real-ip`, then deploy.
 4. Wait for the server deployment to pass its `/health` check, then claim the instance below.
 5. Note the release that is running. Run `curl https://<your-address>/`; the JSON answer names it as `version`. (A browser shows the page instead.) You need it to [update the server](#update-the-server) or go back to this build.
 
@@ -81,7 +81,7 @@ Railway does not update this instance for you, and you should not let it update 
 To move to a newer release:
 
 1. Note the running release from `version` in `GET /`, and take a volume backup as [Railway volume backups](https://docs.railway.com/volumes/backups) describes.
-2. In the Marfa server's settings, change the source image's tag to the new release, such as `ghcr.io/withmarfa/marfa-server:<release>`, then review and deploy the staged change.
+2. In the Marfa server's settings, change the source image's tag to the new release, such as `ghcr.io/withmarfa/marfa-server:<release>`. Set `MARFA_TRUSTED_PROXY_CIDRS=0.0.0.0/0,::/0` alongside `MARFA_TRUSTED_PROXY_HEADER=x-real-ip`, then review and deploy the staged changes together.
 3. Read `GET /health`. If the release changed the database schema, the deployment's logs record the copy the server made, `/data/marfa.db.before-upgrade`. A release with the same schema makes no copy.
 
 If the new build refuses a database that a newer build wrote, or one whose schema matches none it knows, the server exits with status 78 and changes nothing. Its supervisor keeps the container running but unhealthy: set the tag back to the previous release and deploy. If the volume lacks the free space for the copy, the server exits with status 1 and changes nothing, and Railway starts it again as its restart policy says, each time to the same refusal, until there's room. Railway's rollback changes the deployment, not the database contents, so once the new build has updated the database, setting the tag back alone runs the previous release on a database it refuses. To go back after an update, restore the volume backup from step 1 as [Restore a volume backup](#restore-a-volume-backup) says, with the tag set back to the previous release in the same deployment.
@@ -101,26 +101,29 @@ If the project also hosts other services, remove only this instance's service an
 
 ## Template configuration
 
-These settings describe the saved template and its container defaults. [Settings](README.md#settings) describes each name.
+Check these settings before deploying. [Settings](README.md#settings) describes each name.
 
-| Setting                     | Value                                                                         |
-| --------------------------- | ----------------------------------------------------------------------------- |
-| Server source               | Docker image `ghcr.io/withmarfa/marfa-server:<version>`, a pinned release tag |
-| Volume mount                | `/data`                                                                       |
-| `MARFA_DATABASE_PATH`       | `/data/marfa.db` (set by the image)                                           |
-| `MARFA_BLOB_PATH`           | `/data/blobs` (set by the image)                                              |
-| Control socket              | `/data/control/marfa.sock` (`MARFA_CONTROL_SOCKET`, set by the image)         |
-| Runtime UID                 | `RAILWAY_RUN_UID=0`                                                           |
-| Shutdown allowance          | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30`                                      |
-| Client address header       | `MARFA_TRUSTED_PROXY_HEADER=x-real-ip`                                        |
-| Volume backup schedule      | Daily                                                                         |
-| HTTP port and domain target | `8600`                                                                        |
-| Health check                | `/health`                                                                     |
-| Replicas                    | `1`                                                                           |
-| Serverless                  | Disabled                                                                      |
-| Image auto updates          | Off                                                                           |
-| `MARFA_KEY_SALT`            | `${{secret(64, "abcdef0123456789")}}`                                         |
-| `MARFA_AUTH_SECRET`         | `${{secret(64, "abcdef0123456789")}}`                                         |
+| Setting                      | Value                                                                         |
+| ---------------------------- | ----------------------------------------------------------------------------- |
+| Server source                | Docker image `ghcr.io/withmarfa/marfa-server:<version>`, a pinned release tag |
+| Volume mount                 | `/data`                                                                       |
+| `MARFA_DATABASE_PATH`        | `/data/marfa.db` (set by the image)                                           |
+| `MARFA_BLOB_PATH`            | `/data/blobs` (set by the image)                                              |
+| Control socket               | `/data/control/marfa.sock` (`MARFA_CONTROL_SOCKET`, set by the image)         |
+| Runtime UID                  | `RAILWAY_RUN_UID=0`                                                           |
+| Shutdown allowance           | `RAILWAY_DEPLOYMENT_DRAINING_SECONDS=30`                                      |
+| Client address header        | `MARFA_TRUSTED_PROXY_HEADER=x-real-ip`                                        |
+| Ranges the header comes from | `MARFA_TRUSTED_PROXY_CIDRS=0.0.0.0/0,::/0`                                    |
+| Volume backup schedule       | Daily                                                                         |
+| HTTP port and domain target  | `8600`                                                                        |
+| Health check                 | `/health`                                                                     |
+| Replicas                     | `1`                                                                           |
+| Serverless                   | Disabled                                                                      |
+| Image auto updates           | Off                                                                           |
+| `MARFA_KEY_SALT`             | `${{secret(64, "abcdef0123456789")}}`                                         |
+| `MARFA_AUTH_SECRET`          | `${{secret(64, "abcdef0123456789")}}`                                         |
+
+Railway's edge connects from addresses that Railway doesn't publish, so the template believes the client address header from every address, including another service in the same project that reaches the instance on the private network.
 
 The image names its own build: `GET /` answers the release as `version`. Each tag is published for `linux/amd64` and `linux/arm64`, and a published version tag is never moved. The package is public, so Railway pulls it without registry credentials.
 

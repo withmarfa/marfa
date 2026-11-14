@@ -35,10 +35,12 @@ beforeAll(async () => {
   [limited, unset] = await Promise.all([
     bootFreshServer("sign-in-door-limits", {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
       MARFA_RATE_LIMIT_ENABLED: "true",
     }),
     bootFreshServer("sign-in-address-unset", {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
       MARFA_SIGN_IN_ADDRESS: "",
     }),
   ]);
