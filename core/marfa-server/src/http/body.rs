@@ -22,6 +22,7 @@ use super::doors::{Asks, Credentials};
 use super::observe::RequestContext;
 use crate::app::App;
 use crate::app::items::write::ruled;
+use crate::app::oauth::client::MAX_REGISTRATION_BYTES;
 use crate::app::oauth::resource::MCP_PATHS;
 use crate::app::refusal::{Code, Refusal};
 use crate::listener::Transport;
@@ -33,6 +34,7 @@ const BULK_PATHS: [&str; 2] = ["/items/bulk", "/items/bulk-actions"];
 const STATE_REQUEST_BYTES: usize = 2 * 512 * 1024 + 100 * 6 + 35;
 const CONNECTORS_PATH: &str = "/connectors";
 const PLAIN_JSON: &str = "application/json";
+const REGISTER_PATH: &str = "/auth/oauth2/register";
 /// What a door that asks no credential reads. The largest real bodies there
 /// are a few kilobytes: a password of 128 characters, a passkey assertion, a
 /// consent form carrying an authorization's signed query.
@@ -214,9 +216,18 @@ impl FromRequest<Arc<App>> for JsonBody {
 #[derive(Clone, Copy)]
 struct Open;
 
+/// A registration is bounded by what a client's stored metadata may hold.
+fn open_cap(path: &str) -> usize {
+    if path == REGISTER_PATH {
+        MAX_REGISTRATION_BYTES
+    } else {
+        OPEN_REQUEST_BYTES
+    }
+}
+
 fn cap_on(app: &App, path: &str, extensions: &Extensions) -> usize {
     if extensions.get::<Open>().is_some() {
-        return OPEN_REQUEST_BYTES;
+        return open_cap(path);
     }
     if BULK_PATHS.contains(&path) {
         return app.bulk_cap();
@@ -771,13 +782,13 @@ mod presented_tests {
         assert_eq!(doors.len(), 13, "the witness: {doors:?}");
         let mut wrong = Vec::new();
         for (method, path) in &doors {
+            let cap = open_cap(path);
             let mut declared = request(method, path, None, Body::new(Held));
-            declared.headers_mut().insert(
-                header::CONTENT_LENGTH,
-                HeaderValue::from(OPEN_REQUEST_BYTES + 1),
-            );
-            let past = request(method, path, None, streamed(OPEN_REQUEST_BYTES + 1));
-            let under = request(method, path, None, streamed(OPEN_REQUEST_BYTES));
+            declared
+                .headers_mut()
+                .insert(header::CONTENT_LENGTH, HeaderValue::from(cap + 1));
+            let past = request(method, path, None, streamed(cap + 1));
+            let under = request(method, path, None, streamed(cap));
             let answers = [
                 answer(&instance, declared).await,
                 answer(&instance, past).await,

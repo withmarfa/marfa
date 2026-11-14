@@ -91,6 +91,10 @@ pub enum CliError {
         "the credential that holds this stream has ended: sign in again with `marfa login`, or use a new key"
     )]
     CredentialEnded,
+    /// A device code the server no longer holds or that ran out, which only a
+    /// new `marfa login` replaces.
+    #[error("the sign-in code is no longer valid: run `marfa login` again")]
+    DeviceCodeEnded,
     #[error("{0}")]
     Invalid(String),
     /// An export written whole but for the blobs its manifest names as
@@ -282,7 +286,7 @@ impl Exit {
                 "the command line or the profile file was wrong, or named no store or server"
             }
             Exit::Environment => {
-                "the environment failed (unreachable, timed out, a 5xx, a 408, a 425, a 429, an answer naming no contract, full local storage, a working copy another program was writing to, a docs site that cannot be read, a new build installed under `folders watch --exit-on-new-build`); try again"
+                "the environment failed (unreachable, timed out, a 5xx, a 408, a 425, a 429, an answer naming no contract, full local storage, a working copy another program was writing to, a docs site that cannot be read, a new build installed under `folders watch --exit-on-new-build`, a sign-in code that is no longer valid); try again"
             }
             Exit::Local => {
                 "the working copy or the queue refused under the device rules, the keychain cannot be used (locked, missing, unreadable, or none on this system), or the core stopped on a fault of its own"
@@ -332,6 +336,7 @@ own_codes! {
     CliError::NoKeychain(_) => "no_keychain",
     CliError::SignedOut { .. } => "signed_out",
     CliError::CredentialEnded => "unauthorized",
+    CliError::DeviceCodeEnded => "device_code_ended",
     CliError::Invalid(_) => "invalid",
     CliError::ArchiveLacksBlobs(_)
     | CliError::ArchiveKeptApart { .. }
@@ -441,6 +446,7 @@ impl CliError {
             CliError::Io(_)
             | CliError::Watch(..)
             | CliError::Install(_)
+            | CliError::DeviceCodeEnded
             | CliError::DocsUnreachable { .. } => Exit::Environment,
             CliError::Invalid(_)
             | CliError::ArchiveLacksBlobs(_)
@@ -882,6 +888,7 @@ mod tests {
             "no_store",
             "no_credential",
             "key_command",
+            "device_code_ended",
             "docs_page_not_found",
             "docs_section_not_found",
             "docs_unreachable",
@@ -929,6 +936,7 @@ mod tests {
                 origin: String::new(),
             },
             CliError::CredentialEnded,
+            CliError::DeviceCodeEnded,
             CliError::Invalid(String::new()),
             CliError::ContractMismatch {
                 origin: String::new(),

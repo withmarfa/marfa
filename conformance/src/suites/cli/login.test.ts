@@ -1,5 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { offeredValues } from "../../utils/approval-form.js";
+import {
+  bootFreshServer,
+  FRESH_SERVER_TIMEOUT_MS,
+  type FreshServer,
+} from "../../utils/fresh-server.js";
 import { cleanup } from "../../utils/setup.js";
 import { TEST_OWNER } from "../../utils/target.js";
 import { cliContext, once, releaseHeld } from "./harness.js";
@@ -216,5 +221,101 @@ describe("the owner", () => {
     const dead = await c.cli.as(token.access_token).run(["--json", "whoami"]);
     expect(dead.code, dead.stderr).toBe(5);
     expect(dead.stdout).toBe("");
+  });
+});
+
+describe("a sign-in whose device code is no longer valid", () => {
+  let server: FreshServer;
+
+  beforeAll(async () => {
+    server = await bootFreshServer("login-code-ended");
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  afterAll(async () => {
+    await server.stop();
+  });
+
+  /** `login` started against the server, held until its code line is read. */
+  async function startLogin(): Promise<{
+    ended: Promise<number | null>;
+    stderr: () => string;
+  }> {
+    const login = c.cli
+      .as(undefined)
+      .at(server.apiUrl)
+      .hold(["login", "--print-token", "--no-browser"]);
+    let stdout = "";
+    let stderr = "";
+    login.stdout!.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    login.stderr!.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    const started = Date.now();
+    while (!stdout.includes("\n") && Date.now() - started < 15_000) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    expect(stdout.includes("\n"), `no code line: ${stderr}`).toBe(true);
+    return {
+      ended: once(login, "close"),
+      stderr: () => stderr,
+    };
+  }
+
+  /** What the failed login printed last: the refusal envelope. */
+  function refusal(stderr: string): {
+    error: { code: string; message: string };
+    exit: number;
+  } {
+    return JSON.parse(stderr.trim().split("\n").at(-1)!);
+  }
+
+  it("ends a login whose device code the server removed with exit 3, saying to run marfa login again", async () => {
+    const registration = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "login code removal fixture",
+        application_type: "native",
+        grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
+        response_types: [],
+        token_endpoint_auth_method: "none",
+      }),
+    });
+    expect(registration.status).toBe(201);
+    const other = ((await registration.json()) as { client_id: string })
+      .client_id;
+    const login = await startLogin();
+    // 1000 newer codes that nobody enters make the server remove the login's.
+    for (let n = 0; n < 1000; n++) {
+      const response = await fetch(`${server.apiUrl}/auth/device/code`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({
+          client_id: other,
+          scope: "core.note:read",
+        }),
+      });
+      expect(response.status).toBe(200);
+      await response.body?.cancel();
+    }
+    const code = await login.ended;
+    expect(code, login.stderr()).toBe(3);
+    const refused = refusal(login.stderr());
+    expect(refused.error.code).toBe("device_code_ended");
+    expect(refused.error.message).toContain("no longer valid");
+    expect(refused.error.message).toContain("marfa login");
+    expect(refused.exit).toBe(3);
+  });
+
+  it("ends a login whose device code ran out with exit 3, saying to run marfa login again", async () => {
+    const login = await startLogin();
+    await server.advanceClock(11 * 60 * 1000);
+    const code = await login.ended;
+    expect(code, login.stderr()).toBe(3);
+    const refused = refusal(login.stderr());
+    expect(refused.error.code).toBe("device_code_ended");
+    expect(refused.error.message).toContain("marfa login");
   });
 });

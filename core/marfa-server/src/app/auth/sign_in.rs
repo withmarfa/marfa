@@ -2,9 +2,12 @@
 //! writer, then acts in one transaction that finds the password as it was checked. Only an
 //! attempt whose password proved right is taken back.
 
+use std::sync::Arc;
+
 use rusqlite::Transaction;
 use serde_json::json;
 
+use super::allowance::{self, CHANGE_REFUSED, CONFIRM_REFUSED, Door, SIGN_IN_REFUSED};
 use super::device::{Holder, Known};
 use super::limits::{self, too_many_passwords};
 use super::owner::{self, Owner};
@@ -187,43 +190,46 @@ impl Proven {
     }
 }
 
-async fn refused_sign_in(
-    app: &App,
-    actor: Option<&Caller>,
-    email: &str,
-    reason: &str,
-    visit: &Visit,
-) -> Result<()> {
-    let clock = app.clock.clone();
-    let actor = actor.cloned();
-    let email = email.to_string();
-    let reason = reason.to_string();
-    let visit = visit.clone();
-    app.db
-        .write(Write::caller(SIGN_IN_FAILED), move |tx| {
-            note(
-                tx,
-                &clock.stamp(),
-                actor.as_ref(),
-                &visit,
-                Note {
-                    action: SIGN_IN_FAILED,
-                    resource_type: "owner",
-                    resource_id: &email,
-                    details: Some(json!({
-                        "email": email,
-                        "method": "password",
-                        "reason": reason,
-                    })),
-                },
-            )
-        })
-        .await
+/// The record of a refused password sign-in.
+struct Refused {
+    actor: Option<Caller>,
+    email: String,
+    reason: &'static str,
+    visit: Visit,
+    left_out: u64,
+}
+
+impl Refused {
+    async fn write(&self, app: &App) -> Result<()> {
+        let clock = app.clock.clone();
+        let actor = self.actor.clone();
+        let email = self.email.clone();
+        let reason = self.reason;
+        let visit = self.visit.clone();
+        let left_out = self.left_out;
+        app.db
+            .write(Write::caller(SIGN_IN_FAILED), move |tx| {
+                let details = json!({ "email": email, "method": "password", "reason": reason });
+                note(
+                    tx,
+                    &clock.instant().text(),
+                    actor.as_ref(),
+                    &visit,
+                    Note {
+                        action: SIGN_IN_FAILED,
+                        resource_type: "owner",
+                        resource_id: &email,
+                        details: Some(allowance::with_unrecorded_before(details, left_out)),
+                    },
+                )
+            })
+            .await
+    }
 }
 
 /// Signs in with a password. `mark` is the device cookie the browser sent, if any.
 pub async fn with_password(
-    app: &App,
+    app: &Arc<App>,
     email: String,
     password: String,
     mark: Option<&str>,
@@ -241,8 +247,15 @@ pub async fn with_password(
     match counted(app, &email, known.as_ref(), &visit, attempt).await? {
         Ok(opening) => opening.signed_in(app, known.as_ref()),
         Err(wait) => {
-            refused_sign_in(app, None, &email, TOO_MANY, &visit).await?;
-            Err(too_many_passwords(wait))
+            limited(
+                app,
+                None,
+                &email,
+                SIGN_IN_REFUSED,
+                &visit,
+                too_many_passwords(wait),
+            )
+            .await
         }
     }
 }
@@ -251,16 +264,57 @@ async fn refused<T>(
     app: &App,
     actor: Option<&Caller>,
     email: &str,
-    reason: &str,
+    reason: &'static str,
     visit: &Visit,
     refusal: Refusal,
 ) -> Result<T> {
-    refused_sign_in(app, actor, email, reason, visit).await?;
+    let record = Refused {
+        actor: actor.cloned(),
+        email: email.to_string(),
+        reason,
+        visit: visit.clone(),
+        left_out: 0,
+    };
+    record.write(app).await?;
+    Err(refusal)
+}
+
+/// The task owns settlement because the caller can disconnect.
+async fn limited<T>(
+    app: &Arc<App>,
+    actor: Option<&Caller>,
+    email: &str,
+    door: Door,
+    visit: &Visit,
+    refusal: Refusal,
+) -> Result<T> {
+    let Some(left_out) = app.refusal_records.begin(door, app.clock.now_ms()) else {
+        return Err(refusal);
+    };
+    let record = Refused {
+        actor: actor.cloned(),
+        email: email.to_string(),
+        reason: TOO_MANY,
+        visit: visit.clone(),
+        left_out,
+    };
+    let app = Arc::clone(app);
+    tokio::spawn(async move {
+        let written = record.write(&app).await;
+        app.refusal_records
+            .settle(door, record.left_out, &written, app.clock.now_ms());
+        match written {
+            Err(failed) if !failed.commit_failed => Err(failed),
+            _ => Ok(()),
+        }
+    })
+    .await
+    .map_err(|_| Refusal::internal("a refusal's record was not settled"))??;
     Err(refusal)
 }
 
 async fn open_with_password(
-    app: &App,
+    app: &Arc<App>,
     email: &str,
     password: String,
     queue: Queue,
@@ -274,7 +328,9 @@ async fn open_with_password(
             );
         }
         Err(refusal) if refusal.code == Code::RateLimited => {
-            return Tried::unproven(refused(app, None, email, TOO_MANY, visit, refusal).await);
+            return Tried::unproven(
+                limited(app, None, email, SIGN_IN_REFUSED, visit, refusal).await,
+            );
         }
         Err(refusal) => return Tried::unproven(Err(refusal)),
     };
@@ -333,7 +389,7 @@ async fn open(app: &App, email: &str, proven: Proven, visit: &Visit) -> Result<O
 
 /// Confirms the signed-in owner by their password. `mark` is the device cookie, if any.
 pub async fn confirm(
-    app: &App,
+    app: &Arc<App>,
     caller: &Caller,
     password: String,
     mark: Option<&str>,
@@ -347,8 +403,8 @@ pub async fn confirm(
     match counted(app, &email, known.as_ref(), &visit, attempt).await? {
         Ok(opening) => opening.signed_in(app, known.as_ref()),
         Err(wait) => {
-            refused_sign_in(app, Some(caller), &email, TOO_MANY, &visit).await?;
-            Err(too_many_passwords(wait))
+            let refusal = too_many_passwords(wait);
+            limited(app, Some(caller), &email, CONFIRM_REFUSED, &visit, refusal).await
         }
     }
 }
@@ -358,7 +414,7 @@ fn not_right() -> Refusal {
 }
 
 async fn reopen(
-    app: &App,
+    app: &Arc<App>,
     caller: &Caller,
     session: session::Session,
     email: &str,
@@ -380,7 +436,7 @@ async fn reopen(
         }
         Ok(None) => Tried::unproven(refused(app, actor, email, INVALID, &visit, not_right()).await),
         Err(refusal) if refusal.code == Code::RateLimited => {
-            Tried::unproven(refused(app, actor, email, TOO_MANY, &visit, refusal).await)
+            Tried::unproven(limited(app, actor, email, CONFIRM_REFUSED, &visit, refusal).await)
         }
         Err(refusal) => Tried::unproven(Err(refusal)),
     }
@@ -436,7 +492,7 @@ async fn confirmed(
 
 /// Ends the owner's other browser sessions too, and answers this browser's new device mark.
 pub async fn change_password(
-    app: &App,
+    app: &Arc<App>,
     caller: &Caller,
     current_password: String,
     new_password: String,
@@ -467,8 +523,8 @@ pub async fn change_password(
             app.devices.mark(holder, known.as_ref(), app.clock.now_ms())
         }
         Err(wait) => {
-            refused_sign_in(app, Some(caller), &email, TOO_MANY, &visit).await?;
-            Err(too_many_passwords(wait))
+            let refusal = too_many_passwords(wait);
+            limited(app, Some(caller), &email, CHANGE_REFUSED, &visit, refusal).await
         }
     }
 }
@@ -478,7 +534,7 @@ fn current_not_right() -> Refusal {
 }
 
 async fn replace(
-    app: &App,
+    app: &Arc<App>,
     caller: &Caller,
     session: session::Session,
     email: &str,
@@ -504,7 +560,7 @@ async fn replace(
             Tried::unproven(refused(app, actor, email, INVALID, &visit, current_not_right()).await)
         }
         Err(refusal) if refusal.code == Code::RateLimited => {
-            Tried::unproven(refused(app, actor, email, TOO_MANY, &visit, refusal).await)
+            Tried::unproven(limited(app, actor, email, CHANGE_REFUSED, &visit, refusal).await)
         }
         Err(refusal) => Tried::unproven(Err(refusal)),
     }

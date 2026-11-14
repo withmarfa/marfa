@@ -294,7 +294,7 @@ registry! {
     RATE_LIMIT_WINDOW_SECONDS: u64 = "rate_limit_window_seconds", UP_TO_A_DAY, "60", "How long one rate-limit window lasts, in seconds.";
     ERROR_REPORTING_ENABLED: bool = "error_reporting_enabled", Rule::Boolean, "true", "Whether the server reports its own errors to the receiver set where it runs.";
     AUDIT_RETENTION_DAYS: u64 = "audit_retention_days", Rule::Whole { min: 0, max: 36_500 }, "90", "How many days the audit log is kept. 0 keeps it for ever.";
-    DCR_CLIENT_RETENTION_DAYS: u64 = "dcr_client_retention_days", Rule::Whole { min: 0, max: 36_500 }, "1", "How many days an app that registered itself and holds no grant is kept. 0 keeps it for ever.";
+    DCR_CLIENT_RETENTION_HOURS: u64 = "dcr_client_retention_hours", Rule::Whole { min: 0, max: 876_000 }, "1", "How many hours an app that registered itself and holds no grant is kept. 0 keeps it for ever.";
     REVOKED_GRANT_RETENTION_DAYS: u64 = "revoked_grant_retention_days", Rule::Whole { min: 0, max: 36_500 }, "90", "How many days a revoked app grant is kept. 0 keeps it for ever.";
     GRANT_INACTIVITY_DAYS: u64 = "grant_inactivity_days", Rule::Whole { min: 0, max: 36_500 }, "365", "How many days an app grant may go unused before it is retired. 0 never retires one.";
     TRASH_RETENTION_DAYS: u64 = "trash_retention_days", Rule::Whole { min: 0, max: 36_500 }, "60", "How many days a trashed item is kept before it is deleted. 0 keeps it for ever.";
