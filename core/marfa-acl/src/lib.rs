@@ -503,7 +503,7 @@ pub fn clear(_file: &impl std::os::fd::AsRawFd) -> std::io::Result<()> {
 fn unsupported() -> std::io::Error {
     std::io::Error::new(
         ErrorKind::Unsupported,
-        "a private control socket needs macOS or Linux",
+        "access control lists are read only on macOS and Linux",
     )
 }
 

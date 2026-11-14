@@ -152,8 +152,7 @@ struct Looked {
     target: Option<PathBuf>,
 }
 
-/// Here an entry's own access control list can let another account remove it, so all of it is
-/// read from one descriptor: what is judged is what the name held, even if the name is replaced.
+/// One descriptor for all of it: here an entry's own ACL can let another account replace it.
 #[cfg(target_os = "macos")]
 fn look(path: &Path, me: u32) -> std::io::Result<Looked> {
     use std::os::fd::AsRawFd;
@@ -191,9 +190,7 @@ fn look(path: &Path, me: u32) -> std::io::Result<Looked> {
     })
 }
 
-/// Here only the folder an entry is in decides who can remove or rename it, and the walk judges
-/// that folder first, so a second read by name still finds the same entry. A link keeps no access
-/// control list.
+/// Read by name: here only the entry's folder, judged first, decides who can replace it.
 #[cfg(not(target_os = "macos"))]
 fn look(path: &Path, _me: u32) -> std::io::Result<Looked> {
     let found = std::fs::symlink_metadata(path)?;
@@ -459,11 +456,10 @@ fn exposed(path: &Path, why: &Exposure, ours: bool) -> Failure {
         (_, true) => "The server could not make it private: keep the data on a file system \
                       that keeps file modes and access control lists."
             .to_string(),
-        (Exposure::Mode(_), false) => format!(
-            "It belongs to another account: give it to the server's account with `chown`, or \
-             run `chmod go-rwx {}`.",
-            path.display()
-        ),
+        (Exposure::Mode(_), false) => {
+            "It belongs to another account: give it to the server's account with `chown`."
+                .to_string()
+        }
         (Exposure::Acl, false) => format!(
             "Remove those entries with {}.",
             marfa_acl::removal_command(false)
