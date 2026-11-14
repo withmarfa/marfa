@@ -520,7 +520,8 @@ CREATE TABLE IF NOT EXISTS sort_indexes_dropping (
 ) STRICT, WITHOUT ROWID;
 
 -- A property's sort value: a number or boolean as a REAL, a text that reads as a datetime as the UTC
--- instant it names, any other text as itself, else the empty blob, which sorts last. The descending index keeps ids ascending, as a listing sorted down does.
+-- instant it names, any other text as itself, else the empty blob, which sorts last. The descending
+-- index keeps ids ascending, as a listing sorted down does.
 CREATE TABLE IF NOT EXISTS item_sort_keys (
     type TEXT NOT NULL,
     name TEXT NOT NULL,
