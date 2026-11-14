@@ -595,6 +595,9 @@ mod tests {
         })
     }
 
+    const TABLE: &str = "CREATE TABLE clock_trust (id INTEGER PRIMARY KEY CHECK (id = 1), \
+        trusted_at TEXT NOT NULL, clock_at TEXT NOT NULL, steady_from TEXT) STRICT";
+
     fn paused() -> (Clock, i64) {
         let clock = Clock::new(0);
         clock.pause(true);
@@ -773,11 +776,7 @@ mod tests {
     #[test]
     fn keeps_what_it_knows_in_the_transaction() {
         let mut db = rusqlite::Connection::open_in_memory().unwrap();
-        db.execute_batch(
-            "CREATE TABLE clock_trust (id INTEGER PRIMARY KEY CHECK (id = 1), trusted_at TEXT NOT NULL, \
-             clock_at TEXT NOT NULL, steady_from TEXT) STRICT",
-        )
-        .unwrap();
+        db.execute_batch(TABLE).unwrap();
         let (clock, now) = paused();
         let tx = db.transaction().unwrap();
         assert_eq!(super::kept(&tx).unwrap(), None);
@@ -806,6 +805,30 @@ mod tests {
                 .unwrap();
             assert!(super::kept(&tx).is_err(), "{column}");
         }
+    }
+
+    #[test]
+    fn a_hold_counts_no_time_stopped_when_the_clock_moved_on_while_stopped() {
+        let mut db = rusqlite::Connection::open_in_memory().unwrap();
+        db.execute_batch(TABLE).unwrap();
+        let (before, _) = paused();
+        before.now_ms();
+        before.jump(30 * DAY_MS).unwrap();
+        before.advance(10_000).unwrap();
+        assert_eq!(before.judging(), None, "the witness: held at 30 days");
+        let tx = db.transaction().unwrap();
+        before.keep(&tx).unwrap();
+        tx.commit().unwrap();
+
+        let (after, _) = paused();
+        after.jump(32 * DAY_MS).unwrap();
+        let tx = db.transaction().unwrap();
+        after.resume_from(super::kept(&tx).unwrap());
+        assert_eq!(after.judging(), None, "restarted at 32 days");
+        after.advance((STEADY_MS - 10_000) as u64 - 1).unwrap();
+        assert_eq!(after.judging(), None);
+        after.advance(1).unwrap();
+        assert!(after.judging().is_some(), "a day of running in all");
     }
 
     #[test]

@@ -502,13 +502,10 @@ async fn confirm_on(db: &Db, clock: &Arc<Clock>) -> Result<Stamp> {
     let written = {
         let (clock, replaced) = (clock.clone(), replaced.clone());
         db.write(Write::own(), move |tx| {
-            let (at, before) = clock.confirm();
+            let (at, before) = confirming(tx, &clock)?;
             *replaced
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(before);
-            for job in JOBS.iter().filter(|job| job.deletes) {
-                schedule::bring_forward_held(tx, job.name, &at.text())?;
-            }
             Ok(at)
         })
         .await
@@ -523,6 +520,17 @@ async fn confirm_on(db: &Db, clock: &Arc<Clock>) -> Result<Stamp> {
         }
     }
     written
+}
+
+fn confirming(
+    tx: &rusqlite::Transaction<'_>,
+    clock: &Clock,
+) -> Result<(Stamp, crate::app::clock::Guard)> {
+    let (at, before) = clock.confirm();
+    for job in JOBS.iter().filter(|job| job.deletes) {
+        schedule::bring_forward_held(tx, job.name, &at.text())?;
+    }
+    Ok((at, before))
 }
 
 #[cfg(test)]
@@ -572,5 +580,42 @@ mod tests {
         assert!(confirm_on(&db, &clock).await.is_err());
         assert_eq!(clock.judging(), None);
         assert!(matches!(clock.standing(), Standing::Ahead { .. }));
+    }
+
+    #[tokio::test]
+    async fn a_confirmation_changes_nothing_a_clean_up_reads_until_its_write_commits() {
+        let db = Db::open(
+            &Options {
+                path: DatabasePath::Memory,
+                write_wait: Duration::from_secs(5),
+                readers: 1,
+                migrations: crate::db::migrate::MIGRATIONS,
+                reserve: 0,
+            },
+            Arc::default(),
+        )
+        .map_err(|failure| failure.message)
+        .unwrap();
+        let clock = Arc::new(Clock::new(0));
+        clock.pause(true);
+        clock.now_ms();
+        clock.jump(180 * DAY_MS).unwrap();
+        db.keep_clock(clock.clone());
+        assert_eq!(clock.judging(), None, "the witness: the clock holds");
+
+        let inside = clock.clone();
+        let seen = db
+            .write(Write::own(), move |tx| {
+                confirming(tx, &inside)?;
+                Ok(inside.judging())
+            })
+            .await
+            .unwrap();
+        assert_eq!(seen, None, "read inside the confirming write");
+
+        let confirmed = confirm_on(&db, &clock).await.unwrap();
+        assert_eq!(clock.judging(), Some(confirmed));
+        let kept = db.read(crate::app::clock::kept).await.unwrap().unwrap();
+        assert_eq!(kept.trusted_at, confirmed);
     }
 }
