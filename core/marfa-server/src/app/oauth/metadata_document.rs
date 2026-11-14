@@ -2,7 +2,7 @@
 
 use crate::app::faults::Faults;
 use crate::app::outbound::address::is_public;
-use crate::app::outbound::{self, Pinned, Reach};
+use crate::app::outbound::{self, Asker, Pinned, Reach};
 use std::io::Read;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -199,16 +199,18 @@ impl Fetcher {
         let port = url.port_or_known_default().ok_or(Failure::Unavailable(
             "The client's host could not be resolved.",
         ))?;
-        match self
-            .runtime
-            .block_on(outbound::reach(&self.faults, url, false))
-        {
+        match self.runtime.block_on(outbound::reach(
+            &self.faults,
+            url,
+            false,
+            Asker::ClientDocument,
+        )) {
             Reach::Targets(targets) => Ok(targets
                 .into_iter()
                 .take(MOST_ADDRESSES)
                 .map(|target| SocketAddr::new(target.connected, port))
                 .collect()),
-            Reach::Unresolved => Err(Failure::Unavailable(
+            Reach::Unresolved | Reach::NoSlot => Err(Failure::Unavailable(
                 "The client's host could not be resolved.",
             )),
             Reach::NotPublic => Err(Failure::Refused(
