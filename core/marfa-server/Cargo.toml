@@ -20,6 +20,7 @@ test-hooks = []
 native = ["marfa-enrichment/native"]
 
 [dependencies]
+aes-gcm = "0.11"
 arc-swap = "1"
 argon2 = "0.6"
 askama = { version = "0.16", default-features = false, features = ["config", "derive", "std"] }
