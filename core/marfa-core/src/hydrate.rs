@@ -698,7 +698,7 @@ fn attempt(
             }
             let conn = core.conn()?;
             context.check(&conn)?;
-            conn.execute("DELETE FROM meta WHERE key LIKE 'item_early/%'", [])?;
+            store::meta_delete_under(&conn, "item_early/")?;
             Reached::at(Phase::Replay, pages_total).keep(&conn)?;
         }
 

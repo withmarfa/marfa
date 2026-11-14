@@ -758,8 +758,13 @@ pub fn record_digest(conn: &Connection) -> Result<[u8; 32], CoreError> {
         &[],
     )?;
     take(
-        "SELECT key, value FROM meta WHERE key LIKE 'folder\\_%' ESCAPE '\\' AND key NOT IN (?1, ?2) ORDER BY key",
-        &[&super::health::META, &super::watch::SEND_AGAIN_AT],
+        "SELECT key, value FROM meta WHERE key >= ?1 AND key < ?2 AND key NOT IN (?3, ?4) ORDER BY key",
+        &[
+            &"folder_",
+            &crate::store::prefix_end("folder_"),
+            &super::health::META,
+            &super::watch::SEND_AGAIN_AT,
+        ],
     )?;
     Ok(digest.finalize().into())
 }

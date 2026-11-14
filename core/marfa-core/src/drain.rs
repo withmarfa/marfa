@@ -3576,14 +3576,9 @@ fn read_owed_backs(
     let pending = {
         let conn = core.conn()?;
         let mut owed: HashMap<String, String> = {
-            let prefix = receipt_key("");
-            let mut statement = conn.prepare(
-                "SELECT substr(key, length(?1) + 1), value FROM meta
-                  WHERE substr(key, 1, length(?1)) = ?1",
-            )?;
-            statement
-                .query_map([&prefix], |row| Ok((row.get(0)?, row.get(1)?)))?
-                .collect::<rusqlite::Result<_>>()?
+            store::meta_under(&conn, &receipt_key(""))?
+                .into_iter()
+                .collect()
         };
         let ids: Vec<String> = owed.keys().cloned().collect();
         store::queued_writes_named(&conn, &ids)?
