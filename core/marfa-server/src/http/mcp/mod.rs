@@ -7,8 +7,9 @@ mod tools;
 use std::sync::Arc;
 
 use axum::body::Body;
-use axum::extract::{FromRequest, Request, State};
+use axum::extract::{Request, State};
 use axum::http::header::{ALLOW, ORIGIN, WWW_AUTHENTICATE};
+use axum::http::request::Parts;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
 use marfa_rules::json_text;
@@ -16,7 +17,7 @@ use serde_json::{Map, Value, json};
 
 use super::answer::{Unhandled, refusal_answer};
 use super::body::JsonBody;
-use super::caller::{identify, refused};
+use super::caller::{forget, identify, refused};
 use super::query;
 use crate::app::App;
 use crate::app::access::{Caller, unauthorized};
@@ -266,29 +267,40 @@ async fn answer(app: &Arc<App>, caller: &Caller, group: Group, call: Call) -> Re
     reply.into_response()
 }
 
+async fn caller_of(
+    app: &Arc<App>,
+    group: Group,
+    parts: &mut Parts,
+) -> std::result::Result<Caller, Box<Response>> {
+    match identify(parts, app).await {
+        Ok(Some(caller @ (Caller::Key(_) | Caller::App { .. }))) => Ok(caller),
+        Ok(None) => Err(Box::new(unauthenticated(app, group, &refused(parts)))),
+        Ok(Some(_)) => Err(Box::new(unauthenticated(app, group, &unauthorized()))),
+        Err(refusal) => Err(Box::new(refusal_answer(&refusal))),
+    }
+}
+
 async fn post(app: Arc<App>, group: Group, request: Request) -> Response {
     let (mut parts, body) = request.into_parts();
     if !origin_allowed(&app, &parts.headers).await {
         return foreign_origin();
     }
-    let caller = match identify(&mut parts, &app).await {
-        Ok(Some(caller @ (Caller::Key(_) | Caller::App { .. }))) => caller,
-        Ok(None) => return unauthenticated(&app, group, &refused(&parts)),
-        Ok(Some(_)) => return unauthenticated(&app, group, &unauthorized()),
-        Err(refusal) => return refusal_answer(&refusal),
-    };
+    if let Err(refused) = caller_of(&app, group, &mut parts).await {
+        return *refused;
+    }
     if let Err(refusal) = query::only(&parts.uri, &[]) {
         return refusal_answer(&refusal);
     }
-    let headers = parts.headers.clone();
-    let read = match JsonBody::from_request(Request::from_parts(parts, body), &app).await {
-        Ok(body) => body.read().await,
-        Err(stopped) => Err(stopped),
-    };
-    let read = match read {
+    let read = match JsonBody::of(&app, &parts, body).read().await {
         Ok(read) => read,
         Err(stopped) => return axum::response::IntoResponse::into_response(stopped),
     };
+    forget(&mut parts);
+    let caller = match caller_of(&app, group, &mut parts).await {
+        Ok(caller) => caller,
+        Err(refused) => return *refused,
+    };
+    let headers = parts.headers;
     if json_text::too_deep(read.bytes()) {
         return unreadable(false);
     }

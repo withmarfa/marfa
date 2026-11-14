@@ -7,7 +7,8 @@ use std::time::Duration;
 
 use axum::body::{Body, Bytes, HttpBody};
 use axum::extract::{FromRequest, MatchedPath, Request, State};
-use axum::http::{Extensions, HeaderMap, HeaderValue, header};
+use axum::http::request::Parts;
+use axum::http::{Extensions, HeaderMap, HeaderValue, Method, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use http_body::{Frame, SizeHint};
@@ -16,7 +17,7 @@ use marfa_rules::{integers, json_text};
 use serde_json::{Map, Value, json};
 
 use super::answer::{Stopped, refusal_answer};
-use super::caller::presents;
+use super::caller::{forget, presents};
 use super::doors::Credentials;
 use super::observe::RequestContext;
 use crate::app::App;
@@ -203,12 +204,7 @@ impl FromRequest<Arc<App>> for JsonBody {
 
     async fn from_request(request: Request, app: &Arc<App>) -> Result<JsonBody, Stopped> {
         let (parts, body) = request.into_parts();
-        let limit = cap_on(app, parts.uri.path(), &parts.extensions);
-        Ok(JsonBody {
-            headers: parts.headers,
-            body,
-            limit,
-        })
+        Ok(JsonBody::of(app, &parts, body))
     }
 }
 
@@ -301,6 +297,14 @@ async fn buffered(body: Body, limit: usize) -> Result<Bytes, Stopped> {
 }
 
 impl JsonBody {
+    pub fn of(app: &App, parts: &Parts, body: Body) -> JsonBody {
+        JsonBody {
+            headers: parts.headers.clone(),
+            body,
+            limit: cap_on(app, parts.uri.path(), &parts.extensions),
+        }
+    }
+
     async fn bytes(self) -> Result<Bytes, Stopped> {
         if declared_length(&self.headers) > Some(self.limit) {
             return Err(too_large(self.limit).into());
@@ -505,23 +509,24 @@ pub struct Checking {
     pub credentials: Arc<Credentials>,
 }
 
-/// A connector's declared size takes precedence over its credential.
+/// No operation takes a body under any other method, so none is read.
+fn takes_body(method: &Method) -> bool {
+    matches!(*method, Method::POST | Method::PUT | Method::PATCH)
+}
+
+/// The caller is judged again once the body is whole; the first look only admits.
 pub async fn checked(State(checking): State<Checking>, request: Request, next: Next) -> Response {
     let app = &checking.app;
-    let path = request.uri().path();
-    let limit = cap_on(app, path, request.extensions());
     // The MCP doors judge the origin and the credential before they read the body.
     if super::profile::reads_own_body(&request)
         || request.body().is_end_stream()
-        || MCP_PATHS.contains(&path)
+        || !takes_body(request.method())
+        || MCP_PATHS.contains(&request.uri().path())
     {
         return next.run(request).await;
     }
-    let over = declared_length(request.headers()) > Some(limit);
-    if over && under_connectors(path) {
-        return refusal_answer(&too_large(limit));
-    }
     let (mut parts, body) = request.into_parts();
+    let limit = cap_on(app, parts.uri.path(), &parts.extensions);
     let door = parts
         .extensions
         .get::<MatchedPath>()
@@ -531,9 +536,14 @@ pub async fn checked(State(checking): State<Checking>, request: Request, next: N
                 .get(&(parts.method.clone(), matched.as_str()))
         })
         .copied();
-    if let Some((asks, admission)) = door
-        && let Err(refusal) = presents(&mut parts, app, asks, admission).await
-    {
+    let Some((asks, admission)) = door else {
+        return super::unmatched(parts.method, parts.headers).await;
+    };
+    let over = declared_length(&parts.headers) > Some(limit);
+    if over && under_connectors(parts.uri.path()) {
+        return refusal_answer(&too_large(limit));
+    }
+    if let Err(refusal) = presents(&mut parts, app, asks, admission).await {
         return refusal_answer(&refusal);
     }
     if over {
@@ -543,6 +553,10 @@ pub async fn checked(State(checking): State<Checking>, request: Request, next: N
         Ok(bytes) => bytes,
         Err(stopped) => return stopped.into_response(),
     };
+    forget(&mut parts);
+    if let Err(refusal) = presents(&mut parts, app, asks, admission).await {
+        return refusal_answer(&refusal);
+    }
     if let Err(refusal) = scanned(&bytes) {
         return refusal_answer(&refusal);
     }
@@ -666,28 +680,45 @@ mod presented_tests {
             .map(|answer| answer.unwrap().status())
     }
 
+    /// Every method at every path, whether or not the credential map names it.
     #[tokio::test]
-    async fn a_door_that_asks_a_credential_refuses_none_with_the_body_unread_as_the_door_would() {
+    async fn a_body_with_no_credential_is_answered_as_no_body_is_at_every_method_and_path() {
         let instance = start().await;
-        let mut asked = 0;
-        let mut disagree = Vec::new();
-        for ((method, path), (asks, _)) in public_doors(instance.app.clone()).credentials() {
-            if asks == Asks::Nothing {
-                continue;
-            }
-            asked += 1;
-            let bare = answer(&instance, request(&method, path, None, Body::empty())).await;
-            let held_request = request(&method, path, None, Body::new(Held));
-            let held = if super::super::profile::reads_own_body(&held_request) {
-                bare
-            } else {
-                answer(&instance, held_request).await
-            };
-            if (bare, held) != (Some(StatusCode::UNAUTHORIZED), bare) {
-                disagree.push(format!("{method} {path}: {bare:?}, {held:?} with a body"));
-            }
-        }
-        assert!(asked > 100, "the witness: {asked} doors");
+        let doors = public_doors(instance.app.clone());
+        let credentials = doors.credentials();
+        let paths: BTreeSet<&str> = doors.served().iter().map(|door| door.path).collect();
+        let methods = [
+            Method::GET,
+            Method::HEAD,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ];
+        let judged: Vec<_> = paths
+            .into_iter()
+            .flat_map(|path| methods.iter().map(move |method| (method, path)))
+            .filter(|(method, path)| {
+                let open = credentials
+                    .get(&((*method).clone(), *path))
+                    .is_some_and(|(asks, _)| *asks == Asks::Nothing);
+                !(open && takes_body(method))
+            })
+            .collect();
+        assert!(judged.len() > 900, "the witness: {}", judged.len());
+        let instance = &instance;
+        let answers = judged.iter().map(|&(method, path)| async move {
+            let bare = answer(instance, request(method, path, None, Body::empty())).await;
+            let held = answer(instance, request(method, path, None, Body::new(Held))).await;
+            (bare.is_none() || held != bare)
+                .then(|| format!("{method} {path}: {bare:?}, {held:?} with a body"))
+        });
+        let disagree: Vec<String> = futures_util::future::join_all(answers)
+            .await
+            .into_iter()
+            .flatten()
+            .collect();
         assert_eq!(disagree, Vec::<String>::new());
     }
 

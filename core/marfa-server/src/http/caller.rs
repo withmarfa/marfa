@@ -243,6 +243,13 @@ pub fn refused(parts: &Parts) -> Refusal {
     }
 }
 
+/// Drops what was read of the caller, so the next read is of the state now.
+pub fn forget(parts: &mut Parts) {
+    parts.extensions.remove::<Identified>();
+    parts.extensions.remove::<Named>();
+    parts.extensions.remove::<Expired>();
+}
+
 /// Read once however many layers ask. A credential that does not verify is nobody, on the
 /// control socket too.
 pub async fn identify(parts: &mut Parts, app: &Arc<App>) -> Result<Option<Caller>> {
