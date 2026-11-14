@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   SCRIPTED_INSTANCE,
   answers,
+  refusal,
   wireItem,
 } from "../../device/marfa-answers.js";
 import type { QueuedWrite } from "../../device/protocol.js";
@@ -341,18 +342,30 @@ describe("setting a damaged store aside", () => {
     const { harness } = await storeWith("set-aside-not-made", 1);
     const { store } = harness.device;
     damageTable(store, "items");
-    const made = `${store}.carrying`;
-    writeFileSync(made, "a person's file");
     const before = digest(store);
-    const refused = await harness.device.setAside();
-    expect(refused.ok).toBe(false);
-    if (!refused.ok) {
-      expect(refused.refusal.code).toBe("store");
-      expect(refused.refusal.raw).toContain(made);
+    // Where the new store is made and marked, where it carries the writes,
+    // and the log SQLite would read into a store made at either name.
+    for (const name of [
+      `${store}.carrying`,
+      `${store}.carrying-wal`,
+      `${store}.making`,
+      `${store}.making-wal`,
+    ]) {
+      writeFileSync(name, "a person's file");
+      const refused = await harness.device.setAside();
+      expect(refused.ok, name).toBe(false);
+      if (!refused.ok) {
+        expect(refused.refusal.code).toBe("store");
+        expect(refused.refusal.raw).toContain(name);
+      }
+      expect(readFileSync(name, "utf8")).toBe("a person's file");
+      expect(digest(store)).toBe(before);
+      expect(existsSync(`${store}.damaged-1`)).toBe(false);
+      rmSync(name);
     }
-    expect(readFileSync(made, "utf8")).toBe("a person's file");
-    expect(digest(store)).toBe(before);
-    expect(existsSync(`${store}.damaged-1`)).toBe(false);
+    // The witness: with nothing standing there, the store is set aside.
+    const done = await harness.device.setAside();
+    expect(done.ok && done.value.carried, JSON.stringify(done)).toBe(1);
   });
 
   it("refuses to set aside a store that opens, leaving it as it was", async () => {
@@ -409,5 +422,118 @@ describe("setting a damaged store aside", () => {
     ]);
     const carried = await device.queue();
     expect(carried.ok && carried.value.map(sent)).toEqual(queued.map(sent));
+  });
+
+  it("finishes a set-aside that ended while it made the new store, leaving nothing at the name it carries the writes in", async () => {
+    for (const point of ["made", "making"]) {
+      const { harness: made, queued } = await storeWith(
+        `set-aside-making-${point}`,
+        1,
+      );
+      const { device } = made;
+      damageTable(device.store, "items");
+      const damaged = digest(device.store);
+      const crashed = device.hold(["set-aside"], "device", {
+        MARFA_TEST_FAULT: `set-aside-crash=${point}`,
+      });
+      await crashed.exited();
+      expect(crashed.exitCode(), `the set-aside did not stop at ${point}`).not.toBe(
+        0,
+      );
+      expect(
+        existsSync(`${device.store}.carrying`),
+        `a file stands where the writes are carried that no mark shows a set-aside made (${point})`,
+      ).toBe(false);
+      expect(digest(device.store)).toBe(damaged);
+
+      const done = await device.setAside();
+      expect(done.ok, JSON.stringify(done)).toBe(true);
+      if (!done.ok) return;
+      expect([done.value.set_aside, done.value.carried]).toEqual([
+        `${device.store}.damaged-1`,
+        1,
+      ]);
+      expect(existsSync(`${device.store}.making`)).toBe(false);
+      const carried = await device.queue();
+      expect(carried.ok && carried.value.map(sent)).toEqual(queued.map(sent));
+      await made.stop();
+      harness = undefined;
+    }
+  });
+
+  it("holds a carried write whose record does not read whatever its verdict, and a released one goes under its key and is judged again", async () => {
+    const { harness, queued } = await storeWith("set-aside-record-spent", 1);
+    const { device, server } = harness;
+    const spentKey = () =>
+      scriptWrites(server, {
+        create: [
+          refusal(422, "idempotency_key_reused", "answered for another body"),
+        ],
+      });
+    spentKey();
+    expect((await device.drain()).ok).toBe(true);
+    const spent = await device.queue();
+    // The witness: the write was blocked for another reason before.
+    expect(
+      spent.ok && [spent.value[0]?.verdict, spent.value[0]?.reason],
+    ).toEqual(["blocked", "key_spent"]);
+
+    damageTable(device.store, "body_checks");
+    const done = await device.setAside();
+    expect(done.ok, JSON.stringify(done)).toBe(true);
+    if (!done.ok) return;
+    expect([done.value.carried, done.value.record_unread]).toEqual([1, 1]);
+    const held = await device.queue();
+    expect(held.ok && [held.value[0]?.verdict, held.value[0]?.reason]).toEqual(
+      ["blocked", "record_unread"],
+    );
+
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const released = await device.release({ reason: "record_unread" });
+    expect(released.ok && released.value, JSON.stringify(released)).toBe(1);
+    const before = writes(harness).length;
+    spentKey();
+    expect((await device.drain()).ok).toBe(true);
+    expect(writes(harness).slice(before)).toEqual([
+      { key: queued[0]?.idempotency_key },
+    ]);
+    const again = await device.queue();
+    expect(
+      again.ok && [again.value[0]?.verdict, again.value[0]?.reason],
+    ).toEqual(["blocked", "key_spent"]);
+  });
+
+  it("keeps a carried write held record_unread when the new store is hydrated from another instance", async () => {
+    harness = await startHarness("set-aside-record-instance");
+    const { server, device } = harness;
+    let instance = SCRIPTED_INSTANCE;
+    server.copyAnswer("GET", "/", () =>
+      answers.root(Number(BUILT_FOR), instance),
+    );
+    scriptHydration(server, { head: "1", instance: () => instance });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "typed", body: "offline" },
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    const tagged = await device.addTag(created.value.item_id ?? "", "carried");
+    expect(tagged.ok, JSON.stringify(tagged)).toBe(true);
+    if (!tagged.ok) return;
+    damageTable(device.store, "body_checks");
+    const done = await device.setAside();
+    expect(done.ok && done.value.record_unread, JSON.stringify(done)).toBe(1);
+
+    instance = "00000000-0000-7000-8000-0000000000ff";
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const held = await device.queue();
+    expect(held.ok, JSON.stringify(held)).toBe(true);
+    if (!held.ok) return;
+    const reason = (id: string) =>
+      held.value.find((write) => write.id === id)?.reason;
+    // The witness: the write that was waiting is held for the instance.
+    expect(reason(tagged.value.id)).toBe("instance_changed");
+    expect(reason(created.value.id)).toBe("record_unread");
   });
 });

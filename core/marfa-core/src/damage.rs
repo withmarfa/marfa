@@ -277,7 +277,11 @@ fn left_part_made(making: &Path) -> bool {
         return false;
     };
     let log = store::suffixed(making, "-wal");
-    if !held.is_file() || store::suffixed(making, "-journal").symlink_metadata().is_ok() {
+    if !held.is_file()
+        || store::suffixed(making, "-journal")
+            .symlink_metadata()
+            .is_ok()
+    {
         return false;
     }
     if held.len() == 0 {

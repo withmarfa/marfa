@@ -825,7 +825,10 @@ fn a_new_store_left_part_made_is_removed_only_where_it_holds_nothing_or_a_set_as
             Err(error) => error.to_string(),
             Ok(done) => panic!("{left}: set aside past what it did not make: {done:?}"),
         };
-        assert!(said.contains(&making(&path).display().to_string()), "{said}");
+        assert!(
+            said.contains(&making(&path).display().to_string()),
+            "{said}"
+        );
         assert_eq!(bytes(&making(&path)), kept, "{left}");
         assert_eq!(bytes(&path), before, "{left}");
         assert!(!beside(&path, ".carrying").exists(), "{left}");
@@ -947,10 +950,7 @@ fn a_write_held_record_unread_keeps_its_reason_when_the_copy_moves_to_another_in
     store::block_for_another_instance(&conn).unwrap();
     let reason = |id: &str| store::queued_write(&conn, id).unwrap().unwrap().reason;
     // The witness: a write that was waiting is held for the instance.
-    assert_eq!(
-        reason(&waiting.id).as_deref(),
-        Some("instance_changed")
-    );
+    assert_eq!(reason(&waiting.id).as_deref(), Some("instance_changed"));
     assert_eq!(reason(&edge).as_deref(), Some("record_unread"));
 }
 
@@ -963,14 +963,20 @@ fn a_folders_store_that_fails_to_open_on_damage_keeps_its_log() {
     let path = state.join(store::FOLDER_STORE);
     drop(Core::open(&path, None).unwrap());
     damage_table(&path, "meta");
-    in_log(&path, "CREATE TABLE logged (x); INSERT INTO logged VALUES (1);");
+    in_log(
+        &path,
+        "CREATE TABLE logged (x); INSERT INTO logged VALUES (1);",
+    );
     let before = bytes(&path);
     let log = bytes(&beside(&path, "-wal"));
     assert!(log.is_some());
     let directory = crate::directory::Directory::open(&state).unwrap();
     let error = Core::open_directory(&directory, &path, None).err().unwrap();
     assert_eq!(error.code(), "store_damaged", "{error}");
-    assert!(bytes(&beside(&path, "-wal")) == log, "the open changed the log");
+    assert!(
+        bytes(&beside(&path, "-wal")) == log,
+        "the open changed the log"
+    );
     assert!(bytes(&path) == before, "the open changed the store");
 }
 

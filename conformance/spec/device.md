@@ -358,9 +358,9 @@ While a folder's copy is expired, a device MUST send no status report for the fo
 
 ### `device/queue-other-instance-held`
 
-When a device hydrates a copy from an instance other than the one the copy was last built from, a device MUST give every queued write still waiting the verdict `blocked` with the reason `instance_changed`.
+When a device hydrates a copy from an instance other than the one the copy was last built from, a device MUST give every queued write still waiting, but one blocked `record_unread`, the verdict `blocked` with the reason `instance_changed`.
 
-**Reason:** each write was made against items the other instance held, and the instance now at the address may never have held them. Held, nothing is sent to a server the person did not make it for; a caller releases a write to send it to the instance now there, or withdraws it.
+**Reason:** each write was made against items the other instance held, and the instance now at the address may never have held them. Held, nothing is sent to a server the person did not make it for; a caller releases a write to send it to the instance now there, or withdraws it. A write blocked `record_unread` is already held until a person releases it, and keeps the reason that says what it would go without (`device/set-aside-record-unread-kept`).
 
 **Tests:** `device/queue.test.ts › holds the writes queued against another instance once hydrated from the one now there, sending none until released`, `device/classification.test.ts › reports one of the eight blocked reasons and no other`.
 
@@ -4776,7 +4776,7 @@ When a device sets aside a store that records the instance it was built from, a 
 
 ### `device/set-aside-instance-unread`
 
-If a device sets aside a store and cannot read which instance it was built from, then a device MUST give each carried write still waiting the verdict `blocked` with the reason `instance_changed`.
+If a device sets aside a store and cannot read which instance it was built from, then a device MUST give each carried write still waiting, but one it gave the reason `record_unread`, the verdict `blocked` with the reason `instance_changed`.
 
 **Reason:** the device cannot know which server the writes were made for, so each waits for a person to release it.
 
@@ -4784,11 +4784,19 @@ If a device sets aside a store and cannot read which instance it was built from,
 
 ### `device/set-aside-record-unread`
 
-If a device sets aside a store and cannot read a record the old store kept that decides how a carried write still waiting is sent, then a device MUST give that write the verdict `blocked` with the reason `record_unread`.
+If a device sets aside a store and cannot read a record the old store kept that decides how a carried write still waiting is sent, then a device MUST give that write the verdict `blocked` with the reason `record_unread`, whether it was waiting, blocked for another reason or dead.
 
-**Reason:** such a record can be what stops a write from changing what a person did not mean it to, as for an edge a body made after the server kept another body on the item. Without it the device cannot know the write is safe to send, so it waits for a person to release or withdraw it.
+**Reason:** such a record can be what stops a write from changing what a person did not mean it to, as for an edge a body made after the server kept another body on the item. Without it the device cannot know the write is safe to send, so it waits for a person to release or withdraw it. A write blocked for another reason, or dead, is a release away from being sent, so it is held the same way. Released, it keeps its idempotency key (`queue-and-verdicts/key-kept-on-retry`), so a drain judges it again: a key the server spent is refused again.
 
-**Tests:** `device/damaged-store.test.ts › holds a carried write whose record of how it is sent does not read, until a person releases or withdraws it`.
+**Tests:** `device/damaged-store.test.ts › holds a carried write whose record of how it is sent does not read, until a person releases or withdraws it`, `› holds a carried write whose record does not read whatever its verdict, and a released one goes under its key and is judged again`.
+
+### `device/set-aside-record-unread-kept`
+
+When a device hydrates a store from an instance other than the one it was last built from, a device MUST leave each write blocked `record_unread` with that reason.
+
+**Reason:** a release of a write blocked `instance_changed` says only that the instance changed. Kept `record_unread`, the write's release still says it goes without the record that decides how it is sent.
+
+**Tests:** `device/damaged-store.test.ts › keeps a carried write held record_unread when the new store is hydrated from another instance`.
 
 ### `device/set-aside-record-unread-says`
 
@@ -4820,11 +4828,27 @@ If a device's set-aside of a store stopped after it made the new store, then a d
 
 **Tests:** `device/damaged-store.test.ts › refuses a store whose set-aside stopped part way, and finishes it when asked again`.
 
+### `device/set-aside-marked`
+
+When a device sets aside a store, a device MUST make the new store at `<store>.making`, recording in the transaction that makes its tables that a set-aside made it, before the new store takes the name `<store>.carrying`.
+
+**Reason:** a set-aside can end at any point, as when the process is killed. Made this way, nothing stands at `<store>.carrying` that a set-aside cannot show it made, so asking again finishes the set-aside (`device/set-aside-finishes`).
+
+**Tests:** `device/damaged-store.test.ts › finishes a set-aside that ended while it made the new store, leaving nothing at the name it carries the writes in`.
+
+### `device/set-aside-making-left`
+
+If a device is asked to set aside a store while the file at `<store>.making` records that a set-aside made it, or holds no tables and no write-ahead log beside it holds a committed write, then a device MUST remove that file and the logs beside it.
+
+**Reason:** such a file is one a set-aside that ended part way left, and holds nothing a person made.
+
+**Tests:** `device/damaged-store.test.ts › finishes a set-aside that ended while it made the new store, leaving nothing at the name it carries the writes in`.
+
 ### `device/set-aside-not-made`
 
-If a file that no set-aside made stands at `<store>.carrying` when a device is asked to set aside the store, then a device MUST refuse `store`, leaving that file and the store unchanged.
+If a file that no set-aside made stands at `<store>.carrying` or `<store>.making`, or at one of the names `-wal`, `-journal` and `-shm` beside either, when a device is asked to set aside the store, then a device MUST refuse `store`, naming that file and leaving it and the store unchanged.
 
-**Reason:** a set-aside makes the new store at that name. A file it cannot show it made may hold what a person needs, so it is never removed, and the refusal names it so the person can move it.
+**Reason:** a set-aside makes the new store at those names, and SQLite reads a log into whatever store takes the name it stands beside, so a log is a set-aside's only beside a store a set-aside made. A file a set-aside cannot show it made may hold what a person needs, so it is never removed, and the refusal names it so the person can move it.
 
 **Tests:** `device/damaged-store.test.ts › refuses to set aside a store beside a file no set-aside made, leaving both as they were`.
 
