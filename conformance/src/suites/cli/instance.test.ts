@@ -1091,17 +1091,25 @@ describe("the instance from the terminal", () => {
     await receiver.waitFor(
       (hit) => hit.path === "/hook/cli" && hit.body.includes(written.item.id),
     );
+    // The receiver saw the request before the server read its answer, so the
+    // row is `pending` until the server records the outcome.
     const delivered = await vi.waitFor(
       async () => {
         const rows = await c.cli.json<{
-          data: Array<{ event_type: string; succeeded: boolean }>;
+          data: Array<{
+            event_type: string;
+            status: string;
+            succeeded: boolean;
+          }>;
         }>(["webhooks", "deliveries", live.id]);
         expect(rows.data.length).toBeGreaterThan(0);
+        expect(rows.data[0]?.status).not.toBe("pending");
         return rows.data;
       },
       { timeout: 20_000, interval: 250 },
     );
     expect(delivered[0]?.event_type).toBe("item.created");
+    expect(delivered[0]?.status).toBe("success");
     expect(delivered[0]?.succeeded).toBe(true);
 
     // The same write, and the paused subscription has nothing: a pause
