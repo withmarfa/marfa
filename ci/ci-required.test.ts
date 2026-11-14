@@ -177,9 +177,9 @@ describe("what a change runs", () => {
       ["quick-checks"],
     ],
     [
-      "the action that makes the native build image",
+      "the action that makes the native build image, which the server group, MCP conformance and the restore drill build their server in",
       [".github/actions/native-build-image/action.yml"],
-      ["quick-checks", "core-native", "image", ...CONTRACT_SHARDS],
+      ["quick-checks", "core-native", "image", ...RUST_SERVER],
     ],
     [
       "an action a workflow could use",
@@ -276,7 +276,7 @@ describe("what a change runs", () => {
       [...RUST, ...ENRICHMENT, "image", "quick-checks", "version-fields"],
     ],
     [
-      "the native readers' scripts, pins and patches, which the native build, the image's programs and the Rust server's build run",
+      "the native readers' scripts, pins and patches, which the native build, the image's programs and the Rust server's build run, and MCP conformance and the restore drill boot the same program",
       [
         "core/marfa-enrichment/native/release.sh",
         "core/marfa-enrichment/native/manifest.txt",
@@ -284,7 +284,7 @@ describe("what a change runs", () => {
         "core/marfa-enrichment/native/shim.cc",
         "core/marfa-enrichment/native/linux/Dockerfile",
       ],
-      ["quick-checks", "core-native", "image", ...CONTRACT_SHARDS],
+      ["quick-checks", "core-native", "image", ...RUST_SERVER],
     ],
     [
       "the reader's parsers, which are pure Rust and read the same on a Mac",
@@ -566,7 +566,7 @@ describe("what a change runs", () => {
     [
       "the native readers' scripts, which the image's programs and the Rust server are built with",
       ["core/marfa-enrichment/native/lib.sh"],
-      ["quick-checks", "core-native", "image", ...CONTRACT_SHARDS],
+      ["quick-checks", "core-native", "image", ...RUST_SERVER],
     ],
     [
       "the settings, whose names the Dockerfile sets",
@@ -970,14 +970,34 @@ function embeddedOutsideCore(scan: (path: string) => boolean): string[] {
   return outside;
 }
 
+type Dependencies = Record<string, { path?: string; workspace?: boolean }>;
+interface Manifest {
+  dependencies?: Dependencies;
+  "build-dependencies"?: Dependencies;
+  target?: Record<
+    string,
+    { dependencies?: Dependencies; "build-dependencies"?: Dependencies }
+  >;
+}
+
+/** Every dependency table of a manifest: the plain, build and per-target ones. */
+function dependencyTables(manifest: Manifest): Dependencies[] {
+  return [
+    manifest.dependencies ?? {},
+    manifest["build-dependencies"] ?? {},
+    ...Object.values(manifest.target ?? {}).flatMap((target) => [
+      target.dependencies ?? {},
+      target["build-dependencies"] ?? {},
+    ]),
+  ];
+}
+
 /** The crates a crate is built from: itself and the path dependencies of each, from the manifests. */
 function crateClosure(root: string): string[] {
   const manifest = (crate: string) =>
     parseToml(
       readFileSync(join(ROOT, "core", crate, "Cargo.toml"), "utf8"),
-    ) as {
-      dependencies?: Record<string, { path?: string; workspace?: boolean }>;
-    };
+    ) as Manifest;
   const workspace = (
     parseToml(readFileSync(join(ROOT, "core", "Cargo.toml"), "utf8")) as {
       workspace: { dependencies: Record<string, { path?: string }> };
@@ -988,8 +1008,8 @@ function crateClosure(root: string): string[] {
   for (let crate = pending.pop(); crate !== undefined; crate = pending.pop()) {
     if (crates.has(crate)) continue;
     crates.add(crate);
-    for (const [name, dep] of Object.entries(
-      manifest(crate).dependencies ?? {},
+    for (const [name, dep] of dependencyTables(manifest(crate)).flatMap(
+      (table) => Object.entries(table),
     )) {
       // A workspace dependency's path is the workspace root's, not the crate's.
       const path =
@@ -1505,6 +1525,25 @@ describe("what a job reads reaches it", () => {
     expect(files).toContain("conformance/src/utils/target.ts");
     const read = [...files, "conformance/package.json", "pnpm-lock.yaml"];
     expect(read.filter((f) => !affected(f).has("mcp-conformance"))).toEqual([]);
+  });
+
+  it("the crates a crate is built from include those named in its build and target dependency tables", () => {
+    const tables = dependencyTables({
+      dependencies: { a: { path: "../a" } },
+      "build-dependencies": { b: { path: "../b" } },
+      target: {
+        'cfg(target_os = "macos")': { dependencies: { c: { path: "../c" } } },
+        "x86_64-unknown-linux-musl": {
+          "build-dependencies": { d: { path: "../d" } },
+        },
+      },
+    });
+    expect(tables.flatMap((table) => Object.keys(table)).sort()).toEqual([
+      "a",
+      "b",
+      "c",
+      "d",
+    ]);
   });
 
   it("the cached device binary is keyed on every crate it is built from", () => {

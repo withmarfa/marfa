@@ -210,7 +210,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // (`release.yml` uses it too, and no pull request runs that).
   [
     /^\.github\/actions\/native-build-image\//,
-    ["core-native", "image", ...CONTRACT_SHARDS],
+    ["core-native", "image", ...RUST_SERVER],
   ],
   // Read by GitHub alone. Anything else under `.github/`, such as an action
   // a workflow uses, runs everything until a rule names it.
@@ -468,7 +468,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // the server with them: nothing else compiles or runs them.
   [
     /^core\/marfa-enrichment\/native\//,
-    ["core-native", "image", ...CONTRACT_SHARDS],
+    ["core-native", "image", ...RUST_SERVER],
   ],
   // Its sandbox is Landlock and seccomp on Linux and `sandbox_init` on macOS,
   // and its memory watch reads each system's own counter, so the source of
@@ -647,7 +647,7 @@ export interface Shard {
   module: boolean;
   /** Whether it holds every status the server drew to its declaration. */
   statuses: boolean;
-  /** Whether it needs the server a release ships, built without test hooks. */
+  /** Whether it needs the server a release ships, built without test hooks: only the compliance fixture that runs that program does. */
   release: boolean;
 }
 
@@ -675,7 +675,7 @@ export const SHARDS: readonly Shard[] = [
     binary: false,
     module: false,
     statuses: true,
-    release: true,
+    release: false,
   },
   ...split("compliance", 12, "rust-contract-server", {
     binary: false,

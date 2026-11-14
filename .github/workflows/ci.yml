@@ -677,7 +677,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TARGET: x86_64-unknown-linux-musl
-      # Whether the shards that run a release's program are owed.
+      # Whether the compliance shards, which run a release's program, are owed.
       RELEASE_OWED: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' }}
     steps:
       - uses: actions/checkout@v7
@@ -732,8 +732,9 @@ jobs:
       - name: Set the server aside
         if: ${{ steps.servers.outputs.cache-hit != 'true' }}
         run: install -D "$RUNNER_TEMP/marfa-native/out/$TARGET/marfa-server" "$RUNNER_TEMP/marfa-servers/hooks/marfa-server"
-      # Release-only fixtures need a separate binary without test hooks, and
-      # only the server's shards run them. `main` builds it every time.
+      # The compliance fixture that runs a release's program needs a binary
+      # without test hooks, and no other fixture does. `main` builds it every
+      # time.
       - name: Build the Rust server without test hooks
         id: release
         if: ${{ steps.servers.outputs.cache-hit != 'true' && env.RELEASE_OWED == 'true' }}

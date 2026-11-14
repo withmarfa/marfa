@@ -184,18 +184,14 @@ describe("the Rust contract shards", () => {
       "compliance",
     ]);
     expect(lanes("rust-contract-device")).toEqual(["cli", "device"]);
-    // Only the compliance fixture that runs a release's program needs it, so
-    // the group that holds it downloads the build without test hooks.
+    // Only the compliance fixture that runs a release's program reads it, so
+    // only the compliance shards download the build without test hooks.
     for (const entry of matrix) {
       expect(entry.release, entry.name).toBe(
-        entry.lane === "rust-contract-server",
+        entry.args.includes("--project compliance"),
       );
     }
-    expect(
-      matrix
-        .filter((entry) => entry.args.includes("--project compliance"))
-        .every((entry) => entry.release),
-    ).toBe(true);
+    expect(matrix.some((entry) => entry.release)).toBe(true);
     expect(
       readFileSync(
         resolve(
