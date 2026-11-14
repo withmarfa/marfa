@@ -20,6 +20,7 @@ import { afterAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import { listEntries, readEntry } from "../../utils/archive.js";
 import { controlRequest } from "../../utils/control-request.js";
+import { ON_MACOS } from "../../utils/platform.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -662,6 +663,33 @@ describe("the files a server keeps", () => {
     expect(run.output()).toContain("symbolic link");
     expect(mode(outside)).toBe(0o755);
   });
+
+  it(
+    "refuses to start through a symbolic link whose access control list lets another account remove it",
+    ON_MACOS,
+    async () => {
+      const data = folder("marfa-hf-data-");
+      const real = folder("marfa-hf-real-");
+      const via = resolve(data, "via");
+      symlinkSync(real, via);
+      const settings = { MARFA_BLOB_PATH: resolve(via, "blobs") };
+      // The witness: through the same link with nothing granted, the server starts.
+      const first = start(data, settings);
+      await listening(first);
+      await stop(first);
+      const granted = spawnSync("chmod", [
+        "-h",
+        "+a",
+        "everyone allow delete",
+        via,
+      ]);
+      expect(granted.status, granted.stderr.toString()).toBe(0);
+      const run = start(data, settings);
+      expect(await refusal(run), run.output()).not.toBe(0);
+      expect(run.output()).toContain(via);
+      expect(run.output()).toContain("access control list");
+    },
+  );
 
   it("refuses to start on a blob folder another account owns, and leaves it as it was", async () => {
     // As the system's administrator account, the server would own the folder.

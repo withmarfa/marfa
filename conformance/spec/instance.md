@@ -2557,11 +2557,11 @@ If the server's blob folder exists when the server starts and another account ow
 
 ### `instance/files-way-guarded`
 
-If another account could replace or remove what a folder on the path to the server's database or blob folder holds when the server starts, because that account owns the folder, may write to it while it is not both owned by the system's administrator account and marked sticky, or owns a symbolic link on that path, then the server MUST refuse to start, name the folder and leave the database and the blob folder unchanged.
+If another account could replace or remove what a folder on the path to the server's database or blob folder holds when the server starts, because that account owns the folder, may write to it while it is not both owned by the system's administrator account and marked sticky, or owns a symbolic link on that path or may change or remove one through its access control list, then the server MUST refuse to start, name the folder or link and leave the database and the blob folder unchanged.
 
 **Reason:** whoever can replace a folder on the way decides which files the server makes private and where it writes the owner's data.
 
-**Tests:** `compliance/hook-free-server.test.ts › refuses to start when another account could write to a folder on the way to its blob folder, and leaves the blob folder as it was`.
+**Tests:** `compliance/hook-free-server.test.ts › refuses to start when another account could write to a folder on the way to its blob folder, and leaves the blob folder as it was`, `› refuses to start through a symbolic link whose access control list lets another account remove it`.
 
 ### `instance/files-holder-shared`
 

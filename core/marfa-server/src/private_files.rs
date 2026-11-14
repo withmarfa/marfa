@@ -83,8 +83,8 @@ fn walk(path: &Path, me: u32) -> Result<Reached, Failure> {
             Step::Name(name) => name,
         };
         let next = folder.join(&name);
-        let found = match std::fs::symlink_metadata(&next) {
-            Ok(found) => found,
+        let looked = match look(&next, me) {
+            Ok(looked) => looked,
             Err(error) if error.kind() == ErrorKind::NotFound => {
                 let mut below = vec![name];
                 for step in ahead {
@@ -98,29 +98,37 @@ fn walk(path: &Path, me: u32) -> Result<Reached, Failure> {
             }
             Err(error) => return Err(refused(&next, format_args!("could not be read: {error}"))),
         };
-        if found.file_type().is_symlink() {
-            if found.uid() != me && found.uid() != 0 {
+        if let Some(target) = &looked.target {
+            if looked.found.uid() != me && looked.found.uid() != 0 {
                 return Err(refused(
                     &next,
                     "is a symbolic link another account made. Name the folder it points to \
                      instead.",
                 ));
             }
+            if looked.others_may_change {
+                return Err(refused(
+                    &next,
+                    format_args!(
+                        "is a symbolic link whose access control list lets another account \
+                         change or remove it. Run `chmod -h -N {}`.",
+                        next.display()
+                    ),
+                ));
+            }
             links += 1;
-            let target = std::fs::read_link(&next)
-                .map_err(|error| refused(&next, format_args!("could not be read: {error}")))?;
             if links > MAX_LINKS || target.as_os_str().is_empty() {
                 return Err(refused(
                     path,
                     "could not be followed through its symbolic links",
                 ));
             }
-            for step in steps(&target).rev() {
+            for step in steps(target).rev() {
                 ahead.push_front(step);
             }
             continue;
         }
-        judged_on_the_way(&next, &found, me)?;
+        judged_on_the_way(&next, &looked, me)?;
         folder = next;
     }
     Ok(Reached {
@@ -130,14 +138,81 @@ fn walk(path: &Path, me: u32) -> Result<Reached, Failure> {
 }
 
 fn on_the_way(folder: &Path, me: u32) -> Result<(), Failure> {
-    let found = std::fs::symlink_metadata(folder)
+    let looked = look(folder, me)
         .map_err(|error| refused(folder, format_args!("could not be read: {error}")))?;
-    judged_on_the_way(folder, &found, me)
+    judged_on_the_way(folder, &looked, me)
 }
 
-fn judged_on_the_way(folder: &Path, found: &Metadata, me: u32) -> Result<(), Failure> {
-    let why =
-        marfa_acl::exposure(folder, found, me).map_err(|error| unreadable_acl(folder, &error))?;
+/// A file or folder on the way, unfollowed, and what it says about itself.
+struct Looked {
+    found: Metadata,
+    /// Whether its own access control list lets another account change or remove it.
+    others_may_change: bool,
+    /// Where it points, when it is a symbolic link.
+    target: Option<PathBuf>,
+}
+
+/// Here an entry's own access control list can let another account remove it, so all of it is
+/// read from one descriptor: what is judged is what the name held, even if the name is replaced.
+#[cfg(target_os = "macos")]
+fn look(path: &Path, me: u32) -> std::io::Result<Looked> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::ffi::OsStringExt;
+
+    // A folder needs only search rights this way; a link answers ENOTDIR and is opened as itself.
+    let file = match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_SEARCH | libc::O_NOFOLLOW)
+        .open(path)
+    {
+        Err(error) if error.raw_os_error() == Some(libc::ENOTDIR) => OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_SYMLINK | libc::O_EVTONLY)
+            .open(path)?,
+        opened => opened?,
+    };
+    let found = file.metadata()?;
+    let others_may_change = marfa_acl::others_may_write_file(&file, me)?;
+    let target = if found.file_type().is_symlink() {
+        let mut buffer = vec![0u8; libc::PATH_MAX as usize];
+        // SAFETY: the file is open and the buffer has the size passed.
+        let length =
+            unsafe { libc::freadlink(file.as_raw_fd(), buffer.as_mut_ptr().cast(), buffer.len()) };
+        let length = usize::try_from(length).map_err(|_| std::io::Error::last_os_error())?;
+        buffer.truncate(length);
+        Some(PathBuf::from(OsString::from_vec(buffer)))
+    } else {
+        None
+    };
+    Ok(Looked {
+        found,
+        others_may_change,
+        target,
+    })
+}
+
+/// Here only the folder an entry is in decides who can remove or rename it, and the walk judges
+/// that folder first, so a second read by name still finds the same entry. A link keeps no access
+/// control list.
+#[cfg(not(target_os = "macos"))]
+fn look(path: &Path, _me: u32) -> std::io::Result<Looked> {
+    let found = std::fs::symlink_metadata(path)?;
+    let target = if found.file_type().is_symlink() {
+        Some(std::fs::read_link(path)?)
+    } else {
+        None
+    };
+    Ok(Looked {
+        found,
+        others_may_change: false,
+        target,
+    })
+}
+
+fn judged_on_the_way(folder: &Path, looked: &Looked, me: u32) -> Result<(), Failure> {
+    let why = marfa_acl::exposure(folder, &looked.found, me)
+        .map_err(|error| unreadable_acl(folder, &error))?
+        .or(looked.others_may_change.then_some(marfa_acl::Exposure::Acl));
     let fix = match why {
         None => return Ok(()),
         Some(marfa_acl::Exposure::Link | marfa_acl::Exposure::NotFolder) => {
@@ -497,6 +572,49 @@ mod tests {
         std::os::unix::fs::symlink(&real, dir.path().join("via")).unwrap();
         kept(dir.path(), &dir.path().join("via/blobs")).unwrap();
         assert_eq!(mode(&real.join("blobs")), 0o700);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_link_on_the_way_that_another_account_may_change_or_remove_refuses_the_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let (holder, real) = (dir.path().join("holder"), dir.path().join("real"));
+        fs::create_dir(&holder).unwrap();
+        fs::create_dir_all(real.join("blobs")).unwrap();
+        let link = holder.join("via");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let blobs = link.join("blobs");
+        let chmod_acl = |args: &[&std::ffi::OsStr]| {
+            let done = std::process::Command::new("/bin/chmod").args(args).status();
+            assert!(done.unwrap().success());
+        };
+        // The witness: the same link, with nothing granted, leads to the blob folder.
+        kept(dir.path(), &blobs).unwrap();
+        chmod_acl(&[
+            "-h".as_ref(),
+            "+a".as_ref(),
+            "everyone allow delete".as_ref(),
+            link.as_ref(),
+        ]);
+        let failure = kept(dir.path(), &blobs).err().expect("refused");
+        assert!(failure.message.contains("access control list"), "{failure}");
+        assert!(
+            failure.message.contains(link.to_str().unwrap()),
+            "{failure}"
+        );
+        chmod_acl(&["-h".as_ref(), "-N".as_ref(), link.as_ref()]);
+        kept(dir.path(), &blobs).unwrap();
+        chmod_acl(&[
+            "+a".as_ref(),
+            "everyone allow delete_child".as_ref(),
+            holder.as_ref(),
+        ]);
+        let failure = kept(dir.path(), &blobs).err().expect("refused");
+        assert!(failure.message.contains("access control list"), "{failure}");
+        assert!(
+            failure.message.contains(holder.to_str().unwrap()),
+            "{failure}"
+        );
     }
 
     #[test]

@@ -418,9 +418,10 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^core\/marfa-allocator\//, RUST],
   // The server's own use of it has a macOS-only test, its start routes memory
   // to jemalloc on a Mac only, and its process figures read the resident size,
-  // and the open-file limit is raised, through macOS-only calls.
+  // and the open-file limit is raised, through macOS-only calls, as are the
+  // folders on the way to the server's data.
   [
-    /^core\/marfa-server\/src\/(main|control_socket|app\/metrics|open_files)\.rs$/,
+    /^core\/marfa-server\/src\/(main|control_socket|app\/metrics|open_files|private_files)\.rs$/,
     ["core-checks", "core-checks-linux", ...RUST_SERVER],
   ],
   // A background read lowers its thread's priority each system's own way.
