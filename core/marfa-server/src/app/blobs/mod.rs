@@ -2,7 +2,7 @@
 
 pub mod carry;
 mod digests;
-mod disk;
+pub mod disk;
 pub mod folder;
 mod hash;
 pub mod link;
@@ -40,8 +40,8 @@ use crate::db::{Db, Write, volume};
 use crate::failure::Failure;
 use crate::settings::registry::{BLOB_MIN_COPIES, DISK_RESERVE_BYTES};
 use crate::settings::start::ObjectStoreSettings;
-use disk::{Disk, Staged};
-pub use disk::{MARKER, Scratch};
+use disk::{Disk, Place, Staged};
+pub use disk::{MARKER, Scratch, lock_blobs};
 pub use folder::Folder;
 pub use hash::Hash;
 pub use restore::stored_size;
@@ -194,10 +194,11 @@ async fn object_store(
 }
 
 impl Blobs {
-    /// The folder is changed only once nothing refuses the start.
+    /// The folder is changed only once nothing refuses the start. Its lock comes with it where the
+    /// folder was there to take it in.
     pub async fn open(
         db: &Db,
-        root: &Path,
+        (root, held): (&Path, Option<File>),
         object: Option<&ObjectStoreSettings>,
         backup: Option<(&Path, &str)>,
         secret: &str,
@@ -206,7 +207,7 @@ impl Blobs {
     ) -> std::result::Result<Blobs, Failure> {
         let signer = link::Signer::derive(secret).map_err(started)?;
         let folder = root.to_path_buf();
-        let found = tokio::task::spawn_blocking(move || Disk::probe(&folder))
+        let found = tokio::task::spawn_blocking(move || Disk::probe(&folder, Place::Blobs))
             .await
             .map_err(started)??;
         let unfilled = if found == disk::Found::Marked {
@@ -230,7 +231,7 @@ impl Blobs {
         };
         let folder = root.to_path_buf();
         let disk = Arc::new(
-            tokio::task::spawn_blocking(move || Disk::open(&folder))
+            tokio::task::spawn_blocking(move || Disk::open(&folder, Place::Blobs, held))
                 .await
                 .map_err(started)??,
         );

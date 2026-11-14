@@ -302,8 +302,45 @@ pub struct Kept {
     blobs_made: bool,
 }
 
+/// The server's files, judged without a change to any of them.
+pub struct Judged {
+    files: Vec<PathBuf>,
+    blobs: PathBuf,
+    /// The blob folder, by the path it was reached on, where it is there.
+    blob_folder: Option<(File, PathBuf)>,
+    me: u32,
+}
+
+impl Judged {
+    /// Whether the blob folder is there to be locked.
+    pub fn has_blob_folder(&self) -> bool {
+        self.blob_folder.is_some()
+    }
+
+    /// Makes what is the server's private, once nothing refuses the start.
+    pub fn keep(self) -> Result<Kept, Failure> {
+        let blobs_made = match &self.blob_folder {
+            Some((opened, path)) => {
+                secure_blob_folder(opened, path, self.me)?;
+                false
+            }
+            None => true,
+        };
+        // Only before SQLite opens them: closing any descriptor on a file drops the locks this
+        // process holds on it. SQLite makes the ones still missing under the umask, in a folder
+        // that passes nothing on.
+        self.files
+            .iter()
+            .try_for_each(|file| secure(file, self.me))?;
+        Ok(Kept {
+            blobs: self.blobs,
+            blobs_made,
+        })
+    }
+}
+
 impl Kept {
-    pub fn closed(database_path: &DatabasePath, blobs: &Path) -> Result<Kept, Failure> {
+    pub fn judged(database_path: &DatabasePath, blobs: &Path) -> Result<Judged, Failure> {
         let me = me();
         let mut files = Vec::new();
         let mut data = None;
@@ -351,23 +388,14 @@ impl Kept {
         } else {
             None
         };
-        let blobs_made = match opened {
-            Some(opened) => {
-                secure_blob_folder(&opened, &path, me)?;
-                false
-            }
-            None => {
-                holds_new_files(&reached.folder, me)?;
-                true
-            }
-        };
-        // Only before SQLite opens them: closing any descriptor on a file drops the locks this
-        // process holds on it. SQLite makes the ones still missing under the umask, in a folder
-        // that passes nothing on.
-        files.iter().try_for_each(|file| secure(file, me))?;
-        Ok(Kept {
+        if opened.is_none() {
+            holds_new_files(&reached.folder, me)?;
+        }
+        Ok(Judged {
+            files,
             blobs: blobs.to_path_buf(),
-            blobs_made,
+            blob_folder: opened.map(|opened| (opened, path)),
+            me,
         })
     }
 
@@ -544,7 +572,7 @@ mod tests {
     }
 
     fn kept(data: &Path, blobs: &Path) -> Result<Kept, Failure> {
-        Kept::closed(&DatabasePath::File(data.join("marfa.db")), blobs)
+        Kept::judged(&DatabasePath::File(data.join("marfa.db")), blobs)?.keep()
     }
 
     #[test]
@@ -797,7 +825,9 @@ mod tests {
             DatabasePath::Uri("file::memory:".into()),
             DatabasePath::Uri("file:marfa.db?mode=memory".into()),
         ] {
-            Kept::closed(&memory, &private.join("blobs")).unwrap();
+            Kept::judged(&memory, &private.join("blobs"))
+                .and_then(Judged::keep)
+                .unwrap();
         }
         assert_eq!(fs::read_dir(&open).unwrap().count(), 0);
     }

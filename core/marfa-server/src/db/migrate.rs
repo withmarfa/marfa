@@ -165,6 +165,8 @@ pub enum Unapplied {
     KeysUnchanged { on: bool },
     /// The migrations committed, and foreign keys did not come back on.
     Committed(Box<Unapplied>),
+    /// `COMMIT` failed, which does not prove the log did not take the transaction.
+    CommitFailed(rusqlite::Error),
 }
 
 impl From<rusqlite::Error> for Unapplied {
@@ -190,13 +192,14 @@ impl Unapplied {
                 if *on { "on" } else { "off" }
             ),
             Unapplied::Committed(cause) => cause.why(),
+            Unapplied::CommitFailed(error) => error.to_string(),
         }
     }
 
     pub fn failure(&self, label: &str, from: Option<u32>, migrations: &[Migration]) -> Failure {
         let to = latest(migrations);
         let why = self.why();
-        Failure::start(match (self, from) {
+        let message = match (self, from) {
             (Unapplied::Committed(_), Some(from)) => format!(
                 "{label} was upgraded from schema version {from} to {to}, but then {why}. \
                  Start the server again."
@@ -204,12 +207,27 @@ impl Unapplied {
             (Unapplied::Committed(_), None) => format!(
                 "{label} was made at schema version {to}, but then {why}. Start the server again."
             ),
+            (Unapplied::CommitFailed(_), Some(from)) => format!(
+                "{label} may have been upgraded from schema version {from} to {to}: the upgrade \
+                 did not commit cleanly ({why}), and SQLite may still have written it. Start the \
+                 server again, which reads the version the file holds."
+            ),
+            (Unapplied::CommitFailed(_), None) => format!(
+                "{label} may have been made at schema version {to}: its tables did not commit \
+                 cleanly ({why}). Start the server again."
+            ),
             (_, Some(from)) => format!(
                 "{label} was not upgraded from schema version {from} to {to}, because {why}. \
                  Nothing was changed."
             ),
             (_, None) => format!("{label} could not be made at schema version {to}: {why}"),
-        })
+        };
+        // Starting again meets the same rows.
+        if matches!(self, Unapplied::Dangling(_)) {
+            Failure::database(message)
+        } else {
+            Failure::start(message)
+        }
     }
 }
 
@@ -264,8 +282,7 @@ fn in_one_transaction<'a>(
         return Err(Unapplied::Dangling(dangling));
     }
     tx.pragma_update(None, "user_version", version)?;
-    tx.commit()?;
-    Ok(())
+    tx.commit().map_err(Unapplied::CommitFailed)
 }
 
 /// SQLite ignores the setting inside a transaction without a word, so it is read back.

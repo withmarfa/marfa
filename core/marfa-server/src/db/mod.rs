@@ -20,7 +20,7 @@ use rusqlite::Transaction;
 use tokio::sync::watch;
 
 pub use hold::{Holding, Permit};
-pub use open::Options;
+pub use open::{Lock, Options};
 pub use writer::{Pulse, Watcher};
 
 use crate::app::faults::{
@@ -97,8 +97,12 @@ pub struct Db {
 
 impl Db {
     /// Blocks while it judges and updates the file, so it runs before the server takes requests.
-    pub fn open(options: &Options, faults: Arc<Faults>) -> std::result::Result<Db, Failure> {
-        let opened = open::open(options, &faults)?;
+    pub fn open(
+        options: &Options,
+        lock: Lock,
+        faults: Arc<Faults>,
+    ) -> std::result::Result<Db, Failure> {
+        let opened = open::open(options, lock, &faults)?;
         let writer = writer::Writer::start(opened.writer, faults.clone())
             .map_err(|error| Failure::start(format!("The writer did not start: {error}")))?;
         Ok(Db {

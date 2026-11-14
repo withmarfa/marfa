@@ -197,14 +197,35 @@ fn a_socket_left_by_a_killed_server_does_not_stop_the_next() {
 }
 
 #[test]
-fn a_second_server_on_the_socket_is_refused_and_the_first_serves_on() {
+fn a_second_server_with_its_own_files_on_the_socket_is_refused_and_the_first_serves_on() {
     let dir = TempDir::new().unwrap();
+    let other = TempDir::new().unwrap();
     let first = Server::start(dir.path());
-    let output = program(dir.path()).output().unwrap();
+    let output = program(other.path())
+        .env("MARFA_CONTROL_SOCKET", control_socket(dir.path()))
+        .output()
+        .unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("already in use"),
         "{output:?}"
+    );
+    assert_eq!(status(&first.control(&request("GET", "/health", b""))), 200);
+}
+
+#[test]
+fn a_second_server_on_the_same_files_and_socket_is_refused_for_the_database() {
+    let dir = TempDir::new().unwrap();
+    let first = Server::start(dir.path());
+    let output = program(dir.path()).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let said = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        said.contains(&format!(
+            "{} is open in another Marfa server",
+            dir.path().join("marfa.db").display()
+        )) && !said.contains("already in use"),
+        "{said}"
     );
     assert_eq!(status(&first.control(&request("GET", "/health", b""))), 200);
 }

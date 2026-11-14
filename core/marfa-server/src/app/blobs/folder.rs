@@ -11,7 +11,7 @@ use futures_util::StreamExt;
 use futures_util::stream;
 use uuid::Uuid;
 
-use super::disk::{self, Disk};
+use super::disk::{self, Disk, Place};
 use super::hash::Hash;
 use super::rows;
 use super::store::ByteStream;
@@ -93,12 +93,12 @@ impl Folder {
     pub async fn open(db: &Db, root: &Path, instance: &str) -> Result<Folder, Failure> {
         let area = root.join(FILES).join(instance);
         let probed = area.clone();
-        let found = tokio::task::spawn_blocking(move || Disk::probe(&probed))
+        let found = tokio::task::spawn_blocking(move || Disk::probe(&probed, Place::BackupFiles))
             .await
             .map_err(started)??;
         let files = if found == disk::Found::Marked {
             let opened = area.clone();
-            tokio::task::spawn_blocking(move || Disk::open(&opened))
+            tokio::task::spawn_blocking(move || Disk::open(&opened, Place::BackupFiles, None))
                 .await
                 .map_err(started)??
         } else {
@@ -134,7 +134,7 @@ impl Folder {
                                 made.display()
                             ))
                         })?;
-                        Disk::open(&opened)
+                        Disk::open(&opened, Place::BackupFiles, None)
                     })
                     .await
                     .map_err(started)??
@@ -506,7 +506,9 @@ mod tests {
         Folder {
             root: root.to_path_buf(),
             instance: "instance".into(),
-            files: RwLock::new(Arc::new(Disk::open(&area).unwrap())),
+            files: RwLock::new(Arc::new(
+                Disk::open(&area, Place::BackupFiles, None).unwrap(),
+            )),
             started: SystemTime::now(),
         }
     }
