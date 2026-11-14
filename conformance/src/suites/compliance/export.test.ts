@@ -23,6 +23,7 @@ import {
   readEntry,
   readLineFile,
   type LineFile,
+  blobEntry,
 } from "../../utils/archive.js";
 import { startReceiver } from "../../utils/webhook-receiver.js";
 
@@ -601,7 +602,7 @@ describe("the archive's contents", () => {
       "edges.ndjson.gz",
       "rows.ndjson.gz",
     ]);
-    expect(entries.slice(7)).toEqual([`blobs/${upload.data.hash}`]);
+    expect(entries.slice(7)).toEqual([blobEntry(upload.data.hash)]);
 
     const manifest = JSON.parse(
       readEntry(archive, "manifest.json") ?? "{}",
@@ -645,7 +646,7 @@ describe("the archive's contents", () => {
     // The witness: the same selection carries the file without the parameter.
     const whole = await archiveOf(source);
     expect(listEntries(whole).map((e) => e.name)).toContain(
-      `blobs/${upload.data.hash}`,
+      blobEntry(upload.data.hash),
     );
 
     const res = await client.exportArchive({ source, files: "false" });

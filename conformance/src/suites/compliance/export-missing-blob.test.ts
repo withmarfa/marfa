@@ -22,6 +22,7 @@ import {
   archiveManifest,
   listEntries,
   notCarried,
+  blobEntry,
 } from "../../utils/archive.js";
 import {
   damageBlobs,
@@ -110,7 +111,7 @@ describe("an archive export on an instance with one disk store", () => {
     const before = await archiveOf(working);
     expect(Object.keys(before.carried).sort()).toEqual([kept, lost].sort());
     expect(before.missing).toEqual({});
-    expect(before.entries).toContain(`blobs/${lost}`);
+    expect(before.entries).toContain(blobEntry(lost));
 
     await loseBlobs(server!, [lost]);
     const { manifest, entries, carried, missing } = await archiveOf(working);
@@ -121,8 +122,8 @@ describe("an archive export on an instance with one disk store", () => {
     expect(missing).toEqual({
       [lost]: { mime_type: "text/plain", size_bytes: lostBytes.length },
     });
-    expect(entries).toContain(`blobs/${kept}`);
-    expect(entries).not.toContain(`blobs/${lost}`);
+    expect(entries).toContain(blobEntry(kept));
+    expect(entries).not.toContain(blobEntry(lost));
   });
 
   it("names a blob whose struck copy is the only one as not carried, and answers a whole archive", async () => {
@@ -138,7 +139,7 @@ describe("an archive export on an instance with one disk store", () => {
     const { entries, carried, missing } = await archiveOf(working);
     expect(Object.keys(missing)).toContain(hash);
     expect(Object.keys(carried)).not.toContain(hash);
-    expect(entries).not.toContain(`blobs/${hash}`);
+    expect(entries).not.toContain(blobEntry(hash));
   });
 
   it("ends the response with an error when a copy's bytes do not hash to the blob's name, and strikes the copy", async () => {
@@ -393,7 +394,7 @@ describe("an archive export on an instance with one disk store", () => {
     // The witness: the same export ends cleanly and carries the blob while
     // its file is there.
     const whole = await archiveOf(working);
-    expect(whole.entries).toContain(`blobs/${last}`);
+    expect(whole.entries).toContain(blobEntry(last));
 
     // The export waits at its first read of a blob's bytes, with the
     // manifest already written, while the last blob's file goes.
@@ -445,7 +446,7 @@ describe("an archive export on an instance with an object store", () => {
     const { archive, carried, missing } = await archiveOf(working);
     expect(missing).toEqual({});
     expect(Object.keys(carried)).toEqual([hash]);
-    const entry = listEntries(archive).find((e) => e.name === `blobs/${hash}`);
+    const entry = listEntries(archive).find((e) => e.name === blobEntry(hash));
     expect(entry).toBeDefined();
     expect(blobHash(entry!.body)).toBe(hash);
   });

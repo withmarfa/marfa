@@ -20,6 +20,7 @@ import {
   itemsArchive,
   readEntry,
   type LineFile,
+  blobEntry,
 } from "../../utils/archive.js";
 import { v7 as uuidv7 } from "uuid";
 
@@ -527,14 +528,14 @@ describe("who may read and upload a blob", () => {
     const listed = Object.keys(carriedFiles(archive.data));
     for (const hash of [inProperty, inExtension, inEdge]) {
       expect(listed).toContain(hash);
-      expect(readEntry(archive.data, `blobs/${hash}`)).not.toBeNull();
+      expect(readEntry(archive.data, blobEntry(hash))).not.toBeNull();
     }
     for (const hash of [inPlantedExtension, inPlantedEdge]) {
       // The witness: the instance holds the bytes, and the archive leaves
       // them out because the key was never served them.
       expect((await operator.downloadBlob(hash)).status).toBe(200);
       expect(listed).not.toContain(hash);
-      expect(readEntry(archive.data, `blobs/${hash}`)).toBeNull();
+      expect(readEntry(archive.data, blobEntry(hash))).toBeNull();
     }
   });
 
@@ -582,7 +583,7 @@ describe("who may read and upload a blob", () => {
     });
     expect(archive.status).toBe(200);
     for (const hash of [viaEdge, viaExtension]) {
-      expect(readEntry(archive.data, `blobs/${hash}`)).not.toBeNull();
+      expect(readEntry(archive.data, blobEntry(hash))).not.toBeNull();
     }
 
     // Take the items away, which withdraws both reaches, and restore them.
@@ -1706,9 +1707,9 @@ describe("which write that names a digest lends it", () => {
     expect(archive.status).toBe(200);
     const listed = Object.keys(carriedFiles(archive.data));
     expect(listed).toEqual([proved]);
-    expect(readEntry(archive.data, `blobs/${proved}`)).not.toBeNull();
+    expect(readEntry(archive.data, blobEntry(proved))).not.toBeNull();
     for (const hash of [planted, earlier]) {
-      expect(readEntry(archive.data, `blobs/${hash}`)).toBeNull();
+      expect(readEntry(archive.data, blobEntry(hash))).toBeNull();
     }
   });
 
@@ -1758,7 +1759,7 @@ describe("which write that names a digest lends it", () => {
       });
       expect(archive.status, name).toBe(200);
       const carried = (hash: string) =>
-        readEntry(archive.data, `blobs/${hash}`) !== null;
+        readEntry(archive.data, blobEntry(hash)) !== null;
       expect(carried(inProperty), name).toBe(true);
       expect(carried(inEdge), name).toBe(edge);
       expect(carried(inExtension), name).toBe(extension);

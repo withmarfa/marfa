@@ -2232,6 +2232,14 @@ When an archive round trip restores an item, the server MUST restore its extensi
 
 **Tests:** `compliance/export-roundtrip.test.ts › reconstructs items with their ids, tags, and extensions`.
 
+### `items/extension-archive-rules`
+
+If an item line of an archive carries an extension in `core`, `marfa` or `system`, or an extension whose data is over 102400 characters of JSON, then the server MUST answer `POST /restore` with `400 validation_error` naming the item in `details.item_id` and the namespace in `details.namespace`, and restore nothing.
+
+**Reason:** a restore holds an extension to the rules a write holds it to (`PUT /items/{id}/extensions/{namespace}`), so an archive is not a way to put in an item what no write could.
+
+**Tests:** `compliance/restore-says.test.ts › names an archived item whose extension sits in a reserved namespace or is over 100 KB, and restores nothing of the archive`.
+
 ### `items/extension-announced`
 
 When a key writes or deletes an extension namespace, the server MUST announce `metadata.changed`.

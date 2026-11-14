@@ -82,6 +82,7 @@ export function emptyManifest(
     type_icon_count: 0,
     source_count: 0,
     setting_count: 0,
+    enforcement_count: 0,
     connector_state_count: 0,
     connector_agreement_count: 0,
     ...fields,
@@ -104,6 +105,7 @@ const INSTANCE_KINDS: Record<string, string> = {
   type_icon: "type_icon_count",
   source: "source_count",
   setting: "setting_count",
+  enforcement: "enforcement_count",
   connector_state: "connector_state_count",
   connector_agreement: "connector_agreement_count",
 };
@@ -378,6 +380,11 @@ export function blobHash(data: Uint8Array): string {
   return `sha256:${createHash("sha256").update(data).digest("hex")}`;
 }
 
+/** The name of the entry that carries the blob `hash` names: its hex, with no colon. */
+export function blobEntry(hash: string): string {
+  return `blobs/${hash.replace(/^sha256:/, "")}`;
+}
+
 /**
  * A minimal archive: `items`, and the `blobs`, type registrations and
  * `versions` given. Each line file is written even when empty, so a restore
@@ -438,7 +445,7 @@ export function itemsArchive(
     lineFile("edges", ""),
     lineFile("rows", ""),
     ...blobs.map((blob) => ({
-      name: `blobs/${blob.named ?? blobHash(blob.data)}`,
+      name: blobEntry(blob.named ?? blobHash(blob.data)),
       body: blob.data,
     })),
   ]);

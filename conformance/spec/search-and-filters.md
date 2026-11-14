@@ -1808,7 +1808,7 @@ If `GET /export` names a `format` other than `ndjson` or `archive`, then the ser
 
 ### `search-and-filters/export-without-files`
 
-When `GET /export?format=archive` names `files=false`, the server MUST carry no `blobs/<hash>` entry, count none in `blob_count`, and name in `files.ndjson.gz` as `not_carried` each file the archive would otherwise have carried.
+When `GET /export?format=archive` names `files=false`, the server MUST carry no `blobs/<hex>` entry, count none in `blob_count`, and name in `files.ndjson.gz` as `not_carried` each file the archive would otherwise have carried.
 
 **Reason:** a person who wants a copy of their items, and not the often far larger files they name, can take one, and a restore of it reports in `blobs_missing` the files the instance it restores into does not hold.
 
@@ -1850,15 +1850,23 @@ When `GET /export?format=archive` names the filters of an NDJSON export, the ser
 
 ### `search-and-filters/archive-entries`
 
-The server MUST write an archive's entries in this order: `manifest.json`, then the gzip-compressed line files `files.ndjson.gz`, `instance.ndjson.gz`, `items.ndjson.gz`, `versions.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`, then an uncompressed `blobs/<hash>` entry for each file that `files.ndjson.gz` names as `carried`.
+The server MUST write an archive's entries in this order: `manifest.json`, then the gzip-compressed line files `files.ndjson.gz`, `instance.ndjson.gz`, `items.ndjson.gz`, `versions.ndjson.gz`, `edges.ndjson.gz` and `rows.ndjson.gz`, then an uncompressed `blobs/<hex>` entry for each file that `files.ndjson.gz` names as `carried`.
 
 **Reason:** the manifest comes first, so a reader knows what the archive holds before it reads the rest. The files come next, so a reader knows each file's type and size before its bytes, and finds every file a backup names without reading the items. The registrations come before the item, version, edge and row lines, and the items before their versions, so a restore can check each line as it arrives.
 
 **Tests:** `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`.
 
+### `search-and-filters/archive-entry-names`
+
+The server MUST name no entry of an archive with a colon, naming the `blobs/` entry of a file with the hex of its hash, without the `sha256:` prefix.
+
+**Reason:** a colon is not a character a file name may hold on Windows, so an archive named with one cannot be extracted there. The hash in `files.ndjson.gz` keeps its prefix, and a restore reads the entry as that hash.
+
+**Tests:** `compliance/restore-says.test.ts › names no entry of an archive with a colon, so each extracts on Windows`.
+
 ### `search-and-filters/archive-manifest`
 
-The server MUST write into the manifest of an archive its `version`, its `format`, its `written_by`, a `created_at` instant, and in `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `connector_state_count` and `connector_agreement_count` the number of each kind of entry or line the archive holds.
+The server MUST write into the manifest of an archive its `version`, its `format`, its `written_by`, a `created_at` instant, and in `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count` and `connector_agreement_count` the number of each kind of entry or line the archive holds.
 
 **Reason:** `instance/archive-version`, `instance/archive-format`, `instance/archive-written-by` and `instance/id-in-archive` state the version, the format, the writing build and the instance's name in the manifest, and a restore checks every count against what it read (`search-and-filters/restore-line-counts`).
 
@@ -1914,7 +1922,7 @@ The server MUST NOT name in `files.ndjson.gz` a hash that the credential request
 
 ### `search-and-filters/archive-missing-not-carried`
 
-When the `files.ndjson.gz` of an archive names a file as `not_carried` or `lost`, the server MUST NOT count it in `blob_count` or carry a `blobs/<hash>` entry for it.
+When the `files.ndjson.gz` of an archive names a file as `not_carried` or `lost`, the server MUST NOT count it in `blob_count` or carry a `blobs/<hex>` entry for it.
 
 **Tests:** `compliance/export-missing-blob.test.ts › names a blob whose file has left the disk as not carried, and carries the rest`.
 
@@ -2062,9 +2070,25 @@ If a `source` line of an archive is not an object, holds a `source` code that `k
 
 When the credential requesting `GET /export?format=archive` holds `config.manage`, the server MUST carry in `instance.ndjson.gz` one `setting` line, holding the setting's `key` and its `value`, for each setting stored on the instance apart from `sign_in_address` and `addresses`.
 
-**Reason:** an owner's settings are their own choices, and a restore that reset them would change the instance without saying so. The two addresses name where this instance answers, which a move changes. No setting holds a secret.
+**Reason:** an owner's settings are their own choices, and a restore that reset them would change the instance without saying so. The two addresses name where this instance answers, which a move changes, and the instance's name is its own to set again, so no `setting` line carries it. No setting holds a secret.
 
-**Tests:** `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`.
+**Tests:** `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`, `compliance/restore-says.test.ts › restores the enforcement settings onto an instance with none, skips them on one that has them, and does not carry the name`.
+
+### `search-and-filters/archive-enforcement`
+
+When the credential requesting `GET /export?format=archive` holds `config.manage` and the instance stores enforcement settings, the server MUST carry in `instance.ndjson.gz` one `enforcement` line holding the strict mode, the source allowlist and the source filter as `/config` reads them.
+
+**Reason:** strict mode and the source lists are what keeps a restored instance from taking writes the original refused, so a move that dropped them would open it.
+
+**Tests:** `compliance/restore-says.test.ts › restores the enforcement settings onto an instance with none, skips them on one that has them, and does not carry the name`.
+
+### `search-and-filters/restore-enforcement`
+
+When `POST /restore` reads an `enforcement` line, the server MUST store it only where the instance stores no enforcement settings, count it in `enforcement_added` or `enforcement_skipped`, and replace nothing the instance holds.
+
+**Reason:** a restore adds what the instance lacks and replaces nothing (`search-and-filters/restore-settings`).
+
+**Tests:** `compliance/restore-says.test.ts › restores the enforcement settings onto an instance with none, skips them on one that has them, and does not carry the name`.
 
 ### `search-and-filters/restore-settings`
 
@@ -2078,9 +2102,17 @@ When `POST /restore` reads a `setting` line, the server MUST store that setting 
 
 If the settings that `POST /restore` would store, judged with the instance's own, break a rule that `/config` applies across settings (`instance/live-policy-validation`), then the server MUST refuse the archive with the `400 validation_error` and `details.errors` that `/config` answers for them, and store nothing.
 
-**Reason:** a restore is not a way to hold settings that the configuration door would refuse, such as a heartbeat with no receiver or version windows out of order.
+**Reason:** a restore is not a way to hold settings that the configuration door would refuse, such as version windows out of order.
 
 **Tests:** `compliance/export-instance-lines.test.ts › refuses settings the instance cannot hold together, answering as /config does, and stores none`.
+
+### `search-and-filters/restore-reporting-without-receiver`
+
+When `POST /restore` reads a `setting` line that turns `heartbeat_enabled` or `error_reporting_enabled` on where the server has no receiver for it, the server MUST restore the archive and name the key in `settings_without_receiver`.
+
+**Reason:** the heartbeat and error reporting are on by default, so an archive that records them on asks for what the instance already holds, and a server with no receiver sends nothing either way. A restore that refused for them would make a backup of one server unusable on another.
+
+**Tests:** `compliance/restore-says.test.ts › restores a reporting setting that is turned on where no receiver is set, names it, and still refuses turning it on again from off`.
 
 ### `search-and-filters/restore-setting-twice`
 
@@ -2338,17 +2370,33 @@ When local authority sends `POST /restore` with an archive that `GET /export?for
 
 ### `search-and-filters/restore-counts`
 
-When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `settings_dropped`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `rows_imported` and `rows_skipped`, each for the kind of thing it counts.
+When `POST /restore` succeeds, the server MUST carry the counts `imported`, `duplicates`, `edges_imported`, `edges_skipped`, `edges_skipped_reasons`, `blobs_imported`, `types_registered`, `types_skipped`, `edge_types_registered`, `edge_types_skipped`, `type_icons_added`, `type_icons_skipped`, `type_icons_skipped_reasons`, `sources_added`, `sources_skipped`, `sources_skipped_reasons`, `settings_added`, `settings_skipped`, `settings_dropped`, `connector_states_added`, `connector_states_skipped`, `connector_agreements_added`, `connector_agreements_skipped`, `rows_imported`, `rows_skipped`, `enforcement_added` and `enforcement_skipped`, each for the kind of thing it counts.
 
 **Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
 
-### `search-and-filters/restore-set-up-again`
+### `search-and-filters/restore-not-restored`
 
-When `POST /restore` succeeds, the server MUST answer in `set_up_again` a sentence saying that an archive holds no sign-in, keys, apps or webhooks, and that they are set up again on the instance.
+When `POST /restore` succeeds, the server MUST answer in `not_restored` one entry, holding a `kind` and a `message`, for each of what an archive leaves out: `sign_in`, `keys`, `apps`, `webhooks`, `inbound_endpoints`, `connector_keys`, `addresses`, `name` and `logs`, in that order.
 
-**Reason:** an archive holds no credential (`search-and-filters/archive-only`), so after a move the owner signs in, makes keys, approves apps and makes webhooks again, and the answer says so where the owner reads the outcome.
+**Reason:** an archive holds no credential, webhook, endpoint or log, and not the instance's name or addresses (`search-and-filters/archive-only`), so after a move the owner signs in, makes keys, approves apps, makes webhooks and endpoints again and gives each sender the new address of an endpoint, and the answer says so where the owner reads the outcome.
 
-**Tests:** `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
+**Tests:** `compliance/restore-says.test.ts › restores the enforcement settings onto an instance with none, skips them on one that has them, and does not carry the name`, `compliance/restore-archive.test.ts › answers the restore result fields on the first restore and on a repeat`.
+
+### `search-and-filters/restore-previous-instance`
+
+When `POST /restore` succeeds with an archive whose manifest names an `instance_id` other than this instance's, the server MUST answer in `previous_instance` that `instance_id` and, in `safe_to_delete`, the folders `backups/<instance id>` and `files/<instance id>` of the instance it names.
+
+**Reason:** a restore into a new instance leaves the old instance's backups in the backup destination, where they cost room and are taken for current ones, and only the old instance's id names them.
+
+**Tests:** `compliance/restore-says.test.ts › names the old instance's backup folder as safe to delete after a restore into another instance, and not after a restore into the same one`.
+
+### `search-and-filters/restore-own-archive-no-previous`
+
+When `POST /restore` succeeds with an archive whose manifest names this instance's own `instance_id`, the server MUST NOT answer `previous_instance`.
+
+**Reason:** the backup folder of the instance restoring is the one in use, and an answer that called it safe to delete would invite its loss.
+
+**Tests:** `compliance/restore-says.test.ts › names the old instance's backup folder as safe to delete after a restore into another instance, and not after a restore into the same one`.
 
 ### `search-and-filters/cli-restore-refused`
 
@@ -2358,13 +2406,13 @@ When `POST /restore` refuses an archive that `marfa restore` sends, whether befo
 
 **Tests:** `cli/archive-blobs.test.ts › reports the refusal of a large archive the server refuses before or while it arrives`.
 
-### `search-and-filters/cli-restore-set-up-again`
+### `search-and-filters/cli-restore-not-restored`
 
-When `POST /restore` answers `marfa restore` with `set_up_again`, the CLI MUST print that sentence on standard error.
+When `POST /restore` answers `marfa restore` with `not_restored`, the CLI MUST print the `message` of each entry on its own line on standard error.
 
-**Reason:** the person running the command learns there and then that sign-in, keys, apps and webhooks are not restored.
+**Reason:** the person running the command learns there and then each thing that is not restored, and what to do about it.
 
-**Tests:** `cli/archive-blobs.test.ts › prints the answer of a restore of it and exits 1 with blobs_missing`.
+**Tests:** `cli/restore-says.test.ts › prints one line on standard error for each kind a restore left out, and what it did with the settings`.
 
 ### `search-and-filters/restore-blobs-missing`
 
@@ -2700,7 +2748,7 @@ If two lines of the `files.ndjson.gz` of an archive name the same `hash`, then t
 
 ### `search-and-filters/restore-line-counts`
 
-If a count in an archive's manifest is not the number it counts, being the lines of `files.ndjson.gz`, `items.ndjson.gz`, `versions.ndjson.gz`, `edges.ndjson.gz` or `rows.ndjson.gz` for `file_count`, `item_count`, `version_count`, `edge_count` or `row_count`, the lines of each kind in `instance.ndjson.gz` for the seven other `_count` fields that name a kind of line, or the `blobs/` entries for `blob_count`, then the server MUST answer `400 validation_error` naming the count in `details.field`.
+If a count in an archive's manifest is not the number it counts, being the lines of `files.ndjson.gz`, `items.ndjson.gz`, `versions.ndjson.gz`, `edges.ndjson.gz` or `rows.ndjson.gz` for `file_count`, `item_count`, `version_count`, `edge_count` or `row_count`, the lines of each kind in `instance.ndjson.gz` for the eight other `_count` fields that name a kind of line, or the `blobs/` entries for `blob_count`, then the server MUST answer `400 validation_error` naming the count in `details.field`.
 
 **Reason:** the manifest says what the archive holds before a reader reads the rest (`search-and-filters/archive-entries`), so an archive that holds other than it says was cut or changed after the export, and a restore that took it would restore less than was exported without saying so.
 

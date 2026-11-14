@@ -318,7 +318,8 @@ describe("a backup in the object store", () => {
       instance_id: originId,
     });
     expect(restored.data.blobs_missing).toEqual([]);
-    expect(typeof restored.data.set_up_again).toBe("string");
+    expect(restored.data.not_restored.map((one) => one.kind)).toContain("keys");
+    expect(restored.data.previous_instance).toBeUndefined();
     expect((await working.getItem(made.note)).status).toBe(200);
     const read = await operator.downloadBlob(made.hash);
     expect(read.status).toBe(200);

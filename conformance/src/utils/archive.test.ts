@@ -12,6 +12,7 @@ import { randomBytes } from "node:crypto";
 import {
   archiveLines,
   archiveManifest,
+  blobEntry,
   blobHash,
   carriedFiles,
   editLineFile,
@@ -129,7 +130,7 @@ describe("itemsArchive", () => {
       "versions.ndjson.gz",
       "edges.ndjson.gz",
       "rows.ndjson.gz",
-      `blobs/${blobHash(data)}`,
+      blobEntry(blobHash(data)),
     ]);
     expect(archiveLines(archive, "items")).toHaveLength(1);
     const manifest = archiveManifest<{
@@ -149,7 +150,7 @@ describe("itemsArchive", () => {
       [{ data, mime_type: "application/octet-stream", named }],
     );
     expect(Object.keys(carriedFiles(archive))).toEqual([named]);
-    expect(readEntry(archive, `blobs/${named}`)).not.toBeNull();
-    expect(readEntry(archive, `blobs/${blobHash(data)}`)).toBeNull();
+    expect(readEntry(archive, blobEntry(named))).not.toBeNull();
+    expect(readEntry(archive, blobEntry(blobHash(data)))).toBeNull();
   });
 });

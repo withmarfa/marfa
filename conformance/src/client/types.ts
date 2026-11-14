@@ -832,7 +832,11 @@ export interface RestoreArchiveResponse {
   rows_skipped: number;
   entries_skipped: string[];
   line_kinds_skipped: string[];
-  set_up_again: string;
+  settings_without_receiver: string[];
+  enforcement_added: number;
+  enforcement_skipped: number;
+  not_restored: { kind: string; message: string }[];
+  previous_instance?: { instance_id: string; safe_to_delete: string[] };
 }
 
 export interface PerfResult {

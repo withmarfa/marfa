@@ -15,6 +15,7 @@ import {
   listEntries,
   ndjson,
   notCarried,
+  blobEntry,
 } from "../../utils/archive.js";
 import {
   bootFreshServer,
@@ -312,10 +313,10 @@ describe("the history an archive carries", () => {
     const carried = listEntries(archive.data)
       .filter((e) => e.name.startsWith("blobs/"))
       .map((e) => e.name);
-    expect(carried).toContain(`blobs/${up.data.hash}`);
-    expect(carried).not.toContain(`blobs/${upHidden.data.hash}`);
-    expect(carried).toContain(`blobs/${current.data.hash}`);
-    expect(carried).not.toContain(`blobs/${earlier.data.hash}`);
+    expect(carried).toContain(blobEntry(up.data.hash));
+    expect(carried).not.toContain(blobEntry(upHidden.data.hash));
+    expect(carried).toContain(blobEntry(current.data.hash));
+    expect(carried).not.toContain(blobEntry(earlier.data.hash));
     const listed = Object.keys(carriedFiles(archive.data));
     expect(listed).toContain(up.data.hash);
     expect(listed).not.toContain(upHidden.data.hash);

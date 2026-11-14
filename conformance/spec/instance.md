@@ -540,7 +540,7 @@ The server MUST cut each description and title in the `GET /overview` answer at 
 
 ## Backing up
 
-An owner has two backups of an instance. Where `S3_BUCKET` is set, the server backs itself up to that object store, and where `MARFA_BACKUP_PATH` is set, to that folder: on a schedule, and when the owner asks. With neither set, it keeps no backup. Each backup is an archive, as `GET /export?format=archive` writes one, of every item and instance line, the trash included, and of no file's bytes, since the object store, or the backup folder's files area, already keeps a copy of each file as an attached store. And an image of the data directory, such as a machine backup takes, holds everything the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. Neither holds the setting `MARFA_KEY_SALT`, and a backup holds no credential, so sign-in, keys and apps are set up again after a backup is restored.
+An owner has two backups of an instance. Where `S3_BUCKET` is set, the server backs itself up to that object store, and where `MARFA_BACKUP_PATH` is set, to that folder: on a schedule, and when the owner asks. With neither set, it keeps no backup. Each backup is an archive, as `GET /export?format=archive` writes one, of every item and instance line, the trash included, and of no file's bytes, since the object store, or the backup folder's files area, already keeps a copy of each file as an attached store. And an image of the data directory, such as a machine backup takes, holds everything the instance keeps: the database file, the log beside it that holds the writes not yet moved into the file, and the folder of blob files. Neither holds the setting `MARFA_KEY_SALT`, and a backup holds no credential, so sign-in, keys, apps, webhooks and inbound endpoints are set up again after a backup is restored, and the instance's name and addresses are set again.
 
 ### `instance/backup-object`
 
@@ -2518,7 +2518,7 @@ When an authorized caller replaces or updates the configuration, the server MUST
 
 ### `instance/live-policy-validation`
 
-If a configuration write would make the effective recent, daily and weekly version windows decrease in that order, set a negative window or inactivity period, set a version count below one, or enable reporting without a configured receiver, then the server MUST refuse it with `400 validation_error` without changing the stored configuration.
+If a configuration write would make the effective recent, daily and weekly version windows decrease in that order, set a negative window or inactivity period, set a version count below one, or turn reporting from off to on without a configured receiver, then the server MUST refuse it with `400 validation_error` without changing the stored configuration.
 
 **Reason:** validation includes the defaults exposed by clearing a stored setting. The receivers' addresses and credentials are start-only settings.
 

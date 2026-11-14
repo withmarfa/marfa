@@ -9,6 +9,7 @@ import {
   itemsArchive,
   blobHash,
   ndjson,
+  blobEntry,
 } from "../../utils/archive.js";
 import {
   bootFreshServer,
@@ -561,6 +562,6 @@ function carryingBoth(rows: Carried, extra: Uint8Array): Uint8Array {
     }
     return { name: entry.name, body: entry.body };
   });
-  entries.push({ name: `blobs/${extraHash}`, body: Buffer.from(extra) });
+  entries.push({ name: blobEntry(extraHash), body: Buffer.from(extra) });
   return tar(entries);
 }

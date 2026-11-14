@@ -34,6 +34,7 @@ import {
   blobHash,
   type ArchiveFile,
   type LineFile,
+  blobEntry,
 } from "../../utils/archive.js";
 import type { TestContext } from "../../client/types.js";
 import {
@@ -442,6 +443,7 @@ describe("restore", () => {
     "type_icon_count",
     "source_count",
     "setting_count",
+    "enforcement_count",
     "connector_state_count",
     "connector_agreement_count",
   ])(
@@ -629,7 +631,7 @@ describe("restore", () => {
       { name: "._manifest.json", body: "mac resource fork" },
       ...entries.slice(at).map(({ name, body }) => ({ name, body })),
       { name: "notes/readme.txt", body: "a note a person put here" },
-      { name: `blobs/${blobHash(unlisted)}`, body: unlisted },
+      { name: blobEntry(blobHash(unlisted)), body: unlisted },
     ]);
 
     // The witness: the archive as written skips nothing.
@@ -644,7 +646,7 @@ describe("restore", () => {
     expect(restored.data.entries_skipped).toEqual([
       "._manifest.json",
       "notes/readme.txt",
-      `blobs/${blobHash(unlisted)}`,
+      blobEntry(blobHash(unlisted)),
     ]);
     expect(restored.data.duplicates).toBe(1);
     expect((await owner.downloadBlob(blobHash(unlisted))).status).toBe(404);
@@ -776,7 +778,7 @@ describe("restore", () => {
   it("refuses an archive whose entries are out of order, naming the first, and writes nothing", async () => {
     const id = uuidv7();
     const data = new Uint8Array(randomBytes(24));
-    const blob = `blobs/${blobHash(data)}`;
+    const blob = blobEntry(blobHash(data));
     const entries = listEntries(
       itemsArchive(
         [{ id, type: "core.note", source: ctx.source, properties: {} }],
@@ -1308,12 +1310,23 @@ describe("what a restore answers", () => {
         "connector_agreements_skipped",
         "rows_imported",
         "rows_skipped",
-        "set_up_again",
+        "settings_without_receiver",
+        "enforcement_added",
+        "enforcement_skipped",
+        "not_restored",
       ].sort(),
     );
-    expect(first.data.set_up_again).toContain(
-      "sign-in, keys, apps or webhooks",
-    );
+    expect(first.data.not_restored.map((one) => one.kind)).toEqual([
+      "sign_in",
+      "keys",
+      "apps",
+      "webhooks",
+      "inbound_endpoints",
+      "connector_keys",
+      "addresses",
+      "name",
+      "logs",
+    ]);
     expect(first.data).toEqual({
       imported: 2,
       duplicates: 0,
@@ -1343,7 +1356,10 @@ describe("what a restore answers", () => {
       rows_skipped: 0,
       entries_skipped: [],
       line_kinds_skipped: [],
-      set_up_again: expect.any(String),
+      settings_without_receiver: [],
+      enforcement_added: 0,
+      enforcement_skipped: 0,
+      not_restored: expect.any(Array),
     });
     await expectMatchesSchema("POST", "/restore", 200, first.data);
 
@@ -1394,7 +1410,10 @@ describe("what a restore answers", () => {
       rows_skipped: 0,
       entries_skipped: [],
       line_kinds_skipped: [],
-      set_up_again: expect.any(String),
+      settings_without_receiver: [],
+      enforcement_added: 0,
+      enforcement_skipped: 0,
+      not_restored: expect.any(Array),
     });
     await expectMatchesSchema("POST", "/restore", 200, again.data);
   });
