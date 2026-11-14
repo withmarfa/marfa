@@ -1788,8 +1788,7 @@ fn send_queue(
             }
             continue;
         }
-        // Held as a write behind an unanswered one is, for the pass after
-        // its bytes have gone again.
+        // Held until its bytes go again, in the follow-up pass.
         if settled.bytes_again {
             answers.insert(row.id.clone(), settled.verdict);
             waiting.insert(row.id.clone());
@@ -3102,11 +3101,7 @@ fn take_answered_edges(conn: &rusqlite::Connection, item: &WireItem) -> Result<(
     Ok(())
 }
 
-/// A write refused for bytes the server does not hold, or that this
-/// credential may not read, waits once for the uploads it names to go again
-/// where the copy still holds their bytes. The refusal writes nothing, and
-/// the server keeps no answer under the write's key for it
-/// (`items/idempotency-unproven-file-not-kept`).
+/// `queue-and-verdicts/upload-again-bytes-absent`.
 fn waits_for_bytes_again(
     core: &Core,
     row: &QueuedWrite,

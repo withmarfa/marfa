@@ -3222,8 +3222,7 @@ pub fn set_attachment_miss(
 /// (`uploads_to_send_again`). A write may still be sent while it has no
 /// verdict, is blocked or dead, or is refused unsent behind no withdrawn
 /// write, as `release` decides: released, it waits on the upload again. A
-/// write the server refused for bytes it does not hold keeps them too, as
-/// the copy may hold the only copy of the file.
+/// write refused `blob_not_found` keeps them too: they may be the only copy.
 pub fn kept_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
     let mut statement = conn.prepare(
         "SELECT DISTINCT blob FROM queue
@@ -3368,27 +3367,17 @@ pub fn send_upload_again(conn: &Connection, id: &str) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// The server's code for a file write naming bytes it does not hold, or that
-/// the writing credential neither sent nor may read.
 pub const BYTES_ABSENT: &str = "blob_not_found";
 
 fn bytes_sent_again_key(id: &str) -> String {
     format!("bytes_sent_again/{id}")
 }
 
-/// Forgets that the bytes `id` waits on went again for it, once its refusal
-/// is recorded or it is released.
 pub fn forget_bytes_sent_again(conn: &Connection, id: &str) -> Result<(), CoreError> {
     meta_delete(conn, &bytes_sent_again_key(id))
 }
 
-/// For the write `id`, which the server refused for bytes it does not hold
-/// or this credential may not read: each taken upload it waits on whose
-/// bytes `held` says the copy has is made unanswered, unless an unanswered
-/// upload of the same bytes already goes ahead of it, and the write is
-/// blocked behind them. Answers whether it now waits on bytes going again:
-/// false once it has waited so before, or where the copy holds none of its
-/// bytes, which leaves the refusal to stand.
+/// Whether the write `id` now waits, once, on its held uploads going again.
 pub fn send_bytes_again(
     conn: &Connection,
     id: &str,
