@@ -415,6 +415,41 @@ it("refuses locally an edge that closes a cycle through edges the copy holds, wi
   );
 });
 
+it("refuses locally an edge that would make an item a part of its own part, across edge types, with the server's code", async () => {
+  const first = await note("first");
+  const second = await note("second");
+  const third = await note("third");
+  const other = await note("other");
+  await edge(first, second, "comments-on");
+  await edge(second, third, "attached-to");
+  const device = await hydrated("parts-cycle", ["core.note"]);
+
+  await refusedAlike(
+    device,
+    { source: third, target: first, type: "attached-to" },
+    CONSTRAINT,
+    "an attached-to edge that closes first, second, third through two part types",
+  );
+  await refusedAlike(
+    device,
+    { source: third, target: first, type: "comments-on" },
+    CONSTRAINT,
+    "the same edge as a comments-on edge",
+  );
+  // The witnesses: the same edge to an item outside the chain is queued, and
+  // so is a reference closing the same loop, which makes no item a part.
+  await queuedAfterCheck(
+    device,
+    { source: third, target: other, type: "attached-to" },
+    "an attached-to edge to an item outside the chain",
+  );
+  await queuedAfterCheck(
+    device,
+    { source: third, target: first, type: "references" },
+    "a reference that closes the same loop",
+  );
+});
+
 it("queues an edge whose cycle closes through an edge outside the copy, and the server refuses it", async () => {
   const upper = await note("upper");
   const lower = await note("lower");

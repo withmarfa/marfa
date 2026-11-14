@@ -2958,6 +2958,14 @@ If an edge write would leave an edge of a type the held catalog marks `acyclic` 
 
 **Tests:** `device/edge-checks-live.test.ts › refuses locally an edge that closes a cycle through edges the copy holds, with the server's code`, `› refuses an inline edge of a create and a move of an edge as the server refuses them`.
 
+### `queue-and-verdicts/edge-parts-cycle-refused`
+
+If an edge write of a type the held catalog gives `cascade_on_delete` `with-hosts` would close a cycle through `with-hosts` edges of any type the copy holds, its own waiting writes among them, then a device MUST refuse it in the `validation` class carrying the server's code `edge_constraint_violation` and the server's `details` for it, the `edge_type`, `source_id`, `target_id` and `constraint` `cycle`, queueing nothing.
+
+**Reason:** the server refuses such an edge `400 edge_constraint_violation` (`edges/parts-cycle`), and every edge the copy holds is one the server holds or one the copy will send before it.
+
+**Tests:** `device/edge-checks-live.test.ts › refuses locally an edge that would make an item a part of its own part, across edge types, with the server's code`.
+
 ### `queue-and-verdicts/edge-judged-held`
 
 Where the copy does not hold the edge type, the type of an end, an end, or an edge that a cycle runs through, a device MUST queue an edge write for the server to judge rather than refuse it for what the copy does not hold.
