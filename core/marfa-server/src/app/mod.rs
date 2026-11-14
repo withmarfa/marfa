@@ -124,7 +124,6 @@ impl App {
     /// Starts on the files [`Kept::closed`] judged, for a caller that must judge them before it
     /// makes anything beside the database.
     pub async fn start_kept(accepted: Accepted, kept: Kept) -> Result<Arc<App>, Failure> {
-        let kept = Arc::new(kept);
         let settings = accepted.open_secrets()?;
         let start = settings.start.clone();
         let faults = Arc::<Faults>::default();
@@ -141,8 +140,6 @@ impl App {
         let db = tokio::task::spawn_blocking(move || Db::open(&options, opening))
             .await
             .map_err(|error| Failure::start(format!("The database did not open: {error}")))??;
-        let checking = kept.clone();
-        blocking(move || checking.database_opened()).await?;
         let unreadable = |error| Failure::start(format!("The database could not be read: {error}"));
         let rows = db.read(stored::rows).await.map_err(unreadable)?;
         settings.apply_stored(&rows);

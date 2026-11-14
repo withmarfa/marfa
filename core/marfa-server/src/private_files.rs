@@ -298,7 +298,6 @@ pub fn make_data_folder(database: &DatabasePath) -> Result<(), Failure> {
 }
 
 pub struct Kept {
-    files: Vec<PathBuf>,
     blobs: PathBuf,
     blobs_made: bool,
 }
@@ -361,18 +360,14 @@ impl Kept {
                 true
             }
         };
-        let kept = Kept {
-            files,
+        // Only before SQLite opens them: closing any descriptor on a file drops the locks this
+        // process holds on it. SQLite makes the ones still missing under the umask, in a folder
+        // that passes nothing on.
+        files.iter().try_for_each(|file| secure(file, me))?;
+        Ok(Kept {
             blobs: blobs.to_path_buf(),
             blobs_made,
-        };
-        kept.database_opened()?;
-        Ok(kept)
-    }
-
-    pub fn database_opened(&self) -> Result<(), Failure> {
-        let me = me();
-        self.files.iter().try_for_each(|file| secure(file, me))
+        })
     }
 
     pub fn blobs_opened(&self) -> Result<(), Failure> {
