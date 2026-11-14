@@ -1175,31 +1175,43 @@ pub(crate) fn take_reread(conn: &Connection, reread: &Reread) -> Result<Vec<(Str
     Ok(changed)
 }
 
+/// What `apply` did to the copy.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Applied {
+    /// Nothing in the copy changed.
+    Nothing,
+    /// A table's state moved, with no row or caller-visible change.
+    Moved,
+    /// Rows or a table changed.
+    Changed,
+}
+
 /// Applies `rows.changed` in the transaction that moves the cursor past it.
-pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) -> Result<bool> {
+pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) -> Result<Applied> {
     let item = event.item.id.as_str();
     let table = event.table.as_str();
     let Some((state, _)) = state_of(conn, item, table)? else {
-        return Ok(false);
+        return Ok(Applied::Nothing);
     };
     match state.as_str() {
         ONLINE => {
             if event.rows.iter().any(|row| row.deleted) {
                 set_state(conn, item, table, OWED, None)?;
+                return Ok(Applied::Moved);
             }
-            return Ok(false);
+            return Ok(Applied::Nothing);
         }
         FILLING | WHOLE => {}
-        _ => return Ok(false),
+        _ => return Ok(Applied::Nothing),
     }
     let read = match read {
         Some(Named::Gone) => {
             drop_table(conn, item, table)?;
-            return Ok(true);
+            return Ok(Applied::Changed);
         }
         Some(Named::Failed) => {
             owe_table(conn, item, table)?;
-            return Ok(true);
+            return Ok(Applied::Changed);
         }
         Some(Named::Rows(read)) => Some(read),
         None => None,
@@ -1223,7 +1235,7 @@ pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) 
         let Some(read) = read else {
             // Owed or online when the rows were read, so they were not.
             owe_table(conn, item, table)?;
-            return Ok(true);
+            return Ok(Applied::Changed);
         };
         match read.get(&row.id) {
             Some(answered) => hold_answered(conn, item, table, answered)?,
@@ -1232,7 +1244,7 @@ pub(crate) fn apply(conn: &Connection, event: &RowsEvent, read: Option<&Named>) 
     }
     crate::row_writes::applied_batch(conn, item, table, &event.batch)?;
     past_cap(conn, item, table)?;
-    Ok(true)
+    Ok(Applied::Changed)
 }
 
 fn local_table(conn: &Connection, item: &str, table: &str) -> Result<Option<Map<String, Value>>> {

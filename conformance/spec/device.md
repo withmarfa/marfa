@@ -1098,7 +1098,7 @@ When a hydration or a catch-up reads an item whose text holds a surrogate pair, 
 
 ## Catch-up
 
-A device takes an event when it applies it or skips it; both move its cursor past the event, a skipped one with the next event applied, after a bounded count of skipped events, or at the stream's live marker. Every rule here holds within an unchanged reach; a changed one expires the copy (`device/reach-changed`).
+A device takes an event when it applies it or skips it. Every rule here holds within an unchanged reach; a changed one expires the copy (`device/reach-changed`).
 
 ### `device/catch-up-resumes`
 
@@ -1114,9 +1114,9 @@ When a catch-up's stream carries an event, a device MUST take it by the rules of
 
 ### `device/catch-up-cursor-taken`
 
-When a device applies an event, or a catch-up reaches its stream's live marker, a device MUST set its cursor to the id of the last event it took, never to the highest id it has seen.
+When a device moves its cursor in a catch-up, a device MUST move it to the id of an event it took or to its stream's live marker, never to the highest id it has seen.
 
-**Reason:** the server delivers ids in order (`events/ids-ascending`), so the two agree while every event is taken, and a mark set from what merely arrived would step over an event it did not take for good. A run of skipped events commits its cursor at the next applied event, after a bounded count, or at the live marker; a crash replays its uncommitted tail.
+**Reason:** the server delivers ids in order (`events/ids-ascending`), so the two agree while every event is taken, and a mark set from what merely arrived would step over an event it did not take for good.
 
 **Tests:** `device/catch-up.test.ts › keeps the last id applied rather than the highest, so a late lower id is not stepped over`.
 
@@ -1136,11 +1136,11 @@ If an event carries the version of the item or edge the copy holds and an `updat
 
 ### `device/catch-up-skip-advances`
 
-When a device skips an event, a device MUST move its cursor past it.
+When a catch-up skips events, a device MUST commit its cursor at the last of them no later than the next event it applies, its stream's live marker, or the 1,000th event it has skipped since its last commit.
 
-**Reason:** a cursor left behind would fetch the same stale event on every catch-up.
+**Reason:** a cursor left behind would fetch the same stale event on every catch-up, and a commit for each skipped event makes a long run of them as costly as applying them. Between commits the stored cursor trails the last skipped event by fewer than 1,000 events, so a crash or a stream that ends early replays only events the device skips again.
 
-**Tests:** `device/catch-up.test.ts › skips an event older than the item it holds and still advances the cursor`, `› skips an event at the version it holds that was stamped before the item it holds`.
+**Tests:** `device/catch-up.test.ts › skips an event older than the item it holds and still advances the cursor`, `› skips an event at the version it holds that was stamped before the item it holds`, `› never leaves its cursor before an applied event or past one it did not take when the stream ends among skipped events`, `› commits its cursor within a bound of the last skipped event, in a run that outlasts the bound, when the stream ends early`.
 
 ### `device/catch-up-same-stamp`
 
@@ -1430,13 +1430,15 @@ If a catch-up's stream ends before its live marker, then a device MUST end the c
 
 ### `device/catch-up-incomplete-cursor`
 
-If a catch-up's stream ends before its live marker, then a device MUST keep its cursor at the last event it took and keep its copy complete.
+If a catch-up's stream ends before its live marker, then a device MUST keep its copy complete and keep its cursor at or after the last event it applied, at or before the last event it took, and fewer than 1,000 events before that one.
 
-**Tests:** `device/catch-up.test.ts › leaves the cursor at the last applied event when the stream ends early`, `device/reach.test.ts › requires the actual live marker even when the announced head is already held`.
+**Reason:** a cursor before an applied event replays it, one past an event not taken loses it, and one far behind a run of skipped events makes the next catch-up read them all again. The events between the cursor and the last event taken are ones the device skipped, so the next catch-up skips them again.
+
+**Tests:** `device/catch-up.test.ts › leaves the cursor at the last applied event when the stream ends early`, `device/reach.test.ts › requires the actual live marker even when the announced head is already held`, `device/catch-up.test.ts › never leaves its cursor before an applied event or past one it did not take when the stream ends among skipped events`, `› commits its cursor within a bound of the last skipped event, in a run that outlasts the bound, when the stream ends early`.
 
 ### `device/catch-up-silence`
 
-If a catch-up's stream sends nothing at all for its idle wait before its live marker, then a device MUST end the catch-up `stream_incomplete` at the last event it took.
+If a catch-up's stream sends nothing at all for its idle wait before its live marker, then a device MUST end the catch-up `stream_incomplete`.
 
 **Tests:** `device/catch-up.test.ts › counts keepalive comments as activity before a delayed live marker (quiet=%s)`.
 
@@ -1448,9 +1450,9 @@ When a catch-up's stream sends its live marker, a device MUST end the catch-up.
 
 ### `device/marker-moves-cursor`
 
-When a live marker names a cursor past the last event a catch-up or a held stream took, a device MUST move its cursor to the marker's.
+When a catch-up or a held stream receives a live marker that names a cursor, a device MUST hold a cursor at or after the marker's.
 
-**Reason:** the events between are ones the credential withheld (`events/stream-live-cursor`), and a cursor left before them would stop short of the head on every catch-up and age out on a quiet slice.
+**Reason:** the events between the last one taken and the marker are ones the device skipped or the credential withheld (`events/stream-live-cursor`), and a cursor left before them would stop short of the head on every catch-up and age out on a quiet slice.
 
 **Tests:** `device/catch-up.test.ts › moves the cursor past the items the stream withheld, and resumes from there`, `› moves a held stream's cursor past the items it withheld`, `device/fidelity.test.ts › matches the marker that ends a replay whose items were withheld`.
 

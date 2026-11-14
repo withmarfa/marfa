@@ -467,12 +467,16 @@ fn take(
         reach::cursor(id).ok_or_else(reach::invalid)?;
         if let Some(rows) = &payload.rows {
             let applied = crate::tables::apply(&tx, rows, read_rows.as_ref())?;
-            store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
+            let behind = leave_skipped && applied == crate::tables::Applied::Nothing;
+            if !behind {
+                store::meta_set(&tx, store::META_EVENT_CURSOR, id)?;
+            }
             tx.commit()?;
             return Ok(Taken {
-                change: applied.then(|| rows_changed(rows.item.id.clone())),
+                change: (applied == crate::tables::Applied::Changed)
+                    .then(|| rows_changed(rows.item.id.clone())),
                 rows: Vec::new(),
-                behind: false,
+                behind,
             });
         }
         // Judged outside the transaction: a row held or pinned since is taken
@@ -5684,18 +5688,7 @@ mod tests {
         frames.push(stream_live(Some(&last.to_string())));
         let server = skipped_server(vec![frames]);
         let (_dir, core) = hydrated(&server);
-        let writes = Arc::new(AtomicUsize::new(0));
-        let counted = Arc::clone(&writes);
-        core.conn()
-            .unwrap()
-            .update_hook(Some(
-                move |_: rusqlite::hooks::Action, _: &str, table: &str, _| {
-                    if table == "meta" {
-                        counted.fetch_add(1, Ordering::Relaxed);
-                    }
-                },
-            ))
-            .unwrap();
+        let writes = meta_writes(&core);
         let report = core.catch_up().unwrap();
         assert_eq!((report.applied, report.skipped), (0, last - 10));
         assert_eq!(stored_cursor(&core), Some(last.to_string()));
@@ -5773,6 +5766,137 @@ mod tests {
             Some("16")
         );
     }
+    fn table_event(id: u64, item: &str, deleted: bool) -> String {
+        let payload = serde_json::json!({
+            "event_type": "rows.changed",
+            "item": {"id": item},
+            "table": "log",
+            "batch": format!("b{id}"),
+            "last_activity_at": "2026-01-01T00:00:00Z",
+            "rows": [{"id": "r1", "values": {"a": 1}, "deleted": deleted}],
+        });
+        event(&id.to_string(), "rows.changed", &payload.to_string())
+    }
+
+    fn meta_writes(core: &Core) -> Arc<AtomicUsize> {
+        let writes = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&writes);
+        core.conn()
+            .unwrap()
+            .update_hook(Some(
+                move |_: rusqlite::hooks::Action, _: &str, table: &str, _| {
+                    if table == "meta" {
+                        counted.fetch_add(1, Ordering::Relaxed);
+                    }
+                },
+            ))
+            .unwrap();
+        writes
+    }
+
+    #[test]
+    fn a_run_of_table_events_for_an_item_the_copy_does_not_hold_commits_in_batches() {
+        let last = 2_500 + 10;
+        let mut frames = vec![stream_cursor(&last.to_string())];
+        frames.extend((11..=last).map(|id| table_event(id, "elsewhere", false)));
+        frames.push(stream_live(Some(&last.to_string())));
+        let server = skipped_server(vec![frames]);
+        let (_dir, core) = hydrated(&server);
+        let writes = meta_writes(&core);
+        let report = core.catch_up().unwrap();
+        assert_eq!((report.applied, report.skipped), (0, last - 10));
+        assert_eq!(stored_cursor(&core), Some(last.to_string()));
+        let writes = writes.load(Ordering::Relaxed);
+        assert!(
+            writes <= 8,
+            "{writes} writes to meta for {} table events that changed nothing",
+            last - 10
+        );
+    }
+
+    #[test]
+    fn a_table_event_that_moves_a_table_commits_the_cursor_among_events_that_change_nothing() {
+        let mut frames = vec![stream_cursor("20")];
+        frames.push(table_event(11, "elsewhere", false));
+        frames.push(table_event(12, "n1", true));
+        frames.push(table_event(13, "elsewhere", false));
+        frames.push(incomplete());
+        let ledger = serde_json::json!({
+            "id": "app.acme.ledger",
+            "fields": {},
+            "tables": {"log": {"columns": {"a": {"type": "string"}}}},
+        });
+        let server = Scripted::start();
+        server.on(
+            "/types",
+            vec![crate::scripted::certified(crate::scripted::json(
+                200,
+                &serde_json::json!({
+                    "data": [
+                        {"id": NOTE, "display_hints": {"title_field": "title"}},
+                        ledger,
+                    ],
+                    "next_cursor": null,
+                })
+                .to_string(),
+            ))],
+        );
+        server.on("/events", vec![stream(frames, held())]);
+        let (_dir, core) = hydrated(&server);
+        {
+            let conn = core.conn().unwrap();
+            let ledger: marfa_rules::wire::WireType = serde_json::from_value(ledger).unwrap();
+            store::replace_catalog(
+                &conn,
+                &WireCatalog {
+                    types: vec![store::testing::wire_type(NOTE, None, Some("title")), ledger],
+                    edge_types: Vec::new(),
+                },
+            )
+            .unwrap();
+            let catalog = crate::catalog::load(&conn).unwrap();
+            let held = store::testing::wire_item(
+                "n1",
+                "app.acme.ledger",
+                "active",
+                "2026-01-01T00:00:00Z",
+                serde_json::json!({}),
+            );
+            store::put_server_item(&conn, &held, Some(&[]), &catalog).unwrap();
+            conn.execute(
+                "INSERT INTO table_choices (type, name) VALUES ('app.acme.ledger', 'log')",
+                [],
+            )
+            .unwrap();
+            crate::tables::reconcile_item(&conn, "n1").unwrap();
+            conn.execute(
+                "UPDATE item_tables SET state = 'online' WHERE item_id = 'n1'",
+                [],
+            )
+            .unwrap();
+        }
+        let error = core.catch_up().unwrap_err();
+        assert!(matches!(error, CoreError::StreamIncomplete { .. }));
+        let state: String = core
+            .conn()
+            .unwrap()
+            .query_row(
+                "SELECT state FROM item_tables WHERE item_id = 'n1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            state, "owed",
+            "the event was not taken, so the control says nothing"
+        );
+        assert_eq!(
+            stored_cursor(&core).as_deref(),
+            Some("12"),
+            "a table event that moved a table was left behind the cursor"
+        );
+    }
+
     #[test]
     fn a_held_row_retyped_out_of_the_slice_leaves_among_events_skipped_around_it() {
         let retyped = item_payload("item.updated", "n1", SKIPPED_TYPE, 2);
