@@ -112,8 +112,7 @@ impl Docker {
         Ok(self.succeed(&args)?.lines().any(|line| line == name))
     }
 
-    /// Where a tunnel or proxy on this machine reaches a container on the
-    /// network from, or `None` when there is no such network.
+    /// Returns `None` when the network does not exist.
     pub fn network_gateways(&self, name: &str) -> Result<Option<String>, CliError> {
         if !self.exists(&["network", "ls"], name)? {
             return Ok(None);
@@ -324,8 +323,6 @@ fn failed(args: &[&str], output: &Output) -> CliError {
     CliError::Install(format!("`docker {}` failed: {said}", args.join(" ")))
 }
 
-/// Each gateway in `.IPAM.Config`, as a range of one address: the published
-/// port forwards from the gateway, and any other address is a container.
 pub fn gateways_of(config: &str) -> Option<String> {
     let value: Value = serde_json::from_str(config).ok()?;
     let ranges: Vec<String> = value
