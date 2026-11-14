@@ -382,7 +382,7 @@ describe("stored text that is layout or colour", () => {
       "core.note",
       "--prop",
       // A list shows the first line of a title.
-      `title=${LAYOUT.replace("\n", " ")}`,
+      `title=${LAYOUT.replaceAll("\n", " ")}`,
       "--tag",
       "layout-escape",
     ]);
