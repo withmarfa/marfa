@@ -1024,31 +1024,16 @@ fn upload(http: &Http, bytes: File, mime_type: &str) -> std::result::Result<Answ
     Ok(answer)
 }
 
-fn sendable(row: &QueuedWrite) -> bool {
-    match row.verdict {
-        None => true,
-        Some(Verdict::Blocked) => {
-            row.blocked_reason() == Some(BlockedReason::CredentialRefused)
-                || row.reason.as_deref() == Some(crate::model::AWAITING_DEPENDENCY)
-        }
-        Some(_) => false,
-    }
-}
-
-fn judges_row_writes(conn: &rusqlite::Connection) -> Result<bool> {
-    for row in store::waiting_writes(conn)?
-        .iter()
-        .filter(|row| sendable(row))
-    {
-        if let (WriteKind::WriteRows, Some(item), Some(table)) =
-            (row.kind, row.item_id.as_deref(), row.table.as_deref())
-            && store::read_of(conn, &row.id)?.is_some()
-            && crate::tables::state(conn, item, table)?.as_deref() == Some(crate::tables::WHOLE)
-        {
-            return Ok(true);
-        }
-    }
-    Ok(false)
+/// Judged by `queue-and-verdicts/rows-conflicted`: made while the copy held its
+/// table whole, which it still does.
+fn judged(conn: &rusqlite::Connection, row: &QueuedWrite) -> Result<bool> {
+    let (WriteKind::WriteRows, Some(item), Some(table)) =
+        (row.kind, row.item_id.as_deref(), row.table.as_deref())
+    else {
+        return Ok(false);
+    };
+    Ok(store::read_of(conn, &row.id)?.is_some()
+        && crate::tables::state(conn, item, table)?.as_deref() == Some(crate::tables::WHOLE))
 }
 
 /// Whether a drain now has work: a write with no verdict, one blocked for a
@@ -1057,7 +1042,16 @@ fn judges_row_writes(conn: &rusqlite::Connection) -> Result<bool> {
 /// something outside the queue changes, is no reason to drain.
 pub(crate) fn would_send(core: &Core) -> Result<bool> {
     let conn = core.conn()?;
-    let sendable = store::waiting_writes(&conn)?.iter().any(sendable);
+    let sendable = store::waiting_writes(&conn)?
+        .iter()
+        .any(|row| match row.verdict {
+            None => true,
+            Some(Verdict::Blocked) => {
+                row.blocked_reason() == Some(BlockedReason::CredentialRefused)
+                    || row.reason.as_deref() == Some(crate::model::AWAITING_DEPENDENCY)
+            }
+            Some(_) => false,
+        });
     Ok(sendable
         || !store::owed_read_backs(&conn)?.is_empty()
         || crate::body::rule::waiting(&conn)?
@@ -1127,22 +1121,36 @@ fn drain_checked(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainRep
 
 fn drain_inner(core: &Core, stop: &AtomicBool) -> std::result::Result<DrainReport, Cut> {
     crate::catch_up::refuse_if_stopped(stop)?;
-    if judges_row_writes(&*core.conn()?)? {
-        core.catch_up_before_rows(stop)?;
-    }
     // Queued writes and their natural-key lookups name the copy's instance
     // so a replacement refuses them even after the pass confirmed the origin.
     // Credential renewal uses the exempt authentication endpoints.
     let (http, generation) = crate::catch_up::naming_instance(core, core.http()?)?;
     let mut pass = ReachChange::default();
     let mut report = DrainReport::empty();
-    let mut sent = send_queue(core, &http, generation, stop, &mut pass, &mut report);
+    let mut caught_up = false;
+    let mut sent = send_queue(
+        core,
+        &http,
+        generation,
+        stop,
+        &mut pass,
+        &mut report,
+        &mut caught_up,
+    );
     // No host owes a drain for a write it was not told is waiting, so one an
     // answer queued goes out in this drain, as a pass of its own.
     if sent.is_ok() && pass.follow_up && !pass.changed() && report.has_nothing_left() {
         pass.follow_up = false;
         let mut later = DrainReport::empty();
-        sent = send_queue(core, &http, generation, stop, &mut pass, &mut later);
+        sent = send_queue(
+            core,
+            &http,
+            generation,
+            stop,
+            &mut pass,
+            &mut later,
+            &mut caught_up,
+        );
         report.absorb(later);
     }
     let result = match sent {
@@ -1206,6 +1214,7 @@ fn send_queue(
     stop: &AtomicBool,
     pass: &mut ReachChange,
     report: &mut DrainReport,
+    caught_up: &mut bool,
 ) -> Result<()> {
     let waiting = store::waiting_writes(&*core.conn()?)?;
     let owed = !store::owed_read_backs(&*core.conn()?)?.is_empty()
@@ -1550,6 +1559,19 @@ fn send_queue(
                 landing: &landing,
             },
         )?;
+        // Here rather than as the drain starts, so writes queued ahead are not held.
+        if !*caught_up {
+            let conn = core.conn()?;
+            let mut judging = judged(&conn, row)?;
+            for joined in &batched {
+                judging = judging || judged(&conn, joined)?;
+            }
+            drop(conn);
+            if judging {
+                *caught_up = true;
+                core.catch_up_before_rows(stop)?;
+            }
+        }
         let payload = match payload_to_send(core, http, row, &all, &mut lookups)? {
             Ok(_) if row.kind == WriteKind::WriteRows => rows::body(row, &batched),
             Ok(payload) => payload,

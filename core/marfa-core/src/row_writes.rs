@@ -933,7 +933,23 @@ pub(crate) fn taken(
     Ok(conflicts)
 }
 
-/// Where the server's value before `write` differs from what the copy showed it.
+/// What `ops` leave in `column` of row `id`, a null being no value: none
+/// where no operation names the column.
+fn sets<'a>(ops: &'a [Op], id: &str, column: &str) -> Option<Option<&'a Value>> {
+    ops.iter()
+        .rev()
+        .filter(|op| op.id() == id)
+        .find_map(|op| match op {
+            Op::Delete { .. } => Some(None),
+            Op::Put { values, .. } => Some(values.get(column).filter(|value| !value.is_null())),
+            Op::Patch { values, .. } => values
+                .get(column)
+                .map(|value| (!value.is_null()).then_some(value)),
+        })
+}
+
+/// Where the server's value before `write` differs from what the copy showed
+/// it and from what the write sets: a value the write replaced unseen.
 fn clashes(
     conn: &Connection,
     item: &str,
@@ -992,7 +1008,7 @@ fn clashes(
             }
             let was = server.and_then(|values| values.get(*column));
             let saw = shown.as_ref().and_then(|values| values.get(*column));
-            if was != saw {
+            if was != saw && sets(ops, id, column) != Some(was) {
                 clashed.push(RowConflict {
                     row: id.to_string(),
                     column: (*column).to_string(),

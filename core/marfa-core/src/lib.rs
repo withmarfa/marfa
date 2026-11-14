@@ -222,27 +222,6 @@ struct Streaming {
     /// A follow is open, holding the stream or waiting for a hydration
     /// without it, so a second follow is refused at once.
     following: bool,
-    backlog: Backlog,
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
-enum Backlog {
-    /// No stream is had.
-    #[default]
-    Idle,
-    /// A stream is had and has not yet said it is live.
-    Applying,
-    /// A stream has applied every event it held when it opened.
-    Applied,
-}
-
-/// Clears replay progress when the follow releases its stream.
-struct Reading<'a>(&'a Mutex<Streaming>);
-
-impl Drop for Reading<'_> {
-    fn drop(&mut self) {
-        streaming_of(self.0).backlog = Backlog::Idle;
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -274,6 +253,11 @@ fn streaming_of(streaming: &Mutex<Streaming>) -> MutexGuard<'_, Streaming> {
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
+
+/// Long enough for a reachable server to name its head and for a copy to
+/// apply a few thousand events, short enough that a person waiting on a drain
+/// is not kept.
+const ROWS_CAUGHT_UP_WAIT: Duration = Duration::from_secs(5);
 
 fn one_at_a_time() -> CoreError {
     CoreError::Invalid(
@@ -1282,43 +1266,81 @@ impl Core {
         })
     }
 
+    /// Waits until the copy has applied every event its stream carries up to
+    /// the head of the server's log, by watching whoever moves the cursor or,
+    /// where nobody does, by catching up. Past `ROWS_CAUGHT_UP_WAIT`, or where
+    /// the head cannot be read, it returns and the write is judged as it stands.
     pub(crate) fn catch_up_before_rows(&self, stop: &AtomicBool) -> Result<()> {
-        loop {
+        let deadline = std::time::Instant::now() + ROWS_CAUGHT_UP_WAIT;
+        let target = match catch_up::last_carried(self, self.http()?, deadline, stop) {
+            Ok(target) => target,
+            Err(error) => {
+                catch_up::refuse_if_stopped(stop)?;
+                telemetry::degraded!(&error);
+                return Ok(());
+            }
+        };
+        let Some(target) = target else {
+            return Ok(());
+        };
+        while !self.applied_through(target)? {
             catch_up::refuse_if_stopped(stop)?;
-            let streaming = streaming_of(&self.streaming);
-            match (streaming.holder, streaming.backlog) {
-                (None, _) => break,
-                (Some(Mover::Follow), Backlog::Applying) => {}
-                (Some(Mover::Follow), _) => return Ok(()),
-                (Some(_), _) => {}
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            if left.is_zero() {
+                return Ok(());
             }
-            drop(streaming);
-            std::thread::sleep(Duration::from_millis(10));
-        }
-        match self.catch_up_pass(stop) {
-            Ok(_) => Ok(()),
-            Err(failed)
-                if failed.error.is_environmental()
-                    || matches!(failed.error, CoreError::StreamIncomplete { .. })
-                    || failed.error == one_at_a_time() =>
-            {
-                telemetry::degraded!(&failed.error);
-                Ok(())
+            if streaming_of(&self.streaming).holder.is_some() {
+                std::thread::sleep(left.min(Duration::from_millis(20)));
+                continue;
             }
-            Err(failed) => Err(failed.error),
+            match self.catch_up_by(deadline, stop) {
+                Ok(_) => {}
+                Err(failed) if failed.error == one_at_a_time() => {}
+                Err(failed)
+                    if failed.error == CoreError::Canceled
+                        || failed.error.is_environmental()
+                        || matches!(failed.error, CoreError::StreamIncomplete { .. }) =>
+                {
+                    catch_up::refuse_if_stopped(stop)?;
+                    telemetry::degraded!(&failed.error);
+                    return Ok(());
+                }
+                Err(failed) => return Err(failed.error),
+            }
         }
+        Ok(())
     }
 
-    fn reading(&self) -> Reading<'_> {
-        streaming_of(&self.streaming).backlog = Backlog::Applying;
-        Reading(&self.streaming)
+    fn applied_through(&self, target: u64) -> Result<bool> {
+        let cursor = store::meta_get(&*self.conn()?, store::META_EVENT_CURSOR)?;
+        Ok(cursor
+            .as_deref()
+            .and_then(reach::cursor)
+            .is_some_and(|cursor| cursor >= target))
     }
 
-    fn backlog_applied(&self) {
-        let mut streaming = streaming_of(&self.streaming);
-        if streaming.backlog == Backlog::Applying {
-            streaming.backlog = Backlog::Applied;
-        }
+    /// A catch-up pass that `deadline` stops as `stop` does.
+    fn catch_up_by(
+        &self,
+        deadline: std::time::Instant,
+        stop: &AtomicBool,
+    ) -> std::result::Result<CatchUpReport, CatchUpFailed> {
+        let cut = AtomicBool::new(false);
+        let done = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                while !done.load(Ordering::Relaxed) {
+                    if stop.load(Ordering::Relaxed) || std::time::Instant::now() >= deadline {
+                        cut.store(true, Ordering::Relaxed);
+                        return;
+                    }
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            });
+            let result = self.catch_up_pass(&cut);
+            done.store(true, Ordering::Relaxed);
+            result
+        })
     }
 
     /// `on_change` is called with no lock on the store held, so it may read

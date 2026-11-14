@@ -248,10 +248,12 @@ class RowsProxy {
   readonly replies: Reply[] = [];
   /** Answers every row write to `item` while set. */
   refusing: { item: string; gateway: number } | null = null;
-  /** What the proxy answers the event stream while set: a refusal, or a stream that ends at once. */
-  events: "refuse" | "end" | null = null;
+  /** What the proxy answers the event stream while set: a refusal, a stream that ends at once, or one that stays open and says nothing. */
+  events: "refuse" | "end" | "silent" | null = null;
   /** Each request for the event stream that reached the proxy. */
   eventRequests = 0;
+  /** The method and path of each request that reached the proxy, in order. */
+  readonly asked: string[] = [];
   /** Each row write that reached the proxy, in order. */
   readonly sent: { key: string | undefined; body: unknown }[] = [];
   private contract = "";
@@ -290,6 +292,7 @@ class RowsProxy {
         headers.set(name, Array.isArray(sent) ? sent.join(", ") : sent);
     }
     const path = request.url ?? "/";
+    this.asked.push(`${request.method ?? ""} ${path}`);
     if (path.startsWith("/events")) {
       this.eventRequests += 1;
       if (this.events === "refuse") {
@@ -305,6 +308,14 @@ class RowsProxy {
           "x-marfa-contract": this.contract,
         });
         response.end(": connected\n\n");
+        return;
+      }
+      if (this.events === "silent") {
+        response.writeHead(200, {
+          "content-type": "text/event-stream",
+          "x-marfa-contract": this.contract,
+        });
+        response.write(": connected\n\n");
         return;
       }
     }
@@ -916,17 +927,8 @@ describe("what a verdict does to the rows a copy holds", () => {
     };
     const follow = await device.follow();
     try {
-      // Let the follow apply an event before gating a later one.
-      const first = uuidv7();
-      await write(item, [{ op: "put", id: first, values: { count: 0 } }]);
-      await until(() => gate.reached() === 1, "the follow reaching a first event");
-      gate.release(1);
-      await until(
-        async () => (await shown())[first] !== undefined && gate.reached() >= 1,
-        "the follow taking the first event",
-      );
       await write(item, [{ op: "patch", id: row, values: { count: 5 } }]);
-      await until(() => gate.reached() === 2, "the follow reaching the event");
+      await until(() => gate.reached() === 1, "the follow reaching the event");
       const mine = value(
         await device.call<QueuedWrite>("writeRows", item, "steps", [
           { op: "patch", id: row, values: { note: "mine" } },
@@ -941,31 +943,20 @@ describe("what a verdict does to the rows a copy holds", () => {
       expect(
         report.verdicts.find((entry) => entry.id === mine.id)?.verdict?.verdict,
       ).toBe("accepted");
-      expect(await shown()).toEqual({
-        [first]: { count: 0 },
-        [row]: { count: 1, note: "mine" },
-      });
+      expect(await shown()).toEqual({ [row]: { count: 1, note: "mine" } });
 
-      gate.release(2);
+      gate.release(1);
       await until(
-        async () =>
-          ((await shown())[row] as { count?: number } | undefined)?.count ===
-            5 && gate.reached() >= 3,
+        async () => (await shown())[row] !== undefined && gate.reached() >= 2,
         "the follow taking the earlier event and reaching its own",
       );
-      expect(await shown()).toEqual({
-        [first]: { count: 0 },
-        [row]: { count: 5, note: "mine" },
-      });
+      expect(await shown()).toEqual({ [row]: { count: 5, note: "mine" } });
       gate.release("all");
       await until(async () => {
         const held = value(await device.call<QueuedWrite[]>("queue"));
         return held.length === 1;
       }, "the queue holding the answered write");
-      expect(await shown()).toEqual({
-        [first]: { count: 0 },
-        [row]: { count: 5, note: "mine" },
-      });
+      expect(await shown()).toEqual({ [row]: { count: 5, note: "mine" } });
     } finally {
       gate.release("all");
       expect(await follow.stop()).toBeNull();
@@ -981,7 +972,6 @@ describe("what a verdict does to the rows a copy holds", () => {
     ]);
     const device = await holding(type, "unchanged");
     await write(item, [{ op: "patch", id: row, values: { note: "same" } }]);
-    value(await device.catchUp());
     const mine = value(
       await device.writeRows(item, "steps", [
         { op: "patch", id: row, values: { note: "same" } },
@@ -1258,6 +1248,141 @@ describe("a drain catches up before it sends row writes", () => {
         note: "offline",
       });
     }
+  });
+
+  it("names only the column whose value it replaced, where another writer set the other column to the value the write sets", async () => {
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
+    const device = await holding(type, "caught-up-same");
+    const mine = value(
+      await device.writeRows(item, "steps", [
+        { op: "patch", id: row, values: { count: 2, note: "same" } },
+      ]),
+    );
+    await write(item, [
+      { op: "patch", id: row, values: { count: 3, note: "same" } },
+    ]);
+    const report = value(await device.drain());
+    expect(verdictOf(report, mine.id)).toBe("conflicted");
+    expect(
+      report.verdicts.find((entry) => entry.id === mine.id)?.conflicts,
+    ).toEqual([{ row, column: "count" }]);
+    expect(await serverRows(item)).toEqual({
+      [row]: { count: 2, note: "same" },
+    });
+  });
+
+  it("reports a write conflicted where another writer's batch reaches a following copy after its stream went live", async () => {
+    const proxy = await proxied();
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
+    counter += 1;
+    const store = newStore(`table-writes-live-later-${String(counter)}`);
+    const gate = new Gate(dirname(store), "gate-rows-event");
+    const device = await BindingDevice.start({
+      module: requireModule(),
+      store,
+      url: proxy.url,
+      key: server.workingKey,
+      env: gate.env,
+    });
+    bindings.push(device);
+    value(await device.hydrate([type], "library"));
+    value(await device.call("holdTable", type, "steps"));
+    const mine = value(
+      await device.call<QueuedWrite>("writeRows", item, "steps", [
+        { op: "patch", id: row, values: { note: "offline" } },
+      ]),
+    );
+    const follow = await device.follow();
+    try {
+      // An event the follow takes once its stream is open, so the next one comes after it went live.
+      await write(item, [{ op: "put", id: uuidv7(), values: { count: 0 } }]);
+      await until(
+        () => gate.reached() === 1,
+        "the follow reaching a first event",
+      );
+      gate.release(1);
+      await write(item, [{ op: "patch", id: row, values: { note: "other" } }]);
+      await until(
+        () => gate.reached() === 2,
+        "the follow reaching the overlap",
+      );
+      const before = proxy.eventRequests;
+      const draining = device.call<{
+        verdicts: {
+          id: string;
+          verdict: { verdict: string } | null;
+          conflicts: { row: string; column: string }[];
+        }[];
+      }>("drain");
+      await until(
+        () => proxy.eventRequests > before,
+        "the drain reading the head of the log",
+      );
+      // The batch's own event stays held, so the answer is judged before it.
+      gate.release(2);
+      const told = value(await draining).verdicts.find(
+        (entry) => entry.id === mine.id,
+      );
+      expect(told?.verdict?.verdict).toBe("conflicted");
+      expect(told?.conflicts).toEqual([{ row, column: "note" }]);
+    } finally {
+      gate.release("all");
+      expect(await follow.stop()).toBeNull();
+    }
+  });
+
+  it("sends the writes queued ahead of a row write before it waits, and sends the row write once 5 seconds pass without the stream's head", async () => {
+    const proxy = await proxied();
+    const type = await tableType();
+    const item = await itemOf(type);
+    const row = uuidv7();
+    await write(item, [
+      { op: "put", id: row, values: { count: 1, note: "a" } },
+    ]);
+    const device = await holding(
+      type,
+      "caught-up-silent",
+      server.workingKey,
+      proxy.url,
+    );
+    const made = value(
+      await device.create({ type, properties: { title: "Ahead" } }),
+    );
+    const mine = value(
+      await device.writeRows(item, "steps", [
+        { op: "patch", id: row, values: { note: "offline" } },
+      ]),
+    );
+    await write(item, [{ op: "patch", id: row, values: { note: "other" } }]);
+    proxy.events = "silent";
+    const from = proxy.asked.length;
+    const started = Date.now();
+    const report = value(await device.drain());
+    const took = Date.now() - started;
+    proxy.events = null;
+    expect(verdictOf(report, made.id)).toBe("accepted");
+    expect(verdictOf(report, mine.id)).toBe("accepted");
+    const asked = proxy.asked.slice(from);
+    const created = asked.findIndex((one) => /^POST \/items(\?|$)/.test(one));
+    const stream = asked.findIndex((one) => one.startsWith("GET /events"));
+    const rows = asked.findIndex((one) =>
+      /^POST \/items\/[^/]+\/tables\/steps\/rows$/.test(one),
+    );
+    expect(created, asked.join("\n")).toBeGreaterThanOrEqual(0);
+    expect(stream, asked.join("\n")).toBeGreaterThan(created);
+    expect(rows, asked.join("\n")).toBeGreaterThan(stream);
+    expect(took).toBeGreaterThanOrEqual(5_000);
+    expect(took).toBeLessThan(10_000);
   });
 });
 
