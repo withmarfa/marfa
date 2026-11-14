@@ -248,7 +248,7 @@ fn bootout(name: &str, trace: bool) -> Result<(), CliError> {
         return Ok(());
     }
     if trace {
-        eprintln!("  $ launchctl bootout {}", target(name));
+        crate::errln!("  $ launchctl bootout {}", target(name));
     }
     let ran = run(&["bootout", &target(name)])?;
     if !ran.status.success() && loaded(name) {
@@ -275,7 +275,7 @@ fn bootout(name: &str, trace: bool) -> Result<(), CliError> {
 fn bootstrap(path: &Path, name: &str, trace: bool) -> Result<(), CliError> {
     let path_text = text(path)?;
     if trace {
-        eprintln!("  $ launchctl bootstrap {} {path_text}", domain());
+        crate::errln!("  $ launchctl bootstrap {} {path_text}", domain());
     }
     let ran = run(&["bootstrap", &domain(), path_text])?;
     if ran.status.success() {
@@ -341,7 +341,7 @@ pub fn start(name: &str, dir: &Path, trace: bool) -> Result<(), CliError> {
         return Ok(());
     }
     if trace {
-        eprintln!("  $ launchctl kickstart {}", target(name));
+        crate::errln!("  $ launchctl kickstart {}", target(name));
     }
     let ran = run(&["kickstart", &target(name)])?;
     if ran.status.success() {
@@ -365,7 +365,7 @@ pub fn restart(name: &str, dir: &Path, trace: bool) -> Result<(), CliError> {
         return start(name, dir, trace);
     }
     if trace {
-        eprintln!("  $ launchctl kickstart -k {}", target(name));
+        crate::errln!("  $ launchctl kickstart -k {}", target(name));
     }
     let ran = run(&["kickstart", "-k", &target(name)])?;
     if ran.status.success() {

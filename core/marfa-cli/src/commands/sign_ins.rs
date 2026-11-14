@@ -82,11 +82,11 @@ pub fn run(command: SignInsCommand, remote: &Remote, out: &Printer) -> Result<()
     match command {
         SignInsCommand::List => {
             let answer = remote.json(&list_request())?;
-            out.report(&answer, || listing(&answer))
+            out.report(&answer, listing)
         }
         SignInsCommand::Rename { id, name } => {
             let answer = remote.json(&rename_request(&id, &name))?;
-            out.report(&answer, || {
+            out.report(&answer, |answer| {
                 let named = answer.get("name").and_then(Value::as_str).unwrap_or("");
                 format!("renamed sign-in {} to {}", printable(&id), printable(named))
             })
@@ -94,7 +94,7 @@ pub fn run(command: SignInsCommand, remote: &Remote, out: &Printer) -> Result<()
         SignInsCommand::EndAll { kind, keep } => end_all(&kind, &keep, remote, out),
         SignInsCommand::End { id, revoke_keys } => {
             let answer = remote.json(&end_request(&id, revoke_keys))?;
-            out.report(&answer, || format!("ended sign-in {}", printable(&id)))
+            out.report(&answer, |_| format!("ended sign-in {}", printable(&id)))
         }
     }
 }
@@ -222,7 +222,7 @@ fn end_all(
     out: &Printer,
 ) -> Result<(), CliError> {
     let outcome = end_chosen(kinds, keep, remote)?;
-    out.report(&outcome.json(), || outcome.text())?;
+    out.report(&outcome.json(), |_| outcome.text())?;
     match outcome.failed.into_iter().next() {
         Some((_, error)) => Err(error),
         None => Ok(()),

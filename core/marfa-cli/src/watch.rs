@@ -75,7 +75,7 @@ pub fn watch_every(named: &Named, stop_after: Option<u64>, json: bool) -> Result
     })?;
     interrupt::stop_on_interrupt();
     let stop = interrupt::stop_after(stop_after);
-    eprintln!(
+    crate::errln!(
         "watching every folder {} lists (interrupt to stop)",
         registry.path().display()
     );
@@ -230,16 +230,7 @@ impl EveryFolder for Machine {
                         "code": reason.code,
                         "reason": reason.message,
                     }),
-                    || {
-                        if CREDENTIAL_ENDED.contains(&reason.code.as_str()) {
-                            format!(
-                                "not watched: {}; it is watched again once `marfa login` or `marfa keys keep` keeps a new credential",
-                                reason.message
-                            )
-                        } else {
-                            format!("not watched: {}; trying again", reason.message)
-                        }
-                    },
+                    || not_watched(reason),
                 )
             }
             Every::HandedOver { dir } => say(json, dir).line(handed_over(), || {
@@ -277,7 +268,7 @@ impl EveryFolder for Machine {
             ),
             Every::Registry(Some(reason)) => self.line(
                 &serde_json::json!({ "registry": self.registry, "readable": false, "reason": reason }),
-                || format!("{reason}; the folders already watched keep syncing"),
+                || format!("{}; the folders already watched keep syncing", output::printable(reason)),
             ),
             Every::Record { path, reason } => {
                 record_unwritten(json, path, reason);
@@ -300,7 +291,10 @@ fn record_unwritten(json: bool, path: &Path, reason: &str) {
             String::new,
         );
     } else {
-        eprintln!("{reason}; the watch goes on without it");
+        crate::errln!(
+            "{}; the watch goes on without it",
+            output::printable(reason)
+        );
     }
 }
 
@@ -308,6 +302,17 @@ const HANDED_OVER_LINE: &str =
     "let go to a command that asked for it; taken back once that command ends";
 
 const TAKEN_BACK_LINE: &str = "taken back from the command it was let go to, and watched again";
+
+fn not_watched(reason: &Unwatched) -> String {
+    let message = output::printable(&reason.message);
+    if CREDENTIAL_ENDED.contains(&reason.code.as_str()) {
+        format!(
+            "not watched: {message}; it is watched again once `marfa login` or `marfa keys keep` keeps a new credential"
+        )
+    } else {
+        format!("not watched: {message}; trying again")
+    }
+}
 
 fn handed_over() -> Value {
     serde_json::json!({
@@ -349,8 +354,8 @@ impl Say<'_> {
     /// A line for a person on stderr, in either mode.
     fn note(&self, text: &str) {
         match self.dir {
-            None => eprintln!("{text}"),
-            Some(dir) => eprintln!("{}", prefixed(dir, text)),
+            None => crate::errln!("{text}"),
+            Some(dir) => crate::errln!("{}", prefixed(dir, text)),
         }
     }
 }
@@ -371,7 +376,7 @@ fn naming(mut value: Value, dir: &Path) -> Value {
 
 fn prefixed(dir: &Path, text: &str) -> String {
     text.lines()
-        .map(|line| format!("{}: {line}", dir.display()))
+        .map(|line| format!("{}: {line}", output::printable(&dir.display().to_string())))
         .collect::<Vec<_>>()
         .join("\n")
 }
@@ -528,7 +533,10 @@ fn ended(server: &str, error: WatchError<CliError>) -> CliError {
         WatchError::CredentialRefused(error) if error.is_signed_out() => signed_out(error),
         WatchError::CredentialRefused(error) => refused_credential(server, &error),
         WatchError::FollowEnded(error) => CliError::Watch(
-            format!("the server's changes stopped reaching this folder: {error}"),
+            format!(
+                "the server's changes stopped reaching this folder: {}",
+                output::printable(&error.to_string())
+            ),
             error.answer().map(Box::new),
         ),
         WatchError::Unwatchable(reason) => CliError::Watch(reason, None),
@@ -577,18 +585,23 @@ fn tell(
         }
         WatchEvent::ReclaimFailed(error) => {
             say.note(&format!(
-                "warning: the copy could not be compacted ({error}); it is tried again later and nothing was changed"
+                "warning: the copy could not be compacted ({}); it is tried again later and nothing was changed",
+                output::printable(&error.to_string())
             ));
             Ok(())
         }
         WatchEvent::Missed { path } => {
             say.note(&format!(
-                "warning: the hourly check rewrote {path}, which a change had reached and the watch had left as it was"
+                "warning: the hourly check rewrote {}, which a change had reached and the watch had left as it was",
+                output::printable(&path)
             ));
             Ok(())
         }
         WatchEvent::WatcherFailed(error) => {
-            say.note(&format!("watch error: {error}"));
+            say.note(&format!(
+                "watch error: {}",
+                output::printable(&error.to_string())
+            ));
             Ok(())
         }
         WatchEvent::Retrying { error, wait } if marfa_core::folder::copy_changed(&error) => {
@@ -602,14 +615,16 @@ fn tell(
             wait,
         } => {
             say.note(&format!(
-                "another program kept writing to the folder's store while the watch wrote to it ({error}); the watch goes on and tries again in {wait:?}"
+                "another program kept writing to the folder's store while the watch wrote to it ({}); the watch goes on and tries again in {wait:?}",
+                output::printable(&error.to_string())
             ));
             Ok(())
         }
         WatchEvent::Retrying { error, wait } => {
             say.note(&format!(
-                "could not hydrate ({error}); trying again in {wait:?}, and after each failure \
-                 a wait that doubles to {RETRY_MOST:?}, or longer where the server names one"
+                "could not hydrate ({}); trying again in {wait:?}, and after each failure \
+                 a wait that doubles to {RETRY_MOST:?}, or longer where the server names one",
+                output::printable(&error.to_string())
             ));
             Ok(())
         }
@@ -623,7 +638,8 @@ fn tell(
             serde_json::json!({ "server": server, "reachable": false, "reason": reason }),
             || {
                 format!(
-                    "cannot reach the server at {server} ({reason}); edits wait here and go when it answers"
+                    "cannot reach the server at {server} ({}); edits wait here and go when it answers",
+                    output::printable(&reason)
                 )
             },
         ),
@@ -643,7 +659,10 @@ fn tell(
         ),
         WatchEvent::Waiting { settings, scan } => say.report(
             serde_json::json!({ "settings": settings, "scan": scan }),
-            || format!("waiting: {}", scan.root_gone.as_deref().unwrap_or_default()),
+            || format!(
+                "waiting: {}",
+                output::printable(scan.root_gone.as_deref().unwrap_or_default())
+            ),
         ),
         WatchEvent::Passed(pass) => passed(say, folder, conflicts, &pass),
     }
@@ -701,16 +720,20 @@ fn standing(
                 (scanned.held_outside > 0)
                     .then(|| folders::held_outside_line(scanned.held_outside)),
             )
-            .chain(
-                scanned
-                    .warnings
-                    .iter()
-                    .map(|file| format!("{}: {}", file.path, file.reason)),
-            )
+            .chain(scanned.warnings.iter().map(|file| {
+                format!(
+                    "{}: {}",
+                    output::printable(&file.path),
+                    output::printable(&file.reason)
+                )
+            }))
             .chain(folders::directory_lines(&scanned.directories))
             .chain(folders::secret_lines(&scanned.secrets))
             .chain(scanned.settling.iter().map(|path| {
-                format!("{path}: still changing, so not sent yet; it is sent once it stops")
+                format!(
+                    "{}: still changing, so not sent yet; it is sent once it stops",
+                    output::printable(path)
+                )
             }))
             .chain(folders::flagged_lines(flagged))
             .chain(folders::embed_lines(embeds))
@@ -750,7 +773,7 @@ fn passed(
         .stopped
         .clone()
         .filter(|_| *stopped_changed)
-        .map(|reason| format!("the drain stopped: {reason}"));
+        .map(|reason| format!("the drain stopped: {}", output::printable(&reason)));
     // What stands is said when it changes; what happened, every time.
     let standing = standing(
         scanned,
@@ -864,6 +887,21 @@ mod tests {
     use super::*;
     use crate::output::tests::{pass, verdict};
     use marfa_core::{Verdict, WriteKind};
+
+    #[test]
+    fn a_refusal_in_an_all_folders_watch_stays_one_line_naming_its_folder() {
+        let reason = Unwatched {
+            code: "unauthorized".into(),
+            message: "refused\nother: not watched: fine\u{1b}[2K".into(),
+        };
+        let line = prefixed(Path::new("/notes"), &not_watched(&reason));
+        assert_eq!(line.lines().count(), 1, "{line:?}");
+        assert!(
+            line.starts_with("/notes: not watched: refused\\u{a}other"),
+            "{line:?}"
+        );
+        assert!(!line.contains('\u{1b}'), "{line:?}");
+    }
 
     #[test]
     fn a_watch_line_says_the_drain_in_the_words_a_push_does() {

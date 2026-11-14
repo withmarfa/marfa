@@ -240,7 +240,7 @@ describe("profiles", () => {
     expect(missingWitness.envelope.error.message).toContain("missing");
 
     const byUrl = await missing
-      .withEnv({ MARFA_API_KEY: c.apiKey })
+      .withEnv({ MARFA_API_URL: c.apiUrl, MARFA_API_KEY: c.apiKey })
       .json<ItemEnvelope>(["--url", c.apiUrl, "items", "get", id]);
     expect(byUrl.item.id).toBe(id);
     const byKey = await missing

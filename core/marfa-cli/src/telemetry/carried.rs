@@ -168,7 +168,7 @@ pub fn load(command: &str) {
         &mut |name, value| unsafe { std::env::set_var(name, value) },
     );
     if let Err(said) = result {
-        eprintln!("marfa: {said}");
+        crate::errln!("marfa: {said}");
     }
 }
 

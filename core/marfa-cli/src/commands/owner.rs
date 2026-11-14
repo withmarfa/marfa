@@ -133,7 +133,7 @@ fn set_address(remote: &Remote, address: Option<&str>, out: &Printer) -> Result<
     if let Some(set) = crate::server::address::ensure(remote, address)?
         && !out.json
     {
-        eprintln!("Set the sign-in address to {set}.");
+        crate::errln!("Set the sign-in address to {set}.");
     }
     Ok(())
 }
@@ -145,15 +145,16 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
         OwnerCommand::Picture { output } => {
             let (content_type, mut reader) =
                 remote.stream(&Request::get(&["owner", "picture"]).streamed())?;
-            let written = super::blobs::save(&mut reader, output.as_deref())?;
+            let written = super::blobs::save(&mut reader, output.as_deref(), None)?;
             // Bytes to stdout are the answer; a report there would corrupt it.
             if let Some(path) = output {
                 out.report(
                     &json!({ "path": path, "size_bytes": written, "mime_type": content_type }),
-                    || {
+                    |_| {
                         format!(
-                            "{} byte(s) of {content_type} into {}",
+                            "{} byte(s) of {} into {}",
                             written,
+                            crate::output::printable(&content_type),
                             path.display()
                         )
                     },
@@ -234,7 +235,7 @@ pub fn setup(command: SetupCommand, remote: &Remote, out: &Printer) -> Result<()
                 };
                 let status = std::process::Command::new(command).arg(link).status();
                 if !status.is_ok_and(|status| status.success()) {
-                    eprintln!("Could not open a browser; use the setup link below.");
+                    crate::errln!("Could not open a browser; use the setup link below.");
                 }
             }
             out.value(&result)

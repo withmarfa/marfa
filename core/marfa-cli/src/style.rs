@@ -5,7 +5,6 @@
 //! terminal on the other draws color on the terminal alone. Every styled
 //! word keeps its text, so a color never carries meaning by itself.
 
-use std::io::IsTerminal;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,8 +28,8 @@ pub fn allowed(is_terminal: bool, json: bool, no_color: Option<&str>, term: Opti
 
 fn on(stream: Stream) -> bool {
     let is_terminal = match stream {
-        Stream::Out => std::io::stdout().is_terminal(),
-        Stream::Err => std::io::stderr().is_terminal(),
+        Stream::Out => crate::output::stdout_is_terminal(),
+        Stream::Err => crate::output::stderr_is_terminal(),
     };
     allowed(
         is_terminal,

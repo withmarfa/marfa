@@ -1,4 +1,3 @@
-use std::io::{self, Write};
 use std::path::PathBuf;
 
 use clap::{Args, Subcommand, ValueEnum};
@@ -431,7 +430,7 @@ fn state(command: StateCommand, remote: &Remote, out: &Printer) -> Result<(), Cl
     };
     let answer = remote.json(&request)?;
     match &sentence {
-        Some(sentence) => out.report(&answer, || sentence.clone()),
+        Some(sentence) => out.report(&answer, |_| sentence.clone()),
         None => out.value(&answer),
     }
 }
@@ -480,7 +479,7 @@ fn endpoints(command: EndpointsCommand, remote: &Remote, out: &Printer) -> Resul
                 "endpoints",
                 &endpoint,
             ]))?;
-            out.report(&answer, || {
+            out.report(&answer, |_| {
                 format!("retired endpoint {endpoint} of connector {id}")
             })
         }
@@ -504,25 +503,12 @@ fn deliveries(command: DeliveriesCommand, remote: &Remote, out: &Printer) -> Res
             output,
         } => {
             let (_, mut reader) = remote.stream(&delivery_body_request(&id, &delivery))?;
-            let written = match &output {
-                Some(path) => {
-                    let mut file = std::fs::File::create(path).map_err(|error| {
-                        CliError::Invalid(format!("cannot write {}: {error}", path.display()))
-                    })?;
-                    io::copy(&mut reader, &mut file)?
-                }
-                None => {
-                    let mut stdout = io::stdout().lock();
-                    let written = io::copy(&mut reader, &mut stdout)?;
-                    stdout.flush()?;
-                    written
-                }
-            };
+            let written = super::blobs::save(&mut reader, output.as_deref(), None)?;
             // Bytes to stdout are the answer; a report there would corrupt it.
             if let Some(path) = output {
                 out.report(
                     &json!({ "delivery": delivery, "path": path, "size_bytes": written }),
-                    || format!("{written} byte(s) into {}", path.display()),
+                    |_| format!("{written} byte(s) into {}", path.display()),
                 )?;
             }
             Ok(())
@@ -570,8 +556,8 @@ pub fn run(command: ConnectorsCommand, remote: &Remote, out: &Printer) -> Result
         answer
             .get(name)
             .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string()
+            .map(crate::output::printable)
+            .unwrap_or_default()
     };
     let sentence = match (done, &wrote) {
         (Some(sentence), _) => Some(sentence),
@@ -601,7 +587,7 @@ pub fn run(command: ConnectorsCommand, remote: &Remote, out: &Printer) -> Result
         (None, Wrote::Nothing) => None,
     };
     match sentence {
-        Some(sentence) => out.report(&answer, || sentence),
+        Some(sentence) => out.report(&answer, |_| sentence),
         None => out.value(&answer),
     }
 }

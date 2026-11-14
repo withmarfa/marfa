@@ -32,6 +32,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/cli/instance.test.ts",
   "src/suites/cli/item-summaries.test.ts",
   "src/suites/cli/items.test.ts",
+  "src/suites/cli/key-and-files.test.ts",
   "src/suites/cli/login.test.ts",
   "src/suites/cli/owner-commands.test.ts",
   "src/suites/cli/profiles.test.ts",

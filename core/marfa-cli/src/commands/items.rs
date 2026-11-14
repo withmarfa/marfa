@@ -8,7 +8,7 @@ use serde_json::{Map, Value, json};
 
 use super::{PageArgs, PropertyArgs, StateFilter, TierFilter, insert_opt, object, state_list};
 use crate::error::CliError;
-use crate::output::{self, Printer};
+use crate::output::{self, Printer, printable};
 use crate::remote::Remote;
 use crate::remote::request::Request;
 use crate::values::{ItemState, SortDirection, SortField, Tier};
@@ -1212,14 +1212,14 @@ pub fn run(command: ItemsCommand, remote: &Remote, out: &Printer) -> Result<(), 
     };
     let answer = remote.pages(&request, all)?;
     match (done, wrote) {
-        (Some(sentence), _) => out.report(&answer, || sentence),
-        (None, Some(verb)) => out.report(&answer, || super::said::item(verb, &answer)),
-        (None, None) if tagging => {
-            out.report(&answer, || super::said::tags("tagged", &id_of, &answer))
-        }
-        (None, None) if untagging => {
-            out.report(&answer, || super::said::tags("untagged", &id_of, &answer))
-        }
+        (Some(sentence), _) => out.report(&answer, |_| sentence),
+        (None, Some(verb)) => out.report(&answer, |answer| super::said::item(verb, answer)),
+        (None, None) if tagging => out.report(&answer, |answer| {
+            super::said::tags("tagged", &id_of, answer)
+        }),
+        (None, None) if untagging => out.report(&answer, |answer| {
+            super::said::tags("untagged", &id_of, answer)
+        }),
         (None, None) => out.value(&answer),
     }
 }
@@ -1305,11 +1305,15 @@ fn empty_bin(confirm: &str, remote: &Remote, out: &Printer) -> Result<(), CliErr
         .count();
     out.report(
         &json!({ "purged": purged, "stayed": stayed, "failures": failures }),
-        || {
+        |_| {
             let mut lines = vec![format!("{purged} items deleted from the bin")];
             for failure in &failures {
                 let text = |name: &str| failure.get(name).and_then(Value::as_str).unwrap_or("");
-                lines.push(format!("{}: {}", text("id"), text("message")));
+                lines.push(format!(
+                    "{}: {}",
+                    crate::output::printable(text("id")),
+                    crate::output::printable(text("message"))
+                ));
             }
             if stayed > 0 {
                 lines.push(format!("{stayed} items stayed in the bin"));
@@ -1371,12 +1375,12 @@ fn attach(args: &AttachArgs, remote: &Remote, out: &Printer) -> Result<(), CliEr
     let edge = remote.json(&attached_to_request(&file_item_id, &args.id))?;
     out.report(
         &json!({ "blob": blob, "item": file_item, "edge": edge }),
-        || {
+        |_| {
             format!(
                 "attached {} as {} ({}), linked to {}",
                 args.file.display(),
-                file_item_id,
-                hash,
+                printable(&file_item_id),
+                printable(&hash),
                 args.id
             )
         },
@@ -1388,12 +1392,12 @@ fn add(args: &AddArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let (blob, hash) = upload(&args.file, &mime_type, remote)?;
     let item = remote.json(&added_file_request(args, &mime_type, &hash))?;
     let (file_item, file_item_id) = file_item_of(&item)?;
-    out.report(&json!({ "blob": blob, "item": file_item }), || {
+    out.report(&json!({ "blob": blob, "item": file_item }), |_| {
         format!(
             "added {} as {} ({})",
             args.file.display(),
-            file_item_id,
-            hash
+            printable(&file_item_id),
+            printable(&hash)
         )
     })
 }

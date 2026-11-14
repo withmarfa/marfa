@@ -37,7 +37,7 @@ pub fn redirect(path: &Path) -> Result<(), CliError> {
         set_aside(&path)?;
     }
     attach(&path)?;
-    eprintln!(
+    crate::errln!(
         "{} folders watch started, process {}",
         now(),
         std::process::id()
@@ -64,7 +64,7 @@ fn is_full(path: &Path) -> bool {
 /// the watch has stopped either way.
 pub fn note_stop() {
     if let Some(stop) = interrupt::stopped_by() {
-        write_stop(&mut io::stderr(), &now(), &stop);
+        write_stop(&mut crate::output::stderr(), &now(), &stop);
     }
 }
 
@@ -117,8 +117,8 @@ fn attach(path: &Path) -> io::Result<()> {
         .append(true)
         .mode(0o600)
         .open(path)?;
-    io::stdout().flush()?;
-    io::stderr().flush()?;
+    crate::output::stdout_bytes().flush()?;
+    crate::output::stderr().flush()?;
     for target in [libc::STDOUT_FILENO, libc::STDERR_FILENO] {
         // SAFETY: both descriptors are open; `dup2` replaces the target in one
         // step, so a write from another thread lands in one file or the other.

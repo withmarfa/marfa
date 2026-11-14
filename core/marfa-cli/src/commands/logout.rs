@@ -40,7 +40,7 @@ fn sign_out(origin: &str, out: &Printer) -> Result<(), CliError> {
             };
             out.report(
                 &json!({ "server": origin, "signed_out": true, "revoked": revoked }),
-                || match not_revoked {
+                |_| match not_revoked {
                     None => format!("signed out of {origin}"),
                     Some((why, true)) => {
                         format!(
@@ -54,7 +54,7 @@ fn sign_out(origin: &str, out: &Printer) -> Result<(), CliError> {
         Some(Kept::Key { .. }) => Err(CliError::Invalid(format!(
             "a key is kept for {origin}, not a sign-in; `marfa keys forget` removes it"
         ))),
-        None => out.report(&json!({ "server": origin, "signed_out": false }), || {
+        None => out.report(&json!({ "server": origin, "signed_out": false }), |_| {
             format!("not signed in to {origin}")
         }),
     }

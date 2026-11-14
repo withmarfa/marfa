@@ -688,12 +688,20 @@ fn free_port(from: u16) -> Option<u16> {
     (from..from.saturating_add(100)).find(|port| port_is_free(*port).is_ok())
 }
 
-fn http_agent() -> ureq::Agent {
-    ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(3)))
-        .http_status_as_error(false)
-        .build()
-        .into()
+fn health_url(port: u16) -> String {
+    format!("http://127.0.0.1:{port}/health")
+}
+
+/// A client for the health of the server on `port` of this machine.
+fn http_agent(port: u16) -> ureq::Agent {
+    marfa_core::http::direct_when_local(
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(3)))
+            .http_status_as_error(false),
+        &health_url(port),
+    )
+    .build()
+    .into()
 }
 
 // ---- progress -----------------------------------------------------------
@@ -705,7 +713,7 @@ struct Steps {
 impl Steps {
     fn say(&self, text: &str) {
         if !self.quiet {
-            eprintln!("{}", style::bold(Stream::Err, text));
+            crate::errln!("{}", style::bold(Stream::Err, text));
         }
     }
 }

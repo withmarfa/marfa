@@ -326,7 +326,7 @@ pub fn run(command: RowsCommand, remote: &Remote, out: &Printer) -> Result<(), C
         _ => None,
     };
     match table {
-        Some(table) => out.report(&answer, || super::said::rows(table, &answer)),
+        Some(table) => out.report(&answer, |answer| super::said::rows(table, answer)),
         None => out.value(&answer),
     }
 }

@@ -856,6 +856,7 @@ dependencies = [
  "libc",
  "libsqlite3-sys",
  "marfa-rules",
+ "marfa-telemetry",
  "notify",
  "pulldown-cmark",
  "regex",
@@ -900,6 +901,14 @@ dependencies = [
  "serde_json",
  "sha2",
  "unicode-normalization",
+ "url",
+]
+
+[[package]]
+name = "marfa-telemetry"
+version = "0.0.0"
+dependencies = [
+ "serde_json",
  "url",
 ]
 

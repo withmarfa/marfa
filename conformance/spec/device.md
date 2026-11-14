@@ -3500,6 +3500,54 @@ Where the address of the server is `https`, the CLI MUST NOT print the plain `ht
 
 **Tests:** `cli/cleartext.test.ts › prints no warning for an https address, which it reaches`.
 
+### `device/command-loopback-no-proxy`
+
+When a command sends a request to `localhost`, an address in `127.0.0.0/8` or `::1`, the CLI MUST send it directly, whatever proxy the environment names, and that holds for a request made by following a redirect as for the first one.
+
+**Reason:** a proxy cannot reach this machine, and would be handed the request with its key, and one that cannot reach it makes the checks of `marfa server` report the wrong health. A redirect names a new destination, so the rule is applied to it again.
+
+**Tests:** `cli/key-and-files.test.ts › never goes through a proxy the environment names, and one to another host does`, `› is sent through the proxy or not by where it goes, each time`, `cli/server-status.test.ts › asks the server on this machine directly, whatever proxy the environment names`.
+
+### `device/command-redirect-no-credentials`
+
+If a command follows a redirect from the docs site or from a link to a blob that changes the scheme, the host or the port, then the CLI MUST send no `Authorization`, `Proxy-Authorization` or `Cookie` header and no header whose name starts with `X-Marfa-` on that request or on any later request of the command, whatever `MARFA_API_KEY` holds.
+
+**Reason:** the headers that say who is asking belong to the origin the command began at. An address that redirect names is another party's, and a later redirect back to the first origin does not make it the first one again.
+
+**Tests:** `cli/key-and-files.test.ts › is sent through the proxy or not by where it goes, each time`, `› leaves what names the caller behind when it goes to another host or port`.
+
+### `device/command-key-own-server`
+
+If `--url` names a server other than the one `MARFA_API_URL` names, `MARFA_API_KEY` is set and `--key` is not given, then the CLI MUST exit 2 with `usage` and send no request.
+
+**Reason:** the two variables are exported as a pair for one server, and the key must not go to another.
+
+**Tests:** `cli/key-and-files.test.ts › goes only to the server MARFA_API_URL names, and a --url for another server refuses`.
+
+### `device/command-output-owner-only`
+
+When a command writes to a file named by `--output`, the CLI MUST make the file readable and writable by its owner alone, whatever the umask.
+
+**Reason:** an export or a download holds what the key could read, and a file made under the usual umask is open to other accounts on the machine.
+
+**Tests:** `cli/key-and-files.test.ts › is readable by its owner alone whatever the umask, for an export and a download`.
+
+### `device/command-output-whole`
+
+If a transfer to a file named by `--output` ends before the whole answer arrives, or a blob's bytes do not hash to the digest asked for, then the CLI MUST end with any earlier file at that path unchanged and no partial file beside it.
+
+**Reason:** a person keeps the earlier file until a whole one replaces it.
+
+**Tests:** `cli/key-and-files.test.ts › replaces the file at --output only when the download arrives whole and matches its digest`.
+
+### `device/command-text-printable`
+
+When a command prints text a server holds, without `--json`, the CLI MUST print each control character and bidirectional formatting character in it as an escape sequence, a newline, a tab and an escape that starts a colour included, and add its own line breaks, columns and colour only around that text, and print two names that differ in any character as two different names.
+
+**Reason:** a title, a name or a message is text on the line it was printed on, and must not move the cursor, erase a line, retitle the window, reorder what follows it, start a row of its own or colour what follows it, and an object holding both of two names that differ only by such a character must not show one value for them.
+
+**Tests:** `cli/key-and-files.test.ts › prints no control or bidirectional character from a title, and --json is unchanged`, `› print no control or bidirectional character from a view's title`, `› stays on its own line, in its own column and uncoloured, in a list, the overview and a device's views`, `› says a key's label on the line of that key, however the label is written`, `› shows each as its own entry, with no control character on the terminal`.
+
 ### `device/command-cleartext-allow-flag`
 
 Where `--allow-http` is given, the CLI MUST NOT print the plain `http` warning.

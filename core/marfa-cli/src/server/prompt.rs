@@ -21,7 +21,7 @@ impl Prompter {
     }
 
     fn line(&self, question: &str) -> Result<String, CliError> {
-        let mut err = io::stderr().lock();
+        let mut err = crate::output::stderr();
         write!(err, "{question} ")?;
         err.flush()?;
         let mut answer = String::new();
@@ -44,9 +44,9 @@ impl Prompter {
         if !self.asking {
             return default.ok_or_else(|| CliError::Usage(format!("pass {flag}")));
         }
-        eprintln!("{question}");
+        crate::errln!("{question}");
         for (index, (name, description)) in options.iter().enumerate() {
-            eprintln!("  {}. {name}: {description}", index + 1);
+            crate::errln!("  {}. {name}: {description}", index + 1);
         }
         loop {
             let hint = default.map_or(String::new(), |d| format!(" [{}]", d + 1));
@@ -64,7 +64,7 @@ impl Prompter {
             if let Some(found) = options.iter().position(|(name, _)| *name == answer) {
                 return Ok(found);
             }
-            eprintln!("Answer with a number from 1 to {}.", options.len());
+            crate::errln!("Answer with a number from 1 to {}.", options.len());
         }
     }
 
@@ -105,7 +105,7 @@ impl Prompter {
                 "" => return Ok(default),
                 "y" | "yes" => return Ok(true),
                 "n" | "no" => return Ok(false),
-                _ => eprintln!("Answer y or n."),
+                _ => crate::errln!("Answer y or n."),
             }
         }
     }

@@ -178,7 +178,7 @@ pub fn run(out: &Printer) -> Result<(), CliError> {
         .iter()
         .map(|operation| json!({ "operation_id": operation.id, "command": operation.command }))
         .collect();
-    out.report(&json!(rows), || {
+    out.report(&json!(rows), |_| {
         OPERATIONS
             .iter()
             .map(|operation| format!("{:32} marfa {}", operation.id, operation.command))

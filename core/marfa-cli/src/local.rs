@@ -600,7 +600,7 @@ mod tests {
     fn a_socket_folder_with_an_acl_for_another_account_is_refused() {
         let (root, path, _listener) = socket_folder("acl");
         if !let_another_account(&root, Grant::Read) {
-            eprintln!("skipped: this file system keeps no ACLs");
+            crate::errln!("skipped: this file system keeps no ACLs");
             std::fs::remove_dir_all(root).unwrap();
             return;
         }
@@ -630,7 +630,7 @@ mod tests {
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
             verify(&path).unwrap();
             if !let_another_account(&above, grant) {
-                eprintln!("skipped: this file system keeps no ACLs");
+                crate::errln!("skipped: this file system keeps no ACLs");
                 break;
             }
             let checked = verify(&path);

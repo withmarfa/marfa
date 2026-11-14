@@ -1449,6 +1449,69 @@ fn the_server_is_set_to_start_at_login_unless_declined() {
     assert!(!rig.agent("marfa").exists() && !rig.home().join("loaded-marfa").exists());
 }
 
+fn count_connections(stop: Arc<AtomicBool>) -> (u16, Arc<AtomicU16>, JoinHandle<()>) {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let arrivals = Arc::new(AtomicU16::new(0));
+    let counted = arrivals.clone();
+    let thread = std::thread::spawn(move || {
+        while !stop.load(Ordering::Relaxed) {
+            match listener.accept() {
+                Ok(_) => {
+                    counted.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(_) => std::thread::sleep(Duration::from_millis(10)),
+            }
+        }
+    });
+    (port, arrivals, thread)
+}
+
+#[test]
+fn the_servers_health_is_asked_directly_whatever_proxy_the_environment_names() {
+    let rig = Rig::new("no-proxy");
+    let stop = Arc::new(AtomicBool::new(false));
+    let (proxy, arrivals, thread) = count_connections(stop.clone());
+    let through = format!("http://127.0.0.1:{proxy}");
+    let environment: Vec<(&str, &Path)> = [
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ]
+    .into_iter()
+    .map(|name| (name, Path::new(&through)))
+    .chain([("NO_PROXY", Path::new("")), ("no_proxy", Path::new(""))])
+    .collect();
+    let port = rig.port.to_string();
+    let (code, stdout, stderr) = rig.marfa_with(
+        &[
+            "install",
+            "--docker",
+            "--release",
+            "0.0.22",
+            "--port",
+            &port,
+            "--yes",
+            "--wait",
+            "5",
+            "--access",
+            "local",
+        ],
+        &environment,
+    );
+    assert_eq!(code, 0, "{stdout}\n{stderr}");
+    let (code, stdout, stderr) = rig.marfa_with(&["status"], &environment);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("running and healthy"), "{stdout}");
+    stop.store(true, Ordering::Relaxed);
+    thread.join().unwrap();
+    assert_eq!(arrivals.load(Ordering::Relaxed), 0);
+}
+
 #[test]
 fn start_brings_the_server_up_without_changing_anything() {
     let rig = Rig::new("start");
