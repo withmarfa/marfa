@@ -174,6 +174,9 @@ pub struct Http {
     /// How long a streamed call waits for the answer to begin, in place of the
     /// agent's response budget.
     stream_wait: Option<Duration>,
+    /// What to tell a person to check when a call that waits on the server's
+    /// work ends without an answer (`Http::working`).
+    working: Option<String>,
     /// Whether a write on this transport is announced: a folder's health
     /// report, which changes no data, is not.
     announces: bool,
@@ -326,6 +329,9 @@ enum Budget {
     /// A file is sent whole and the server may work on all of it before it
     /// answers, as a restore does.
     Upload,
+    /// The server does its work before it answers, so there is no limit on
+    /// how long the answer takes to begin.
+    Working,
 }
 
 /// ureq fixes its body budget before the status is known. A stream gets its
@@ -695,6 +701,7 @@ impl Http {
             instance: None,
             call_budget: None,
             stream_wait: None,
+            working: None,
             announces: true,
         })
     }
@@ -704,6 +711,17 @@ impl Http {
     pub fn awaiting(&self, wait: Duration) -> Self {
         Self {
             stream_wait: Some(wait),
+            ..self.clone()
+        }
+    }
+
+    /// This transport for calls that answer only when the server's work is
+    /// done: they wait as long as the connection holds, and one that ends
+    /// without an answer says the work may still be running, and that
+    /// `check` is how to find out.
+    pub fn working(&self, check: &str) -> Self {
+        Self {
+            working: Some(check.to_string()),
             ..self.clone()
         }
     }
@@ -982,6 +1000,23 @@ impl Http {
         } else {
             CoreError::Network(format!("request to {origin} failed: {cause}"))
         }
+    }
+
+    /// A call that waits on the server's work and ended without an answer.
+    /// Only a connection that was never made is a plain failure: any other
+    /// end leaves the work possibly running.
+    fn unanswered(&self, cause: ureq::Error, check: &str) -> CoreError {
+        if matches!(
+            cause,
+            ureq::Error::Timeout(ureq::Timeout::Resolve | ureq::Timeout::Connect)
+        ) || connection_refused(&cause)
+        {
+            return self.unreached(cause);
+        }
+        let origin = self.base.origin().ascii_serialization();
+        CoreError::Network(format!(
+            "no answer from {origin} ({cause}). The server may still be working on this request, so it has not necessarily failed. {check}"
+        ))
     }
 
     /// `GET /items/{id}/tables`, as the server answers it.
@@ -1816,6 +1851,8 @@ impl Http {
             Budget::Stream(Arc::clone(&deadline))
         } else if matches!(call.body, CallBody::Reader(_)) {
             Budget::Upload
+        } else if self.working.is_some() {
+            Budget::Working
         } else {
             Budget::Whole
         };
@@ -1852,7 +1889,11 @@ impl Http {
         let cannot_send = |error: ureq::http::Error| {
             CoreError::Invalid(format!("this call cannot be sent: {error}"))
         };
-        let network = |error: ureq::Error| self.unreached(error);
+        let waits = matches!(budget, Budget::Working);
+        let network = |error: ureq::Error| match &self.working {
+            Some(check) if waits => self.unanswered(error, check),
+            _ => self.unreached(error),
+        };
         let send = |authorization: Option<&str>, text: Option<&str>| {
             let builder = builder(authorization);
             match text {
@@ -1965,6 +2006,13 @@ impl Http {
                 }
                 agent.run(configured.build())
             }
+            Budget::Working => self.agent.run(
+                self.agent
+                    .configure_request(request)
+                    .timeout_recv_response(None)
+                    .timeout_global(global_budget(None)?)
+                    .build(),
+            ),
             Budget::Upload => self.agent.run(
                 self.agent
                     .configure_request(request)
@@ -3433,6 +3481,98 @@ mod tests {
             Err(CoreError::Network(_))
         ));
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    /// A server that reads the request, then answers after `pause` or, with
+    /// `answer` false, hangs up without answering.
+    fn works_for(pause: Duration, answer: bool) -> (String, std::thread::JoinHandle<()>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let serving = std::thread::spawn(move || {
+            use std::io::Write;
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut head = [0u8; 4096];
+            Read::read(&mut socket, &mut head).unwrap();
+            std::thread::sleep(pause);
+            if answer {
+                let body = "{}";
+                let _ = write!(
+                    socket,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n{CONTRACT_HEADER}: {CONTRACT_VERSION}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        (url, serving)
+    }
+
+    #[test]
+    fn a_call_that_waits_on_the_servers_work_outlasts_the_answer_budget() {
+        let budgets = |url: &str| {
+            Http::with_timeouts(
+                url,
+                "k",
+                Duration::from_millis(300),
+                Duration::from_millis(300),
+            )
+            .unwrap()
+        };
+        let post = |segments| Call {
+            method: Method::Post,
+            segments,
+            params: &[],
+            headers: &[],
+            body: CallBody::None,
+            credential: true,
+            stream: false,
+        };
+        let (url, serving) = works_for(Duration::from_millis(1_200), true);
+        let waited = budgets(&url)
+            .working("Check.")
+            .fetch(post(&["restore"]), true);
+        assert_eq!(waited.unwrap().status, 200);
+        serving.join().unwrap();
+        // The witness: the same slow answer, on a call that is not marked, runs out of its budget.
+        let (url, serving) = works_for(Duration::from_millis(1_200), true);
+        assert!(matches!(
+            budgets(&url).fetch(post(&["restore"]), true),
+            Err(CoreError::Network(_))
+        ));
+        serving.join().unwrap();
+    }
+
+    #[test]
+    fn a_waiting_call_that_ends_without_an_answer_does_not_say_it_failed() {
+        let post = |segments| Call {
+            method: Method::Post,
+            segments,
+            params: &[],
+            headers: &[],
+            body: CallBody::None,
+            credential: true,
+            stream: false,
+        };
+        let (url, serving) = works_for(Duration::from_millis(100), false);
+        let Err(CoreError::Network(said)) = Http::new(&url, "k")
+            .unwrap()
+            .working("Check with the check.")
+            .fetch(post(&["restore"]), true)
+        else {
+            panic!("a hung-up call was not a network error");
+        };
+        serving.join().unwrap();
+        assert!(said.contains("may still be working"), "{said}");
+        assert!(said.ends_with("Check with the check."), "{said}");
+        // The witness: a call never marked says only that the request failed.
+        let (url, serving) = works_for(Duration::from_millis(100), false);
+        let Err(CoreError::Network(plain)) = Http::new(&url, "k")
+            .unwrap()
+            .fetch(post(&["restore"]), true)
+        else {
+            panic!("a hung-up call was not a network error");
+        };
+        serving.join().unwrap();
+        assert!(!plain.contains("may still be working"), "{plain}");
     }
 
     #[test]
