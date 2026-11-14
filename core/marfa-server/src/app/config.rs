@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 
 use super::access::{Caller, Levers, Permission, Standing, report_unread};
 use super::addresses;
+use super::auth::session;
 use super::consequences::{self, Consequence};
 use super::refusal::{Code, Refusal, Result};
 use super::sources;
@@ -508,6 +509,9 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
                     return Err(confirmation_needed(&moved));
                 }
                 stored::write_rows(tx, &plan.ops)?;
+                if moved.sign_in_moves {
+                    session::end_every(tx, &unit.at, &unit.caller)?;
+                }
                 if let Some(name) = &plan.name {
                     instance::set_name(tx, name.as_deref())?;
                 }

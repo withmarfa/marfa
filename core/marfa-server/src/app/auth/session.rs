@@ -327,6 +327,14 @@ pub(super) fn end_all(
     super::owner::renew_credentials(tx, owner_id)
 }
 
+/// Ends every session of the owner, where there is one, and every device cookie.
+pub(crate) fn end_every(tx: &Transaction<'_>, at: &str, actor: &Caller) -> Result<()> {
+    match super::owner::read(tx)? {
+        Some(owner) => end_all(tx, at, actor, &Visit::default(), &owner.id, None),
+        None => Ok(()),
+    }
+}
+
 pub const UNREAD: Unread<'static> = Unread {
     table: "sign_ins",
     time: "expires_at",

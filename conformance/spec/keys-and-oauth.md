@@ -2611,7 +2611,7 @@ If every device cookie together has made a hundred counted password sign-in atte
 
 When the owner's password is recovered, the server MUST count each later password sign-in that carries a device cookie set before the recovery as one with no device cookie.
 
-**Reason:** A device cookie stands only for the current password, so a recovery leaves no browser known.
+**Reason:** A device cookie is signed for the owner's credentials as they stand, and a recovery renews them, so a recovery leaves no browser known.
 
 **Tests:** `compliance/sign-in-limits.test.ts › forgets every known device when the password is recovered`.
 
