@@ -75,6 +75,75 @@ export function slowPost(
   };
 }
 
+export interface HeldRequest {
+  /**
+   * `true` once the server asks for the body with `100 Continue`, or `false`
+   * when it answers before asking.
+   */
+  asked: Promise<boolean>;
+  /** Sends the whole body. */
+  send(): void;
+  /** The answer, which can arrive before the body is sent. */
+  answered: Promise<{
+    status: number;
+    headers: IncomingHttpHeaders;
+    body: string;
+  }>;
+}
+
+/**
+ * A request that declares its body and sends none of it until the server
+ * asks, with `Expect: 100-continue`, so a fixture can change something
+ * between the server judging the head and the body arriving.
+ */
+export function heldRequest(
+  apiUrl: string,
+  method: string,
+  path: string,
+  headers: Record<string, string>,
+  body: string,
+): HeldRequest {
+  const req = request({
+    ...urlOptions(apiUrl),
+    path,
+    method,
+    agent: false,
+    headers: {
+      ...headers,
+      "content-length": String(Buffer.byteLength(body)),
+      expect: "100-continue",
+    },
+  });
+  let ask: (asked: boolean) => void = () => undefined;
+  const asked = new Promise<boolean>((resolve) => (ask = resolve));
+  req.on("continue", () => ask(true));
+  const answered = new Promise<{
+    status: number;
+    headers: IncomingHttpHeaders;
+    body: string;
+  }>((resolve, reject) => {
+    req.on("response", (response) => {
+      ask(false);
+      let text = "";
+      response.setEncoding("utf8");
+      response.on("data", (part: string) => (text += part));
+      response.once("error", reject);
+      response.once("end", () => {
+        resolve({
+          status: response.statusCode ?? 0,
+          headers: response.headers,
+          body: text,
+        });
+        req.destroy();
+      });
+    });
+    req.on("error", reject);
+  });
+  answered.catch(() => undefined);
+  req.flushHeaders();
+  return { asked, send: () => req.end(body), answered };
+}
+
 function urlOptions(apiUrl: string): { hostname: string; port: string } {
   const url = new URL(apiUrl);
   return { hostname: url.hostname, port: url.port };

@@ -1526,11 +1526,33 @@ While bytes of a `POST /blobs` body keep arriving within the upload's idle limit
 
 ### `instance/credential-before-body`
 
-If a request with a body is sent to an operation that requires a credential and carries no credential, or one that is malformed, unknown, expired or revoked, then the server MUST answer `401 unauthorized` before it reads the body.
+If a request with a body is sent to an operation that requires a credential and carries no credential, or one that is malformed, unknown, expired or revoked, and neither `connectors/order-cap-before-credential` nor `mcp/foreign-origin` has it answered first, then the server MUST answer `401 unauthorized` before it reads the body.
 
 **Reason:** a caller with no credential cannot make the server hold a body the operation would refuse once it has arrived.
 
 **Tests:** `compliance/public-body.test.ts › answers 401 unauthorized to a declared body before any of it is sent, when no credential comes with it`, `› answers 401 naming the expiry to a key past its expires_at before any of the body is sent`, `compliance/well-formed-text.test.ts › answers a missing credential 401 before it reads a body holding a surrogate escape with no partner`, `compliance/connector-check-order.test.ts › answers a declared body over the cap 413 before a missing credential's 401, and a missing credential 401 before a body nested too deep`.
+
+### `instance/credential-judged-after-body`
+
+If the credential a request carries is revoked, loses the permission its operation needs, or ends, as a revoked key, a revoked app grant or a signed-out owner browser session does, while the server is reading the request's body, then the server MUST answer the request as it answers the same request sent after that change.
+
+**Reason:** a credential the server judged when the head arrived proves nothing about the moment the body is whole, and a caller who sends a body slowly must not keep authority the owner has taken away.
+
+**Tests:** `compliance/public-body.test.ts › is answered 401 once the body is whole when its key was revoked meanwhile`, `› is answered as a fresh request is once the body is whole when its key lost the permission meanwhile`, `› is answered 401 once the body is whole when the app's grant was revoked meanwhile`, `› is answered 401 once the body is whole when the owner's browser session was signed out meanwhile`, `› is answered 401 once the body is whole when its key was revoked meanwhile, with the rate limiter on`.
+
+### `instance/bodiless-method-body-unread`
+
+If a `GET`, `HEAD`, `DELETE` or `OPTIONS` request carries a body, then the server MUST answer it without reading the body, as it answers the same request with no body.
+
+**Reason:** no operation takes a body under these methods, so a body cannot change the answer, and the server does not wait for one.
+
+**Tests:** `compliance/public-body.test.ts › is not waited for on a GET, HEAD, DELETE or OPTIONS request, which is answered as it is with no body`.
+
+### `instance/unserved-method-before-body`
+
+If a `POST`, `PUT` or `PATCH` request with a body is sent to a path where no operation takes its method, then the server MUST answer `404 not_found` before it reads the body.
+
+**Tests:** `compliance/public-body.test.ts › is answered 404 not_found before the body when no operation at the path takes the method`.
 
 ## The root in a browser
 

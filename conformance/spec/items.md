@@ -2560,7 +2560,7 @@ If `POST /items/tombstones` names a `type` nothing registered, then the server M
 
 ### `items/json-depth`
 
-If a request body, other than one sent to `POST /blobs`, `POST /restore` or an inbound endpoint, nests more than 64 levels, counting each array or object inside another and no bracket inside a string, whatever its `Content-Type` states, then the server MUST answer `400 validation_error`.
+If the body of a `POST`, `PUT` or `PATCH` request that carries a credential its operation accepts, or is sent to an operation that requires none, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /owner/picture`, `PUT /profile/picture` or an inbound endpoint, nests more than 64 levels, counting each array or object inside another and no bracket inside a string, whatever its `Content-Type` states, then the server MUST answer `400 validation_error`.
 
 **Reason:** SQLite's JSON functions stop at 1,000 levels, so a deeper body would fail inside the database as `500`.
 
@@ -2568,7 +2568,7 @@ If a request body, other than one sent to `POST /blobs`, `POST /restore` or an i
 
 ### `items/json-text-well-formed`
 
-If a request body, other than one sent to `POST /blobs`, `POST /restore` or an inbound endpoint, is JSON that holds a string or an object key with a surrogate escape that has no partner, whatever its `Content-Type` states, then the server MUST answer `400 validation_error` with `details.errors[].path` naming one of them by its JSON pointer.
+If the body of a `POST`, `PUT` or `PATCH` request that carries a credential its operation accepts, or is sent to an operation that requires none, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /owner/picture`, `PUT /profile/picture` or an inbound endpoint, is JSON that holds a string or an object key with a surrogate escape that has no partner, whatever its `Content-Type` states, then the server MUST answer `400 validation_error` with `details.errors[].path` naming one of them by its JSON pointer.
 
 **Reason:** RFC 8259 section 8.2 lets a JSON string carry a surrogate code unit with no partner, which no UTF-8 text can carry. The server holds only text that UTF-8 can represent, so every client can decode what it holds.
 
