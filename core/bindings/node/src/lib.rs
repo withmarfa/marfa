@@ -2519,9 +2519,9 @@ impl MarfaCore {
     }
 
     /// Reads every page of the store at `path`, and checks each index against
-    /// its rows. Refuses with `store_damaged`,
-    /// naming it and how many writes its queue holds that the server has not
-    /// taken as `unsent`, where SQLite cannot read it, with `wrong_schema`
+    /// its rows. Refuses with `store_damaged`, naming it and how many writes
+    /// its queue holds that the server has not taken as `unsent`, where
+    /// SQLite cannot read it, with `wrong_schema`
     /// where another build made it, and with `reading_handle` while another
     /// process, or another `MarfaCore` in this one, writes it. Changes
     /// nothing, and reads the whole file, so it takes longer the larger the

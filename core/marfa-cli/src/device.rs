@@ -356,8 +356,9 @@ pub enum DeviceCommand {
     /// completes.
     Status,
     /// Read every page of the store, check each index against its rows, and
-    /// refuse one SQLite cannot read store_damaged, naming it and how many writes its queue holds that the
-    /// server has not taken, or that its queue cannot be read whole.
+    /// refuse one SQLite cannot read store_damaged, naming it and how many
+    /// writes its queue holds that the server has not taken, or that its
+    /// queue cannot be read whole.
     ///
     /// It reads the whole file, so it takes longer the larger the store. It
     /// changes nothing, and is refused reading_handle while another process

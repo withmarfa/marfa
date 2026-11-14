@@ -3303,9 +3303,8 @@ pub fn remove_store_losing_all(path: String) -> Result<(), MarfaError> {
 }
 
 /// Reads every page of the store at `path`, and checks each index against its
-/// rows. Throws `StoreDamaged`, naming it
-/// and how many writes its queue holds that the server has not taken, where
-/// SQLite cannot read it, `WrongSchema` where another build made it, and
+/// rows. Throws `StoreDamaged`, naming it and how many writes its queue holds
+/// that the server has not taken, where SQLite cannot read it, `WrongSchema` where another build made it, and
 /// `ReadingHandle` while another process, or another `Core` in this one,
 /// writes it. Changes nothing, and reads the whole file, so it takes longer
 /// the larger the store.

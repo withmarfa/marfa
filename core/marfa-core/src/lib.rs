@@ -502,10 +502,11 @@ impl Core {
     }
 
     /// Reads every page of the store at `path`, and checks each index
-    /// against its rows. Refuses, leaving it as it is, with `StoreDamaged`, its path and what its queue holds where
-    /// SQLite cannot read it, with `WrongSchema` where another build made it,
-    /// and with `ReadingHandle` while another process, or another `Core` in
-    /// this one, holds the writer role. Reads the whole file, so it takes
+    /// against its rows. Refuses, leaving it as it is, with `StoreDamaged`,
+    /// its path and what its queue holds where SQLite cannot read it, with
+    /// `WrongSchema` where another build made it, and with `ReadingHandle`
+    /// while another process, or another `Core` in this one, holds the
+    /// writer role. Reads the whole file, so it takes
     /// longer the larger the store: for a store a call refused
     /// `StoreDamaged` without naming it.
     pub fn check_store(path: impl AsRef<Path>) -> Result<()> {
@@ -3634,8 +3635,9 @@ impl Core {
 
     /// Takes every file the cache holds that a device can fetch again, and
     /// answers how many bytes it took. Keeps the bytes of attachments, of
-    /// queued uploads, of a set-aside's unread writes and of reads in progress, and the partial files a
-    /// fetch holds, and leaves the file budget as it was. Where the store or
+    /// queued uploads, of a set-aside's unread writes and of reads in
+    /// progress, and the partial files a fetch holds, and leaves the file
+    /// budget as it was. Where the store or
     /// the cache cannot be read, takes nothing and answers the error. An
     /// attachment made while the files go can lose its bytes, which the next
     /// fetch of kept files brings back. Refused to a reading handle.
