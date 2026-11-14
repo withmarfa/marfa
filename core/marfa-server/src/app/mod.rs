@@ -73,7 +73,7 @@ use query::Secret;
 
 const READERS: usize = 4;
 
-async fn blocking<T: Send + 'static>(
+pub(crate) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, Failure> + Send + 'static,
 ) -> Result<T, Failure> {
     tokio::task::spawn_blocking(work).await.map_err(|error| {

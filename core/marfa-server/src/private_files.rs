@@ -173,12 +173,14 @@ fn look(path: &Path, me: u32) -> std::io::Result<Looked> {
     {
         Err(error) if error.raw_os_error() == Some(libc::ENOTDIR) => OpenOptions::new()
             .read(true)
-            .custom_flags(libc::O_SYMLINK | libc::O_EVTONLY)
+            .custom_flags(libc::O_SYMLINK | libc::O_EVTONLY | libc::O_NONBLOCK)
             .open(path)?,
         opened => opened?,
     };
     let found = file.metadata()?;
-    let others_may_change = marfa_acl::others_may_write_file(&file, me)?;
+    // Anything else is refused as not a folder, so its list is not read.
+    let others_may_change = (found.is_dir() || found.file_type().is_symlink())
+        && marfa_acl::others_may_write_file(&file, me)?;
     let target = if found.file_type().is_symlink() {
         let mut buffer = vec![0u8; libc::PATH_MAX as usize];
         // SAFETY: the file is open and the buffer has the size passed.
@@ -572,6 +574,29 @@ mod tests {
             assert!(failure.message.contains("symbolic link"), "{failure}");
         }
         assert_eq!(mode(&outside), 0o755);
+    }
+
+    #[test]
+    fn a_pipe_on_the_way_is_refused_and_does_not_hold_up_the_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let pipe = dir.path().join("pipe");
+        let named = std::ffi::CString::new(pipe.to_str().unwrap()).unwrap();
+        // SAFETY: `named` is a NUL-terminated path that outlives the call.
+        assert_eq!(unsafe { libc::mkfifo(named.as_ptr(), 0o700) }, 0);
+        let (sender, receiver) = std::sync::mpsc::channel();
+        let path = pipe.join("marfa.db");
+        std::thread::spawn(move || {
+            let _ = sender.send(walk(&path, me()).err().map(|failure| failure.message));
+        });
+        let answered = receiver.recv_timeout(std::time::Duration::from_secs(10));
+        if answered.is_err() {
+            // A writer lets a reader that is stuck opening the pipe go.
+            drop(OpenOptions::new().write(true).open(&pipe));
+        }
+        let message = answered
+            .expect("the start waited on a pipe")
+            .expect("refused");
+        assert!(message.contains("is not a folder"), "{message}");
     }
 
     #[test]

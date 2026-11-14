@@ -8,7 +8,7 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use crate::app::auth::claim;
-use crate::app::{App, housekeeping, jobs, webhooks};
+use crate::app::{App, blocking, housekeeping, jobs, webhooks};
 use crate::control_socket::Claim;
 use crate::failure::Failure;
 use crate::http;
@@ -130,9 +130,13 @@ fn listen(
 
 pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
     let fixed = accepted.fixed();
-    crate::private_files::make_data_folder(&fixed.database)?;
+    let (database, blob_path) = (fixed.database.clone(), fixed.blob_path.clone());
     // Before the claim, which makes the control socket's folder beside the database.
-    let kept = crate::private_files::Kept::closed(&fixed.database, &fixed.blob_path)?;
+    let kept = blocking(move || {
+        crate::private_files::make_data_folder(&database)?;
+        crate::private_files::Kept::closed(&database, &blob_path)
+    })
+    .await?;
     let mut claim = Claim::take(&fixed.control_socket)?;
     let app = App::start_kept(accepted, kept).await?;
     let telemetry = app.telemetry.start(&telemetry, &app.instance_id);
