@@ -419,10 +419,19 @@ describe("audit log", () => {
     // than the instant it means. A lower bound loses the whole second and
     // an upper bound keeps it, and both answer a well-formed 200 — which is
     // why this is a fixture and not a code comment.
-    const item = await client.createItem(createNote({ source: ctx.source }));
+    // An entry stamped at `.000` is its own second's start, so a bound at
+    // second precision equals it and neither assertion below can tell a
+    // lexical door from one that reads instants. Make another entry then.
+    let item = await client.createItem(createNote({ source: ctx.source }));
     expect(item.ok).toBe(true);
     trackItem(ctx, item.data.item.id);
-    const row = await createdRow(item.data.item.id);
+    let row = await createdRow(item.data.item.id);
+    while (row.created_at.slice(19, 23) === ".000") {
+      item = await client.createItem(createNote({ source: ctx.source }));
+      expect(item.ok).toBe(true);
+      trackItem(ctx, item.data.item.id);
+      row = await createdRow(item.data.item.id);
+    }
 
     // The same instant as the entry, spelled without the milliseconds. On a
     // door that compares the raw string this excludes the entry it names.
