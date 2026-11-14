@@ -29,6 +29,7 @@ const MiB = 1024 * 1024;
 const UPLOAD_BYTES = 8 * MiB;
 
 let first: FreshServer;
+let operator: MarfaClient;
 let working: MarfaClient;
 const removals: string[] = [];
 const refusals: RefusedBoot[] = [];
@@ -36,7 +37,7 @@ const refusals: RefusedBoot[] = [];
 beforeAll(async () => {
   // On the disk store alone, so no replication takes the write hold.
   first = await bootFreshServer("one-server", DISK_ONLY);
-  ({ working } = clientsFor(first));
+  ({ operator, working } = clientsFor(first));
 }, FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -124,7 +125,7 @@ describe("a second server on a running server's files", () => {
     await first.clearFault("hold:blob-write");
     const landed = await answer;
     expect(landed.status, JSON.stringify(landed.error)).toBe(201);
-    const read = await working.downloadBlob(landed.data.hash);
+    const read = await operator.downloadBlob(landed.data.hash);
     expect(read.status).toBe(200);
     expect(new Uint8Array(read.data)).toEqual(bytes);
   }, 180_000);
@@ -151,12 +152,11 @@ describe("a database that cannot keep a write-ahead log", () => {
     removals.push(dir);
     const file = join(dir, "marfa.db");
     // SQLite's dot-file locking keeps no shared memory, so it cannot keep the log.
-    const noLog = await refused({
-      MARFA_DATABASE_PATH: `file:${file}?vfs=unix-dotfile`,
-    });
+    const uri = `file:${file}?vfs=unix-dotfile`;
+    const noLog = await refused({ MARFA_DATABASE_PATH: uri });
     expect(noLog.code, noLog.output).toBe(1);
     expect(noLog.output).toContain(
-      `${file} cannot keep a write-ahead log, which the server needs`,
+      `${uri} cannot keep a write-ahead log, which the server needs`,
     );
 
     const logged = await bootFreshServer("one-server-log", {
