@@ -244,6 +244,36 @@ pub struct UnregisteredType {
     pub message: String,
 }
 
+/// What `setAsideDamaged` did.
+#[napi(object)]
+pub struct SetAside {
+    /// Where the damaged store now is, with its logs beside it.
+    pub set_aside: String,
+    /// The writes the new store holds that the server has not taken.
+    pub carried: i64,
+    /// The writes found in the old queue that could not be read.
+    pub unread: i64,
+    /// The id of each unread write whose id could be read.
+    pub unread_ids: Vec<String>,
+    /// Whether every write the old queue holds was found, and every record
+    /// that decides how a carried write is sent, and of the bytes an earlier
+    /// set-aside keeps, was read; where not, or where a write did not read,
+    /// the store set aside may hold more, and every byte the cache held as
+    /// it was set aside stays until that store is removed or moved from
+    /// where the set-aside put it.
+    pub whole: bool,
+    /// The carried writes held blocked `instance_changed`, because the old
+    /// store did not say which instance it was built from; release one to
+    /// send it to the instance the new store is hydrated from.
+    pub held: i64,
+    /// The carried writes held blocked `record_unread`, because a record that
+    /// decides how each is sent could not be read; release one to send it
+    /// without that record. Where the store is built from another instance
+    /// than the one it was made against, or the set-aside could not tell
+    /// which, a release holds it `instance_changed` instead.
+    pub record_unread: i64,
+}
+
 /// What a pin or an unpin answers.
 #[napi(object)]
 pub struct PinReport {
@@ -616,6 +646,10 @@ pub enum BlockedReason {
     /// The write was queued against an instance other than the one the copy
     /// has been built from since, and is sent only once released.
     InstanceChanged,
+    /// The write was carried from a store set aside where a record that
+    /// decides how it is sent could not be read, and is sent only once
+    /// released.
+    RecordUnread,
 }
 
 /// Which handle this process holds on the store.
@@ -1148,6 +1182,7 @@ impl From<marfa_core::BlockedReason> for BlockedReason {
             R::ConflictUnresolved => BlockedReason::ConflictUnresolved,
             R::FailingAlone => BlockedReason::FailingAlone,
             R::InstanceChanged => BlockedReason::InstanceChanged,
+            R::RecordUnread => BlockedReason::RecordUnread,
         }
     }
 }
@@ -1162,6 +1197,7 @@ impl From<BlockedReason> for marfa_core::BlockedReason {
             BlockedReason::ConflictUnresolved => R::ConflictUnresolved,
             BlockedReason::FailingAlone => R::FailingAlone,
             BlockedReason::InstanceChanged => R::InstanceChanged,
+            BlockedReason::RecordUnread => R::RecordUnread,
         }
     }
 }
@@ -1594,6 +1630,7 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
         | E::HydrationIncomplete
         | E::NoCatalog
         | E::WrongSchema { .. }
+        | E::StoreDamaged { .. }
         | E::UnsentDiffers { .. }
         | E::ReadingHandle
         | E::CopyExpired { .. }
@@ -1633,6 +1670,15 @@ fn describe(error: &marfa_core::CoreError) -> (String, Vec<(&'static str, serde_
             reason,
             unsent,
             ..
+        } => vec![
+            ("path", json!(path)),
+            ("reason", json!(reason)),
+            ("unsent", json!(unsent)),
+        ],
+        E::StoreDamaged {
+            path,
+            reason,
+            unsent,
         } => vec![
             ("path", json!(path)),
             ("reason", json!(reason)),
@@ -2461,6 +2507,55 @@ impl MarfaCore {
             ));
         }
         marfa_core::Core::remove_store(path, unsent as u64).map_err(|error| failure(env, error))
+    }
+
+    /// Removes the store at `path` as `removeStore` does, agreeing to lose
+    /// every write it holds that the server has not taken, however many there
+    /// are and whether or not they can be counted, as for a store `open`
+    /// refuses with `store_damaged`. Refuses as `removeStore` does but for
+    /// the count.
+    #[napi]
+    pub fn remove_store_losing_all(env: Env, path: String) -> Result<()> {
+        marfa_core::Core::remove_store_losing_all(path).map_err(|error| failure(env, error))
+    }
+
+    /// Reads every page of the store at `path`, and checks each index against
+    /// its rows. Refuses with `store_damaged`, naming it and how many writes
+    /// its queue holds that the server has not taken as `unsent`, where
+    /// SQLite cannot read it, with `wrong_schema`
+    /// where another build made it, and with `reading_handle` while another
+    /// process, or another `MarfaCore` in this one, writes it. Changes
+    /// nothing, and reads the whole file, so it takes longer the larger the
+    /// store.
+    #[napi]
+    pub fn check_store(env: Env, path: String) -> Result<()> {
+        marfa_core::Core::check_store(path).map_err(|error| failure(env, error))
+    }
+
+    /// Sets aside the store at `path`, which `open` refuses with
+    /// `store_damaged`: moves it and its logs to `<path>.damaged-<n>` beside
+    /// it, never deleting them, and makes a new store at `path` that carries
+    /// every write its queue lets be read, under its id and idempotency key,
+    /// with its body, base version and verdict, and the server and instance it
+    /// was built from. Close every `MarfaCore` on the store first. The new
+    /// store holds no copy: hydrate it, then drain, to send what it carries.
+    /// Refuses with `invalid` a store that opens as it is or a folder's store,
+    /// with `wrong_schema` a store another build made, and with
+    /// `reading_handle` while another process writes it. One that stopped
+    /// part way is finished by calling again.
+    #[napi]
+    pub fn set_aside_damaged(env: Env, path: String) -> Result<SetAside> {
+        let done =
+            marfa_core::Core::set_aside_damaged(path).map_err(|error| failure(env, error))?;
+        Ok(SetAside {
+            set_aside: done.set_aside,
+            carried: done.carried as i64,
+            unread: done.unread as i64,
+            unread_ids: done.unread_ids,
+            whole: done.whole,
+            held: done.held as i64,
+            record_unread: done.record_unread as i64,
+        })
     }
 
     /// Replaces the local copy with the declared types at `tier`, one tier or

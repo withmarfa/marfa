@@ -99,10 +99,15 @@ const EDGE_COLUMNS: &str =
     "id, source_id, target_id, edge_type, properties, version, created_at, updated_at";
 
 pub fn open(path: &Path) -> Result<Connection, CoreError> {
+    crate::damage::refuse_emptied(path)?;
+    let seen = crate::damage::seen();
     let conn = Connection::open(path)?;
     // The store may have been named by an environment variable rather than
     // typed, so the refusal names its path.
-    prepare(&conn).map_err(|error| at_path(error, path))?;
+    prepare(&conn).map_err(|error| {
+        crate::damage::keep_log_if_met(&conn, seen);
+        crate::damage::at_path(at_path(error, path), path)
+    })?;
     Ok(conn)
 }
 
@@ -111,17 +116,21 @@ pub(crate) fn open_directory(
     vfs: &crate::directory_vfs::DirectoryVfs,
     label: &Path,
 ) -> Result<Connection, CoreError> {
+    let seen = crate::damage::seen();
     let conn = vfs.open(
         FOLDER_STORE,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE
             | rusqlite::OpenFlags::SQLITE_OPEN_CREATE
             | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    prepare(&conn).map_err(|error| in_folder(error, label, &conn))?;
+    prepare(&conn).map_err(|error| {
+        crate::damage::keep_log_if_met(&conn, seen);
+        in_folder(error, label, &conn)
+    })?;
     Ok(conn)
 }
 
-fn at_path(error: CoreError, path: &Path) -> CoreError {
+pub(crate) fn at_path(error: CoreError, path: &Path) -> CoreError {
     match error {
         CoreError::WrongSchema {
             reason,
@@ -157,6 +166,13 @@ fn in_folder(error: CoreError, label: &Path, conn: &Connection) -> CoreError {
             },
             Err(error) => error,
         },
+        CoreError::StoreDamaged { path, reason, .. } if path.is_empty() => {
+            CoreError::StoreDamaged {
+                path: label.display().to_string(),
+                reason,
+                unsent: folder_unsent(conn),
+            }
+        }
         other => other,
     }
 }
@@ -200,6 +216,8 @@ fn uncarried(conn: &Connection) -> Result<Option<&'static str>, CoreError> {
 /// connection that closes last checkpoints the writer's journal into the file.
 /// SQLite may still create the WAL's two side files, which a WAL reader needs.
 pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
+    crate::damage::refuse_emptied(path)?;
+    let seen = crate::damage::seen();
     let conn = Connection::open_with_flags(
         path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -210,7 +228,8 @@ pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
             path.display()
         ))
     })?;
-    read_connection(conn, path)
+    read_checked(&conn, path).inspect_err(|_| crate::damage::keep_log_if_met(&conn, seen))?;
+    Ok(conn)
 }
 
 /// Why a writer would refuse the store at `path`, read without changing it:
@@ -227,7 +246,8 @@ pub(crate) fn refusal(path: &Path) -> Result<Option<CoreError>, CoreError> {
 /// The store at `path` opened to read, whatever its shape, for the caller
 /// that holds its writer lock. SQLite may make a `-shm` index beside a log to
 /// read it.
-fn open_refused(path: &Path) -> Result<Connection, CoreError> {
+pub(crate) fn open_refused(path: &Path) -> Result<Connection, CoreError> {
+    crate::damage::refuse_emptied(path)?;
     let flags =
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let logged = ["-wal", "-journal"]
@@ -270,37 +290,79 @@ pub(crate) fn refused_file_budget(path: &Path) -> Option<crate::FileBudget> {
 /// The writes the store at `path` holds that the server has not taken, as
 /// `wrong_schema` counts them, read whatever the store's shape for the caller
 /// that holds its writer lock. A store with no table holds none. `None` where
-/// they cannot be counted, as in a file that is not a store. Refuses a
-/// folder's store, which only its folder's removal may take.
-pub(crate) fn removal_count(path: &Path) -> Result<Option<u64>, CoreError> {
+/// they cannot be counted, as in a file that is not a store. The caller
+/// refuses a folder's store first (`refuse_folders`).
+pub(crate) fn removal_count(path: &Path) -> Option<u64> {
     let Ok(conn) = open_refused(path) else {
-        return Ok(None);
+        return None;
     };
     let Ok(tables) = conn.query_row("SELECT COUNT(*) FROM sqlite_schema", [], |row| {
         row.get::<_, i64>(0)
     }) else {
-        return Ok(None);
+        return None;
     };
     if tables == 0 {
-        return Ok(Some(0));
+        return Some(0);
     }
-    // A folder's store is bound to the folder, and is also known by where
-    // the folder keeps it, so one a crash left before it was bound is still
-    // the folder's.
-    let kept_by_folder = path.file_name() == Some(FOLDER_STORE.as_ref())
-        && path.parent().and_then(Path::file_name) == Some(crate::folder::STATE_DIR.as_ref());
-    if kept_by_folder
-        || meta_get(&conn, crate::folder::settings_file::META_FOLDER)
-            .ok()
-            .flatten()
-            .is_some()
-    {
-        return Err(CoreError::Invalid(format!(
-            "{} is a folder's store: remove the folder instead (`marfa folders remove`), which keeps its registry and its files in step",
-            path.display()
-        )));
+    untaken_count(&conn)
+}
+
+// The path and registry identify folder stores even when their pages do not read.
+pub(crate) fn refuse_folders(path: &Path) -> Result<(), CoreError> {
+    let bound = || {
+        open_refused(path).is_ok_and(|conn| {
+            meta_get(&conn, crate::folder::settings_file::META_FOLDER)
+                .ok()
+                .flatten()
+                .is_some()
+        })
+    };
+    if kept_by_folder(path) || bound() {
+        return Err(folders(path));
     }
-    Ok(untaken_count(&conn))
+    Ok(())
+}
+
+fn folders(path: &Path) -> CoreError {
+    CoreError::Invalid(format!(
+        "{} is a folder's store: remove the folder instead (`marfa folders remove`), which keeps its registry and its files in step, and add it again",
+        path.display()
+    ))
+}
+
+fn kept_by_folder(path: &Path) -> bool {
+    let named = |name: Option<&std::ffi::OsStr>, expected: &str| {
+        name.and_then(|name| name.to_str())
+            .is_some_and(|name| name.eq_ignore_ascii_case(expected))
+    };
+    if !named(path.file_name(), FOLDER_STORE) {
+        return false;
+    }
+    let state = path
+        .parent()
+        .filter(|state| !state.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    if named(state.file_name(), crate::folder::STATE_DIR) {
+        return true;
+    }
+    let Ok(here) = std::fs::metadata(state) else {
+        return false;
+    };
+    crate::folder::registry::listing().iter().any(|entry| {
+        std::fs::metadata(entry.dir.join(crate::folder::STATE_DIR))
+            .is_ok_and(|listed| same_file(&listed, &here))
+    })
+}
+
+#[cfg(unix)]
+fn same_file(one: &std::fs::Metadata, other: &std::fs::Metadata) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    (one.dev(), one.ino()) == (other.dev(), other.ino())
+}
+
+#[cfg(not(unix))]
+fn same_file(_: &std::fs::Metadata, _: &std::fs::Metadata) -> bool {
+    false
 }
 
 /// Removes the store at `path` and the logs beside it, logs first, so a log
@@ -315,9 +377,9 @@ pub(crate) fn remove(path: &Path) -> Result<(), CoreError> {
 
 /// The store file, then the logs SQLite keeps beside it. A log is read into
 /// whatever store holds its name, so each one moves with its store.
-const STORE_FILES: [&str; 4] = ["", "-journal", "-wal", "-shm"];
+pub(crate) const STORE_FILES: [&str; 4] = ["", "-journal", "-wal", "-shm"];
 
-fn suffixed(path: &Path, suffix: &str) -> std::path::PathBuf {
+pub(crate) fn suffixed(path: &Path, suffix: &str) -> std::path::PathBuf {
     let mut name = path.as_os_str().to_owned();
     name.push(suffix);
     name.into()
@@ -327,12 +389,12 @@ fn suffixed(path: &Path, suffix: &str) -> std::path::PathBuf {
 /// only where something other than a copy keeps taking the names.
 const MOST_SET_ASIDE: u32 = 1000;
 
-/// The name, `<store>.refused-<n>` for the first `n` from 1 whose store file
-/// and logs are all absent, so a copy a replacement left is never overwritten
+/// The name, `<store><label>-<n>` for the first `n` from 1 whose store file
+/// and logs are all absent, so a copy set aside before is never overwritten
 /// or mistaken for part of this one.
-pub(crate) fn free_set_aside(path: &Path) -> Result<std::path::PathBuf, CoreError> {
+pub(crate) fn free_set_aside(path: &Path, label: &str) -> Result<std::path::PathBuf, CoreError> {
     for n in 1..=MOST_SET_ASIDE {
-        let aside = suffixed(path, &format!(".refused-{n}"));
+        let aside = suffixed(path, &format!("{label}-{n}"));
         let mut free = true;
         for suffix in STORE_FILES {
             let name = suffixed(&aside, suffix);
@@ -340,7 +402,7 @@ pub(crate) fn free_set_aside(path: &Path) -> Result<std::path::PathBuf, CoreErro
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => {
                     return Err(CoreError::Store(format!(
-                        "{} cannot be replaced: {} cannot be checked: {error}",
+                        "{} cannot be set aside: {} cannot be checked: {error}",
                         path.display(),
                         name.display()
                     )));
@@ -353,7 +415,7 @@ pub(crate) fn free_set_aside(path: &Path) -> Result<std::path::PathBuf, CoreErro
         }
     }
     Err(CoreError::Store(format!(
-        "{} cannot be replaced: {MOST_SET_ASIDE} copies set aside beside it are left; remove them first",
+        "{} cannot be set aside: {MOST_SET_ASIDE} copies set aside beside it are left; remove them first",
         path.display()
     )))
 }
@@ -364,7 +426,7 @@ pub(crate) fn free_set_aside(path: &Path) -> Result<std::path::PathBuf, CoreErro
 /// log is never left beside a store that is not its own; it is put back if
 /// the new store cannot be made, and removed only once it has been.
 pub(crate) fn replace(path: &Path) -> Result<Connection, CoreError> {
-    let aside = free_set_aside(path)?;
+    let aside = free_set_aside(path, ".refused")?;
     let mut moved = Vec::new();
     for suffix in STORE_FILES.iter().rev() {
         let (from, to) = (suffixed(path, suffix), suffixed(&aside, suffix));
@@ -473,8 +535,7 @@ fn meta_of(conn: &Connection, keys: &[&str]) -> Result<HashMap<String, String>, 
 
 /// Leaves the store `conn` opened as one file, with no log beside it that a
 /// store later at its name would read as its own.
-#[cfg(unix)]
-fn without_log(conn: &Connection) -> Result<(), CoreError> {
+pub(crate) fn without_log(conn: &Connection) -> Result<(), CoreError> {
     let mode: String = conn.query_row("PRAGMA journal_mode = DELETE", [], |row| row.get(0))?;
     if !mode.eq_ignore_ascii_case("delete") {
         return Err(CoreError::Store(
@@ -500,6 +561,7 @@ pub(crate) fn replace_folder_store(
     let unreplaced = |reason: String| {
         CoreError::Store(format!("{} cannot be replaced: {reason}", label.display()))
     };
+    crate::damage::refuse_emptied_in(state, label)?;
     let vfs = crate::directory_vfs::DirectoryVfs::new(state.file())?;
     let named = |store: &str, suffix: &str| std::path::PathBuf::from(format!("{store}{suffix}"));
     let log_beside = |store: &str| {
@@ -515,6 +577,7 @@ pub(crate) fn replace_folder_store(
             let _ = state.unlink(&named(FOLDER_STORE_MADE, suffix));
         }
     };
+    let seen = crate::damage::seen();
     let old = vfs.open(
         FOLDER_STORE,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_WRITE | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
@@ -539,6 +602,7 @@ pub(crate) fn replace_folder_store(
         Ok((kept, tables))
     })();
     let (kept, tables) = read.map_err(|error| {
+        crate::damage::keep_log_if_met(&old, seen);
         unreplaced(format!(
             "what it records of the folder cannot be read: {error}"
         ))
@@ -591,6 +655,7 @@ pub(crate) fn replace_folder_store(
             )
             .map_err(|error| CoreError::Store(error.to_string()))
     })();
+    crate::damage::keep_log_if_met(&old, seen);
     drop(old);
     if let Err(error) = made {
         clear_made();
@@ -639,16 +704,15 @@ pub(crate) fn read_directory(
     vfs: &crate::directory_vfs::DirectoryVfs,
     label: &Path,
 ) -> Result<Connection, CoreError> {
+    let seen = crate::damage::seen();
     let conn = vfs.open(
         FOLDER_STORE,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )?;
-    read_checked(&conn, label).map_err(|error| in_folder(error, label, &conn))?;
-    Ok(conn)
-}
-
-fn read_connection(conn: Connection, path: &Path) -> Result<Connection, CoreError> {
-    read_checked(&conn, path)?;
+    read_checked(&conn, label).map_err(|error| {
+        crate::damage::keep_log_if_met(&conn, seen);
+        in_folder(error, label, &conn)
+    })?;
     Ok(conn)
 }
 
@@ -732,20 +796,16 @@ fn read_checked(conn: &Connection, path: &Path) -> Result<(), CoreError> {
             path.display()
         ))
     };
-    let found = version(conn).map_err(|error| match &error {
-        rusqlite::Error::SqliteFailure(_, Some(message))
-            if message.contains("file is not a database") =>
-        {
-            no_schema()
-        }
-        _ => CoreError::from(error),
-    })?;
+    let found =
+        version(conn).map_err(|error| crate::damage::at_path(CoreError::from(error), path))?;
     if found != SCHEMA_VERSION {
-        let has_meta: bool = conn.query_row(
-            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta')",
-            [],
-            |row| row.get(0),
-        )?;
+        let has_meta: bool = conn
+            .query_row(
+                "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta')",
+                [],
+                |row| row.get(0),
+            )
+            .map_err(|error| crate::damage::at_path(error.into(), path))?;
         if !has_meta {
             return Err(no_schema());
         }
@@ -807,11 +867,38 @@ fn make(conn: &Connection) -> Result<(), CoreError> {
     Ok(())
 }
 
-fn version(conn: &Connection) -> rusqlite::Result<i64> {
+/// Makes a store at `path`, an empty file, with `marks` in its meta, in one
+/// transaction, so a crash leaves it holding no tables or holding the marks.
+pub(crate) fn make_marked(path: &Path, marks: &[(&str, &str)]) -> Result<(), CoreError> {
+    let conn = Connection::open(path)?;
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
+    conn.query_row("PRAGMA journal_mode = WAL", [], |_| Ok(()))?;
+    let tx = rusqlite::Transaction::new_unchecked(&conn, rusqlite::TransactionBehavior::Immediate)?;
+    if version(&tx)? != 0 || holds_tables(&tx)? {
+        return Err(CoreError::Store(format!(
+            "{} is not empty, so no store is made there",
+            path.display()
+        )));
+    }
+    tx.execute_batch(SCHEMA)?;
+    tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    meta_set(
+        &tx,
+        META_STORE_ID,
+        &uuid::Uuid::now_v7().simple().to_string(),
+    )?;
+    for (key, value) in marks {
+        meta_set(&tx, key, value)?;
+    }
+    tx.commit()?;
+    without_log(&conn)
+}
+
+pub(crate) fn version(conn: &Connection) -> rusqlite::Result<i64> {
     conn.query_row("PRAGMA user_version", [], |row| row.get(0))
 }
 
-fn holds_tables(conn: &Connection) -> rusqlite::Result<bool> {
+pub(crate) fn holds_tables(conn: &Connection) -> rusqlite::Result<bool> {
     conn.query_row(
         "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table')",
         [],
@@ -820,7 +907,7 @@ fn holds_tables(conn: &Connection) -> rusqlite::Result<bool> {
 }
 
 /// The refusal of a store at version `found`, with what it holds.
-fn refused(conn: &Connection, found: i64) -> CoreError {
+pub(crate) fn refused(conn: &Connection, found: i64) -> CoreError {
     CoreError::WrongSchema {
         path: String::new(),
         reason: format!(
@@ -966,7 +1053,7 @@ pub fn queued_ids(conn: &Connection) -> Result<HashSet<String>, CoreError> {
 /// a file's state waits on, which a store without the queue would leave
 /// waiting for ever. `None` where a queue or a folder's record of another
 /// shape cannot be counted.
-fn untaken_count(conn: &Connection) -> Option<u64> {
+pub(crate) fn untaken_count(conn: &Connection) -> Option<u64> {
     let counted = (|| -> Result<i64, CoreError> {
         conn.execute_batch("CREATE TEMP TABLE queue AS SELECT * FROM main.queue")?;
         forget_answered_inner(conn, None, None, false)?;
@@ -3316,7 +3403,7 @@ pub fn kept_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
     Ok(hashes)
 }
 
-fn upload_sent_as_key(id: &str) -> String {
+pub(crate) fn upload_sent_as_key(id: &str) -> String {
     format!("{UPLOAD_SENT_AS}{id}")
 }
 
@@ -5839,14 +5926,69 @@ pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usiz
 /// For a copy about to be built from an instance other than the one its
 /// writes were queued against: every write a drain or a release could still
 /// send is held until a caller releases it, so none reaches rows the copy
-/// never held. A refused write stays refused. Answers how many it held.
+/// never held. A refused write stays refused, and one held `record_unread`
+/// keeps that reason, so its release still says what it goes without; that
+/// release compares the instance with the one its set-aside recorded
+/// (`hold_for_instance`). Answers how many it held.
 pub fn block_for_another_instance(conn: &Connection) -> Result<usize, CoreError> {
     Ok(conn.execute(
-        &format!("UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3 WHERE {WAITING}"),
+        &format!(
+            "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
+              WHERE {WAITING} AND (verdict IS NOT ?1 OR reason IS NOT ?4)"
+        ),
         params![
             Verdict::Blocked.as_str(),
             BlockedReason::InstanceChanged.as_str(),
-            now_iso()
+            now_iso(),
+            BlockedReason::RecordUnread.as_str()
+        ],
+    )?)
+}
+
+/// The instance the writes a set-aside carried were made for: empty where it
+/// could not be read, and absent where they were made for none, which any
+/// instance a hydration builds the copy from takes without holding them.
+pub(crate) const META_CARRIED_FOR: &str = "carried_for_instance";
+
+/// Holds `instance_changed` every write of `batch` held `record_unread`
+/// where the copy is built from another instance than the one its writes
+/// were carried for, or that one is unknown. Answers whether it held any.
+fn hold_for_instance(conn: &Connection, batch: &[String]) -> Result<bool, CoreError> {
+    let Some(made_for) = meta_get(conn, META_CARRIED_FOR)? else {
+        return Ok(false);
+    };
+    if !made_for.is_empty() && meta_get(conn, META_INSTANCE_ID)?.as_ref() == Some(&made_for) {
+        return Ok(false);
+    }
+    Ok(conn.execute(
+        "UPDATE queue SET reason = ?2, answered_at = ?3
+          WHERE id IN (SELECT value FROM json_each(?1)) AND verdict = ?4 AND reason = ?5",
+        params![
+            serde_json::to_string(batch)?,
+            BlockedReason::InstanceChanged.as_str(),
+            now_iso(),
+            Verdict::Blocked.as_str(),
+            BlockedReason::RecordUnread.as_str()
+        ],
+    )? > 0)
+}
+
+/// Holds each of `ids` the server has not taken `blocked` `record_unread`,
+/// whatever it was. A release keeps its key, so a drain judges it again.
+/// One refused unsent is held too: releasing what it waits for would send it.
+pub(crate) fn hold_record_unread(conn: &Connection, ids: &[String]) -> Result<usize, CoreError> {
+    Ok(conn.execute(
+        &format!(
+            "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
+              WHERE id IN (SELECT value FROM json_each(?4))
+                AND ({WAITING} OR (verdict = ?5 AND sent = 0))"
+        ),
+        params![
+            Verdict::Blocked.as_str(),
+            BlockedReason::RecordUnread.as_str(),
+            now_iso(),
+            serde_json::to_string(ids)?,
+            Verdict::Refused.as_str()
         ],
     )?)
 }
@@ -5917,6 +6059,9 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         return Ok(false);
     }
     let batch = crate::row_writes::batch_of(conn, id)?;
+    if hold_for_instance(conn, &batch)? {
+        return Ok(false);
+    }
     for write in &batch {
         forget_bytes_sent_again(conn, write)?;
         conn.execute(

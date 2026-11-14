@@ -294,7 +294,11 @@ pub enum DeviceCommand {
     /// to the write it waits behind, never by this command. A released write
     /// goes under a fresh idempotency key. A row write instead goes again with
     /// every write sent in its batch, as they went, under the batch's key, and
-    /// an undo under its own key, unless either was blocked `key_spent`.
+    /// an undo under its own key, unless either was blocked `key_spent`. A
+    /// write blocked `record_unread` whose copy is now built from another
+    /// instance than the one it was made against, or from one the set-aside
+    /// could not tell, is held `instance_changed` instead, and goes only when
+    /// released again.
     Release {
         /// The queued write to release.
         #[arg(
@@ -308,8 +312,9 @@ pub enum DeviceCommand {
         reason: Option<marfa_core::BlockedReason>,
     },
     /// Take a write that is `dead`, or blocked `ancestor_unavailable`,
-    /// `conflict_unresolved`, `failing_alone` or `instance_changed`, out of the
-    /// queue, and put the copy back to what the server holds.
+    /// `conflict_unresolved`, `failing_alone`, `instance_changed` or
+    /// `record_unread`, out of the queue, and put the copy back to what the
+    /// server holds.
     ///
     /// A release sends a write again on the version it already names. A write
     /// blocked `conflict_unresolved` is refused the same way each time, and
@@ -350,6 +355,42 @@ pub enum DeviceCommand {
     /// that fills a stale copy in place keeps it until that hydration
     /// completes.
     Status,
+    /// Read every page of the store, check each index against its rows, and
+    /// refuse one SQLite cannot read store_damaged, naming it and how many
+    /// writes its queue holds that the server has not taken, or that its
+    /// queue cannot be read whole.
+    ///
+    /// It reads the whole file, so it takes longer the larger the store. It
+    /// changes nothing, and is refused reading_handle while another process
+    /// holds the store's writer role.
+    Check,
+    /// Set aside a store SQLite cannot read, and make a new one in its place
+    /// that carries every write its queue lets be read.
+    ///
+    /// The damaged store and its logs move to `PATH.damaged-N` beside it, for
+    /// the first N no file holds, and are never deleted. Each write carried
+    /// keeps its id and idempotency key, its body, its base version and its
+    /// verdict, and the new store keeps the server and instance the old one
+    /// was built from and the bytes kept beside the store. The answer counts
+    /// the writes carried that the server has not taken and the writes it
+    /// could not read, names each of those by id where it can, and says
+    /// whether the whole queue was found. Where it could not read every
+    /// write, every record of how one is sent, or every record of the bytes
+    /// an earlier set-aside keeps, every byte kept beside the store as it was
+    /// set aside stays until the store set aside is removed or moved from
+    /// where the set-aside put it.
+    ///
+    /// The new store holds no copy: hydrate it, and then drain, to send what
+    /// it carries; a drain before then sends nothing. Where the old store
+    /// does not say which instance it was built from, each carried write is
+    /// held blocked instance_changed until released, and a carried write
+    /// whose record of how it is sent does not read is held blocked
+    /// record_unread until released. A store that opens as it
+    /// is, or a folder's store, is refused invalid. A set-aside that stopped
+    /// part way is finished by running it again, and until then the store is
+    /// refused store_damaged.
+    #[command(name = "set-aside")]
+    SetAside,
     /// The item types the copy holds, read from it alone, the ones an app
     /// declares for it, and the server's.
     Types {
@@ -1146,7 +1187,31 @@ pub enum DeviceFoldersCommand {
     },
 }
 
+/// A store found damaged part way through a read is named, with what its
+/// queue holds where the store can be read to say so.
 pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError> {
+    let db = args.db.clone();
+    run_on(args, named, json).map_err(|error| match (error, db) {
+        (
+            CliError::Core(marfa_core::CoreError::StoreDamaged {
+                path,
+                reason,
+                unsent,
+            }),
+            Some(db),
+        ) if path.is_empty() => match Core::check_store(&db) {
+            Err(named @ marfa_core::CoreError::StoreDamaged { .. }) => CliError::Core(named),
+            _ => CliError::Core(marfa_core::CoreError::StoreDamaged {
+                path: db.display().to_string(),
+                reason,
+                unsent,
+            }),
+        },
+        (error, _) => error,
+    })
+}
+
+fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError> {
     let store = Store {
         db: args.db,
         reader: args.reader,
@@ -2006,6 +2071,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
         }
         DeviceCommand::Release { id, reason } => {
             let core = store.open(None)?;
+            let unread = held_for(&core, marfa_core::BlockedReason::RecordUnread)?;
             let released = match (&id, &reason) {
                 (_, Some(reason)) => core.release_reason(*reason)?,
                 (Some(id), None) => usize::from(core.release(id)?),
@@ -2016,15 +2082,26 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     ));
                 }
             };
+            let moved = held_for(&core, marfa_core::BlockedReason::InstanceChanged)?
+                .intersection(&unread)
+                .count();
             output::report(&released, json, || {
-                if released == 0 {
+                let mut said = if released == 0 && moved == 0 {
                     "nothing to release: a write is released only where it is blocked, dead or refused unsent, and never while it waits behind another write"
-                        .into()
+                        .to_string()
+                } else if released == 0 {
+                    "nothing released".to_string()
                 } else if let Some(id) = &id {
                     format!("released {id}")
                 } else {
                     format!("released {released} write(s)")
+                };
+                if moved > 0 {
+                    said.push_str(&format!(
+                        "\n{moved} write(s) held blocked instance_changed instead, since the copy is now built from another instance than the one each was made against: release them again to send them there"
+                    ));
                 }
+                said
             })
         }
         DeviceCommand::Withdraw { id } => {
@@ -2032,7 +2109,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             output::report(&withdrawn, json, || {
                 if withdrawn.is_empty() {
                     format!(
-                        "nothing to withdraw: {id} is not dead or blocked ancestor_unavailable, conflict_unresolved, failing_alone or instance_changed"
+                        "nothing to withdraw: {id} is not dead or blocked ancestor_unavailable, conflict_unresolved, failing_alone, instance_changed or record_unread"
                     )
                 } else {
                     format!(
@@ -2040,6 +2117,52 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         withdrawn.join(", ")
                     )
                 }
+            })
+        }
+        DeviceCommand::Check => {
+            let path = store.path()?;
+            Core::check_store(path)?;
+            output::report(
+                &serde_json::json!({ "path": path, "whole": true }),
+                json,
+                || format!("{} reads whole", path.display()),
+            )
+        }
+        DeviceCommand::SetAside => {
+            let done = Core::set_aside_damaged(store.path()?)?;
+            output::report(&done, json, || {
+                let mut line = format!(
+                    "set aside as {}; carried {} write(s) the server has not taken",
+                    done.set_aside, done.carried
+                );
+                if done.unread > 0 {
+                    line.push_str(&format!(
+                        "\n{} write(s) could not be read{}",
+                        done.unread,
+                        if done.unread_ids.is_empty() {
+                            String::new()
+                        } else {
+                            format!(": {}", done.unread_ids.join(", "))
+                        }
+                    ));
+                }
+                if !done.whole {
+                    line.push_str("\nthe queue, or a record that decides how a carried write is sent, could not be read whole, so the store set aside may hold more");
+                }
+                if done.record_unread > 0 {
+                    line.push_str(&format!(
+                        "\n{} write(s) held blocked record_unread, since a record that decides how each is sent could not be read: release them to send them without it",
+                        done.record_unread
+                    ));
+                }
+                if done.held > 0 {
+                    line.push_str(&format!(
+                        "\n{} write(s) held blocked instance_changed, since the store did not say which instance it was built from: release them to send them",
+                        done.held
+                    ));
+                }
+                line.push_str("\nhydrate the new store, then drain, to send what it carries");
+                line
             })
         }
         DeviceCommand::Status => {
@@ -2463,6 +2586,18 @@ fn edge_line(edge: &marfa_core::Edge) -> String {
     )
 }
 
+fn held_for(
+    core: &marfa_core::Core,
+    reason: marfa_core::BlockedReason,
+) -> Result<std::collections::BTreeSet<String>, CliError> {
+    Ok(core
+        .queue()?
+        .into_iter()
+        .filter(|write| write.blocked_reason() == Some(reason))
+        .map(|write| write.id)
+        .collect())
+}
+
 fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::BlockedReason> {
     use clap::builder::TypedValueParser;
     clap::builder::PossibleValuesParser::new(
@@ -2602,6 +2737,10 @@ struct Store {
 }
 
 impl Store {
+    fn path(&self) -> Result<&std::path::Path, CliError> {
+        self.db.as_deref().ok_or(CliError::NoStoreNamed)
+    }
+
     fn open(&self, session: Option<Session>) -> Result<Core, CliError> {
         let Some(path) = &self.db else {
             return Err(CliError::NoStoreNamed);

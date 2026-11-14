@@ -8,6 +8,9 @@ mod catch_up;
 /// Public so a debug build's binding can move the clock it waits by.
 pub mod clock;
 pub mod contract;
+mod damage;
+#[cfg(test)]
+mod damage_tests;
 #[cfg(test)]
 mod deleted_stays_gone_tests;
 mod directory;
@@ -110,6 +113,7 @@ pub use body::{
 };
 pub use catalog::ServerCatalog;
 pub use catch_up::{Change, ChangeEvent, FollowReport};
+pub use damage::SetAside;
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{
     CODES as ERROR_CODES, CoreError, CoreErrorKind, FolderStore, NOT_HELD, ServerAnswer,
@@ -317,6 +321,17 @@ pub struct Core {
     /// Raised by a table held while another call held the stream; a follow
     /// looks at it each time it waits for a frame.
     tables_owed: AtomicBool,
+    /// `damage::seen` as the core opened, so its close keeps the
+    /// write-ahead log of a store found damaged since.
+    damage_seen: u64,
+}
+
+impl Drop for Core {
+    fn drop(&mut self) {
+        if let Ok(conn) = self.conn.lock() {
+            damage::keep_log_if_met(&conn, self.damage_seen);
+        }
+    }
 }
 
 const DEFAULT_CATCH_UP_IDLE: Duration = Duration::from_secs(3);
@@ -415,6 +430,7 @@ impl Core {
         server: Option<Server>,
         lock: Arc<lock::WriterLock>,
     ) -> Result<Core> {
+        damage::refuse_emptied_in(state, store_label)?;
         let vfs = directory_vfs::DirectoryVfs::new(state.file())?;
         let writer = lock.handle() == Handle::Writer;
         let cache = blob::Cache::anchored(state, store_label, writer)?;
@@ -429,6 +445,7 @@ impl Core {
 
     #[cfg(unix)]
     pub(crate) fn read_directory(state: &directory::Directory, store_label: &Path) -> Result<Core> {
+        damage::refuse_emptied_in(state, store_label)?;
         let vfs = directory_vfs::DirectoryVfs::new(state.file())?;
         Self::from_connection(
             store::read_directory(&vfs, store_label)?,
@@ -476,15 +493,64 @@ impl Core {
         let lock = lock::WriterLock::claim(Some(path))?;
         let cache = blob::Cache::beside(path);
         if lock.handle() == Handle::Writer {
+            damage::refuse_unfinished(path)?;
             owner_only(path)?;
         }
         Self::from_connection(store::open(path)?, server, Arc::new(lock), Some(cache))
             .map(Core::swept)
+            .map_err(|error| damage::at_path(error, path))
+    }
+
+    /// Reads every page of the store at `path`, and checks each index
+    /// against its rows. Refuses, leaving it as it is, with `StoreDamaged`,
+    /// its path and what its queue holds where SQLite cannot read it, with
+    /// `WrongSchema` where another build made it, and with `ReadingHandle`
+    /// while another process, or another `Core` in this one, holds the
+    /// writer role. Reads the whole file, so it takes
+    /// longer the larger the store: for a store a call refused
+    /// `StoreDamaged` without naming it.
+    pub fn check_store(path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+        let lock = lock::WriterLock::claim(Some(path))?;
+        lock.refuse_unless_writer()?;
+        if path.symlink_metadata().is_err() {
+            return Err(CoreError::Invalid(format!(
+                "{} holds no store to check",
+                path.display()
+            )));
+        }
+        damage::check(path)
+    }
+
+    /// Sets aside a store SQLite cannot read: moves the store file and its
+    /// logs to `<store>.damaged-<n>` beside it, for the first `n` no file
+    /// holds, never deleting them, and makes a new store at `path` that
+    /// carries every write the old queue lets be read, under its id and
+    /// idempotency key, with its body, base version and verdict. The new
+    /// store keeps the server and instance the old one was built from, and
+    /// the fetched and uploaded bytes beside the path, which are addressed by
+    /// content. Where it cannot read every write, every record that decides
+    /// how a carried write is sent, or every record of the bytes an earlier
+    /// set-aside keeps, every byte held beside the path as it sets the store
+    /// aside stays, whatever the file budget, until the store set aside is
+    /// removed or moved from where the set-aside put it. It holds no copy: a drain sends nothing until it is
+    /// hydrated, and a hydration from another instance holds the carried
+    /// writes, as for any store. Refuses with `Invalid` a store that opens
+    /// as it is and a folder's store, with `WrongSchema` a store another
+    /// build made, and with `ReadingHandle` while another process holds the
+    /// writer role. A set-aside that stopped part way is finished by asking
+    /// again, and until then a writer's open is refused `StoreDamaged`.
+    pub fn set_aside_damaged(path: impl AsRef<Path>) -> Result<SetAside> {
+        let path = path.as_ref();
+        let lock = lock::WriterLock::claim(Some(path))?;
+        lock.refuse_unless_writer()?;
+        damage::set_aside(path)
     }
 
     /// For a writer, lets go of old changes of removed edges and takes what
     /// a process that ended part way left in the cache, sparing the partial
-    /// files of attachments.
+    /// files of attachments, and forgets the bytes kept for a store set
+    /// aside that is gone.
     fn swept(self) -> Core {
         if self.handle() != Handle::Writer {
             return self;
@@ -500,6 +566,9 @@ impl Core {
                 .ok()
                 .and_then(|conn| store::kept_attachments(&conn).ok());
             cache.sweep_incoming(INCOMING_GRACE, attachments.as_ref());
+            if let Ok(conn) = self.conn() {
+                let _ = damage::forget_gone_keeps(&conn, |name| cache.beside_store(name));
+            }
         }
         self
     }
@@ -513,7 +582,8 @@ impl Core {
     /// first. The file budget's setting is kept, as far as the old store
     /// gives it: where it holds none, or none that can be read, the new store
     /// has the default. The blob cache is kept: it is addressed by content,
-    /// not by the store.
+    /// not by the store. Refuses with `Invalid` a folder's store, and with
+    /// `StoreDamaged` while a set-aside of the store is unfinished.
     pub fn replace_refused(path: impl AsRef<Path>, server: Option<Server>) -> Result<Core> {
         let path = path.as_ref();
         // Held from the count to the returned core, so no write can be
@@ -524,6 +594,8 @@ impl Core {
         if let Some(server) = &server {
             http::Http::new(&server.url, &server.key)?;
         }
+        store::refuse_folders(path)?;
+        damage::refuse_unfinished(path)?;
         if path.symlink_metadata().is_err() {
             return Err(CoreError::Invalid(format!(
                 "{} holds no store to replace",
@@ -565,22 +637,34 @@ impl Core {
     /// another process, or another `Core` in this one, holds the writer role,
     /// with `UnsentDiffers` and the store's own count where it holds another
     /// number of such writes or one that cannot be counted, and with
-    /// `Invalid` where the store is a folder's, bound or not. A process that
-    /// only reads the store does not hold the writer role, so it does not
-    /// stop the removal. A path with no store holds
-    /// none, so it answers as removed, taking any lock or bytes left there.
+    /// `Invalid` where the store is a folder's, bound or not, and with
+    /// `StoreDamaged` while a set-aside of the store is unfinished, which
+    /// asking for the set-aside again finishes. A process that only reads the
+    /// store does not hold the writer role, so it does not stop the removal.
+    /// A path with no store holds none, so it answers as removed, taking any
+    /// lock or bytes left there.
     pub fn remove_store(path: impl AsRef<Path>, unsent: u64) -> Result<()> {
-        let path = path.as_ref();
-        let differs = |held: Option<u64>| {
-            if held == Some(unsent) {
-                Ok(())
-            } else {
-                Err(CoreError::UnsentDiffers {
-                    path: path.display().to_string(),
-                    unsent: held,
-                    agreed: unsent,
-                })
-            }
+        Self::remove_agreed(path.as_ref(), Some(unsent))
+    }
+
+    /// Removes the store at `path` as `remove_store` does, agreeing to lose
+    /// every write it holds that the server has not taken, however many there
+    /// are and whether or not they can be counted, as for a store SQLite
+    /// cannot read. Refuses as `remove_store` does but for the count.
+    pub fn remove_store_losing_all(path: impl AsRef<Path>) -> Result<()> {
+        Self::remove_agreed(path.as_ref(), None)
+    }
+
+    /// `agreed` is `None` where every write is agreed to be lost.
+    fn remove_agreed(path: &Path, agreed: Option<u64>) -> Result<()> {
+        let differs = |held: Option<u64>| match agreed {
+            None => Ok(()),
+            Some(unsent) if held == Some(unsent) => Ok(()),
+            Some(unsent) => Err(CoreError::UnsentDiffers {
+                path: path.display().to_string(),
+                unsent: held,
+                agreed: unsent,
+            }),
         };
         let holder = path
             .parent()
@@ -594,9 +678,12 @@ impl Core {
         // path that the removal would then take.
         let lock = lock::WriterLock::claim(Some(path))?;
         lock.refuse_unless_writer()?;
+        store::refuse_folders(path)?;
+        // The missing store a stopped set-aside leaves is no store with no writes.
+        damage::refuse_unfinished(path)?;
         let held = match path.metadata() {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Some(0),
-            _ => store::removal_count(path)?,
+            _ => store::removal_count(path),
         };
         differs(held)?;
         // The store goes after the fetched bytes, so a removal that stops
@@ -627,6 +714,7 @@ impl Core {
             renewals: Arc::default(),
             reclaim_held_until: Mutex::default(),
             tables_owed: AtomicBool::new(false),
+            damage_seen: damage::seen(),
         })
     }
 
@@ -658,26 +746,31 @@ impl Core {
         lock: Arc<lock::WriterLock>,
         cache: Option<blob::Cache>,
     ) -> Result<Core> {
+        let damage_seen = damage::seen();
         let http = match server {
             Some(server) => Some(Arc::new(http::Http::new(&server.url, &server.key)?)),
             None => None,
         };
-        let relocation = if let Some(http) = &http
-            && let Some(expected) = store::meta_get(&conn, store::META_SERVER_ORIGIN)?
-            && expected != http.origin()
-        {
-            Some((expected, store::meta_get(&conn, store::META_INSTANCE_ID)?))
-        } else {
-            None
-        };
-        // A copy that has never reached a server holds the types Marfa ships,
-        // so an app can save before it has connected.
-        if lock.handle() == Handle::Writer
-            && store::never_synced(&conn)?
-            && store::catalog_version(&conn)?.is_none()
-        {
-            store::hold_local_catalog_alone(&conn)?;
-        }
+        let relocation = (|| -> Result<_> {
+            let relocation = if let Some(http) = &http
+                && let Some(expected) = store::meta_get(&conn, store::META_SERVER_ORIGIN)?
+                && expected != http.origin()
+            {
+                Some((expected, store::meta_get(&conn, store::META_INSTANCE_ID)?))
+            } else {
+                None
+            };
+            // A copy that has never reached a server holds the types Marfa
+            // ships, so an app can save before it has connected.
+            if lock.handle() == Handle::Writer
+                && store::never_synced(&conn)?
+                && store::catalog_version(&conn)?.is_none()
+            {
+                store::hold_local_catalog_alone(&conn)?;
+            }
+            Ok(relocation)
+        })()
+        .inspect_err(|_| damage::keep_log_if_met(&conn, damage_seen))?;
         let conn = Arc::new(Mutex::new(conn));
         let renewals = Arc::new(Mutex::new(Vec::new()));
         if let Some(http) = &http {
@@ -730,6 +823,7 @@ impl Core {
             renewals,
             reclaim_held_until: Mutex::default(),
             tables_owed: AtomicBool::new(false),
+            damage_seen,
         })
     }
 
@@ -1865,7 +1959,10 @@ impl Core {
     /// unless blocked `key_spent`. Answers `false` for a row that is not
     /// blocked, dead or refused without being sent, for one held behind
     /// another write, and for one refused because what it waited for was
-    /// withdrawn.
+    /// withdrawn. A write held `record_unread`, or a row write whose batch
+    /// holds one, where the copy is not built from the instance its set-aside
+    /// recorded, has each such write held `instance_changed` instead,
+    /// answering `false`.
     pub fn release(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -1895,14 +1992,17 @@ impl Core {
         drop(conn);
         let mut conn = self.conn()?;
         let tx = conn.transaction()?;
-        // A write released with its batch is released all the same.
+        // A write released or held with its batch is passed over, so no
+        // batch is both held for the instance and released by one call.
         for id in &ids {
-            store::release(&tx, id)?;
+            if store::queued_write(&tx, id)?.is_some_and(|row| row.blocked_reason() == Some(reason))
+            {
+                store::release(&tx, id)?;
+            }
         }
         let mut released = 0;
         for id in &ids {
-            if store::queued_write(&tx, id)?.is_some_and(|row| row.blocked_reason() != Some(reason))
-            {
+            if store::queued_write(&tx, id)?.is_some_and(|row| row.blocked_reason().is_none()) {
                 released += 1;
             }
         }
@@ -3140,7 +3240,7 @@ impl Core {
     /// The bytes the queue keeps and the bytes attachments keep, by the hex
     /// of their hash, both read on `conn`.
     fn keep_sets(&self, conn: &Connection) -> Result<(HashSet<String>, HashSet<String>)> {
-        let kept = queue_keeps(conn)?;
+        let kept = self.queue_keeps(conn)?;
         #[cfg(debug_assertions)]
         crate::fault::hold(|| format!("uploads-read:{:p}", self));
         let attachments = store::kept_attachments(conn)?;
@@ -3170,7 +3270,20 @@ impl Core {
     }
 
     fn kept_blobs(&self) -> Option<HashSet<String>> {
-        queue_keeps(&*self.conn().ok()?).ok()
+        self.queue_keeps(&*self.conn().ok()?).ok()
+    }
+
+    /// The bytes the queue keeps, and those a set-aside keeps for writes it
+    /// could not read, by the hex of their hash.
+    fn queue_keeps(&self, conn: &Connection) -> Result<HashSet<String>> {
+        let mut kept: HashSet<String> = store::kept_uploads(conn)?
+            .iter()
+            .filter_map(|hash| blob::hex_of(hash).ok().map(str::to_string))
+            .collect();
+        if let Some(cache) = &self.cache {
+            kept.extend(damage::kept_bytes(conn, |name| cache.beside_store(name))?);
+        }
+        Ok(kept)
     }
 
     /// The bytes attachments keep, by the hex of their hash, with the
@@ -3523,8 +3636,9 @@ impl Core {
 
     /// Takes every file the cache holds that a device can fetch again, and
     /// answers how many bytes it took. Keeps the bytes of attachments, of
-    /// queued uploads and of reads in progress, and the partial files a
-    /// fetch holds, and leaves the file budget as it was. Where the store or
+    /// queued uploads, of a set-aside's unread writes and of reads in
+    /// progress, and the partial files a fetch holds, and leaves the file
+    /// budget as it was. Where the store or
     /// the cache cannot be read, takes nothing and answers the error. An
     /// attachment made while the files go can lose its bytes, which the next
     /// fetch of kept files brings back. Refused to a reading handle.
@@ -4686,15 +4800,6 @@ pub(crate) fn name_bytes(
     if catalog.matches("core.file", r#type) {
         properties.insert("size_bytes".into(), taken.size.into());
     }
-}
-
-/// The bytes the queue keeps, by the hex of their hash.
-fn queue_keeps(conn: &Connection) -> Result<HashSet<String>> {
-    let hashes = store::kept_uploads(conn)?;
-    Ok(hashes
-        .iter()
-        .filter_map(|hash| blob::hex_of(hash).ok().map(str::to_string))
-        .collect())
 }
 
 fn queue_upload(conn: &Connection, hash: &str, mime_type: &str) -> Result<QueuedWrite> {
@@ -8732,9 +8837,11 @@ mod tests {
                     // handle can reach it; `replace_tests` claims the role
                     // first and is refused.
                     "replace_refused",
-                    // Takes no core either; `remove_tests` holds the role
-                    // from another core and is refused.
-                    "remove_store",
+                    // Take no core either; `remove_tests` and `damage_tests`
+                    // hold the role from another core and are refused.
+                    "remove_agreed",
+                    "check_store",
+                    "set_aside_damaged",
                 ][..],
             ),
             (include_str!("drain.rs"), &["drain_checked"][..]),
@@ -9418,7 +9525,11 @@ mod tests {
         assert!(not_a_store(&tableless).contains("has no schema to read"));
         let words = at("words.sqlite");
         std::fs::write(&words, "words, not a database. ".repeat(40)).unwrap();
-        assert!(not_a_store(&words).contains("has no schema to read"));
+        assert!(matches!(
+            refusal(&words),
+            CoreError::StoreDamaged { path, reason, unsent: None }
+                if path == words.display().to_string() && reason.contains("not a database")
+        ));
 
         let meta = "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);";
         let older = made(

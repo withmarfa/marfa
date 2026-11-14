@@ -108,6 +108,7 @@ fn core_error(error: &CoreError) -> &'static str {
         CoreError::NoCatalog => "the working copy has never held the server's type catalog",
         CoreError::ReadingHandle => "another process holds the working copy's writer handle",
         CoreError::WrongSchema { .. } => "the working copy was made by another build",
+        CoreError::StoreDamaged { .. } => "the working copy's store cannot be read",
         CoreError::UnsentDiffers { .. } => {
             "the working copy holds other writes than the ones agreed to lose"
         }

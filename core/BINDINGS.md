@@ -87,6 +87,14 @@ One thread tells every listener, so `changed` must return promptly.
 
 Each binding takes a `Stop` on the calls that can be stopped, such as a hydration, a catch-up, a drain and a read of the server's catalog. Raise it when the app's own cancellation is requested. What a stopped call leaves is in the contract (`device/stop-canceled` and the statements after it).
 
+## A store that cannot be read
+
+A store SQLite cannot read, whole or in part, is refused with the error code `store_damaged`. A refusal at open names its `path` and gives `unsent`, the number of writes its queue holds that the server has not taken, or none if the queue cannot be read in full.
+
+A refusal during a later call has an empty `path`. Close every handle on the store, then call `checkStore` to read its pages, check its indexes against their rows and obtain a refusal with the path and count. `setAsideDamaged` keeps the damaged file under `<store>.damaged-<n>` beside it and creates a store at the original path with each write it can read. Its result gives the number of carried and unread writes, the unread IDs it could identify, and whether it read the whole queue, every record that decides how a carried write is sent and every record of the bytes an earlier set-aside keeps. If it could not read every write and record, every byte the cache held at that point stays, whatever the file budget, until the store set aside is removed or moved from where the set-aside put it. Hydrate the new store before draining it. If `held` is nonzero, writes whose original instance could not be read remain blocked `instance_changed` until released. If `recordUnread` is nonzero, writes whose record of how they are sent could not be read remain blocked `record_unread` until released. If the store is now built from another instance than the one such a write was made against, or the set-aside could not tell which that was, releasing it blocks it `instance_changed` and answers that nothing was released; release it again to send it. While a set-aside is unfinished, `removeStore`, `removeStoreLosingAll` and `replaceRefused` refuse `store_damaged`; call `setAsideDamaged` again to finish it.
+
+Use `removeStoreLosingAll` only when the person agrees to lose every write, including writes that cannot be counted.
+
 ## Folders in an app
 
 The Swift and Node bindings' `add`, `sync`, `confirm_first_sync`, `confirm`, `restore` and `remove` ask a process that holds the folder to let it go, wait up to 10 seconds, and past that are refused with the error coded `reading_handle`, naming the folder. A watch an app runs through a binding lets the folder go to a command or another call and takes it back, as the command line's watch does, and tells its listener with the events `HandedOver`, `HeldElsewhere`, `TakenBack`, `Removed` and `Unlisted`. A folder removed or taken off the registry ends that watch.

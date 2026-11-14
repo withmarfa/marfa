@@ -472,6 +472,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/device/cli-outcomes.test.ts",
   "src/suites/device/contract.test.ts",
   "src/suites/device/credential-locks.test.ts",
+  "src/suites/device/damaged-store.test.ts",
   "src/suites/device/declare-replaces-live.test.ts",
   "src/suites/device/declare-replaces.test.ts",
   "src/suites/device/deleted-stays-gone.test.ts",

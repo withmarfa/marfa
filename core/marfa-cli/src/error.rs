@@ -433,6 +433,7 @@ impl CliError {
                 | CoreError::NoCatalog
                 | CoreError::ReadingHandle
                 | CoreError::WrongSchema { .. }
+                | CoreError::StoreDamaged { .. }
                 | CoreError::UnsentDiffers { .. }
                 | CoreError::CopyExpired { .. }
                 | CoreError::WrongServer { .. }
@@ -1045,6 +1046,16 @@ mod tests {
         assert!(envelope["error"]["server"].is_null());
         assert!(envelope["error"]["retry_after_seconds"].is_null());
         assert_eq!(envelope["exit"], 4);
+
+        let damaged = CliError::Core(CoreError::StoreDamaged {
+            path: "copy.sqlite".into(),
+            reason: "file is not a database".into(),
+            unsent: Some(1),
+        })
+        .envelope();
+        assert_eq!(damaged["error"]["code"], "store_damaged");
+        assert!(damaged["error"]["server"].is_null());
+        assert!(damaged["error"]["local"].is_null());
 
         let validation = CliError::Core(CoreError::Validation {
             server: heard(422, "invalid_properties"),
