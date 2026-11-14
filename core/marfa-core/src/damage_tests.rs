@@ -367,3 +367,36 @@ fn a_folders_store_is_not_set_aside() {
     ));
     assert!(!beside(&path, ".damaged-1").exists());
 }
+
+#[test]
+fn a_carried_row_write_lays_its_rows_again() {
+    let (_dir, path, _) = store_with(0);
+    {
+        let conn = Connection::open(&path).unwrap();
+        conn.execute(
+            "INSERT INTO queue (id, kind, item_id, row_table, idempotency_key, payload, queued_at)
+             VALUES ('rows', 'write_rows', 'n1', 'lines', 'k-rows',
+                     '{\"operations\":[{\"op\":\"put\",\"id\":\"r1\",\"values\":{\"a\":1}},{\"op\":\"delete\",\"id\":\"r2\"}]}',
+                     '2026-01-01T00:00:00Z')",
+            [],
+        )
+        .unwrap();
+    }
+    damage_table(&path, "items");
+    assert_eq!(set_aside(&path).carried, 1);
+    let conn = Connection::open(&path).unwrap();
+    let mut laid = conn
+        .prepare("SELECT write_id, item_id, name, id FROM rows_laid ORDER BY id")
+        .unwrap();
+    let laid: Vec<(String, String, String, String)> = laid
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert_eq!(
+        laid,
+        ["r1", "r2"]
+            .map(|id| ("rows".into(), "n1".into(), "lines".into(), id.to_string()))
+            .to_vec()
+    );
+}
