@@ -363,7 +363,7 @@ async fn post_admin(State(app): State<Arc<App>>, request: Request) -> Response {
 }
 
 pub fn doors() -> super::Routes {
-    use super::doors::{Asks, Doors, post as post_to};
+    use super::doors::{Doors, post as post_to};
     Doors::new()
         .route(
             Group::Items.path(),
@@ -380,7 +380,6 @@ pub fn doors() -> super::Routes {
             post_to(post_admin).get(only_post).delete(only_post),
         )
         .refusing(axum::http::Method::DELETE, Group::Admin.path())
-        .asking(Asks::Nothing)
 }
 
 #[cfg(test)]

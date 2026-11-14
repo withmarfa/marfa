@@ -34,7 +34,7 @@ pub enum Asks {
     Credential,
     /// A credential, or the owner's session cookie.
     Session,
-    /// Nothing, or the door reads the credential itself before the body.
+    /// Nothing: a stranger may send the body, so it is read only to a small fixed cap.
     Nothing,
 }
 

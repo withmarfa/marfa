@@ -413,7 +413,6 @@ fn sender_doors() -> Routes {
     Doors::new()
         .route("/inbound/{token}", post(inbound::receive))
         .unjudged()
-        .asking(Asks::Nothing)
 }
 
 /// Sign-in, grant and OAuth callers hold no copy of the instance.

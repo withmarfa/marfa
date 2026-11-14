@@ -500,6 +500,67 @@ describe("a body on a request no operation reads one for", () => {
   }, 30_000);
 });
 
+const OPEN_CAP = 32768;
+const OPEN_DOORS = [
+  "/owner",
+  "/setup/exchange",
+  "/setup/claim",
+  "/auth/sign-in",
+  "/auth/passkeys/sign-in/options",
+  "/auth/passkeys/sign-in",
+  "/auth/authorize/decision",
+  "/auth/oauth2/token",
+  "/auth/oauth2/revoke",
+  "/auth/oauth2/register",
+  "/auth/device/code",
+  "/auth/device",
+  "/auth/device/consent",
+];
+
+describe("an operation that asks no credential", () => {
+  it("answers 413 to a body over 32768 bytes declared to it, before any of it is sent", async () => {
+    for (const path of OPEN_DOORS) {
+      const started = Date.now();
+      const refused = await declareOversizeBody(`${server.apiUrl}${path}`, {
+        method: "POST",
+        headers: JSON_HEADERS,
+        bytes: OPEN_CAP + 1,
+      });
+      expect(refused.status, `${path} ${refused.body}`).toBe(413);
+      expect(codeOf(refused), path).toBe("request_too_large");
+      expect(Date.now() - started, path).toBeLessThan(DEADLINE_MS);
+    }
+
+    // The witness: a body of exactly the cap is waited for until the deadline.
+    const held = await declareOversizeBody(`${server.apiUrl}/auth/sign-in`, {
+      method: "POST",
+      headers: JSON_HEADERS,
+      bytes: OPEN_CAP,
+    });
+    expect(held.status, held.body).toBe(408);
+  }, 60_000);
+
+  it("answers 413 to a body that streams past 32768 bytes to it, and takes one just under it", async () => {
+    const chunk = Buffer.alloc(1024, "a");
+    for (const path of OPEN_DOORS) {
+      for (const [chunks, over] of [
+        [OPEN_CAP / 1024 + 1, true],
+        [OPEN_CAP / 1024, false],
+      ] as const) {
+        const upload = slowPost({ apiUrl: server.apiUrl }, path, JSON_HEADERS);
+        for (let sent = 0; sent < chunks; sent++) {
+          await upload.write(chunk).catch(() => undefined);
+        }
+        upload.end();
+        const answered = await upload.answered;
+        const label = `${path} with ${String(chunks)} KiB: ${answered.body}`;
+        if (over) expect(answered.status, label).toBe(413);
+        else expect(answered.status, label).not.toBe(413);
+      }
+    }
+  }, 120_000);
+});
+
 describe("a credential the rate limiter has already read", () => {
   let limited: FreshServer;
 

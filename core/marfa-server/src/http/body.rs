@@ -18,7 +18,7 @@ use serde_json::{Map, Value, json};
 
 use super::answer::{Stopped, refusal_answer};
 use super::caller::{forget, presents};
-use super::doors::Credentials;
+use super::doors::{Asks, Credentials};
 use super::observe::RequestContext;
 use crate::app::App;
 use crate::app::items::write::ruled;
@@ -32,9 +32,11 @@ const LINGER_BYTES: usize = 64 * 1024 * 1024;
 const BULK_PATHS: [&str; 2] = ["/items/bulk", "/items/bulk-actions"];
 const STATE_REQUEST_BYTES: usize = 2 * 512 * 1024 + 100 * 6 + 35;
 const CONNECTORS_PATH: &str = "/connectors";
-const REGISTER_PATH: &str = "/auth/oauth2/register";
 const PLAIN_JSON: &str = "application/json";
-const REGISTER_REQUEST_BYTES: usize = 32 * 1024;
+/// What a door that asks no credential reads. The largest real bodies there
+/// are a few kilobytes: a password of 128 characters, a passkey assertion, a
+/// consent form carrying an authorization's signed query.
+const OPEN_REQUEST_BYTES: usize = 32 * 1024;
 const CONFIG_PATH: &str = "/config";
 
 /// `finish` keeps reading so a refusal that leaves a body unread still arrives.
@@ -208,12 +210,16 @@ impl FromRequest<Arc<App>> for JsonBody {
     }
 }
 
+/// Marks a request to a door that asks no credential before it reads the body.
+#[derive(Clone, Copy)]
+struct Open;
+
 fn cap_on(app: &App, path: &str, extensions: &Extensions) -> usize {
+    if extensions.get::<Open>().is_some() {
+        return OPEN_REQUEST_BYTES;
+    }
     if BULK_PATHS.contains(&path) {
         return app.bulk_cap();
-    }
-    if path == REGISTER_PATH {
-        return REGISTER_REQUEST_BYTES;
     }
     if let Some(cap) = connector_cap(app, path) {
         return cap;
@@ -514,19 +520,21 @@ fn takes_body(method: &Method) -> bool {
     matches!(*method, Method::POST | Method::PUT | Method::PATCH)
 }
 
+/// A door that streams its body, or judges the origin and the credential before it reads one.
+fn reads_its_own_body(request: &Request) -> bool {
+    super::profile::reads_own_body(request) || MCP_PATHS.contains(&request.uri().path())
+}
+
 /// The caller is judged again once the body is whole; the first look only admits.
 pub async fn checked(State(checking): State<Checking>, request: Request, next: Next) -> Response {
     let app = &checking.app;
-    // The MCP doors judge the origin and the credential before they read the body.
-    if super::profile::reads_own_body(&request)
+    if reads_its_own_body(&request)
         || request.body().is_end_stream()
         || !takes_body(request.method())
-        || MCP_PATHS.contains(&request.uri().path())
     {
         return next.run(request).await;
     }
     let (mut parts, body) = request.into_parts();
-    let limit = cap_on(app, parts.uri.path(), &parts.extensions);
     let door = parts
         .extensions
         .get::<MatchedPath>()
@@ -539,8 +547,12 @@ pub async fn checked(State(checking): State<Checking>, request: Request, next: N
     let Some((asks, admission)) = door else {
         return super::unmatched(parts.method, parts.headers).await;
     };
+    if asks == Asks::Nothing {
+        parts.extensions.insert(Open);
+    }
+    let limit = cap_on(app, parts.uri.path(), &parts.extensions);
     let over = declared_length(&parts.headers) > Some(limit);
-    if over && under_connectors(parts.uri.path()) {
+    if over && (asks == Asks::Nothing || under_connectors(parts.uri.path())) {
         return refusal_answer(&too_large(limit));
     }
     if let Err(refusal) = presents(&mut parts, app, asks, admission).await {
@@ -632,15 +644,17 @@ mod presented_tests {
     use std::collections::BTreeSet;
 
     use axum::http::{Method, StatusCode};
+    use futures_util::StreamExt;
     use tower::ServiceExt;
 
     use super::*;
-    use crate::http::doors::Asks;
     use crate::http::test_instance::{Instance, start};
     use crate::http::{public_doors, shared};
 
     const ID: &str = "019537a0-7b80-7000-8000-0000000000ff";
     const PROMPT: Duration = Duration::from_secs(2);
+    /// A request's wait starts when it is sent, so the count in flight, not the total, bounds the load a wait meets.
+    const IN_FLIGHT: usize = 16;
 
     struct Held;
 
@@ -709,17 +723,75 @@ mod presented_tests {
         assert!(judged.len() > 900, "the witness: {}", judged.len());
         let instance = &instance;
         let answers = judged.iter().map(|&(method, path)| async move {
+            let held = request(method, path, None, Body::new(Held));
+            if reads_its_own_body(&held) {
+                return None;
+            }
             let bare = answer(instance, request(method, path, None, Body::empty())).await;
-            let held = answer(instance, request(method, path, None, Body::new(Held))).await;
+            let held = answer(instance, held).await;
             (bare.is_none() || held != bare)
                 .then(|| format!("{method} {path}: {bare:?}, {held:?} with a body"))
         });
-        let disagree: Vec<String> = futures_util::future::join_all(answers)
-            .await
-            .into_iter()
-            .flatten()
-            .collect();
+        let disagree: Vec<String> = futures_util::stream::iter(answers)
+            .buffer_unordered(IN_FLIGHT)
+            .filter_map(std::future::ready)
+            .collect()
+            .await;
         assert_eq!(disagree, Vec::<String>::new());
+    }
+
+    /// The doors that take a body and ask no credential, each as a method and a path.
+    fn open_body_doors(instance: &Instance) -> Vec<(Method, &'static str)> {
+        let doors = public_doors(instance.app.clone());
+        let credentials = doors.credentials();
+        doors
+            .served()
+            .into_iter()
+            .filter(|door| takes_body(&door.method))
+            .filter(|door| {
+                credentials
+                    .get(&(door.method.clone(), door.path))
+                    .is_some_and(|(asks, _)| *asks == Asks::Nothing)
+            })
+            .map(|door| (door.method, door.path))
+            .collect()
+    }
+
+    fn streamed(bytes: usize) -> Body {
+        let chunk = Bytes::from(vec![b'a'; 1024]);
+        Body::from_stream(futures_util::stream::iter(
+            (0..bytes.div_ceil(1024)).map(move |_| Ok::<_, std::io::Error>(chunk.clone())),
+        ))
+    }
+
+    #[tokio::test]
+    async fn a_door_that_asks_no_credential_refuses_a_body_past_its_cap_declared_or_streamed() {
+        let instance = start().await;
+        let doors = open_body_doors(&instance);
+        assert_eq!(doors.len(), 13, "the witness: {doors:?}");
+        let mut wrong = Vec::new();
+        for (method, path) in &doors {
+            let mut declared = request(method, path, None, Body::new(Held));
+            declared.headers_mut().insert(
+                header::CONTENT_LENGTH,
+                HeaderValue::from(OPEN_REQUEST_BYTES + 1),
+            );
+            let past = request(method, path, None, streamed(OPEN_REQUEST_BYTES + 1));
+            let under = request(method, path, None, streamed(OPEN_REQUEST_BYTES));
+            let answers = [
+                answer(&instance, declared).await,
+                answer(&instance, past).await,
+            ];
+            let within = answer(&instance, under).await;
+            if answers != [Some(StatusCode::PAYLOAD_TOO_LARGE); 2]
+                || within == Some(StatusCode::PAYLOAD_TOO_LARGE)
+            {
+                wrong.push(format!(
+                    "{method} {path}: {answers:?}, at the cap {within:?}"
+                ));
+            }
+        }
+        assert_eq!(wrong, Vec::<String>::new());
     }
 
     #[tokio::test]

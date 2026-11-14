@@ -410,6 +410,18 @@ fn is_refused(reply: &Reply) -> bool {
     )
 }
 
+/// What a door that asks no credential reads of a body.
+const OPEN_BODY_CAP: usize = 32 * 1024;
+
+/// Signing in asks no credential, so a body past its cap is refused unread.
+fn is_refused_at_sign_in(reply: &Reply, sent: &Value) -> bool {
+    if sent.to_string().len() > OPEN_BODY_CAP {
+        reply.status == StatusCode::PAYLOAD_TOO_LARGE
+    } else {
+        is_refused(reply)
+    }
+}
+
 #[tokio::test]
 async fn a_passkey_added_signs_in_and_only_an_answered_challenge_is_stored() {
     let instance = Instance::claimed().await;
@@ -1158,8 +1170,15 @@ async fn hostile_json_and_cbor_are_refused_without_a_panic() {
             .await;
         assert!(is_refused(&reply), "{} {}", reply.status, reply.text);
         let asked = instance.asked_to_prove().await;
-        let reply = instance.verify_assertion(&asked.cookie, hostile).await;
-        assert!(is_refused(&reply), "{} {}", reply.status, reply.text);
+        let reply = instance
+            .verify_assertion(&asked.cookie, hostile.clone())
+            .await;
+        assert!(
+            is_refused_at_sign_in(&reply, &hostile),
+            "{} {}",
+            reply.status,
+            reply.text
+        );
     }
     for attestation in hostile_attestations() {
         let asked = instance.asked_to_add().await;
@@ -1171,8 +1190,15 @@ async fn hostile_json_and_cbor_are_refused_without_a_panic() {
         let asked = instance.asked_to_prove().await;
         let mut response = device.assertion(&asked.challenge, &saying);
         response["response"]["authenticatorData"] = json!(text(&attestation));
-        let reply = instance.verify_assertion(&asked.cookie, response).await;
-        assert!(is_refused(&reply), "{} {}", reply.status, reply.text);
+        let reply = instance
+            .verify_assertion(&asked.cookie, response.clone())
+            .await;
+        assert!(
+            is_refused_at_sign_in(&reply, &response),
+            "{} {}",
+            reply.status,
+            reply.text
+        );
     }
     let signed = instance.sign_in_with(&device, 1).await;
     assert_eq!(signed.status, StatusCode::OK, "{}", signed.text);
