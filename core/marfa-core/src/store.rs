@@ -5063,6 +5063,17 @@ pub fn removal_read(conn: &Connection, subject: Subject, id: &str) -> Result<(),
     meta_delete(conn, &removal_key(subject, id))
 }
 
+/// Whether the row has no held item, pin, answer mark or removal record.
+pub fn holds_nothing_of(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn
+        .prepare_cached(
+            "SELECT NOT (EXISTS (SELECT 1 FROM items WHERE id = ?1)
+                      OR EXISTS (SELECT 1 FROM pins WHERE item_id = ?1)
+                      OR EXISTS (SELECT 1 FROM meta WHERE key IN ('item_listed/' || ?1, ?2)))",
+        )?
+        .query_row([id, &removal_key(Subject::Item, id)], |row| row.get(0))?)
+}
+
 /// Whether an event naming the row or edge is from before a removal the
 /// server accepted.
 pub fn removed(conn: &Connection, subject: Subject, id: &str) -> Result<bool, CoreError> {
