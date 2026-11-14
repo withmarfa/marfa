@@ -27,10 +27,7 @@ impl Said {
 
     /// What the server answers now, or `None` when it does not answer.
     pub fn ask(agent: &ureq::Agent, port: u16) -> Option<Said> {
-        let mut response = agent
-            .get(&format!("http://127.0.0.1:{port}/health"))
-            .call()
-            .ok()?;
+        let mut response = agent.get(&super::health_url(port)).call().ok()?;
         Said::of(&response.body_mut().read_json::<Value>().ok()?)
     }
 

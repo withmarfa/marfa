@@ -1544,13 +1544,16 @@ enum Refusal {
 /// which an object store's host must never see. Asks from byte `from` on
 /// where `from` is above zero.
 fn open(link: &str, from: u64) -> std::result::Result<Opened, Refusal> {
-    let agent: Agent = Agent::config_builder()
-        .http_status_as_error(false)
-        .timeout_connect(Some(Duration::from_secs(10)))
-        .timeout_recv_response(Some(Duration::from_secs(30)))
-        .timeout_recv_body(Some(LINK_BODY_MOST))
-        .build()
-        .into();
+    let agent: Agent = crate::http::direct_when_local(
+        Agent::config_builder()
+            .http_status_as_error(false)
+            .timeout_connect(Some(Duration::from_secs(10)))
+            .timeout_recv_response(Some(Duration::from_secs(30)))
+            .timeout_recv_body(Some(LINK_BODY_MOST)),
+        link,
+    )
+    .build()
+    .into();
     // The agent offers gzip unless told otherwise, and drops the length of
     // what it decompresses, so the stated size and the offsets of a range
     // would describe a different representation from the stored bytes.

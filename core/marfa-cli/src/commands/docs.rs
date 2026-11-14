@@ -156,16 +156,19 @@ impl Site {
         let tls = ureq::tls::TlsConfig::builder()
             .root_certs(ureq::tls::RootCerts::PlatformVerifier)
             .build();
-        let agent: ureq::Agent = ureq::Agent::config_builder()
-            .tls_config(tls)
-            .http_status_as_error(false)
-            .max_redirects(5)
-            .timeout_connect(Some(CONNECT_BUDGET))
-            .timeout_recv_response(Some(recv_response))
-            .timeout_recv_body(Some(recv_body))
-            .user_agent(concat!("marfa/", env!("CARGO_PKG_VERSION")))
-            .build()
-            .into();
+        let agent: ureq::Agent = marfa_core::http::direct_when_local(
+            ureq::Agent::config_builder()
+                .tls_config(tls)
+                .http_status_as_error(false)
+                .max_redirects(5)
+                .timeout_connect(Some(CONNECT_BUDGET))
+                .timeout_recv_response(Some(recv_response))
+                .timeout_recv_body(Some(recv_body))
+                .user_agent(concat!("marfa/", env!("CARGO_PKG_VERSION"))),
+            &base,
+        )
+        .build()
+        .into();
         Ok(Site {
             base,
             agent,

@@ -160,6 +160,21 @@ pub(crate) type Renewed = Box<dyn Fn(&str, &str) + Send + Sync>;
 
 type Response = ureq::http::Response<ureq::Body>;
 
+/// The one rule for every request the binary makes: a request to this machine
+/// goes straight there, whatever proxy the environment names, since a proxy
+/// cannot reach it and would be handed the request and its credential. Every
+/// client is built through it.
+pub fn direct_when_local(
+    builder: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>,
+    target: &str,
+) -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope> {
+    if marfa_telemetry::host::may_use_proxy(target) {
+        builder
+    } else {
+        builder.proxy(None)
+    }
+}
+
 /// Which of the agent's time budgets a call is held to.
 #[derive(Clone)]
 enum Budget {
@@ -486,19 +501,17 @@ impl Http {
         let tls = ureq::tls::TlsConfig::builder()
             .root_certs(ureq::tls::RootCerts::PlatformVerifier)
             .build();
-        let builder = Agent::config_builder()
-            .tls_config(tls)
-            .http_status_as_error(false)
-            .max_redirects(0)
-            .timeout_connect(Some(Duration::from_secs(10)))
-            .timeout_recv_response(Some(recv_response))
-            .timeout_recv_body(Some(recv_body));
-        // Loopback credentials must not reach an environment proxy.
-        let config = if marfa_telemetry::host::may_use_proxy(url) {
-            builder.build()
-        } else {
-            builder.proxy(None).build()
-        };
+        let config = direct_when_local(
+            Agent::config_builder()
+                .tls_config(tls)
+                .http_status_as_error(false)
+                .max_redirects(0)
+                .timeout_connect(Some(Duration::from_secs(10)))
+                .timeout_recv_response(Some(recv_response))
+                .timeout_recv_body(Some(recv_body)),
+            url,
+        )
+        .build();
         Self::with_connector(url, key, config, DefaultConnector::default)
     }
 

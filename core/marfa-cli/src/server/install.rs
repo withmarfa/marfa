@@ -15,9 +15,9 @@ use super::service::{Control, Manager, Mark, Service};
 use super::systemd::Linger;
 use super::{
     AGENT_HINT, Access, DEFAULT_PORT, Folder, IMAGE, InstallArgs, OPTIONS_HINT, Runtime, State,
-    Steps, account, address, checked_release, external_problems, files, free_port, http_agent,
-    launchd, local_address, names, native, own_release, port_is_free, proxy_trust, public_address,
-    refuse_older, tailscale, valid_name,
+    Steps, account, address, checked_release, external_problems, files, free_port, health_url,
+    http_agent, launchd, local_address, names, native, own_release, port_is_free, proxy_trust,
+    public_address, refuse_older, tailscale, valid_name,
 };
 use crate::error::CliError;
 use crate::output::Printer;
@@ -650,7 +650,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         }
     }
     let notes = boot_notes(runtime, manager, autostart, &linger);
-    let backups = backups::Said::ask(&http_agent(), port);
+    let backups = backups::Said::ask(&http_agent(port), port);
     let backups_say = backups
         .as_ref()
         .and_then(|said| said.words(&settings_path, runtime == Runtime::Docker, None));
@@ -867,15 +867,15 @@ impl Watch<'_> {
 }
 
 fn answers_health(port: u16) -> bool {
-    http_agent()
-        .get(&format!("http://127.0.0.1:{port}/health"))
+    http_agent(port)
+        .get(&health_url(port))
         .call()
         .is_ok_and(|response| response.status().as_u16() == 200)
 }
 
 pub(super) fn wait_until_healthy(watch: &Watch, port: u16, seconds: u64) -> Result<(), CliError> {
-    let agent = http_agent();
-    let url = format!("http://127.0.0.1:{port}/health");
+    let agent = http_agent(port);
+    let url = health_url(port);
     let deadline = Instant::now() + Duration::from_secs(seconds);
     let mut last = String::from("no answer yet");
     loop {

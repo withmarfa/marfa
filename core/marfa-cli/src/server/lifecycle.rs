@@ -12,8 +12,8 @@ use super::run::{self, REFUSED_DATABASE};
 use super::service::{Control, Manager, Service};
 use super::{
     Access, DirArgs, Folder, IMAGE, PrivateCommand, Runtime, StartArgs, State, Steps,
-    UninstallArgs, UpgradeArgs, checked_release, files, http_agent, launchd, native, own_release,
-    refuse_older, tailscale,
+    UninstallArgs, UpgradeArgs, checked_release, files, health_url, http_agent, launchd, native,
+    own_release, refuse_older, tailscale,
 };
 use crate::error::CliError;
 use crate::output::Printer;
@@ -415,10 +415,7 @@ struct Health {
 
 impl Health {
     fn ask(agent: &ureq::Agent, port: u16) -> Option<Health> {
-        let mut response = agent
-            .get(&format!("http://127.0.0.1:{port}/health"))
-            .call()
-            .ok()?;
+        let mut response = agent.get(&health_url(port)).call().ok()?;
         let http = response.status().as_u16();
         let body = response
             .body_mut()
@@ -488,7 +485,7 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
         (_, Some(container)) => container.status == "running",
         _ => false,
     };
-    let agent = http_agent();
+    let agent = http_agent(state.port);
     let answered = if running {
         Health::ask(&agent, state.port)
     } else {

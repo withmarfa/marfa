@@ -3502,11 +3502,11 @@ Where the address of the server is `https`, the CLI MUST NOT print the plain `ht
 
 ### `device/command-loopback-no-proxy`
 
-When the address of the server is `localhost`, an address in `127.0.0.0/8` or `::1`, the CLI MUST send each request to it directly, whatever proxy the environment names.
+When a command sends a request to `localhost`, an address in `127.0.0.0/8` or `::1`, the CLI MUST send it directly, whatever proxy the environment names.
 
-**Reason:** a proxy cannot reach this machine, and would be handed the request with its key.
+**Reason:** a proxy cannot reach this machine, and would be handed the request with its key, and one that cannot reach it makes the checks of `marfa server` report the wrong health.
 
-**Tests:** `cli/key-and-files.test.ts › never goes through a proxy the environment names, and one to another host does`.
+**Tests:** `cli/key-and-files.test.ts › never goes through a proxy the environment names, and one to another host does`, `cli/server-status.test.ts › asks the server on this machine directly, whatever proxy the environment names`.
 
 ### `device/command-key-own-server`
 
