@@ -90,7 +90,7 @@ fn notes(answer: &serde_json::Value) -> Vec<String> {
     let skipped = texts(answer, "enforcement_skipped");
     if !skipped.is_empty() {
         notes.push(format!(
-            "Skipped the archive's enforcement settings this instance already stores: {}.",
+            "Kept this instance's own enforcement settings instead of the archive's: {}.",
             skipped.join(", ")
         ));
     }
@@ -174,7 +174,7 @@ mod tests {
             [
                 "Stored heartbeat_enabled, which sends nothing until a receiver is set where Marfa runs.",
                 "Restored the archive's enforcement settings: source_filter.",
-                "Skipped the archive's enforcement settings this instance already stores: strict_mode, source_allowlist.",
+                "Kept this instance's own enforcement settings instead of the archive's: strict_mode, source_allowlist.",
                 "Previous instance line.",
                 "Sign-in line.",
                 "Endpoints line.",

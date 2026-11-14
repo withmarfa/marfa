@@ -77,9 +77,9 @@ fn previous_instance(app: &App, id: &str) -> Value {
         (Some(bucket), _) => {
             let backups = format!("{}/{}/{id}", bucket.prefix, crate::app::backups::FOLDER);
             let message = format!(
-                "Instance {id} wrote this archive. Its backups are under {backups} in the object \
-                 store. {WHEN} Its file copies are under {}/{}/, shared with this instance, so \
-                 keep them.",
+                "Instance {id} wrote this archive. If it took backups to this object store, they \
+                 are under {backups}. {WHEN} The file copies under {}/{}/ are shared with this \
+                 instance, so keep them.",
                 bucket.prefix,
                 crate::app::blobs::s3::BLOBS,
             );
@@ -89,8 +89,8 @@ fn previous_instance(app: &App, id: &str) -> Value {
             use crate::app::blobs::folder::{BACKUPS, FILES};
             let kept = vec![format!("{BACKUPS}/{id}"), format!("{FILES}/{id}")];
             let message = format!(
-                "Instance {id} wrote this archive. Its backups and file copies are in {} and {} \
-                 in the backup folder. {WHEN}",
+                "Instance {id} wrote this archive. If it took backups to this backup folder, its \
+                 backups and file copies are in {} and {}. {WHEN}",
                 kept[0], kept[1],
             );
             (json!("folder"), kept, message)
