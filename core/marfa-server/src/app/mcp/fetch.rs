@@ -278,8 +278,7 @@ pub async fn file(
     mime_hint: Option<String>,
 ) -> Result<Fetched, Failed> {
     let (app, caller, raw) = (app.clone(), caller.clone(), raw.to_string());
-    let origin = provenance::current();
-    tokio::spawn(provenance::within(origin, async move {
+    tokio::spawn(provenance::carried(async move {
         let parsed = checked(&raw);
         let outcome = match &parsed {
             Ok(url) => attempt(&app, &caller, url, mime_hint).await,
@@ -326,11 +325,11 @@ async fn attempt(
     };
     let (app, caller, url) = (app.clone(), caller.clone(), url.clone());
     let handle = Handle::current();
-    let joined = tokio::task::spawn_blocking(move || {
+    let joined = tokio::task::spawn_blocking(provenance::carried_blocking(move || {
         let outcome = stream(&app, &handle, &caller, &url, mime_hint, &limits);
         drop(permit);
         outcome
-    })
+    }))
     .await;
     joined.unwrap_or_else(|_| Err(Refusal::internal("a file fetch did not finish").into()))
 }

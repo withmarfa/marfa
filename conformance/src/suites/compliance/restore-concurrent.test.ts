@@ -12,9 +12,9 @@ import { collectUntil, withStream } from "../../utils/stream.js";
 
 /**
  * What a write meets while a restore runs. A restore holds the write lock
- * from its first item to its commit, so a write issued meanwhile waits behind
- * it, and the only question is what the write is answered and where its event
- * lands among the restore's. Each test boots a server of its own: the restore
+ * from its first item to its commit, so a write issued meanwhile is refused
+ * at once, and the only question is what the write is answered and where its
+ * event lands among the restore's. Each test boots a server of its own: the restore
  * is large enough to be in flight for a while, and the run's server must not
  * carry its items or its settings.
  *
@@ -28,15 +28,11 @@ const RESTORED = 4_000;
 const RESTORED_PAST_THE_WAIT = 20_000;
 
 let ordered: FreshServer;
-let impatient: FreshServer;
-/** The write wait the impatient server is booted with. */
-const BUDGET_MS = 50;
+let writers: FreshServer;
 
 beforeAll(async () => {
   ordered = await bootFreshServer("restore-order");
-  impatient = await bootFreshServer("restore-writers", {
-    MARFA_TEST_TUNING: `write_wait_ms=${String(BUDGET_MS)}`,
-  });
+  writers = await bootFreshServer("restore-writers");
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 function archiveOf(count: number): { ids: string[]; bytes: Uint8Array } {
@@ -120,9 +116,9 @@ describe("a restore that commits", () => {
       );
 
       const restoring = ownerOf(ordered).restoreArchive(restore.bytes);
-      // A write the restore holds past the write wait is refused
-      // `write_contention` and writes nothing (`search-and-filters/restore-writers-wait`);
-      // only the writes that committed have events to order.
+      // A write the restore holds is refused `write_contention` and writes
+      // nothing (`search-and-filters/restore-writers-refused`); only the
+      // writes that committed have events to order.
       const answers = await writesWhile(restoring, async () => {
         const r = await worker.createItem({
           type: "core.note",
@@ -173,17 +169,19 @@ describe("a restore that commits", () => {
 });
 
 describe("a write that meets a restore", () => {
-  it("is answered 201, or 503 write_contention carrying the write wait, and nothing else", async () => {
+  it("answers each write 201 or 503 restore_running, and keeps every item it answered 201", async () => {
     const worker = new MarfaClient({
-      baseUrl: impatient.apiUrl,
-      apiKey: impatient.workingKey,
+      baseUrl: writers.apiUrl,
+      apiKey: writers.workingKey,
     });
-    const restoring = ownerOf(impatient).restoreArchive(
+    const source = (await worker.getCurrentKey()).data.source as string;
+    const restoring = ownerOf(writers).restoreArchive(
       archiveOf(RESTORED_PAST_THE_WAIT).bytes,
     );
     const answers = await writesWhile(restoring, () =>
       worker.createItem({
         type: "core.note",
+        source,
         properties: { body: "written during the restore" },
       }),
     );
@@ -193,17 +191,33 @@ describe("a write that meets a restore", () => {
     const refused = answers.filter((a) => a.status === 503);
     expect(
       refused.length,
-      "no write was refused, so the restore was not holding the lock for longer than the budget",
+      "no write was refused, so the restore was not holding the lock",
     ).toBeGreaterThan(0);
     for (const answer of answers as ApiResponse<unknown>[]) {
       expect([201, 503], JSON.stringify(answer.error)).toContain(answer.status);
       if (answer.status === 503) {
-        expect(answer.error?.error.code).toBe("write_contention");
-        expect(
-          (answer.error?.error as { details?: { budget_ms?: number } }).details
-            ?.budget_ms,
-        ).toBe(BUDGET_MS);
+        const error = answer.error?.error as {
+          code: string;
+          details?: { reason?: string };
+        };
+        expect(error.code).toBe("write_contention");
+        expect(error.details?.reason).toBe("restore_running");
+        expect(answer.headers.get("retry-after")).toBe("5");
       }
     }
+
+    // Every write answered 201 is there, and no refused write left an item.
+    const keptIds: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await worker.listItems({ source, limit: 100, cursor });
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      keptIds.push(...page.data.data.map((item) => item.id));
+      cursor = page.data.next_cursor ?? undefined;
+    } while (cursor !== undefined);
+    const created = answers
+      .filter((a) => a.status === 201)
+      .map((a) => (a.data as { item: { id: string } }).item.id);
+    expect(keptIds.sort()).toEqual([...created].sort());
   }, 300_000);
 });

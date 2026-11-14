@@ -25,6 +25,7 @@ use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM};
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{connectors, edge_types, sources, stored, tables, types};
+use crate::app::{provenance, restore_running};
 use intake::{Intake, LineFile, Received};
 
 /// What an archive never holds, each with the kind a client reads and what the owner does.
@@ -270,6 +271,8 @@ impl App {
         whole: bool,
     ) -> Result<Value> {
         caller.require_local()?;
+        let holding = self.db.hold_writes(restore_running::refusal())?;
+        let permit = holding.permit();
         let app = self.clone();
         let caller = caller.clone();
         let task = async move {
@@ -501,6 +504,7 @@ impl App {
                 })
                 .await;
             drop(placed);
+            drop(holding);
             let (mut answer, staged) = written?;
             let emptying = app.clone();
             tokio::spawn(async move { emptying.db.empty_log().await });
@@ -522,7 +526,7 @@ impl App {
             }
             Ok(answer)
         };
-        tokio::spawn(task)
+        tokio::spawn(provenance::carried(permit.run(task)))
             .await
             .map_err(|error| Refusal::internal(&format!("a restore did not finish: {error}")))?
     }

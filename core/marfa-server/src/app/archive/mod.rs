@@ -27,7 +27,7 @@ use super::faults::{ARCHIVE_LINE_LANE, FAIL_EXPORT_READ, HOLD_EXPORT_PAGE};
 use super::items::{self, Archived, Reader, reading, reading_background};
 use super::query::{self, Ask};
 use super::refusal::{Code, Refusal, Result};
-use super::{backups, connectors, edges, sources, stored, tables};
+use super::{backups, connectors, edges, provenance, sources, stored, tables};
 use crate::db::io_refusal;
 use crate::settings::registry::{self, ADDRESSES, SIGN_IN_ADDRESS};
 use spool::{Lines, Spooled};
@@ -365,7 +365,9 @@ impl App {
         let (sender, body) = channel(QUEUED);
         let (app, caller) = (self.clone(), caller.clone());
         let idle = self.blob_read_idle();
-        tokio::spawn(async move { send::archive(app, caller, prepared, sender, idle).await });
+        tokio::spawn(provenance::carried(async move {
+            send::archive(app, caller, prepared, sender, idle).await
+        }));
         Ok((body, created))
     }
 

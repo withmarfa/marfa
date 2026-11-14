@@ -8,6 +8,7 @@ use rusqlite::{OptionalExtension, Transaction, params};
 use super::App;
 use super::access::Levers;
 use super::refusal::{Refusal, Result};
+use super::{App, provenance};
 use crate::db::Write;
 use crate::settings::registry::{self, Kind, Reading, Seeds, Setting};
 use crate::settings::report_unreadable;
@@ -132,7 +133,7 @@ where
     F: Future<Output = Result<(T, Option<Staged>)>> + Send + 'static,
 {
     let app = app.clone();
-    tokio::spawn(async move {
+    tokio::spawn(provenance::carried(async move {
         match write.await {
             Ok((value, staged)) => {
                 if let Some(staged) = staged {
@@ -147,7 +148,7 @@ where
                 Err(refusal)
             }
         }
-    })
+    }))
     .await
     .map_err(|_| Refusal::internal("a settings change did not finish"))?
 }
