@@ -230,7 +230,7 @@ Where a view sorts by `tags`, the server MUST order each item by the smallest of
 
 Where a view sorts by a property, the server MUST order the items as `search-and-filters/sort-property-ascending`, `search-and-filters/sort-property-descending`, `search-and-filters/sort-property-missing` and `search-and-filters/sort-property-ties` specify.
 
-**Tests:** `compliance/views-items.test.ts › sorts by a property across numbers, booleans and text, with null, objects and arrays last`.
+**Tests:** `compliance/views-items.test.ts › sorts by a property across numbers, booleans and text, with null, objects and arrays last`, `compliance/datetime-property-compare.test.ts › orders a view by instant, whole and filtered`.
 
 ### `views/items-order-missing`
 

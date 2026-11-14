@@ -180,7 +180,7 @@ pub(crate) fn list_where_with(
         // real, as the server compares it, and SQLite puts numbers before
         // text, a boolean being 0 or 1.
         SortField::Property(name) => format!(
-            "ORDER BY {expression} IS NULL, {expression} {}, id ASC",
+            "ORDER BY {expression} {} NULLS LAST, id ASC",
             direction_sql(sort.direction),
             expression =
                 rules::property_sort_expression("items.properties", &format!("'$.{name}'")),

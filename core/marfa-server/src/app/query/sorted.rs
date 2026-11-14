@@ -261,7 +261,7 @@ mod tests {
         let mut statement = conn
             .prepare(&format!(
                 "SELECT id FROM items WHERE type = 'core.note' \
-                 ORDER BY ({expression}) IS NULL, ({expression}) {direction}, id ASC"
+                 ORDER BY ({expression}) {direction} NULLS LAST, id ASC"
             ))
             .unwrap();
         statement
@@ -434,6 +434,32 @@ mod tests {
             );
             assert_eq!(scan(&conn, false), wanted(&after), "scan after changes");
         }
+    }
+
+    #[test]
+    fn instants_beyond_the_years_a_date_holds_still_sort_in_order_and_a_millisecond_is_the_finest_key()
+     {
+        let written = [
+            "0000-01-01T00:00:00+05:00",
+            "0000-01-01T00:00:00Z",
+            "2026-01-01T05:00:00.0004Z",
+            "2026-01-01T05:00:00.000Z",
+            "9999-12-31T23:59:59Z",
+            "9999-12-31T23:59:59.999Z",
+            "9999-12-31T23:00:00-05:00",
+            "9999-12-31T23:59:59.999-23:59",
+        ];
+        let conn = db();
+        for (n, when) in written.iter().enumerate() {
+            put(&conn, n, "core.note", &format!(r#"{{"p":"{when}"}}"#));
+        }
+        let up: Vec<String> = (0..written.len()).map(|n| format!("id-{n:03}")).collect();
+        assert_eq!(scan(&conn, false), up);
+        let mut down = up.clone();
+        down.reverse();
+        let tie = down.len() - 4;
+        down.swap(tie, tie + 1);
+        assert_eq!(scan(&conn, true), down);
     }
 
     #[test]

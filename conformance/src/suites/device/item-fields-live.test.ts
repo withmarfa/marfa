@@ -330,6 +330,12 @@ it("sorts and bounds a property written as a time by its instant, as the server 
     minutes: "2026-01-01T04:00Z",
     day: "2026-01-01",
     fraction: "2026-01-01T00:00:00.5Z",
+    fine: "2026-01-01T05:00:00.0004Z",
+    rounded: "2026-01-01T05:00:00.0006Z",
+    past: "0000-01-01T00:00:00+05:00",
+    last: "9999-12-31T23:59:59Z",
+    beyond: "9999-12-31T23:00:00-05:00",
+    furthest: "9999-12-31T23:59:59.999-23:59",
     word: "banana",
     number: 7,
   };
@@ -371,6 +377,9 @@ it("sorts and bounds a property written as a time by its instant, as the server 
     'properties.when gte "2026-01-01T10:00:00+05:00"',
     'properties.when eq "2026-01-01T05:00:00.000Z"',
     'properties.when gt "2026-01-01"',
+    'properties.when eq "2026-01-01T05:00:00.0004Z"',
+    'properties.when gt "9999-12-31T23:59:59Z"',
+    'properties.when lt "0000-01-01T00:00:00Z"',
     "properties.when gt 1",
   ]) {
     const filter = `${base} AND ${bound}`;
@@ -383,7 +392,7 @@ it("sorts and bounds a property written as a time by its instant, as the server 
     filter: `${base} AND properties.when eq "2026-01-01T05:00:00.000Z"`,
     limit: 100,
   });
-  expect(names(equal.data.data).sort()).toEqual(["offset", "utc"]);
+  expect(names(equal.data.data).sort()).toEqual(["fine", "offset", "utc"]);
 });
 
 it("refuses a property sort the server's grammar refuses", async () => {

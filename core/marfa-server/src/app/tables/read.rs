@@ -132,8 +132,11 @@ impl Withholding {
         self.masked(column, &Self::on_body("json_type", column))
     }
 
-    /// The value of a column of a kind in `KEYED_KINDS` as its sort key, and nothing for a value of another kind.
+    /// The value of a column of a kind in `KEYED_KINDS` as its sort key, and nothing for a value of another kind or a column whose name cannot be written into the SQL.
     fn typed(&self, column: &str, kind: &str) -> Sql {
+        if !marfa_rules::schema::order_column_inlinable(column) {
+            return Sql::new("NULL");
+        }
         let order = Order {
             column: column.to_string(),
             kind: kind.to_string(),
@@ -351,7 +354,7 @@ fn order_by(sql: &mut Sql, key: &Key, descending: bool) {
         Key::Id => sql.push(&format!(" ORDER BY r.id {direction}")),
         Key::Updated => sql.push(&format!(" ORDER BY k {direction}, r.id ASC")),
         Key::Column { .. } | Key::Order(_) => {
-            sql.push(&format!(" ORDER BY k IS NULL, k {direction}, r.id ASC"));
+            sql.push(&format!(" ORDER BY k {direction} NULLS LAST, r.id ASC"));
         }
     }
 }
@@ -851,15 +854,12 @@ mod parity {
                 let mut statement = db
                     .prepare(&format!(
                         "SELECT r.id FROM table_rows r WHERE r.table_seq = 1 \
-                         ORDER BY ({0}) IS NULL, ({0}) {direction}, r.id ASC",
+                         ORDER BY ({0}) {direction} NULLS LAST, r.id ASC",
                         key.text
                     ))
                     .unwrap();
                 let found: Vec<String> = statement
-                    .query_map(
-                        params_from_iter(key.values.iter().chain(key.values.iter())),
-                        |row| row.get(0),
-                    )
+                    .query_map(params_from_iter(key.values.iter()), |row| row.get(0))
                     .unwrap()
                     .collect::<std::result::Result<_, _>>()
                     .unwrap();

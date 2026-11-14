@@ -58,18 +58,24 @@ fn instant_ms() -> String {
     )
 }
 
-/// The key of a text that may read as a datetime: the UTC instant as `YYYY-MM-DDTHH:MM:SS.sssZ` when it does, so every spelling of an instant is the same text and texts order by instant, else the text itself. `value` is evaluated once.
+/// The last instant SQLite writes as a date, 9999-12-31T23:59:59.999Z, in milliseconds since the epoch.
+const LAST_MS: i64 = 253_402_300_799_999;
+
+/// The key of a text that may read as a datetime: the UTC instant as `YYYY-MM-DDTHH:MM:SS.sssZ` when it does, so every spelling of an instant is the same text and texts order by instant, else the text itself.
+///
+/// The instant is kept to the millisecond, so two texts that differ only below it have one key. An instant before the year 0000 keys as `-001-...` and sorts before every other. An instant after `9999-12-31T23:59:59.999Z` keys as that text, `+` and its milliseconds beyond it, which sorts after every instant SQLite can write and in the instants' own order. `value` is evaluated once.
 pub fn text_key_sql(value: &str) -> String {
     format!("{}{value}{TEXT_KEY_CLOSE}", text_key_open())
 }
 
 /// The SQL before the value [`text_key_sql`] keys, for a caller that writes the value itself.
 pub fn text_key_open() -> String {
+    let ms = instant_ms();
     format!(
         "(SELECT CASE WHEN v GLOB '{DATE_SHAPE}*' THEN COALESCE(\
-         strftime('%Y-%m-%dT%H:%M:%fZ', ({}) / 1000.0, 'unixepoch'), v) ELSE v END \
-         FROM (SELECT ",
-        instant_ms()
+         strftime('%Y-%m-%dT%H:%M:%fZ', ({ms}) / 1000.0, 'unixepoch'), \
+         '9999-12-31T23:59:59.999Z+' || printf('%09d', ({ms}) - {LAST_MS}), v) ELSE v END \
+         FROM (SELECT "
     )
 }
 

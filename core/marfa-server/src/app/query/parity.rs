@@ -118,15 +118,12 @@ fn the_ordered_items_are_filtered_and_sorted_as_the_working_copy_does() {
         for (direction, ids) in [("ASC", &case["ascending"]), ("DESC", &case["descending"])] {
             let mut statement = db
                 .prepare(&format!(
-                    "SELECT i.id FROM items i ORDER BY ({0}) IS NULL, ({0}) {direction}, i.id ASC",
+                    "SELECT i.id FROM items i ORDER BY ({0}) {direction} NULLS LAST, i.id ASC",
                     key.text
                 ))
                 .unwrap();
             let found: Vec<String> = statement
-                .query_map(
-                    params_from_iter(key.values.iter().chain(key.values.iter())),
-                    |row| row.get(0),
-                )
+                .query_map(params_from_iter(key.values.iter()), |row| row.get(0))
                 .unwrap()
                 .collect::<Result<_, _>>()
                 .unwrap();

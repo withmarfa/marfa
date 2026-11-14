@@ -1583,7 +1583,7 @@ fn page_from_copy(
         Key::Id => format!(" ORDER BY r.id {direction}"),
         Key::Updated => format!(" ORDER BY k {direction}, r.id ASC"),
         Key::Column { .. } | Key::Order { .. } => {
-            format!(" ORDER BY k IS NULL, k {direction}, r.id ASC")
+            format!(" ORDER BY k {direction} NULLS LAST, r.id ASC")
         }
     });
     sql.push_str(" LIMIT ?");
@@ -1638,9 +1638,15 @@ fn aggregate(adding: &Adding, values: &mut Vec<Value>) -> String {
             out.push(" END");
         },
         |out| {
-            let key =
-                marfa_rules::schema::order_value_key_sql(&adding.kind, &adding.name, "r.body");
-            out.push(&key);
+            if marfa_rules::schema::order_column_inlinable(&adding.name) {
+                out.push(&marfa_rules::schema::order_value_key_sql(
+                    &adding.kind,
+                    &adding.name,
+                    "r.body",
+                ));
+            } else {
+                out.push("NULL");
+            }
         },
     );
     values.extend(out.values);

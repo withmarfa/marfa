@@ -149,11 +149,15 @@ describe("numeric property filters", () => {
       ["null", null],
       ["array", [7]],
       ["object", { n: 7 }],
+      ["missing", undefined],
     ] as const) {
       const made = await client.createItem({
         type: "core.note",
         source: ctx.source,
-        properties: { body: ctx.runId, range_probe: value },
+        properties: {
+          body: ctx.runId,
+          ...(value === undefined ? {} : { range_probe: value }),
+        },
       });
       expect(made.ok, JSON.stringify(made.error)).toBe(true);
       trackItem(ctx, made.data.item.id);
