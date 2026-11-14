@@ -138,7 +138,6 @@ function codeOf(answered: Answered): string | undefined {
     ?.code;
 }
 
-/** The same request with its body sent at once. */
 async function sentWhole(
   on: FreshServer,
   method: string,
@@ -154,11 +153,7 @@ async function sentWhole(
   return { status: response.status, body: await response.text() };
 }
 
-/**
- * Holds a request's body until the server asks for it, makes `change`, then
- * sends the body. Answers the held request and the same request sent whole
- * once the change is made.
- */
+/** The handshake places the authority change after admission and before the body. */
 async function heldAcross(
   on: FreshServer,
   method: string,
@@ -195,7 +190,6 @@ async function keyHolding(
   return minted.data;
 }
 
-/** A key revoked while its body is held, on `on`. */
 async function revokedWhileHeld(on: FreshServer, label: string): Promise<void> {
   const key = await keyHolding(on, label, ["config.manage"]);
   const headers = { ...JSON_HEADERS, ...bearer(key.key) };

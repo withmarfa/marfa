@@ -76,10 +76,7 @@ export function slowPost(
 }
 
 export interface HeldRequest {
-  /**
-   * `true` once the server asks for the body with `100 Continue`, or `false`
-   * when it answers before asking.
-   */
+  /** `true` on `100 Continue`; `false` on a final answer before it. */
   asked: Promise<boolean>;
   /** Sends the whole body. */
   send(): void;
@@ -91,11 +88,7 @@ export interface HeldRequest {
   }>;
 }
 
-/**
- * A request that declares its body and sends none of it until the server
- * asks, with `Expect: 100-continue`, so a fixture can change something
- * between the server judging the head and the body arriving.
- */
+/** `100 Continue` lets a fixture change authority after admission and before the body. */
 export function heldRequest(
   apiUrl: string,
   method: string,
