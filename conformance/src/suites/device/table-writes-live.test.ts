@@ -1447,7 +1447,11 @@ describe("a drain catches up before it sends row writes", () => {
       asked.join("\n"),
     ).toBe(true);
     expect(took).toBeLessThan(6_500);
-    expect(verdictOf(report, mine.id)).toBe("accepted");
+    // The other writer's patch came before the rows the catch-up could not read, so the copy applied it.
+    expect(verdictOf(report, mine.id)).toBe("conflicted");
+    expect(
+      report.verdicts.find((entry) => entry.id === mine.id)?.conflicts,
+    ).toEqual([{ row, column: "note" }]);
     expect((await serverRows(item))[row]).toEqual({
       count: 1,
       note: "offline",
