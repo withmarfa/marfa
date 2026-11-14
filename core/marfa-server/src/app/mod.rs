@@ -56,6 +56,7 @@ use tokio::sync::{Notify, watch};
 use crate::db::migrate::MIGRATIONS;
 use crate::db::{Db, Options, Write};
 use crate::failure::Failure;
+use crate::private_files::Kept;
 use crate::settings::{Accepted, Settings};
 use crate::telemetry::Telemetry;
 use addresses::Addresses;
@@ -71,6 +72,14 @@ use limiter::Limiter;
 use query::Secret;
 
 const READERS: usize = 4;
+
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T, Failure> + Send + 'static,
+) -> Result<T, Failure> {
+    tokio::task::spawn_blocking(work).await.map_err(|error| {
+        Failure::start(format!("The data's files could not be checked: {error}"))
+    })?
+}
 
 pub struct App {
     pub db: Db,
@@ -105,6 +114,9 @@ pub struct App {
 
 impl App {
     pub async fn start(accepted: Accepted) -> Result<Arc<App>, Failure> {
+        let fixed = accepted.fixed();
+        let (database, blob_path) = (fixed.database.clone(), fixed.blob_path.clone());
+        let kept = Arc::new(blocking(move || Kept::closed(&database, &blob_path)).await?);
         let settings = accepted.open_secrets()?;
         let start = settings.start.clone();
         let faults = Arc::<Faults>::default();
@@ -121,6 +133,8 @@ impl App {
         let db = tokio::task::spawn_blocking(move || Db::open(&options, opening))
             .await
             .map_err(|error| Failure::start(format!("The database did not open: {error}")))??;
+        let checking = kept.clone();
+        blocking(move || checking.database_opened()).await?;
         let unreadable = |error| Failure::start(format!("The database could not be read: {error}"));
         let rows = db.read(stored::rows).await.map_err(unreadable)?;
         settings.apply_stored(&rows);
@@ -158,6 +172,7 @@ impl App {
             at.clone(),
         )
         .await?;
+        blocking(move || kept.blobs_opened()).await?;
         db.write(Write::own(), move |tx| catalog::reconcile(tx, &at))
             .await
             .map_err(|refused| Failure::start(refused.to_string()))?;

@@ -129,6 +129,7 @@ fn listen(
 }
 
 pub async fn run(accepted: Accepted, telemetry: Config) -> Result<u8, Failure> {
+    crate::private_files::make_data_folder(&accepted.fixed().database)?;
     let mut claim = Claim::take(&accepted.fixed().control_socket)?;
     let app = App::start(accepted).await?;
     let telemetry = app.telemetry.start(&telemetry, &app.instance_id);
