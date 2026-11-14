@@ -1098,7 +1098,7 @@ When a hydration or a catch-up reads an item whose text holds a surrogate pair, 
 
 ## Catch-up
 
-A device takes an event when it applies it or skips it; both move its cursor past the event. Every rule here holds within an unchanged reach; a changed one expires the copy (`device/reach-changed`).
+A device takes an event when it applies it or skips it; both move its cursor past the event, a skipped one with the next event applied, after a bounded count of skipped events, or at the stream's live marker. Every rule here holds within an unchanged reach; a changed one expires the copy (`device/reach-changed`).
 
 ### `device/catch-up-resumes`
 
@@ -1114,9 +1114,9 @@ When a catch-up's stream carries an event, a device MUST take it by the rules of
 
 ### `device/catch-up-cursor-taken`
 
-When a device takes an event, a device MUST set its cursor to that event's id, never to the highest id it has seen.
+When a device applies an event, or a catch-up reaches its stream's live marker, a device MUST set its cursor to the id of the last event it took, never to the highest id it has seen.
 
-**Reason:** the server delivers ids in order (`events/ids-ascending`), so the two agree while every event is taken, and a mark set from what merely arrived would step over an event it did not take for good.
+**Reason:** the server delivers ids in order (`events/ids-ascending`), so the two agree while every event is taken, and a mark set from what merely arrived would step over an event it did not take for good. A run of skipped events moves the cursor once rather than once each, so a catch-up through events the copy does not hold commits no more often than it applies, and a crash in the run reads again only events that are skipped again.
 
 **Tests:** `device/catch-up.test.ts › keeps the last id applied rather than the highest, so a late lower id is not stepped over`.
 

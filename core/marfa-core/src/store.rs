@@ -5025,6 +5025,19 @@ pub fn removal_read(conn: &Connection, subject: Subject, id: &str) -> Result<(),
     meta_delete(conn, &removal_key(subject, id))
 }
 
+/// Whether the copy holds nothing of the row `id`: not the row, a pin on it,
+/// the server's answer for it or the record of its removal. Evicting such a
+/// row changes nothing.
+pub fn holds_nothing_of(conn: &Connection, id: &str) -> Result<bool, CoreError> {
+    Ok(conn
+        .prepare_cached(
+            "SELECT NOT (EXISTS (SELECT 1 FROM items WHERE id = ?1)
+                      OR EXISTS (SELECT 1 FROM pins WHERE item_id = ?1)
+                      OR EXISTS (SELECT 1 FROM meta WHERE key IN ('item_listed/' || ?1, ?2)))",
+        )?
+        .query_row([id, &removal_key(Subject::Item, id)], |row| row.get(0))?)
+}
+
 /// Whether an event naming the row or edge is from before a removal the
 /// server accepted.
 pub fn removed(conn: &Connection, subject: Subject, id: &str) -> Result<bool, CoreError> {
