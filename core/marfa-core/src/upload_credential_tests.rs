@@ -457,6 +457,7 @@ fn withdrawing_bytes_sent_again_under_a_new_key_refuses_the_file_sent_before() {
     assert_eq!(upload.verdict, None, "the bytes were not made to go again");
     assert!(!crate::store::unsent(&core.conn().unwrap(), &file.id).unwrap());
     // What a withdrawal reads to learn whether the create made anything.
+    server.on("/items", vec![crate::upload_again_tests::empty_bin()]);
     server.on(
         &format!("/items/{file_id}"),
         vec![scripted::certified(scripted::refusal(

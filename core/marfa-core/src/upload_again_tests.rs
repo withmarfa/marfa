@@ -58,7 +58,7 @@ fn absent() -> scripted::Answer {
 }
 
 /// A refused create reads the bin to learn whether it made anything.
-fn empty_bin() -> scripted::Answer {
+pub(crate) fn empty_bin() -> scripted::Answer {
     scripted::certified(scripted::json(200, r#"{"data":[],"next_cursor":null}"#))
 }
 
@@ -322,7 +322,7 @@ pub(crate) fn set_aside(core: &crate::Core, id: &str) {
 fn withdrawing_bytes_sent_again_refuses_the_file_sent_before_and_keeps_it() {
     let server = Scripted::start();
     let dir = tempfile::tempdir().unwrap();
-    let Waiting { core, .. } = file_waiting_on_taken_bytes(&server, dir.path());
+    let Waiting { core, file_id, .. } = file_waiting_on_taken_bytes(&server, dir.path());
     server.on("/items", vec![absent()]);
     server.on(
         "/blobs",
@@ -333,6 +333,15 @@ fn withdrawing_bytes_sent_again_refuses_the_file_sent_before_and_keeps_it() {
     let (upload, file) = (queue[0].clone(), queue[1].clone());
     assert_eq!(upload.verdict, None, "the bytes were not made to go again");
     assert!(!crate::store::unsent(&core.conn().unwrap(), &file.id).unwrap());
+    // What a withdrawal reads to learn whether the create made anything.
+    server.on("/items", vec![empty_bin()]);
+    server.on(
+        &format!("/items/{file_id}"),
+        vec![scripted::certified(scripted::refusal(
+            404,
+            "item_not_found",
+        ))],
+    );
 
     set_aside(&core, &upload.id);
     assert!(core.withdraw(&upload.id).unwrap());
