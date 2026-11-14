@@ -1038,12 +1038,14 @@ fn sendable(row: &QueuedWrite) -> bool {
 /// Whether a write a drain would send is a row write whose table the copy
 /// holds whole, so its clash is judged by what the copy has applied.
 fn judges_row_writes(conn: &rusqlite::Connection) -> Result<bool> {
-    for row in store::waiting_writes(conn)?.iter().filter(|row| sendable(row)) {
+    for row in store::waiting_writes(conn)?
+        .iter()
+        .filter(|row| sendable(row))
+    {
         if let (WriteKind::WriteRows, Some(item), Some(table)) =
             (row.kind, row.item_id.as_deref(), row.table.as_deref())
             && store::read_of(conn, &row.id)?.is_some()
-            && crate::tables::state(conn, item, table)?.as_deref()
-                == Some(crate::tables::WHOLE)
+            && crate::tables::state(conn, item, table)?.as_deref() == Some(crate::tables::WHOLE)
         {
             return Ok(true);
         }
