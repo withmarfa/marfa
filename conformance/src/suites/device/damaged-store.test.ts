@@ -437,9 +437,10 @@ describe("setting a damaged store aside", () => {
         MARFA_TEST_FAULT: `set-aside-crash=${point}`,
       });
       await crashed.exited();
-      expect(crashed.exitCode(), `the set-aside did not stop at ${point}`).not.toBe(
-        0,
-      );
+      expect(
+        crashed.exitCode(),
+        `the set-aside did not stop at ${point}`,
+      ).not.toBe(0);
       expect(
         existsSync(`${device.store}.carrying`),
         `a file stands where the writes are carried that no mark shows a set-aside made (${point})`,
@@ -484,9 +485,10 @@ describe("setting a damaged store aside", () => {
     if (!done.ok) return;
     expect([done.value.carried, done.value.record_unread]).toEqual([1, 1]);
     const held = await device.queue();
-    expect(held.ok && [held.value[0]?.verdict, held.value[0]?.reason]).toEqual(
-      ["blocked", "record_unread"],
-    );
+    expect(held.ok && [held.value[0]?.verdict, held.value[0]?.reason]).toEqual([
+      "blocked",
+      "record_unread",
+    ]);
 
     expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
     const released = await device.release({ reason: "record_unread" });
