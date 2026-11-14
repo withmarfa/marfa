@@ -328,9 +328,10 @@ fn folders(path: &Path) -> CoreError {
 /// before it was bound, or one whose meta does not read, is still the
 /// folder's.
 fn kept_by_folder(path: &Path) -> bool {
-    let Some(state) = path.parent().filter(|state| !state.as_os_str().is_empty()) else {
-        return false;
-    };
+    let state = path
+        .parent()
+        .filter(|state| !state.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
     if state
         .file_name()
         .and_then(|name| name.to_str())

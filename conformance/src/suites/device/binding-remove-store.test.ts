@@ -336,7 +336,10 @@ describe("removing a store", () => {
     other = await BindingDevice.start({ module: requireModule(), store });
     await other.forget();
     const header = Buffer.alloc(100, 0xa5);
-    writeFileSync(store, Buffer.concat([header, readFileSync(store).subarray(100)]));
+    writeFileSync(
+      store,
+      Buffer.concat([header, readFileSync(store).subarray(100)]),
+    );
     const before = kept(store);
 
     expect(refusalOf(await other.removeStoreLosingAll()).code).toBe("invalid");

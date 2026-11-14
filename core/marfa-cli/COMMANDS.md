@@ -3833,13 +3833,13 @@ marfa device release [OPTIONS] [ID]
 
 | Option | Description |
 | --- | --- |
-| `--reason <REASON>` | Release every write blocked for this reason instead of one by id. One of `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `failing_alone`, `instance_changed`. |
+| `--reason <REASON>` | Release every write blocked for this reason instead of one by id. One of `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `failing_alone`, `instance_changed`, `record_unread`. |
 
 Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 ### marfa device withdraw
 
-Take a write that is `dead`, or blocked `ancestor_unavailable`, `conflict_unresolved`, `failing_alone` or `instance_changed`, out of the queue, and put the copy back to what the server holds.
+Take a write that is `dead`, or blocked `ancestor_unavailable`, `conflict_unresolved`, `failing_alone`, `instance_changed` or `record_unread`, out of the queue, and put the copy back to what the server holds.
 
 A release sends a write again on the version it already names. A write blocked `conflict_unresolved` is refused the same way each time, and one blocked `ancestor_unavailable` too, unless the credential it is sent with has come to read the snapshot it names. A `dead` write has failed five times in a way that counts. The writes held for the withdrawn write are refused unsent. A row write goes with every write sent in its batch.
 
@@ -3889,7 +3889,7 @@ Set aside a store SQLite cannot read, and make a new one in its place that carri
 
 The damaged store and its logs move to `PATH.damaged-N` beside it, for the first N no file holds, and are never deleted. Each write carried keeps its id and idempotency key, its body, its base version and its verdict, and the new store keeps the server and instance the old one was built from and the bytes kept beside the store. The answer counts the writes carried that the server has not taken and the writes it could not read, names each of those by id where it can, and says whether the whole queue was found.
 
-The new store holds no copy: hydrate it, and then drain, to send what it carries; a drain before then sends nothing. Where the old store does not say which instance it was built from, each carried write is held blocked instance_changed until released. A store that opens as it is, or a folder's store, is refused invalid. A set-aside that stopped part way is finished by running it again, and until then the store is refused store_damaged.
+The new store holds no copy: hydrate it, and then drain, to send what it carries; a drain before then sends nothing. Where the old store does not say which instance it was built from, each carried write is held blocked instance_changed until released, and a carried write whose record of how it is sent does not read is held blocked record_unread until released. A store that opens as it is, or a folder's store, is refused invalid. A set-aside that stopped part way is finished by running it again, and until then the store is refused store_damaged.
 
 ```text
 marfa device set-aside [OPTIONS]
