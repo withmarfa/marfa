@@ -33,8 +33,7 @@ pub async fn read_clock(State(app): State<Arc<App>>) -> Response {
     clock_answer(&app)
 }
 
-/// `advance_ms` is time passing while the server runs and commits; `jump_ms` is the host's clock
-/// being set, either way, with no time passing.
+/// `advance_ms` is time passing; `jump_ms` is the host's clock being set, with no time passing.
 pub async fn move_clock(State(app): State<Arc<App>>, body: JsonBody) -> Answer {
     let body = body.object(&["advance_ms", "jump_ms", "paused"]).await?;
     let one_of = || {

@@ -1,5 +1,4 @@
-//! The one place code asks the time. A stamp is never earlier than the newest time the server
-//! committed, and a clock far ahead of that time judges nothing old enough to delete.
+//! The one place code asks the time, kept from stamping below the mark or judging age far ahead of it.
 
 #[cfg(feature = "test-hooks")]
 use std::sync::MutexGuard;
@@ -199,8 +198,7 @@ impl Clock {
         (system_ms(), steady_ms())
     }
 
-    /// The later of the wall clock and the mark, except while clean-up holds, when the mark
-    /// stays put so that a clock set right again is not left behind it.
+    /// The later of the wall clock and the mark, or the wall clock alone while clean-up holds.
     pub fn now_ms(&self) -> i64 {
         let mut guard = self.guard();
         let (wall, steady) = self.readings();

@@ -256,8 +256,7 @@ pub fn runs_statements(name: &str) -> bool {
     JOBS.iter().any(|job| job.name == name && job.statements)
 }
 
-/// The instant a retention keeps records from, or `None` while it is zero, or the clock is too far
-/// ahead to judge age by, and it keeps everything.
+/// The instant a retention keeps records from, or `None`, keeping everything, while it is zero or clean-up holds.
 /// Read from `tx`, since the live settings lag a change the writer has committed.
 pub fn cutoff(
     tx: &rusqlite::Transaction<'_>,
