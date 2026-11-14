@@ -6,7 +6,7 @@ use std::sync::Arc;
 use rusqlite::{Transaction, params};
 use serde_json::json;
 
-use super::grant;
+use super::{DEVICE_CODE_SECONDS, MS_PER_SECOND, grant};
 use crate::app::access::Caller;
 use crate::app::auth::{passkeys, session};
 use crate::app::clock::{Stamp, Unread, readable};
@@ -16,11 +16,12 @@ use crate::app::refusal::Result;
 use crate::app::{App, stored};
 use crate::db::Write;
 use crate::settings::registry::{
-    DCR_CLIENT_RETENTION_DAYS, GRANT_INACTIVITY_DAYS, REVOKED_GRANT_RETENTION_DAYS, Setting,
+    DCR_CLIENT_RETENTION_HOURS, GRANT_INACTIVITY_DAYS, REVOKED_GRANT_RETENTION_DAYS, Setting,
 };
 
 const BATCH: i64 = 200;
 pub(super) const MS_PER_DAY: i64 = 86_400_000;
+const MS_PER_HOUR: i64 = 3_600_000;
 const CLIENTS_PURGED: &str = "auth.clients.purged";
 const GRANTS_PURGED: &str = "auth.grants.purged";
 const GRANT_RETIRED: &str = "auth.grant.retired";
@@ -95,20 +96,39 @@ async fn report_kept(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+struct Retention {
+    setting: Setting<u64>,
+    unit_ms: i64,
+}
+
+const CLIENTS_KEPT: Retention = Retention {
+    setting: DCR_CLIENT_RETENTION_HOURS,
+    unit_ms: MS_PER_HOUR,
+};
+const IDLE_GRANTS_KEPT: Retention = Retention {
+    setting: GRANT_INACTIVITY_DAYS,
+    unit_ms: MS_PER_DAY,
+};
+const REVOKED_GRANTS_KEPT: Retention = Retention {
+    setting: REVOKED_GRANT_RETENTION_DAYS,
+    unit_ms: MS_PER_DAY,
+};
+
 enum Cutoff {
     At(Stamp),
-    Kept(Setting<u64>),
+    Kept(Retention),
 }
 
 /// Read from `tx`, since the live settings lag a change the writer has committed.
-fn cutoff_of(tx: &Transaction<'_>, app: &App, retention: Setting<u64>) -> Result<Option<Stamp>> {
-    let days = stored::deciding(tx, &app.settings.seeds(), retention)?;
-    if days == 0 {
+fn cutoff_of(tx: &Transaction<'_>, app: &App, retention: Retention) -> Result<Option<Stamp>> {
+    let units = stored::deciding(tx, &app.settings.seeds(), retention.setting)?;
+    if units == 0 {
         return Ok(None);
     }
-    let kept = i64::try_from(days)
+    let kept = i64::try_from(units)
         .unwrap_or(i64::MAX)
-        .saturating_mul(MS_PER_DAY);
+        .saturating_mul(retention.unit_ms);
     Ok(app.clock.instant().earlier_by(kept))
 }
 
@@ -125,11 +145,7 @@ fn consents_in(
 }
 
 /// So a run with nothing to do takes no write.
-async fn any_consent(
-    app: &Arc<App>,
-    query: fn() -> String,
-    retention: Setting<u64>,
-) -> Result<bool> {
+async fn any_consent(app: &Arc<App>, query: fn() -> String, retention: Retention) -> Result<bool> {
     let live = app.clone();
     app.db
         .read(move |tx| match cutoff_of(tx, &live, retention)? {
@@ -142,7 +158,7 @@ async fn any_consent(
 async fn idle_clients(app: &Arc<App>) -> Result<i64> {
     let live = app.clone();
     app.write(&Caller::Server, CLIENTS_PURGED, move |unit| {
-        let Some(cutoff) = cutoff_of(unit.tx(), &live, DCR_CLIENT_RETENTION_DAYS)? else {
+        let Some(cutoff) = cutoff_of(unit.tx(), &live, CLIENTS_KEPT)? else {
             return Ok(0);
         };
         let offered = "COALESCE(offered_at, created_at)";
@@ -178,19 +194,19 @@ async fn idle_clients(app: &Arc<App>) -> Result<i64> {
 pub async fn remove_idle_clients(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
     let (taken, done) = drain(run, BATCH, || idle_clients(app)).await?;
     if done {
-        let cutoff = Cutoff::Kept(DCR_CLIENT_RETENTION_DAYS);
+        let cutoff = Cutoff::Kept(CLIENTS_KEPT);
         report_kept(app, run, cutoff, CLIENT_UNREAD).await?;
     }
     Ok((taken, done))
 }
 
 async fn retire_one(app: &Arc<App>) -> Result<i64> {
-    if !any_consent(app, idle_consents, GRANT_INACTIVITY_DAYS).await? {
+    if !any_consent(app, idle_consents, IDLE_GRANTS_KEPT).await? {
         return Ok(0);
     }
     let (live, cache) = (app.clone(), app.catalog_handle());
     app.write(&Caller::Server, GRANT_RETIRED, move |unit| {
-        let Some(cutoff) = cutoff_of(unit.tx(), &live, GRANT_INACTIVITY_DAYS)? else {
+        let Some(cutoff) = cutoff_of(unit.tx(), &live, IDLE_GRANTS_KEPT)? else {
             return Ok(0);
         };
         let idle = consents_in(unit.tx(), &idle_consents(), cutoff, 1)?;
@@ -215,19 +231,19 @@ async fn retire_one(app: &Arc<App>) -> Result<i64> {
 pub async fn retire_idle_grants(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
     let (taken, done) = drain(run, 1, || retire_one(app)).await?;
     if done {
-        let cutoff = Cutoff::Kept(GRANT_INACTIVITY_DAYS);
+        let cutoff = Cutoff::Kept(IDLE_GRANTS_KEPT);
         report_kept(app, run, cutoff, IDLE_UNREAD).await?;
     }
     Ok((taken, done))
 }
 
 async fn withdrawn_grants(app: &Arc<App>) -> Result<i64> {
-    if !any_consent(app, withdrawn_consents, REVOKED_GRANT_RETENTION_DAYS).await? {
+    if !any_consent(app, withdrawn_consents, REVOKED_GRANTS_KEPT).await? {
         return Ok(0);
     }
     let (live, cache) = (app.clone(), app.catalog_handle());
     app.write(&Caller::Server, GRANTS_PURGED, move |unit| {
-        let Some(cutoff) = cutoff_of(unit.tx(), &live, REVOKED_GRANT_RETENTION_DAYS)? else {
+        let Some(cutoff) = cutoff_of(unit.tx(), &live, REVOKED_GRANTS_KEPT)? else {
             return Ok(0);
         };
         let withdrawn = consents_in(unit.tx(), &withdrawn_consents(), cutoff, BATCH)?;
@@ -249,7 +265,7 @@ async fn withdrawn_grants(app: &Arc<App>) -> Result<i64> {
 pub async fn purge_withdrawn_grants(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
     let (taken, done) = drain(run, BATCH, || withdrawn_grants(app)).await?;
     if done {
-        let cutoff = Cutoff::Kept(REVOKED_GRANT_RETENTION_DAYS);
+        let cutoff = Cutoff::Kept(REVOKED_GRANTS_KEPT);
         report_kept(app, run, cutoff, WITHDRAWN_UNREAD).await?;
     }
     Ok((taken, done))
@@ -298,8 +314,12 @@ pub async fn sweep_expired(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
     }
     for (table, key, kept_ms) in [
         ("oauth_codes", "digest", 0),
-        // A day longer, so a device polling after the code expired is told so.
-        ("oauth_device_codes", "device_code", MS_PER_DAY),
+        // As long again, so a device polling after the code expired is told so.
+        (
+            "oauth_device_codes",
+            "device_code",
+            DEVICE_CODE_SECONDS * MS_PER_SECOND,
+        ),
         ("oauth_access_tokens", "id", 0),
         ("oauth_refresh_tokens", "id", 0),
         ("setup_proof", "digest", 0),

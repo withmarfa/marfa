@@ -2,10 +2,12 @@ import { afterAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
+  startDeviceFlow,
   stopFreshServers,
 } from "../../utils/fresh-server.js";
 import {
   jobs,
+  MINUTE_MS,
   operatorOf,
   QUIET_SCHEDULE,
   runJob,
@@ -46,6 +48,26 @@ const NOT_RUN = [
 
 describe("the credential clean-up", () => {
   it(
+    "removes a device code ten minutes after it expires, and not before",
+    async () => {
+      const server = await bootFreshServer(
+        "credential-cleanup-device-codes",
+        QUIET_SCHEDULE,
+      );
+      const kept = await startDeviceFlow(server, ["core.note:read"]);
+      const removed = await startDeviceFlow(server, ["core.note:read"]);
+      // Past the ten minutes a code lives, by less than ten more.
+      await server.advanceClock(19 * MINUTE_MS);
+      expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+      expect((await kept.poll()).body.error).toBe("expired_token");
+      await server.advanceClock(2 * MINUTE_MS);
+      expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+      expect((await removed.poll()).body.error).toBe("invalid_grant");
+    },
+    4 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "lists every job the server runs, and runs the credential clean-up on demand",
     async () => {
       const server = await bootFreshServer(
@@ -85,7 +107,7 @@ describe("the credential clean-up", () => {
         ...QUIET_SCHEDULE,
         MARFA_REVOKED_GRANT_RETENTION_DAYS: "36500",
         MARFA_GRANT_INACTIVITY_DAYS: "36500",
-        MARFA_DCR_CLIENT_RETENTION_DAYS: "36500",
+        MARFA_DCR_CLIENT_RETENTION_HOURS: "876000",
       });
       const run = await runJob(server, "credential-cleanup");
       expect(run.outcome, String(run.error)).toBe("ok");
