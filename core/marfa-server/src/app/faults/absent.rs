@@ -43,6 +43,10 @@ impl Faults {
         None
     }
 
+    pub fn stall(&self, _host: &str) -> Option<Duration> {
+        None
+    }
+
     pub fn deadline(&self, _job: &str) -> Option<Duration> {
         None
     }

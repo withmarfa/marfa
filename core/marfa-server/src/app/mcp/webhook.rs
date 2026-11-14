@@ -152,9 +152,9 @@ pub struct Previewed {
 
 /// The address is judged here and again at the commit.
 pub async fn preview(app: &App, caller: &Caller, request: Request) -> Result<Previewed> {
-    caller.webhook_maker()?;
+    let maker = caller.webhook_maker()?;
     if let Some(address) = request.address() {
-        webhooks::check_address(app, address).await?;
+        webhooks::check_address(app, &maker, address).await?;
     }
     let reader = caller.clone();
     let (plan, subject) = app
@@ -184,9 +184,9 @@ pub async fn confirmed(
     request: Request,
     token: &str,
 ) -> Result<Confirmed> {
-    caller.webhook_maker()?;
+    let maker = caller.webhook_maker()?;
     if let Some(address) = request.address() {
-        webhooks::check_address(app, address).await?;
+        webhooks::check_address(app, &maker, address).await?;
     }
     let Some(parsed) = confirm::parse(token) else {
         return Ok(Confirmed::Stale);

@@ -1,6 +1,11 @@
 //! Every outbound request goes through here, to public addresses judged once.
 
 pub mod address;
+mod fair;
+mod slots;
+
+pub use slots::{Asker, deliveries_released, delivery_share_is_free};
+use slots::{BOUND, Lane};
 
 use std::net::{IpAddr, SocketAddr, ToSocketAddrs};
 use std::sync::{Arc, LazyLock};
@@ -25,28 +30,37 @@ use url::{Host, Url};
 
 use super::faults::Faults;
 
-/// How long one lookup may take before the name counts as not found.
-pub const LOOKUP_BOUND: Duration = Duration::from_secs(3);
-
-static LOOKUPS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
-
+/// A timed-out lookup keeps its slot until the thread returns.
 async fn resolve_with<T: Send + 'static>(
+    lane: &Lane,
+    maker: Option<&str>,
     lookup: impl FnOnce() -> T + Send + 'static,
     bound: Duration,
-) -> Option<T> {
-    tokio::time::timeout(bound, async {
-        let permit = LOOKUPS.acquire().await.ok()?;
-        tokio::task::spawn_blocking(move || {
-            // A timed-out caller cannot release a thread still inside the system resolver.
-            let _permit = permit;
-            lookup()
-        })
-        .await
-        .ok()
-    })
-    .await
-    .ok()
-    .flatten()
+) -> Looked<T> {
+    let began = tokio::time::Instant::now();
+    let Some(slot) = lane.take(maker, bound).await else {
+        return Looked::NoSlot;
+    };
+    let deadline = if lane.patient {
+        tokio::time::Instant::now() + bound
+    } else {
+        began + bound
+    };
+    let thread = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        lookup()
+    });
+    match tokio::time::timeout_at(deadline, thread).await {
+        Ok(Ok(done)) => Looked::Done(done),
+        Ok(Err(_)) | Err(_) => Looked::Unfinished,
+    }
+}
+
+enum Looked<T> {
+    Done(T),
+    /// The lookup ran past its bound, panicked or was cut.
+    Unfinished,
+    NoSlot,
 }
 
 /// Checked and connected addresses differ only under a test fault.
@@ -61,6 +75,8 @@ pub enum Reach {
     Targets(Vec<Target>),
     /// The name did not resolve, or not in time.
     Unresolved,
+    /// No lookup slot came free in time, so the name was not looked up.
+    NoSlot,
     NotPublic,
 }
 
@@ -79,10 +95,16 @@ pub struct Outgoing<'a> {
     pub body: String,
 }
 
+enum Lookup {
+    Found(Vec<Target>),
+    Unresolved,
+    NoSlot,
+}
+
 /// The resolver fault counts and scripts lookups here.
-pub async fn look_up(faults: &Faults, host: &str, port: u16) -> Option<Vec<Target>> {
+async fn look_up(faults: &Faults, host: &str, port: u16, asker: Asker<'_>) -> Lookup {
     if let Some(scripted) = faults.resolve(host) {
-        return Some(
+        return Lookup::Found(
             scripted
                 .judged
                 .into_iter()
@@ -91,17 +113,27 @@ pub async fn look_up(faults: &Faults, host: &str, port: u16) -> Option<Vec<Targe
                 .collect(),
         );
     }
-    let host = host.to_string();
-    let found = resolve_with(
+    let stall = faults.stall(host);
+    let name = host.to_string();
+    let looked = resolve_with(
+        asker.lane(),
+        asker.maker(),
         move || {
-            (host.as_str(), port)
+            if let Some(stall) = stall {
+                std::thread::sleep(stall);
+            }
+            (name.as_str(), port)
                 .to_socket_addrs()
                 .map(Iterator::collect::<Vec<_>>)
         },
-        LOOKUP_BOUND,
+        BOUND,
     )
-    .await?
-    .ok()?;
+    .await;
+    let found = match looked {
+        Looked::Done(Ok(found)) => found,
+        Looked::Done(Err(_)) | Looked::Unfinished => return Lookup::Unresolved,
+        Looked::NoSlot => return Lookup::NoSlot,
+    };
     let targets: Vec<Target> = found
         .into_iter()
         .map(|socket| Target {
@@ -109,20 +141,25 @@ pub async fn look_up(faults: &Faults, host: &str, port: u16) -> Option<Vec<Targe
             connected: socket.ip(),
         })
         .collect();
-    (!targets.is_empty()).then_some(targets)
+    if targets.is_empty() {
+        Lookup::Unresolved
+    } else {
+        Lookup::Found(targets)
+    }
 }
 
 /// Where `url` leads, judged once. Any answer that is not public refuses the whole name.
-pub async fn reach(faults: &Faults, url: &Url, private_allowed: bool) -> Reach {
+pub async fn reach(faults: &Faults, url: &Url, private_allowed: bool, asker: Asker<'_>) -> Reach {
     let Some(port) = url.port_or_known_default() else {
         return Reach::Unresolved;
     };
     let targets = match url.host() {
         Some(Host::Ipv4(ip)) => vec![literal(IpAddr::V4(ip))],
         Some(Host::Ipv6(ip)) => vec![literal(IpAddr::V6(ip))],
-        Some(Host::Domain(name)) => match look_up(faults, name, port).await {
-            Some(targets) => targets,
-            None => return Reach::Unresolved,
+        Some(Host::Domain(name)) => match look_up(faults, name, port, asker).await {
+            Lookup::Found(targets) => targets,
+            Lookup::Unresolved => return Reach::Unresolved,
+            Lookup::NoSlot => return Reach::NoSlot,
         },
         None => return Reach::Unresolved,
     };
@@ -302,45 +339,218 @@ mod tests {
 
     use super::*;
 
-    #[tokio::test]
-    async fn timed_out_lookups_keep_their_slots_until_the_threads_finish() {
-        let (release, held) = std::sync::mpsc::channel();
-        let held = Arc::new(std::sync::Mutex::new(held));
-        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
-        let mut jobs = Vec::new();
-        for _ in 0..4 {
-            let held = held.clone();
-            let started = started.clone();
-            jobs.push(tokio::spawn(resolve_with(
-                move || {
-                    started.send(()).unwrap();
-                    held.lock().unwrap().recv().unwrap();
-                },
-                Duration::from_millis(100),
-            )));
+    /// A lookup that holds its thread until `release` is sent.
+    fn held(
+        gate: &Arc<std::sync::Mutex<std::sync::mpsc::Receiver<()>>>,
+        started: &tokio::sync::mpsc::UnboundedSender<()>,
+    ) -> impl FnOnce() -> bool + Send + 'static {
+        let (gate, started) = (gate.clone(), started.clone());
+        move || {
+            started.send(()).unwrap();
+            gate.lock().unwrap().recv().is_ok()
         }
-        for _ in 0..4 {
+    }
+
+    const SHORT: Duration = Duration::from_millis(100);
+
+    #[tokio::test]
+    async fn one_makers_stalled_lookups_leave_another_maker_its_slots() {
+        let lane = Lane::new(4, Some(2), false);
+        let (release, gate) = std::sync::mpsc::channel();
+        let gate = Arc::new(std::sync::Mutex::new(gate));
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let lane = Arc::new(lane);
+        let mut stalled = Vec::new();
+        for _ in 0..2 {
+            let (lane, gate, started) = (lane.clone(), gate.clone(), started.clone());
+            stalled.push(tokio::spawn(async move {
+                resolve_with(&lane, Some("a"), held(&gate, &started), SHORT).await
+            }));
+        }
+        for _ in 0..2 {
             starts.recv().await.unwrap();
         }
-        for job in jobs {
-            assert!(job.await.unwrap().is_none());
+        let third = resolve_with(&lane, Some("a"), || true, SHORT).await;
+        assert!(
+            matches!(third, Looked::NoSlot),
+            "a maker at its share waits, then gets no slot"
+        );
+        let other = resolve_with(&lane, Some("b"), || true, SHORT).await;
+        assert!(matches!(other, Looked::Done(true)));
+        for job in stalled {
+            assert!(matches!(job.await.unwrap(), Looked::Unfinished));
         }
-        let extra = resolve_with(|| true, Duration::from_millis(100)).await;
-        for _ in 0..4 {
+        for _ in 0..2 {
             release.send(()).unwrap();
         }
-        assert_eq!(extra, None);
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while LOOKUPS.available_permits() != 4 {
+    }
+
+    #[tokio::test]
+    async fn makers_together_cannot_pass_the_lanes_total() {
+        let lane = Arc::new(Lane::new(2, Some(2), false));
+        let (release, gate) = std::sync::mpsc::channel();
+        let gate = Arc::new(std::sync::Mutex::new(gate));
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let mut stalled = Vec::new();
+        for maker in ["a", "b"] {
+            let (lane, gate, started) = (lane.clone(), gate.clone(), started.clone());
+            stalled.push(tokio::spawn(async move {
+                resolve_with(&lane, Some(maker), held(&gate, &started), SHORT).await
+            }));
+        }
+        for _ in 0..2 {
+            starts.recv().await.unwrap();
+        }
+        let third = resolve_with(&lane, Some("c"), || true, SHORT).await;
+        assert!(matches!(third, Looked::NoSlot));
+        for job in stalled {
+            job.await.unwrap();
+        }
+        for _ in 0..2 {
+            release.send(()).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn the_wait_for_a_slot_and_the_lookup_share_one_budget() {
+        let lane = Arc::new(Lane::new(1, Some(1), false));
+        let holder = {
+            let lane = lane.clone();
+            tokio::spawn(async move {
+                resolve_with(
+                    &lane,
+                    Some("a"),
+                    || std::thread::sleep(Duration::from_millis(200)),
+                    Duration::from_secs(5),
+                )
+                .await
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let started = tokio::time::Instant::now();
+        let waited_then_stalled = resolve_with(
+            &lane,
+            Some("a"),
+            || std::thread::sleep(Duration::from_secs(1)),
+            Duration::from_millis(300),
+        )
+        .await;
+        assert!(matches!(waited_then_stalled, Looked::Unfinished));
+        assert!(
+            started.elapsed() < Duration::from_millis(450),
+            "separate budgets would take about 500 ms"
+        );
+        holder.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_patient_lane_waits_for_its_pool_and_gives_the_lookup_its_whole_bound_from_the_slot()
+    {
+        let lane = Arc::new(Lane::new(1, Some(4), true));
+        let holder = {
+            let lane = lane.clone();
+            tokio::spawn(async move {
+                resolve_with(
+                    &lane,
+                    Some("x"),
+                    || std::thread::sleep(Duration::from_millis(300)),
+                    Duration::from_secs(5),
+                )
+                .await
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let waited_then_looked = resolve_with(
+            &lane,
+            Some("y"),
+            || std::thread::sleep(Duration::from_millis(200)),
+            Duration::from_millis(250),
+        )
+        .await;
+        assert!(
+            matches!(waited_then_looked, Looked::Done(())),
+            "the wait took longer than the bound and the lookup still had all of it"
+        );
+        holder.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_patient_lane_gives_no_slot_only_when_the_makers_own_share_is_full() {
+        let lane = Arc::new(Lane::new(8, Some(1), true));
+        let (release, gate) = std::sync::mpsc::channel();
+        let gate = Arc::new(std::sync::Mutex::new(gate));
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let stalled = {
+            let (lane, gate, started) = (lane.clone(), gate.clone(), started.clone());
+            tokio::spawn(async move {
+                resolve_with(&lane, Some("a"), held(&gate, &started), SHORT).await
+            })
+        };
+        starts.recv().await.unwrap();
+        let second = resolve_with(&lane, Some("a"), || true, SHORT).await;
+        assert!(matches!(second, Looked::NoSlot));
+        let other = resolve_with(&lane, Some("b"), || true, SHORT).await;
+        assert!(matches!(other, Looked::Done(true)));
+        assert!(matches!(stalled.await.unwrap(), Looked::Unfinished));
+        release.send(()).unwrap();
+    }
+
+    async fn free_again(lane: &Lane, total: usize) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while lane.free() != total {
                 tokio::task::yield_now().await;
             }
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_slot_is_released_when_a_lookup_ends_in_any_way() {
+        let lane = Arc::new(Lane::new(2, Some(2), false));
+        let done = resolve_with(&lane, Some("a"), || Err::<(), _>("no such host"), SHORT).await;
+        assert!(matches!(done, Looked::Done(Err(_))));
+        free_again(&lane, 2).await;
+
+        let panicked = resolve_with(&lane, Some("a"), || -> () { panic!("resolver") }, SHORT).await;
+        assert!(matches!(panicked, Looked::Unfinished));
+        free_again(&lane, 2).await;
+
+        let timed_out = resolve_with(
+            &lane,
+            Some("a"),
+            || std::thread::sleep(Duration::from_millis(300)),
+            SHORT,
+        )
+        .await;
+        assert!(matches!(timed_out, Looked::Unfinished));
         assert_eq!(
-            resolve_with(|| true, Duration::from_secs(1)).await,
-            Some(true)
+            lane.free(),
+            1,
+            "held while the thread is inside the resolver"
         );
+        free_again(&lane, 2).await;
+
+        let (release, gate) = std::sync::mpsc::channel();
+        let gate = Arc::new(std::sync::Mutex::new(gate));
+        let (started, mut starts) = tokio::sync::mpsc::unbounded_channel();
+        let cancelled = {
+            let (lane, gate, started) = (lane.clone(), gate.clone(), started.clone());
+            tokio::spawn(async move {
+                resolve_with(
+                    &lane,
+                    Some("a"),
+                    held(&gate, &started),
+                    Duration::from_secs(5),
+                )
+                .await
+            })
+        };
+        starts.recv().await.unwrap();
+        cancelled.abort();
+        let _ = cancelled.await;
+        release.send(()).unwrap();
+        free_again(&lane, 2).await;
     }
 
     /// A receiver on loopback that reads one request and then does what `answer` says.
@@ -501,7 +711,7 @@ mod tests {
         })
         .await;
         let url = Url::parse(&format!("http://rebind.test:{}/", local.port().unwrap())).unwrap();
-        let Reach::Targets(targets) = reach(&faults, &url, false).await else {
+        let Reach::Targets(targets) = reach(&faults, &url, false, Asker::McpFetch).await else {
             panic!("the first answer is public");
         };
         let outcome = send(&url, &targets, Duration::from_secs(5)).await;
@@ -514,7 +724,10 @@ mod tests {
                 .contains("host: rebind.test:")
         );
         assert_eq!(faults.list()[0].fired, 1);
-        assert_eq!(reach(&faults, &url, false).await, Reach::NotPublic);
+        assert_eq!(
+            reach(&faults, &url, false, Asker::McpFetch).await,
+            Reach::NotPublic
+        );
     }
 
     #[tokio::test]
@@ -524,11 +737,17 @@ mod tests {
             .set("resolve:mixed.test", Some("93.184.216.34,10.0.0.1"))
             .unwrap();
         let url = Url::parse("https://mixed.test/").unwrap();
-        assert_eq!(reach(&faults, &url, false).await, Reach::NotPublic);
+        assert_eq!(
+            reach(&faults, &url, false, Asker::McpFetch).await,
+            Reach::NotPublic
+        );
         assert!(
-            matches!(reach(&faults, &url, true).await, Reach::Targets(found) if found.len() == 2)
+            matches!(reach(&faults, &url, true, Asker::McpFetch).await, Reach::Targets(found) if found.len() == 2)
         );
         let literal = Url::parse("http://[::ffff:127.0.0.1]:9/").unwrap();
-        assert_eq!(reach(&faults, &literal, false).await, Reach::NotPublic);
+        assert_eq!(
+            reach(&faults, &literal, false, Asker::McpFetch).await,
+            Reach::NotPublic
+        );
     }
 }

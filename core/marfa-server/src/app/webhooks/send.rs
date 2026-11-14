@@ -18,7 +18,7 @@ use crate::app::catalog::{self, Catalog};
 use crate::app::connectors::{ReadOnly, read_only};
 use crate::app::events::{Head, Judge, Judged};
 use crate::app::faults::HOLD_WEBHOOK_RESPONSE;
-use crate::app::outbound::{self, Outcome, Outgoing, Reach};
+use crate::app::outbound::{self, Asker, Outcome, Outgoing, Reach};
 use crate::app::refusal::{Refusal, Result};
 use crate::db::Write;
 
@@ -214,8 +214,16 @@ async fn write(
     app.db.write(Write::own(), job).await
 }
 
-/// Answers once the delivery's outcome is recorded, or once there is nothing to send.
-pub async fn attempt(app: Arc<App>, seq: i64) -> Result<()> {
+/// How an attempt ended.
+pub enum Ended {
+    /// What the attempt met is recorded, or there was nothing to send.
+    Settled,
+    /// No lookup slot came free, so the delivery is left due, unrecorded and with no attempt spent.
+    Deferred,
+}
+
+/// `spent` means the deferral limit passed, so an unavailable lookup slot counts as an attempt.
+pub async fn attempt(app: Arc<App>, seq: i64, maker: String, spent: bool) -> Result<Ended> {
     let at = app.clock.stamp();
     let cache = app.catalog_handle();
     let marked = app.read_only_handle();
@@ -228,14 +236,17 @@ pub async fn attempt(app: Arc<App>, seq: i64) -> Result<()> {
         })
         .await?;
     let ready = match ready {
-        Prepared::Gone => return Ok(()),
+        Prepared::Gone => return Ok(Ended::Settled),
         Prepared::Cancel(reason) => {
             let at = app.clock.stamp();
-            return write(&app, move |tx| store::cancel(tx, seq, reason, &at)).await;
+            write(&app, move |tx| store::cancel(tx, seq, reason, &at)).await?;
+            return Ok(Ended::Settled);
         }
         Prepared::Send(ready) => ready,
     };
-    let attempted = send(&app, &ready).await?;
+    let Some(attempted) = send(&app, &ready, &maker, spent).await? else {
+        return Ok(Ended::Deferred);
+    };
     app.faults.hold(HOLD_WEBHOOK_RESPONSE, None).await;
     let now_ms = app.clock.now_ms();
     let settled = settle(&attempted, ready.cycle_attempt, now_ms);
@@ -253,18 +264,23 @@ pub async fn attempt(app: Arc<App>, seq: i64) -> Result<()> {
             &at,
         )
     })
-    .await
+    .await?;
+    Ok(Ended::Settled)
 }
 
-async fn send(app: &App, ready: &Ready) -> Result<Attempted> {
+/// `None` when no lookup slot came free for the maker and the delivery may still wait.
+async fn send(app: &App, ready: &Ready, maker: &str, spent: bool) -> Result<Option<Attempted>> {
     let Ok(url) = Url::parse(&ready.url) else {
-        return Ok(Attempted::Sent(Outcome::Unreachable));
+        return Ok(Some(Attempted::Sent(Outcome::Unreachable)));
     };
     let private_allowed = app.settings.start.webhook_private_addresses;
-    let targets = match outbound::reach(&app.faults, &url, private_allowed).await {
+    let reached = outbound::reach(&app.faults, &url, private_allowed, Asker::Delivery(maker));
+    let targets = match reached.await {
         Reach::Targets(targets) => targets,
-        Reach::Unresolved => return Ok(Attempted::Sent(Outcome::Unreachable)),
-        Reach::NotPublic => return Ok(Attempted::NotPublic),
+        Reach::Unresolved => return Ok(Some(Attempted::Sent(Outcome::Unreachable))),
+        Reach::NoSlot if spent => return Ok(Some(Attempted::Sent(Outcome::Unreachable))),
+        Reach::NoSlot => return Ok(None),
+        Reach::NotPublic => return Ok(Some(Attempted::NotPublic)),
     };
     let now_ms = app.clock.now_ms();
     let mut body = ready.body.clone();
@@ -282,9 +298,9 @@ async fn send(app: &App, ready: &Ready) -> Result<Attempted> {
         headers: &headers,
         body: String::from_utf8_lossy(&printed).into_owned(),
     };
-    Ok(Attempted::Sent(
+    Ok(Some(Attempted::Sent(
         outbound::post(&url, &targets, outgoing, ATTEMPT_BOUND).await,
-    ))
+    )))
 }
 
 #[cfg(test)]
