@@ -382,7 +382,8 @@ async function confirmedSessionId(cookie: string): Promise<string> {
 describe("a refused confirmation in the audit log", () => {
   it("records a refused confirmation in the audit log as a refused password sign-in, with its reason", async () => {
     const stale = await signIn();
-    await server.advanceClock(6 * MINUTE);
+    // Past the recent sign-in, and past any lockout an earlier case recorded.
+    await server.advanceClock(15 * MINUTE);
     const failed = "auth.sign_in.failed";
     const before = (await audited(failed)).length;
     const sent = "a wrong confirmation password";
@@ -414,6 +415,13 @@ describe("a refused confirmation in the audit log", () => {
       method: "password",
       reason: "too_many_attempts",
     });
+    const again = await confirm(
+      { password: TEST_OWNER.password },
+      stale,
+      address,
+    );
+    expect(again.status).toBe(429);
+    expect(await audited(failed)).toHaveLength(before + 12);
 
     const recorded = held.slice(0, 12);
     expect(JSON.stringify(recorded)).not.toContain(sent);
@@ -423,6 +431,29 @@ describe("a refused confirmation in the audit log", () => {
     for (const entry of recorded) {
       expect(entry.actor).toMatchObject({ kind: "browser", id: session });
     }
+  });
+
+  it("records the next refused confirmation when the record of the one before could not be written", async () => {
+    const stale = await signIn();
+    // A new quarter hour, past the case before's record and its windows.
+    await server.advanceClock(15 * MINUTE);
+    const failed = "auth.sign_in.failed";
+    const address = nextAddress();
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const spent = await confirm({ password: "wrong" }, stale, address);
+      expect(spent.status).toBe(401);
+    }
+    const before = (await audited(failed)).length;
+    await server.setFault("fail:lock=1");
+    const right = { password: TEST_OWNER.password };
+    const unrecorded = await confirm(right, stale, address);
+    expect(unrecorded.status).toBe(503);
+    expect(await audited(failed)).toHaveLength(before);
+    const locked = await confirm(right, stale, address);
+    expect(locked.status).toBe(429);
+    const held = await audited(failed);
+    expect(held).toHaveLength(before + 1);
+    expect(held[0]?.details).toMatchObject({ reason: "too_many_attempts" });
   });
 
   it("records a refused passkey confirmation in the audit log as a refused passkey sign-in", async () => {

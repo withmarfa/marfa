@@ -16,6 +16,7 @@ use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::audit::{self, Entry};
 use crate::app::auth::Visit;
+use crate::app::auth::allowance::{self, DEVICE_CODE_ISSUED};
 use crate::app::auth::limits::{
     admit, device_code_lanes, device_lookup_lanes, device_owner_lanes, hold_to,
 };
@@ -88,23 +89,29 @@ pub async fn request(app: &Arc<App>, form: &Form, visit: &Visit) -> Result<Answe
         last_polled_at: None,
         expires_at: now.plus_ms(DEVICE_CODE_SECONDS * MS_PER_SECOND)?,
     };
-    let at = now.text();
+    let clock = app.clock.clone();
     let ip = visit.client_ip();
     app.db
         .write(Write::caller(CODE_WRITE), move |tx| {
             store::insert_device_code(tx, &row)?;
-            audit::record_from(
-                tx,
-                &at,
-                None,
-                ip.as_deref(),
-                Entry {
-                    action: CODE_WRITE,
-                    resource_type: "oauth_client",
-                    resource_id: Some(&row.client_id),
-                    details: Some(json!({ "client_id": row.client_id, "source": "device" })),
-                },
-            )
+            let at = clock.instant();
+            allowance::record_or_count(tx, DEVICE_CODE_ISSUED, at, || {
+                audit::record_from(
+                    tx,
+                    &at.text(),
+                    None,
+                    ip.as_deref(),
+                    Entry {
+                        action: DEVICE_CODE_ISSUED.action(),
+                        resource_type: "oauth_client",
+                        resource_id: Some(&row.client_id),
+                        details: Some(json!({
+                            "client_id": row.client_id,
+                            "source": DEVICE_CODE_ISSUED.source(),
+                        })),
+                    },
+                )
+            })
         })
         .await?;
     let origin = app.addresses().sign_in().origin().to_string();

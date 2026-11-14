@@ -3473,9 +3473,77 @@ When `DELETE /owner/sign-ins/{id}` answers `200`, the server MUST already hold t
 
 ### `keys-and-oauth/audit-failed-sign-in`
 
-When the server refuses a password sign-in, the server MUST already hold the audit record of the failure, readable at `GET /audit`.
+When the server refuses a password sign-in because the email or the password is wrong, the server MUST already hold the audit record of the failure, readable at `GET /audit`.
 
 **Tests:** `compliance/credential-audit.test.ts › is in the audit log when the refusal of a failed sign-in answers`.
+
+### `keys-and-oauth/audit-limited-sign-in`
+
+When a password sign-in limit or the queue `keys-and-oauth/sign-in-decoy-queue` names refuses a password sign-in, and the server is not writing the record of another such refusal, has not finished a write of the record of one in the fifteen minutes before that committed or whose outcome it could not tell, and has not had such a write fail in the minute before, the server MUST already hold an `auth.sign_in.failed` audit record of the refusal with `details.reason` `too_many_attempts`, readable at `GET /audit`.
+
+**Reason:** The owner sees in the audit log that the sign-in limits are refusing attempts.
+
+**Tests:** `compliance/sign-in-limits.test.ts › records the first sign-in a filled limit refuses in fifteen minutes, and no other, from any number of addresses`.
+
+### `keys-and-oauth/audit-limited-sign-in-once`
+
+While fewer than fifteen minutes have passed since the server, in its current run, finished a write of the record of a password sign-in that a password sign-in limit or the queue `keys-and-oauth/sign-in-decoy-queue` names refused, and that write committed or its outcome could not be told, the server MUST NOT write an audit record of another such refusal.
+
+**Reason:** A refusal by a limit judges no password, and anyone can send one from as many addresses as they hold, so the audit log would otherwise grow with every one. A wrong password is still recorded each time, by `keys-and-oauth/audit-failed-sign-in`, and the sign-in limits bound how many arrive. The server writes the record of one such refusal at a time, so two cannot both commit. The fifteen minutes start once the write has answered, so they never start before its commit. A write whose outcome could not be told counts as written, so a record that may exist is never written twice.
+
+**Tests:** `compliance/sign-in-limits.test.ts › records the first sign-in a filled limit refuses in fifteen minutes, and no other, from any number of addresses`, `› treats the record of a refused sign-in whose write may have committed as written, and writes none for fifteen minutes after it`.
+
+### `keys-and-oauth/audit-limited-retried`
+
+If the server's write of the audit record of a refusal that `keys-and-oauth/audit-limited-sign-in`, `authentication/confirm-locked-audit` or `authentication/password-change-locked-audit` requires fails without committing, and its write of the record before at that door did not fail, then the server MUST write the record of the next such refusal at that door.
+
+**Reason:** A write that failed without committing records nothing, so it must not keep the next refusal out of the record. After a second failure in a row the server waits before it tries again, counted from the failure and doubling up to a minute, so a store that keeps failing is not asked to write each refusal.
+
+**Tests:** `compliance/sign-in-limits.test.ts › records the next refused sign-in when the record of the one before could not be written`, `compliance/confirm-sign-in.test.ts › records the next refused confirmation when the record of the one before could not be written`, `compliance/owner-pages.test.ts › records the next refused change when the record of the one before could not be written`.
+
+### `keys-and-oauth/audit-limited-unrecorded`
+
+When the server writes an audit record that `keys-and-oauth/audit-limited-sign-in`, `authentication/confirm-locked-audit` or `authentication/password-change-locked-audit` requires, after refusals at that door that it left out, or whose record's write failed without committing, since its previous such record there in its current run, or since it started, the server MUST give the record a `details.unrecorded_before` that holds their number.
+
+**Reason:** The owner sees how many refusals the bound kept out of the audit log, including one whose own record failed. A refusal whose record's write could not be told counts as recorded, and is not in the number. A refusal left out writes nothing, so its count waits in memory for the next record and is lost when the server stops.
+
+**Tests:** `compliance/sign-in-limits.test.ts › records the next refused sign-in when the record of the one before could not be written`, `› treats the record of a refused sign-in whose write may have committed as written, and writes none for fifteen minutes after it`.
+
+### `keys-and-oauth/audit-register`
+
+When `POST /auth/oauth2/register` answers `201`, and the audit log held fewer than ten `auth.client.created` records of registrations written in the fifteen minutes before the registration was stored, the server MUST already hold an `auth.client.created` audit record of the registration with `details.source` `registration`, readable at `GET /audit`.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › registers every client from every address, records ten in fifteen minutes, and counts the rest on the newest record`, `› measures the fifteen minutes from when a registration's record is written`.
+
+### `keys-and-oauth/audit-register-bound`
+
+While the audit log holds ten `auth.client.created` records of registrations written in the fifteen minutes before, the server MUST NOT write an `auth.client.created` audit record of another registration.
+
+**Reason:** Registration takes no credential, and anyone can send one from as many addresses as they hold, so the audit log, which keeps a record for `audit_retention_days`, would otherwise grow with every one. The server decides in the write that stores the registration, from the records already committed, so no more than ten are written in any fifteen minutes, however the requests end. The client itself is still stored, until `keys-and-oauth/register-idle-removed` removes it.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › registers every client from every address, records ten in fifteen minutes, and counts the rest on the newest record`, `› measures the fifteen minutes from when a registration's record is written`, `› writes no more than ten registration records when the callers leave before their writes`.
+
+### `keys-and-oauth/audit-device-code`
+
+When `POST /auth/device/code` answers `200`, and the audit log held fewer than ten `auth.device_code.issued` records written in the fifteen minutes before the code was stored, the server MUST already hold an `auth.device_code.issued` audit record of the code, readable at `GET /audit`.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › issues every device code from every address, records ten in fifteen minutes, and counts the rest on the newest record`.
+
+### `keys-and-oauth/audit-device-code-bound`
+
+While the audit log holds ten `auth.device_code.issued` records written in the fifteen minutes before, the server MUST NOT write an `auth.device_code.issued` audit record of another device code.
+
+**Reason:** A device code request takes no credential, and anyone can send one from as many addresses as they hold, so the audit log would otherwise grow with every one. The code itself is still stored, until `keys-and-oauth/device-code-removed` removes it.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › issues every device code from every address, records ten in fifteen minutes, and counts the rest on the newest record`.
+
+### `keys-and-oauth/audit-stored-unrecorded`
+
+When the server stores a registration or a device code without the record `keys-and-oauth/audit-register` or `keys-and-oauth/audit-device-code` would require, the server MUST, in the same write, add one to `details.unrecorded_after` of the newest record of its kind.
+
+**Reason:** The owner sees, on the newest record, how many more the bound kept out of the audit log since it. The count is written with the client or the code, so it counts only what was stored.
+
+**Tests:** `compliance/sign-in-door-limits.test.ts › registers every client from every address, records ten in fifteen minutes, and counts the rest on the newest record`, `› issues every device code from every address, records ten in fifteen minutes, and counts the rest on the newest record`, `› writes no more than ten registration records when the callers leave before their writes`.
 
 ### `keys-and-oauth/audit-refresh-replay`
 

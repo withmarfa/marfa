@@ -96,6 +96,35 @@ pub fn record_from(
     Ok(())
 }
 
+/// Uses the same time and ID ordering as the audit listing.
+pub fn newest_after(
+    tx: &Transaction<'_>,
+    action: &str,
+    source: &str,
+    after: &str,
+    limit: usize,
+) -> Result<Vec<String>> {
+    let mut found = tx.prepare_cached(
+        "SELECT id FROM audit_log WHERE action = ?1 AND created_at > ?2 \
+         AND json_extract(details, '$.source') = ?3 \
+         ORDER BY created_at DESC, id DESC LIMIT ?4",
+    )?;
+    let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+    Ok(found
+        .query_map(params![action, after, source, limit], |row| row.get(0))?
+        .collect::<rusqlite::Result<_>>()?)
+}
+
+/// Adds one to the record's `details.unrecorded_after`.
+pub fn count_unrecorded_after(tx: &Transaction<'_>, id: &str) -> Result<()> {
+    tx.execute(
+        "UPDATE audit_log SET details = json_set(details, '$.unrecorded_after', \
+         COALESCE(json_extract(details, '$.unrecorded_after'), 0) + 1) WHERE id = ?1",
+        params![id],
+    )?;
+    Ok(())
+}
+
 #[derive(Debug, Default)]
 pub struct Filter {
     action: Option<String>,
