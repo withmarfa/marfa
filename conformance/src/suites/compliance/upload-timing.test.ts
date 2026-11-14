@@ -41,7 +41,12 @@ const HEADERS = { "content-type": "application/octet-stream" };
 let server: FreshServer;
 let management: MarfaClient;
 let working: MarfaClient;
-/** The two long uploads begin together, so the file waits 66 seconds once. */
+/**
+ * The two long uploads run together, so the file waits 66 seconds once. The
+ * blob starts a part later and ends only after the restore has answered: a
+ * write that lands while a restore writes is refused
+ * (`search-and-filters/restore-writers-refused`).
+ */
 let longRestore: Promise<Long>;
 let longBlob: Promise<Long>;
 const longRestoreId = uuidv7();
@@ -58,7 +63,9 @@ beforeAll(async () => {
     { "content-type": "application/x-tar" },
     noteArchive(longRestoreId, "restored after a long upload"),
   );
-  longBlob = sendSlowly("/blobs", HEADERS, longBlobBytes);
+  longBlob = pause(GAP_MS).then(() =>
+    sendSlowly("/blobs", HEADERS, longBlobBytes, longRestore),
+  );
   // A fixture that fails before it awaits them must not leave them unhandled.
   longRestore.catch(() => undefined);
   longBlob.catch(() => undefined);
@@ -98,13 +105,14 @@ interface Long {
 }
 
 /**
- * Sends `body` to `path` in parts, a part every `GAP_MS`, and says how long it
- * took and what the server answered.
+ * Sends `body` to `path` in parts, a part every `GAP_MS`, ends it once `after`
+ * settles, and says how long it took and what the server answered.
  */
 async function sendSlowly(
   path: string,
   headers: Record<string, string>,
   body: Uint8Array,
+  after?: Promise<unknown>,
 ): Promise<Long> {
   const upload = slowPost({ socketPath: server.controlSocket }, path, headers);
   const started = Date.now();
@@ -112,6 +120,7 @@ async function sendSlowly(
     await upload.write(part);
     await pause(GAP_MS);
   }
+  await after?.catch(() => undefined);
   upload.end();
   const answered = await upload.answered;
   return { started, finished: Date.now(), ...answered };
