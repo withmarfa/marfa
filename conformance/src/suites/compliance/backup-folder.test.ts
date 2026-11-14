@@ -23,6 +23,7 @@ import {
 import {
   afterFirstScheduledBackup,
   backupConcerns,
+  backupName,
   attentionOf,
   healthDetail,
   instanceIdOf,
@@ -198,7 +199,7 @@ describe("backups to a folder", () => {
     expect(run.status, JSON.stringify(run.error)).toBe(200);
     expect(run.data.outcome).toBe("put");
     name = run.data.backup.name;
-    expect(name).toBe(`${run.data.backup.created_at}.tar`);
+    expect(name).toBe(backupName(new Date(run.data.backup.created_at)));
     expect(readdirSync(join(folder, "backups", originId)).sort()).toEqual(
       [...scheduled, name].sort(),
     );

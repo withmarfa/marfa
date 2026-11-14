@@ -556,10 +556,12 @@ async fn a_file_deleted_after_a_backup_named_it_stays_in_the_folder_until_thinni
     assert!(on_disk.is_file());
 
     instance.app.clock.pause(true);
-    instance.app.clock.advance(40 * DAY_MS).unwrap();
-    let (status, body) = instance.back_up().await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["removed"], 1, "{body}");
+    for day in 1..=32 {
+        instance.app.clock.advance(DAY_MS).unwrap();
+        let (status, body) = instance.back_up().await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["removed"], u64::from(day == 32), "{body}");
+    }
     for _ in 0..2 {
         instance.run("blob-orphans").await;
     }

@@ -97,9 +97,10 @@ pub struct Report {
 }
 
 /// Fields of the `backups` object given only to a caller who may read the reasons.
-const BACKUP_DETAIL: [&str; 8] = [
+const BACKUP_DETAIL: [&str; 9] = [
     "destination",
     "copies_waiting",
+    "last_backup_files_waiting",
     "store_error",
     "last_backup",
     "last_backup_at",
