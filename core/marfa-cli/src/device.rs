@@ -10,7 +10,7 @@ use marfa_core::{
 
 use crate::error::{CliError, Exit};
 use crate::interrupt::{stop_after, stop_on_interrupt};
-use crate::output;
+use crate::output::{self, printable};
 use crate::remote::{Named, Session, renewing};
 use crate::values::{
     ItemState, SliceTier, SortDirection, Tier, edges, item_properties, parse_sort_field, properties,
@@ -1173,7 +1173,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 let whole = if report.edge_types.is_empty() {
                     String::new()
                 } else {
-                    format!(", {} held whole", report.edge_types.join(","))
+                    format!(", {} held whole", printable(&report.edge_types.join(",")))
                 };
                 let pages = if report.resumed {
                     format!("{} page(s), {} in all", report.pages, report.pages_total)
@@ -1184,9 +1184,9 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     "hydrated {} item(s) and {} edge(s) of {} at {}{whole} in {pages}; cursor {}",
                     report.items,
                     report.edges,
-                    report.types.join(","),
+                    printable(&report.types.join(",")),
                     report.tier,
-                    report.cursor
+                    printable(&report.cursor)
                 );
                 if report.resumed {
                     line.push_str("\nresumed the interrupted hydration from the page it had reached");
@@ -1206,25 +1206,29 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 if !report.registered_types.is_empty() {
                     line.push_str(&format!(
                         "\nregistered {} on the server",
-                        report.registered_types.join(",")
+                        printable(&report.registered_types.join(","))
                     ));
                 }
                 for held in &report.unregistered_types {
                     line.push_str(&format!(
                         "\nnot registered: {} ({}): {}",
-                        held.id, held.code, held.message
+                        printable(&held.id),
+                        printable(&held.code),
+                        printable(&held.message)
                     ));
                 }
                 if !report.replaced_types.is_empty() {
                     line.push_str(&format!(
                         "\nreplaced {} on the server",
-                        report.replaced_types.join(",")
+                        printable(&report.replaced_types.join(","))
                     ));
                 }
                 for held in &report.unreplaced_types {
                     line.push_str(&format!(
                         "\nnot replaced: {} ({}): {}",
-                        held.id, held.code, held.message
+                        printable(&held.id),
+                        printable(&held.code),
+                        printable(&held.message)
                     ));
                 }
                 line
@@ -1289,15 +1293,16 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
             output::line_of(&report, json, || {
                 let failed = match (&report.last_failure, report.failed_opens) {
                     (Some(reason), count) => format!(
-                        "; {count} stream(s) could not be opened and {} table read(s) failed, last: {reason}",
-                        report.tables_failed
+                        "; {count} stream(s) could not be opened and {} table read(s) failed, last: {}",
+                        report.tables_failed,
+                        printable(reason)
                     ),
                     (None, _) => String::new(),
                 };
                 let cursor = if report.cursor.is_empty() {
                     "no cursor, as it stopped before reading one".to_string()
                 } else {
-                    format!("cursor {}", report.cursor)
+                    format!("cursor {}", printable(&report.cursor))
                 };
                 format!(
                     "applied {} event(s), skipped {}{}; {cursor}; {} reconnect(s){failed}",
@@ -1371,7 +1376,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     report.applied,
                     report.skipped,
                     read_only_said(report.read_only_held),
-                    report.cursor,
+                    printable(&report.cursor),
                     if report.catalog_changed {
                         "; the catalog changed"
                     } else {
@@ -1612,7 +1617,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         || {
                             format!(
                                 "{} of {} bytes{}",
-                                thumbnail.mime_type,
+                                printable(&thumbnail.mime_type),
                                 thumbnail.bytes.len(),
                                 out.as_ref()
                                     .map(|path| format!(", written to {}", path.display()))
@@ -1719,7 +1724,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                 let stop = crate::interrupt::stop();
                 let held = core.hold_table_until(&type_id, &table, stop)?;
                 output::report(&held, json, || {
-                    let what = format!("{type_id} {table}");
+                    let what = printable(&format!("{type_id} {table}"));
                     match &held.fill {
                         Some(fill) => format!("holding {what}; {}", fill_line(fill)),
                         None => format!("holding {what}; it fills with the stream"),
@@ -1743,7 +1748,13 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     held.tables
                         .iter()
                         .map(|table| {
-                            format!("{} {}: {}, {} row(s)", table.item, table.table, table.state, table.rows)
+                            format!(
+                                "{} {}: {}, {} row(s)",
+                                printable(&table.item),
+                                printable(&table.table),
+                                printable(&table.state.to_string()),
+                                table.rows
+                            )
                         })
                         .collect::<Vec<_>>()
                         .join("\n")
@@ -1831,7 +1842,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         &serde_json::json!({"completeness": rows.completeness, "groups": rows.rows}),
                         json,
                         || rows.rows.iter().map(|group| {
-                            format!("{}: {} item(s)", group.key, group.count)
+                            format!("{}: {} item(s)", printable(&group.key.to_string()), group.count)
                         }).collect::<Vec<_>>().join("\n"),
                     )
                 }
@@ -2049,13 +2060,13 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     if names.is_empty() {
                         "(none)".to_string()
                     } else {
-                        names.join(",")
+                        printable(&names.join(","))
                     }
                 };
                 format!(
                     "server {}\ninstance {}\nslice {} at {}\nedge types held whole {}\npinned {}\ncursor {}\nhydration {}\nsynced at {}\ncatalog version {}\n{} item(s), {} edge(s){}",
-                    status.server_origin.as_deref().unwrap_or("(none)"),
-                    status.instance_id.as_deref().unwrap_or("(none)"),
+                    printable(status.server_origin.as_deref().unwrap_or("(none)")),
+                    printable(status.instance_id.as_deref().unwrap_or("(none)")),
                     listed(&status.slice_types),
                     status
                         .slice_tier
@@ -2063,7 +2074,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                         .unwrap_or_else(|| "(none)".into()),
                     listed(&status.slice_edge_types),
                     listed(&status.pinned),
-                    status.event_cursor.as_deref().unwrap_or("(none)"),
+                    printable(status.event_cursor.as_deref().unwrap_or("(none)")),
                     status.hydration.as_str(),
                     status.synced_at.as_deref().unwrap_or("(never)"),
                     status
@@ -2128,7 +2139,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                     output::report(&declared, json, || {
                         declared
                             .iter()
-                            .filter_map(|held| held["id"].as_str())
+                            .filter_map(|held| held["id"].as_str().map(printable))
                             .collect::<Vec<_>>()
                             .join("\n")
                     })
@@ -2150,7 +2161,7 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                             ("link", &held.link_field),
                         ] {
                             if let Some(value) = value {
-                                lines.push(format!("  {name} field {value}"));
+                                lines.push(format!("  {name} field {}", printable(value)));
                             }
                         }
                         if !held.name_from_body {
@@ -2199,8 +2210,8 @@ pub fn run(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError
                             edge_type_line(&held),
                             format!(
                                 "  from {} to {}, {} on delete",
-                                held.source_type_constraints.join(","),
-                                held.target_type_constraints.join(","),
+                                printable(&held.source_type_constraints.join(",")),
+                                printable(&held.target_type_constraints.join(",")),
                                 held.cascade_on_delete
                             ),
                         ];
@@ -2226,13 +2237,15 @@ fn read_only_said(held: u64) -> String {
 fn view_line(row: &marfa_core::ViewRow) -> String {
     format!(
         "{} {} at version {}: {}",
-        row.id,
+        printable(&row.id),
         row.state.as_str(),
         row.version,
-        row.settings
-            .get("title")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("untitled")
+        printable(
+            row.settings
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("untitled")
+        )
     )
 }
 
@@ -2240,10 +2253,10 @@ fn folder_row(row: &marfa_core::FolderRow, json: bool) -> Result<(), CliError> {
     output::report(row, json, || {
         format!(
             "{} {} at version {}: {}",
-            row.id,
+            printable(&row.id),
             row.state.as_str(),
             row.version,
-            row.settings.title.as_deref().unwrap_or("untitled")
+            printable(row.settings.title.as_deref().unwrap_or("untitled"))
         )
     })
 }
@@ -2281,14 +2294,15 @@ fn file_cache_text(cache: &marfa_core::FileCache) -> String {
         (Some(held), _) => format!("{held} byte(s)"),
         (None, reason) => format!(
             "unknown, the cache could not be read: {}",
-            reason.as_deref().unwrap_or("no reason given")
+            printable(reason.as_deref().unwrap_or("no reason given"))
         ),
     };
     let mut text =
         format!("file budget {setting}, in force {budget}{unreadable}\nfiles held {held}");
     if let Some(failure) = &cache.backup_mark_failure {
         text.push_str(&format!(
-            "\nfetched files could not be kept out of backups: {failure}"
+            "\nfetched files could not be kept out of backups: {}",
+            printable(failure)
         ));
     }
     text.push('\n');
@@ -2344,11 +2358,14 @@ fn given<T>(values: Vec<T>) -> Option<Vec<T>> {
 fn type_line(held: &marfa_core::ItemType) -> String {
     format!(
         "{}  {}{}  {} field(s)",
-        held.id,
-        held.label.as_deref().unwrap_or("(no label)"),
+        printable(&held.id),
+        printable(held.label.as_deref().unwrap_or("(no label)")),
         held.parent
             .as_deref()
-            .map_or(String::new(), |parent| format!("  inherits {parent}")),
+            .map_or(String::new(), |parent| format!(
+                "  inherits {}",
+                printable(parent)
+            )),
         held.fields.len()
     ) + &match held.tables.len() {
         0 => String::new(),
@@ -2359,7 +2376,7 @@ fn type_line(held: &marfa_core::ItemType) -> String {
 fn table_lines(tables: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
     let mut lines = Vec::new();
     for (name, table) in tables {
-        lines.push(format!("  table {name}"));
+        lines.push(format!("  table {}", printable(name)));
         for (column, definition) in table
             .get("columns")
             .and_then(serde_json::Value::as_object)
@@ -2368,14 +2385,18 @@ fn table_lines(tables: &serde_json::Map<String, serde_json::Value>) -> Vec<Strin
         {
             let held = |key: &str| definition.get(key).and_then(serde_json::Value::as_str);
             lines.push(format!(
-                "    {column}  {}{}{}",
-                held("type").unwrap_or("unknown"),
+                "    {}  {}{}{}",
+                printable(column),
+                printable(held("type").unwrap_or("unknown")),
                 if definition.get("required") == Some(&serde_json::Value::Bool(true)) {
                     "  required"
                 } else {
                     ""
                 },
-                held("adds_up").map_or(String::new(), |way| format!("  adds up as {way}")),
+                held("adds_up").map_or(String::new(), |way| format!(
+                    "  adds up as {}",
+                    printable(way)
+                )),
             ));
         }
     }
@@ -2392,17 +2413,17 @@ fn field_line(field: &marfa_core::TypeField) -> String {
         .filter_map(|entry| {
             Some(format!(
                 "{}={}",
-                entry.get("value")?.as_str()?,
-                entry.get("group")?.as_str()?
+                printable(entry.get("value")?.as_str()?),
+                printable(entry.get("group")?.as_str()?)
             ))
         })
         .collect();
     format!(
         "  {}  {}{}  from {}{}",
-        field.name,
-        field.r#type,
+        printable(&field.name),
+        printable(&field.r#type),
         if field.required { "  required" } else { "" },
-        field.declared_by,
+        printable(&field.declared_by),
         if words.is_empty() {
             String::new()
         } else {
@@ -2414,13 +2435,16 @@ fn field_line(field: &marfa_core::TypeField) -> String {
 fn edge_type_line(held: &marfa_core::EdgeType) -> String {
     format!(
         "{}  {} / {}  {}{}  written at {}{}",
-        held.id,
-        held.label,
-        held.reverse_label,
+        printable(&held.id),
+        printable(&held.label),
+        printable(&held.reverse_label),
         held.cardinality,
         held.reverse_name
             .as_deref()
-            .map_or(String::new(), |name| format!("  reverse {name}")),
+            .map_or(String::new(), |name| format!(
+                "  reverse {}",
+                printable(name)
+            )),
         match held.written_at {
             marfa_core::WrittenAt::Source => "its source",
             marfa_core::WrittenAt::Target => "its target",
@@ -2437,7 +2461,7 @@ fn edge_list(edges: &[marfa_core::Edge], json: bool) -> Result<(), CliError> {
 }
 
 fn changed_lines(changes: &marfa_core::CopyChanges) -> String {
-    let mut lines = vec![format!("cursor {}", changes.cursor)];
+    let mut lines = vec![format!("cursor {}", printable(&changes.cursor))];
     if changes.everything {
         lines.push("everything: read the whole copy again".into());
     }
@@ -2447,7 +2471,7 @@ fn changed_lines(changes: &marfa_core::CopyChanges) -> String {
         ("edge", &changes.edges),
         ("removed edge", &changes.removed_edges),
     ] {
-        lines.extend(ids.iter().map(|id| format!("{label}  {id}")));
+        lines.extend(ids.iter().map(|id| format!("{label}  {}", printable(id))));
     }
     lines.join("\n")
 }
@@ -2459,7 +2483,11 @@ fn edge_one(edge: &marfa_core::Edge, json: bool) -> Result<(), CliError> {
 fn edge_line(edge: &marfa_core::Edge) -> String {
     format!(
         "{}  {} -> {}  {}  v{}",
-        edge.id, edge.source_id, edge.target_id, edge.edge_type, edge.version
+        printable(&edge.id),
+        printable(&edge.source_id),
+        printable(&edge.target_id),
+        printable(&edge.edge_type),
+        edge.version
     )
 }
 
@@ -2481,12 +2509,17 @@ fn change_line(change: &marfa_core::Change) -> String {
             .item_id
             .as_deref()
             .or(change.edge_id.as_deref())
-            .unwrap_or("-"),
-        change.cursor,
+            .map(printable)
+            .unwrap_or_else(|| "-".to_string()),
+        printable(&change.cursor),
         match &change.event {
-            marfa_core::ChangeEvent::ServerUnreachable(reason) => format!(": {reason}"),
+            marfa_core::ChangeEvent::ServerUnreachable(reason) => {
+                format!(": {}", printable(&reason.to_string()))
+            }
             marfa_core::ChangeEvent::QueueNotDrained(error)
-            | marfa_core::ChangeEvent::WatchFailed(error) => format!(": {error}"),
+            | marfa_core::ChangeEvent::WatchFailed(error) => {
+                format!(": {}", printable(&error.to_string()))
+            }
             marfa_core::ChangeEvent::QueueDrained(report) => format!(
                 ": {}{}{}",
                 crate::output::answered_and_held(report),
@@ -2499,7 +2532,7 @@ fn change_line(change: &marfa_core::Change) -> String {
                     .stopped
                     .as_deref()
                     .or(report.unavailable.as_deref())
-                    .map(|why| format!("; {why}"))
+                    .map(|why| format!("; {}", printable(why)))
                     .unwrap_or_default()
             ),
             marfa_core::ChangeEvent::Saved(version) => format!(": data version {version}"),
@@ -2636,11 +2669,39 @@ impl Store {
 
 fn fill_line(fill: &marfa_core::FillReport) -> String {
     let failed = match &fill.failure {
-        Some(reason) => format!("; {} table read(s) failed, last: {reason}", fill.failed),
+        Some(reason) => format!(
+            "; {} table read(s) failed, last: {}",
+            fill.failed,
+            printable(reason)
+        ),
         None => String::new(),
     };
     format!(
         "{} table(s) whole, {} read from the server, {} still to fill; {} page(s), {} row(s){failed}",
         fill.whole, fill.online, fill.unfilled, fill.pages, fill.rows
     )
+}
+
+#[cfg(test)]
+mod view_line_tests {
+    use super::view_line;
+
+    #[test]
+    fn a_stored_title_stays_on_its_own_line_and_uncoloured() {
+        let row = marfa_core::ViewRow {
+            id: "v1".into(),
+            version: 3,
+            state: marfa_core::ItemState::Active,
+            settings: serde_json::from_value(serde_json::json!({
+                "title": "one\n  forged  view\tcolumn\u{1b}[1;31m"
+            }))
+            .unwrap(),
+        };
+        let line = view_line(&row);
+        assert_eq!(
+            line,
+            r"v1 active at version 3: one\u{a}  forged  view\u{9}column\u{1b}[1;31m"
+        );
+        assert_eq!(line.lines().count(), 1);
+    }
 }

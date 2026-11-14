@@ -144,7 +144,7 @@ pub enum CliError {
         "no docs page at {path}: `marfa docs search` finds pages and `marfa docs topics` lists them"
     )]
     DocsPageNotFound { path: String },
-    #[error("no section {heading:?} in the docs page {path}; its headings are:\n{}", .headings.join("\n"))]
+    #[error("no section {heading:?} in the docs page {path}; its headings are: {}", .headings.join(", "))]
     DocsSectionNotFound {
         path: String,
         heading: String,

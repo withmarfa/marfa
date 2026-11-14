@@ -7,7 +7,10 @@ use serde_json::Value;
 
 use crate::error::CliError;
 
-/// Human output preserves newlines, tabs and `DRAWN`; JSON passes unchanged.
+/// What a person is given. Stored text is escaped by [`printable`] where it
+/// enters a line, so the newlines, tabs and `DRAWN` colors that remain are the
+/// CLI's own and pass; this sink shows any other control character as an
+/// escape. JSON passes unchanged.
 pub struct Terminal<W: Write> {
     to: W,
     text: bool,
@@ -227,8 +230,11 @@ pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
         out,
         "queued {} {} as {}",
         write.kind,
-        write.item_id.as_deref().unwrap_or("-"),
-        write.id
+        write
+            .item_id
+            .as_deref()
+            .map_or_else(|| "-".to_string(), printable),
+        printable(&write.id)
     )?;
     if !write.depends_on.is_empty() {
         writeln!(
@@ -240,7 +246,8 @@ pub fn queued_one(write: &QueuedWrite, json: bool) -> Result<(), CliError> {
     if let Some(ahead) = &write.follows {
         writeln!(
             out,
-            "after {ahead}, the write ahead of it to the same item or edge"
+            "after {}, the write ahead of it to the same item or edge",
+            printable(ahead)
         )?;
     }
     Ok(())
@@ -292,7 +299,7 @@ pub fn queued(
             .as_deref()
             .or(write.edge_id.as_deref())
             .or(write.blob.as_deref())
-            .unwrap_or("-");
+            .map_or_else(|| "-".to_string(), printable);
         let refusals = match write.refusals {
             0 => String::new(),
             n => format!("  {n}/{} refused", marfa_core::CEILING),
@@ -317,18 +324,19 @@ pub fn queued(
             .collect();
         let held = match pending.len() {
             0 => String::new(),
-            1 => format!("  waiting on {}", pending[0]),
+            1 => format!("  waiting on {}", printable(pending[0])),
             n => format!("  waiting on {n} writes"),
         };
         // A row held with nothing it depends on is held by this.
         let after = match &write.follows {
-            Some(ahead) => format!("  after {ahead}"),
+            Some(ahead) => format!("  after {}", printable(ahead)),
             None => String::new(),
         };
         let unlanded = match landing.get(&write.id) {
             Some(target) => format!(
-                "  its natural key names {target}, which no read has found; \
-                 discard it to refuse the writes waiting on it"
+                "  its natural key names {}, which no read has found; \
+                 discard it to refuse the writes waiting on it",
+                printable(target)
             ),
             None => String::new(),
         };
@@ -479,9 +487,11 @@ pub fn verdict_line(
             .verdict
             .map_or("unanswered", marfa_core::Verdict::as_str),
         verdict.kind,
-        subject
-            .or(verdict.item_id.as_deref())
-            .unwrap_or(verdict.id.as_str())
+        printable(
+            subject
+                .or(verdict.item_id.as_deref())
+                .unwrap_or(verdict.id.as_str())
+        )
     );
     if let Some(reason) = &verdict.reason {
         line.push_str(&format!(" ({})", printable(reason)));
@@ -490,10 +500,16 @@ pub fn verdict_line(
         line.push_str(&refused(refusal));
     }
     if let Some(sibling) = &verdict.conflicted_copy_id {
-        line.push_str(&format!(" conflicted copy {}", copy.unwrap_or(sibling)));
+        line.push_str(&format!(
+            " conflicted copy {}",
+            printable(copy.unwrap_or(sibling))
+        ));
     }
     if !verdict.merged_fields.is_empty() {
-        line.push_str(&format!(" merged {}", verdict.merged_fields.join(",")));
+        line.push_str(&format!(
+            " merged {}",
+            printable(&verdict.merged_fields.join(","))
+        ));
     }
     if verdict.replayed {
         line.push_str(" (answered from the record)");
@@ -619,8 +635,9 @@ pub fn unclaimed(drain: &DrainReport) -> Vec<String> {
         .iter()
         .map(|source| {
             format!(
-                "this credential's key does not claim the source {source}, so every create naming it is blocked; \
-                 they go on the first drain after the key claims it"
+                "this credential's key does not claim the source {}, so every create naming it is blocked; \
+                 they go on the first drain after the key claims it",
+                printable(source)
             )
         })
         .collect()
@@ -1985,6 +2002,20 @@ pub fn printable(text: &str) -> String {
             }
         })
         .collect()
+}
+
+/// `value` with every string, and every name in an object, as [`printable`] shows it.
+pub fn printable_value(value: &Value) -> Value {
+    match value {
+        Value::String(text) => Value::String(printable(text)),
+        Value::Array(list) => Value::Array(list.iter().map(printable_value).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(name, held)| (printable(name), printable_value(held)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
 }
 
 /// `printable` for each line of `text`, keeping the line breaks between them.

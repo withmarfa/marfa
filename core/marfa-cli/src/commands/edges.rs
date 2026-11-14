@@ -215,7 +215,8 @@ pub fn run(command: EdgesCommand, remote: &Remote, out: &Printer) -> Result<(), 
                 .get("edge")
                 .and_then(|edge| edge.get("id"))
                 .and_then(Value::as_str)
-                .unwrap_or("");
+                .map(crate::output::printable)
+                .unwrap_or_default();
             let mut sentence = format!(
                 "linked {} -> {} with {} edge {id}",
                 args.source, args.target, args.type_
@@ -228,7 +229,9 @@ pub fn run(command: EdgesCommand, remote: &Remote, out: &Printer) -> Result<(), 
         EdgesCommand::Delete { id, .. } => out.report(&answer, || format!("removed edge {id}")),
         EdgesCommand::Update { id, .. } => out.report(&answer, || {
             let edge = answer.get("edge").unwrap_or(&answer);
-            let text = |name: &str| edge.get(name).and_then(Value::as_str).unwrap_or("");
+            let text = |name: &str| {
+                crate::output::printable(edge.get(name).and_then(Value::as_str).unwrap_or(""))
+            };
             format!(
                 "updated {} edge {id}: {} -> {} (version {})",
                 text("edge_type"),

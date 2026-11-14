@@ -556,8 +556,8 @@ pub fn run(command: ConnectorsCommand, remote: &Remote, out: &Printer) -> Result
         answer
             .get(name)
             .and_then(Value::as_str)
-            .unwrap_or("")
-            .to_string()
+            .map(crate::output::printable)
+            .unwrap_or_default()
     };
     let sentence = match (done, &wrote) {
         (Some(sentence), _) => Some(sentence),

@@ -170,12 +170,12 @@ pub fn run(command: BlobsCommand, remote: &Remote, out: &Printer) -> Result<(), 
                 };
                 format!(
                     "stored {} ({} bytes, {})",
-                    text("hash"),
+                    crate::output::printable(text("hash")),
                     answer
                         .get("size_bytes")
                         .and_then(serde_json::Value::as_u64)
                         .unwrap_or(0),
-                    text("mime_type")
+                    crate::output::printable(text("mime_type"))
                 )
             })
         }
@@ -186,7 +186,14 @@ pub fn run(command: BlobsCommand, remote: &Remote, out: &Printer) -> Result<(), 
             if let Some(path) = output {
                 out.report(
                     &json!({ "hash": hash, "path": path, "size_bytes": written, "mime_type": content_type }),
-                    || format!("{} byte(s) of {content_type} into {}", written, path.display()),
+                    || {
+                        format!(
+                            "{} byte(s) of {} into {}",
+                            written,
+                            crate::output::printable(&content_type),
+                            path.display()
+                        )
+                    },
                 )?;
             }
             Ok(())

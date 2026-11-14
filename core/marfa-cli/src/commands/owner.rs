@@ -152,8 +152,9 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
                     &json!({ "path": path, "size_bytes": written, "mime_type": content_type }),
                     || {
                         format!(
-                            "{} byte(s) of {content_type} into {}",
+                            "{} byte(s) of {} into {}",
                             written,
+                            crate::output::printable(&content_type),
                             path.display()
                         )
                     },

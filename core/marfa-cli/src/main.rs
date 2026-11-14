@@ -472,7 +472,11 @@ fn print_refusal(error: &CliError, json: bool, aim: Option<&hint::Aim>) {
     if json {
         let _ = writeln!(output::stderr_json(), "{}", error.envelope());
     } else {
-        crate::errln!("{} {error}", style::bad(style::Stream::Err, "marfa:"));
+        crate::errln!(
+            "{} {}",
+            style::bad(style::Stream::Err, "marfa:"),
+            output::printable(&error.to_string())
+        );
         if let Some(hint) = aim.and_then(|aim| hint::for_error(error, aim)) {
             crate::errln!("{hint}");
         }

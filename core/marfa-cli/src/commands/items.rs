@@ -1309,7 +1309,11 @@ fn empty_bin(confirm: &str, remote: &Remote, out: &Printer) -> Result<(), CliErr
             let mut lines = vec![format!("{purged} items deleted from the bin")];
             for failure in &failures {
                 let text = |name: &str| failure.get(name).and_then(Value::as_str).unwrap_or("");
-                lines.push(format!("{}: {}", text("id"), text("message")));
+                lines.push(format!(
+                    "{}: {}",
+                    crate::output::printable(text("id")),
+                    crate::output::printable(text("message"))
+                ));
             }
             if stayed > 0 {
                 lines.push(format!("{stayed} items stayed in the bin"));

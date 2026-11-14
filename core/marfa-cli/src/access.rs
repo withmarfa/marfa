@@ -114,7 +114,7 @@ impl Held {
             .iter()
             .map(|(_, pattern, level)| {
                 let title = word(&ROWS, pattern).unwrap_or(pattern);
-                (title.to_string(), level.word())
+                (crate::output::printable(title), level.word())
             })
             .collect();
         let width = rows.iter().map(|(title, _)| title.chars().count()).max();

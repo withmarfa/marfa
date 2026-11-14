@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use crate::error::CliError;
-use crate::output::Printer;
+use crate::output::{Printer, printable};
 use crate::remote::Remote;
 use crate::remote::request::Request;
 
@@ -54,8 +54,8 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
             value
                 .get(name)
                 .map(|value| match value {
-                    Value::String(text) => text.clone(),
-                    other => other.to_string(),
+                    Value::String(text) => printable(text),
+                    other => printable(&other.to_string()),
                 })
                 .unwrap_or_default()
         };
@@ -92,7 +92,7 @@ pub fn items_line(stats: &Value) -> String {
             let count = count.as_u64().filter(|count| *count > 0)?;
             Some(match state.as_str() {
                 "trashed" => format!("{count} in the bin"),
-                state => format!("{count} {state}"),
+                state => format!("{count} {}", printable(state)),
             })
         })
         .collect();
@@ -107,12 +107,12 @@ pub fn items_line(stats: &Value) -> String {
 /// build when it is not a release.
 pub fn instance_line(instance: &Value) -> String {
     let text = |name: &str| match instance.get(name) {
-        Some(Value::String(text)) => text.clone(),
-        Some(other) => other.to_string(),
+        Some(Value::String(text)) => printable(text),
+        Some(other) => printable(&other.to_string()),
         None => String::new(),
     };
     let running = match instance.get("release").and_then(Value::as_str) {
-        Some(release) => format!("{release}, build {}", text("version")),
+        Some(release) => format!("{}, build {}", printable(release), text("version")),
         None => text("version"),
     };
     format!(
@@ -136,8 +136,8 @@ pub fn contract_report(instance: &Value) -> Value {
 
 pub fn contract_line(instance: &Value) -> String {
     let served = match instance.get("contract") {
-        Some(Value::String(served)) => served.clone(),
-        Some(served) => served.to_string(),
+        Some(Value::String(served)) => printable(served),
+        Some(served) => printable(&served.to_string()),
         None => "none".into(),
     };
     format!(

@@ -2,7 +2,7 @@ use clap::Subcommand;
 use serde_json::Value;
 
 use crate::error::CliError;
-use crate::output::Printer;
+use crate::output::{Printer, printable};
 use crate::remote::Remote;
 use crate::remote::request::Request;
 
@@ -36,14 +36,14 @@ pub fn run(command: HousekeepingCommand, remote: &Remote, out: &Printer) -> Resu
         HousekeepingCommand::Run { name } => out.report(&answer, || {
             let text = |field: &str| answer.get(field).and_then(Value::as_str).unwrap_or("");
             let said = match answer.get("error").and_then(Value::as_str) {
-                Some(error) => error.to_string(),
+                Some(error) => printable(error),
                 None => answer
                     .get("result")
                     .filter(|result| !result.is_null())
-                    .map(Value::to_string)
+                    .map(|result| printable(&result.to_string()))
                     .unwrap_or_default(),
             };
-            format!("ran {name}: {} {said}", text("outcome"))
+            format!("ran {name}: {} {said}", printable(text("outcome")))
                 .trim_end()
                 .to_string()
         }),

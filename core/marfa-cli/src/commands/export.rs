@@ -140,7 +140,8 @@ fn run_waiting(
                 &json!({ "path": path, "size_bytes": written, "content_type": content_type }),
                 || {
                     format!(
-                        "{written} byte(s) of {content_type} into {}",
+                        "{written} byte(s) of {} into {}",
+                        crate::output::printable(&content_type),
                         path.display()
                     )
                 },

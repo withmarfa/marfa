@@ -70,6 +70,7 @@ fn with_description(head: String, entry: &Value) -> String {
 /// The overview as text for a person: the instance, the credential, then one
 /// section for each list the server sent.
 pub fn describe(overview: &Value) -> String {
+    let overview = &crate::output::printable_value(overview);
     let empty = Value::Null;
     let instance = overview.get("instance").unwrap_or(&empty);
     let credential = overview.get("credential").unwrap_or(&empty);
@@ -132,4 +133,42 @@ pub fn describe(overview: &Value) -> String {
         });
     }
     lines.join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::describe;
+
+    fn stored() -> serde_json::Value {
+        json!({
+            "instance": { "name": "a\nb", "version": "1" },
+            "credential": { "kind": "key", "label": "x\ty" },
+            "types": [{ "id": "note", "count": 1, "description": "d\u{1b}[1;31m" }],
+            "tags": [{ "tag": "t\nforged  row", "count": 1 }],
+            "views": [{ "id": "v1", "title": "one\n  forged-id  forged view\tcolumn" }],
+            "folders": [{ "id": "f1", "title": "red\u{1b}[1;31m" }]
+        })
+    }
+
+    #[test]
+    fn stored_text_never_adds_a_line_a_column_or_a_colour() {
+        let text = describe(&stored());
+        for line in text.lines() {
+            assert!(!line.starts_with("  forged"), "{line:?}");
+            assert!(!line.starts_with("forged"), "{line:?}");
+        }
+        assert!(!text.contains('\t'), "{text:?}");
+        assert!(!text.contains('\u{1b}'), "{text:?}");
+        assert!(text.contains(r"one\u{a}  forged-id  forged view\u{9}column"));
+        assert!(text.contains(r"red\u{1b}[1;31m"));
+    }
+
+    #[test]
+    fn the_overviews_own_lines_are_unchanged() {
+        let text = describe(&stored());
+        assert!(text.contains("\n\nviews\n  v1  "), "{text:?}");
+        assert!(text.contains("\n\nfolders\n  f1  "), "{text:?}");
+    }
 }

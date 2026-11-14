@@ -16,7 +16,7 @@ use crate::interrupt;
 use crate::keyfile;
 use crate::logfile;
 use crate::new_build;
-use crate::output::{self, Printer};
+use crate::output::{self, Printer, printable};
 use crate::remote::{Named, Remote, Session, renewing};
 use crate::storage;
 use crate::watch;
@@ -414,7 +414,11 @@ pub fn run(
                         confirmed
                             .unsure
                             .iter()
-                            .map(|file| format!("\n{}: not let go yet, {}", file.path, file.reason))
+                            .map(|file| format!(
+                                "\n{}: not let go yet, {}",
+                                printable(&file.path),
+                                printable(&file.reason)
+                            ))
                             .collect::<String>()
                     )
                 },
@@ -430,7 +434,11 @@ pub fn run(
                         restored
                             .not_written_back
                             .iter()
-                            .map(|file| format!("\n{}: {}", file.path, file.reason))
+                            .map(|file| format!(
+                                "\n{}: {}",
+                                printable(&file.path),
+                                printable(&file.reason)
+                            ))
                             .collect::<String>()
                     ),
                 };
@@ -731,7 +739,7 @@ fn kept_lines(kept: &[marfa_core::Unmatched]) -> Vec<String> {
         .filter_map(|file| {
             file.kept
                 .as_ref()
-                .map(|reason| format!("{} is kept: {reason}", file.path))
+                .map(|reason| format!("{} is kept: {}", printable(&file.path), printable(reason)))
         })
         .collect()
 }
@@ -749,9 +757,13 @@ fn describe_unmatched(files: &[marfa_core::Unmatched]) -> String {
         files.len()
     )];
     lines.extend(files.iter().map(|file| match (&file.kept, &file.held) {
-        (_, Some(reason)) => format!("{} {reason}", file.path),
-        (Some(reason), None) => format!("{} would be kept: {reason}", file.path),
-        (None, None) => file.path.clone(),
+        (_, Some(reason)) => format!("{} {}", printable(&file.path), printable(reason)),
+        (Some(reason), None) => format!(
+            "{} would be kept: {}",
+            printable(&file.path),
+            printable(reason)
+        ),
+        (None, None) => printable(&file.path),
     }));
     lines.join("\n")
 }
@@ -767,7 +779,7 @@ fn asks_to_remove(dir: &Path, going: &[String]) -> Result<bool, CliError> {
         dir.display()
     )?;
     for path in going {
-        writeln!(question, "  {path}")?;
+        writeln!(question, "  {}", printable(path))?;
     }
     write!(question, "Remove them? [y/N] ")?;
     question.flush()?;
@@ -979,26 +991,41 @@ pub fn flagged_lines(flagged: &[marfa_core::folder::Flagged]) -> Vec<String> {
         .map(|file| match file.flag {
             "unreadable" => format!(
                 "{} is held, not sent: its frontmatter cannot be read ({})",
-                file.path, file.reason
+                printable(&file.path),
+                printable(&file.reason)
             ),
-            "behind" => format!("{}: {}", file.path, file.reason),
-            "edges" => format!("{} is left as written: {}", file.path, file.reason),
-            "waiting" => format!("{} waits: {}", file.path, file.reason),
+            "behind" => format!("{}: {}", printable(&file.path), printable(&file.reason)),
+            "edges" => format!(
+                "{} is left as written: {}",
+                printable(&file.path),
+                printable(&file.reason)
+            ),
+            "waiting" => format!(
+                "{} waits: {}",
+                printable(&file.path),
+                printable(&file.reason)
+            ),
             "unwritten" | "outside" | "unsuited" | "absent" => {
                 let item = file
                     .item
                     .as_ref()
-                    .map(|item| format!(" (item {item})"))
+                    .map(|item| format!(" (item {})", printable(item)))
                     .unwrap_or_default();
-                format!("{} is not written{item}: {}", file.path, file.reason)
+                format!(
+                    "{} is not written{item}: {}",
+                    printable(&file.path),
+                    printable(&file.reason)
+                )
             }
             marfa_core::folder::DEFAULT_EDGE_REFUSED => format!(
                 "{} is sent, but a default edge of the folder was not applied: {}",
-                file.path, file.reason
+                printable(&file.path),
+                printable(&file.reason)
             ),
             _ => format!(
                 "{} is held, not sent, and left as written: {}",
-                file.path, file.reason
+                printable(&file.path),
+                printable(&file.reason)
             ),
         })
         .collect()
@@ -1008,8 +1035,8 @@ pub fn directory_lines(directories: &[marfa_core::folder::Flagged]) -> Vec<Strin
     directories
         .iter()
         .map(|dir| match dir.path.as_str() {
-            "" => format!("the folder {}", dir.reason),
-            path => format!("{path} {}", dir.reason),
+            "" => format!("the folder {}", printable(&dir.reason)),
+            path => format!("{} {}", printable(path), printable(&dir.reason)),
         })
         .collect()
 }
@@ -1019,7 +1046,7 @@ pub fn embed_lines<'a>(
 ) -> Vec<String> {
     let mut said: Vec<String> = Vec::new();
     for embed in embeds {
-        let line = format!("{}: {}", embed.path, embed.reason);
+        let line = format!("{}: {}", printable(&embed.path), printable(&embed.reason));
         if !said.contains(&line) {
             said.push(line);
         }
@@ -1212,15 +1239,15 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
             || file.reason.is_some()
             || file.warning.is_some()
     }) {
-        let mut line = format!("{}: {}", file.path, status_words(file.status));
+        let mut line = format!("{}: {}", printable(&file.path), status_words(file.status));
         if !file.waits.is_empty() {
-            line.push_str(&format!(" ({})", file.waits.join(", ")));
+            line.push_str(&format!(" ({})", printable(&file.waits.join(", "))));
         }
         if let Some(reason) = &file.reason {
-            line.push_str(&format!(", {reason}"));
+            line.push_str(&format!(", {}", printable(reason)));
         }
         if let Some(warning) = &file.warning {
-            line.push_str(&format!("; {warning}"));
+            line.push_str(&format!("; {}", printable(warning)));
         }
         lines.push(line);
     }
@@ -1230,7 +1257,12 @@ fn describe_status(report: &marfa_core::StatusReport) -> String {
         } else {
             &directory.path
         };
-        lines.push(format!("{path}: {}, {}", directory.flag, directory.reason));
+        lines.push(format!(
+            "{}: {}, {}",
+            printable(path),
+            printable(directory.flag),
+            printable(&directory.reason)
+        ));
     }
     if report.paused.disk + report.paused.pull > 0 {
         lines.push(format!(
@@ -1335,7 +1367,12 @@ fn asks_to_go_ahead(dir: &Path, plan: &FirstSync) -> Result<bool, CliError> {
 pub(crate) fn secret_lines(secrets: &[String]) -> Vec<String> {
     secrets
         .iter()
-        .map(|path| format!("{path}: not taken, because its name is one a secret goes by"))
+        .map(|path| {
+            format!(
+                "{}: not taken, because its name is one a secret goes by",
+                printable(path)
+            )
+        })
         .collect()
 }
 
@@ -1448,7 +1485,7 @@ fn describe_scan(report: &marfa_core::ScanReport) -> String {
             report
                 .warnings
                 .iter()
-                .map(|file| format!("{}: {}", file.path, file.reason)),
+                .map(|file| format!("{}: {}", printable(&file.path), printable(&file.reason))),
         )
         .chain(secret_lines(&report.secrets))
     {
@@ -1471,7 +1508,10 @@ pub fn trashed_lines(report: &marfa_core::ScanReport) -> Vec<String> {
         .trashed
         .iter()
         .map(|path| {
-            format!("{path} was found in no folder on this machine, so its item was trashed")
+            format!(
+                "{} was found in no folder on this machine, so its item was trashed",
+                printable(path)
+            )
         })
         .collect()
 }
@@ -1480,12 +1520,16 @@ pub fn trashed_lines(report: &marfa_core::ScanReport) -> Vec<String> {
 /// happened in one pass.
 pub fn unsure_lines(report: &marfa_core::ScanReport) -> Vec<String> {
     let registry = report.registry.iter().map(|why| {
-        format!("this folder stands alone, since the folder registry cannot be read: {why}")
+        format!(
+            "this folder stands alone, since the folder registry cannot be read: {}",
+            printable(why)
+        )
     });
     let unsure = report.unsure.iter().map(|file| {
         format!(
             "{} is missing and not trashed, since the other folders cannot all be read: {}",
-            file.path, file.reason
+            printable(&file.path),
+            printable(&file.reason)
         )
     });
     registry.chain(unsure).collect()
@@ -1523,7 +1567,9 @@ impl Conflicts {
         self.awaiting.retain(|(file, copy)| match file_of(copy) {
             Some(path) => {
                 arrived.push(format!(
-                    "{path} holds the text of the conflicted edit of {file}"
+                    "{} holds the text of the conflicted edit of {}",
+                    printable(&path),
+                    printable(file)
                 ));
                 false
             }
