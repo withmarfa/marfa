@@ -7,17 +7,12 @@ use serde_json::Value;
 
 use crate::error::CliError;
 
-/// Where text for a person reaches a terminal: every control and
-/// bidirectional formatting character in it is shown as an escape sequence,
-/// except the line break, the tab and the colours `style` draws. `clippy.toml`
-/// forbids the print macros and the standard streams everywhere else.
+/// Human output preserves newlines, tabs and `DRAWN`; JSON passes unchanged.
 pub struct Terminal<W: Write> {
     to: W,
     text: bool,
 }
 
-/// Standard output for a person. `json` is the JSON document of a command
-/// given `--json`, which passes unchanged.
 pub fn stdout(json: bool) -> Terminal<io::StdoutLock<'static>> {
     #[allow(clippy::disallowed_methods)]
     let to = io::stdout().lock();
@@ -37,8 +32,7 @@ pub fn stderr_json() -> Terminal<io::Stderr> {
     Terminal { to, text: false }
 }
 
-/// Standard output exactly as written, for the bytes of a file or a document
-/// a person asked for by name.
+/// Raw output for a requested file or document.
 pub fn stdout_bytes() -> io::StdoutLock<'static> {
     #[allow(clippy::disallowed_methods)]
     let lock = io::stdout().lock();
@@ -90,7 +84,7 @@ impl<W: Write> Write for Terminal<W> {
     }
 }
 
-/// The colour sequences `style` draws, the only escape sequences let through.
+/// Only the color sequences drawn by `style` pass unchanged.
 const DRAWN: [&str; 5] = [
     "\u{1b}[1m",
     "\u{1b}[2m",
@@ -653,8 +647,7 @@ impl Printer {
         Ok(())
     }
 
-    /// Text exactly as given, with nothing added after it: a JSON document,
-    /// or a page already made safe for a terminal.
+    /// Raw text: JSON or a page already made safe for its destination.
     pub fn raw(&self, text: &str) -> Result<(), CliError> {
         let mut out = stdout_bytes();
         out.write_all(text.as_bytes())?;

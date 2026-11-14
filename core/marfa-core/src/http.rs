@@ -160,10 +160,7 @@ pub(crate) type Renewed = Box<dyn Fn(&str, &str) + Send + Sync>;
 
 type Response = ureq::http::Response<ureq::Body>;
 
-/// The one rule for every request the binary makes: a request to this machine
-/// goes straight there, whatever proxy the environment names, since a proxy
-/// cannot reach it and would be handed the request and its credential. Every
-/// client is built through it.
+/// An environment proxy cannot reach this machine's loopback addresses.
 pub fn direct_when_local(
     builder: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>,
     target: &str,

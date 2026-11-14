@@ -1446,8 +1446,6 @@ fn the_server_is_set_to_start_at_login_unless_declined() {
     assert!(!rig.agent("marfa").exists() && !rig.home().join("loaded-marfa").exists());
 }
 
-/// Counts each connection made to it and closes it, as a proxy that cannot
-/// reach this machine would.
 fn count_connections(stop: Arc<AtomicBool>) -> (u16, Arc<AtomicU16>, JoinHandle<()>) {
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     listener.set_nonblocking(true).unwrap();
