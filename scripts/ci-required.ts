@@ -21,6 +21,12 @@
  * pull request ready for review starts a run that does, and so does every
  * push after.
  *
+ * The Rust contract's shards are the one job that is a list. `SHARDS` holds
+ * them, `rust-contract-server` and `rust-contract-device` say which group
+ * runs, and the answer also carries the matrix of the shards that run and
+ * the projects they cover, which the score judges, so that a project is
+ * judged if and only if its shards ran.
+ *
  * A path is matched against `RULES` in order and the first match names the
  * jobs it can affect. A path no rule matches affects every job, so a new
  * folder runs everything until someone states what reads it.
@@ -62,19 +68,29 @@ export const JOBS = [
   // The contract's offline lane, which needs no server. `Conformance`
   // collects it and MCP conformance into one verdict.
   "conformance-offline",
-  // The contract run against the Rust server (`core/marfa-server/`): the
-  // release build, the fixtures of every server project in shards, and the
-  // score. It reads what the Rust program is built from, the fixtures and the
-  // meter.
-  "rust-contract",
+  // The contract run against the Rust server (`core/marfa-server/`), in two
+  // groups of shards that share one build of the server and one score. The
+  // server's own: the fixtures of the compliance, correctness and sync
+  // projects, and the server a release ships, built without its test hooks.
+  // It reads what the server is built from (`SERVER_CRATES`), the fixtures it
+  // runs and the meter.
+  "rust-contract-server",
+  // The device's: the `cli` and `device` fixtures, which boot that same server
+  // and drive the `marfa` binary and the Node module against it. It reads what
+  // those are built from (`core/marfa-core/`, `core/marfa-cli/` and the Node
+  // binding) and everything the server group reads, since the server is under
+  // it. The server does not depend on any of them, so a change to only them
+  // leaves the server group out.
+  "rust-contract-device",
   // The device and CLI fixtures against the Rust server on macOS, for file
   // watching, name case, Finder packages and a real keychain: one build, the
   // shards after it and their score. Only the nightly and a dispatch with
   // `macos` run it.
   "rust-contract-macos",
   // The MCP project's conformance tool, against `/mcp` on the Rust server's
-  // release build, and the restore drill, which throws a Rust server away
-  // and restores it from its bucket. Both need that build.
+  // build, and the restore drill, which throws a Rust server away and restores
+  // it from its bucket. Both read what the server is built from and nothing
+  // the device is.
   "mcp-conformance",
   "restore-drill",
   // The image job builds and boots the shipped image from the release programs.
@@ -92,25 +108,49 @@ export type Job = (typeof JOBS)[number];
 
 const ALL: readonly Job[] = JOBS;
 
+/** The shards of the server's own projects, and what builds the server they boot. */
+const SERVER_SHARDS: readonly Job[] = ["rust-contract-server"];
+
+/** The shards of the `cli` and `device` projects. */
+const DEVICE_SHARDS: readonly Job[] = ["rust-contract-device"];
+
+/** Every shard of the Rust contract, which one score judges. */
+const CONTRACT_SHARDS: readonly Job[] = [...SERVER_SHARDS, ...DEVICE_SHARDS];
+
 /**
- * Every job that boots the Rust server: the contract run, MCP conformance and
- * the restore drill.
+ * Every job a change to what the server is built from reaches: both groups
+ * of shards, since the device's boot the server, MCP conformance and the
+ * restore drill. A change to the `marfa` binary or the Node module reaches
+ * only `DEVICE_SHARDS`.
  */
 const RUST_SERVER: readonly Job[] = [
-  "rust-contract",
+  ...CONTRACT_SHARDS,
   "mcp-conformance",
   "restore-drill",
 ];
 
 /**
- * Every job that builds the `marfa` binary and runs on Linux, and the core's
- * own checks there. The Rust contract jobs build the binary for the device
- * and CLI fixtures, and the server crate from the same workspace.
+ * Every job that builds the Rust crates and runs on Linux, and the core's own
+ * checks there. A path in the core that no rule names can be read by any of
+ * them, so it reaches all.
  */
 const RUST_LINUX: readonly Job[] = [
   "core-checks-linux",
   "conformance-offline",
   ...RUST_SERVER,
+];
+
+/**
+ * What a change to the device alone, `marfa-core`, `marfa-cli` and the Node
+ * module, reaches on Linux. `marfa-server` depends on none of the three, so
+ * the server's shards, MCP conformance and the restore drill have nothing to
+ * judge in it. The offline lane reads every file in `core/` for the contract
+ * statements it cites.
+ */
+const DEVICE_LINUX: readonly Job[] = [
+  "core-checks-linux",
+  "conformance-offline",
+  ...DEVICE_SHARDS,
 ];
 
 /**
@@ -124,7 +164,7 @@ const ENRICHMENT: readonly Job[] = ["core-native", "core-fault-injection"];
  * The jobs that run the fixtures: the offline lane, which holds the citations
  * to them, and the Rust contract jobs.
  */
-const CONTRACT: readonly Job[] = ["conformance-offline", "rust-contract"];
+const CONTRACT: readonly Job[] = ["conformance-offline", ...CONTRACT_SHARDS];
 
 /**
  * The jobs that run on macOS for a pull request: the core's checks and its
@@ -138,6 +178,9 @@ const MACOS: readonly Job[] = ["core-checks", "core"];
 
 /** Every job a change to the core's manifests or to a macOS-only part can reach. */
 const RUST: readonly Job[] = [...RUST_LINUX, ...MACOS];
+
+/** What a change to a macOS-only part of the device alone reaches. */
+const DEVICE: readonly Job[] = [...DEVICE_LINUX, ...MACOS];
 
 /** Every job that installs or builds the pnpm workspace, but `core`. */
 const WORKSPACE: readonly Job[] = [
@@ -167,7 +210,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // (`release.yml` uses it too, and no pull request runs that).
   [
     /^\.github\/actions\/native-build-image\//,
-    ["core-native", "image", "rust-contract"],
+    ["core-native", "image", ...CONTRACT_SHARDS],
   ],
   // Read by GitHub alone. Anything else under `.github/`, such as an action
   // a workflow uses, runs everything until a rule names it.
@@ -181,30 +224,36 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // `compliance/error-codes.test.ts` holds every refusal's code to the error
   // table, `compliance/instance.test.ts` holds the published operations to
   // the coverage table, and `device/error-codes.test.ts` holds the device's
-  // codes to the table in `device.md`. No other server fixture reads the
-  // contract, and
+  // codes to the table in `device.md`, so each reaches the group of shards
+  // that fixture is in. No other server fixture reads the contract, and
   // `ci/ci-required.test.ts` fails when one starts to. A unit test of the Rust
   // server holds its refusal codes to `errors.md`, three more hold its
   // settings to the tables of `instance.md`, and one holds its jobs to the
-  // table of `housekeeping.md`, so those chapters reach it.
+  // table of `housekeeping.md`, so those chapters reach the core's checks.
+  // The program embeds none of them (`ci/ci-required.test.ts` holds what it
+  // embeds to the shards).
   [
     /^conformance\/spec\/errors\.md$/,
-    ["workspace", "conformance-offline", "core-checks-linux", "rust-contract"],
+    ["workspace", "conformance-offline", "core-checks-linux", ...SERVER_SHARDS],
   ],
   [
-    /^conformance\/spec\/(coverage|device)\.md$/,
-    ["workspace", "conformance-offline", "rust-contract"],
+    /^conformance\/spec\/coverage\.md$/,
+    ["workspace", "conformance-offline", ...SERVER_SHARDS],
+  ],
+  [
+    /^conformance\/spec\/device\.md$/,
+    ["workspace", "conformance-offline", ...DEVICE_SHARDS],
   ],
   [
     /^conformance\/spec\/(instance|housekeeping)\.md$/,
-    ["workspace", "conformance-offline", "core-checks-linux", "rust-contract"],
+    ["workspace", "conformance-offline", "core-checks-linux"],
   ],
   [/^conformance\/spec\//, ["workspace", "conformance-offline"]],
   // The item names and previews the core is held to: its unit tests and the
   // compliance and device fixtures read it.
   [
     /^conformance\/fixtures\/item-display\.json$/,
-    ["core-checks-linux", "conformance-offline", "rust-contract"],
+    ["core-checks-linux", "conformance-offline", ...CONTRACT_SHARDS],
   ],
   // The filter expressions the core is held to: its unit tests and the Node
   // binding's tests read it.
@@ -216,7 +265,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // fixture for title lookups read it.
   [
     /^conformance\/fixtures\/name-fold\.json$/,
-    ["core-checks-linux", "rust-contract"],
+    ["core-checks-linux", ...SERVER_SHARDS],
   ],
   // The binary's command reference is generated from its command tree, and
   // a unit test in `marfa-cli` holds the committed file to it. Only the core
@@ -293,7 +342,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // The score of the Rust contract run, whose test the offline lane runs.
   [
     /^conformance\/scripts\/rust-score\.ts$/,
-    ["workspace", "conformance-offline", "rust-contract"],
+    ["workspace", "conformance-offline", ...CONTRACT_SHARDS],
   ],
   // Spec citations name fixture files anywhere under `src/`, so every
   // change there reaches the offline lane.
@@ -302,9 +351,20 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/src\/suites\/(load|performance|hydration)\//,
     ["workspace", "conformance-offline"],
   ],
-  // The fixtures of every server project, and the device suites' adapters
-  // and scripted server, which the offline lane also tests.
-  [/^conformance\/src\/(suites|device)\//, ["workspace", ...CONTRACT]],
+  // The fixtures of the server's own projects, which run in the server's
+  // shards, and those of the device projects with the adapters and scripted
+  // server they drive, which run in the device's. The offline lane tests
+  // them all. A fixture of either that imports from the other, or a folder
+  // no rule names, reaches both (`ci/ci-required.test.ts` follows the imports).
+  [
+    /^conformance\/src\/suites\/(compliance|correctness|sync)\//,
+    ["workspace", "conformance-offline", ...SERVER_SHARDS],
+  ],
+  [
+    /^conformance\/src\/(suites\/(cli|device)|device)\//,
+    ["workspace", "conformance-offline", ...DEVICE_SHARDS],
+  ],
+  [/^conformance\/src\/suites\//, ["workspace", ...CONTRACT]],
   // The nightly scale benchmark's figures, comparison and driver. Only
   // `benchmarks.yml` runs the driver; the offline lane tests the figures.
   [
@@ -345,7 +405,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // budget.
   [
     /^core\/marfa-core\/src\/contract\.rs$/,
-    [...RUST_LINUX, "core", "clients-freshness", "workspace"],
+    [...DEVICE_LINUX, "core", "clients-freshness", "workspace"],
   ],
   [
     /^core\/marfa-rules\/src\/builtin_catalog\.json$/,
@@ -394,12 +454,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // the crate.
   [
     /^core\/bindings\/node\/(package\.json|pnpm-lock\.yaml)$/,
-    ["core", "rust-contract"],
+    ["core", ...DEVICE_SHARDS],
   ],
   [/^core\/bindings\/node\/(index\.js|index\.d\.ts|tsconfig\.json)$/, ["core"]],
   [
     /^core\/bindings\/node\/(src\/|Cargo\.toml$|build\.rs$)/,
-    ["core-checks", "core-checks-linux", "core", "rust-contract"],
+    ["core-checks", "core-checks-linux", "core", ...DEVICE_SHARDS],
   ],
   [/^core\/bindings\//, ["core-checks", "core-checks-linux", "core"]],
   // `marfa-enrichment`. The scripts, pins, patches and the C++ shim that build
@@ -408,7 +468,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // the server with them: nothing else compiles or runs them.
   [
     /^core\/marfa-enrichment\/native\//,
-    ["core-native", "image", "rust-contract"],
+    ["core-native", "image", ...CONTRACT_SHARDS],
   ],
   // Its sandbox is Landlock and seccomp on Linux and `sandbox_init` on macOS,
   // and its memory watch reads each system's own counter, so the source of
@@ -456,6 +516,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // run by the Rust contract jobs, with the real `marfa` binary, and by MCP
   // conformance and the restore drill; the live
   // job on macOS boots it too but waits for the push to `main`.
+  // Its integration tests are the exception: `cargo build` makes the program
+  // from `src/` and the manifest, so only the core's own checks run them.
+  [/^core\/marfa-server\/tests\//, ["core-checks-linux"]],
   [/^core\/marfa-server\//, ["core-checks-linux", ...RUST_SERVER]],
   // A crate's tests are not in the binary, but they may exercise a macOS-only
   // side (a keychain, a watched folder) that nothing here names, so a Mac
@@ -466,22 +529,24 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^core\/[^/]+\/Cargo\.toml$/, RUST],
   // The CLI's access words, which `ci/access-words.test.ts` holds to the
   // glossary.
-  [/^core\/marfa-cli\/src\/access\.rs$/, [...RUST, "workspace"]],
-  // The parts of the core with a macOS-only side, which only a Mac runs: the
+  [/^core\/marfa-cli\/src\/access\.rs$/, [...DEVICE, "workspace"]],
+  // The parts of the device with a macOS-only side, which only a Mac runs: the
   // command line, with its login keychain, key files by path and launchd
   // autostart, and the core's folder watching and what it reads and writes,
   // which FSEvents, name case and Finder packages change, and the files with
   // an Apple-only `cfg` block. `ci/ci-required.test.ts` searches `core/` for
   // `target_os = "macos"`, `"ios"` and `target_vendor = "apple"` and requires
-  // every file it finds here.
+  // every file it finds here. `marfa-server` depends on neither crate, so the
+  // server's shards, MCP conformance and the restore drill have nothing to
+  // judge in them.
   [
     /^core\/(marfa-cli\/|marfa-core\/src\/(folder\/|watch\.rs$|file_cache\.rs$|lock\.rs$|priority\.rs$|blob\.rs$|lib\.rs$|stop_tests\.rs$|damage_tests\.rs$|directory[^/]*$))/,
-    RUST,
+    DEVICE,
   ],
   // The core's other source is what the live tests (`tests/live*.rs`) run
   // against, and only the `core` job runs them, so it stays on a pull
   // request.
-  [/^core\/marfa-core\/src\//, [...RUST_LINUX, "core"]],
+  [/^core\/marfa-core\/src\//, [...DEVICE_LINUX, "core"]],
   // The core and the command line are built from the rules crate, so it
   // reaches what they do.
   [/^core\/marfa-rules\/src\//, [...RUST_LINUX, "core"]],
@@ -561,6 +626,94 @@ export const DRAFT_JOBS: readonly Job[] = [
   "types-freshness",
   "version-fields",
 ];
+
+/**
+ * The shards of the Rust contract. `Rust contract shard` runs the ones whose
+ * group `classify` answered `true` for, as the matrix `changes` hands it,
+ * and `Rust contract score` judges the projects of exactly those, so a group
+ * that does not run is not judged and one that runs and writes no report
+ * fails.
+ */
+export interface Shard {
+  name: string;
+  slug: string;
+  /** The Vitest arguments that pick the shard's files. */
+  args: string;
+  /** The group of shards that runs it, and the `JOBS` answer that decides it. */
+  lane: "rust-contract-server" | "rust-contract-device";
+  /** Whether it drives the `marfa` binary, so builds or restores it. */
+  binary: boolean;
+  /** Whether it drives the Node module, so builds or restores it. */
+  module: boolean;
+  /** Whether it holds every status the server drew to its declaration. */
+  statuses: boolean;
+  /** Whether it needs the server a release ships, built without test hooks. */
+  release: boolean;
+}
+
+const split = (
+  project: string,
+  count: number,
+  lane: Shard["lane"],
+  rest: Pick<Shard, "binary" | "module" | "release">,
+): Shard[] =>
+  Array.from({ length: count }, (_, i) => ({
+    name: `${project} ${String(i + 1)}/${String(count)}`,
+    slug: `${project}-${String(i + 1)}`,
+    args: `--project ${project} --shard=${String(i + 1)}/${String(count)}`,
+    lane,
+    statuses: false,
+    ...rest,
+  }));
+
+export const SHARDS: readonly Shard[] = [
+  {
+    name: "correctness and sync",
+    slug: "correctness-sync",
+    args: "--project correctness --project sync",
+    lane: "rust-contract-server",
+    binary: false,
+    module: false,
+    statuses: true,
+    release: true,
+  },
+  ...split("compliance", 12, "rust-contract-server", {
+    binary: false,
+    module: false,
+    release: true,
+  }),
+  {
+    name: "cli",
+    slug: "cli",
+    args: "--project cli",
+    lane: "rust-contract-device",
+    binary: true,
+    module: false,
+    statuses: true,
+    release: false,
+  },
+  ...split("device", 6, "rust-contract-device", {
+    binary: true,
+    module: true,
+    release: false,
+  }),
+];
+
+/** The shards a `classify` answer runs. */
+export function shardsFor(answer: Record<Job, boolean>): Shard[] {
+  return SHARDS.filter((shard) => answer[shard.lane]);
+}
+
+/** The contract projects a set of shards runs, once each, in the order they are listed. */
+export function projectsOf(shards: readonly Shard[]): string[] {
+  return [
+    ...new Set(
+      shards.flatMap(({ args }) =>
+        [...args.matchAll(/--project (\w+)/g)].map((match) => match[1] ?? ""),
+      ),
+    ),
+  ];
+}
 
 /** The jobs one changed path can affect. */
 export function affected(path: string): Set<Job> {
@@ -755,12 +908,18 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.log("Could not classify the change; running every job.");
   }
   if (draft) answer = forDraft(answer);
+  const shards = shardsFor(answer);
   appendFileSync(
     process.env.GITHUB_OUTPUT ?? "",
     JOBS.map((job) => `${job}=${String(answer[job])}\n`).join("") +
-      `full=${String(!draft)}\n`,
+      `full=${String(!draft)}\n` +
+      `rust-shards=${JSON.stringify({ include: shards })}\n` +
+      `rust-projects=${projectsOf(shards).join(",")}\n`,
   );
   for (const job of JOBS) {
     console.log(`${answer[job] ? "runs " : "skips"} ${job}`);
   }
+  console.log(
+    `runs ${String(shards.length)} of ${String(SHARDS.length)} shards`,
+  );
 }

@@ -11,6 +11,11 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
+import {
+  projectsOf as projectsOfShards,
+  SHARDS,
+  type Shard,
+} from "../scripts/ci-required.js";
 
 interface Step {
   name?: string;
@@ -20,21 +25,13 @@ interface Step {
   env?: Record<string, string>;
   with?: Record<string, string>;
 }
-interface Entry {
-  name: string;
-  slug: string;
-  args: string;
-  binary: boolean;
-  module: boolean;
-  statuses: boolean;
-}
 interface Job {
   name?: string;
   needs?: string | string[];
   if?: string;
   "runs-on"?: string;
   env?: Record<string, string>;
-  strategy?: { "fail-fast"?: boolean; matrix?: { include?: Entry[] } };
+  strategy?: { "fail-fast"?: boolean; matrix?: unknown };
   steps: Step[];
 }
 
@@ -46,7 +43,8 @@ const { jobs } = parse(
 const build = jobs["rust-contract"];
 const shards = jobs["rust-contract-shards"];
 const score = jobs["rust-contract-score"];
-const matrix = shards?.strategy?.matrix?.include ?? [];
+/** The shards the classifier hands the job, which `changes` filters by what a change can affect. */
+const matrix: readonly Shard[] = SHARDS;
 const needsOf = (job: Job | undefined): string[] => [job?.needs ?? []].flat();
 const step = (job: Job | undefined, name: string): Step => {
   const found = job?.steps.find((candidate) => candidate.name === name);
@@ -65,36 +63,45 @@ function projectsOf(args: string): { projects: string[]; shard?: string } {
 describe("the Rust server's release build", () => {
   it("runs for the contract, MCP conformance or the restore drill", () => {
     expect(build?.if).toBe(
-      "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false' || needs.changes.outputs.mcp-conformance != 'false' || needs.changes.outputs.restore-drill != 'false') }}",
+      "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' || needs.changes.outputs.rust-contract-device != 'false' || needs.changes.outputs.mcp-conformance != 'false' || needs.changes.outputs.restore-drill != 'false') }}",
     );
   });
 
   it("is the release build of marfa-server with the file readers linked in, on a standard Linux runner, and is uploaded for the shards", () => {
     expect(build?.["runs-on"]).toBe("ubuntu-latest");
     expect(build?.env?.TARGET).toBe("x86_64-unknown-linux-musl");
-    expect(step(build, "Build the Rust server").run).toBe(
+    const hooked = step(build, "Build the Rust server");
+    expect(hooked.run).toBe(
       'core/marfa-enrichment/native/release.sh "$TARGET" --server',
     );
+    expect(hooked.env?.MARFA_SERVER_FEATURES).toBe("test-hooks");
     const upload = step(build, "Keep the server");
     expect(upload.with?.path).toBe(
-      "${{ runner.temp }}/marfa-native/out/${{ env.TARGET }}/marfa-server",
+      "${{ runner.temp }}/marfa-servers/hooks/marfa-server",
     );
     expect(upload.with?.["if-no-files-found"]).toBe("error");
   });
 
   it("builds the program a release ships a second time, without the test hooks, and uploads it for the shards", () => {
     const names = (build?.steps ?? []).map((candidate) => candidate.name);
-    // After the hooked server is kept: the second build replaces the output.
-    expect(names.indexOf("Keep the server")).toBeGreaterThan(-1);
+    // After the hooked server is set aside: the second build replaces the output.
+    expect(names.indexOf("Set the server aside")).toBeGreaterThan(-1);
     expect(
       names.indexOf("Build the Rust server without test hooks"),
-    ).toBeGreaterThan(names.indexOf("Keep the server"));
+    ).toBeGreaterThan(names.indexOf("Set the server aside"));
     const free = step(build, "Build the Rust server without test hooks");
-    expect(free.run).toBe(
+    expect(free.run).toContain(
       'core/marfa-enrichment/native/release.sh "$TARGET" --server',
     );
     expect(free.env?.MARFA_SERVER_FEATURES).toBeUndefined();
+    // Owed to the server's shards only, which the compliance fixture that
+    // runs a release's program is in.
+    expect(free.if).toContain("env.RELEASE_OWED == 'true'");
+    expect(build?.env?.RELEASE_OWED).toBe(
+      "${{ needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' }}",
+    );
     const upload = step(build, "Keep the server without test hooks");
+    expect(upload.if).toBe("${{ env.RELEASE_OWED == 'true' }}");
     expect(upload.with?.name).toBe("rust-contract-release-server");
     expect(upload.with?.["if-no-files-found"]).toBe("error");
     expect(
@@ -113,8 +120,13 @@ describe("the Rust server's release build", () => {
 describe("the Rust contract shards", () => {
   it("wait for the build and run only when it passed", () => {
     expect(needsOf(shards)).toEqual(["changes", "rust-contract"]);
+    // The matrix is the classifier's, so the job cannot read it when the
+    // classifier did not run: `Full CI` fails for that on its own.
     expect(shards?.if).toBe(
-      "${{ !cancelled() && needs.rust-contract.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false') }}",
+      "${{ !cancelled() && needs.rust-contract.result == 'success' && needs.changes.result == 'success' && (needs.changes.outputs.rust-contract-server != 'false' || needs.changes.outputs.rust-contract-device != 'false') }}",
+    );
+    expect(shards?.strategy?.matrix).toBe(
+      "${{ fromJSON(needs.changes.outputs.rust-shards) }}",
     );
     expect(shards?.["runs-on"]).toBe("ubuntu-latest");
     expect(shards?.strategy?.["fail-fast"]).toBe(false);
@@ -134,6 +146,9 @@ describe("the Rust contract shards", () => {
       }
     }
     expect([...whole.keys()].sort()).toEqual(["cli", "correctness", "sync"]);
+    // The witness: the matrix is the classifier's whole list, and a project
+    // is in it or it is not judged.
+    expect(matrix.length).toBeGreaterThan(0);
     for (const count of whole.values()) expect(count).toBe(1);
     // A split project has every shard of one count, once each.
     expect([...split.keys()].sort()).toEqual(["compliance", "device"]);
@@ -158,6 +173,44 @@ describe("the Rust contract shards", () => {
       );
       expect(entry.module, entry.name).toBe(projects.includes("device"));
     }
+  });
+
+  it("belong to one group each, and a group is the shards of the projects its fixtures need", () => {
+    const lanes = (lane: Shard["lane"]) =>
+      projectsOfShards(matrix.filter((entry) => entry.lane === lane));
+    expect(lanes("rust-contract-server")).toEqual([
+      "correctness",
+      "sync",
+      "compliance",
+    ]);
+    expect(lanes("rust-contract-device")).toEqual(["cli", "device"]);
+    // Only the compliance fixture that runs a release's program needs it, so
+    // the group that holds it downloads the build without test hooks.
+    for (const entry of matrix) {
+      expect(entry.release, entry.name).toBe(
+        entry.lane === "rust-contract-server",
+      );
+    }
+    expect(
+      matrix
+        .filter((entry) => entry.args.includes("--project compliance"))
+        .every((entry) => entry.release),
+    ).toBe(true);
+    expect(
+      readFileSync(
+        resolve(
+          ROOT,
+          "conformance/src/suites/compliance/hook-free-server.test.ts",
+        ),
+        "utf8",
+      ),
+    ).toContain("MARFA_SERVER_RELEASE_BIN");
+    // The two steps that fetch and name it are the ones that wait on it.
+    expect(
+      shards?.steps.filter(
+        (candidate) => candidate.if === "${{ matrix.release }}",
+      ).length,
+    ).toBe(2);
   });
 
   it("boot the downloaded server through the meter and write a report whether or not a test failed", () => {
@@ -220,7 +273,7 @@ describe("the Rust contract score", () => {
       "rust-contract-shards",
     ]);
     expect(score?.if).toBe(
-      "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract != 'false') }}",
+      "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' || needs.changes.outputs.rust-contract-device != 'false') }}",
     );
     const first = score?.steps[0];
     expect(first?.run).toContain('[ "$BUILD" != success ]');
@@ -235,6 +288,12 @@ describe("the Rust contract score", () => {
     const run = step(score, "Score the run").run ?? "";
     expect(run).toContain("pnpm rust:score");
     expect(run).toContain('--markdown "$GITHUB_STEP_SUMMARY"');
+    // Only the projects of the shards that ran are judged, from the list
+    // that made the matrix.
+    expect(run).toContain('--projects "$PROJECTS"');
+    expect(step(score, "Score the run").env?.PROJECTS).toBe(
+      "${{ needs.changes.outputs.rust-projects }}",
+    );
     const scripts = JSON.parse(
       readFileSync(resolve(ROOT, "conformance/package.json"), "utf8"),
     ) as { scripts: Record<string, string> };
@@ -284,10 +343,9 @@ describe("the Rust contract on macOS", () => {
   const mac = jobs["rust-contract-macos"];
   const macShards = jobs["rust-contract-macos-shards"];
   const macScore = jobs["rust-contract-macos-score"];
-  const entries = (macShards?.strategy?.matrix?.include ?? []) as unknown as {
-    args: string;
-    slug: string;
-  }[];
+  const entries = ((
+    macShards?.strategy?.matrix as { include?: unknown[] } | undefined
+  )?.include ?? []) as { args: string; slug: string }[];
   const gate =
     "(github.event_name == 'schedule' || inputs.macos) && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-macos != 'false')";
 
