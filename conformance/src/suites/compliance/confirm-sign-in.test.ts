@@ -529,6 +529,13 @@ describe("a confirmation without a signed-in owner session", () => {
     const none = await confirm({ password: TEST_OWNER.password }, undefined);
     expect(none.status).toBe(401);
     expect(none.headers.get("set-cookie")).toBeNull();
+    const noneForeign = await confirm(
+      { password: TEST_OWNER.password },
+      undefined,
+      nextAddress(),
+      { origin: "https://foreign.example" },
+    );
+    expect(noneForeign.status).toBe(401);
 
     const ended = await signIn();
     const out = await fetch(`${server.apiUrl}/auth/sign-out`, {

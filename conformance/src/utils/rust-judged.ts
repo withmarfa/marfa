@@ -284,6 +284,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/platform-types.test.ts",
   "src/suites/compliance/profile.test.ts",
   "src/suites/compliance/property-order.test.ts",
+  "src/suites/compliance/public-body.test.ts",
   "src/suites/compliance/publisher-types.test.ts",
   "src/suites/compliance/purge-preconditions.test.ts",
   "src/suites/compliance/question-mark-values.test.ts",

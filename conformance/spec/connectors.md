@@ -238,7 +238,7 @@ If a request to an operation under `/connectors/{id}` whose body and query fit t
 
 ### `connectors/no-credential`
 
-If a request to an operation under `/connectors` carries no credential and no body over the operation's cap, nested more than 64 levels or holding a surrogate escape with no partner, then the server MUST answer `401 unauthorized`.
+If a request to an operation under `/connectors` carries no credential and declares no `Content-Length` over the operation's cap, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 
@@ -332,7 +332,7 @@ When a key is revoked, the server MUST keep the runs its connector reported, and
 
 ### `connectors/revoked-unauthorized`
 
-If a revoked key sends a request to any operation under `/connectors` with no body over the operation's cap, nested more than 64 levels or holding a surrogate escape with no partner, then the server MUST answer `401 unauthorized`.
+If a revoked key sends a request to any operation under `/connectors` that declares no `Content-Length` over the operation's cap, then the server MUST answer `401 unauthorized`.
 
 **Tests:** `compliance/connector-codes.test.ts › answers 401 unauthorized to a revoked key on every door, and leaves its runs to the manager`, `compliance/connectors.test.ts › keeps a registration whose key was revoked, until the manager removes it`.
 
@@ -1264,23 +1264,17 @@ Where one request meets two refusals, each rule below names the refusal the requ
 
 ### `connectors/order-cap-before-credential`
 
-If a request to an operation under `/connectors` carries a body over the cap its operation takes and carries no credential, then the server MUST answer `413 request_too_large`.
+If a request to an operation under `/connectors` declares a `Content-Length` over the cap its operation takes and carries no credential, then the server MUST answer `413 request_too_large`.
 
-**Reason:** the server reads the size of a body before it reads who sent it.
+**Reason:** the server checks the declared size before the credential, and neither check reads the body.
 
-**Tests:** `compliance/connector-check-order.test.ts › answers a body nested too deep 400 before a missing credential's 401, and a body over the cap 413`.
-
-### `connectors/order-depth-before-credential`
-
-If a request to an operation under `/connectors` carries a JSON body nested more than 64 levels and carries no credential, then the server MUST answer `400 validation_error`, as `items/json-depth` says of the depth.
-
-**Tests:** `compliance/connector-check-order.test.ts › answers a body nested too deep 400 before a missing credential's 401, and a body over the cap 413`.
+**Tests:** `compliance/connector-check-order.test.ts › answers a declared body over the cap 413 before a missing credential's 401, and a missing credential 401 before a body nested too deep`.
 
 ### `connectors/order-credential-before-body`
 
-If a request to an operation under `/connectors` carries no credential and a body or query the operation would refuse for anything but the body's size, nesting or text (`items/json-text-before-credential`), then the server MUST answer `401 unauthorized`.
+If a request to an operation under `/connectors` carries no credential and a body or query the operation would refuse for anything but a declared size over its cap, then the server MUST answer `401 unauthorized`.
 
-**Tests:** `compliance/connector-check-order.test.ts › answers a missing credential 401 before a body the door would refuse`, `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
+**Tests:** `compliance/connector-check-order.test.ts › answers a missing credential 401 before a body the door would refuse`, `› answers a declared body over the cap 413 before a missing credential's 401, and a missing credential 401 before a body nested too deep`, `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 
 ### `connectors/order-operator-before-body`
 

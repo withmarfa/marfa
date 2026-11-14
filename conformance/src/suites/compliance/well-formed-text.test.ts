@@ -520,23 +520,19 @@ describe("a surrogate escape with no partner", () => {
     );
   });
 
-  it("answers it before a missing credential, as it answers a body nested too deep", async () => {
+  it("answers a missing credential 401 before it reads a body holding a surrogate escape with no partner", async () => {
     const body = JSON.stringify({
       type: "core.note",
       properties: { body: LONE },
     });
     const refused = await send("POST", "/items", body, false);
-    expect(refused.status).toBe(400);
-    expect(refused.code).toBe("validation_error");
+    expect(refused.status).toBe(401);
+    expect(refused.code).toBe("unauthorized");
 
-    // The witness: the same body with a pair is met by the missing credential.
-    const witness = await send(
-      "POST",
-      "/items",
-      JSON.stringify({ type: "core.note", properties: { body: PAIR } }),
-      false,
-    );
-    expect(witness.status).toBe(401);
+    // The witness: with the credential, the same body is refused for its text.
+    const read = await send("POST", "/items", body);
+    expect(read.status).toBe(400);
+    expect(read.errors?.[0]?.path).toBe("/properties/body");
   });
 
   it("names the nesting before the text when a body is both too deep and not well-formed", async () => {
@@ -547,7 +543,7 @@ describe("a surrogate escape with no partner", () => {
     expect(JSON.stringify(refused.data)).toMatch(/nests deeper/);
   });
 
-  it("refuses it on every published operation that takes a JSON body, before any credential", async () => {
+  it("refuses it on every published operation that takes a JSON body, from a key the instance holds", async () => {
     const document = await servedDocument();
     const unreached: string[] = [];
     const witnessed: string[] = [];
@@ -561,7 +557,6 @@ describe("a surrogate escape with no partner", () => {
           method.toUpperCase(),
           path,
           JSON.stringify({ k: LONE }),
-          false,
         );
         if (
           refused.status !== 400 ||
@@ -755,7 +750,7 @@ describe("a body whatever its content type states", () => {
     { path: "/setup/claim", credential: false },
   ];
 
-  it("is refused for a surrogate escape with no partner, before any credential", async () => {
+  it("is refused for a surrogate escape with no partner, from a key or on a door that takes none", async () => {
     for (const contentType of types) {
       for (const door of doors) {
         const where = `${door.path} as ${contentType}`;
@@ -785,7 +780,7 @@ describe("a body whatever its content type states", () => {
     }
   });
 
-  it("is refused when it nests too deep, before any credential", async () => {
+  it("is refused when it nests too deep, from a key or on a door that takes none", async () => {
     const deep = '{"a":'.repeat(70) + "1" + "}".repeat(70);
     for (const contentType of types) {
       for (const door of doors) {

@@ -365,7 +365,6 @@ async fn until_an_address_is_set_only_this_machine_gets_past_the_doors() {
         "/setup/claim",
         "/owner",
         "/auth/sign-in",
-        "/auth/confirm",
         "/auth/passkeys/sign-in",
     ] {
         let cookie = "marfa_session=none";
@@ -375,6 +374,12 @@ async fn until_an_address_is_set_only_this_machine_gets_past_the_doors() {
         let message = refused.body["error"]["message"].as_str().unwrap();
         assert!(message.contains("sign_in_address"), "{path}: {message}");
     }
+    let unknown = from(
+        AWAY,
+        post_signed_in("/auth/confirm", &json!({}), "marfa_session=none"),
+    );
+    let refused = send(instance.public.clone(), unknown).await;
+    assert_eq!(refused.status, StatusCode::UNAUTHORIZED);
     let here = send(
         instance.public.clone(),
         from("127.0.0.1", sign_in_at(NO_ADDRESS_ORIGIN)),

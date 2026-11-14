@@ -2560,19 +2560,19 @@ If `POST /items/tombstones` names a `type` nothing registered, then the server M
 
 ### `items/json-depth`
 
-If a request body, other than one sent to `POST /blobs`, `POST /restore` or an inbound endpoint, nests more than 64 levels, counting each array or object inside another and no bracket inside a string, whatever its `Content-Type` states, then the server MUST answer `400 validation_error`.
+If the body of a `POST`, `PUT` or `PATCH` request that carries a credential its operation accepts, or is sent to an operation that requires none, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /owner/picture`, `PUT /profile/picture` or an inbound endpoint, nests more than 64 levels, counting each array or object inside another and no bracket inside a string, whatever its `Content-Type` states, then the server MUST answer `400 validation_error`.
 
 **Reason:** SQLite's JSON functions stop at 1,000 levels, so a deeper body would fail inside the database as `500`.
 
-**Tests:** `compliance/odd-input.test.ts › accepts 64 levels and refuses deeper item, extension and bulk bodies`, `compliance/well-formed-text.test.ts › is refused when it nests too deep, before any credential`.
+**Tests:** `compliance/odd-input.test.ts › accepts 64 levels and refuses deeper item, extension and bulk bodies`, `compliance/well-formed-text.test.ts › is refused when it nests too deep, from a key or on a door that takes none`.
 
 ### `items/json-text-well-formed`
 
-If a request body, other than one sent to `POST /blobs`, `POST /restore` or an inbound endpoint, is JSON that holds a string or an object key with a surrogate escape that has no partner, whatever its `Content-Type` states, then the server MUST answer `400 validation_error` with `details.errors[].path` naming one of them by its JSON pointer.
+If the body of a `POST`, `PUT` or `PATCH` request that carries a credential its operation accepts, or is sent to an operation that requires none, other than a body sent to `POST /blobs`, `POST /restore`, `PUT /owner/picture`, `PUT /profile/picture` or an inbound endpoint, is JSON that holds a string or an object key with a surrogate escape that has no partner, whatever its `Content-Type` states, then the server MUST answer `400 validation_error` with `details.errors[].path` naming one of them by its JSON pointer.
 
 **Reason:** RFC 8259 section 8.2 lets a JSON string carry a surrogate code unit with no partner, which no UTF-8 text can carry. The server holds only text that UTF-8 can represent, so every client can decode what it holds.
 
-**Tests:** `compliance/well-formed-text.test.ts › refuses $name, naming where, and takes a surrogate pair there`, `› writes nothing when it refuses a create`, `› refuses a lone low surrogate and a reversed pair, in either letter case of the escape`, `› refuses it on every published operation that takes a JSON body, before any credential`, `› is refused for a surrogate escape with no partner, before any credential`, `device/well-formed-text-live.test.ts › refuses a surrogate escape with no partner and leaves a device able to hydrate and catch up over the item that is`.
+**Tests:** `compliance/well-formed-text.test.ts › refuses $name, naming where, and takes a surrogate pair there`, `› writes nothing when it refuses a create`, `› refuses a lone low surrogate and a reversed pair, in either letter case of the escape`, `› refuses it on every published operation that takes a JSON body, from a key the instance holds`, `› is refused for a surrogate escape with no partner, from a key or on a door that takes none`, `device/well-formed-text-live.test.ts › refuses a surrogate escape with no partner and leaves a device able to hydrate and catch up over the item that is`.
 
 ### `items/json-text-pointer`
 
@@ -2587,12 +2587,6 @@ When the server names a surrogate escape with no partner in a refusal and the po
 **Reason:** the pointer is itself text in the answer, so it follows the same rule.
 
 **Tests:** `compliance/well-formed-text.test.ts › writes U+FFFD in the pointer for each lone surrogate in a key`, `› refuses $name, naming where, and takes a surrogate pair there`.
-
-### `items/json-text-before-credential`
-
-If a request to an operation that requires a credential carries no credential and a body that is JSON holding a surrogate escape with no partner, then the server MUST answer `400 validation_error`, as `items/json-text-well-formed` says.
-
-**Tests:** `compliance/well-formed-text.test.ts › answers it before a missing credential, as it answers a body nested too deep`, `› refuses it on every published operation that takes a JSON body, before any credential`.
 
 ### `items/json-text-after-depth`
 

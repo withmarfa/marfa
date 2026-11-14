@@ -23,7 +23,7 @@ import { waitFor } from "../../utils/wait.js";
  * arriving, and the server ends one that stops arriving. The private control
  * socket is the door, because it is the one a fixture can hold a request on
  * for longer than its fixed request deadline, 30 seconds, without waiting for
- * the public listener's 300.
+ * the public listener's 180.
  *
  * A server that keeps a 30-second request deadline checked every 30 seconds,
  * as Node's own is, cuts the body at the second check, a minute in. The long

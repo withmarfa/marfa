@@ -12,14 +12,14 @@ use std::sync::Arc;
 
 use axum::extract::FromRequestParts;
 use axum::http::request::Parts;
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::middleware::from_fn;
 use axum::response::Response;
 use serde_json::{Map, Value};
 
 use super::Routes;
 use super::answer::Stopped;
-use super::doors::{Doors, get, patch, post};
+use super::doors::{Asks, Doors, get, patch, post};
 use super::no_store;
 use super::observe::RequestContext;
 use crate::app::App;
@@ -82,30 +82,44 @@ fn text_field<'b>(body: &'b Map<String, Value>, field: &str) -> Result<&'b str, 
 }
 
 pub fn owner_doors() -> Routes {
-    Doors::new()
-        .route(
-            "/owner",
-            get(owner::read).post(owner::claim).patch(owner::update),
-        )
+    let passkeys = Doors::new()
         .route("/owner/passkeys", get(passkeys::list))
         .route(
             "/owner/passkeys/{id}",
             patch(passkeys::rename).delete(passkeys::remove),
         )
+        .asking(Asks::Session);
+    Doors::new()
+        .route(
+            "/owner",
+            get(owner::read).post(owner::claim).patch(owner::update),
+        )
+        .asking_at(Method::POST, "/owner", Asks::Nothing)
         .route("/owner/sign-ins", get(sign_ins::list))
         .route(
             "/owner/sign-ins/{id}",
             patch(sign_ins::rename).delete(sign_ins::end),
         )
+        .merge(passkeys)
         .route_layer(from_fn(no_store))
 }
 
 pub fn doors() -> Routes {
-    Doors::new()
+    let open = Doors::new()
         .route("/auth/sign-in", get(pages::sign_in).post(sign_in::sign_in))
         .route("/auth/error", get(pages::error))
         .route("/auth/device", get(pages::device))
         .route("/setup", get(pages::setup))
+        .route(
+            "/auth/passkeys/sign-in/options",
+            post(passkeys::sign_in_options),
+        )
+        .route("/auth/passkeys/sign-in", post(passkeys::sign_in))
+        .route("/auth/owner/passkeys", get(passkeys::page))
+        .route("/setup/exchange", post(setup::exchange))
+        .route("/setup/claim", post(setup::claim))
+        .asking(Asks::Nothing);
+    let owner = Doors::new()
         .route("/auth/sign-out", post(sign_in::sign_out))
         .route("/auth/confirm", post(sign_in::confirm))
         .route(
@@ -113,14 +127,7 @@ pub fn doors() -> Routes {
             post(passkeys::registration_options),
         )
         .route("/auth/passkeys/registration", post(passkeys::register))
-        .route(
-            "/auth/passkeys/sign-in/options",
-            post(passkeys::sign_in_options),
-        )
-        .route("/auth/passkeys/sign-in", post(passkeys::sign_in))
-        .route("/auth/owner/passkeys", get(passkeys::page))
         .route("/auth/owner/password", post(sign_in::change_password))
-        .route("/setup/exchange", post(setup::exchange))
-        .route("/setup/claim", post(setup::claim))
-        .route_layer(from_fn(no_store))
+        .asking(Asks::Session);
+    open.merge(owner).route_layer(from_fn(no_store))
 }

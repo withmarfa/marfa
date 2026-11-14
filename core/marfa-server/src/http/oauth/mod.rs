@@ -19,7 +19,7 @@ use super::Routes;
 use super::answer::{Answer, Stopped, json_answer};
 use super::auth::origin::{self, Source};
 use super::caller::browser_owner;
-use super::doors::{Doors, get, patch, post};
+use super::doors::{Asks, Doors, get, patch, post};
 use super::no_store;
 use crate::app::App;
 use crate::app::access::Caller;
@@ -143,5 +143,5 @@ pub fn doors() -> Routes {
             get(discovery::protected_resource_at),
         )
         .route_layer(from_fn(any_origin));
-    held.merge(open)
+    held.merge(open).asking(Asks::Nothing)
 }

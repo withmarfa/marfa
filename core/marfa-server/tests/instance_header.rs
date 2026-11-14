@@ -315,8 +315,8 @@ async fn a_cookie_is_no_credential_at_a_door_that_ignores_cookies() {
             .await;
         assert_refused(
             &nested,
-            StatusCode::BAD_REQUEST,
-            "validation_error",
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
             &format!("cookie only, POST {path} with a body too deep"),
         );
         let with_key = instance

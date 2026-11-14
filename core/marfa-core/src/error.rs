@@ -482,8 +482,8 @@ impl CoreError {
     }
 }
 
-/// A status the same request may be answered past: `408` is a proxy's
-/// about the network, `425` asks for the same request again, and a `5xx` is
+/// A status the same request may be answered past: `408` says a body did not
+/// arrive in time, which is about the network, `425` asks for the same request again, and a `5xx` is
 /// the server's own trouble, which the server reports itself.
 pub fn environmental_status(status: u16) -> bool {
     matches!(status, 408 | 425 | 500..=599)
