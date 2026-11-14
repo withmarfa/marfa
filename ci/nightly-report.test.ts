@@ -1,10 +1,11 @@
 /**
- * A scheduled run that fails opens one issue, and each failure after it
- * comments on that issue instead of opening another. The job that does it,
- * `report-failure`, is the last job of every scheduled workflow but CodeQL's
- * (whose findings are code scanning alerts), runs only for a schedule, and
- * calls `scripts/report-nightly-failure.sh`. The script is run here against a
- * stand-in for `gh`; nothing in these tests reaches GitHub.
+ * A scheduled run that fails, or has a job cancelled or timed out, opens one
+ * issue, and each failure after it comments on that issue instead of opening
+ * another. The job that does it, `report-failure`, is the last job of every
+ * scheduled workflow but CodeQL's (whose findings are code scanning alerts),
+ * runs only for a schedule, and calls `scripts/report-nightly-failure.sh`. The
+ * script is run here against a stand-in for `gh`; nothing in these tests
+ * reaches GitHub.
  */
 import { execFileSync } from "node:child_process";
 import {
@@ -50,6 +51,50 @@ interface Workflow {
   jobs: Record<string, Job>;
 }
 
+const REPORT_CONDITION =
+  "${{ github.event_name == 'schedule' && (failure() || contains(needs.*.result, 'cancelled')) }}";
+
+/**
+ * Evaluates a report job's `if` the way GitHub does for the pieces it uses.
+ * `failure()` is true when a job it needs ended as `failure`, and a condition
+ * that holds a status function skips the implicit `success()`. Anything else
+ * in the expression throws, so a new construct cannot pass unevaluated.
+ */
+function fires(condition: string, event: string, results: string[]): boolean {
+  const body = condition.replace(/^\$\{\{\s*|\s*\}\}$/g, "");
+  const js = body
+    .replace(/github\.event_name/g, JSON.stringify(event))
+    .replace(/failure\(\)/g, String(results.includes("failure")))
+    .replace(
+      /contains\(needs\.\*\.result,\s*'([a-z]+)'\)/g,
+      (_, wanted: string) => String(results.includes(wanted)),
+    )
+    .replace(/'schedule'/g, JSON.stringify("schedule"));
+  const steps: [RegExp, (...parts: string[]) => string][] = [
+    [/"([^"]*)"\s*==\s*"([^"]*)"/, (_, a, b) => String(a === b)],
+    [/!\s*(true|false)\b/, (_, a) => String(a !== "true")],
+    [/\(\s*(true|false)\s*\)/, (_, a) => a],
+    [
+      /\b(true|false)\s*&&\s*(true|false)\b/,
+      (_, a, b) => String(a === "true" && b === "true"),
+    ],
+    [
+      /(?<!&&\s*)\b(true|false)\s*\|\|\s*(true|false)\b(?!\s*&&)/,
+      (_, a, b) => String(a === "true" || b === "true"),
+    ],
+  ];
+  let expression = js.trim();
+  for (;;) {
+    const step = steps.find(([pattern]) => pattern.test(expression));
+    if (!step) break;
+    expression = expression.replace(step[0], step[1]).trim();
+  }
+  if (expression !== "true" && expression !== "false") {
+    throw new Error(`Cannot evaluate: ${body}`);
+  }
+  return expression === "true";
+}
+
 const workflows = readdirSync(WORKFLOWS)
   .filter((file) => /\.ya?ml$/.test(file))
   .map((file) => ({
@@ -93,10 +138,39 @@ describe("the job that reports a failed scheduled run", () => {
       }
     });
 
-    it("runs only after a failed job, and only for a schedule, so no pull request run can open an issue", () => {
-      expect(report?.if).toBe(
-        "${{ failure() && github.event_name == 'schedule' }}",
-      );
+    it("runs after a failed or cancelled job, and only for a schedule, so no pull request run can open an issue", () => {
+      expect(report?.if).toBe(REPORT_CONDITION);
+    });
+
+    it("reports a job that timed out, which GitHub ends as cancelled, and a failed one, and nothing else", () => {
+      const condition = report?.if ?? "";
+      // The witness: the condition this one replaced was false for a timeout.
+      const before = "${{ failure() && github.event_name == 'schedule' }}";
+      expect(fires(before, "schedule", ["success", "cancelled"])).toBe(false);
+      expect(fires(before, "schedule", ["success", "failure"])).toBe(true);
+
+      expect(fires(condition, "schedule", ["success", "cancelled"])).toBe(true);
+      expect(fires(condition, "schedule", ["skipped", "cancelled"])).toBe(true);
+      expect(fires(condition, "schedule", ["success", "failure"])).toBe(true);
+      expect(fires(condition, "schedule", ["failure", "cancelled"])).toBe(true);
+      expect(fires(condition, "schedule", ["success", "skipped"])).toBe(false);
+      for (const event of ["push", "pull_request", "workflow_dispatch"]) {
+        for (const results of [["failure"], ["cancelled"], ["success"]]) {
+          expect(fires(condition, event, results), event).toBe(false);
+        }
+      }
+    });
+
+    it("is not cancelled by a newer run on a schedule, which would end a night unreported", () => {
+      const { concurrency } = workflow as Workflow & {
+        concurrency?: { "cancel-in-progress"?: boolean | string };
+      };
+      // `ci.yml` cancels only a pull request's run, and a schedule's group is its own run.
+      expect([
+        undefined,
+        false,
+        "${{ github.event_name == 'pull_request' }}",
+      ]).toContain(concurrency?.["cancel-in-progress"]);
     });
 
     it("may write issues and read the run, and nothing else", () => {
@@ -270,22 +344,41 @@ describe("scripts/report-nightly-failure.sh", () => {
       "https://github.com/withmarfa/marfa/actions/runs/424242",
     );
     expect(result.body).toContain("0123456789abcdef0123456789abcdef01234567");
-    expect(result.body).toContain("- Core checks (Linux)");
-    expect(result.body).toContain("- Rust contract on macOS (cli)");
+    expect(result.body).toContain("- Core checks (Linux): failed");
+    expect(result.body).toContain("- Rust contract on macOS (cli): failed");
     // Only a job that failed is named.
     expect(result.body).not.toContain("Classify changes");
     expect(result.body).not.toContain("Restore drill");
     expect(result.body).toContain("The nightly run passes.");
   });
 
-  it("says so when no job ended as failed, rather than leaving the list empty", () => {
-    const result = run("no-failed-job", {
+  it("names a job that timed out, which GitHub ends as cancelled, beside each failed job", () => {
+    const result = run("timed-out", {
       FAKE_JOBS: JSON.stringify({
-        jobs: [{ name: "Image", conclusion: "cancelled" }],
+        jobs: [
+          { name: "Core / Rust, bindings, live", conclusion: "cancelled" },
+          { name: "Core checks (Linux)", conclusion: "failure" },
+          { name: "Restore drill", conclusion: "skipped" },
+        ],
       }),
     });
     expect(result.status).toBe(0);
-    expect(result.body).toContain("None ended as failed");
+    expect(result.body).toContain(
+      "- Core / Rust, bindings, live: cancelled or timed out",
+    );
+    expect(result.body).toContain("- Core checks (Linux): failed");
+    expect(result.body).not.toContain("Restore drill");
+    expect(result.body).not.toContain("None ended");
+  });
+
+  it("says so when no job ended as failed or cancelled, rather than leaving the list empty", () => {
+    const result = run("no-failed-job", {
+      FAKE_JOBS: JSON.stringify({
+        jobs: [{ name: "Image", conclusion: "success" }],
+      }),
+    });
+    expect(result.status).toBe(0);
+    expect(result.body).toContain("None ended as failed or cancelled");
   });
 
   it("names the workflow whose run failed", () => {

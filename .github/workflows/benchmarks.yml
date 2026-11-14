@@ -4,7 +4,7 @@ name: Benchmarks
 # scale benchmark, against the Rust server, off the gate: their budgets measure
 # a shared runner as much as the server, so a slow night should not block a
 # merge, but a failure still has to land somewhere it is seen. A scheduled run
-# that fails opens an issue, or comments on the one that is open.
+# that fails or times out opens an issue, or comments on the one that is open.
 on:
   schedule:
     - cron: "43 4 * * *"
@@ -368,10 +368,12 @@ jobs:
         working-directory: conformance
         run: pnpm marfa:down --state "$MARFA_SCALE_STATE"
 
+  # A job that reaches its timeout ends as cancelled, not failed, so a cancelled
+  # job reports too.
   report-failure:
     name: Report a failed scheduled run
     needs: [server, benchmarks, scale]
-    if: ${{ failure() && github.event_name == 'schedule' }}
+    if: ${{ github.event_name == 'schedule' && (failure() || contains(needs.*.result, 'cancelled')) }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
