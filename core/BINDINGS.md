@@ -87,6 +87,10 @@ One thread tells every listener, so `changed` must return promptly.
 
 Each binding takes a `Stop` on the calls that can be stopped, such as a hydration, a catch-up, a drain and a read of the server's catalog. Raise it when the app's own cancellation is requested. What a stopped call leaves is in the contract (`device/stop-canceled` and the statements after it).
 
+## A store that cannot be read
+
+A store SQLite cannot read, whole or in part, is refused with the error coded `store_damaged`. One met as the store opens names its `path` and gives `unsent`, the writes its queue holds that the server has not taken, or none where its queue cannot be read whole. One met part way through a later call has an empty `path`: call `checkStore`, which reads every page and refuses the same way with both. `setAsideDamaged` then keeps the damaged file under `<store>.damaged-<n>` beside it, makes a new store at the path that carries every write it can read, and answers how many it carried, how many it could not read and their ids. Close every handle on the store first. Hydrate the new store before a drain sends what it carries. `removeStoreLosingAll` removes a store whose writes cannot be counted, where the person agrees to lose them all.
+
 ## Folders in an app
 
 The Swift and Node bindings' `add`, `sync`, `confirm_first_sync`, `confirm`, `restore` and `remove` ask a process that holds the folder to let it go, wait up to 10 seconds, and past that are refused with the error coded `reading_handle`, naming the folder. A watch an app runs through a binding lets the folder go to a command or another call and takes it back, as the command line's watch does, and tells its listener with the events `HandedOver`, `HeldElsewhere`, `TakenBack`, `Removed` and `Unlisted`. A folder removed or taken off the registry ends that watch.
