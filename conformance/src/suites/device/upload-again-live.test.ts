@@ -13,13 +13,6 @@ import { QUIET_SCHEDULE, quiet } from "../../utils/moved-clock.js";
 import { clientsFor, DISK_ONLY, runJob } from "../../utils/own-blob-server.js";
 import { fileOf, requireBinary } from "./harness.js";
 
-/**
- * A file whose item write stalls after its upload was taken, until the
- * orphan sweep purges the bytes (`queue-and-verdicts/upload-again-bytes-absent`),
- * against a real server and the real binary. A grace of 0 stands for the day
- * that passes (`stores/orphan-upload-kept`).
- */
-
 let server: FreshServer;
 let operator: MarfaClient;
 let working: MarfaClient;
@@ -61,7 +54,6 @@ it(
     value(await device.hydrate(["core.note"], "library"));
     const bytes = `the bytes of a photo ${String(Date.now())}\n`;
 
-    // 1. The upload and the file item are queued.
     const queued = value(
       await device.addFile(fileOf("photo.txt", bytes), { type: "core.file" }),
     );
@@ -70,8 +62,7 @@ it(
     const hash = upload?.blob;
     expect(hash, JSON.stringify(queued)).toBeTruthy();
 
-    // 2. The server takes the upload, the drain's first write, and fails
-    // the file item, its second.
+    // The upload is the first write; the fault stalls the item write.
     await server.setFault("fail:lock=2");
     value(await device.drain());
     expect(
@@ -88,7 +79,6 @@ it(
       JSON.stringify(stalled),
     ).toBeNull();
 
-    // 3. One run reports the bytes nothing references, the next purges them.
     const reported = await runJob<{ reported: number; purged: number }>(
       operator,
       "blob-orphans",
@@ -104,7 +94,6 @@ it(
       "the sweep left the bytes, so nothing here is about bytes the server lost",
     ).toBe(404);
 
-    // 4. The drain sends the bytes again, then the file item.
     const drained = value(await device.drain());
     const settled = value(await device.queue());
     expect(
@@ -115,11 +104,8 @@ it(
       "accepted",
     );
 
-    // 5. Nothing is left to release.
     expect(value(await device.release({ id: file!.id }))).toBe(0);
 
-    // 6. A budget of nothing takes the device's bytes, and the file is on the
-    // server.
     value(await device.fileBudget("0"));
     const id = settled.find((write) => write.id === file?.id)?.item_id;
     expect(id).toBeTruthy();

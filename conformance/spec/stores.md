@@ -744,7 +744,7 @@ While a blob's report is younger than `blob_cleanup_grace_seconds`, the server M
 
 While fewer than `blob_cleanup_grace_seconds` have passed since the server last took an upload of a blob, the server MUST NOT purge it.
 
-**Reason:** a client that uploads bytes and writes the item naming them later needs to know how long it has. The first run of `blob-orphans` after the upload reports bytes nothing references (`stores/orphan-upload-lifts`), and the first run at least the grace after that report purges them, so an upload nothing references is kept for at least the grace and at most the grace and two of the job's intervals: between one and three days at the default grace of a day and a daily run.
+**Reason:** a client that uploads bytes before writing the item naming them has at least the grace to finish, because an upload clears any earlier orphan report (`stores/orphan-upload-lifts`). With successful runs at the configured interval and nothing else keeping the blob, the report and purge take at most the grace plus two intervals after the upload: between one and three days at the default grace of a day and a daily run.
 
 **Tests:** `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`.
 

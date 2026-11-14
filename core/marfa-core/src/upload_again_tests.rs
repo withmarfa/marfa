@@ -15,8 +15,6 @@ struct Waiting {
     hash: String,
 }
 
-/// A file whose upload the server took and whose item it held back, so the
-/// item still waits when the server has since purged the bytes.
 fn file_waiting_on_taken_bytes(server: &Scripted, dir: &Path) -> Waiting {
     let core = copy_in_keyed(server, dir, "k");
     holding_a_catalog(&core);
@@ -59,8 +57,7 @@ fn absent() -> scripted::Answer {
     scripted::refusal(404, "blob_not_found")
 }
 
-/// The bin, which a refused create reads on `GET /items` to learn that it
-/// made nothing.
+/// A refused create reads the bin to learn whether it made anything.
 fn empty_bin() -> scripted::Answer {
     scripted::certified(scripted::json(200, r#"{"data":[],"next_cursor":null}"#))
 }

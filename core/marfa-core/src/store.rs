@@ -3216,13 +3216,7 @@ pub fn set_attachment_miss(
     Ok(())
 }
 
-/// The bytes the cache keeps for the queue: those of every upload not yet
-/// taken, and those of every taken upload a write that may still be sent
-/// waits on, which a drain under another credential sends again
-/// (`uploads_to_send_again`). A write may still be sent while it has no
-/// verdict, is blocked or dead, or is refused unsent behind no withdrawn
-/// write, as `release` decides: released, it waits on the upload again. A
-/// write refused `blob_not_found` keeps them too: they may be the only copy.
+/// A taken upload may need resending, or hold a refused file's only copy.
 pub fn kept_uploads(conn: &Connection) -> Result<HashSet<String>, CoreError> {
     let mut statement = conn.prepare(
         "SELECT DISTINCT blob FROM queue

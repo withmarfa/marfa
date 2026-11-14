@@ -760,7 +760,7 @@ Where the copy still holds an upload's bytes, when a device drains with a creden
 
 Where the copy still holds the bytes of a taken upload that a write waits on, when the server answers that write `404 blob_not_found`, a device MUST send the upload again before it sends that write again, unless the uploads the write waits on already went again for an earlier such answer to it.
 
-**Reason:** the server answers so when it purged bytes nothing referenced yet (`stores/orphan-upload-kept`), as it does when a write stalls after its upload was taken, and when the writing credential neither sent the bytes nor may read them (`blobs/proof-file-refused`). Sending them again cures both, and the server keeps no answer under the write's key for the refusal (`items/idempotency-unproven-file-not-kept`). The write waits `blocked` for `awaiting_dependency` meanwhile, and the copy keeps the bytes while it waits or is refused so (`device/file-trim-keeps-queued`). A second such answer refuses the write (`queue-and-verdicts/refused-contract`), so bytes the server never takes do not loop.
+**Reason:** a stalled write can outlive its upload's orphan grace (`stores/orphan-upload-kept`), and a credential that neither sent the bytes nor may read them gets the same answer (`blobs/proof-file-refused`). Sending the bytes again can cure either refusal without changing the write's key (`items/idempotency-unproven-file-not-kept`); the one-resend limit prevents a loop, and `device/file-trim-keeps-queued` protects the local copy.
 
 **Tests:** `device/upload-again-live.test.ts › sends a file's bytes again once the server has purged them, and the file item lands`.
 
