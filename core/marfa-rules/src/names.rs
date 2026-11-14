@@ -1,4 +1,4 @@
-//! Names compare in NFC, case-insensitively, as macOS and Obsidian do.
+//! Names compare in NFC under full Unicode case folding, as APFS does.
 
 use unicode_normalization::UnicodeNormalization;
 
