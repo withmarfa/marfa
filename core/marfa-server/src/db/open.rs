@@ -168,9 +168,7 @@ impl Lock {
     }
 }
 
-/// Changes nothing but what any open of the file would: with no log to apply, SQLite is told not
-/// to look for one, since a reader of a WAL file would make side files, unless a rollback
-/// journal waits to be put back.
+/// Changes nothing but a rollback journal put back; a file with no log is opened immutable.
 fn judge_file(path: &Path, options: &Options, label: &str) -> Result<Judged, Failure> {
     let unreadable =
         |error: std::io::Error| Failure::start(format!("{label} could not be read: {error}"));

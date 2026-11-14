@@ -194,8 +194,7 @@ async fn object_store(
 }
 
 impl Blobs {
-    /// The folder is changed only once nothing refuses the start. Its lock comes with it where the
-    /// folder was there to take it in.
+    /// The folder is changed only once nothing refuses the start; `held` is its lock if taken.
     pub async fn open(
         db: &Db,
         (root, held): (&Path, Option<File>),

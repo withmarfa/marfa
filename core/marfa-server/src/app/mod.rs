@@ -118,7 +118,7 @@ pub struct App {
 /// The locks a server holds on its database and blob folder while it runs.
 pub struct Held {
     database: Lock,
-    /// None where the blob folder is not there yet; the store takes it once it makes the folder.
+    /// None where the blob folder has no marker yet; the store takes it when it opens the folder.
     blobs: Option<std::fs::File>,
 }
 
@@ -126,8 +126,7 @@ pub struct Held {
 /// server is refused before it changes anything of the first's. It blocks.
 pub fn take_files(database: &DatabasePath, blobs: &Path) -> Result<(Kept, Held), Failure> {
     let judged = Kept::judged(database, blobs)?;
-    // A running server has marked its folder. One with no marker is locked once it is judged, so
-    // a folder the start refuses is left as it was.
+    // A running server has marked its folder; an unmarked one gets no lock file until it opens.
     let marked = judged.has_blob_folder() && blobs.join(blobs::MARKER).is_file();
     let held = Held {
         database: Lock::take(database)?,
