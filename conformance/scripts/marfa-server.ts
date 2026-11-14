@@ -990,6 +990,7 @@ function clearState(state: string): void {
     p.db,
     `${p.db}-wal`,
     `${p.db}-shm`,
+    `${p.db}.server-lock`,
     p.env,
     p.log,
     p.stderr,
