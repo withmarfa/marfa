@@ -117,3 +117,32 @@ test("a refused store is replaced only while nothing is unsent and no other proc
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("a refused store lists each write it holds unsent, and is left unchanged", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "marfa-node-unsent-"));
+  try {
+    const path = join(dir, "copy.sqlite");
+    refusedStore(path, true);
+    const db = new DatabaseSync(path);
+    db.exec(`INSERT INTO queue (id, kind, item_id, idempotency_key, payload, queued_at, verdict, sent)
+             VALUES ('q2', 'merge_metadata', 'n1', 'k2', '{"tags":[]}', '2026-01-01T00:00:01Z', 'dead', 1),
+                    ('q3', 'add_tag', 'n1', 'k3', '{}', '2026-01-01T00:00:02Z', 'accepted', 1)`);
+    db.close();
+    assert.equal(refusal(() => MarfaCore.open(path)).code, "wrong_schema");
+    const before = digest(path);
+    assert.deepEqual(MarfaCore.readUnsent(path), [
+      { id: "q1", kind: "create_item", body: "{}" },
+      { id: "q2", kind: "merge_metadata", itemId: "n1", body: '{"tags":[]}', verdict: "dead" },
+    ]);
+    assert.equal(digest(path), before);
+
+    const release = await holdWriter(path);
+    try {
+      assert.equal(refusal(() => MarfaCore.readUnsent(path)).code, "reading_handle");
+    } finally {
+      await release();
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
