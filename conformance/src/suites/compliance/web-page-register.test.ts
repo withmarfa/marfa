@@ -301,7 +301,7 @@ describe("registrations nobody approves", () => {
       method: "DELETE",
       headers: { authorization: `Bearer ${server.managementKey}` },
     });
-    expect(ended.status).toBe(204);
+    expect(ended.status).toBe(200);
 
     // Past the retention, a day.
     await server.advanceClock(2 * DAY_MS);

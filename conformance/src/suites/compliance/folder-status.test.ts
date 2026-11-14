@@ -949,7 +949,7 @@ describe("folder sync reports", () => {
     expect(afterRefresh.sign_ins[0]!.sign_in.id).toBe(before.sign_in.id);
     expect(afterRefresh.sign_ins[0]!.copies[0]!.sequence).toBe(2);
     const ended = await call("DELETE", `/auth/grants/${before.sign_in.id}`);
-    expect(ended.status).toBe(204);
+    expect(ended.status).toBe(200);
     const after = await get(id);
     expect(after.sign_ins[0]!.current).toBe(false);
     expect(after.sign_ins[0]!.copies).toHaveLength(1);

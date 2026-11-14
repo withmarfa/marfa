@@ -193,7 +193,7 @@ describe("a subscription whose credential stops standing", () => {
       `/auth/grants/${grants.data.data[0]!.id}`,
       { method: "DELETE" },
     );
-    expect(revoked.status).toBe(204);
+    expect(revoked.status).toBe(200);
 
     expect(await local(`/webhooks/${id}`)).toBe(404);
     const listed = await controlRequest(server!.controlSocket, "/webhooks");

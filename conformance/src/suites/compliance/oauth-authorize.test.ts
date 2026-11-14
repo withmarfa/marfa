@@ -4,7 +4,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { offeredValues } from "../../utils/approval-form.js";
+import { offeredValues, visibleText } from "../../utils/approval-form.js";
 import {
   authorize,
   authorizeQuery,
@@ -518,6 +518,127 @@ describe("a type registered while the server runs", () => {
     });
     expect(exchanged.status, JSON.stringify(exchanged.body)).toBe(200);
     expect(exchanged.body.scope).toBe(scope);
+  });
+});
+
+describe("an app's own type namespace", () => {
+  async function registerType(id: string): Promise<void> {
+    const registered = await fetch(`${server.apiUrl}/types`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${server.workingKey}`,
+      },
+      body: JSON.stringify({
+        id,
+        version: 1,
+        fields: { title: { type: "string" } },
+      }),
+    });
+    expect(registered.status, id).toBe(201);
+  }
+
+  async function createItem(access: string, type: string): Promise<number> {
+    const response = await fetch(`${server.apiUrl}/items`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${access}`,
+      },
+      body: JSON.stringify({ type, properties: { title: "made by the app" } }),
+    });
+    await response.body?.cancel();
+    return response.status;
+  }
+
+  it("is offered and granted for app.<vendor>.*, reaches that vendor's types registered before and after, and no other vendor's", async () => {
+    await registerType("app.nsone.widget");
+    await registerType("app.nsone2.gadget");
+    const scope = "app.nsone.*:write";
+    const app = await registerApp(server, scope);
+
+    // The witness: a vendor namespace no type sits under is dropped.
+    const none = await consentScreen(
+      authorizeQuery(app.clientId, `${scope} app.nsnone.*:write`, pkce()),
+    );
+    expect(none.searchParams.get("scope")).toBe(scope);
+
+    const proof = pkce();
+    const consent = await consentScreen(
+      authorizeQuery(app.clientId, scope, proof),
+    );
+    const page = await (await fetch(consent, { headers: { cookie } })).text();
+    expect(offeredValues(page, "scopes")).toContain(scope);
+    const sent = await decide(server, origin, cookie, consent, true, [scope]);
+    const exchanged = await token(server, {
+      grant_type: "authorization_code",
+      code: sent?.searchParams.get("code") ?? "",
+      redirect_uri: CALLBACK,
+      code_verifier: proof.verifier,
+      client_id: app.clientId,
+    });
+    expect(exchanged.status, JSON.stringify(exchanged.body)).toBe(200);
+    expect(exchanged.body.scope).toBe(scope);
+    const access = exchanged.body.access_token!;
+
+    await registerType("app.nsone.gizmo");
+    expect(await createItem(access, "app.nsone.widget")).toBe(201);
+    expect(await createItem(access, "app.nsone.gizmo")).toBe(201);
+    expect(await createItem(access, "app.nsone2.gadget")).toBe(403);
+    expect(await createItem(access, "core.note")).toBe(403);
+  });
+
+  it("is dropped from a request by an app registered for another vendor's namespace", async () => {
+    await registerType("app.nsthree.widget");
+    await registerType("app.nsfour.widget");
+    const app = await registerApp(server, "app.nsthree.*:write");
+    const consent = await consentScreen(
+      authorizeQuery(
+        app.clientId,
+        "app.nsthree.*:write app.nsfour.*:write",
+        pkce(),
+      ),
+    );
+    expect(consent.searchParams.get("scope")).toBe("app.nsthree.*:write");
+  });
+
+  it("titles the rows for every app's data and for one vendor's data on the consent screen", async () => {
+    await registerType("app.nstitled.widget");
+    const scope = "app.*:read app.nstitled.*:read";
+    const app = await registerApp(server, scope);
+    const consent = await consentScreen(
+      authorizeQuery(app.clientId, scope, pkce()),
+    );
+    const text = visibleText(
+      await (await fetch(consent, { headers: { cookie } })).text(),
+    );
+    expect(text).toContain("Every app's data");
+    expect(text).toContain("App data from nstitled");
+  });
+
+  it("is offered on a device code for app.<vendor>.*, and refused for a vendor no type sits under", async () => {
+    await registerType("app.nsdevice.widget");
+    const app = await registerApp(server, "app.nsdevice.*:write", {
+      grant_types: [
+        "authorization_code",
+        "refresh_token",
+        "urn:ietf:params:oauth:grant-type:device_code",
+      ],
+    });
+    const ask = (scope: string): Promise<Response> =>
+      fetch(`${server.apiUrl}/auth/device/code`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: app.clientId, scope }),
+      });
+    const issued = await ask("app.nsdevice.*:write");
+    expect(issued.status, await issued.clone().text()).toBe(200);
+    await issued.body?.cancel();
+    const refused = await ask("app.nsnodevice.*:write");
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toBe(
+      "invalid_scope",
+    );
   });
 });
 

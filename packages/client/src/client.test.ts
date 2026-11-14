@@ -651,7 +651,7 @@ it.each(["items", "edges"] as const)(
   },
 );
 
-it("sends the published app grant operations and reads an empty disconnect answer", async () => {
+it("sends the published app grant operations and reads the disconnect answer", async () => {
   const seen: Request[] = [];
   const client = createClient({
     baseUrl: "https://marfa.example",
@@ -661,15 +661,15 @@ it("sends the published app grant operations and reads an empty disconnect answe
       seen.push(request);
       return Promise.resolve(
         new Response(
-          request.method === "DELETE"
-            ? null
-            : JSON.stringify(
-                request.method === "GET"
-                  ? { data: [], next_cursor: null }
-                  : { scopes: ["core.note:read"] },
-              ),
+          JSON.stringify(
+            request.method === "GET"
+              ? { data: [], next_cursor: null }
+              : request.method === "DELETE"
+                ? { ok: true }
+                : { scopes: ["core.note:read"] },
+          ),
           {
-            status: request.method === "DELETE" ? 204 : 200,
+            status: 200,
             headers: {
               "content-type": "application/json",
               [CONTRACT_HEADER]: String(CONTRACT_VERSION),
@@ -695,16 +695,16 @@ it("sends the published app grant operations and reads an empty disconnect answe
   expect(
     (
       await client.DELETE("/auth/grants/{id}", {
-        params: { path: { id: "app-1" }, query: { revoke_keys: "1" } },
+        params: { path: { id: "app-1" }, query: { revoke_keys: "true" } },
       })
-    ).response.status,
-  ).toBe(204);
+    ).data,
+  ).toEqual({ ok: true });
   expect(
     seen.map((r) => [r.method, new URL(r.url).pathname, new URL(r.url).search]),
   ).toEqual([
     ["GET", "/auth/grants", ""],
     ["PATCH", "/auth/grants/app-1", ""],
-    ["DELETE", "/auth/grants/app-1", "?revoke_keys=1"],
+    ["DELETE", "/auth/grants/app-1", "?revoke_keys=true"],
   ]);
   expect(await seen[1]!.json()).toEqual(choice);
 });

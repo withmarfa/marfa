@@ -35,14 +35,48 @@ pub fn only_where(uri: &Uri, allowed: impl Fn(&str) -> bool) -> Result<()> {
 }
 
 pub fn flag(uri: &Uri, name: &str) -> Result<Option<bool>> {
-    let Some((_, value)) = pairs(uri)?.into_iter().find(|(key, _)| key == name) else {
+    let mut named = pairs(uri)?.into_iter().filter(|(key, _)| key == name);
+    let Some((_, value)) = named.next() else {
         return Ok(None);
     };
+    if named.next().is_some() {
+        return Err(
+            Refusal::validation(format!("{name} is named once.")).with_detail("field", name)
+        );
+    }
     match value.as_str() {
         "true" => Ok(Some(true)),
         "false" => Ok(Some(false)),
         _ => {
             Err(Refusal::validation(format!("{name} is true or false.")).with_detail("field", name))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read(query: &str) -> Result<Option<bool>> {
+        let uri: Uri = format!("/x{query}").parse().unwrap();
+        flag(&uri, "revoke_keys")
+    }
+
+    #[test]
+    fn a_flag_is_true_false_or_absent_and_never_named_twice() {
+        assert_eq!(read("").unwrap(), None);
+        assert_eq!(read("?other=yes").unwrap(), None);
+        assert_eq!(read("?revoke_keys=true").unwrap(), Some(true));
+        assert_eq!(read("?revoke_keys=false").unwrap(), Some(false));
+        for refused in [
+            "?revoke_keys=yes",
+            "?revoke_keys=",
+            "?revoke_keys=true&revoke_keys=true",
+            "?revoke_keys=false&revoke_keys=yes",
+            "?revoke_keys=yes&revoke_keys=false",
+            "?revoke_keys=false&other=1&revoke_keys=true",
+        ] {
+            assert!(read(refused).is_err(), "{refused}");
         }
     }
 }

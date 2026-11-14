@@ -325,7 +325,7 @@ describe("a grant's withdrawal", () => {
 
       // The witness: after the one-shot fault, the same withdrawal takes effect and
       // is announced on this stream.
-      expect((await withdraw()).status).toBe(204);
+      expect((await withdraw()).status).toBe(200);
       await collectUntil(
         stream,
         (seen) => seen.some(aboutGrant),

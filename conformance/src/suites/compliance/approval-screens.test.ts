@@ -752,7 +752,7 @@ describe("what an approval grants an app whose access ended while the screen was
       method: "DELETE",
       headers: authorization,
     });
-    expect(revoked.status).toBe(204);
+    expect(revoked.status).toBe(200);
   }
 
   /** The scopes the code of an approval on the consent screen exchanges for. */
