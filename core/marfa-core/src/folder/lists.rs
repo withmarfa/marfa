@@ -537,11 +537,14 @@ mod tests {
 
     #[test]
     fn case_is_ignored_as_names_compare_and_no_further() {
-        // Unicode's own case pairs that the name comparison does not fold.
-        assert!(lists(&[], &["S"]).takes("\u{17f}"));
-        assert!(lists(&[], &["*\u{3c3}.md"]).takes("\u{3bb}\u{3cc}\u{3b3}\u{3bf}\u{3c2}.md"));
+        // A case pair the name comparison does not fold: it has no locale rule.
+        assert!(lists(&[], &["I"]).takes("\u{131}"));
         // What it does fold, through the folded form.
         assert!(!lists(&[], &["k"]).takes("\u{212a}"));
+        assert!(!lists(&[], &["S"]).takes("\u{17f}"));
+        assert!(!lists(&[], &["[s]x"]).takes("\u{17f}x"));
+        assert!(!lists(&[], &["*\u{3c3}.md"]).takes("\u{3bb}\u{3cc}\u{3b3}\u{3bf}\u{3c2}.md"));
+        assert!(!lists(&[], &["stra\u{df}e.md"]).takes("STRASSE.md"));
         assert!(!lists(&[], &["CAF\u{c9}.md"]).takes("caf\u{e9}.md"));
         // ASCII case in classes and literals alike.
         assert!(!lists(&[], &["[a-c]*.MD"]).takes("B.md"));
