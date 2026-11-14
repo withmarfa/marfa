@@ -62,8 +62,6 @@ const META_SET_ASIDE_MAKING: &str = "set_aside_making";
 
 /// `<prefix><set-aside name>/<hex>`: bytes kept while that store stands.
 const META_KEEPS: &str = "set_aside_keeps/";
-/// The first key after every `META_KEEPS` key.
-const META_KEEPS_END: &str = "set_aside_keeps0";
 
 // Unread records block only the write kinds whose sending they govern.
 const BY_WRITE: [(&str, &[WriteKind]); 5] = [
@@ -568,12 +566,16 @@ fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
     if let Some(old) = old {
         let _ = copy_rows(old, &tx, "declared_types");
     }
-    let keep_range = META_KEEPS.to_string()..META_KEEPS_END.to_string();
-    let kept = meta.rows.range(keep_range.clone()).map(|(key, _)| key);
+    let under = |key: &&String| key.starts_with(META_KEEPS);
+    let kept = meta
+        .rows
+        .range(META_KEEPS.to_string()..)
+        .map(|(key, _)| key)
+        .take_while(under);
     let indexed = meta
         .keys
         .iter()
-        .flat_map(|keys| keys.range(keep_range.clone()));
+        .flat_map(|keys| keys.range(META_KEEPS.to_string()..).take_while(under));
     for key in kept.chain(indexed).collect::<BTreeSet<_>>() {
         let aside = key[META_KEEPS.len()..]
             .rsplit_once('/')
@@ -667,13 +669,7 @@ pub(crate) fn forget_gone_keeps(
     beside: impl Fn(&str) -> PathBuf,
 ) -> Result<(), CoreError> {
     for aside in keeps(conn, beside)?.1 {
-        conn.execute(
-            "DELETE FROM meta WHERE key >= ?1 AND key < ?2",
-            [
-                format!("{META_KEEPS}{aside}/"),
-                format!("{META_KEEPS}{aside}0"),
-            ],
-        )?;
+        store::meta_delete_under(conn, &format!("{META_KEEPS}{aside}/"))?;
     }
     Ok(())
 }
@@ -683,14 +679,10 @@ fn keeps(
     conn: &Connection,
     beside: impl Fn(&str) -> PathBuf,
 ) -> Result<(BTreeSet<String>, BTreeSet<String>), CoreError> {
-    let mut query = conn.prepare_cached("SELECT key FROM meta WHERE key >= ?1 AND key < ?2")?;
-    let keys = query
-        .query_map([META_KEEPS, META_KEEPS_END], |row| row.get::<_, String>(0))?
-        .collect::<rusqlite::Result<Vec<_>>>()?;
     let mut standing = BTreeMap::new();
     let (mut kept, mut gone) = (BTreeSet::new(), BTreeSet::new());
-    for key in &keys {
-        let Some((aside, hex)) = key[META_KEEPS.len()..].rsplit_once('/') else {
+    for (key, _) in store::meta_under(conn, META_KEEPS)? {
+        let Some((aside, hex)) = key.rsplit_once('/') else {
             continue;
         };
         let stands = *standing
