@@ -97,39 +97,34 @@ describe("a second server on a running server's files", () => {
     }
   }, 180_000);
 
-  it(
-    "is refused on the database, not the control socket, when both have the socket beside the database",
-    async () => {
-      const dir = await mkdtemp(
-        join(await realpath(tmpdir()), "marfa-default-socket-"),
+  it("is refused on the database, not the control socket, when both have the socket beside the database", async () => {
+    // Short, because the socket's path must fit in a socket address.
+    const dir = await mkdtemp(join(await realpath(tmpdir()), "marfa-ds-"));
+    removals.push(dir);
+    const database = join(dir, "marfa.db");
+    // Where the server puts its control socket when it is given none.
+    const beside = {
+      MARFA_DATABASE_PATH: database,
+      MARFA_CONTROL_SOCKET: join(dir, "control", "marfa.sock"),
+    };
+    const running = await bootFreshServer("one-server-beside", {
+      ...DISK_ONLY,
+      ...beside,
+    });
+    try {
+      const second = await refused(beside);
+      expect(second.code, second.output).toBe(1);
+      expect(second.output).toContain(
+        `${database} is open in another Marfa server`,
       );
-      removals.push(dir);
-      const database = join(dir, "marfa.db");
-      // Where the server puts its control socket when it is given none.
-      const beside = {
-        MARFA_DATABASE_PATH: database,
-        MARFA_CONTROL_SOCKET: join(dir, "control", "marfa.sock"),
-      };
-      const running = await bootFreshServer("one-server-beside", {
-        ...DISK_ONLY,
-        ...beside,
-      });
-      try {
-        const second = await refused(beside);
-        expect(second.code, second.output).toBe(1);
-        expect(second.output).toContain(
-          `${database} is open in another Marfa server`,
-        );
-        expect(second.output).not.toContain("Control socket");
-        expect(
-          (await controlRequest(running.controlSocket, "/health")).status,
-        ).toBe(200);
-      } finally {
-        await running.stop();
-      }
-    },
-    180_000,
-  );
+      expect(second.output).not.toContain("Control socket");
+      expect(
+        (await controlRequest(running.controlSocket, "/health")).status,
+      ).toBe(200);
+    } finally {
+      await running.stop();
+    }
+  }, 180_000);
 
   it(
     "is refused on a second hard link to the database, and says why",
