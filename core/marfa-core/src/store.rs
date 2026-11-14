@@ -298,9 +298,7 @@ pub(crate) fn removal_count(path: &Path) -> Option<u64> {
     untaken_count(&conn)
 }
 
-/// Refuses `Invalid` a folder's store: one in a folder's state, judged by
-/// `path` and the folder registry before the store is read, since it may not
-/// read, or one whose meta names a folder.
+// The path and registry identify folder stores even when their pages do not read.
 pub(crate) fn refuse_folders(path: &Path) -> Result<(), CoreError> {
     let bound = || {
         open_refused(path).is_ok_and(|conn| {
@@ -323,10 +321,6 @@ fn folders(path: &Path) -> CoreError {
     ))
 }
 
-/// Whether `path` is in a folder's state directory: one named as a folder
-/// names it, or one a folder the registry lists keeps. A store a crash left
-/// before it was bound, or one whose meta does not read, is still the
-/// folder's.
 fn kept_by_folder(path: &Path) -> bool {
     let state = path
         .parent()
@@ -5921,8 +5915,6 @@ pub(crate) fn block_for_another_instance_but(
     )?)
 }
 
-/// Holds `reason` each write `ids` names that a drain would send: one
-/// unanswered or blocked for a reason that clears itself.
 pub(crate) fn hold(
     conn: &Connection,
     ids: &[String],

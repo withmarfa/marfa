@@ -42,14 +42,12 @@ fn carrying(path: &Path) -> PathBuf {
     store::suffixed(path, ".carrying")
 }
 
-// These markers let a later call resume interrupted renames, and show that
-// a set-aside made the file at `carrying`.
+// Markers distinguish an interrupted set-aside from an unrelated file.
 const META_SET_ASIDE_TO: &str = "set_aside_to";
 const META_SET_ASIDE: &str = "set_aside";
 const META_SET_ASIDE_MAKING: &str = "set_aside_making";
 
-/// Each record meta keeps under a write's id, with the kinds of write it
-/// decides how to send.
+// Unread records block only the write kinds whose sending they govern.
 const BY_WRITE: [(&str, &[WriteKind]); 5] = [
     ("chosen_tier/", &[WriteKind::CreateItem]),
     ("cleared_time/", &[WriteKind::CreateItem]),
@@ -58,8 +56,6 @@ const BY_WRITE: [(&str, &[WriteKind]); 5] = [
     ("upload_sent_as/", &[]),
 ];
 
-/// Each table that keeps a record under a write's id, with the kinds of
-/// write it decides how to send.
 const TABLES_BY_WRITE: [(&str, &[WriteKind]); 2] = [
     (
         "body_edges",
@@ -73,20 +69,15 @@ const TABLES_BY_WRITE: [(&str, &[WriteKind]); 2] = [
 
 static MET: AtomicU64 = AtomicU64::new(0);
 
-/// Counts the damage SQLite reports, on any store.
 pub(crate) fn note_met() {
     MET.fetch_add(1, Ordering::Relaxed);
 }
 
-/// What `keep_log_if_met` compares against.
 pub(crate) fn seen() -> u64 {
     MET.load(Ordering::Relaxed)
 }
 
-/// Where damage was met since `seen`, leaves the write-ahead log as it is
-/// when `conn` closes, since a checkpoint on close would fold it into a file
-/// that does not read and delete it. The count is the process's, so damage
-/// met on another store keeps this one's log too, which its next open reads.
+// Healthy stores' logs also stay; their next open replays them.
 pub(crate) fn keep_log_if_met(conn: &Connection, seen: u64) {
     if self::seen() != seen {
         let _ = conn.set_db_config(DbConfig::SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, true);
@@ -114,9 +105,7 @@ pub(crate) fn at_path(error: CoreError, path: &Path) -> CoreError {
     }
 }
 
-/// Refuses `StoreDamaged` while a file stands where a set-aside makes the
-/// new store, so nothing opens, replaces or removes the store at `path`
-/// while what a set-aside carried waits to take its place.
+// Carried writes still need the upload bytes beside the original path.
 pub(crate) fn refuse_unfinished(path: &Path) -> Result<(), CoreError> {
     let made = carrying(path);
     if made.symlink_metadata().is_err() {
@@ -361,8 +350,6 @@ fn carry(path: &Path, made: &Path, aside: &Path) -> Result<(), CoreError> {
     Ok(())
 }
 
-/// The kind of each write the new store carries, by its id, `None` where
-/// this build names no such kind.
 fn kinds(tx: &Connection) -> Result<BTreeMap<String, Option<WriteKind>>, CoreError> {
     let mut query = tx.prepare("SELECT id, kind FROM queue")?;
     let rows = query.query_map([], |row| {
@@ -376,8 +363,7 @@ fn kinds(tx: &Connection) -> Result<BTreeMap<String, Option<WriteKind>>, CoreErr
     Ok(kinds)
 }
 
-/// Whether a record kept for `guards` may decide how a write of `kind` is
-/// sent: a kind this build does not name may be one.
+// Unknown write kinds may need any guarding record.
 fn guarded(guards: &[WriteKind], kind: Option<WriteKind>) -> bool {
     kind.is_none_or(|kind| guards.contains(&kind))
 }
@@ -587,8 +573,7 @@ enum Said {
     Unknown,
 }
 
-/// The old store's meta as far as it reads: its rows, and whether every
-/// key it holds is known, from the table or from an index of its keys.
+// A complete key index can prove absence when the table cannot.
 struct Meta {
     rows: BTreeMap<String, String>,
     whole: bool,
@@ -645,7 +630,6 @@ impl Meta {
     }
 }
 
-/// Runs `sql`, handing each row to `each`; whether every row read.
 fn scan(
     old: &Connection,
     sql: &str,
@@ -687,8 +671,7 @@ fn by_key_index(old: &Connection, table: &str, column: &str) -> Vec<String> {
         .collect()
 }
 
-/// Copies the rows of `table` that name a carried write, read without an
-/// index; answers the writes copied and whether every row read.
+// A damaged index must not hide readable records.
 fn copy_by_write(
     old: &Connection,
     new: &Connection,
