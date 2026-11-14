@@ -8,7 +8,7 @@ import {
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { bootFreshServer } from "../../utils/fresh-server.js";
-import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
+import { QUIET_SCHEDULE, settle } from "../../utils/moved-clock.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -60,6 +60,10 @@ describe("the housekeeping the server runs on itself", () => {
       QUIET_SCHEDULE,
     );
     try {
+      // The scheduler makes each job's first run a few seconds after boot
+      // whatever its interval; the moved clock below would otherwise make
+      // that run land on the one this test asks for.
+      await settle(server, ["trash-purge"]);
       const operator = new MarfaClient({
         baseUrl: server.apiUrl,
         apiKey: server.managementKey,

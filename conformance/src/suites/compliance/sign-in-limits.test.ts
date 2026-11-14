@@ -40,6 +40,7 @@ beforeAll(async () => {
     }),
     bootFreshServer("sign-in-limits-every-email", {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     }),
     bootFreshServer("sign-in-limits-timed", {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
@@ -644,6 +645,7 @@ describe("a confirmed move of the sign-in address", () => {
     // Its own server: the move changes the address every later sign-in names.
     const own = await bootFreshServer("sign-in-limits-address-move", {
       MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     });
     try {
       const before = await deviceCookie(own, "172.18.0.1");
