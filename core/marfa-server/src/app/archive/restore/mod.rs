@@ -24,8 +24,8 @@ use crate::app::edges::write::Writing;
 use crate::app::faults::{HOLD_RESTORE_COMMIT, HOLD_RESTORE_ITEM};
 use crate::app::items::restored::{self, Restored};
 use crate::app::refusal::{Code, Refusal, Result};
-use crate::app::restore_running;
 use crate::app::{connectors, edge_types, sources, stored, tables, types};
+use crate::app::{provenance, restore_running};
 use intake::{Intake, Received};
 
 /// What every answer says of what an archive does not hold.
@@ -408,7 +408,7 @@ impl App {
             answer["set_up_again"] = Value::from(SET_UP_AGAIN);
             Ok(answer)
         };
-        tokio::spawn(permit.run(task))
+        tokio::spawn(provenance::carried(permit.run(task)))
             .await
             .map_err(|error| Refusal::internal(&format!("a restore did not finish: {error}")))?
     }

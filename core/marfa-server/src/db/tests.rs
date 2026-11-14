@@ -11,6 +11,7 @@ use super::migrate::{MIGRATIONS, Migration};
 use super::{Db, Options, Write};
 use crate::app::faults::Faults;
 use crate::app::items::bulk::each;
+use crate::app::provenance;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::failure::Failure;
 use crate::settings::DatabasePath;
@@ -338,6 +339,40 @@ async fn a_hold_refuses_a_callers_write_at_once_and_queues_its_own_and_backgroun
     db.write(WRITE, |tx| add(tx, 5)).await.unwrap();
     assert!(!ran.load(Ordering::SeqCst));
     assert_eq!(ids(&db).await, [1, 3, 4, 5]);
+}
+
+#[tokio::test]
+async fn a_hold_refuses_bookkeeping_a_request_starts_on_another_task_and_queues_the_servers() {
+    let place = folder();
+    let db = Arc::new(open(&place.file));
+    let _holding = db
+        .hold_writes(Refusal::new(Code::WriteContention, "held"))
+        .unwrap();
+    let request = provenance::within(provenance::Origin::default(), async {
+        let spawned = {
+            let db = db.clone();
+            tokio::spawn(provenance::carried(async move {
+                db.write(Write::own(), |tx| add(tx, 1)).await
+            }))
+        };
+        let blocking = {
+            let db = db.clone();
+            let handle = tokio::runtime::Handle::current();
+            tokio::task::spawn_blocking(provenance::carried_blocking(move || {
+                handle.block_on(db.write(Write::own(), |tx| add(tx, 2)))
+            }))
+        };
+        let servers = {
+            let db = db.clone();
+            tokio::spawn(async move { db.write(Write::own(), |tx| add(tx, 3)).await })
+        };
+        (spawned.await, blocking.await, servers.await)
+    });
+    let (spawned, blocking, servers) = request.await;
+    assert_eq!(spawned.unwrap().unwrap_err().message, "held");
+    assert_eq!(blocking.unwrap().unwrap_err().message, "held");
+    servers.unwrap().unwrap();
+    assert_eq!(ids(&db).await, [3]);
 }
 
 #[tokio::test]

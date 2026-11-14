@@ -1,4 +1,12 @@
-import { readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
@@ -10,6 +18,7 @@ import {
   itemsArchive,
   blobHash,
 } from "../../utils/archive.js";
+import { afterFirstScheduledBackup, ownerOf } from "../../utils/backups.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -670,6 +679,116 @@ describe("a writer while a restore writes", () => {
       properties: { body: "written after the restore placed its files" },
     });
     expect(landed.status, JSON.stringify(landed.error)).toBe(201);
+  });
+
+  it("refuses a housekeeping run asked for while the restore runs, at once and naming the restore", async () => {
+    const rows = carrying();
+    await server.setFault("hold:restore:before-commit");
+    const restoring = ownerClient().restoreArchive(rows.archive);
+    await server.waitForHold("hold:restore:before-commit");
+    try {
+      const started = performance.now();
+      const answer = await operator.runHousekeeping("blob-integrity");
+      expectRefusedForTheRestore(
+        "POST /housekeeping/{name}/run",
+        answer,
+        performance.now() - started,
+      );
+    } finally {
+      await server.clearFault();
+    }
+    const done = await restoring;
+    expect(done.status, JSON.stringify(done.error)).toBe(200);
+
+    // The witness: the same run is taken once the restore has committed.
+    await runJob(operator, "blob-integrity");
+  });
+
+  it("refuses an upload that finishes a queued deletion of its bytes while the restore runs, at once and naming the restore", async () => {
+    const bytes = new TextEncoder().encode(
+      `an upload whose first attempt failed, ${uuidv7()}`,
+    );
+    const hash = blobHash(bytes);
+    // A placing that fails leaves the deletion of its bytes queued, which the
+    // next upload of the same bytes finishes first.
+    await server.setFault("fail:blob-write");
+    const failed = await working.uploadBlob(bytes, "application/octet-stream");
+    expect(failed.status, JSON.stringify(failed.error)).toBe(507);
+    await server.clearFault();
+
+    await server.setFault("hold:blob-delete");
+    const uploading = working.uploadBlob(bytes, "application/octet-stream");
+    await server.waitForHold("hold:blob-delete");
+    const rows = carrying();
+    await server.setFault("hold:restore:before-commit");
+    const restoring = ownerClient().restoreArchive(rows.archive);
+    await server.waitForHold("hold:restore:before-commit");
+    try {
+      const started = performance.now();
+      await server.clearFault("hold:blob-delete");
+      expectRefusedForTheRestore(
+        "POST /blobs",
+        await uploading,
+        performance.now() - started,
+      );
+    } finally {
+      await server.clearFault();
+    }
+    const done = await restoring;
+    expect(done.status, JSON.stringify(done.error)).toBe(200);
+    await expectAllOf(rows);
+
+    // The witness: the same upload is taken once the restore has committed.
+    const landed = await working.uploadBlob(bytes, "application/octet-stream");
+    expect(landed.status, JSON.stringify(landed.error)).toBe(201);
+    const read = await operator.downloadBlob(hash);
+    expect(read.status).toBe(200);
+    expect(new Uint8Array(read.data)).toEqual(bytes);
+  });
+});
+
+describe("a backup asked for while a restore runs", () => {
+  const folder = mkdtempSync(join(tmpdir(), "marfa-restore-faults-backup-"));
+  let backingUp: FreshServer;
+
+  beforeAll(async () => {
+    // The interval is a year, so once the first scheduled run has ended no
+    // other comes during the test.
+    backingUp = await bootFreshServer("restore-faults-backup", {
+      S3_BUCKET: "",
+      MARFA_BACKUP_PATH: folder,
+      MARFA_BACKUP_INTERVAL_SECONDS: "31536000",
+    });
+    await afterFirstScheduledBackup(backingUp);
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  afterAll(async () => {
+    await backingUp?.stop();
+    rmSync(folder, { recursive: true, force: true });
+  }, FRESH_SERVER_TIMEOUT_MS);
+
+  it("refuses a backup asked for while the restore runs, at once and naming the restore", async () => {
+    const owner = ownerOf(backingUp);
+    await backingUp.setFault("hold:restore:before-commit");
+    const restoring = owner.restoreArchive(carrying().archive);
+    await backingUp.waitForHold("hold:restore:before-commit");
+    try {
+      const started = performance.now();
+      const answer = await owner.runBackup();
+      expectRefusedForTheRestore(
+        "POST /backups",
+        answer,
+        performance.now() - started,
+      );
+    } finally {
+      await backingUp.clearFault();
+    }
+    const done = await restoring;
+    expect(done.status, JSON.stringify(done.error)).toBe(200);
+
+    // The witness: the same backup is taken once the restore has committed.
+    const taken = await owner.runBackup();
+    expect(taken.status, JSON.stringify(taken.error)).toBe(200);
   });
 });
 

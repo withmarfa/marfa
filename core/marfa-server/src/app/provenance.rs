@@ -27,6 +27,26 @@ pub async fn within<F: Future>(origin: Origin, work: F) -> F::Output {
     ORIGIN.scope(origin, work).await
 }
 
+/// `work` as part of the current request, if any, wherever it is later run.
+pub fn carried<F: Future>(work: F) -> impl Future<Output = F::Output> {
+    let origin = ORIGIN.try_with(Clone::clone).ok();
+    async move {
+        match origin {
+            Some(origin) => ORIGIN.scope(origin, work).await,
+            None => work.await,
+        }
+    }
+}
+
+/// As `carried`, for work on a blocking thread.
+pub fn carried_blocking<R>(work: impl FnOnce() -> R) -> impl FnOnce() -> R {
+    let origin = ORIGIN.try_with(Clone::clone).ok();
+    move || match origin {
+        Some(origin) => ORIGIN.sync_scope(origin, work),
+        None => work(),
+    }
+}
+
 pub async fn through<F: Future>(via: &'static str, work: F) -> F::Output {
     let origin = Origin {
         via: Some(via),
