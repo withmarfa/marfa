@@ -1872,7 +1872,7 @@ describe("the working copy belongs to one server", () => {
       expect(
         refused.refusal.raw,
         "the refusal does not send the person to the build that made the store",
-      ).toContain("only the build that made it can send or show");
+      ).toContain("only the build that made it can send");
     }
     expect(queuedRows(), "refusing the store changed its queue").toEqual(
       before,
@@ -1916,6 +1916,87 @@ describe("the working copy belongs to one server", () => {
       said,
       "the refusal counted a blocked write without saying a blocked write is among them",
     ).toContain("blocked");
+  });
+
+  it("lists each write a store of another version holds unsent, with its kind, item and body", async () => {
+    harness = await hydratedHarness("store-version-list", {
+      items: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const { device } = harness;
+    const tagged = await device.addTag("n1", "kept");
+    expect(tagged.ok, JSON.stringify(tagged)).toBe(true);
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "typed", body: "offline" },
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!tagged.ok || !created.ok) return;
+    const store = new DatabaseSync(device.store);
+    let bodies: Record<string, string>;
+    try {
+      bodies = Object.fromEntries(
+        (
+          store.prepare("SELECT id, payload FROM queue").all() as Array<{
+            id: string;
+            payload: string;
+          }>
+        ).map((row) => [row.id, row.payload]),
+      );
+      store.exec("PRAGMA user_version = 0");
+    } finally {
+      store.close();
+    }
+    const refused = await device.queue();
+    expect(refused.ok ? null : refused.refusal.code).toBe("wrong_schema");
+
+    const listed = await device.unsent();
+    expect(listed.ok, JSON.stringify(listed)).toBe(true);
+    if (!listed.ok) return;
+    expect(listed.value).toEqual(
+      [tagged.value, created.value].map((write) => ({
+        id: write.id,
+        kind: write.kind,
+        item_id: write.item_id,
+        body: bodies[write.id],
+        verdict: null,
+      })),
+    );
+  });
+
+  it("holds in its queue no kind and no verdict its schema version does not name", async () => {
+    harness = await hydratedHarness("store-version-names", {
+      items: { "core.note": [{ item: { id: "n1" } }] },
+    });
+    const { device } = harness;
+    const queued = await device.replaceMetadata("n1", ["held"]);
+    expect(queued.ok, JSON.stringify(queued)).toBe(true);
+    if (!queued.ok) return;
+
+    const store = new DatabaseSync(device.store);
+    try {
+      const set = (column: "kind" | "verdict", value: string) => () =>
+        store
+          .prepare(`UPDATE queue SET ${column} = ? WHERE id = ?`)
+          .run(value, queued.value.id);
+      // The witness: a kind and a verdict the version names are held.
+      expect(set("kind", "add_tag")).not.toThrow();
+      expect(set("verdict", "dead")).not.toThrow();
+      expect(
+        set("kind", "merge_metadata"),
+        "the store held a kind its version does not name",
+      ).toThrow();
+      expect(
+        set("verdict", "maybe"),
+        "the store held a verdict its version does not name",
+      ).toThrow();
+      expect(
+        store
+          .prepare("SELECT kind, verdict FROM queue WHERE id = ?")
+          .get(queued.value.id),
+      ).toEqual({ kind: "add_tag", verdict: "dead" });
+    } finally {
+      store.close();
+    }
   });
 
   it("names a write of a kind this build does not send, among the writes a store of another version holds", async () => {

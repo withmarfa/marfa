@@ -244,6 +244,19 @@ pub struct UnregisteredType {
     pub message: String,
 }
 
+/// An unsent write with the kind and verdict recorded by the store's build.
+#[napi(object)]
+pub struct UnsentWrite {
+    pub id: String,
+    /// As the store names it, which may be a kind this build does not send.
+    pub kind: String,
+    pub item_id: Option<String>,
+    /// The body it sends, as the store holds it.
+    pub body: String,
+    /// Omitted while waiting; otherwise the verdict recorded by the store.
+    pub verdict: Option<String>,
+}
+
 /// What `setAsideDamaged` did.
 #[napi(object)]
 pub struct SetAside {
@@ -2505,6 +2518,22 @@ impl MarfaCore {
     #[napi]
     pub fn remove_store_losing_all(env: Env, path: String) -> Result<()> {
         marfa_core::Core::remove_store_losing_all(path).map_err(|error| failure(env, error))
+    }
+
+    /// Lists unsent writes from a refused store; see BINDINGS.md for refusals.
+    #[napi]
+    pub fn read_unsent(env: Env, path: String) -> Result<Vec<UnsentWrite>> {
+        let unsent = marfa_core::Core::read_unsent(path).map_err(|error| failure(env, error))?;
+        Ok(unsent
+            .into_iter()
+            .map(|write| UnsentWrite {
+                id: write.id,
+                kind: write.kind,
+                item_id: write.item_id,
+                body: write.body,
+                verdict: write.verdict,
+            })
+            .collect())
     }
 
     /// Reads every page of the store at `path`. Refuses with `store_damaged`,

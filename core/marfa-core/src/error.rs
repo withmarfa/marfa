@@ -427,7 +427,7 @@ fn wrong_schema(
             "It holds no write still to be sent and no answer the folder has yet to record, but its table {table}, part of what the folder records of its files, is not of a shape this build can keep, so this build leaves the store and the folder's files as they are: with the build that made the store, remove the folder (`marfa folders remove`, which leaves its files), then add it again with this build"
         ),
         (Some(count), None) => format!(
-            "It holds {count} {} the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send or show: open it with that build and drain or discard them before hydrating a new store",
+            "It holds {count} {} the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send: list them (`marfa device unsent`, or `readUnsent` in a binding), and open it with that build to drain or discard them before hydrating a new store",
             writes(count)
         ),
         (Some(count), Some(FolderStore::Replaceable)) => format!(

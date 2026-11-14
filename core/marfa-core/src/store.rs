@@ -90,9 +90,18 @@ pub const META_READ_ONLY_READ: &str = "read_only_read_at";
 /// copy no longer holds once there are more than twice this many.
 pub const EDGE_CHANGES_KEPT: usize = 10_000;
 pub const HYDRATE_IN_PROGRESS: &str = "in_progress";
-/// The version of the shape `schema.sql` makes, held in SQLite's
-/// `user_version`. A change to that shape raises it.
+/// SQLite's `user_version`; a shape change increments it and appends to `SHAPES`.
 pub const SCHEMA_VERSION: i64 = 1;
+
+/// Moves with `SCHEMA_VERSION` until the first compatible release, then stays fixed.
+const OLDEST_UPGRADED: i64 = SCHEMA_VERSION;
+
+/// One SQL step per version, starting at `OLDEST_UPGRADED`.
+const UPGRADES: &[&str] = &[];
+
+fn upgraded(found: i64) -> bool {
+    (OLDEST_UPGRADED..SCHEMA_VERSION).contains(&found)
+}
 
 const ITEM_COLUMNS: &str = "id, type, state, tier, version, schema_version, source, source_id, occurred_at, created_at, updated_at, properties, capture_latitude, capture_longitude, trashed_at, read_only";
 const EDGE_COLUMNS: &str =
@@ -231,6 +240,7 @@ pub(crate) fn refusal(path: &Path) -> Result<Option<CoreError>, CoreError> {
     match version(&conn)? {
         SCHEMA_VERSION => Ok(None),
         0 if !holds_tables(&conn)? => Ok(None),
+        found if upgraded(found) => Ok(None),
         found => Ok(Some(at_path(refused(&conn, found), path))),
     }
 }
@@ -819,11 +829,10 @@ fn prepare(conn: &Connection) -> Result<(), CoreError> {
     )?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     tune(conn)?;
-    // A store at another version is refused, never discarded, because it may
-    // hold writes the server has never seen.
     match version(conn)? {
         SCHEMA_VERSION => {}
         0 if !holds_tables(conn)? => make(conn)?,
+        found if upgraded(found) => upgrade(conn, OLDEST_UPGRADED, UPGRADES)?,
         found => return Err(refused(conn, found)),
     }
     if meta_get(conn, META_STORE_ID)?.is_none() {
@@ -848,6 +857,29 @@ fn make(conn: &Connection) -> Result<(), CoreError> {
     }
     tx.execute_batch(SCHEMA)?;
     tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+    tx.commit()?;
+    Ok(())
+}
+
+/// A crash must leave the store at its original version or the target version.
+fn upgrade(conn: &Connection, oldest: i64, steps: &[&str]) -> Result<(), CoreError> {
+    let tx = rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+    let target = oldest + steps.len() as i64;
+    // Another program may have upgraded it between the read and the lock.
+    let found = version(&tx)?;
+    if found == target {
+        return Ok(());
+    }
+    let Some(from) = usize::try_from(found - oldest)
+        .ok()
+        .filter(|from| *from < steps.len())
+    else {
+        return Err(refused(&tx, found));
+    };
+    for step in &steps[from..] {
+        tx.execute_batch(step)?;
+    }
+    tx.pragma_update(None, "user_version", target)?;
     tx.commit()?;
     Ok(())
 }
@@ -1012,21 +1044,39 @@ pub fn queued_ids(conn: &Connection) -> Result<HashSet<String>, CoreError> {
 /// waiting for ever. `None` where a queue or a folder's record of another
 /// shape cannot be counted.
 pub(crate) fn untaken_count(conn: &Connection) -> Option<u64> {
-    let counted = (|| -> Result<i64, CoreError> {
+    untaken(conn).map(|writes| writes.len() as u64)
+}
+
+/// Raw strings preserve kinds and verdicts this build does not recognize.
+pub(crate) fn untaken(conn: &Connection) -> Option<Vec<crate::UnsentWrite>> {
+    let read = (|| -> Result<Vec<crate::UnsentWrite>, CoreError> {
         conn.execute_batch("CREATE TEMP TABLE queue AS SELECT * FROM main.queue")?;
         forget_answered_inner(conn, None, None, false)?;
-        Ok(conn.query_row(
-            "SELECT COUNT(*) FROM temp.queue WHERE verdict IS NULL OR verdict NOT IN (?1, ?2, ?3)",
+        let mut query = conn.prepare(
+            "SELECT id, kind, item_id, payload, verdict FROM temp.queue
+              WHERE verdict IS NULL OR verdict NOT IN (?1, ?2, ?3)
+              ORDER BY seq",
+        )?;
+        let rows = query.query_map(
             [
                 Verdict::Accepted.as_str(),
                 Verdict::Merged.as_str(),
                 Verdict::Conflicted.as_str(),
             ],
-            |row| row.get(0),
-        )?)
+            |row| {
+                Ok(crate::UnsentWrite {
+                    id: row.get(0)?,
+                    kind: row.get(1)?,
+                    item_id: row.get(2)?,
+                    body: row.get(3)?,
+                    verdict: row.get(4)?,
+                })
+            },
+        )?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
     })();
     let _ = conn.execute_batch("DROP TABLE IF EXISTS temp.queue");
-    counted.ok().and_then(|count| u64::try_from(count).ok())
+    read.ok()
 }
 
 /// The writes a replacement of a folder's store would lose: each not yet
@@ -7306,6 +7356,34 @@ pub(crate) mod testing {
         open_in_memory().unwrap()
     }
 
+    /// The queue another build made, whose `CHECK` also admits `kind`.
+    pub fn queue_admitting(conn: &Connection, kind: &str) {
+        let made: String = conn
+            .query_row(
+                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'queue'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let other = made
+            .replacen(
+                "'replace_metadata',",
+                &format!("'replace_metadata', '{kind}',"),
+                1,
+            )
+            .replacen("CREATE TABLE queue", "CREATE TABLE queue_other", 1);
+        assert!(other.contains(kind));
+        conn.execute_batch(&format!(
+            "PRAGMA foreign_keys = OFF;
+             {other};
+             INSERT INTO queue_other SELECT * FROM queue;
+             DROP TABLE queue;
+             ALTER TABLE queue_other RENAME TO queue;
+             PRAGMA foreign_keys = ON;"
+        ))
+        .unwrap();
+    }
+
     pub fn wire_type(id: &str, parent: Option<&str>, title_field: Option<&str>) -> WireType {
         WireType {
             id: id.into(),
@@ -10296,7 +10374,7 @@ mod tests {
             );
             assert!(
                 said.contains(
-                    "1 write the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send or show: open it with that build and drain or discard them before hydrating a new store"
+                    "1 write the server has not taken, waiting, blocked, refused or dead, which only the build that made it can send: list them (`marfa device unsent`, or `readUnsent` in a binding), and open it with that build to drain or discard them before hydrating a new store"
                 ),
                 "{said}"
             );
@@ -10352,25 +10430,6 @@ mod tests {
         assert!(said.contains("cannot be read"), "{said}");
     }
 
-    /// The queue an earlier build made, whose `CHECK` still admits `kind`.
-    fn queue_admitting(conn: &Connection, kind: &str) {
-        let made: String = conn
-            .query_row(
-                "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'queue'",
-                [],
-                |row| row.get(0),
-            )
-            .unwrap();
-        let earlier = made.replacen(
-            "'replace_metadata',",
-            &format!("'replace_metadata', '{kind}',"),
-            1,
-        );
-        assert_ne!(earlier, made);
-        conn.execute_batch(&format!("DROP TABLE queue; {earlier};"))
-            .unwrap();
-    }
-
     #[test]
     fn a_queued_write_of_a_kind_this_build_does_not_send_is_refused_by_name() {
         let dir = tempfile::tempdir().unwrap();
@@ -10386,10 +10445,7 @@ mod tests {
             )
             .unwrap();
         };
-        {
-            let conn = open(&path).unwrap();
-            queue_admitting(&conn, "merge_metadata");
-        }
+        queue_admitting(&open(&path).unwrap(), "merge_metadata");
         at_version(&path, 0);
         // A refused write that carried content stays until discarded, so it
         // is counted with the waiting one.
@@ -10424,9 +10480,9 @@ mod tests {
         assert_eq!(unsent, Some(0));
     }
 
-    /// Any change to what `schema.sql` makes, tables, indexes and triggers
-    /// alike, changes this hash: raise `SCHEMA_VERSION` with it, so a store
-    /// of the earlier shape is refused rather than misread.
+    /// Append one hash per schema version; never change an existing entry.
+    const SHAPES: [&str; 1] = ["9a505dc1b14cecc6"];
+
     #[test]
     fn the_shape_this_build_makes_is_the_one_its_version_names() {
         let conn = Connection::open_in_memory().unwrap();
@@ -10449,13 +10505,58 @@ mod tests {
             .collect::<rusqlite::Result<_>>()
             .unwrap();
         assert_eq!(
-            (
-                SCHEMA_VERSION,
-                crate::folder::state::hash(named.as_bytes()).as_str()
-            ),
-            (1, "9a505dc1b14cecc6"),
-            "the shape schema.sql makes changed: raise SCHEMA_VERSION and write the new hash here"
+            SHAPES.len() as i64,
+            SCHEMA_VERSION,
+            "SHAPES holds one entry for each version"
         );
+        assert_eq!(
+            crate::folder::state::hash(named.as_bytes()),
+            SHAPES[SHAPES.len() - 1],
+            "the shape schema.sql makes is not the one its version names: raise SCHEMA_VERSION and add the new hash to SHAPES, leaving every entry before it as it is"
+        );
+        assert_eq!(
+            OLDEST_UPGRADED + UPGRADES.len() as i64,
+            SCHEMA_VERSION,
+            "UPGRADES holds a step from each version since OLDEST_UPGRADED"
+        );
+    }
+
+    #[test]
+    fn a_store_at_an_earlier_version_is_upgraded_in_place_with_its_queue_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("core.sqlite");
+        {
+            let conn = open(&path).unwrap();
+            queue_one(&conn);
+            conn.execute_batch("ALTER TABLE meta RENAME TO meta_before")
+                .unwrap();
+        }
+        let conn = Connection::open(&path).unwrap();
+        conn.pragma_update(None, "user_version", 7).unwrap();
+        let before = queued(&path);
+        // A step that fails leaves the store at its version.
+        let steps = [
+            "ALTER TABLE meta_before RENAME TO meta",
+            "SELECT * FROM absent",
+        ];
+        assert!(upgrade(&conn, 7, &steps).is_err());
+        assert_eq!(version(&conn).unwrap(), 7);
+        assert!(held_shape(&conn).unwrap().contains_key("meta_before"));
+
+        let steps = ["ALTER TABLE meta_before RENAME TO meta", "SELECT 1"];
+        upgrade(&conn, 7, &steps).unwrap();
+        assert_eq!(version(&conn).unwrap(), 9);
+        assert!(held_shape(&conn).unwrap().contains_key("meta"));
+        assert_eq!(queued(&path), before, "the upgrade changed the queue");
+        // Upgraded already: nothing runs again.
+        upgrade(&conn, 7, &["SELECT * FROM absent", "SELECT * FROM absent"]).unwrap();
+        // A version before the oldest is refused, unchanged.
+        conn.pragma_update(None, "user_version", 3).unwrap();
+        assert!(matches!(
+            upgrade(&conn, 7, &steps),
+            Err(CoreError::WrongSchema { .. })
+        ));
+        assert_eq!(version(&conn).unwrap(), 3);
     }
 
     #[test]

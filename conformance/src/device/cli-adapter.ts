@@ -40,6 +40,7 @@ import {
   type KeptFetch,
   type SetAsideReport,
   type Status,
+  type UnsentWrite,
   type Tier,
 } from "./protocol.js";
 
@@ -571,6 +572,11 @@ export class CliDevice implements DeviceUnderTest {
 
   async status(): Promise<Outcome<Status>> {
     return this.json<Status>(["status"]);
+  }
+
+  /** The writes the store holds unsent, whichever build made it. */
+  async unsent(): Promise<Outcome<UnsentWrite[]>> {
+    return this.json<UnsentWrite[]>(["unsent"]);
   }
 
   /** Reads every page of the store (`device/store-damaged`). */

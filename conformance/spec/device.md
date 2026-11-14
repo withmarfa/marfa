@@ -4424,11 +4424,33 @@ If a command opens a store to read at a path that holds a file that is not a sto
 
 ### `device/wrong-schema`
 
-If a store records another schema version than the one this build makes, then a device MUST refuse every open of it, as a writer or to read, `wrong_schema` before it reads anything, naming the store's path, unless the open replaces a folder's store (`folders/refused-store-replaced`).
+If a store records another schema version than the one this build makes, then a device MUST refuse every open of it to read, and every open of it as a writer that does not upgrade it (`device/schema-upgrade`), `wrong_schema` before it reads anything, naming the store's path, unless the open replaces a folder's store (`folders/refused-store-replaced`).
 
 **Reason:** a store outlives the app that made it, and a build reads only the shape its own version names. A store that records no version is one an earlier build made.
 
 **Tests:** `device/working-copy.test.ts › refuses to read a store a writer of another schema version made`, `› refuses a store an earlier build made, by name, with the writes it holds unsent`.
+
+### `device/schema-upgrade`
+
+When a device opens as a writer a store that records an earlier schema version than the one this build makes, and no earlier than the first version this build upgrades, a device MUST upgrade the store in place to this build's version before it reads it.
+
+**Reason:** from 0.1, a build opens every store an earlier build of 0.1 or later made, so an app that updates itself never strands the writes its store holds. A store an earlier build made before that version is refused (`device/wrong-schema`), and replaced or removed.
+
+**Tests:** waiting on #3065.
+
+### `device/schema-upgrade-keeps-queue`
+
+When a device upgrades a store, a device MUST keep every write its queue holds, with its id, idempotency key, kind, body, base version and verdict.
+
+**Tests:** waiting on #3065.
+
+### `device/schema-version-names-kinds`
+
+A device MUST make a store whose queue refuses a write kind or a verdict that the store's schema version does not name.
+
+**Reason:** a new write kind or verdict is then a new schema version, upgraded in place (`device/schema-upgrade`). A store another build wrote at the same version then holds only writes this build reads, so no clean-up acts on a write before a reader refuses it.
+
+**Tests:** `device/working-copy.test.ts › holds in its queue no kind and no verdict its schema version does not name`.
 
 ### `device/schema-version-kept`
 
@@ -4452,11 +4474,19 @@ When a device refuses a store `wrong_schema` and its queue holds a write the ser
 
 **Tests:** `device/working-copy.test.ts › names a write of a kind this build does not send, among the writes a store of another version holds`.
 
+### `device/wrong-schema-lists`
+
+When a device is asked for the writes a store holds that the server has not taken, a device MUST list each, waiting, blocked, refused or dead, with its id, kind, item and body, whichever build made the store.
+
+**Reason:** a person whose app has updated past the build that made a store can then see what they would lose before they remove it (`device/remove-store-any-schema`).
+
+**Tests:** `device/working-copy.test.ts › lists each write a store of another version holds unsent, with its kind, item and body`.
+
 ### `device/wrong-schema-no-delete`
 
 When a device refuses a store `wrong_schema`, a device MUST NOT advise deleting the store.
 
-**Reason:** only the build that made the store can send or show the writes it holds.
+**Reason:** only the build that made the store can send the writes it holds.
 
 **Tests:** `device/working-copy.test.ts › refuses a store an earlier build made, by name, with the writes it holds unsent`.
 

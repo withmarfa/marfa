@@ -376,6 +376,13 @@ pub enum DeviceCommand {
     /// refused store_damaged.
     #[command(name = "set-aside")]
     SetAside,
+    /// List each write the store holds that the server has not taken, with
+    /// its kind, item and body, whatever build made the store.
+    ///
+    /// For a store refused wrong_schema, whose writes only the build that
+    /// made it can send. It changes nothing, and is refused reading_handle
+    /// while another process holds the store's writer role.
+    Unsent,
     /// The item types the copy holds, read from it alone, the ones an app
     /// declares for it, and the server's.
     Types {
@@ -2133,6 +2140,28 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                 }
                 line.push_str("\nhydrate the new store, then drain, to send what it carries");
                 line
+            })
+        }
+        DeviceCommand::Unsent => {
+            let unsent = Core::read_unsent(store.path()?)?;
+            output::report(&unsent, json, || {
+                if unsent.is_empty() {
+                    return "the store holds no write the server has not taken".into();
+                }
+                unsent
+                    .iter()
+                    .map(|write| {
+                        format!(
+                            "{} {} {} {}: {}",
+                            write.id,
+                            write.kind,
+                            write.item_id.as_deref().unwrap_or("(no item)"),
+                            write.verdict.as_deref().unwrap_or("waiting"),
+                            write.body
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
             })
         }
         DeviceCommand::Status => {

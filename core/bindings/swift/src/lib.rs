@@ -3211,6 +3211,34 @@ pub fn check_store(path: String) -> Result<(), MarfaError> {
     Ok(marfa_core::Core::check_store(path)?)
 }
 
+/// An unsent write with the kind and verdict recorded by the store's build.
+#[derive(uniffi::Record)]
+pub struct UnsentWrite {
+    pub id: String,
+    /// As the store names it, which may be a kind this build does not send.
+    pub kind: String,
+    pub item_id: Option<String>,
+    /// The body it sends, as the store holds it.
+    pub body: String,
+    /// The stored verdict, including values this build does not recognize.
+    pub verdict: Option<String>,
+}
+
+/// Lists unsent writes from a refused store; see BINDINGS.md for refusals.
+#[uniffi::export]
+pub fn read_unsent(path: String) -> Result<Vec<UnsentWrite>, MarfaError> {
+    Ok(marfa_core::Core::read_unsent(path)?
+        .into_iter()
+        .map(|write| UnsentWrite {
+            id: write.id,
+            kind: write.kind,
+            item_id: write.item_id,
+            body: write.body,
+            verdict: write.verdict,
+        })
+        .collect())
+}
+
 /// What `setAsideDamaged` did.
 #[derive(uniffi::Record)]
 pub struct SetAside {

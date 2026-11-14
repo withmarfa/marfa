@@ -1404,6 +1404,18 @@ impl LastFailure {
     }
 }
 
+/// An unsent write with the kind and verdict recorded by the store's build.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct UnsentWrite {
+    pub id: String,
+    pub kind: String,
+    pub item_id: Option<String>,
+    /// The body it sends, as the store holds it.
+    pub body: String,
+    /// The stored verdict, including values this build does not recognize.
+    pub verdict: Option<String>,
+}
+
 /// A verdict of `None` is a write not yet answered, and serializes as `null`.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct QueuedWrite {
