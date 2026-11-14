@@ -1336,6 +1336,7 @@ fn a_log_that_cannot_be_copied_to_be_read_stops_the_set_aside_before_anything_mo
 }
 
 /// What stands beside `path` other than its own file, log and writer lock.
+#[cfg(target_os = "macos")]
 fn present_beside(path: &Path) -> Vec<std::ffi::OsString> {
     let own = [
         path.to_path_buf(),
