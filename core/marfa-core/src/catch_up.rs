@@ -5777,7 +5777,7 @@ mod tests {
             let core = Core::open(
                 std::path::Path::new(&dir).join("core.sqlite"),
                 Some(Server {
-                    url: std::env::var("MARFA_CATCH_UP_URL").unwrap(),
+                    url: std::env::var("MARFA_TEST_CATCH_UP_URL").unwrap(),
                     key: "k".into(),
                 }),
             )
@@ -5809,7 +5809,7 @@ mod tests {
                 "--nocapture",
             ])
             .env("MARFA_TEST_CATCH_UP_CHILD", dir.path())
-            .env("MARFA_CATCH_UP_URL", server.url())
+            .env("MARFA_TEST_CATCH_UP_URL", server.url())
             .env("MARFA_TEST_FAULT", "crash-after-skipped=10")
             .output()
             .unwrap();
