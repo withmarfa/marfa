@@ -806,7 +806,9 @@ jobs:
 
       # A release already there keeps the files it holds, which a registry may
       # already have: a full re-run rebuilds them. A draft is given only the
-      # files it lacks; a public one is left alone.
+      # files it lacks, and only when it was made for this commit: its
+      # `target_commitish` is the commit it was created with (the API keeps it
+      # for a tag that exists). A public one is left alone.
       - name: Draft the GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -815,6 +817,11 @@ jobs:
             if [ "$draft" = "false" ]; then
               echo "v$VERSION is already released"
               exit 0
+            fi
+            made_for=$(gh release view "v$VERSION" --json targetCommitish --jq .targetCommitish)
+            if [ "$made_for" != "$GITHUB_SHA" ]; then
+              echo "::error::The draft v$VERSION was made for $made_for, and this run builds $GITHUB_SHA, so its files come from another build. Nothing was uploaded or published. Delete the draft (gh release delete v$VERSION, which keeps the tag), then re-run this workflow run."
+              exit 1
             fi
             held=$(gh release view "v$VERSION" --json assets --jq '.assets[].name')
             for file in artifacts/*; do
@@ -828,6 +835,7 @@ jobs:
               --title "v$VERSION" \
               --notes-file scripts/release/upgrade-note.md \
               --generate-notes \
+              --target "$GITHUB_SHA" \
               --verify-tag
           else
             echo "::error::Could not ask whether v$VERSION has a release:"
@@ -868,6 +876,13 @@ jobs:
             fi
           done
           if docker buildx imagetools inspect "$IMAGE:$VERSION" > /dev/null 2> "$RUNNER_TEMP/image-view.err"; then
+            # Every platform's image carries the commit it was built from.
+            built_from=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{json .Image}}' \
+              | jq -r 'map(.config.Labels["org.opencontainers.image.revision"] // "none") | unique | join(" ")')
+            if [ "$built_from" != "$GITHUB_SHA" ]; then
+              echo "::error::$IMAGE:$VERSION was built from $built_from, and this run builds $GITHUB_SHA. A version tag is never moved, so nothing was tagged or published. Delete the $VERSION version of the marfa-server package (GitHub, the withmarfa organization, Packages, marfa-server, the version's settings), then re-run this job."
+              exit 1
+            fi
             echo "$IMAGE:$VERSION is already tagged"
           elif grep -qi "not found" "$RUNNER_TEMP/image-view.err"; then
             docker buildx imagetools create -t "$IMAGE:$VERSION" \
