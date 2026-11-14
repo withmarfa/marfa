@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use marfa_rules::catalog::Catalog;
-use marfa_rules::filter::{Expression, Term, parse_rows};
+use marfa_rules::filter::Expression;
+use marfa_rules::filter::sql::{self, Adding, Bind, Sink};
 use marfa_rules::query::property_sort_expression;
 use rusqlite::types::Value as Bound;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
@@ -1280,18 +1281,8 @@ fn columns(definition: &Map<String, Value>) -> Map<String, Value> {
 }
 
 fn expression(filter: &str, columns: &Map<String, Value>) -> Result<Expression> {
-    let expression = parse_rows(filter).map_err(|error| refused("filter", error.message))?;
-    for condition in &expression.conditions {
-        if let Term::Property { name, .. } = &condition.term
-            && !columns.contains_key(name)
-        {
-            return Err(refused(
-                "filter",
-                format!("the table declares no column \"{name}\""),
-            ));
-        }
-    }
-    Ok(expression)
+    sql::table_filter(filter, |name| columns.contains_key(name))
+        .map_err(|error| refused("filter", error.message))
 }
 
 fn bound_json(value: &Value) -> Bound {
@@ -1610,46 +1601,36 @@ fn page_from_copy(
     Ok(json!({ "data": data, "next_cursor": next }))
 }
 
-fn aggregate(kind: &str, way: &str, column: &str, values: &mut Vec<Value>) -> String {
-    let path = Value::String(format!("$.{column}"));
-    let held = |values: &mut Vec<Value>| {
-        values.push(path.clone());
-        "json_extract(r.body, ?)".to_string()
+fn aggregate(adding: &Adding, values: &mut Vec<Value>) -> String {
+    let column = |out: &mut crate::filter::Compiled, function: &str| {
+        out.push(&format!("{function}(r.body, "));
+        out.bind(Bind::Text(format!("$.{}", adding.name)));
+        out.push(")");
     };
-    let number = |values: &mut Vec<Value>| {
-        values.extend([path.clone(), path.clone()]);
-        "CASE WHEN json_type(r.body, ?) IN ('integer', 'real') THEN json_extract(r.body, ?) END"
-            .to_string()
-    };
-    match (way, kind) {
-        ("count", _) => format!("COUNT({})", held(values)),
-        ("sum", _) => format!("TOTAL({})", number(values)),
-        ("average", _) => format!("AVG({})", number(values)),
-        ("min", "date") => format!("MIN({})", held(values)),
-        ("max", "date") => format!("MAX({})", held(values)),
-        ("min", "datetime") => format!(
-            "strftime('%Y-%m-%dT%H:%M:%fZ', MIN(julianday({})))",
-            held(values)
-        ),
-        ("max", "datetime") => format!(
-            "strftime('%Y-%m-%dT%H:%M:%fZ', MAX(julianday({})))",
-            held(values)
-        ),
-        ("min", _) => format!("MIN({})", number(values)),
-        _ => format!("MAX({})", number(values)),
-    }
+    let mut out = crate::filter::Compiled::default();
+    sql::total(
+        &mut out,
+        adding,
+        |out| column(out, "json_extract"),
+        |out| {
+            out.push("CASE WHEN ");
+            column(out, "json_type");
+            out.push(" IN ('integer', 'real') THEN ");
+            column(out, "json_extract");
+            out.push(" END");
+        },
+    );
+    values.extend(out.values);
+    out.text
 }
 
 fn total_value(kind: &str, way: &str, bound: &Bound) -> Value {
-    let integer = kind == "integer" || way == "count";
     match bound {
         Bound::Integer(count) => json!(count),
-        Bound::Real(value)
-            if integer && value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0 =>
-        {
-            json!(*value as i64)
-        }
-        Bound::Real(value) => json!(value),
+        Bound::Real(value) => match sql::whole_total(kind, way, *value) {
+            Some(whole) => json!(whole),
+            None => json!(value),
+        },
         Bound::Text(text) => json!(text),
         Bound::Null | Bound::Blob(_) => Value::Null,
     }
@@ -1666,20 +1647,12 @@ fn totals_from_copy(
     let filter = filter
         .map(|filter| expression(filter, &columns))
         .transpose()?;
-    let adding: Vec<(String, String, String)> = columns
-        .iter()
-        .filter_map(|(name, definition)| {
-            let way = definition.get("adds_up")?.as_str()?;
-            let kind = definition.get("type")?.as_str()?;
-            marfa_rules::catalog::api_name(name)
-                .then(|| (name.clone(), kind.to_string(), way.to_string()))
-        })
-        .collect();
+    let adding = sql::adding(&columns);
     let mut values: Vec<Value> = Vec::new();
     let mut sql = "SELECT COUNT(*)".to_string();
-    for (name, kind, way) in &adding {
+    for adding in &adding {
         sql.push_str(", ");
-        sql.push_str(&aggregate(kind, way, name, &mut values));
+        sql.push_str(&aggregate(adding, &mut values));
     }
     sql.push_str(" FROM table_rows r WHERE r.item_id = ? AND r.name = ?");
     values.push(Value::String(item.into()));
@@ -1697,7 +1670,7 @@ fn totals_from_copy(
     let mut found = found.into_iter();
     let row_count = found.next().unwrap_or(Bound::Integer(0));
     let mut totals = Map::new();
-    for (name, kind, way) in &adding {
+    for Adding { name, kind, way } in &adding {
         let bound = found.next().unwrap_or(Bound::Null);
         totals.insert(
             name.clone(),
@@ -1794,6 +1767,7 @@ pub(crate) fn totals(core: &Core, item: &str, table: &str, filter: Option<&str>)
 mod tests {
     use super::{
         OR_TERMS, Read, RowsAsked, SPAN_GAP, cursor_of, filter_of, opened, page_from_copy, plan,
+        totals_from_copy,
     };
     use crate::CoreError;
     use serde_json::{Map, Value, json};
@@ -1913,6 +1887,36 @@ mod tests {
             }
         }
         (dir, core)
+    }
+
+    const CORPUS: &str = include_str!("../../marfa-rules/src/filter/parity.json");
+
+    #[test]
+    fn the_row_filters_and_totals_both_sides_share_answer_what_the_server_answers() {
+        let corpus: Value = serde_json::from_str(CORPUS).unwrap();
+        let rows: Vec<(&str, Value)> = corpus["table"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| (row["id"].as_str().unwrap(), row["body"].clone()))
+            .collect();
+        let (_dir, core) = copy_with(&rows);
+        let conn = core.conn().unwrap();
+        let definition = json!({ "columns": corpus["table"]["columns"] })
+            .as_object()
+            .unwrap()
+            .clone();
+        for case in corpus["table"]["filters"].as_array().unwrap() {
+            let mut asked = asked(None, 100, None);
+            asked.filter = case["filter"].as_str().map(str::to_string);
+            let page = page_from_copy(&conn, "i", "t", &definition, &asked).unwrap();
+            assert_eq!(json!(ids_of(&page)), case["ids"], "{}", case["filter"]);
+        }
+        for case in corpus["table"]["totals"].as_array().unwrap() {
+            let totals =
+                totals_from_copy(&conn, "i", "t", &definition, case["filter"].as_str()).unwrap();
+            assert_eq!(totals, case["answer"], "{}", case["filter"]);
+        }
     }
 
     fn table(order: Option<&str>, kind: &str) -> Map<String, Value> {

@@ -1,6 +1,5 @@
-use marfa_rules::catalog::StatusField;
-use marfa_rules::filter::{Compare, Condition, Expression, Literal, Op, Term, system_literal};
-use marfa_rules::query::escape_like;
+use marfa_rules::filter::sql::{self, Bind, Items, Relation, Sink};
+use marfa_rules::filter::{Expression, Term};
 use rusqlite::types::Value;
 use serde_json::{Value as Json, json};
 
@@ -48,6 +47,24 @@ impl Sql {
     pub fn append(&mut self, other: &Sql) {
         self.text.push_str(&other.text);
         self.values.extend(other.values.iter().cloned());
+    }
+}
+
+impl Sink for Sql {
+    fn push(&mut self, text: &str) {
+        Sql::push(self, text);
+    }
+
+    fn bind(&mut self, value: Bind) {
+        Sql::bind(self, value_of(value));
+    }
+}
+
+fn value_of(bind: Bind) -> Value {
+    match bind {
+        Bind::Null => Value::Null,
+        Bind::Real(number) => Value::Real(number),
+        Bind::Text(text) => Value::Text(text),
     }
 }
 
@@ -224,175 +241,62 @@ fn expression(
     reach: &Reach,
     catalog: &Catalog,
 ) -> Result<()> {
-    let statuses = if expression.reads_status() {
-        catalog.rules.status_fields()
-    } else {
-        Vec::new()
+    let items = Items {
+        alias: "i",
+        unreadable_properties: false,
     };
-    let joiner = if expression.any { " OR " } else { " AND " };
-    sql.push("(");
-    for (at, one) in expression.conditions.iter().enumerate() {
-        if at > 0 {
-            sql.push(joiner);
-        }
-        condition(sql, one, reach, catalog, &statuses)?;
-    }
-    sql.push(")");
-    Ok(())
-}
-
-fn condition(
-    sql: &mut Sql,
-    condition: &Condition,
-    reach: &Reach,
-    catalog: &Catalog,
-    statuses: &[StatusField],
-) -> Result<()> {
-    let value = &condition.value;
-    match &condition.term {
-        Term::System { column, compare } => {
-            let literal = system_literal(column, *compare, value).map_err(ruled)?;
-            compared(sql, &Sql::new(&format!("i.{column}")), *compare, &literal);
-        }
-        Term::Property { name, op } => property(sql, "i.properties", name, *op, value),
-        Term::Entry { field, member } => entry(sql, field, member, value),
-        Term::TagHeld => {
-            // `+` takes the column's text affinity off, so a number never
-            // matches a tag spelled like it.
-            sql.push("EXISTS (SELECT 1 FROM item_tags t WHERE t.item_seq = i.seq AND +t.tag = ");
-            sql.bind(bound(value));
-            sql.push(")");
-        }
-        Term::TagsPresent(present) => {
-            sql.push(if *present { "" } else { "NOT " });
-            sql.push("EXISTS (SELECT 1 FROM item_tags t WHERE t.item_seq = i.seq)");
-        }
-        Term::Edge {
-            edge_type,
-            backref,
-            negated,
-            to_item,
-        } => {
-            sql.push(if *negated { "NOT EXISTS (" } else { "EXISTS (" });
-            if *backref {
+    sql::item_filter(sql, expression, &items, &catalog.rules, |sql, relation| {
+        match relation {
+            Relation::Tag(value) => {
+                // `+` removes text affinity so a number never matches a tag spelled like it.
                 sql.push(
-                    "SELECT 1 FROM edges e JOIN items s ON s.id = e.source_id \
-                     WHERE e.target_id = i.id AND e.edge_type = ",
+                    "EXISTS (SELECT 1 FROM item_tags t WHERE t.item_seq = i.seq AND +t.tag = ",
                 );
-            } else {
-                sql.push("SELECT 1 FROM edges e WHERE e.source_id = i.id AND e.edge_type = ");
+                sql.bind(value_of(sql::bound(value)));
+                sql.push(")");
             }
-            sql.bind(edge_type.clone());
-            if *to_item {
-                sql.push(if *backref {
-                    " AND e.source_id = "
+            Relation::Tags { present } => {
+                sql.push(if present { "" } else { "NOT " });
+                sql.push("EXISTS (SELECT 1 FROM item_tags t WHERE t.item_seq = i.seq)");
+            }
+            Relation::Edge {
+                edge_type,
+                backref,
+                negated,
+                to,
+            } => {
+                sql.push(if negated { "NOT EXISTS (" } else { "EXISTS (" });
+                if backref {
+                    sql.push(
+                        "SELECT 1 FROM edges e JOIN items s ON s.id = e.source_id \
+                         WHERE e.target_id = i.id AND e.edge_type = ",
+                    );
                 } else {
-                    " AND e.target_id = "
-                });
-                sql.bind(bound(value));
+                    sql.push("SELECT 1 FROM edges e WHERE e.source_id = i.id AND e.edge_type = ");
+                }
+                sql.bind(edge_type.to_string());
+                if let Some(value) = to {
+                    sql.push(if backref {
+                        " AND e.source_id = "
+                    } else {
+                        " AND e.target_id = "
+                    });
+                    sql.bind(value_of(sql::bound(value)));
+                }
+                if backref {
+                    sql.push(" AND ");
+                    reach.clause(sql, "s", false);
+                }
+                sql.push(")");
             }
-            if *backref {
-                sql.push(" AND ");
-                reach.clause(sql, "s", false);
+            Relation::Part { selected } => {
+                sql.push(if selected { "" } else { "NOT " });
+                part(sql, catalog);
             }
-            sql.push(")");
         }
-        Term::StatusGroup(op) => status_group(sql, *op, value, statuses),
-        Term::Part(compare) => {
-            let selected = matches!(value, Literal::Bool(true)) == (*compare == Compare::Eq);
-            sql.push(if selected { "" } else { "NOT " });
-            part(sql, catalog);
-        }
-    }
-    Ok(())
-}
-
-fn extract(source: &str, name: &str) -> Sql {
-    let mut sql = Sql::new(&format!("json_extract({source}, "));
-    sql.bind(format!("$.{name}"));
-    sql.push(")");
-    sql
-}
-
-/// A condition on member `name` of the JSON object in the column `source`.
-fn property(sql: &mut Sql, source: &str, name: &str, op: Op, value: &Literal) {
-    let mut kind = Sql::new(&format!("json_type({source}, "));
-    kind.bind(format!("$.{name}"));
-    kind.push(")");
-    held_property(sql, &extract(source, name), &kind, op, value);
-}
-
-/// A condition on the value `held`, whose JSON type is `kind`.
-pub(crate) fn held_property(sql: &mut Sql, held: &Sql, kind: &Sql, op: Op, value: &Literal) {
-    match op {
-        Op::Compare(compare @ (Compare::Eq | Compare::Neq))
-            if matches!(value, Literal::Number(_)) =>
-        {
-            let mut number = Sql::new("CASE WHEN ");
-            number.append(kind);
-            number.push(" IN ('integer', 'real') THEN CAST(");
-            number.append(held);
-            number.push(" AS REAL) ELSE ");
-            number.append(held);
-            number.push(" END");
-            compared(sql, &number, compare, value);
-        }
-        Op::Compare(compare @ (Compare::Gt | Compare::Gte | Compare::Lt | Compare::Lte))
-            if matches!(value, Literal::Number(_)) =>
-        {
-            let mut number = Sql::new("CAST(");
-            number.append(held);
-            number.push(" AS REAL)");
-            compared(sql, &number, compare, value);
-        }
-        Op::Compare(compare) => compared(sql, held, compare, value),
-        Op::Exists => {
-            sql.append(held);
-            sql.push(" IS NOT NULL");
-        }
-        Op::NotExists => {
-            sql.append(held);
-            sql.push(" IS NULL");
-        }
-    }
-}
-
-/// `CASE` keeps `json_extract` off an entry that is not an object.
-fn entry(sql: &mut Sql, field: &str, member: &str, value: &Literal) {
-    let list = format!("$.{field}");
-    let path = format!("$.{member}");
-    sql.push("EXISTS (SELECT 1 FROM json_each(i.properties, ");
-    sql.bind(list.clone());
-    sql.push(") AS entry WHERE json_type(i.properties, ");
-    sql.bind(list);
-    sql.push(") = 'array' AND ");
-    if matches!(value, Literal::Number(_)) {
-        sql.push("CASE WHEN entry.type <> 'object' THEN NULL WHEN json_type(entry.value, ");
-        sql.bind(path.clone());
-        sql.push(") IN ('integer', 'real') THEN CAST(json_extract(entry.value, ");
-        sql.bind(path.clone());
-        sql.push(") AS REAL) ELSE json_extract(entry.value, ");
-        sql.bind(path);
-        sql.push(") END");
-    } else {
-        sql.push("CASE WHEN entry.type = 'object' THEN json_extract(entry.value, ");
-        sql.bind(path);
-        sql.push(") END");
-    }
-    sql.push(" = ");
-    sql.bind(bound(value));
-    sql.push(")");
-}
-
-/// Every number, a boolean included, binds as a REAL, as the working copy binds it: bound otherwise,
-/// a condition answers one set of rows on a device and another here.
-fn bound(literal: &Literal) -> Value {
-    match literal {
-        Literal::Text(text) => Value::Text(text.clone()),
-        Literal::Number(number) => Value::Real(*number),
-        Literal::Bool(flag) => Value::Real(if *flag { 1.0 } else { 0.0 }),
-        Literal::Null => Value::Null,
-    }
+        Ok(())
+    })
+    .map_err(ruled)
 }
 
 /// Judged over every host, whatever the caller reads, because the answer names none of them.
@@ -403,79 +307,4 @@ fn part(sql: &mut Sql, catalog: &Catalog) {
     );
     sql.list(&catalog.with_hosts_types());
     sql.push(") AND h.state <> 'trashed'))");
-}
-
-/// A row whose type has no status field, or whose value is no word its type declares, is in no
-/// group, so `eq` and `neq` both pass it by and `not_exists` takes it.
-fn status_group(sql: &mut Sql, op: Op, value: &Literal, statuses: &[StatusField]) {
-    let wanted = |group: &str| match (op, value) {
-        (Op::Compare(Compare::Eq), Literal::Text(asked)) => group == asked,
-        (Op::Compare(Compare::Neq), Literal::Text(asked)) => group != asked,
-        _ => true,
-    };
-    let mut selections: Vec<(&str, Vec<&str>, Vec<&str>)> = Vec::new();
-    for status in statuses {
-        let words: Vec<&str> = status
-            .words
-            .iter()
-            .filter(|(_, group)| wanted(group))
-            .map(|(word, _)| word.as_str())
-            .collect();
-        if words.is_empty() {
-            continue;
-        }
-        match selections
-            .iter_mut()
-            .find(|(name, selected, _)| *name == status.name && *selected == words)
-        {
-            Some((_, _, types)) => types.push(&status.type_id),
-            None => selections.push((&status.name, words, vec![&status.type_id])),
-        }
-    }
-    if op == Op::NotExists {
-        sql.push("NOT ");
-    }
-    if selections.is_empty() {
-        sql.push("0");
-        return;
-    }
-    // `IFNULL`, since an absent value compares as unknown, and `NOT` an
-    // unknown would pass the row by rather than take it.
-    sql.push("IFNULL((");
-    for (at, (name, words, types)) in selections.iter().enumerate() {
-        if at > 0 {
-            sql.push(" OR ");
-        }
-        sql.push("(i.type IN (");
-        sql.list(types);
-        sql.push(") AND json_extract(i.properties, ");
-        sql.bind(format!("$.{}", Json::String((*name).to_string())));
-        sql.push(") IN (");
-        sql.list(words);
-        sql.push("))");
-    }
-    sql.push("), 0)");
-}
-
-pub(crate) fn compared(sql: &mut Sql, held: &Sql, compare: Compare, value: &Literal) {
-    sql.append(held);
-    let operator = match compare {
-        Compare::Eq => " = ",
-        Compare::Neq => " != ",
-        Compare::Gt => " > ",
-        Compare::Gte => " >= ",
-        Compare::Lt => " < ",
-        Compare::Lte => " <= ",
-        Compare::Contains | Compare::StartsWith => " LIKE ",
-    };
-    sql.push(operator);
-    match compare {
-        Compare::Contains => sql.bind(format!("%{}%", escape_like(&value.text()))),
-        Compare::StartsWith => sql.bind(format!("{}%", escape_like(&value.text()))),
-        _ => {
-            sql.bind(bound(value));
-            return;
-        }
-    }
-    sql.push(" ESCAPE '\\'");
 }
