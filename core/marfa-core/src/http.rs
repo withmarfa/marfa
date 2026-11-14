@@ -172,6 +172,67 @@ pub fn direct_when_local(
     }
 }
 
+/// Two agents that follow no redirect themselves, one using the environment's
+/// proxy and one never, so that [`Agents::get`] judges the proxy for each
+/// address a redirect names and not only for the first.
+#[derive(Clone)]
+pub struct Agents {
+    proxied: Agent,
+    direct: Agent,
+}
+
+impl Agents {
+    /// `builder` makes the configuration of each agent; its redirect and proxy
+    /// settings are replaced.
+    pub fn new(
+        builder: impl Fn() -> ureq::config::ConfigBuilder<ureq::typestate::AgentScope>,
+    ) -> Self {
+        let follow_none = |builder: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>| {
+            builder.max_redirects(0)
+        };
+        Self {
+            proxied: follow_none(builder()).build().into(),
+            direct: follow_none(builder()).proxy(None).build().into(),
+        }
+    }
+
+    /// A `GET` of `url` with `headers`, following at most `limit` redirects,
+    /// each sent with the same headers.
+    pub fn get(
+        &self,
+        url: &str,
+        headers: &[(&str, String)],
+        limit: u32,
+    ) -> Result<Response, ureq::Error> {
+        let mut at = url.to_string();
+        for _ in 0..=limit {
+            let agent = if marfa_telemetry::host::may_use_proxy(&at) {
+                &self.proxied
+            } else {
+                &self.direct
+            };
+            let mut request = agent.get(&at);
+            for (name, value) in headers {
+                request = request.header(*name, value.as_str());
+            }
+            let response = request.call()?;
+            if !matches!(response.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+                return Ok(response);
+            }
+            let next = response
+                .headers()
+                .get("location")
+                .and_then(|location| location.to_str().ok())
+                .and_then(|location| Url::parse(&at).ok()?.join(location).ok());
+            match next {
+                Some(next) => at = next.to_string(),
+                None => return Ok(response),
+            }
+        }
+        Err(ureq::Error::TooManyRedirects)
+    }
+}
+
 /// Which of the agent's time budgets a call is held to.
 #[derive(Clone)]
 enum Budget {
@@ -3570,5 +3631,129 @@ mod tests {
         // Neither read went on to ask for a page the doors do not have.
         assert_eq!(server.seen("/types").len(), 1);
         assert_eq!(server.seen("/edge-types").len(), 1);
+    }
+
+    /// Answers one request head per connection with `reply` and records its
+    /// first line. A `CONNECT` is accepted first, and the request sent
+    /// through the tunnel is the one answered.
+    fn recording_listener(
+        reply: impl Fn(&str) -> String + Send + 'static,
+    ) -> (u16, Arc<Mutex<Vec<String>>>) {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let record = Arc::clone(&seen);
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { continue };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let head = |reader: &mut BufReader<std::net::TcpStream>| {
+                    let mut first = String::new();
+                    reader.read_line(&mut first).ok()?;
+                    loop {
+                        let mut line = String::new();
+                        reader.read_line(&mut line).ok()?;
+                        if line.trim().is_empty() {
+                            break;
+                        }
+                    }
+                    Some(first.trim().to_string())
+                };
+                let Some(mut first) = head(&mut reader) else {
+                    continue;
+                };
+                record.lock().unwrap().push(first.clone());
+                if first.starts_with("CONNECT ") {
+                    if reply(&first).is_empty() {
+                        continue;
+                    }
+                    stream
+                        .write_all(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                        .unwrap();
+                    let Some(inner) = head(&mut reader) else {
+                        continue;
+                    };
+                    first = inner;
+                    record.lock().unwrap().push(first.clone());
+                }
+                let _ = stream.write_all(reply(&first).as_bytes());
+            }
+        });
+        (port, seen)
+    }
+
+    #[test]
+    fn each_redirect_is_sent_through_the_proxy_or_not_by_where_it_goes() {
+        let (target, reached) = recording_listener(|_| {
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".into()
+        });
+        let local = format!("http://127.0.0.1:{target}/landed");
+        let (proxy, via_proxy) = recording_listener({
+            let local = local.clone();
+            move |line| {
+                if line.starts_with("CONNECT 127.0.0.1") {
+                    String::new()
+                } else {
+                    format!(
+                        "HTTP/1.1 302 Found\r\nLocation: {local}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                    )
+                }
+            }
+        });
+        // One process for each test, so nothing else reads the environment.
+        unsafe {
+            std::env::set_var("HTTP_PROXY", format!("http://127.0.0.1:{proxy}"));
+            std::env::set_var("http_proxy", format!("http://127.0.0.1:{proxy}"));
+            std::env::remove_var("NO_PROXY");
+            std::env::remove_var("no_proxy");
+        }
+        let agents = Agents::new(Agent::config_builder);
+        let start = "http://redirect.example.test:9/start";
+
+        // A client that sends everything through the proxy asks it for the
+        // local address, so a request there is producible.
+        let witness = agents.proxied.get(&local).call();
+        assert!(witness.is_err(), "the proxy refused the local address");
+        assert!(
+            via_proxy
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|line| line.starts_with("CONNECT 127.0.0.1")),
+            "{:?}",
+            via_proxy.lock().unwrap()
+        );
+        via_proxy.lock().unwrap().clear();
+
+        let mut response = agents
+            .get(start, &[("Accept", "text/plain".into())], 3)
+            .unwrap();
+        assert_eq!(response.body_mut().read_to_string().unwrap(), "ok");
+        let sent = via_proxy.lock().unwrap().clone();
+        assert!(
+            sent.iter()
+                .any(|line| line.starts_with("CONNECT redirect.example.test:9")),
+            "{sent:?}"
+        );
+        assert!(
+            sent.iter().all(|line| !line.contains("127.0.0.1")),
+            "{sent:?}"
+        );
+        let landed = reached.lock().unwrap().clone();
+        assert_eq!(landed, vec!["GET /landed HTTP/1.1".to_string()]);
+    }
+
+    #[test]
+    fn redirects_stop_at_the_limit() {
+        let (target, _) = recording_listener(|_| {
+            "HTTP/1.1 302 Found\r\nLocation: /again\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".into()
+        });
+        let agents = Agents::new(Agent::config_builder);
+        let url = format!("http://127.0.0.1:{target}/");
+        assert!(matches!(
+            agents.get(&url, &[], 2),
+            Err(ureq::Error::TooManyRedirects)
+        ));
     }
 }

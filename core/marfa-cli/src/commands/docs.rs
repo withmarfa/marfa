@@ -19,7 +19,9 @@ use crate::output::{Printer, printable};
 use crate::remote::Named;
 
 pub const DEFAULT_SITE: &str = "https://docs.marfa.so";
-pub const SITE_VARIABLE: &str = "MARFA_DOCS_URL";
+const REDIRECTS: u32 = 5;
+
+const SITE_VARIABLE: &str = "MARFA_DOCS_URL";
 
 const CONNECT_BUDGET: Duration = Duration::from_secs(10);
 const RESPONSE_BUDGET: Duration = Duration::from_secs(30);
@@ -117,7 +119,7 @@ struct Answer {
 /// The docs site and a client that holds no credential.
 pub struct Site {
     base: String,
-    agent: ureq::Agent,
+    agents: marfa_core::http::Agents,
     body_limit: u64,
 }
 
@@ -155,22 +157,18 @@ impl Site {
         let tls = ureq::tls::TlsConfig::builder()
             .root_certs(ureq::tls::RootCerts::PlatformVerifier)
             .build();
-        let agent: ureq::Agent = marfa_core::http::direct_when_local(
+        let agents = marfa_core::http::Agents::new(|| {
             ureq::Agent::config_builder()
-                .tls_config(tls)
+                .tls_config(tls.clone())
                 .http_status_as_error(false)
-                .max_redirects(5)
                 .timeout_connect(Some(CONNECT_BUDGET))
                 .timeout_recv_response(Some(recv_response))
                 .timeout_recv_body(Some(recv_body))
-                .user_agent(concat!("marfa/", env!("CARGO_PKG_VERSION"))),
-            &base,
-        )
-        .build()
-        .into();
+                .user_agent(concat!("marfa/", env!("CARGO_PKG_VERSION")))
+        });
         Ok(Site {
             base,
-            agent,
+            agents,
             body_limit: BODY_LIMIT,
         })
     }
@@ -192,10 +190,15 @@ impl Site {
             }
         }
         let mut response = self
-            .agent
-            .get(url.as_str())
-            .header("Accept", "application/json, text/markdown;q=0.9, */*;q=0.1")
-            .call()
+            .agents
+            .get(
+                url.as_str(),
+                &[(
+                    "Accept",
+                    "application/json, text/markdown;q=0.9, */*;q=0.1".to_string(),
+                )],
+                REDIRECTS,
+            )
             .map_err(|error| self.unreachable(error.to_string()))?;
         let status = response.status().as_u16();
         let content_type = response

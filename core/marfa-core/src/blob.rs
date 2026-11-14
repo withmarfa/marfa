@@ -1238,6 +1238,8 @@ const LINK_IDLE: Duration = Duration::from_secs(60);
 /// ends it.
 const LINK_BODY_MOST: Duration = Duration::from_secs(6 * 60 * 60);
 
+const LINK_REDIRECTS: u32 = 10;
+
 /// Fetches the bytes from `link`, continuing the bytes an earlier fetch of
 /// them left where the link serves a range. What a link sends is bounded by
 /// `stated`, or by the length the link states where nothing else does, so no
@@ -1544,25 +1546,22 @@ enum Refusal {
 /// which an object store's host must never see. Asks from byte `from` on
 /// where `from` is above zero.
 fn open(link: &str, from: u64) -> std::result::Result<Opened, Refusal> {
-    let agent: Agent = crate::http::direct_when_local(
+    let agents = crate::http::Agents::new(|| {
         Agent::config_builder()
             .http_status_as_error(false)
             .timeout_connect(Some(Duration::from_secs(10)))
             .timeout_recv_response(Some(Duration::from_secs(30)))
-            .timeout_recv_body(Some(LINK_BODY_MOST)),
-        link,
-    )
-    .build()
-    .into();
+            .timeout_recv_body(Some(LINK_BODY_MOST))
+    });
     // The agent offers gzip unless told otherwise, and drops the length of
     // what it decompresses, so the stated size and the offsets of a range
     // would describe a different representation from the stored bytes.
-    let mut request = agent.get(link).header("Accept-Encoding", "identity");
+    let mut headers = vec![("Accept-Encoding", "identity".to_string())];
     if from > 0 {
-        request = request.header("Range", format!("bytes={from}-"));
+        headers.push(("Range", format!("bytes={from}-")));
     }
-    let response = request
-        .call()
+    let response = agents
+        .get(link, &headers, LINK_REDIRECTS)
         .map_err(|error| Refusal::Other(format!("{LINK_UNREACHABLE}: {error}")))?;
     let status = response.status().as_u16();
     if status == 416 {
