@@ -7,7 +7,7 @@ import {
 } from "../../device/marfa-answers.js";
 import type { DeviceUnderTest } from "../../device/protocol.js";
 import { BUILT_FOR, type Answer } from "../../device/scripted-server.js";
-import { scriptHydration, startHarness } from "./harness.js";
+import { scriptHydration, scriptWrites, startHarness } from "./harness.js";
 import type { Harness } from "./harness.js";
 
 /**
@@ -194,6 +194,60 @@ describe("a device purges no item a blocked write still names", () => {
 });
 
 describe("a purge refusal names the exits a waiting write has", () => {
+  it("names, for a write held behind another, the write that holds it and that write's commands", async () => {
+    harness = await holding("purge-held");
+    const created = await harness.device.create({
+      type: "core.note",
+      properties: { title: "mine", body: "mine" },
+      source: "notes",
+      sourceId: "kept.md",
+    });
+    expect(created.ok, JSON.stringify(created)).toBe(true);
+    if (!created.ok) return;
+    const local = created.value.item_id ?? "";
+    const deleted = await harness.device.deleteItem(local);
+    expect(deleted.ok, JSON.stringify(deleted)).toBe(true);
+    if (!deleted.ok) return;
+    scriptWrites(harness.server, {
+      create: [
+        refusal(
+          403,
+          "forbidden",
+          'This credential may not write under the source "notes".',
+          { source: "notes" },
+        ),
+      ],
+    });
+    const drained = await harness.device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    const queue = await harness.device.queue();
+    // The witness: the create is blocked for a credential, and the delete is
+    // held behind it, a write no drain can move.
+    expect(
+      queue.ok && queue.value.map((row) => [row.id, row.verdict, row.reason]),
+    ).toEqual([
+      [created.value.id, "blocked", "credential_refused"],
+      [deleted.value.id, "blocked", "awaiting_dependency"],
+    ]);
+    expect(await trashed(harness.device)).toContain(local);
+
+    const refused = await harness.device.purgeItem(local);
+    expect(refused.ok, "a purge went out over a held write").toBe(false);
+    if (!refused.ok) {
+      expect(refused.refusal.code).toBe("invalid");
+      expect(
+        refused.refusal.raw,
+        "the refusal does not name the write the held delete waits on",
+      ).toContain(`waits on ${created.value.id}`);
+      expect(
+        refused.refusal.raw,
+        "the refusal names a drain for a write a drain cannot move",
+      ).not.toContain("drain");
+      expect(refused.refusal.raw).toContain("release");
+    }
+    expect(purges(harness)).toEqual([]);
+  });
+
   it("refuses an item a dead write names with the commands that clear it, and no longer once it is withdrawn", async () => {
     harness = await holding("purge-dead");
     const deleted = await harness.device.deleteItem(ACTIVE);

@@ -374,22 +374,26 @@ fn withdrawing_bytes_sent_again_refuses_the_file_sent_before_and_keeps_it() {
 }
 
 #[cfg(unix)]
-#[test]
-fn sets_aside_an_upload_whose_bytes_fail_to_open_alike_in_successive_drains() {
-    use crate::model::BlockedReason;
+struct Unreadable {
+    core: Arc<crate::Core>,
+    file_id: String,
+    held: std::path::PathBuf,
+    hash: String,
+}
+
+/// A file added, then its held bytes made unreadable.
+#[cfg(unix)]
+fn file_with_unreadable_bytes(server: &Scripted, dir: &Path) -> Unreadable {
     use std::os::unix::fs::PermissionsExt;
-    let server = Scripted::start();
-    let dir = tempfile::tempdir().unwrap();
-    let core = copy_in_keyed(&server, dir.path(), "k");
+    let core = copy_in_keyed(server, dir, "k");
     holding_a_catalog(&core);
-    let file = dir.path().join("photo.txt");
+    let file = dir.join("photo.txt");
     std::fs::write(&file, b"the bytes of a photo").unwrap();
     let added = core
         .add_file(&file, &crate::Attachment::default(), &[])
         .unwrap();
     let hash = added.upload.blob.clone().unwrap();
     let held = dir
-        .path()
         .join("core.sqlite.blobs")
         .join(hash.trim_start_matches("sha256:"));
     std::fs::set_permissions(&held, std::fs::Permissions::from_mode(0o000)).unwrap();
@@ -397,33 +401,66 @@ fn sets_aside_an_upload_whose_bytes_fail_to_open_alike_in_successive_drains() {
         std::fs::File::open(&held).is_err(),
         "the bytes can still be opened, so nothing here is about bytes that cannot"
     );
-    let upload = |core: &crate::Core| {
-        core.queue()
-            .unwrap()
-            .into_iter()
-            .find(|queued| queued.kind == WriteKind::UploadBlob)
-            .unwrap()
-    };
+    Unreadable {
+        file_id: added.item.item_id.clone().unwrap(),
+        core,
+        held,
+        hash,
+    }
+}
+
+#[cfg(unix)]
+fn upload_of(core: &crate::Core) -> crate::QueuedWrite {
+    core.queue()
+        .unwrap()
+        .into_iter()
+        .find(|queued| queued.kind == WriteKind::UploadBlob)
+        .unwrap()
+}
+
+/// Five minutes on, so the next drain is the third that met the failure over five minutes.
+#[cfg(unix)]
+fn five_minutes_on(core: &crate::Core) {
+    let conn = core.conn().unwrap();
+    conn.execute(
+        "UPDATE queue SET environmental_since = environmental_since - 360000 WHERE kind = 'upload_blob'",
+        [],
+    )
+    .unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn sets_aside_an_upload_whose_bytes_fail_to_open_alike_in_successive_drains() {
+    use crate::model::BlockedReason;
+    use std::os::unix::fs::PermissionsExt;
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let Unreadable {
+        core, held, hash, ..
+    } = file_with_unreadable_bytes(&server, dir.path());
     for _ in 0..2 {
         let report = core.drain().unwrap();
         assert_eq!(report.undelivered, 1, "{report:?}");
-        assert_eq!(upload(&core).verdict, None);
+        assert_eq!(upload_of(&core).verdict, None);
     }
-    // Five minutes on, in the third drain.
-    {
-        let conn = core.conn().unwrap();
-        conn.execute(
-            "UPDATE queue SET environmental_since = environmental_since - 360000 WHERE kind = 'upload_blob'",
-            [],
-        )
-        .unwrap();
-    }
+    five_minutes_on(&core);
     let report = core.drain().unwrap();
-    let set_aside = upload(&core);
+    let set_aside = upload_of(&core);
     assert_eq!(
         (set_aside.verdict, set_aside.blocked_reason()),
         (Some(Verdict::Blocked), Some(BlockedReason::FailingAlone)),
         "{report:?}"
+    );
+    assert_eq!(
+        (
+            report.answered,
+            report.unsent,
+            report.undelivered,
+            report.held
+        ),
+        (0, 0, 1, 1),
+        "an upload that was never sent was counted as answered: {report:?}"
     );
     assert!(
         set_aside
@@ -441,4 +478,53 @@ fn sets_aside_an_upload_whose_bytes_fail_to_open_alike_in_successive_drains() {
     assert!(core.release(&set_aside.id).unwrap());
     core.drain().unwrap();
     assert_eq!(uploads_sent(&server), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_purge_refusal_names_the_upload_a_deleted_file_waits_on_and_its_exits() {
+    let server = Scripted::start();
+    let dir = tempfile::tempdir().unwrap();
+    let Unreadable { core, file_id, .. } = file_with_unreadable_bytes(&server, dir.path());
+    let refusal = |core: &crate::Core| match core.purge_item(&file_id, Some(1)).unwrap_err() {
+        crate::CoreError::Invalid(message) => message,
+        other => panic!("{other:?}"),
+    };
+    core.delete_item(&file_id).unwrap();
+    let upload = upload_of(&core);
+    // Before it is set aside the upload is a write a drain can still move.
+    let before = refusal(&core);
+    assert!(before.contains("drain"), "{before}");
+    for _ in 0..2 {
+        core.drain().unwrap();
+    }
+    five_minutes_on(&core);
+    core.drain().unwrap();
+    assert_eq!(
+        core.queue()
+            .unwrap()
+            .iter()
+            .map(|queued| queued.reason.clone())
+            .collect::<Vec<_>>(),
+        [
+            Some("failing_alone".into()),
+            Some("awaiting_dependency".into()),
+            Some("awaiting_dependency".into()),
+        ],
+        "the file did not wait behind its upload"
+    );
+
+    let message = refusal(&core);
+    assert!(
+        message.contains(&upload.id),
+        "the refusal does not name the upload the writes wait on: {message}"
+    );
+    assert!(
+        message.contains("withdraw") && message.contains("release"),
+        "the refusal does not name the exits of the write that blocks: {message}"
+    );
+    assert!(
+        !message.contains("drain"),
+        "the refusal names a drain, which cannot move a write set aside: {message}"
+    );
 }

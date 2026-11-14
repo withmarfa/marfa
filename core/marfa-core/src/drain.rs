@@ -28,8 +28,10 @@ pub struct DrainReport {
     pub answered: usize,
     pub held: usize,
     /// Writes this pass could not deliver: the one the server could not take
-    /// and every write left behind it, and one whose bytes could not be
-    /// opened. Each waits for the next drain.
+    /// and every write left behind it, and an upload whose bytes could not be
+    /// opened, which a drain does not send even once it is set aside as
+    /// `failing_alone`. Each waits for the next drain or, once set aside, for
+    /// a person.
     pub undelivered: usize,
     /// Writes this pass gave a verdict without sending them: refused for a
     /// write they waited on or for bytes no longer held, or settled by
@@ -1622,7 +1624,7 @@ fn send_queue(
                             {
                                 answers.insert(write.id.clone(), Some(Verdict::Blocked));
                                 waiting.insert(write.id.clone());
-                                report.answered += 1;
+                                report.undelivered += 1;
                                 put_verdict(
                                     report,
                                     replacing,

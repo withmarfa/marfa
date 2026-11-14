@@ -6538,11 +6538,11 @@ If the item the copy shows is not in the bin, then a device MUST refuse to purge
 
 ### `device/purge-waiting-write`
 
-If a write to an item has no answer yet, or is blocked or dead, then a device MUST refuse to purge the item `invalid`, sending nothing, and name in the refusal only the commands that take each waiting write out of its wait.
+If a write to an item has no answer yet, or is blocked or dead, then a device MUST refuse to purge the item `invalid`, sending nothing, and name in the refusal only the commands that take each waiting write out of its wait, naming for a write held behind another the write that holds it, followed to the write that actually blocks, and that write's commands.
 
-**Reason:** the write would reach an item that is gone, and a write that carried a person's content would be lost to a purge they may not have meant it for. A write with no answer waits for a drain, a write blocked for a reason a release clears waits for a release, and a dead write or one blocked for a reason a withdraw takes waits for a release or a withdraw. A discard takes only a refused write, so the refusal never names it.
+**Reason:** the write would reach an item that is gone, and a write that carried a person's content would be lost to a purge they may not have meant it for. A write with no answer waits for a drain, a write blocked for a reason a release clears waits for a release, and a dead write or one blocked for a reason a withdraw takes waits for a release or a withdraw. A write held behind another waits for that write, so the refusal names the write it waits on, and a drain only where a drain can move that write. A discard takes only a refused write, so the refusal never names it.
 
-**Tests:** `device/purge.test.ts › refuses an item a write to which still waits, sending nothing`, `› refuses an item a blocked write names, sending nothing`, `› refuses an item a dead write names with the commands that clear it, and no longer once it is withdrawn`.
+**Tests:** `device/purge.test.ts › refuses an item a write to which still waits, sending nothing`, `› refuses an item a blocked write names, sending nothing`, `› refuses an item a dead write names with the commands that clear it, and no longer once it is withdrawn`, `› names, for a write held behind another, the write that holds it and that write's commands`.
 
 ### `device/purge-other-instance`
 

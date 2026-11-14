@@ -2121,9 +2121,20 @@ impl Core {
             });
         }
         if !waiting.is_empty() {
+            let queue = store::queued_writes(&*self.conn()?)?;
             let exits = waiting
                 .iter()
-                .map(|write| format!("{} ({}): {}", write.id, write.kind, write.exits()))
+                .map(|write| match write.blocker(&queue) {
+                    Some(blocker) => format!(
+                        "{} ({}) waits on {} ({}): {}",
+                        write.id,
+                        write.kind,
+                        blocker.id,
+                        blocker.kind,
+                        blocker.exits()
+                    ),
+                    None => format!("{} ({}): {}", write.id, write.kind, write.exits()),
+                })
                 .collect::<Vec<_>>()
                 .join("; ");
             return Err(CoreError::Invalid(format!(

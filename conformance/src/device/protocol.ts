@@ -488,7 +488,8 @@ export interface DrainReport {
    *  ahead of them to the same item or edge, has no answer yet
    *  (`queue-and-verdicts/count-held`). */
   held: number;
-  /** Writes it could not deliver, each waiting for the next drain
+  /** Writes it could not deliver, each waiting for the next drain or, for an
+   *  upload whose bytes cannot be opened, for a person
    *  (`queue-and-verdicts/count-undelivered`). */
   undelivered: number;
   /** Writes it gave a verdict without sending: refused for a write they

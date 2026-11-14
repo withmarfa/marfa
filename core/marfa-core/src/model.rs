@@ -1497,6 +1497,32 @@ impl QueuedWrite {
             )
     }
 
+    /// The write in `queue` that holds this one: the first it follows or
+    /// depends on that has no answer yet or is blocked, followed through any
+    /// write that is itself held, to the one nothing holds. `None` where no
+    /// write holds it, so that a drain moves it.
+    pub fn blocker<'a>(&self, queue: &'a [QueuedWrite]) -> Option<&'a QueuedWrite> {
+        let holding = |write: &QueuedWrite| {
+            write
+                .follows
+                .iter()
+                .chain(&write.depends_on)
+                .filter_map(|ahead| queue.iter().find(|queued| queued.id == *ahead))
+                .find(|ahead| matches!(ahead.verdict, None | Some(Verdict::Blocked)))
+        };
+        let mut blocker = holding(self)?;
+        for _ in 0..queue.len() {
+            match holding(blocker) {
+                Some(next) => blocker = next,
+                None => break,
+            }
+        }
+        Some(blocker)
+    }
+
+    /// The commands that take this write out of its wait, where nothing holds
+    /// it. A write held behind another is cleared through that write
+    /// (`blocker`), not through any command of its own.
     pub fn exits(&self) -> &'static str {
         if self.withdrawable() {
             "withdraw or release"

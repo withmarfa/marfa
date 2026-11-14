@@ -5693,6 +5693,16 @@ describe("an upload is a queued write", () => {
         delete process.env.MARFA_TEST_FAULT;
       }
       expect(aside.ok, JSON.stringify(aside)).toBe(true);
+      expect(
+        aside.ok && [
+          aside.value.answered,
+          aside.value.unsent,
+          aside.value.undelivered,
+          aside.value.held,
+          aside.value.unmade,
+        ],
+        "an upload that was never sent was counted as answered, or went uncounted",
+      ).toEqual([0, 0, 1, 0, 0]);
       const row = await upload();
       expect(
         [row?.verdict, row?.reason],

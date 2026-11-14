@@ -802,9 +802,9 @@ When a drain ends, a device MUST report in the queue the same verdict for each w
 
 ### `queue-and-verdicts/count-answered`
 
-A device MUST count in a drain's `answered` each write the drain sent that had an answer the device did not take as an environmental failure, whatever the answer, and each write the drain set aside as `failing_alone`.
+A device MUST count in a drain's `answered` each write the drain sent that had an answer the device did not take as an environmental failure, whatever the answer, and each write the drain sent and set aside as `failing_alone`.
 
-**Reason:** a write that went out and met no answer is never counted as answered: a report that counted it would read the same whether the server took it or could not be reached, so an app could not tell offline from saved. A write set aside has a verdict the drain reports, and a pass that set one aside has carried on (`queue-and-verdicts/stuck-write-carries-on`), so it is not left undelivered.
+**Reason:** a write that went out and met no answer is never counted as answered: a report that counted it would read the same whether the server took it or could not be reached, so an app could not tell offline from saved. A write set aside after it was sent has a verdict the drain reports, and a pass that set one aside has carried on (`queue-and-verdicts/stuck-write-carries-on`), so it is not left undelivered. An upload set aside because its bytes could not be opened was never sent, so it is counted `undelivered` (`queue-and-verdicts/count-undelivered`) and not here.
 
 **Tests:** `device/classification.test.ts › counts only the writes the server answered, and says why the rest were not delivered`, `› ends the pass at a read the server cannot answer, sending nothing after it`, `device/queue.test.ts › reports a verdict for every write it sent`, `device/stuck-write.test.ts › sets the write aside as failing_alone only five minutes on, once the server takes the write behind it and it fails again`.
 
@@ -816,7 +816,7 @@ A device MUST count in a drain's `held` each write the drain held for a write it
 
 ### `queue-and-verdicts/count-undelivered`
 
-A device MUST count in a drain's `undelivered` the write an environmental failure met without a verdict, each write the pass came to after a write or a read met an environmental failure, each write from the one at which the drain failed to confirm the server's instance, and an upload whose bytes could not be opened, but a write it held.
+A device MUST count in a drain's `undelivered` the write an environmental failure met without a verdict, each write the pass came to after a write or a read met an environmental failure, each write from the one at which the drain failed to confirm the server's instance, and each upload whose held bytes could not be opened, whether or not the drain set it aside as `failing_alone`, but not a write it held.
 
 **Tests:** `device/classification.test.ts › ends the pass at the first write the server cannot take, leaving the rest untried and uncounted`, `› counts only the writes the server answered, and says why the rest were not delivered`, `device/queue.test.ts › sends nothing while the server cannot say which instance it is`, `› leaves an upload whose held bytes cannot be opened unanswered, and says why`.
 
@@ -836,7 +836,7 @@ A device MUST count in a drain's `unmade` each write whose request the device co
 
 A device MUST count each write a drain comes to in exactly one of `answered`, `held`, `undelivered`, `unsent` and `unmade`, but a write that a refused credential parks.
 
-**Reason:** the writes a refused credential parks are counted in the sentence `stopped` gives (`queue-and-verdicts/credential-stop-said`).
+**Reason:** the writes a refused credential parks are counted in the sentence `stopped` gives (`queue-and-verdicts/credential-stop-said`). An upload whose bytes could not be opened is counted `undelivered` only, though the drain may give it a verdict: the count says what the pass did with the write, and the pass sent nothing.
 
 **Tests:** `device/classification.test.ts › counts the writes it settled without sending apart from those the server answered`, `› ends the pass at the first write the server cannot take, leaving the rest untried and uncounted`.
 
@@ -1308,9 +1308,9 @@ If a drain sends a write that meets an environmental failure other than a `429` 
 
 ### `queue-and-verdicts/stuck-write-sent-only`
 
-A device MUST NOT give a write the reason `failing_alone` in a drain unless that drain sent it, and it met an environmental failure before its test and again after it, in that drain.
+A device MUST NOT give a write the reason `failing_alone` in a drain unless that drain sent it, and it met an environmental failure before its test and again after it, in that drain, other than an upload whose held bytes cannot be opened (`queue-and-verdicts/stuck-upload-unopened`).
 
-**Reason:** a write the drain did not send was not shown to fail. Set aside unsent, a write the server would take, such as one that failed only while the server was down, would be kept from it until a person released it.
+**Reason:** a write the drain did not send was not shown to fail. Set aside unsent, a write the server would take, such as one that failed only while the server was down, would be kept from it until a person released it. An upload whose held bytes cannot be opened can never be sent until a person acts, so no drain sends it, and setting it aside is its only exit.
 
 **Tests:** `device/stuck-write.test.ts › sets the write aside only when the write sent to test it was not itself met by a failure`, `› sends two requests a drain in an outage once every queued write has met the failure in three drains, and still sets nothing aside`, `› sets the first of 6 stuck uploads aside in the 9th drain, when the note behind them lands`.
 
