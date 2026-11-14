@@ -9,7 +9,7 @@ use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use marfa_rules::catalog::Catalog;
 use marfa_rules::filter::Expression;
 use marfa_rules::filter::sql::{self, Adding, Bind, Sink};
-use marfa_rules::query::property_sort_expression;
+use marfa_rules::query::column_sort_expression;
 use rusqlite::types::Value as Bound;
 use rusqlite::{Connection, OptionalExtension, params, params_from_iter};
 use serde::Serialize;
@@ -1380,13 +1380,13 @@ impl Key {
             Key::Id => "NULL".into(),
             Key::Updated => "r.updated_at".into(),
             Key::Column { name, kind }
-                if marfa_rules::schema::ORDER_KINDS.contains(&kind.as_str())
+                if marfa_rules::schema::KEYED_KINDS.contains(&kind.as_str())
                     && marfa_rules::schema::order_column_inlinable(name) =>
             {
                 marfa_rules::schema::order_value_key_sql(kind, name, "r.body")
             }
             Key::Column { name, .. } => {
-                let text = property_sort_expression("r.body", "?");
+                let text = column_sort_expression("r.body", "?");
                 values.extend(std::iter::repeat_n(
                     Value::String(format!("$.{name}")),
                     text.matches('?').count(),
@@ -1636,6 +1636,11 @@ fn aggregate(adding: &Adding, values: &mut Vec<Value>) -> String {
             out.push(" IN ('integer', 'real') THEN ");
             column(out, "json_extract");
             out.push(" END");
+        },
+        |out| {
+            let key =
+                marfa_rules::schema::order_value_key_sql(&adding.kind, &adding.name, "r.body");
+            out.push(&key);
         },
     );
     values.extend(out.values);
@@ -1934,6 +1939,32 @@ mod tests {
             let totals =
                 totals_from_copy(&conn, "i", "t", &definition, case["filter"].as_str()).unwrap();
             assert_eq!(totals, case["answer"], "{}", case["filter"]);
+        }
+    }
+
+    #[test]
+    fn the_rows_are_sorted_by_each_column_as_the_server_sorts_them() {
+        let corpus: Value = serde_json::from_str(CORPUS).unwrap();
+        let rows: Vec<(&str, Value)> = corpus["table"]["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| (row["id"].as_str().unwrap(), row["body"].clone()))
+            .collect();
+        let (_dir, core) = copy_with(&rows);
+        let conn = core.conn().unwrap();
+        let definition = json!({ "columns": corpus["table"]["columns"] })
+            .as_object()
+            .unwrap()
+            .clone();
+        for case in corpus["table"]["sorts"].as_array().unwrap() {
+            let column = format!("values.{}", case["by"].as_str().unwrap());
+            for (direction, ids) in [("asc", &case["ascending"]), ("desc", &case["descending"])] {
+                let mut asked = asked(Some(&column), 100, None);
+                asked.direction = Some(direction.into());
+                let page = page_from_copy(&conn, "i", "t", &definition, &asked).unwrap();
+                assert_eq!(json!(ids_of(&page)), *ids, "{column} {direction}");
+            }
         }
     }
 

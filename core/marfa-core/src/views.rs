@@ -381,7 +381,8 @@ fn property_sql(name: &str, json: bool) -> String {
         )
     } else {
         format!(
-            "CASE WHEN json_type(items.properties,{path}) IN ('integer','real') THEN CAST({extract} AS REAL) ELSE {extract} END"
+            "CASE json_type(items.properties,{path}) WHEN 'integer' THEN CAST({extract} AS REAL) WHEN 'real' THEN CAST({extract} AS REAL) WHEN 'text' THEN {} ELSE {extract} END",
+            marfa_rules::schema::text_key_sql(&extract)
         )
     };
     format!(

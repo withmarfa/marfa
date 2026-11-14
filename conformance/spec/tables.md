@@ -882,11 +882,11 @@ If a `cursor` follows a row whose sort value is a text of more than 128 bytes in
 
 ### `tables/rows-filter`
 
-When `GET /items/{id}/tables/{table}/rows` or `GET /items/{id}/tables/{table}/totals` names a `filter`, the server MUST select the rows it selects under the grammar of `search-and-filters/filter-doors`, reading `values.<column>` as a column and `id` and `updated_at` as the row's own.
+When `GET /items/{id}/tables/{table}/rows` or `GET /items/{id}/tables/{table}/totals` names a `filter`, the server MUST select the rows it selects under the grammar of `search-and-filters/filter-doors`, reading `values.<column>` as a column and `id` and `updated_at` as the row's own, and bounding a value by a number only on a number as `search-and-filters/filter-range-numbers` says.
 
 **Reason:** a client that filters items filters rows with the same expressions.
 
-**Tests:** `compliance/table-rows-reads.test.ts › filters rows on columns with the item filter grammar`.
+**Tests:** `compliance/table-rows-reads.test.ts › filters rows on columns with the item filter grammar`, `› totals only the values of a column's own type after a forced change left others`.
 
 ### `tables/rows-filter-refused`
 
@@ -910,11 +910,11 @@ When a page of rows is sorted by a `datetime` column, the server MUST order the 
 
 ### `tables/rows-sort-kind`
 
-When a page of rows is sorted by a `datetime`, `number`, `integer` or `string` column, the server MUST sort a value of another type as though the row held no value for the column.
+When a page of rows is sorted by a `datetime`, `date`, `number`, `integer` or `string` column, the server MUST sort a value of another type, and for a `date` a text that is not a calendar date, as though the row held no value for the column.
 
 **Reason:** a type changed with `force=true` keeps the values its rows held, which may no longer be of the column's type.
 
-**Tests:** `compliance/table-rows-reads.test.ts › sorts a value a forced change left of another type as no value`.
+**Tests:** `compliance/table-rows-reads.test.ts › sorts a value a forced change left of another type as no value`, `› sorts a date or datetime column by its own type after a forced change left other values`.
 
 ### `tables/rows-order-item-id`
 
@@ -979,6 +979,14 @@ When a caller sends `GET /items/{id}/tables/{table}/totals`, the server MUST ans
 The server MUST answer `sum` as the sum of the column's values, `average` as their mean, `min` and `max` as the smallest and largest, a `datetime` compared and answered as its instant in UTC, and `count` as how many rows hold a value.
 
 **Tests:** `compliance/table-rows-reads.test.ts › totals each column that adds up, over the rows a filter selects`.
+
+### `tables/totals-own-type`
+
+When the server answers `sum`, `average`, `min` or `max` for a column, the server MUST use only the values that are of the column's type, and never a value of another type that a forced change left in the rows.
+
+**Reason:** text that reads as a number would otherwise add into a sum, and text that reads as a time would otherwise be the smallest of the times.
+
+**Tests:** `compliance/table-rows-reads.test.ts › totals only the values of a column's own type after a forced change left others`.
 
 ### `tables/totals-empty`
 

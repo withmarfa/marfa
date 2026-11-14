@@ -364,6 +364,78 @@ mod tests {
         assert_eq!(keys, items);
     }
 
+    const WHEN: [&str; 9] = [
+        r#"{"p":"2026-01-01T09:00+09:00"}"#,
+        r#"{"p":"2026-01-01T05:00Z"}"#,
+        r#"{"p":"2026-01-01T03:00:00.000Z"}"#,
+        r#"{"p":"2026-01-01"}"#,
+        r#"{"p":"2026-01-01T00:00:00.5Z"}"#,
+        r#"{"p":"2026-01-01T05:00:00.000+00:00"}"#,
+        r#"{"p":"banana"}"#,
+        r#"{"p":3}"#,
+        r#"{}"#,
+    ];
+
+    #[test]
+    fn datetimes_are_keyed_by_their_instant_whether_a_write_or_the_walk_made_the_key() {
+        let ascending = [
+            "007", "000", "003", "004", "002", "001", "005", "006", "008",
+        ];
+        let descending = [
+            "006", "001", "005", "002", "004", "000", "003", "007", "008",
+        ];
+        let wanted =
+            |ids: &[&str]| -> Vec<String> { ids.iter().map(|id| format!("id-{id}")).collect() };
+        for indexed_first in [true, false] {
+            let conn = db();
+            let index = || {
+                conn.execute(
+                    "INSERT INTO sort_indexes (type, name) VALUES ('core.note', 'p')",
+                    [],
+                )
+                .unwrap();
+            };
+            if indexed_first {
+                index();
+            }
+            for (n, properties) in WHEN.iter().enumerate() {
+                put(&conn, n, "core.note", properties);
+            }
+            if !indexed_first {
+                index();
+                fill(&conn);
+            }
+            assert_eq!(scan(&conn, false), wanted(&ascending), "scan");
+            assert_eq!(scan(&conn, true), wanted(&descending), "scan down");
+            for limit in [1, 4, 50] {
+                assert_eq!(
+                    walked(&conn, false, limit),
+                    wanted(&ascending),
+                    "keys, indexed first {indexed_first}, pages of {limit}"
+                );
+                assert_eq!(
+                    walked(&conn, true, limit),
+                    wanted(&descending),
+                    "keys down, indexed first {indexed_first}, pages of {limit}"
+                );
+            }
+            conn.execute(
+                "UPDATE items SET properties = jsonb('{\"p\":\"2026-01-01T01:00Z\"}') WHERE id = 'id-006'",
+                [],
+            )
+            .unwrap();
+            conn.execute("DELETE FROM items WHERE id = 'id-001'", [])
+                .unwrap();
+            let after = ["007", "000", "003", "004", "006", "002", "005", "008"];
+            assert_eq!(
+                walked(&conn, false, 3),
+                wanted(&after),
+                "keys after changes"
+            );
+            assert_eq!(scan(&conn, false), wanted(&after), "scan after changes");
+        }
+    }
+
     #[test]
     fn an_item_written_while_the_walk_is_under_way_keeps_one_key() {
         let conn = db();

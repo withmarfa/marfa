@@ -3096,7 +3096,7 @@ describe("a local read answers the listing grammar as the server does", () => {
       `edge[parent-of] neq "${child}"`,
       "edge[references] exists",
       "edge[parent-of] not_exists",
-      "properties.s gt 4",
+      "properties.t gt 4",
       "source_id eq true",
       "properties.t eq 5",
       "properties.t eq true",
@@ -3169,7 +3169,7 @@ describe("a local read answers the listing grammar as the server does", () => {
     ).toBeGreaterThanOrEqual(expressions.length - 3);
     // And the items that tell a cast, a REAL and a number's text apart.
     for (const [filter, rows] of [
-      ["properties.s gt 4", ["five", "ten"]],
+      ["properties.t gt 4", ["grandchild"]],
       ["source_id eq true", ["five"]],
       ["properties.t eq 5", ["grandchild"]],
       ["properties.t eq true", ["root"]],

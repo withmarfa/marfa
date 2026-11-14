@@ -519,8 +519,8 @@ CREATE TABLE IF NOT EXISTS sort_indexes_dropping (
     PRIMARY KEY (type, name)
 ) STRICT, WITHOUT ROWID;
 
--- A property's sort value: a number or boolean as a REAL, text as itself, else the empty blob, which
--- sorts last. The descending index keeps ids ascending, as a listing sorted down does.
+-- A property's sort value: a number or boolean as a REAL, a text that reads as a datetime as the UTC
+-- instant it names, any other text as itself, else the empty blob, which sorts last. The descending index keeps ids ascending, as a listing sorted down does.
 CREATE TABLE IF NOT EXISTS item_sort_keys (
     type TEXT NOT NULL,
     name TEXT NOT NULL,
@@ -536,7 +536,7 @@ CREATE TRIGGER IF NOT EXISTS item_sort_keys_inserted AFTER INSERT ON items
 WHEN EXISTS (SELECT 1 FROM sort_indexes WHERE type = NEW.type)
 BEGIN
     INSERT OR IGNORE INTO item_sort_keys (type, name, value, id, seq)
-    SELECT NEW.type, s.name, COALESCE(CASE json_type(NEW.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(NEW.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), NEW.id, NEW.seq
+    SELECT NEW.type, s.name, COALESCE(CASE json_type(NEW.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN (SELECT CASE WHEN v GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', (CASE WHEN date(substr(v, 1, 10)) IS NOT substr(v, 1, 10) THEN NULL WHEN length(v) = 10 THEN CAST(round((julianday(v) - 2440587.5) * 86400000.0) AS INTEGER) WHEN substr(v, 11, 1) <> 'T' THEN NULL WHEN v GLOB '*Z' THEN CAST(round((julianday(substr(v, 1, length(v) - 1)) - 2440587.5) * 86400000.0) AS INTEGER) WHEN v GLOB '*[+-][0-9][0-9]:[0-9][0-9]' AND CAST(substr(v, -5, 2) AS INTEGER) < 24 AND CAST(substr(v, -2) AS INTEGER) < 60 THEN CAST(round((julianday(substr(v, 1, length(v) - 6)) - 2440587.5) * 86400000.0) AS INTEGER) - (CASE substr(v, -6, 1) WHEN '-' THEN -60000 ELSE 60000 END) * (CAST(substr(v, -5, 2) AS INTEGER) * 60 + CAST(substr(v, -2) AS INTEGER)) END) / 1000.0, 'unixepoch'), v) ELSE v END FROM (SELECT json_extract(NEW.properties, '$.' || s.name) AS v)) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), NEW.id, NEW.seq
     FROM sort_indexes s WHERE s.type = NEW.type;
 END;
 CREATE TRIGGER IF NOT EXISTS item_sort_keys_changed AFTER UPDATE OF type, properties ON items
@@ -545,17 +545,17 @@ WHEN (NEW.type IS NOT OLD.type OR NEW.properties IS NOT OLD.properties)
         OR EXISTS (SELECT 1 FROM sort_indexes WHERE type = NEW.type))
 BEGIN
     DELETE FROM item_sort_keys WHERE (type, name, value, id) IN (
-        SELECT OLD.type, s.name, COALESCE(CASE json_type(OLD.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(OLD.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), OLD.id
+        SELECT OLD.type, s.name, COALESCE(CASE json_type(OLD.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN (SELECT CASE WHEN v GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', (CASE WHEN date(substr(v, 1, 10)) IS NOT substr(v, 1, 10) THEN NULL WHEN length(v) = 10 THEN CAST(round((julianday(v) - 2440587.5) * 86400000.0) AS INTEGER) WHEN substr(v, 11, 1) <> 'T' THEN NULL WHEN v GLOB '*Z' THEN CAST(round((julianday(substr(v, 1, length(v) - 1)) - 2440587.5) * 86400000.0) AS INTEGER) WHEN v GLOB '*[+-][0-9][0-9]:[0-9][0-9]' AND CAST(substr(v, -5, 2) AS INTEGER) < 24 AND CAST(substr(v, -2) AS INTEGER) < 60 THEN CAST(round((julianday(substr(v, 1, length(v) - 6)) - 2440587.5) * 86400000.0) AS INTEGER) - (CASE substr(v, -6, 1) WHEN '-' THEN -60000 ELSE 60000 END) * (CAST(substr(v, -5, 2) AS INTEGER) * 60 + CAST(substr(v, -2) AS INTEGER)) END) / 1000.0, 'unixepoch'), v) ELSE v END FROM (SELECT json_extract(OLD.properties, '$.' || s.name) AS v)) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), OLD.id
         FROM sort_indexes s WHERE s.type = OLD.type);
     INSERT OR IGNORE INTO item_sort_keys (type, name, value, id, seq)
-    SELECT NEW.type, s.name, COALESCE(CASE json_type(NEW.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(NEW.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), NEW.id, NEW.seq
+    SELECT NEW.type, s.name, COALESCE(CASE json_type(NEW.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(NEW.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN (SELECT CASE WHEN v GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', (CASE WHEN date(substr(v, 1, 10)) IS NOT substr(v, 1, 10) THEN NULL WHEN length(v) = 10 THEN CAST(round((julianday(v) - 2440587.5) * 86400000.0) AS INTEGER) WHEN substr(v, 11, 1) <> 'T' THEN NULL WHEN v GLOB '*Z' THEN CAST(round((julianday(substr(v, 1, length(v) - 1)) - 2440587.5) * 86400000.0) AS INTEGER) WHEN v GLOB '*[+-][0-9][0-9]:[0-9][0-9]' AND CAST(substr(v, -5, 2) AS INTEGER) < 24 AND CAST(substr(v, -2) AS INTEGER) < 60 THEN CAST(round((julianday(substr(v, 1, length(v) - 6)) - 2440587.5) * 86400000.0) AS INTEGER) - (CASE substr(v, -6, 1) WHEN '-' THEN -60000 ELSE 60000 END) * (CAST(substr(v, -5, 2) AS INTEGER) * 60 + CAST(substr(v, -2) AS INTEGER)) END) / 1000.0, 'unixepoch'), v) ELSE v END FROM (SELECT json_extract(NEW.properties, '$.' || s.name) AS v)) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), NEW.id, NEW.seq
     FROM sort_indexes s WHERE s.type = NEW.type;
 END;
 CREATE TRIGGER IF NOT EXISTS item_sort_keys_deleted AFTER DELETE ON items
 WHEN EXISTS (SELECT 1 FROM sort_indexes WHERE type = OLD.type)
 BEGIN
     DELETE FROM item_sort_keys WHERE (type, name, value, id) IN (
-        SELECT OLD.type, s.name, COALESCE(CASE json_type(OLD.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN json_extract(OLD.properties, '$.' || s.name) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), OLD.id
+        SELECT OLD.type, s.name, COALESCE(CASE json_type(OLD.properties, '$.' || s.name) WHEN 'integer' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'real' THEN CAST(json_extract(OLD.properties, '$.' || s.name) AS REAL) WHEN 'text' THEN (SELECT CASE WHEN v GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]*' THEN COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', (CASE WHEN date(substr(v, 1, 10)) IS NOT substr(v, 1, 10) THEN NULL WHEN length(v) = 10 THEN CAST(round((julianday(v) - 2440587.5) * 86400000.0) AS INTEGER) WHEN substr(v, 11, 1) <> 'T' THEN NULL WHEN v GLOB '*Z' THEN CAST(round((julianday(substr(v, 1, length(v) - 1)) - 2440587.5) * 86400000.0) AS INTEGER) WHEN v GLOB '*[+-][0-9][0-9]:[0-9][0-9]' AND CAST(substr(v, -5, 2) AS INTEGER) < 24 AND CAST(substr(v, -2) AS INTEGER) < 60 THEN CAST(round((julianday(substr(v, 1, length(v) - 6)) - 2440587.5) * 86400000.0) AS INTEGER) - (CASE substr(v, -6, 1) WHEN '-' THEN -60000 ELSE 60000 END) * (CAST(substr(v, -5, 2) AS INTEGER) * 60 + CAST(substr(v, -2) AS INTEGER)) END) / 1000.0, 'unixepoch'), v) ELSE v END FROM (SELECT json_extract(OLD.properties, '$.' || s.name) AS v)) WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END, X''), OLD.id
         FROM sort_indexes s WHERE s.type = OLD.type);
 END;
 

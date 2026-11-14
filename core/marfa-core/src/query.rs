@@ -684,6 +684,30 @@ mod tests {
     }
 
     #[test]
+    fn a_property_sorts_in_the_order_the_server_gives_it() {
+        let corpus: serde_json::Value =
+            serde_json::from_str(include_str!("../../marfa-rules/src/filter/parity.json")).unwrap();
+        let conn = corpus_copy(&corpus, &corpus["ordered"]["items"]);
+        for case in corpus["ordered"]["sorts"].as_array().unwrap() {
+            let name = case["by"].as_str().unwrap();
+            for (direction, ids) in [
+                (SortDirection::Ascending, &case["ascending"]),
+                (SortDirection::Descending, &case["descending"]),
+            ] {
+                let sort = Sort {
+                    field: SortField::Property(name.into()),
+                    direction,
+                };
+                assert_eq!(
+                    json!(listed(&conn, ListFilters::default(), Some(sort)).unwrap()),
+                    *ids,
+                    "{name} {direction:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
     fn a_source_selects_only_the_items_stamped_with_it() {
         let conn = seeded();
         let mut other = wire_item(

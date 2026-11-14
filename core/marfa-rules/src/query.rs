@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::catalog::Catalog;
 use crate::error::{Code, Result, RuleError};
 use crate::grammar;
+use crate::schema::text_key_sql;
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,14 +100,25 @@ pub fn escape_like(text: &str) -> String {
         .replace('_', "\\_")
 }
 
-/// Numbers and booleans by value, then text by its bytes, anything else null, which SQLite's own order gives. `source` is the column holding the JSON object; `path` is the SQL that gives the JSON path, and its name must have passed [`SortField::property`].
+/// Numbers and booleans by value, then text, anything else null, which SQLite's own order gives. A text that reads as a datetime counts as the UTC instant it names and any other text as its bytes, so a property orders the same whichever type declares it (see [`crate::schema::text_key_sql`]). `source` is the column holding the JSON object; `path` is the SQL that gives the JSON path, and its name must have passed [`SortField::property`].
 pub fn property_sort_expression(source: &str, path: &str) -> String {
+    scalar_sort_expression(source, path, text_key_sql)
+}
+
+/// As [`property_sort_expression`], with every text ordered as its bytes, for a column whose type the table declares.
+pub fn column_sort_expression(source: &str, path: &str) -> String {
+    scalar_sort_expression(source, path, str::to_string)
+}
+
+fn scalar_sort_expression(source: &str, path: &str, text: impl FnOnce(&str) -> String) -> String {
+    let extracted = format!("json_extract({source}, {path})");
     format!(
         "CASE json_type({source}, {path}) \
-         WHEN 'integer' THEN CAST(json_extract({source}, {path}) AS REAL) \
-         WHEN 'real' THEN CAST(json_extract({source}, {path}) AS REAL) \
-         WHEN 'text' THEN json_extract({source}, {path}) \
-         WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END"
+         WHEN 'integer' THEN CAST({extracted} AS REAL) \
+         WHEN 'real' THEN CAST({extracted} AS REAL) \
+         WHEN 'text' THEN {} \
+         WHEN 'true' THEN 1.0 WHEN 'false' THEN 0.0 ELSE NULL END",
+        text(&extracted)
     )
 }
 

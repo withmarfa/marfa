@@ -488,7 +488,7 @@ When `GET /items` names a `type` in the `system.` namespace, the server MUST lis
 
 ## Filter grammar
 
-`GET /items`, `GET /items/stats` and `GET /search` take a `filter` expression, `POST /items/bulk-actions` takes one inside its filter, and a view and a folder take one as `query.filter`. An expression is one or more conditions, `<field> <operator> <value>`, with no value after `exists` and `not_exists` (`search-and-filters/filter-malformed`). Numbers on properties are `search-and-filters/filter-numeric`, times are `search-and-filters/filter-time-instant`, and the escapes in a string are `search-and-filters/filter-string-escapes`. An edge term is also `edges.md`'s (`edges/filter-edge-full`, `edges/filter-term-hidden`).
+`GET /items`, `GET /items/stats` and `GET /search` take a `filter` expression, `POST /items/bulk-actions` takes one inside its filter, and a view and a folder take one as `query.filter`. An expression is one or more conditions, `<field> <operator> <value>`, with no value after `exists` and `not_exists` (`search-and-filters/filter-malformed`). Numbers on properties are `search-and-filters/filter-numeric`, times on properties are `search-and-filters/filter-property-instant`, times are `search-and-filters/filter-time-instant`, and the escapes in a string are `search-and-filters/filter-string-escapes`. An edge term is also `edges.md`'s (`edges/filter-edge-full`, `edges/filter-term-hidden`).
 
 ### `search-and-filters/filter-doors`
 
@@ -820,6 +820,28 @@ The server MUST NOT turn text, an array, an object, a missing property or `null`
 
 **Tests:** `compliance/numeric-property-filters.test.ts › does not turn text, arrays, objects, missing or null properties into numeric equality matches`.
 
+### `search-and-filters/filter-range-numbers`
+
+When a `filter` on `GET /items` or `GET /search` bounds a property with a number using `gt`, `gte`, `lt` or `lte`, the server MUST select only the items whose property is a JSON number, and never one whose property is text, a boolean, an array, an object, missing or `null`.
+
+**Reason:** text that reads as a number, and a boolean read as `0` or `1`, would otherwise sit among the numbers a range selects.
+
+**Tests:** `compliance/numeric-property-filters.test.ts › bounds a property by a number only on a number, on the listing and the search`.
+
+### `search-and-filters/filter-range-text`
+
+When a `filter` on `GET /items` or `GET /search` bounds a property with a text literal using `gt`, `gte`, `lt` or `lte`, the server MUST select only the items whose property is text.
+
+**Tests:** `compliance/numeric-property-filters.test.ts › bounds a property by a number only on a number, on the listing and the search`.
+
+### `search-and-filters/filter-property-instant`
+
+When a `filter` on `GET /items` or `GET /search` compares a text property that reads as a datetime (`types/datetime-value`) with a text literal that reads as one, using `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, the server MUST compare the instants they name, a date alone as its midnight in UTC, whichever type declares the property.
+
+**Reason:** one instant written two ways is one moment, and the order of the moments is not the order of the characters.
+
+**Tests:** `compliance/datetime-property-compare.test.ts › filters by instant, so one instant written two ways is equal and an earlier time is lower`.
+
 ### `search-and-filters/filter-null-refused`
 
 If a `filter` compares a field with a `null` literal after an operator that takes a value, then the server MUST answer `400 validation_error`.
@@ -1000,9 +1022,17 @@ When `GET /items` names `sort=properties.<field>`, the server MUST order the ite
 
 ### `search-and-filters/sort-property-ascending`
 
-When `GET /items` sorts by a property ascending, the server MUST put numbers and booleans first in numeric order, with `false` equal to `0` and `true` equal to `1`, followed by strings in binary lexical order of their UTF-8 bytes, an empty string being a value and numeric text remaining text.
+When `GET /items` sorts by a property ascending, the server MUST put numbers and booleans first in numeric order, with `false` equal to `0` and `true` equal to `1`, followed by strings in binary lexical order of their UTF-8 bytes, an empty string being a value and numeric text remaining text, except that a string that reads as a datetime is placed as `search-and-filters/sort-property-datetime` says.
 
 **Tests:** `correctness/property-sort-pagination.test.ts › walks mixed scalar kinds across types, with ascending ID ties and nulls last`.
+
+### `search-and-filters/sort-property-datetime`
+
+When `GET /items` sorts by a property, the server MUST order a string that reads as a datetime (`types/datetime-value`) by the instant it names, a date alone as its midnight in UTC, whichever type declares the property.
+
+**Reason:** the value stays as it was written and only its place in the order changes, so one instant written with different offsets or precision sorts as one moment, and a list that holds items of two types sorts the same whether a type declares the property a `datetime` or a `string`.
+
+**Tests:** `compliance/datetime-property-compare.test.ts › sorts by instant however its time is written, across a datetime and a text declaration`.
 
 ### `search-and-filters/sort-property-descending`
 
@@ -1294,7 +1324,7 @@ When `GET /search` names `sort=created_at`, `sort=updated_at` or `sort=occurred_
 
 ### `search-and-filters/search-sort-property`
 
-When `GET /search` names `sort=properties.<field>`, the server MUST order the hits by the scalar value each stores in that property, in the order `search-and-filters/sort-property-ascending` and `search-and-filters/sort-property-descending` give a listing, and put the hits whose property is missing, null, an object or an array after every scalar in either direction.
+When `GET /search` names `sort=properties.<field>`, the server MUST order the hits by the scalar value each stores in that property, a time by its instant, in the order `search-and-filters/sort-property-ascending` and `search-and-filters/sort-property-descending` give a listing, and put the hits whose property is missing, null, an object or an array after every scalar in either direction.
 
 **Tests:** `compliance/search-ordering.test.ts › orders a search by a property with the items that lack one last in both directions`.
 

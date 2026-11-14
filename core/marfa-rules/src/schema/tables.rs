@@ -25,6 +25,9 @@ pub const ADDS_UP: [&str; 5] = ["sum", "average", "min", "max", "count"];
 /// The kinds of column a table may name as its `order`.
 pub const ORDER_KINDS: [&str; 4] = ["datetime", "number", "integer", "string"];
 
+/// The kinds of column whose sort and totals use only values of the column's own kind.
+pub const KEYED_KINDS: [&str; 5] = ["datetime", "date", "number", "integer", "string"];
+
 const TEXT_KINDS: [&str; 3] = ["string", "email", "url"];
 const ITEM_COLUMN_REFUSES: [&str; 5] =
     ["enum_values", "format", "max_length", "minimum", "maximum"];

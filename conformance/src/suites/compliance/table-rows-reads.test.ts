@@ -481,6 +481,92 @@ describe("reading rows", () => {
     expect(some.data.totals.memo).toEqual({ count: 1 });
   });
 
+  it("totals only the values of a column's own type after a forced change left others", async () => {
+    counter += 1;
+    const type = `user.rows-reads-forced-${counter}-${ctx.runId}`;
+    const before = {
+      amount: { type: "string" },
+      top: { type: "string" },
+      at: { type: "string" },
+      on: { type: "string" },
+      mean: { type: "string" },
+    };
+    const made = await client.registerType({
+      id: type,
+      fields: { title: { type: "string" } },
+      tables: { spend: { columns: before } },
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const created = await client.createItem({
+      type,
+      properties: { title: "Forced" },
+    } as never);
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    const item = created.data.item.id;
+    trackItem(ctx, item);
+    await put(item, [
+      {
+        amount: "10",
+        top: "100",
+        at: "2025-01-01T00:00:00Z",
+        on: "2020-01-01",
+        mean: "9",
+      },
+      { amount: "x", top: "zzz", at: "later", on: "soon", mean: "y" },
+    ]);
+    const forced = await client.replaceType(
+      type,
+      {
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: {
+          spend: {
+            columns: {
+              amount: { type: "number", adds_up: "sum" },
+              top: { type: "integer", adds_up: "max" },
+              at: { type: "datetime", adds_up: "min" },
+              on: { type: "date", adds_up: "max" },
+              mean: { type: "number", adds_up: "average" },
+            },
+          },
+        },
+      },
+      true,
+    );
+    expect(forced.status, JSON.stringify(forced.error)).toBe(200);
+    await put(item, [
+      {
+        amount: 1.5,
+        top: 7,
+        at: "2026-01-01T10:00:00+02:00",
+        on: "2026-03-01",
+        mean: 2,
+      },
+      {
+        amount: 2.5,
+        top: 3,
+        at: "2026-01-01T09:00:00Z",
+        on: "2026-01-02",
+        mean: 4,
+      },
+    ]);
+    const totals = await client.rowTotals(item, "spend");
+    expect(totals.status, JSON.stringify(totals.error)).toBe(200);
+    expect(totals.data).toEqual({
+      row_count: 4,
+      totals: {
+        amount: { sum: 4 },
+        top: { max: 7 },
+        at: { min: "2026-01-01T08:00:00.000Z" },
+        on: { max: "2026-03-01" },
+        mean: { average: 3 },
+      },
+    });
+    const bounded = await client.rowTotals(item, "spend", "values.amount gt 1");
+    expect(bounded.data.row_count).toBe(2);
+    expect(bounded.data.totals.amount).toEqual({ sum: 4 });
+  });
+
   it("totals nothing as zero or null", async () => {
     const { item } = await spendingItem();
     const none = await client.rowTotals(item, "spend");
@@ -962,6 +1048,70 @@ describe("sorting by a table's order", () => {
       texts[1],
       ...[...numbered].sort(),
     ]);
+  });
+
+  it("sorts a date or datetime column by its own type after a forced change left other values", async () => {
+    const columns = {
+      kept: { type: "string" },
+      day: { type: "string" },
+      at: { type: "string" },
+    };
+    const { type, item, table } = await ordered(columns, "kept");
+    const loose = await write(item, [
+      { op: "put", values: { kept: "a", day: "banana", at: "banana" } },
+      {
+        op: "put",
+        values: { kept: "b", day: "2026-02-30", at: "2026-01-01T05:00:00Z" },
+      },
+    ]);
+    const forced = await client.replaceType(
+      type,
+      {
+        id: type,
+        fields: { title: { type: "string" } },
+        tables: {
+          lines: {
+            ...table,
+            columns: {
+              ...columns,
+              day: { type: "date" },
+              at: { type: "datetime" },
+            },
+          },
+        },
+      },
+      true,
+    );
+    expect(forced.status, JSON.stringify(forced.error)).toBe(200);
+    const typed = await write(item, [
+      {
+        op: "put",
+        values: {
+          kept: "c",
+          day: "2026-03-01",
+          at: "2026-01-01T10:00:00+05:00",
+        },
+      },
+      {
+        op: "put",
+        values: { kept: "d", day: "2025-12-31", at: "2026-01-01T04:00:00Z" },
+      },
+    ]);
+    const unkeyed = [...loose].sort();
+    expect(await walk(client, item, "values.day", "asc", 2)).toEqual([
+      typed[1],
+      typed[0],
+      ...unkeyed,
+    ]);
+    expect(await walk(client, item, "values.day", "desc", 2)).toEqual([
+      typed[0],
+      typed[1],
+      ...unkeyed,
+    ]);
+    const instants = await walk(client, item, "values.at", "asc", 2);
+    expect(instants.slice(0, 1)).toEqual([typed[1]]);
+    expect(instants.slice(1, 3).sort()).toEqual([loose[1], typed[0]].sort());
+    expect(instants.slice(3)).toEqual([loose[0]]);
   });
 
   it("sorts an item id a forced change left in the order column as no value", async () => {

@@ -109,6 +109,30 @@ mod tests {
     }
 
     #[test]
+    fn a_date_keys_as_itself_and_a_value_that_is_not_a_date_has_no_key() {
+        assert_eq!(
+            key("date", json!("2026-11-10"), None),
+            Bound::Text("2026-11-10".into())
+        );
+        assert_eq!(
+            key("date", json!("0000-01-01"), None),
+            Bound::Text("0000-01-01".into())
+        );
+        for odd in [
+            json!("soon"),
+            json!("2026-02-30"),
+            json!("2026-11-10T09:30:00Z"),
+            json!("2026-1-1"),
+            json!("20261110"),
+            json!(20261110),
+            json!(true),
+            json!(null),
+        ] {
+            assert_eq!(key("date", odd.clone(), None), Bound::Null, "{odd}");
+        }
+    }
+
+    #[test]
     fn a_value_of_another_kind_or_written_as_an_item_s_id_has_no_key() {
         for odd in [
             json!("now"),
