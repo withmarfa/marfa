@@ -1708,7 +1708,7 @@ A caller can release a write that has stopped, withdraw one that can never be se
 
 ### `queue-and-verdicts/release-stopped`
 
-When a caller releases a write that is `dead`, or `blocked` for a reason other than `awaiting_dependency`, a device MUST take it back to no verdict so the next drain sends it.
+When a caller releases a write that is `dead`, or `blocked` for a reason other than `awaiting_dependency`, other than one it holds for the instance as it is released (`device/record-unread-instance-changed`), a device MUST take it back to no verdict so the next drain sends it.
 
 **Reason:** a device does not judge what the server would now answer, so it releases a write blocked for any of these reasons. One the server answers as before is blocked again for the reason of that answer (`queue-and-verdicts/ancestor-blocks`, `queue-and-verdicts/conflict-blocks`).
 
@@ -1748,7 +1748,7 @@ When a caller releases a write, a device MUST clear its environmental streak, th
 
 ### `queue-and-verdicts/release-by-reason`
 
-When a caller releases by a blocked reason, a device MUST release every write blocked for that reason and no other.
+When a caller releases by a blocked reason, a device MUST release every write blocked for that reason, other than one it holds for the instance as it is released (`device/record-unread-instance-changed`), and no other.
 
 **Reason:** a reason names blocked writes only, so a release by reason never takes a `dead` write, which carries no reason and is released by its id.
 

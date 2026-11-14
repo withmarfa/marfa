@@ -360,7 +360,7 @@ While a folder's copy is expired, a device MUST send no status report for the fo
 
 When a device hydrates a copy from an instance other than the one the copy was last built from, a device MUST give every queued write still waiting, but one blocked `record_unread`, the verdict `blocked` with the reason `instance_changed`.
 
-**Reason:** each write was made against items the other instance held, and the instance now at the address may never have held them. Held, nothing is sent to a server the person did not make it for; a caller releases a write to send it to the instance now there, or withdraws it. A write blocked `record_unread` is already held until a person releases it, and keeps the reason that says what it would go without (`device/set-aside-record-unread-kept`).
+**Reason:** each write was made against items the other instance held, and the instance now at the address may never have held them. Held, nothing is sent to a server the person did not make it for; a caller releases a write to send it to the instance now there, or withdraws it. A write blocked `record_unread` is already held until a person releases it, and keeps the reason that says what it would go without (`device/set-aside-record-unread-kept`); its release then holds it for the instance (`device/record-unread-instance-changed`).
 
 **Tests:** `device/queue.test.ts › holds the writes queued against another instance once hydrated from the one now there, sending none until released`, `device/classification.test.ts › reports one of the eight blocked reasons and no other`.
 
@@ -4700,6 +4700,14 @@ If SQLite cannot read the part of a store a device reads, then a device MUST ref
 
 **Tests:** `device/damaged-store.test.ts › refuses a damaged store store_damaged, naming it and the writes its queue holds, and leaves it as it was`, `› says a damaged store's queue cannot be read whole where its rows do not read`.
 
+### `device/store-emptied-log`
+
+If a device is asked to open a store, as a writer or a reader, whose file is empty while its write-ahead log holds a committed write, then a device MUST refuse the open `store_damaged`, saying that the log holds committed writes.
+
+**Reason:** SQLite deletes such a log as it opens the file, even to read, and every write the log holds goes with it. Refused, the log stays beside the file (`device/store-damaged-kept`), and a set-aside carries what it holds (`device/set-aside-carries`).
+
+**Tests:** `device/damaged-store.test.ts › refuses every open of a store whose file is empty while its log holds committed writes, keeping the log, and a set-aside carries them`.
+
 ### `device/store-damaged-names`
 
 When the CLI refuses a store `store_damaged`, the CLI MUST name the store's path.
@@ -4742,7 +4750,7 @@ When a device sets aside a store, a device MUST give the new store each write th
 
 **Reason:** a write carried under its key is answered from the server's record if an earlier attempt landed, so it is never made twice.
 
-**Tests:** `device/damaged-store.test.ts › sets a damaged store aside under the next free name, keeping its bytes, and carries each write under its id and key`, `› carries a write only the log a crash left holds, and moves the log with the store`.
+**Tests:** `device/damaged-store.test.ts › sets a damaged store aside under the next free name, keeping its bytes, and carries each write under its id and key`, `› carries a write only the log a crash left holds, and moves the log with the store`, `› refuses every open of a store whose file is empty while its log holds committed writes, keeping the log, and a set-aside carries them`.
 
 ### `device/set-aside-answer`
 
@@ -4794,9 +4802,23 @@ If a device sets aside a store and cannot read a record the old store kept that 
 
 When a device hydrates a store from an instance other than the one it was last built from, a device MUST leave each write blocked `record_unread` with that reason.
 
-**Reason:** a release of a write blocked `instance_changed` says only that the instance changed. Kept `record_unread`, the write's release still says it goes without the record that decides how it is sent.
+**Reason:** a release of a write blocked `instance_changed` says only that the instance changed. Kept `record_unread`, the write's release still says it goes without the record that decides how it is sent, and that release holds it for the instance (`device/record-unread-instance-changed`).
 
 **Tests:** `device/damaged-store.test.ts › keeps a carried write held record_unread when the new store is hydrated from another instance`.
+
+### `device/record-unread-instance-changed`
+
+If a caller releases a write blocked `record_unread` that a device would have given the reason `instance_changed` (`device/queue-other-instance-held`, `device/set-aside-instance-unread`), then a device MUST give it the reason `instance_changed` instead of sending it.
+
+**Reason:** the person who releases the write for the record it goes without has not been told that it was made against another instance. Held `instance_changed`, it goes to the instance now at the address only on a second release.
+
+**Tests:** `device/damaged-store.test.ts › holds a write released from record_unread for the instance when the new store was hydrated from another instance, and sends it on a second release`.
+
+### `device/record-unread-instance-uncounted`
+
+When a device gives a write the reason `instance_changed` as a caller releases it (`device/record-unread-instance-changed`), a device MUST answer that the release released nothing.
+
+**Tests:** `device/damaged-store.test.ts › holds a write released from record_unread for the instance when the new store was hydrated from another instance, and sends it on a second release`.
 
 ### `device/set-aside-record-unread-says`
 

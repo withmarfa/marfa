@@ -162,8 +162,9 @@ stays because that thing is what it checks.
   before a restart. No door or fault removes a store's folder.
 - `device/damaged-store.test.ts` overwrites the page of a device's store that
   holds one table's rows, writes a queued write that only the store's log
-  holds, as a crash leaves it, and names a folder in a store's meta. No door or
-  fault damages a store or ends a process between a write and its checkpoint.
+  holds, as a crash leaves it, empties a store's file while its log holds every
+  page, and names a folder in a store's meta. No door or fault damages a store
+  or ends a process between a write and its checkpoint.
   `device/classification.test.ts` damages a store the same way to reach the
   blocked reason a set-aside gives, and `device/binding-remove-store.test.ts`
   damages a store's first page or its rows, for the same reason.

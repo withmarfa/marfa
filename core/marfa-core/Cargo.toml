@@ -30,6 +30,7 @@ ureq.workspace = true
 url = "2"
 uuid.workspace = true
 yaml-rust2.workspace = true
+tempfile = "3"
 tree-sitter = "0.27"
 tree-sitter-yaml = "0.7"
 tracing = { version = "0.1", default-features = false, features = ["std"], optional = true }
@@ -41,7 +42,6 @@ hex.workspace = true
 
 [dev-dependencies]
 rusqlite = { workspace = true, features = ["hooks", "trace"] }
-tempfile = "3"
 flate2 = "1"
 
 [target.'cfg(any(target_os = "macos", target_os = "ios"))'.dependencies]

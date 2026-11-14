@@ -3821,7 +3821,7 @@ Also accepts the options of `marfa device`: `--db <PATH>` and `--reader`.
 
 Send a blocked, dead or unsent refused write again.
 
-A write blocked `awaiting_dependency` is released only by the answer to the write it waits behind, never by this command. A released write goes under a fresh idempotency key. A row write instead goes again with every write sent in its batch, as they went, under the batch's key, and an undo under its own key, unless either was blocked `key_spent`.
+A write blocked `awaiting_dependency` is released only by the answer to the write it waits behind, never by this command. A released write goes under a fresh idempotency key. A row write instead goes again with every write sent in its batch, as they went, under the batch's key, and an undo under its own key, unless either was blocked `key_spent`. A write blocked `record_unread` whose copy has since been built from another instance is held `instance_changed` instead, and goes only when released again.
 
 ```text
 marfa device release [OPTIONS] [ID]

@@ -294,7 +294,10 @@ pub enum DeviceCommand {
     /// to the write it waits behind, never by this command. A released write
     /// goes under a fresh idempotency key. A row write instead goes again with
     /// every write sent in its batch, as they went, under the batch's key, and
-    /// an undo under its own key, unless either was blocked `key_spent`.
+    /// an undo under its own key, unless either was blocked `key_spent`. A
+    /// write blocked `record_unread` whose copy has since been built from
+    /// another instance is held `instance_changed` instead, and goes only when
+    /// released again.
     Release {
         /// The queued write to release.
         #[arg(
@@ -2062,6 +2065,7 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
         }
         DeviceCommand::Release { id, reason } => {
             let core = store.open(None)?;
+            let unread = held_for(&core, marfa_core::BlockedReason::RecordUnread)?;
             let released = match (&id, &reason) {
                 (_, Some(reason)) => core.release_reason(*reason)?,
                 (Some(id), None) => usize::from(core.release(id)?),
@@ -2072,15 +2076,26 @@ fn run_on(args: DeviceArgs, named: &Named, json: bool) -> Result<Exit, CliError>
                     ));
                 }
             };
+            let moved = held_for(&core, marfa_core::BlockedReason::InstanceChanged)?
+                .intersection(&unread)
+                .count();
             output::report(&released, json, || {
-                if released == 0 {
+                let mut said = if released == 0 && moved == 0 {
                     "nothing to release: a write is released only where it is blocked, dead or refused unsent, and never while it waits behind another write"
-                        .into()
+                        .to_string()
+                } else if released == 0 {
+                    "nothing released".to_string()
                 } else if let Some(id) = &id {
                     format!("released {id}")
                 } else {
                     format!("released {released} write(s)")
+                };
+                if moved > 0 {
+                    said.push_str(&format!(
+                        "\n{moved} write(s) held blocked instance_changed instead, since the copy is now built from another instance than the one each was made against: release them again to send them there"
+                    ));
                 }
+                said
             })
         }
         DeviceCommand::Withdraw { id } => {
@@ -2563,6 +2578,18 @@ fn edge_line(edge: &marfa_core::Edge) -> String {
         "{}  {} -> {}  {}  v{}",
         edge.id, edge.source_id, edge.target_id, edge.edge_type, edge.version
     )
+}
+
+fn held_for(
+    core: &marfa_core::Core,
+    reason: marfa_core::BlockedReason,
+) -> Result<std::collections::BTreeSet<String>, CliError> {
+    Ok(core
+        .queue()?
+        .into_iter()
+        .filter(|write| write.blocked_reason() == Some(reason))
+        .map(|write| write.id)
+        .collect())
 }
 
 fn blocked_reason() -> impl clap::builder::TypedValueParser<Value = marfa_core::BlockedReason> {

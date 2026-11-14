@@ -430,6 +430,7 @@ impl Core {
         server: Option<Server>,
         lock: Arc<lock::WriterLock>,
     ) -> Result<Core> {
+        damage::refuse_emptied_in(state, store_label)?;
         let vfs = directory_vfs::DirectoryVfs::new(state.file())?;
         let writer = lock.handle() == Handle::Writer;
         let cache = blob::Cache::anchored(state, store_label, writer)?;
@@ -444,6 +445,7 @@ impl Core {
 
     #[cfg(unix)]
     pub(crate) fn read_directory(state: &directory::Directory, store_label: &Path) -> Result<Core> {
+        damage::refuse_emptied_in(state, store_label)?;
         let vfs = directory_vfs::DirectoryVfs::new(state.file())?;
         Self::from_connection(
             store::read_directory(&vfs, store_label)?,
@@ -1948,7 +1950,9 @@ impl Core {
     /// unless blocked `key_spent`. Answers `false` for a row that is not
     /// blocked, dead or refused without being sent, for one held behind
     /// another write, and for one refused because what it waited for was
-    /// withdrawn.
+    /// withdrawn. A write held `record_unread` whose instance changed while it
+    /// was, or a row write whose batch holds one, is held `instance_changed`
+    /// instead, answering `false`.
     pub fn release(&self, id: &str) -> Result<bool> {
         self.lock.refuse_unless_writer()?;
         let mut conn = self.conn()?;
@@ -1984,8 +1988,7 @@ impl Core {
         }
         let mut released = 0;
         for id in &ids {
-            if store::queued_write(&tx, id)?.is_some_and(|row| row.blocked_reason() != Some(reason))
-            {
+            if store::queued_write(&tx, id)?.is_some_and(|row| row.blocked_reason().is_none()) {
                 released += 1;
             }
         }

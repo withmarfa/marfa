@@ -99,6 +99,7 @@ const EDGE_COLUMNS: &str =
     "id, source_id, target_id, edge_type, properties, version, created_at, updated_at";
 
 pub fn open(path: &Path) -> Result<Connection, CoreError> {
+    crate::damage::refuse_emptied(path)?;
     let seen = crate::damage::seen();
     let conn = Connection::open(path)?;
     // The store may have been named by an environment variable rather than
@@ -215,6 +216,7 @@ fn uncarried(conn: &Connection) -> Result<Option<&'static str>, CoreError> {
 /// connection that closes last checkpoints the writer's journal into the file.
 /// SQLite may still create the WAL's two side files, which a WAL reader needs.
 pub fn open_to_read(path: &Path) -> Result<Connection, CoreError> {
+    crate::damage::refuse_emptied(path)?;
     let seen = crate::damage::seen();
     let conn = Connection::open_with_flags(
         path,
@@ -245,18 +247,7 @@ pub(crate) fn refusal(path: &Path) -> Result<Option<CoreError>, CoreError> {
 /// that holds its writer lock. SQLite may make a `-shm` index beside a log to
 /// read it.
 pub(crate) fn open_refused(path: &Path) -> Result<Connection, CoreError> {
-    // SQLite deletes a log beside an empty file as it opens it, even to read.
-    if path.metadata().is_ok_and(|held| held.len() == 0)
-        && suffixed(path, "-wal")
-            .metadata()
-            .is_ok_and(|log| log.len() > 0)
-    {
-        return Err(CoreError::StoreDamaged {
-            path: path.display().to_string(),
-            reason: "the file is empty and its write-ahead log is not".into(),
-            unsent: None,
-        });
-    }
+    crate::damage::refuse_emptied(path)?;
     let flags =
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
     let logged = ["-wal", "-journal"]
@@ -567,6 +558,7 @@ pub(crate) fn replace_folder_store(
     let unreplaced = |reason: String| {
         CoreError::Store(format!("{} cannot be replaced: {reason}", label.display()))
     };
+    crate::damage::refuse_emptied_in(state, label)?;
     let vfs = crate::directory_vfs::DirectoryVfs::new(state.file())?;
     let named = |store: &str, suffix: &str| std::path::PathBuf::from(format!("{store}{suffix}"));
     let log_beside = |store: &str| {
@@ -5932,9 +5924,23 @@ pub fn block_unanswered(conn: &Connection, reason: BlockedReason) -> Result<usiz
 /// writes were queued against: every write a drain or a release could still
 /// send is held until a caller releases it, so none reaches rows the copy
 /// never held. A refused write stays refused, and one held `record_unread`
-/// keeps that reason, so its release still says what it goes without.
-/// Answers how many it held.
+/// keeps that reason, so its release still says what it goes without; its
+/// release holds it `instance_changed` instead of sending it
+/// (`device/record-unread-instance-changed`). Answers how many it held.
 pub fn block_for_another_instance(conn: &Connection) -> Result<usize, CoreError> {
+    conn.execute(
+        &format!(
+            "INSERT INTO meta (key, value)
+             SELECT ?1 || id, 'true' FROM queue
+              WHERE {WAITING} AND verdict = ?2 AND reason = ?3
+             ON CONFLICT (key) DO NOTHING"
+        ),
+        params![
+            INSTANCE_CHANGED_PREFIX,
+            Verdict::Blocked.as_str(),
+            BlockedReason::RecordUnread.as_str()
+        ],
+    )?;
     Ok(conn.execute(
         &format!(
             "UPDATE queue SET verdict = ?1, reason = ?2, answered_at = ?3
@@ -5947,6 +5953,34 @@ pub fn block_for_another_instance(conn: &Connection) -> Result<usize, CoreError>
             BlockedReason::RecordUnread.as_str()
         ],
     )?)
+}
+
+/// Marks a write held `record_unread` whose instance changed while it was.
+pub(crate) const INSTANCE_CHANGED_PREFIX: &str = "instance_changed/";
+
+/// Holds `instance_changed` each write of `batch` held `record_unread` whose
+/// instance changed while it was, answering whether any was.
+fn hold_for_instance(conn: &Connection, batch: &[String]) -> Result<bool, CoreError> {
+    let mut held = false;
+    for write in batch {
+        let key = format!("{INSTANCE_CHANGED_PREFIX}{write}");
+        if meta_get(conn, &key)?.is_none() {
+            continue;
+        }
+        held |= conn.execute(
+            "UPDATE queue SET reason = ?2, answered_at = ?3
+              WHERE id = ?1 AND verdict = ?4 AND reason = ?5",
+            params![
+                write,
+                BlockedReason::InstanceChanged.as_str(),
+                now_iso(),
+                Verdict::Blocked.as_str(),
+                BlockedReason::RecordUnread.as_str()
+            ],
+        )? > 0;
+        meta_delete(conn, &key)?;
+    }
+    Ok(held)
 }
 
 /// Holds each of `ids` the server has not taken `blocked` `record_unread`,
@@ -6032,6 +6066,9 @@ pub fn release(conn: &Connection, id: &str) -> Result<bool, CoreError> {
         return Ok(false);
     }
     let batch = crate::row_writes::batch_of(conn, id)?;
+    if hold_for_instance(conn, &batch)? {
+        return Ok(false);
+    }
     for write in &batch {
         forget_bytes_sent_again(conn, write)?;
         conn.execute(
@@ -6437,6 +6474,7 @@ fn forget_answered_inner(
                     UPLOAD_SENT_AS,
                     "cleared_time/",
                     "bytes_sent_again/",
+                    INSTANCE_CHANGED_PREFIX,
                 ] {
                     conn.execute(
                         "DELETE FROM main.meta
@@ -9008,6 +9046,7 @@ mod tests {
             meta_set(&conn, &format!("chosen_tier/{id}"), "library").unwrap();
             meta_set(&conn, &format!("upload_sent_as/{id}"), "x").unwrap();
             meta_set(&conn, &format!("cleared_time/{id}"), "1").unwrap();
+            meta_set(&conn, &format!("{INSTANCE_CHANGED_PREFIX}{id}"), "true").unwrap();
         }
         assert_eq!(forget_answered_ids(&conn, &named(&["named"])).unwrap(), 1);
         for prefix in [
@@ -9015,6 +9054,7 @@ mod tests {
             "chosen_tier/",
             "upload_sent_as/",
             "cleared_time/",
+            INSTANCE_CHANGED_PREFIX,
         ] {
             assert!(
                 meta_get(&conn, &format!("{prefix}named"))

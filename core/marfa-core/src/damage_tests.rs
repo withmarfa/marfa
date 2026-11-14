@@ -1003,3 +1003,128 @@ fn an_empty_file_whose_log_holds_writes_keeps_its_log() {
     assert!(Core::open(&path, None).is_err());
     assert_eq!(bytes(&beside(&made, "-wal")), log);
 }
+
+fn reason_of(core: &Core, id: &str) -> Option<String> {
+    store::queued_write(&core.conn().unwrap(), id)
+        .unwrap()
+        .unwrap()
+        .reason
+}
+
+#[test]
+fn a_write_held_record_unread_whose_instance_changed_needs_a_second_release() {
+    let (_dir, path, queued) = store_with(2);
+    damage_table(&path, "body_checks");
+    assert_eq!(set_aside(&path).record_unread, 2);
+    let core = Core::open(&path, None).unwrap();
+    let (first, second) = (&queued[0].id, &queued[1].id);
+    // The witness: with the instance unchanged, one release sends it.
+    assert!(core.release(second).unwrap());
+    assert_eq!(reason_of(&core, second), None);
+
+    store::block_for_another_instance(&core.conn().unwrap()).unwrap();
+    assert_eq!(reason_of(&core, first).as_deref(), Some("record_unread"));
+    assert!(!core.release(first).unwrap());
+    assert_eq!(reason_of(&core, first).as_deref(), Some("instance_changed"));
+    assert!(core.release(first).unwrap());
+    assert_eq!(reason_of(&core, first), None);
+}
+
+#[test]
+fn a_write_held_record_unread_from_a_store_whose_instance_does_not_read_needs_a_second_release() {
+    let (_dir, path, queued) = store_with(2);
+    {
+        let conn = Connection::open(&path).unwrap();
+        store::meta_set(&conn, store::META_INSTANCE_ID, crate::scripted::INSTANCE).unwrap();
+        store::choose_tier(&conn, &queued[0].id, crate::Tier::Feed).unwrap();
+    }
+    damage_table(&path, "meta");
+    let done = set_aside(&path);
+    assert_eq!((done.record_unread, done.held), (1, 1));
+    let core = Core::open(&path, None).unwrap();
+    assert_eq!(
+        core.release_reason(crate::BlockedReason::RecordUnread)
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        reason_of(&core, &queued[0].id).as_deref(),
+        Some("instance_changed")
+    );
+    assert_eq!(
+        core.release_reason(crate::BlockedReason::InstanceChanged)
+            .unwrap(),
+        2
+    );
+    assert_eq!(reason_of(&core, &queued[0].id), None);
+}
+
+/// A store whose every page is in its log and whose file was emptied, as a
+/// truncation or a copy taken of the log alone leaves it.
+fn emptied_with_log(count: usize) -> (tempfile::TempDir, PathBuf, Vec<QueuedWrite>) {
+    let (dir, path, queued) = store_with(count);
+    in_log(&path, "VACUUM;");
+    std::fs::write(&path, b"").unwrap();
+    (dir, path, queued)
+}
+
+#[test]
+fn every_open_refuses_an_empty_file_whose_log_holds_writes_and_a_set_aside_carries_them() {
+    // The witness: a log with nothing committed beside an empty file is an
+    // empty store, which opens.
+    let (_dir, path, _) = store_with(0);
+    store::remove(&path).unwrap();
+    empty_with_log(&path, false);
+    drop(Core::open(&path, None).unwrap());
+
+    let (_dir, path, queued) = emptied_with_log(2);
+    let log = bytes(&beside(&path, "-wal"));
+    let (named, unsent, said) = damaged(Core::open(&path, None).err().unwrap());
+    assert_eq!((named, unsent), (path.display().to_string(), None));
+    assert!(said.contains("log holds committed writes"), "{said}");
+    assert_eq!(bytes(&beside(&path, "-wal")), log);
+    assert_eq!(bytes(&path), Some(Vec::new()));
+    let (named, _, _) = damaged(Core::open_reader(&path).err().unwrap());
+    assert_eq!(named, path.display().to_string());
+    assert_eq!(bytes(&beside(&path, "-wal")), log);
+
+    let done = set_aside(&path);
+    assert_eq!((done.carried, done.unread), (2, 0));
+    let aside = PathBuf::from(&done.set_aside);
+    assert_eq!(bytes(&beside(&aside, "-wal")), log);
+    assert_eq!(bytes(&aside), Some(Vec::new()));
+    let core = Core::open(&path, None).unwrap();
+    let carried = core.queue().unwrap();
+    assert_eq!(
+        carried.iter().map(sent).collect::<Vec<_>>(),
+        queued.iter().map(sent).collect::<Vec<_>>()
+    );
+    let holder = path.parent().unwrap();
+    let left: Vec<_> = std::fs::read_dir(holder)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .filter(|name| name.to_string_lossy().starts_with(".marfa-reading"))
+        .collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_folders_store_whose_file_is_empty_and_whose_log_holds_writes_is_refused_and_kept() {
+    let dir = tempfile::tempdir_in(std::env::temp_dir().canonicalize().unwrap()).unwrap();
+    let state = dir.path().join(crate::folder::STATE_DIR);
+    std::fs::create_dir(&state).unwrap();
+    let path = state.join(store::FOLDER_STORE);
+    drop(Core::open(&path, None).unwrap());
+    in_log(&path, "VACUUM;");
+    std::fs::write(&path, b"").unwrap();
+    let log = bytes(&beside(&path, "-wal"));
+    let directory = crate::directory::Directory::open(&state).unwrap();
+    let (named, _, _) = damaged(Core::open_directory(&directory, &path, None).err().unwrap());
+    assert_eq!(named, path.display().to_string());
+    assert_eq!(bytes(&beside(&path, "-wal")), log);
+    let (named, _, _) = damaged(Core::read_directory(&directory, &path).err().unwrap());
+    assert_eq!(named, path.display().to_string());
+    assert_eq!(bytes(&beside(&path, "-wal")), log);
+    assert_eq!(bytes(&path), Some(Vec::new()));
+}

@@ -538,4 +538,87 @@ describe("setting a damaged store aside", () => {
     expect(reason(tagged.value.id)).toBe("instance_changed");
     expect(reason(created.value.id)).toBe("record_unread");
   });
+
+  it("holds a write released from record_unread for the instance when the new store was hydrated from another instance, and sends it on a second release", async () => {
+    harness = await startHarness("set-aside-record-instance-release");
+    const { server, device } = harness;
+    let instance = SCRIPTED_INSTANCE;
+    server.copyAnswer("GET", "/", () =>
+      answers.root(Number(BUILT_FOR), instance),
+    );
+    scriptHydration(server, { head: "1", instance: () => instance });
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const created = await device.create({
+      type: "core.note",
+      properties: { title: "typed", body: "offline" },
+    });
+    expect(created.ok).toBe(true);
+    if (!created.ok) return;
+    damageTable(device.store, "body_checks");
+    const done = await device.setAside();
+    expect(done.ok && done.value.record_unread, JSON.stringify(done)).toBe(1);
+
+    instance = "00000000-0000-7000-8000-0000000000ff";
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const held = async () => {
+      const queued = await device.queue();
+      return queued.ok
+        ? [queued.value[0]?.verdict, queued.value[0]?.reason]
+        : queued;
+    };
+    expect(await held()).toEqual(["blocked", "record_unread"]);
+    const first = await device.release({ id: created.value.id });
+    expect(first.ok && first.value, JSON.stringify(first)).toBe(0);
+    expect(await held()).toEqual(["blocked", "instance_changed"]);
+    expect((await device.drain()).ok).toBe(true);
+    expect(
+      writes(harness),
+      "a drain sent a write made against another instance",
+    ).toEqual([]);
+
+    // The witness: released again, the write is sent.
+    const id = created.value.item_id ?? "a";
+    scriptWrites(server, {
+      read: [answers.updated(wireItem({ id }))],
+      create: [answers.created(wireItem({ id }))],
+    });
+    const second = await device.release({ id: created.value.id });
+    expect(second.ok && second.value, JSON.stringify(second)).toBe(1);
+    expect((await device.drain()).ok).toBe(true);
+    expect(writes(harness)).toEqual([{ key: created.value.idempotency_key }]);
+  });
+
+  it("refuses every open of a store whose file is empty while its log holds committed writes, keeping the log, and a set-aside carries them", async () => {
+    const { harness, queued } = await storeWith("emptied-log", 2);
+    const { device } = harness;
+    inLogOnly(device.store, "VACUUM");
+    writeFileSync(device.store, "");
+    const log = digest(`${device.store}-wal`);
+    for (const [named, refused] of [
+      ["status", await device.status()],
+      ["reader", await device.reopen({ reader: true }).queue()],
+      ["check", await device.check()],
+    ] as const) {
+      expect(refused.ok, `${named} opened an emptied store`).toBe(false);
+      if (refused.ok) continue;
+      expect(refused.refusal.code, refused.refusal.raw).toBe("store_damaged");
+      expect(refused.refusal.raw).toContain(device.store);
+      expect(refused.refusal.raw).toContain("log holds committed writes");
+      expect(
+        digest(`${device.store}-wal`),
+        `${named} changed the store's log`,
+      ).toBe(log);
+    }
+    expect(readFileSync(device.store).length).toBe(0);
+
+    const done = await device.setAside();
+    expect(done.ok, JSON.stringify(done)).toBe(true);
+    if (!done.ok) return;
+    expect([done.value.carried, done.value.unread]).toEqual([2, 0]);
+    expect(digest(`${done.value.set_aside}-wal`)).toBe(log);
+    const carried = await device.queue();
+    expect(carried.ok, JSON.stringify(carried)).toBe(true);
+    if (!carried.ok) return;
+    expect(carried.value.map(sent)).toEqual(queued.map(sent));
+  });
 });
