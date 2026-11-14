@@ -248,8 +248,7 @@ fn expression(
     sql::item_filter(sql, expression, &items, &catalog.rules, |sql, relation| {
         match relation {
             Relation::Tag(value) => {
-                // `+` takes the column's text affinity off, so a number never
-                // matches a tag spelled like it.
+                // `+` removes text affinity so a number never matches a tag spelled like it.
                 sql.push(
                     "EXISTS (SELECT 1 FROM item_tags t WHERE t.item_seq = i.seq AND +t.tag = ",
                 );

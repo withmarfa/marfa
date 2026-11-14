@@ -1,7 +1,4 @@
-//! The SQLite a parsed filter, a table filter and a table total compile to, written once for the
-//! server and the working copy. A caller names what its storage differs in: the alias of the item
-//! table, whether `properties` may hold text that is not JSON, and how a row's columns are read.
-//! The text is written through a [`Sink`], so this module holds no statement and no engine.
+//! Shared SQL rules; callers supply storage expressions and bindings through [`Sink`].
 
 use serde_json::{Map, Value};
 
@@ -30,7 +27,7 @@ pub trait Sink {
 pub struct Items<'a> {
     /// The alias of the table holding the items.
     pub alias: &'a str,
-    /// Whether `properties` may hold text that is not JSON, which SQLite raises on and a guard must keep from the whole query.
+    /// Guard malformed JSON so one damaged row cannot fail the query.
     pub unreadable_properties: bool,
 }
 
@@ -74,9 +71,7 @@ pub enum Relation<'a> {
     },
 }
 
-/// Every number, a boolean included, binds as a REAL. It matters against a text column, whose
-/// affinity turns `5` into `'5.0'` rather than `'5'`: bound otherwise, a condition answers one set
-/// of rows on a device and another on the server.
+/// Bind numbers and booleans as REAL so text affinity converts `5` to `'5.0'` on both callers.
 pub fn bound(literal: &Literal) -> Bind {
     match literal {
         Literal::Text(text) => Bind::Text(text.clone()),
@@ -188,8 +183,7 @@ fn property<S: Sink>(out: &mut S, items: &Items, name: &str, op: Op, value: &Lit
     });
 }
 
-/// Some entry of the list `field` is an object whose `member` equals the value. `CASE` keeps
-/// `json_extract` off an entry that is not an object.
+/// `CASE` keeps `json_extract` off entries that are not objects.
 fn entry<S: Sink>(out: &mut S, items: &Items, field: &str, member: &str, value: &Literal) {
     let source = items.properties();
     items.guarded(out, |out| {
@@ -217,9 +211,7 @@ fn entry<S: Sink>(out: &mut S, items: &Items, field: &str, member: &str, value: 
     });
 }
 
-/// A row whose type has no status field, or whose value is no word its type declares, is in no
-/// group, so `eq` and `neq` both pass it by and `not_exists` takes it. Each type's status field
-/// gives the row's words, and the words give its group.
+/// Unknown status words match neither `eq` nor `neq`, but do match `not_exists`.
 fn status_group<S: Sink>(
     out: &mut S,
     items: &Items,
@@ -259,8 +251,7 @@ fn status_group<S: Sink>(
         return out.push("0");
     }
     let source = items.properties();
-    // `IFNULL`, since an absent value compares as unknown, and `NOT` an unknown would pass the
-    // row by rather than take it.
+    // `IFNULL` lets `NOT` select absent values instead of preserving SQL's unknown.
     out.push("IFNULL((");
     for (at, (name, words, types)) in selections.iter().enumerate() {
         if at > 0 {
@@ -284,9 +275,7 @@ fn status_group<S: Sink>(
     out.push("), 0)");
 }
 
-/// The conditions of `expression`, joined as it joins them. A term of the item's own columns,
-/// properties, entries or status groups is written here; one that reads a relation goes to
-/// `relation`, which writes it in the caller's tables.
+/// The caller supplies relation SQL because its tables differ between server and device.
 pub fn item_filter<S: Sink>(
     out: &mut S,
     expression: &Expression,
@@ -354,8 +343,7 @@ fn join<S: Sink>(
     Ok(())
 }
 
-/// A row filter of [`parse_rows`], over the columns `id` and `updated_at` of the alias `r` and the
-/// table's own columns, which `held` and `kind` read: the value of a column, and its JSON type.
+/// Requires alias `r`; `held` and `kind` supply each column's value and JSON type.
 pub fn row_filter<S: Sink>(
     out: &mut S,
     expression: &Expression,
@@ -427,8 +415,7 @@ pub fn adding(columns: &Map<String, Value>) -> Vec<Adding> {
         .collect()
 }
 
-/// One total over a column: `held` is its value and `number` the value only where it is a number.
-/// Datetimes compare by instant and return UTC.
+/// `number` excludes nonnumeric values; datetime extrema compare instants and return UTC.
 pub fn total<S: Sink>(
     out: &mut S,
     adding: &Adding,
@@ -463,8 +450,7 @@ pub fn total<S: Sink>(
     }
 }
 
-/// The whole number a total reads as, when it is one a client holds exactly: the count and the
-/// totals of an integer column are whole.
+/// Integer totals and counts use whole numbers only within the client's exact range.
 pub fn whole_total(kind: &str, way: &str, value: f64) -> Option<i64> {
     let integer = kind == "integer" || way == "count";
     (integer && value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0)

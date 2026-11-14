@@ -1,7 +1,4 @@
-//! The server's listing grammar, answered from the working copy. The rules
-//! crate compiles each condition as it does for the server (`marfa_rules::filter::sql`);
-//! this module names the working copy's tables and what its `properties`
-//! column may hold.
+//! Storage expressions for the working copy's shared filter compiler.
 
 use marfa_rules::catalog::Catalog;
 use marfa_rules::filter::sql::{self, Bind, Items, Relation, Sink};
@@ -106,9 +103,7 @@ fn expression_clause(
     let mut out = Compiled::default();
     sql::item_filter(&mut out, expression, &items, catalog, |out, relation| {
         match relation {
-            // `+` takes the column's text affinity off, so a number is
-            // compared as the number it is, as it is against the server's
-            // JSON array, and never matches a tag spelled like it.
+            // `+` removes text affinity so a number never matches a tag spelled like it.
             Relation::Tag(value) => {
                 out.push(
                     "EXISTS (SELECT 1 FROM tags WHERE tags.item_id = items.id AND +tags.tag = ",
@@ -126,8 +121,7 @@ fn expression_clause(
                 negated,
                 to,
             } => {
-                // The copy holds the edges its items draw, not every edge
-                // drawn to them, unless it holds the type whole.
+                // Incoming edges are complete only when the copy holds their type whole.
                 if backref && !whole.iter().any(|held| held == edge_type) {
                     return Err(marfa_rules::RuleError::invalid(format!(
                         "a backref condition on {edge_type:?} is not answered from a working copy that does not hold that edge type whole: hydrate with it as an edge type held whole, or ask the server"
