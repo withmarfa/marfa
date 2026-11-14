@@ -16,6 +16,7 @@ use webauthn_rs::prelude::{
 };
 
 use self::challenge::Purpose;
+pub use self::challenge::Sealer;
 pub use self::challenge::{LIFE_MS as CHALLENGE_LIFE_MS, UNREAD as UNREAD_ANSWERED};
 pub use self::store::Listed;
 use super::limits::{hold_to, passkey_challenge_lanes};
@@ -164,8 +165,7 @@ pub async fn begin_adding(app: Arc<App>, caller: &Caller) -> Result<Begun> {
                 .map_err(|_| Refusal::internal("a passkey registration did not start"))?;
             let mut options = options_of(&creation.public_key)?;
             ask_for_a_resident_key(&mut options, store::credentials_of(tx, &party.host)?);
-            let token = challenge::issue(
-                &now_app.settings.start.auth_secret,
+            let token = now_app.challenges.issue(
                 now,
                 challenge::New {
                     purpose: Purpose::Add,
@@ -192,7 +192,6 @@ pub struct Adding {
 pub async fn add(app: Arc<App>, caller: &Caller, adding: Adding) -> Result<Listed> {
     caller.require_owner()?;
     let name = adding.name.as_deref().map(passkey_name).transpose()?;
-    let secret = app.settings.start.auth_secret.clone();
     let now_app = app.clone();
     app.write(caller, ADDED, move |unit| {
         unit.caller.require_recent(&unit.at)?;
@@ -200,9 +199,8 @@ pub async fn add(app: Arc<App>, caller: &Caller, adding: Adding) -> Result<Liste
         let tx = unit.tx();
         let party = Party::now(&now_app)?;
         let owner = owner::read(tx)?.ok_or_else(owner::not_found)?;
-        let taken = challenge::take(
+        let taken = now_app.challenges.take(
             tx,
-            &secret,
             adding.token.as_deref(),
             Purpose::Add,
             now_app.clock.instant(),
@@ -256,8 +254,7 @@ pub async fn begin_proving(app: Arc<App>, visit: &Visit) -> Result<Begun> {
         .start_discoverable_authentication()
         .map_err(|_| Refusal::internal("a passkey sign-in did not start"))?;
     let options = options_of(&request.public_key)?;
-    let token = challenge::issue(
-        &app.settings.start.auth_secret,
+    let token = app.challenges.issue(
         app.clock.instant(),
         challenge::New {
             purpose: Purpose::Prove,
@@ -329,7 +326,7 @@ struct Judging<'a> {
     at: &'a str,
     now: Stamp,
     party: &'a Party,
-    secret: &'a str,
+    challenges: &'a challenge::Sealer,
     owner_id: Option<&'a str>,
 }
 
@@ -341,13 +338,10 @@ fn prove(
 ) -> Result<std::result::Result<Proven, Unproven>> {
     let party = judging.party;
     let spent = || Ok(Err(Unproven::plainly(challenge_spent())));
-    let taken = challenge::take(
-        tx,
-        judging.secret,
-        assertion.token.as_deref(),
-        Purpose::Prove,
-        judging.now,
-    )?;
+    let taken =
+        judging
+            .challenges
+            .take(tx, assertion.token.as_deref(), Purpose::Prove, judging.now)?;
     let Some(taken) = taken else {
         return spent();
     };
@@ -397,7 +391,6 @@ fn prove(
 
 pub async fn sign_in(app: Arc<App>, assertion: Assertion, visit: Visit) -> Result<Opened> {
     let salt = app.settings.start.key_salt.clone();
-    let secret = app.settings.start.auth_secret.clone();
     let now_app = app.clone();
     app.db
         .write(Write::caller(SIGNED_IN), move |tx| {
@@ -407,7 +400,7 @@ pub async fn sign_in(app: Arc<App>, assertion: Assertion, visit: Visit) -> Resul
                 at: &at,
                 now: now_app.clock.instant(),
                 party: &party,
-                secret: &secret,
+                challenges: &now_app.challenges,
                 owner_id: None,
             };
             let proven = match prove(tx, &judging, assertion)? {
@@ -455,7 +448,6 @@ pub async fn confirm(
 ) -> Result<Opened> {
     let session = caller.session().ok_or_else(unauthorized)?.clone();
     let salt = app.settings.start.key_salt.clone();
-    let secret = app.settings.start.auth_secret.clone();
     let now_app = app.clone();
     app.write(caller, SIGNED_IN, move |unit| {
         let tx = unit.tx();
@@ -464,7 +456,7 @@ pub async fn confirm(
             at: &unit.at,
             now: now_app.clock.instant(),
             party: &party,
-            secret: &secret,
+            challenges: &now_app.challenges,
             owner_id: Some(&session.owner_id),
         };
         let proven = match prove(tx, &judging, assertion)? {

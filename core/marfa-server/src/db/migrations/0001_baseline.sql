@@ -821,7 +821,7 @@ CREATE TABLE IF NOT EXISTS passkeys (
 
 CREATE INDEX IF NOT EXISTS passkeys_owner ON passkeys (owner_id);
 
--- Answered passkey challenges, kept until they would have ended.
+-- Answered passkey challenges, kept one challenge life past their end.
 CREATE TABLE IF NOT EXISTS passkey_challenges_answered (
     digest TEXT PRIMARY KEY NOT NULL,
     expires_at TEXT NOT NULL

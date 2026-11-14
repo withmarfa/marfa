@@ -90,6 +90,7 @@ pub struct App {
     pub blobs: Blobs,
     pub mcp: mcp::Mcp,
     pub devices: auth::device::Signer,
+    pub challenges: auth::passkeys::Sealer,
     pub telemetry: Telemetry,
     pub started: Instant,
     pub cursor_secret: Secret,
@@ -130,6 +131,8 @@ impl App {
         let mcp = mcp::Mcp::new(&start.auth_secret)
             .map_err(|refused| Failure::start(refused.to_string()))?;
         let devices = auth::device::Signer::derive(&start.auth_secret)
+            .map_err(|refused| Failure::start(refused.to_string()))?;
+        let challenges = auth::passkeys::Sealer::derive(&start.auth_secret)
             .map_err(|refused| Failure::start(refused.to_string()))?;
         #[cfg(feature = "test-hooks")]
         let clock = Arc::new(Clock::new(start.clock_offset_ms));
@@ -193,6 +196,7 @@ impl App {
             blobs,
             mcp,
             devices,
+            challenges,
             telemetry: Telemetry::default(),
             started: Instant::now(),
             catalog,
