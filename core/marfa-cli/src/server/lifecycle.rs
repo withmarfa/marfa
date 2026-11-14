@@ -133,7 +133,7 @@ fn upgrade_native(
             "copy": update.copy,
         })),
     });
-    out.report(&report, || {
+    out.report(&report, |_| {
         let moved = if unchanged {
             format!("Already on {target}.")
         } else {
@@ -213,7 +213,7 @@ fn upgrade_docker(
             "copy": update.copy,
         })),
     });
-    out.report(&report, || {
+    out.report(&report, |_| {
         let moved = if unchanged {
             format!("Already on {target}.")
         } else {
@@ -271,7 +271,7 @@ fn refused_update_note(target: &str, from: &str, dir: &Path) -> String {
 
 pub fn start(args: StartArgs, out: &Printer) -> Result<(), CliError> {
     let (json, text) = started(args, out)?;
-    out.report(&json, || text)
+    out.report(&json, |_| text)
 }
 
 fn started(args: StartArgs, out: &Printer) -> Result<(Value, String), CliError> {
@@ -337,7 +337,7 @@ fn started(args: StartArgs, out: &Printer) -> Result<(Value, String), CliError> 
 
 pub fn stop(args: DirArgs, out: &Printer) -> Result<(), CliError> {
     let (json, text) = stopped(args, out)?;
-    out.report(&json, || text)
+    out.report(&json, |_| text)
 }
 
 fn stopped(args: DirArgs, out: &Printer) -> Result<(Value, String), CliError> {
@@ -388,7 +388,7 @@ pub fn restart(args: StartArgs, out: &Printer) -> Result<(), CliError> {
         out.line(&said)?;
     }
     let (started, text) = started(args, out)?;
-    out.report(&json!({ "stopped": stopped, "started": started }), || text)
+    out.report(&json!({ "stopped": stopped, "started": started }), |_| text)
 }
 
 // ---- status -------------------------------------------------------------
@@ -575,7 +575,7 @@ pub fn status(args: DirArgs, out: &Printer) -> Result<(), CliError> {
         "autostart": login,
         "log": tail,
     });
-    out.report(&report, || {
+    out.report(&report, |_| {
         let word = match (running, &answered) {
             (false, _) => style::bad(Stream::Out, "not running"),
             (true, None) => style::bad(Stream::Out, "running, not answering"),
@@ -755,7 +755,7 @@ pub fn uninstall(args: UninstallArgs, out: &Printer) -> Result<(), CliError> {
         "data_deleted": args.delete_data,
         "tailscale_unserved": unserved,
     });
-    out.report(&report, || {
+    out.report(&report, |_| {
         if args.delete_data {
             if state.external {
                 format!(

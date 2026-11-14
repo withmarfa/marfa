@@ -682,7 +682,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
             _ => None,
         },
     });
-    out.report(&report, || {
+    out.report(&report, |_| {
         let mut text = String::new();
         text.push_str(&format!(
             "\n{}\n\n",

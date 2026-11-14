@@ -233,14 +233,14 @@ pub fn run(
     };
     let answer = remote()?.json(&request)?;
     match &command {
-        TypesCommand::Delete { id, .. } => out.report(&answer, || format!("removed type {id}")),
-        TypesCommand::Register(_) => out.report(&answer, || type_line("registered", &answer)),
-        TypesCommand::Replace { .. } => out.report(&answer, || type_line("replaced", &answer)),
+        TypesCommand::Delete { id, .. } => out.report(&answer, |_| format!("removed type {id}")),
+        TypesCommand::Register(_) => out.report(&answer, |answer| type_line("registered", answer)),
+        TypesCommand::Replace { .. } => out.report(&answer, |answer| type_line("replaced", answer)),
         TypesCommand::SetIcon { id, .. } => {
-            out.report(&answer, || format!("set the icon of type {id}"))
+            out.report(&answer, |_| format!("set the icon of type {id}"))
         }
         TypesCommand::ClearIcon { id } => {
-            out.report(&answer, || format!("cleared the icon of type {id}"))
+            out.report(&answer, |_| format!("cleared the icon of type {id}"))
         }
         _ => out.value(&answer),
     }
@@ -269,7 +269,7 @@ const JOB_POLL: Duration = Duration::from_millis(500);
 fn move_type(args: &MoveArgs, remote: &Remote, out: &Printer) -> Result<(), CliError> {
     let mut answer = remote.json(&move_request(args)?)?;
     if args.dry_run {
-        return out.report(&answer, || dry_run_words(&answer));
+        return out.report(&answer, dry_run_words);
     }
     while matches!(
         answer.get("status").and_then(Value::as_str),
@@ -278,7 +278,7 @@ fn move_type(args: &MoveArgs, remote: &Remote, out: &Printer) -> Result<(), CliE
         std::thread::sleep(JOB_POLL);
         answer = remote.json(&job_request(field(&answer, "id")))?;
     }
-    out.report(&answer, || moved_words(args, &answer))?;
+    out.report(&answer, |answer| moved_words(args, answer))?;
     match move_shortfall(&args.from, &answer) {
         Some(why) => Err(CliError::Invalid(why)),
         None => Ok(()),
@@ -484,4 +484,48 @@ fn scaffold(args: &ScaffoldArgs, out: &Printer) -> Result<(), CliError> {
         &args.fields()?,
     )?;
     out.raw(&format!("{}\n", serde_json::to_string_pretty(&definition)?))
+}
+
+#[cfg(test)]
+mod said_tests {
+    use super::{MoveArgs, dry_run_words, moved_words};
+    use crate::output::said;
+    use serde_json::json;
+
+    const FORGED: &str = "fine\nwould move 0 items from user.a to user.b\u{1b}[2K";
+
+    fn only_drawn(text: &str) -> bool {
+        !text.contains('\u{1b}') && !text.contains('\r')
+    }
+
+    #[test]
+    fn a_dry_run_cannot_start_a_line_from_a_key_label_or_a_setting_message() {
+        let answer = json!({
+            "matched": 2, "from": "user.a", "to": "user.b",
+            "settings": [{"kind": "view", "id": "v1", "field": "type",
+                          "reason": "unreadable", "message": FORGED}],
+            "grants": [{"kind": "key", "id": "k1", "label": FORGED}],
+        });
+        let text = said(&answer, dry_run_words);
+        assert!(only_drawn(&text), "{text:?}");
+        assert_eq!(text.lines().count(), 5, "{text:?}");
+        assert!(text.contains("fine\\u{a}would move 0 items"), "{text:?}");
+    }
+
+    #[test]
+    fn a_finished_move_cannot_start_a_line_from_a_stored_message() {
+        let args = MoveArgs {
+            from: "user.a".into(),
+            to: "user.b".into(),
+            dry_run: false,
+            properties: None,
+        };
+        let job = json!({
+            "status": "failed", "error": FORGED, "matched": 1, "succeeded": 0,
+            "result": {"errored": 1, "errors": [{"id": "i1", "code": "refused", "message": FORGED}]},
+        });
+        let text = said(&job, |job| moved_words(&args, job));
+        assert!(only_drawn(&text), "{text:?}");
+        assert_eq!(text.lines().count(), 4, "{text:?}");
+    }
 }

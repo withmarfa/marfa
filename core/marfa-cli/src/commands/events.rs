@@ -179,7 +179,7 @@ fn print_frame(frame: &Frame, out: &Printer) -> Result<(), CliError> {
         serde_json::from_str(&frame.data).unwrap_or(Value::String(frame.data.clone()));
     out.record(
         &json!({ "id": frame.id, "event": frame.event, "data": data }),
-        || {
+        |_| {
             let subject = data
                 .get("item")
                 .or_else(|| data.get("edge"))

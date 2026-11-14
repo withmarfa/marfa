@@ -61,11 +61,11 @@ pub fn run(command: AppsCommand, remote: &Remote, out: &Printer) -> Result<(), C
                 .cloned()
                 .unwrap_or(json!([]));
             let answer = remote.json(&narrow_request(&id, &scope, &expected))?;
-            out.report(&answer, || format!("narrowed the app {id}"))
+            out.report(&answer, |_| format!("narrowed the app {id}"))
         }
         AppsCommand::Disconnect { id, revoke_keys } => {
             let answer = remote.json(&disconnect_request(&id, revoke_keys))?;
-            out.report(&answer, || format!("disconnected the app {id}"))
+            out.report(&answer, |_| format!("disconnected the app {id}"))
         }
     }
 }

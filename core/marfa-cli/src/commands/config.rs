@@ -83,9 +83,9 @@ pub fn run(command: ConfigCommand, remote: &Remote, out: &Printer) -> Result<(),
     };
     let answer = remote.json(&request)?;
     match &command {
-        ConfigCommand::Replace(_) | ConfigCommand::Update(_) => {
-            out.report(&answer, || "updated the instance configuration".to_string())
-        }
+        ConfigCommand::Replace(_) | ConfigCommand::Update(_) => out.report(&answer, |_| {
+            "updated the instance configuration".to_string()
+        }),
         _ => out.value(&answer),
     }
 }

@@ -150,7 +150,7 @@ pub fn run(command: OwnerCommand, remote: &Remote, out: &Printer) -> Result<(), 
             if let Some(path) = output {
                 out.report(
                     &json!({ "path": path, "size_bytes": written, "mime_type": content_type }),
-                    || {
+                    |_| {
                         format!(
                             "{} byte(s) of {} into {}",
                             written,

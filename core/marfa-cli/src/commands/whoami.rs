@@ -50,7 +50,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
         "contract": status::contract_report(&instance),
         "credential": credential,
     });
-    out.report(&report, || {
+    out.report(&report, |_| {
         let field = |value: &Value, name: &str| {
             value
                 .get(name)

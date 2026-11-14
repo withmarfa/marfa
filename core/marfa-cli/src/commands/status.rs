@@ -49,7 +49,7 @@ pub fn run(remote: &Remote, out: &Printer) -> Result<(), CliError> {
         "stats_refused": stats_refused,
         "credential": remote.credential().map(|source| source.as_str()),
     });
-    out.report(&report, || {
+    out.report(&report, |_| {
         let field = |value: &Value, name: &str| {
             value
                 .get(name)

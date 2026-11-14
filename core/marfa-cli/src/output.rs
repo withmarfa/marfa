@@ -640,6 +640,12 @@ pub fn unclaimed(drain: &DrainReport) -> Vec<String> {
         .collect()
 }
 
+/// The text `human` makes from `value`, which it is given with every string in
+/// it escaped.
+pub(crate) fn said(value: &Value, human: impl FnOnce(&Value) -> String) -> String {
+    human(&printable_value(value))
+}
+
 pub struct Printer {
     pub json: bool,
 }
@@ -650,7 +656,7 @@ impl Printer {
         if self.json {
             writeln!(out, "{}", serde_json::to_string_pretty(value)?)?;
         } else {
-            writeln!(out, "{}", describe(value)?)?;
+            writeln!(out, "{}", describe(&printable_value(value))?)?;
         }
         Ok(())
     }
@@ -669,20 +675,33 @@ impl Printer {
         Ok(())
     }
 
-    pub fn report(&self, value: &Value, human: impl FnOnce() -> String) -> Result<(), CliError> {
+    /// `human` is given `value` with every string in it already escaped by
+    /// [`printable`], so the text it makes from the answer cannot carry a
+    /// stored control character into a line. Name its parameter as the answer
+    /// is named, so the raw answer is not in reach.
+    pub fn report(
+        &self,
+        value: &Value,
+        human: impl FnOnce(&Value) -> String,
+    ) -> Result<(), CliError> {
         if self.json {
             self.value(value)
         } else {
-            self.line(&human())
+            self.line(&said(value, human))
         }
     }
 
-    pub fn record(&self, value: &Value, human: impl FnOnce() -> String) -> Result<(), CliError> {
+    /// As [`Printer::report`], one line of JSON.
+    pub fn record(
+        &self,
+        value: &Value,
+        human: impl FnOnce(&Value) -> String,
+    ) -> Result<(), CliError> {
         let mut out = stdout(self.json);
         if self.json {
             writeln!(out, "{}", serde_json::to_string(value)?)?;
         } else {
-            writeln!(out, "{}", human())?;
+            writeln!(out, "{}", said(value, human))?;
         }
         out.flush()?;
         Ok(())

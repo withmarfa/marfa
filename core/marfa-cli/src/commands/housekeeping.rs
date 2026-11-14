@@ -33,7 +33,7 @@ pub fn run(command: HousekeepingCommand, remote: &Remote, out: &Printer) -> Resu
     };
     let answer = remote.json(&request)?;
     match &command {
-        HousekeepingCommand::Run { name } => out.report(&answer, || {
+        HousekeepingCommand::Run { name } => out.report(&answer, |answer| {
             let text = |field: &str| answer.get(field).and_then(Value::as_str).unwrap_or("");
             let said = match answer.get("error").and_then(Value::as_str) {
                 Some(error) => printable(error),

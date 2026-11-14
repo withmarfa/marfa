@@ -354,7 +354,7 @@ pub fn page_path(named: &str) -> Result<String, CliError> {
 
 /// A snippet or description on one line, however the site wrapped it.
 fn one_line(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
+    printable(&text.split_whitespace().collect::<Vec<_>>().join(" "))
 }
 
 fn describe_hits(query: &str, hits: &Hits, closest: &[&Topic]) -> String {
@@ -363,7 +363,11 @@ fn describe_hits(query: &str, hits: &Hits, closest: &[&Topic]) -> String {
         if !closest.is_empty() {
             text.push_str("\nThe closest pages by title:");
             for page in closest {
-                text.push_str(&format!("\n  {}  {}", page.title, address_path(&page.url)));
+                text.push_str(&format!(
+                    "\n  {}  {}",
+                    printable(&page.title),
+                    printable(&address_path(&page.url))
+                ));
             }
         }
         text.push_str("\n`marfa docs topics` lists every page.");
@@ -372,7 +376,7 @@ fn describe_hits(query: &str, hits: &Hits, closest: &[&Topic]) -> String {
     hits.hits
         .iter()
         .map(|hit| {
-            let mut entry = format!("{}  {}", hit.title, hit.url);
+            let mut entry = format!("{}  {}", printable(&hit.title), printable(&hit.url));
             if let Some(snippet) = hit.snippets.first() {
                 entry.push_str(&format!("\n  {}", one_line(snippet)));
             }
@@ -583,7 +587,7 @@ fn describe_topics(topics: &Topics) -> String {
         .pages
         .iter()
         .map(|page| {
-            let mut entry = format!("{}  {}", page.title, page.url);
+            let mut entry = format!("{}  {}", printable(&page.title), printable(&page.url));
             if let Some(description) = page.description.as_deref().map(one_line)
                 && !description.is_empty()
             {
@@ -606,7 +610,7 @@ pub fn run(args: DocsArgs, named: &Named, out: &Printer) -> Result<(), CliError>
         (Some(DocsCommand::Search { query, limit }), _) => {
             let answer = site.search(&query, limit)?;
             let hits: Hits = serde_json::from_value(answer.clone())?;
-            out.report(&answer, || {
+            out.report(&answer, |_| {
                 // A miss is helped with the page titles nearest the query; a
                 // site that cannot list them still gets the plain miss.
                 let topics: Option<Topics> = hits
@@ -628,7 +632,7 @@ pub fn run(args: DocsArgs, named: &Named, out: &Printer) -> Result<(), CliError>
         (Some(DocsCommand::Topics), _) => {
             let answer = site.topics()?;
             let topics: Topics = serde_json::from_value(answer.clone())?;
-            out.report(&answer, || describe_topics(&topics))
+            out.report(&answer, |_| describe_topics(&topics))
         }
         (None, Some(page)) => {
             let mut page = site.page(&page)?;

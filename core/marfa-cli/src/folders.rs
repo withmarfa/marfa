@@ -292,12 +292,13 @@ pub fn run(
                     let mut lines = vec![format!(
                         "{} follows the folder {}",
                         folder.root().display(),
-                        folder.folder_id()
+                        printable(folder.folder_id())
                     )];
                     lines.extend(first_sync_lines(&dir, plan.as_ref(), confirmed));
                     if let Some(error) = &unread {
                         lines.push(format!(
-                            "the first sync waits for confirmation, but the folder could not be read for it now: {error}; `folders push` tries again"
+                            "the first sync waits for confirmation, but the folder could not be read for it now: {}; `folders push` tries again",
+                            printable(&error.to_string())
                         ));
                     }
                     lines.join("\n")
@@ -329,7 +330,7 @@ pub fn run(
                         format!(
                             "{} follows the folder {}",
                             entry.dir.display(),
-                            entry.folder
+                            printable(&entry.folder)
                         )
                     })
                     .collect::<Vec<_>>()
@@ -348,8 +349,9 @@ pub fn run(
                     json,
                     || {
                         format!(
-                            "{} was taken off the list; nothing was deleted because {reason}",
-                            dir.display()
+                            "{} was taken off the list; nothing was deleted because {}",
+                            dir.display(),
+                            printable(&reason)
                         )
                     },
                 ),
@@ -588,7 +590,10 @@ pub fn run(
                     lines.extend(rebuilt_line(rebuilt.as_ref()));
                     lines.extend(drain_lines(&folder, &drained));
                     if let Some(error) = &failed {
-                        lines.push(format!("could not catch up: {error}"));
+                        lines.push(format!(
+                            "could not catch up: {}",
+                            printable(&error.to_string())
+                        ));
                     }
                     lines.push(match &pulled {
                         Some(pulled) if pulled.root_gone.is_some() => describe_pull(pulled),
@@ -810,7 +815,7 @@ fn drain_lines(folder: &Folder, drained: &marfa_core::Drained) -> Vec<String> {
         ));
     }
     if let Some(stopped) = &drained.report.stopped {
-        lines.push(stopped.clone());
+        lines.push(printable(stopped));
     }
     lines.extend(output::unclaimed(&drained.report));
     if drained.rebased > 0 {
@@ -823,6 +828,7 @@ fn drain_lines(folder: &Folder, drained: &marfa_core::Drained) -> Vec<String> {
 }
 
 fn describe_health(report: &serde_json::Value) -> String {
+    let report = &output::printable_value(report);
     let mut lines = vec![format!(
         "folder {}",
         report["folder_id"].as_str().unwrap_or_default()
@@ -922,8 +928,9 @@ fn asked(dir: &Path) -> impl FnOnce(CoreError) -> CliError + '_ {
 fn say_replaced(folder: &Folder) {
     if let Some(reason) = folder.replaced_store() {
         crate::errln!(
-            "marfa: replaced the store of {}, which another build of the core made ({reason}); it held no write still to be sent and no answer the folder had yet to record, so the new store keeps the folder's record of each file and is filled again from the server; the replacement changes no file",
-            folder.root().display()
+            "marfa: replaced the store of {}, which another build of the core made ({}); it held no write still to be sent and no answer the folder had yet to record, so the new store keeps the folder's record of each file and is filled again from the server; the replacement changes no file",
+            folder.root().display(),
+            printable(reason)
         );
     }
 }
@@ -1058,7 +1065,7 @@ pub fn uncarried_line(uncarried: &[marfa_core::folder::Uncarried]) -> Option<Str
     (!uncarried.is_empty()).then(|| {
         let named: Vec<String> = uncarried
             .iter()
-            .map(|entry| format!("{}.{}", entry.r#type, entry.property))
+            .map(|entry| printable(&format!("{}.{}", entry.r#type, entry.property)))
             .collect();
         format!(
             "no file can carry {}: a file reads type, tier, tags, state, occurred_at and edge names as the item's own",
@@ -1085,12 +1092,14 @@ pub fn settings_lines(
 pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> {
     if let Some(reason) = &report.unwritten {
         return Some(format!(
-            "the settings file was not written, and the next pass writes it: {reason}"
+            "the settings file was not written, and the next pass writes it: {}",
+            printable(reason)
         ));
     }
     match (&report.flagged, report.sent) {
         (Some(reason), _) => Some(format!(
-            "the settings file is not in force, and the settings before it are: {reason}"
+            "the settings file is not in force, and the settings before it are: {}",
+            printable(reason)
         )),
         (None, true) => Some("the settings file's edit went through the folder operations".into()),
         (None, false) => None,
@@ -1099,7 +1108,7 @@ pub fn settings_line(report: &marfa_core::SettingsFileReport) -> Option<String> 
 
 fn describe_pull(report: &marfa_core::PullReport) -> String {
     if let Some(gone) = &report.root_gone {
-        return format!("nothing written: {gone}");
+        return format!("nothing written: {}", printable(gone));
     }
     let mut line = format!(
         "{} written, {} rewritten, {} moved, {} unchanged, {} skipped",
@@ -1607,6 +1616,26 @@ mod tests {
     use super::*;
     use marfa_core::{DrainReport, DrainVerdict, Verdict, WriteKind};
     use std::collections::HashMap;
+
+    #[test]
+    fn a_reason_the_settings_file_gives_stays_on_its_own_line() {
+        let said = |unwritten: Option<&str>, flagged: Option<&str>| {
+            settings_line(&marfa_core::SettingsFileReport {
+                sent: false,
+                written: false,
+                unwritten: unwritten.map(str::to_string),
+                flagged: flagged.map(str::to_string),
+            })
+            .unwrap()
+        };
+        for line in [
+            said(Some("full\nforged line\u{1b}[2K"), None),
+            said(None, Some("flagged\nforged line\r")),
+        ] {
+            assert_eq!(line.lines().count(), 1, "{line:?}");
+            assert!(!line.contains('\u{1b}') && !line.contains('\r'), "{line:?}");
+        }
+    }
 
     fn drain(verdicts: Vec<DrainVerdict>) -> DrainReport {
         DrainReport {

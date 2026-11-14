@@ -138,7 +138,7 @@ fn run_waiting(
             let written = write_whole(path, &mut reader)?;
             out.report(
                 &json!({ "path": path, "size_bytes": written, "content_type": content_type }),
-                || {
+                |_| {
                     format!(
                         "{written} byte(s) of {} into {}",
                         crate::output::printable(&content_type),

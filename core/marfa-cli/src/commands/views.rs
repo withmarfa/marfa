@@ -181,12 +181,12 @@ pub fn run(command: ViewsCommand, remote: &Remote, out: &Printer) -> Result<(), 
     }
     match &command {
         ViewsCommand::Create(_) => {
-            out.report(&answer, || super::said::item("created view", &answer))
+            out.report(&answer, |answer| super::said::item("created view", answer))
         }
         ViewsCommand::Change(_) => {
-            out.report(&answer, || super::said::item("changed view", &answer))
+            out.report(&answer, |answer| super::said::item("changed view", answer))
         }
-        ViewsCommand::Delete { id, .. } => out.report(&answer, || format!("removed view {id}")),
+        ViewsCommand::Delete { id, .. } => out.report(&answer, |_| format!("removed view {id}")),
         _ => out.value(&answer),
     }
 }

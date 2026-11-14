@@ -134,7 +134,7 @@ pub fn run(
                 "expires_in": code.expires_in,
                 "scope": scope,
             }),
-            || sentence.clone(),
+            |_| sentence.clone(),
         )?;
     }
     if !args.no_browser {
@@ -150,7 +150,7 @@ pub fn run(
         Ok(()) => {
             let recorded = out.record(
                 &json!({ "server": origin, "scope": token.scope, "kept": "keychain" }),
-                || signed_in_text(&origin, token.scope.as_deref()),
+                |_| signed_in_text(&origin, token.scope.as_deref()),
             );
             resume(&origin);
             recorded
@@ -204,7 +204,7 @@ fn print_set(token: &auth::TokenSet, client_id: &str, out: &Printer) -> Result<(
         "scope": token.scope,
         "client_id": client_id,
     });
-    out.record(&set, || {
+    out.record(&set, |set| {
         serde_json::to_string_pretty(&set).unwrap_or_default()
     })
 }

@@ -230,16 +230,7 @@ impl EveryFolder for Machine {
                         "code": reason.code,
                         "reason": reason.message,
                     }),
-                    || {
-                        if CREDENTIAL_ENDED.contains(&reason.code.as_str()) {
-                            format!(
-                                "not watched: {}; it is watched again once `marfa login` or `marfa keys keep` keeps a new credential",
-                                reason.message
-                            )
-                        } else {
-                            format!("not watched: {}; trying again", reason.message)
-                        }
-                    },
+                    || not_watched(reason),
                 )
             }
             Every::HandedOver { dir } => say(json, dir).line(handed_over(), || {
@@ -277,7 +268,7 @@ impl EveryFolder for Machine {
             ),
             Every::Registry(Some(reason)) => self.line(
                 &serde_json::json!({ "registry": self.registry, "readable": false, "reason": reason }),
-                || format!("{reason}; the folders already watched keep syncing"),
+                || format!("{}; the folders already watched keep syncing", output::printable(reason)),
             ),
             Every::Record { path, reason } => {
                 record_unwritten(json, path, reason);
@@ -300,7 +291,10 @@ fn record_unwritten(json: bool, path: &Path, reason: &str) {
             String::new,
         );
     } else {
-        crate::errln!("{reason}; the watch goes on without it");
+        crate::errln!(
+            "{}; the watch goes on without it",
+            output::printable(reason)
+        );
     }
 }
 
@@ -308,6 +302,18 @@ const HANDED_OVER_LINE: &str =
     "let go to a command that asked for it; taken back once that command ends";
 
 const TAKEN_BACK_LINE: &str = "taken back from the command it was let go to, and watched again";
+
+/// What the watch says when a folder is no longer watched.
+fn not_watched(reason: &Unwatched) -> String {
+    let message = output::printable(&reason.message);
+    if CREDENTIAL_ENDED.contains(&reason.code.as_str()) {
+        format!(
+            "not watched: {message}; it is watched again once `marfa login` or `marfa keys keep` keeps a new credential"
+        )
+    } else {
+        format!("not watched: {message}; trying again")
+    }
+}
 
 fn handed_over() -> Value {
     serde_json::json!({
@@ -610,7 +616,8 @@ fn tell(
             wait,
         } => {
             say.note(&format!(
-                "another program kept writing to the folder's store while the watch wrote to it ({error}); the watch goes on and tries again in {wait:?}"
+                "another program kept writing to the folder's store while the watch wrote to it ({}); the watch goes on and tries again in {wait:?}",
+                output::printable(&error.to_string())
             ));
             Ok(())
         }
@@ -647,7 +654,10 @@ fn tell(
         ),
         WatchEvent::Waiting { settings, scan } => say.report(
             serde_json::json!({ "settings": settings, "scan": scan }),
-            || format!("waiting: {}", scan.root_gone.as_deref().unwrap_or_default()),
+            || format!(
+                "waiting: {}",
+                output::printable(scan.root_gone.as_deref().unwrap_or_default())
+            ),
         ),
         WatchEvent::Passed(pass) => passed(say, folder, conflicts, &pass),
     }
@@ -872,6 +882,21 @@ mod tests {
     use super::*;
     use crate::output::tests::{pass, verdict};
     use marfa_core::{Verdict, WriteKind};
+
+    #[test]
+    fn a_refusal_in_an_all_folders_watch_stays_one_line_naming_its_folder() {
+        let reason = Unwatched {
+            code: "unauthorized".into(),
+            message: "refused\nother: not watched: fine\u{1b}[2K".into(),
+        };
+        let line = prefixed(Path::new("/notes"), &not_watched(&reason));
+        assert_eq!(line.lines().count(), 1, "{line:?}");
+        assert!(
+            line.starts_with("/notes: not watched: refused\\u{a}other"),
+            "{line:?}"
+        );
+        assert!(!line.contains('\u{1b}'), "{line:?}");
+    }
 
     #[test]
     fn a_watch_line_says_the_drain_in_the_words_a_push_does() {

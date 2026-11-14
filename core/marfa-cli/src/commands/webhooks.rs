@@ -158,8 +158,8 @@ pub fn run(command: WebhooksCommand, remote: &Remote, out: &Printer) -> Result<(
     };
     let answer = remote.json(&request)?;
     match &command {
-        WebhooksCommand::Create(args) => out.report(&answer, || created_text(&answer, args)),
-        WebhooksCommand::Update(_) => out.report(&answer, || {
+        WebhooksCommand::Create(args) => out.report(&answer, |answer| created_text(answer, args)),
+        WebhooksCommand::Update(_) => out.report(&answer, |answer| {
             let text = |name: &str| answer.get(name).and_then(Value::as_str).unwrap_or("");
             format!(
                 "updated webhook {} ({})",
@@ -167,7 +167,7 @@ pub fn run(command: WebhooksCommand, remote: &Remote, out: &Printer) -> Result<(
                 printable(text("url"))
             )
         }),
-        WebhooksCommand::Delete { id } => out.report(&answer, || format!("removed webhook {id}")),
+        WebhooksCommand::Delete { id } => out.report(&answer, |_| format!("removed webhook {id}")),
         _ => out.value(&answer),
     }
 }

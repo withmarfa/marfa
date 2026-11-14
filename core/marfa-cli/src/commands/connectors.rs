@@ -430,7 +430,7 @@ fn state(command: StateCommand, remote: &Remote, out: &Printer) -> Result<(), Cl
     };
     let answer = remote.json(&request)?;
     match &sentence {
-        Some(sentence) => out.report(&answer, || sentence.clone()),
+        Some(sentence) => out.report(&answer, |_| sentence.clone()),
         None => out.value(&answer),
     }
 }
@@ -479,7 +479,7 @@ fn endpoints(command: EndpointsCommand, remote: &Remote, out: &Printer) -> Resul
                 "endpoints",
                 &endpoint,
             ]))?;
-            out.report(&answer, || {
+            out.report(&answer, |_| {
                 format!("retired endpoint {endpoint} of connector {id}")
             })
         }
@@ -508,7 +508,7 @@ fn deliveries(command: DeliveriesCommand, remote: &Remote, out: &Printer) -> Res
             if let Some(path) = output {
                 out.report(
                     &json!({ "delivery": delivery, "path": path, "size_bytes": written }),
-                    || format!("{written} byte(s) into {}", path.display()),
+                    |_| format!("{written} byte(s) into {}", path.display()),
                 )?;
             }
             Ok(())
@@ -587,7 +587,7 @@ pub fn run(command: ConnectorsCommand, remote: &Remote, out: &Printer) -> Result
         (None, Wrote::Nothing) => None,
     };
     match sentence {
-        Some(sentence) => out.report(&answer, || sentence),
+        Some(sentence) => out.report(&answer, |_| sentence),
         None => out.value(&answer),
     }
 }

@@ -161,7 +161,7 @@ pub fn run(command: BlobsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         BlobsCommand::Upload { file, mime_type } => {
             let mime_type = mime_type_for(&file, mime_type.as_deref());
             let answer = remote.json(&upload_request(&file, &mime_type))?;
-            out.report(&answer, || {
+            out.report(&answer, |answer| {
                 let text = |name: &str| {
                     answer
                         .get(name)
@@ -186,7 +186,7 @@ pub fn run(command: BlobsCommand, remote: &Remote, out: &Printer) -> Result<(), 
             if let Some(path) = output {
                 out.report(
                     &json!({ "hash": hash, "path": path, "size_bytes": written, "mime_type": content_type }),
-                    || {
+                    |_| {
                         format!(
                             "{} byte(s) of {} into {}",
                             written,
@@ -203,7 +203,7 @@ pub fn run(command: BlobsCommand, remote: &Remote, out: &Printer) -> Result<(), 
         BlobsCommand::Copies { hash } => out.value(&remote.json(&copies_request(&hash))?),
         BlobsCommand::DeleteCopy { hash, store } => {
             let answer = remote.json(&delete_copy_request(&hash, &store))?;
-            out.report(&answer, || {
+            out.report(&answer, |_| {
                 format!("deleted the copy of {hash} in the store {store}")
             })
         }
