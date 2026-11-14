@@ -1,5 +1,4 @@
 import http from "node:http";
-import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
@@ -33,48 +32,60 @@ let registrations: FreshServer;
 let codes: FreshServer;
 let windowed: FreshServer;
 let abandoned: FreshServer;
+let unoffered: FreshServer;
+let unentered: FreshServer;
 let origin: string;
 let addresses = 0;
 
 const CLIENT_HEADER = "x-conformance-client";
 
 beforeAll(async () => {
-  [limited, unset, registrations, codes, windowed, abandoned] =
-    await Promise.all([
-      bootFreshServer("sign-in-door-limits", {
-        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-        MARFA_RATE_LIMIT_ENABLED: "true",
-      }),
-      bootFreshServer("sign-in-address-unset", {
-        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-        MARFA_SIGN_IN_ADDRESS: "",
-      }),
-      bootFreshServer("register-audit-allowance", {
-        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-        MARFA_RATE_LIMIT_ENABLED: "true",
-      }),
-      bootFreshServer("device-code-audit-allowance", {
-        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-        MARFA_RATE_LIMIT_ENABLED: "true",
-      }),
-      bootFreshServer("register-audit-window", {
-        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-        MARFA_RATE_LIMIT_ENABLED: "true",
-      }),
-      bootFreshServer("register-audit-abandoned", {
-        MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
-        MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
-        MARFA_RATE_LIMIT_ENABLED: "true",
-        MARFA_TEST_TUNING: "write_wait_ms=10000",
-      }),
-    ]);
+  [
+    limited,
+    unset,
+    registrations,
+    codes,
+    windowed,
+    abandoned,
+    unoffered,
+    unentered,
+  ] = await Promise.all([
+    bootFreshServer("sign-in-door-limits", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      MARFA_RATE_LIMIT_ENABLED: "true",
+    }),
+    bootFreshServer("sign-in-address-unset", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      MARFA_SIGN_IN_ADDRESS: "",
+    }),
+    bootFreshServer("register-audit-allowance", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      MARFA_RATE_LIMIT_ENABLED: "true",
+    }),
+    bootFreshServer("device-code-audit-allowance", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      MARFA_RATE_LIMIT_ENABLED: "true",
+    }),
+    bootFreshServer("register-audit-window", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      MARFA_RATE_LIMIT_ENABLED: "true",
+    }),
+    bootFreshServer("register-audit-abandoned", {
+      MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
+      MARFA_RATE_LIMIT_ENABLED: "true",
+      MARFA_TEST_TUNING: "write_wait_ms=10000",
+    }),
+    bootFreshServer("unoffered-clients-bound"),
+    bootFreshServer("unentered-device-codes-bound"),
+  ]);
   origin = await issuerOrigin(limited);
-}, 6 * FRESH_SERVER_TIMEOUT_MS);
+}, 8 * FRESH_SERVER_TIMEOUT_MS);
 
 afterAll(async () => {
   await Promise.allSettled([
@@ -84,8 +95,10 @@ afterAll(async () => {
     codes.stop(),
     windowed.stop(),
     abandoned.stop(),
+    unoffered.stop(),
+    unentered.stop(),
   ]);
-}, 6 * FRESH_SERVER_TIMEOUT_MS);
+}, 8 * FRESH_SERVER_TIMEOUT_MS);
 
 function nextAddress(): string {
   addresses += 1;
@@ -330,8 +343,11 @@ describe("what every address together leaves in the audit log", () => {
       }),
     });
     await abandoned.waitForHold("hold:bulk-page");
+    // The eleventh caller write to reach the writer's queue fails there, so its
+    // firing says the ten before it are queued.
+    await abandoned.setFault("fail:lock=11");
     const left = await Promise.all(
-      Array.from({ length: 10 }, (_, n) => {
+      Array.from({ length: 11 }, (_, n) => {
         const request = http.request(
           `${abandoned.apiUrl}/auth/oauth2/register`,
           {
@@ -352,9 +368,16 @@ describe("what every address together leaves in the audit log", () => {
         });
       }),
     );
-    // No signal says a request has reached the writer's queue.
-    await delay(500);
+    await expect
+      .poll(
+        async () =>
+          (await abandoned.faults()).find((fault) => fault.name === "fail:lock")
+            ?.fired,
+        { timeout: 60_000 },
+      )
+      .toBe(1);
     for (const request of left) request.destroy();
+    await abandoned.clearFault("fail:lock");
     await abandoned.clearFault("hold:bulk-page");
     expect((await page).status).toBe(200);
 
@@ -406,6 +429,122 @@ describe("what every address together leaves in the audit log", () => {
     const held = await audited(codes, issued);
     expect(held).toHaveLength(11);
     expect(held[0]?.details?.unrecorded_after).toBeUndefined();
+  });
+});
+
+const DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
+
+/** Registers a device client and answers its ID. */
+async function deviceClient(server: FreshServer): Promise<string> {
+  const response = await fetch(`${server.apiUrl}/auth/oauth2/register`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      client_name: "stored bound fixture",
+      application_type: "native",
+      grant_types: [DEVICE_GRANT],
+      response_types: [],
+      token_endpoint_auth_method: "none",
+    }),
+  });
+  expect(response.status).toBe(201);
+  return ((await response.json()) as { client_id: string }).client_id;
+}
+
+function askForCode(server: FreshServer, clientId: string): Promise<Response> {
+  return fetch(`${server.apiUrl}/auth/device/code`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ client_id: clientId, scope: "core.note:read" }),
+  });
+}
+
+async function deviceCode(
+  server: FreshServer,
+  clientId: string,
+): Promise<{ device_code: string; user_code: string }> {
+  const response = await askForCode(server, clientId);
+  expect(response.status, await response.clone().text()).toBe(200);
+  return (await response.json()) as { device_code: string; user_code: string };
+}
+
+/** The owner enters `userCode` on the verification page. */
+async function enter(server: FreshServer, userCode: string): Promise<void> {
+  const cookie = await ownerCookie(server, await issuerOrigin(server));
+  const page = await fetch(
+    `${server.apiUrl}/auth/device/consent?${new URLSearchParams({ user_code: userCode })}`,
+    { headers: { cookie } },
+  );
+  await page.body?.cancel();
+  expect(page.status).toBe(200);
+}
+
+/** The `error` a poll of `deviceCode` answers. */
+async function polled(
+  server: FreshServer,
+  clientId: string,
+  deviceCode: string,
+): Promise<string | undefined> {
+  const response = await fetch(`${server.apiUrl}/auth/oauth2/token`, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: DEVICE_GRANT,
+      device_code: deviceCode,
+      client_id: clientId,
+    }),
+  });
+  return ((await response.json()) as { error?: string }).error;
+}
+
+describe("what every address together leaves stored", () => {
+  it("keeps at most 1000 clients no approval page has offered, removing the oldest, and keeps an offered one", async () => {
+    await unoffered.pauseClock(true);
+    try {
+      const offered = await deviceClient(unoffered);
+      await enter(unoffered, (await deviceCode(unoffered, offered)).user_code);
+      const oldest = await deviceClient(unoffered);
+      // The witness: the oldest one answers before the bound is reached.
+      await deviceCode(unoffered, oldest);
+      const next = await deviceClient(unoffered);
+      for (let n = 0; n < 999; n++) await deviceClient(unoffered);
+      const gone = await askForCode(unoffered, oldest);
+      expect(gone.status).toBe(400);
+      expect(((await gone.json()) as { error: string }).error).toBe(
+        "invalid_client",
+      );
+      await deviceCode(unoffered, next);
+      await deviceCode(unoffered, offered);
+    } finally {
+      await unoffered.pauseClock(false);
+    }
+  });
+
+  it("keeps at most 1000 device codes nobody has entered, removing the oldest, and keeps an entered one", async () => {
+    await unentered.pauseClock(true);
+    try {
+      const client = await deviceClient(unentered);
+      const entered = await deviceCode(unentered, client);
+      await enter(unentered, entered.user_code);
+      const oldest = await deviceCode(unentered, client);
+      expect(await polled(unentered, client, oldest.device_code)).toBe(
+        "authorization_pending",
+      );
+      await unentered.advanceClock(1);
+      const next = await deviceCode(unentered, client);
+      for (let n = 0; n < 999; n++) await deviceCode(unentered, client);
+      expect(await polled(unentered, client, oldest.device_code)).toBe(
+        "invalid_grant",
+      );
+      expect(await polled(unentered, client, next.device_code)).toBe(
+        "authorization_pending",
+      );
+      expect(await polled(unentered, client, entered.device_code)).toBe(
+        "authorization_pending",
+      );
+    } finally {
+      await unentered.pauseClock(false);
+    }
   });
 });
 

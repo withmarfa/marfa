@@ -196,6 +196,7 @@ pub async fn screen(
                 return Ok(Err(Blocked::ClientGone));
             };
             store::note_offered(tx, &client.id, now)?;
+            store::note_device_code_entered(tx, &code.digest, &owner_id)?;
             let catalog = catalog::current(&cache, tx, Snapshot::Pending)?;
             let registries = Registries::of(&catalog);
             let named = narrow(&code.scopes, &registries.allowed()).kept;

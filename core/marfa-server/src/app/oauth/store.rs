@@ -166,6 +166,25 @@ pub fn put_client(
             now,
         ],
     )?;
+    keep_unoffered_within_bound(tx, id)
+}
+
+/// Registrations and metadata documents need no credential, so the clients no approval page
+/// has offered are held to this number for the whole instance.
+pub const MOST_UNOFFERED_CLIENTS: i64 = 1_000;
+
+/// Removes the oldest unoffered clients past the bound; `kept`, just stored, is never one.
+fn keep_unoffered_within_bound(tx: &Connection, kept: &str) -> Result<()> {
+    tx.execute(
+        "DELETE FROM oauth_clients WHERE rowid IN ( \
+         SELECT c.rowid FROM oauth_clients AS c WHERE c.offered_at IS NULL \
+         AND NOT EXISTS (SELECT 1 FROM oauth_consents AS x WHERE x.client_id = c.client_id) \
+         AND NOT EXISTS (SELECT 1 FROM oauth_access_tokens AS x WHERE x.client_id = c.client_id) \
+         AND NOT EXISTS (SELECT 1 FROM oauth_refresh_tokens AS x WHERE x.client_id = c.client_id) \
+         ORDER BY c.client_id = ?1 DESC, c.created_at DESC, c.rowid DESC \
+         LIMIT -1 OFFSET ?2)",
+        params![kept, MOST_UNOFFERED_CLIENTS],
+    )?;
     Ok(())
 }
 
@@ -605,6 +624,26 @@ pub fn insert_device_code(tx: &Connection, code: &DeviceCode) -> Result<()> {
             code.interval_seconds,
             code.expires_at,
         ],
+    )?;
+    tx.execute(
+        "DELETE FROM oauth_device_codes WHERE device_code IN ( \
+         SELECT device_code FROM oauth_device_codes WHERE owner_id IS NULL \
+         ORDER BY device_code = ?1 DESC, expires_at DESC, device_code DESC \
+         LIMIT -1 OFFSET ?2)",
+        params![code.digest, MOST_UNENTERED_DEVICE_CODES],
+    )?;
+    Ok(())
+}
+
+/// A device code request needs no credential, so the codes no one has entered on the
+/// verification page are held to this number for the whole instance.
+pub const MOST_UNENTERED_DEVICE_CODES: i64 = 1_000;
+
+/// The owner who entered the code on the verification page, before deciding on it.
+pub fn note_device_code_entered(tx: &Connection, digest: &str, owner_id: &str) -> Result<()> {
+    tx.execute(
+        "UPDATE oauth_device_codes SET owner_id = ?2 WHERE device_code = ?1",
+        params![digest, owner_id],
     )?;
     Ok(())
 }
