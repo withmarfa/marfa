@@ -979,10 +979,10 @@ export async function stopServer(args: BootOptions): Promise<void> {
  * re-uploaded into the new bucket reads as three copies where the chapter
  * says two.
  *
- * Scoped to the four paths this script writes rather than to the directory,
- * because `garage/` sits inside it and belongs to a node that may still be
- * running. SQLite's sidecars go with the database: a `-wal` left beside a
- * removed file is replayed into the next one.
+ * Scoped to the paths this script and its server write rather than to the
+ * directory, because `garage/` sits inside it and belongs to a node that may
+ * still be running. The files beside the database go with it: a `-wal` left
+ * beside a removed file is replayed into the next one.
  */
 function clearState(state: string): void {
   const p = paths(state);
