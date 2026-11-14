@@ -412,14 +412,17 @@ fn a_set_aside_copy_takes_the_first_name_whose_every_file_is_free() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("core.sqlite");
     let name = |n: u32| beside(&path, &format!(".refused-{n}"));
-    assert_eq!(crate::store::free_set_aside(&path).unwrap(), name(1));
+    assert_eq!(
+        crate::store::free_set_aside(&path, ".refused").unwrap(),
+        name(1)
+    );
 
     // Each file of a copy, alone, takes its name: a log with no store beside
     // it would be read into whatever store came to hold that name.
     for (n, suffix) in [(1, "-shm"), (2, "-wal"), (3, "-journal"), (4, "")] {
         std::fs::write(beside(&name(n), suffix), b"left").unwrap();
         assert_eq!(
-            crate::store::free_set_aside(&path).unwrap(),
+            crate::store::free_set_aside(&path, ".refused").unwrap(),
             name(n + 1),
             "{suffix} did not take the name {n}"
         );

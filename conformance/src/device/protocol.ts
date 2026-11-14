@@ -265,6 +265,17 @@ export interface KeptFetch {
   attachments: Attachments | null;
 }
 
+/** What `device set-aside` answers (`device/set-aside-answer`). */
+export interface SetAsideReport {
+  set_aside: string;
+  carried: number;
+  unread: number;
+  unread_ids: string[];
+  whole: boolean;
+  held: number;
+  record_unread: number;
+}
+
 export interface Status {
   server_origin?: string | null;
   slice_types: string[];

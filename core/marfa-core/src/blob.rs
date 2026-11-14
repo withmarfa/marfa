@@ -166,6 +166,11 @@ impl Cache {
         Self::for_folder(store, folder)
     }
 
+    /// The file `name` beside the store this cache is kept for.
+    pub(crate) fn beside_store(&self, name: &str) -> PathBuf {
+        self.dir.with_file_name(name)
+    }
+
     /// The folder of fetched bytes beside the store at `store`
     /// (`device/blob-kept-beside`).
     pub(crate) fn dir_beside(store: &Path) -> PathBuf {

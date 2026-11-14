@@ -160,6 +160,17 @@ stays because that thing is what it checks.
   are the subject.
 - `compliance/blob-store-rebuild.test.ts` moves the disk store's folder away
   before a restart. No door or fault removes a store's folder.
+- `device/damaged-store.test.ts` overwrites the page of a device's store that
+  holds one table's rows, writes a queued write that only the store's log
+  holds, as a crash leaves it, empties a store's file while its log holds every
+  page, names a folder in a store's meta, puts back an index's page from before
+  a write, sets a write dead and the write that depends on it refused unsent,
+  and puts bytes no write names in the cache beside a store. No door or fault
+  damages a store, ends a process between a write and its checkpoint, or makes
+  a write dead or refused without a run of drains.
+  `device/classification.test.ts` damages a store the same way to reach the
+  blocked reason a set-aside gives, and `device/binding-remove-store.test.ts`
+  damages a store's first page or its rows, for the same reason.
 - `inbound-faults`, `inbound-logs` and the other fixtures that read the log
   through `serverOutput` check what the server logged. The log is the subject.
 
