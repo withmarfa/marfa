@@ -27,6 +27,7 @@ let addresses = 0;
 beforeAll(async () => {
   server = await bootFreshServer("confirm-sign-in", {
     MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
   });
   origin = await issuerOrigin(server);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
@@ -168,12 +169,10 @@ describe("confirming with the password", () => {
     const refused = await removeAbsent(stale);
     expect(refused.status).toBe(403);
     const refusal = (await refused.json()) as {
-      error: { code: string; message: string };
+      error: { code: string; details?: { needs?: string } };
     };
     expect(refusal.error.code).toBe("forbidden");
-    expect(refusal.error.message).toBe(
-      "Sign in again to perform this operation",
-    );
+    expect(refusal.error.details?.needs).toBe("recent_sign_in");
 
     const confirmed = await confirm({ password: TEST_OWNER.password }, stale);
     expect(confirmed.status).toBe(200);
@@ -517,7 +516,11 @@ describe("a stale session adding a passkey", () => {
     await server.advanceClock(6 * MINUTE);
     const refused = await options();
     expect(refused.status).toBe(403);
-    expect(await code(refused)).toBe("forbidden");
+    const refusal = (await refused.json()) as {
+      error: { code: string; details?: { needs?: string } };
+    };
+    expect(refusal.error.code).toBe("forbidden");
+    expect(refusal.error.details?.needs).toBe("recent_sign_in");
   });
 });
 

@@ -3443,7 +3443,7 @@ marfa device folders create [OPTIONS]
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
 | `--first-placement <TYPE=DIR>` | Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable. |
-| `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
+| `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: past both `files` and `fraction`, or past `ceiling` alone. |
 | `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
 | `--addition-threshold <JSON>` | When new files pause, as a JSON object: `files` and `fraction`. |
 | `--outside-query <MODE>` | What the folder does with a new file that its query would not hold: `send` makes it an item and keeps it flagged unmatched, `hold` leaves it on disk, not sent and with no item, until it matches or this is `send`. A file that already has an item is not affected; unset is `send`. One of `send`, `hold`. |
@@ -3474,7 +3474,7 @@ marfa device folders change [OPTIONS] --version <VERSION> <ID>
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
 | `--first-placement <TYPE=DIR>` | Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable. |
-| `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
+| `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: past both `files` and `fraction`, or past `ceiling` alone. |
 | `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
 | `--addition-threshold <JSON>` | When new files pause, as a JSON object: `files` and `fraction`. |
 | `--outside-query <MODE>` | What the folder does with a new file that its query would not hold: `send` makes it an item and keeps it flagged unmatched, `hold` leaves it on disk, not sent and with no item, until it matches or this is `send`. A file that already has an item is not affected; unset is `send`. One of `send`, `hold`. |
@@ -4522,7 +4522,7 @@ marfa folders create [OPTIONS]
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
 | `--first-placement <TYPE=DIR>` | Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable. |
-| `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
+| `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: past both `files` and `fraction`, or past `ceiling` alone. |
 | `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
 | `--addition-threshold <JSON>` | When new files pause, as a JSON object: `files` and `fraction`. |
 | `--outside-query <MODE>` | What the folder does with a new file that its query would not hold: `send` makes it an item and keeps it flagged unmatched, `hold` leaves it on disk, not sent and with no item, until it matches or this is `send`. A file that already has an item is not affected; unset is `send`. One of `send`, `hold`. |
@@ -4551,7 +4551,7 @@ marfa folders change [OPTIONS] --version <VERSION> <ID>
 | `--include <PATTERN>` | A gitignore pattern for the paths the folder takes, repeatable; a dot-led path only where a pattern names it, and never a secret. |
 | `--ignore <PATTERN>` | A gitignore pattern for the paths the folder leaves alone, repeatable; it wins over an include pattern. |
 | `--first-placement <TYPE=DIR>` | Where a new item of a type made elsewhere first appears, as TYPE=DIR relative to the folder's root, repeatable. |
-| `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: `files` and `fraction`. |
+| `--removal-threshold <JSON>` | When a removal pauses, as a JSON object: past both `files` and `fraction`, or past `ceiling` alone. |
 | `--full-pass-interval-seconds <SECONDS>` | Seconds between the watch's passes that read every file in the folder, from 60 to 86400; unset is 600. |
 | `--addition-threshold <JSON>` | When new files pause, as a JSON object: `files` and `fraction`. |
 | `--outside-query <MODE>` | What the folder does with a new file that its query would not hold: `send` makes it an item and keeps it flagged unmatched, `hold` leaves it on disk, not sent and with no item, until it matches or this is `send`. A file that already has an item is not affected; unset is `send`. One of `send`, `hold`. |

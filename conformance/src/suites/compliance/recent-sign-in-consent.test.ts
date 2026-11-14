@@ -38,6 +38,7 @@ let addresses = 0;
 beforeAll(async () => {
   server = await bootFreshServer("recent-sign-in-consent", {
     MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
   });
   origin = await issuerOrigin(server);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);

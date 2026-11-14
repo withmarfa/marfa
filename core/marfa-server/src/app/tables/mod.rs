@@ -11,6 +11,7 @@ mod undo;
 
 use std::collections::{HashMap, HashSet};
 
+use marfa_rules::rows;
 use marfa_rules::schema::Registry;
 use marfa_rules::validation;
 use rusqlite::Transaction;
@@ -37,136 +38,36 @@ pub use lifecycle::{
 pub use read::{Page, batches, get, list, page, totals};
 pub use undo::undo;
 
-/// A batch of 1000 rows of 1 KB each holds the writer for about 10 ms on the reference machine.
-pub const MAX_OPERATIONS: usize = 1000;
-/// A row's values as JSON; a longer text belongs in a file item the row points at.
-pub const MAX_ROW_BYTES: usize = 65_536;
+pub use marfa_rules::rows::{MAX_OPERATIONS, MAX_ROW_BYTES, Op};
 
-#[derive(Debug)]
-pub enum Op {
-    Put {
-        id: Option<String>,
-        values: Map<String, Value>,
-    },
-    Patch {
-        id: String,
-        values: Map<String, Value>,
-    },
-    Delete {
-        id: String,
-    },
+fn refused(refused: rows::Refused) -> Refusal {
+    match refused.operation {
+        Some(index) => Refusal::validation(refused.sentence())
+            .with_detail("operation", index)
+            .with_detail(
+                "errors",
+                json!([{ "path": refused.path, "message": refused.message }]),
+            ),
+        None => Refusal::validation(refused.message.clone())
+            .with_detail("field", "operations")
+            .with_detail(
+                "errors",
+                json!([{ "path": refused.path, "message": refused.message }]),
+            ),
+    }
 }
 
 fn refused_at(index: usize, path: &str, message: impl Into<String>) -> Refusal {
-    let message = message.into();
-    let path = if path.is_empty() {
-        format!("operations.{index}")
-    } else {
-        format!("operations.{index}.{path}")
-    };
-    Refusal::validation(format!("{path}: {message}"))
-        .with_detail("operation", index)
-        .with_detail("errors", json!([{ "path": path, "message": message }]))
-}
-
-fn whole_batch(message: &str) -> Refusal {
-    Refusal::validation(message.to_string())
-        .with_detail("field", "operations")
-        .with_detail(
-            "errors",
-            json!([{ "path": "operations", "message": message }]),
-        )
-}
-
-fn row_id(index: usize, value: Option<&Value>, required: bool) -> Result<Option<String>> {
-    match value {
-        None if required => Err(refused_at(
-            index,
-            "id",
-            "This operation names the row by id.",
-        )),
-        None => Ok(None),
-        Some(Value::String(id)) if validation::id("id", id).is_ok() => Ok(Some(id.clone())),
-        Some(_) => Err(refused_at(
-            index,
-            "id",
-            "A row id is a UUIDv7 in lowercase.",
-        )),
-    }
-}
-
-fn values_of(index: usize, value: Option<&Value>) -> Result<Map<String, Value>> {
-    let Some(Value::Object(values)) = value else {
-        return Err(refused_at(
-            index,
-            "values",
-            "values is an object keyed by column.",
-        ));
-    };
-    Ok(values.clone())
+    refused(rows::Refused::at(index, path, message))
 }
 
 fn refuse_wide(index: usize, values: &Map<String, Value>) -> Result<()> {
-    let bytes = store::printed_len(values);
-    if bytes > MAX_ROW_BYTES as i64 {
-        return Err(refused_at(
-            index,
-            "values",
-            format!(
-                "A row holds at most {MAX_ROW_BYTES} bytes of values as JSON; this operation leaves {bytes}."
-            ),
-        ));
-    }
-    Ok(())
+    rows::refuse_wide(index, values).map_err(refused)
 }
 
-const OP_FIELDS: [&str; 3] = ["op", "id", "values"];
-
+/// `most` operations at most: the row door and the MCP tool differ in it.
 pub fn operations(sent: Option<&Value>, most: usize) -> Result<Vec<Op>> {
-    let Some(Value::Array(sent)) = sent else {
-        return Err(whole_batch("operations is a list of operations."));
-    };
-    if sent.is_empty() {
-        return Err(whole_batch("operations names at least one operation."));
-    }
-    if sent.len() > most {
-        return Err(whole_batch(&format!(
-            "A batch holds at most {most} operations; this holds {}.",
-            sent.len()
-        )));
-    }
-    sent.iter()
-        .enumerate()
-        .map(|(index, entry)| {
-            let Value::Object(entry) = entry else {
-                return Err(whole_batch("Each operation is an object."));
-            };
-            if let Some(unknown) = entry.keys().find(|key| !OP_FIELDS.contains(&key.as_str())) {
-                return Err(refused_at(
-                    index,
-                    unknown,
-                    "An operation names op, id and values.",
-                ));
-            }
-            match entry.get("op").and_then(Value::as_str) {
-                Some("put") => Ok(Op::Put {
-                    id: row_id(index, entry.get("id"), false)?,
-                    values: values_of(index, entry.get("values"))?,
-                }),
-                Some("patch") => Ok(Op::Patch {
-                    id: row_id(index, entry.get("id"), true)?.unwrap_or_default(),
-                    values: values_of(index, entry.get("values"))?,
-                }),
-                Some("delete") if entry.contains_key("values") => {
-                    Err(refused_at(index, "values", "A delete sends no values."))
-                }
-                Some("delete") => Ok(Op::Delete {
-                    id: row_id(index, entry.get("id"), true)?.unwrap_or_default(),
-                }),
-                _ => Err(refused_at(index, "op", "op is put, patch or delete.")),
-            }
-        })
-        .collect()
+    rows::operations(sent, most).map_err(refused)
 }
 
 pub(crate) fn not_found_table(table: &str) -> Refusal {

@@ -114,16 +114,36 @@ pub(crate) fn settled(row: &Bound, root: &crate::directory::Directory) -> Option
     Some(landing.before.as_deref().cloned())
 }
 
-/// Settles every write a crash cut off between its binding and its landing,
-/// so the file there is never read as the person's edit nor as deleted.
+/// Recover landed writes before a scan mistakes them for edits or deletions.
 pub(crate) fn settle_landings(
     conn: &Connection,
     root: &crate::directory::Directory,
 ) -> Result<(), CoreError> {
-    for row in every_bound(conn)? {
-        match settled(&row, root) {
+    let rows = every_bound(conn)?;
+    for row in &rows {
+        match settled(row, root) {
             None => {}
-            Some(Some(settled)) => bind(conn, &settled)?,
+            Some(Some(settled)) => {
+                bind(conn, &settled)?;
+                let mut landed = row.clone();
+                landed.writes.landing = None;
+                if settled != landed {
+                    continue;
+                }
+                for left in rows.iter().filter(|left| {
+                    left.item_id == row.item_id
+                        && left.path != row.path
+                        && left.writes.landing.is_none()
+                }) {
+                    if root
+                        .read(std::path::Path::new(&left.path))
+                        .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound)
+                    {
+                        unbind(conn, &left.path)?;
+                        journal_clear(conn, &left.path)?;
+                    }
+                }
+            }
             Some(None) => {
                 unbind(conn, &row.path)?;
                 journal_clear(conn, &row.path)?;

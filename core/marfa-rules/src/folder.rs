@@ -41,12 +41,12 @@ impl Violation {
     }
 }
 
-/// One threshold: a count and a fraction, each as a number so that a value
-/// that is no whole count, or a count too large to hold exactly, is seen.
+/// Counts stay floating-point here so validation can reject fractional inputs.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Threshold {
     pub files: Option<f64>,
     pub fraction: Option<f64>,
+    pub ceiling: Option<f64>,
 }
 
 /// The complete settings a device follows a folder by. An absent setting is
@@ -134,13 +134,15 @@ fn check_placement(type_id: &str, directory: &str) -> Result<(), String> {
 }
 
 fn check_threshold(name: &str, threshold: Threshold) -> Result<(), Violation> {
-    if let Some(files) = threshold.files
-        && !((0.0..=MOST_FILES).contains(&files) && files.fract() == 0.0)
-    {
-        return Err(Violation::invalid(
-            &format!("{name}.files"),
-            format!("{name}.files is a whole number from 0 to 9007199254740991."),
-        ));
+    for (key, count) in [("files", threshold.files), ("ceiling", threshold.ceiling)] {
+        if let Some(count) = count
+            && !((0.0..=MOST_FILES).contains(&count) && count.fract() == 0.0)
+        {
+            return Err(Violation::invalid(
+                &format!("{name}.{key}"),
+                format!("{name}.{key} is a whole number from 0 to 9007199254740991."),
+            ));
+        }
     }
     if let Some(fraction) = threshold.fraction
         && !(0.0..=1.0).contains(&fraction)
@@ -435,21 +437,33 @@ mod tests {
 
     #[test]
     fn a_threshold_and_an_interval_hold_their_bounds() {
-        let removal = |files, fraction| {
+        let removal = |files, fraction, ceiling| {
             check(
                 None,
                 &Settings {
                     removal: Threshold {
                         files: Some(files),
                         fraction: Some(fraction),
+                        ceiling: Some(ceiling),
                     },
                     ..Settings::default()
                 },
             )
         };
-        assert!(removal(MOST_FILES, 1.0).is_ok());
-        for (files, fraction) in [(MOST_FILES + 2.0, 0.5), (-1.0, 0.5), (1.5, 0.5), (1.0, 1.1)] {
-            assert!(removal(files, fraction).is_err(), "{files} {fraction}");
+        assert!(removal(MOST_FILES, 1.0, MOST_FILES).is_ok());
+        for (files, fraction, ceiling) in [
+            (MOST_FILES + 2.0, 0.5, 1.0),
+            (-1.0, 0.5, 1.0),
+            (1.5, 0.5, 1.0),
+            (1.0, 1.1, 1.0),
+            (1.0, 0.5, -1.0),
+            (1.0, 0.5, 1.5),
+            (1.0, 0.5, MOST_FILES + 2.0),
+        ] {
+            assert!(
+                removal(files, fraction, ceiling).is_err(),
+                "{files} {fraction} {ceiling}"
+            );
         }
         let interval = |seconds: f64| {
             check(

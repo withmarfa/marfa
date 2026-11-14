@@ -3,10 +3,12 @@ import { afterAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import {
   bootFreshServer,
+  bootRefused,
   FRESH_SERVER_TIMEOUT_MS,
   stopFreshServers,
   type FreshServer,
 } from "../../utils/fresh-server.js";
+import { listened, settingLines } from "../../utils/refused-boot.js";
 
 // Each server fixes its proxy trust at startup; audit records expose the caller's address.
 
@@ -182,9 +184,10 @@ describe("the forwarded chain", () => {
 describe("the edge's header", () => {
   const HEADER = "X-Edge-Client";
 
-  it("is read whatever the peer is while no range is set, and only when it holds one address", async () => {
-    const server = await bootFreshServer("proxy-header-alone", {
+  it("is read from a peer inside the ranges only when it holds one address", async () => {
+    const server = await bootFreshServer("proxy-header-single", {
       MARFA_TRUSTED_PROXY_HEADER: HEADER,
+      MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8, ::1/128",
     });
     expect(await seenAs(server, { [HEADER]: "203.0.113.5" }, "single")).toBe(
       "203.0.113.5",
@@ -223,5 +226,21 @@ describe("the edge's header", () => {
     expect(await seenAs(outside, { [HEADER]: "203.0.113.5" }, "outside")).toBe(
       PEER,
     );
+  });
+
+  it("without MARFA_TRUSTED_PROXY_CIDRS stops the server starting, with a line that names the ranges to set", async () => {
+    const refused = await bootRefused("proxy-header-no-ranges", {
+      extraEnv: { MARFA_TRUSTED_PROXY_HEADER: HEADER },
+    });
+    try {
+      expect(refused).toMatchObject({ code: 1, signal: null });
+      expect(listened(refused)).toBe(false);
+      const lines = settingLines(refused);
+      expect(lines).toHaveLength(1);
+      expect(lines[0]).toContain("MARFA_TRUSTED_PROXY_HEADER");
+      expect(lines[0]).toContain("set MARFA_TRUSTED_PROXY_CIDRS");
+    } finally {
+      await refused.stop();
+    }
   });
 });

@@ -440,7 +440,6 @@ async fn a_caller_is_on_this_machine_only_by_its_own_connection() {
         request
     };
     for trust in [
-        vec![("MARFA_TRUSTED_PROXY_HEADER", "X-Client")],
         vec![("MARFA_TRUSTED_PROXY_CIDRS", "0.0.0.0/0")],
         vec![
             ("MARFA_TRUSTED_PROXY_HEADER", "X-Client"),

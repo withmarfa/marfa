@@ -628,6 +628,12 @@ fn tell(
             ));
             Ok(())
         }
+        WatchEvent::QueryWaits { error, wait } => {
+            say.note(&format!(
+                "the folder's changed query waits: the items it now holds could not be fetched ({error}); trying again in {wait:?}"
+            ));
+            Ok(())
+        }
         WatchEvent::Reach(Some(reason)) => say.line(
             serde_json::json!({ "server": server, "reachable": false, "reason": reason }),
             || {

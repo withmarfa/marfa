@@ -1,6 +1,7 @@
 //! Row reads share their item's access check and snapshot.
 
-use marfa_rules::filter::{Expression, Term, parse_rows, system_literal};
+use marfa_rules::filter::Expression;
+use marfa_rules::filter::sql::{self, Adding};
 use marfa_rules::query::property_sort_expression;
 use rusqlite::Transaction;
 use rusqlite::types::Value as Bound;
@@ -13,7 +14,7 @@ use crate::app::App;
 use crate::app::access::Caller;
 use crate::app::faults::FAIL_TABLE_ROWS_PAGE;
 use crate::app::items::{self, Reader, reading};
-use crate::app::query::{Position, Secret, Sql, compared, held_property, readable_types};
+use crate::app::query::{Position, Secret, Sql, readable_types};
 use crate::app::refusal::{Refusal, Result};
 
 const FIRST_PAGE: i64 = 100;
@@ -198,51 +199,19 @@ pub async fn list(app: &App, caller: &Caller, item_id: String) -> Result<String>
 }
 
 fn expression(filter: &str, table: &Table) -> Result<Expression> {
-    let expression = parse_rows(filter).map_err(|error| invalid("filter", error.message))?;
-    for condition in &expression.conditions {
-        if let Term::Property { name, .. } = &condition.term
-            && !table.columns.contains_key(name)
-        {
-            return Err(invalid(
-                "filter",
-                format!("The table declares no column \"{name}\"."),
-            ));
-        }
-    }
-    Ok(expression)
+    sql::table_filter(filter, |name| table.columns.contains_key(name))
+        .map_err(|error| invalid("filter", error.message))
 }
 
 fn conditions(sql: &mut Sql, expression: &Expression, withholding: &Withholding) -> Result<()> {
-    sql.push(" AND (");
-    for (at, condition) in expression.conditions.iter().enumerate() {
-        if at > 0 {
-            sql.push(if expression.any { " OR " } else { " AND " });
-        }
-        sql.push("(");
-        match &condition.term {
-            Term::Property { name, op } => held_property(
-                sql,
-                &withholding.held(name),
-                &withholding.kind(name),
-                *op,
-                &condition.value,
-            ),
-            Term::System { column, compare } => {
-                let value = system_literal(column, *compare, &condition.value)
-                    .map_err(|error| invalid("filter", error.message))?;
-                compared(sql, &Sql::new(&format!("r.{column}")), *compare, &value);
-            }
-            _ => {
-                return Err(invalid(
-                    "filter",
-                    "A row filter names columns, id and updated_at.",
-                ));
-            }
-        }
-        sql.push(")");
-    }
-    sql.push(")");
-    Ok(())
+    sql.push(" AND ");
+    sql::row_filter(
+        sql,
+        expression,
+        |sql, column| sql.append(&withholding.held(column)),
+        |sql, column| sql.append(&withholding.kind(column)),
+    )
+    .map_err(|error| invalid("filter", error.message))
 }
 
 /// The planner passes by an index a descending page could use unless it is named.
@@ -661,49 +630,25 @@ pub async fn get(
     .await
 }
 
-/// Datetimes compare by instant and return UTC.
-fn aggregate(withholding: &Withholding, kind: &str, way: &str, column: &str) -> Sql {
-    let mut sql = Sql::new("");
-    let mut wrapped = |open: &str, inner: Sql, close: &str| {
-        sql.push(open);
-        sql.append(&inner);
-        sql.push(close);
-    };
-    match (way, kind) {
-        ("count", _) => wrapped("COUNT(", withholding.held(column), ")"),
-        ("sum", _) => wrapped("TOTAL(", withholding.number(column), ")"),
-        ("average", _) => wrapped("AVG(", withholding.number(column), ")"),
-        ("min", "date") => wrapped("MIN(", withholding.held(column), ")"),
-        ("max", "date") => wrapped("MAX(", withholding.held(column), ")"),
-        ("min", "datetime") => wrapped(
-            "strftime('%Y-%m-%dT%H:%M:%fZ', MIN(julianday(",
-            withholding.held(column),
-            ")))",
-        ),
-        ("max", "datetime") => wrapped(
-            "strftime('%Y-%m-%dT%H:%M:%fZ', MAX(julianday(",
-            withholding.held(column),
-            ")))",
-        ),
-        ("min", _) => wrapped("MIN(", withholding.number(column), ")"),
-        _ => wrapped("MAX(", withholding.number(column), ")"),
-    }
-    sql
-}
-
-fn number(value: f64, integer: bool) -> Value {
-    if integer && value.fract() == 0.0 && value.abs() <= 9_007_199_254_740_991.0 {
-        json!(value as i64)
-    } else {
-        json!(value)
-    }
+fn aggregate(withholding: &Withholding, adding: &Adding) -> Sql {
+    let mut out = Sql::new("");
+    let column = &adding.name;
+    sql::total(
+        &mut out,
+        adding,
+        |sql| sql.append(&withholding.held(column)),
+        |sql| sql.append(&withholding.number(column)),
+    );
+    out
 }
 
 fn total_value(kind: &str, way: &str, bound: &Bound) -> Value {
-    let integer = kind == "integer" || way == "count";
     match bound {
         Bound::Integer(count) => json!(count),
-        Bound::Real(value) => number(*value, integer),
+        Bound::Real(value) => match sql::whole_total(kind, way, *value) {
+            Some(whole) => json!(whole),
+            None => json!(value),
+        },
         Bound::Text(text) => json!(text),
         Bound::Null | Bound::Blob(_) => Value::Null,
     }
@@ -721,26 +666,17 @@ fn answered_totals(
     let withholding = Withholding::of(read)?;
     let seq = store::table_seq(read.tx, host.seq, &table.name)?;
     let selected = selection(seq, filter.as_ref(), &withholding, None)?;
-    let adding: Vec<(String, String, String)> = table
-        .columns
-        .iter()
-        .filter_map(|(name, definition)| {
-            let way = definition.get("adds_up")?.as_str()?;
-            let kind = definition.get("type")?.as_str()?;
-            marfa_rules::catalog::api_name(name)
-                .then(|| (name.clone(), kind.to_string(), way.to_string()))
-        })
-        .collect();
+    let adding = sql::adding(&table.columns);
     let mut sql = Sql::new("SELECT COUNT(*)");
-    for (name, kind, way) in &adding {
+    for adding in &adding {
         sql.push(", ");
-        sql.append(&aggregate(&withholding, kind, way, name));
+        sql.append(&aggregate(&withholding, adding));
     }
     sql.append(&selected);
     let mut found = store::single(read.tx, &sql)?.into_iter();
     let row_count = found.next().unwrap_or(Bound::Integer(0));
     let mut totals = Map::new();
-    for (name, kind, way) in &adding {
+    for Adding { name, kind, way } in &adding {
         let bound = found.next().unwrap_or(Bound::Null);
         totals.insert(name.clone(), json!({ way: total_value(kind, way, &bound) }));
     }
@@ -820,4 +756,80 @@ pub async fn batches(
         answered_batches(read, &item_id, &table, limit, cursor.as_deref())
     })
     .await
+}
+
+#[cfg(test)]
+mod parity {
+    use rusqlite::{Connection, params, params_from_iter};
+    use serde_json::{Map, Value, json};
+
+    use super::*;
+
+    const CORPUS: &str = include_str!("../../../../marfa-rules/src/filter/parity.json");
+
+    fn held(corpus: &Value) -> Connection {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(include_str!("../../db/migrations/0001_baseline.sql"))
+            .unwrap();
+        for row in corpus["table"]["rows"].as_array().unwrap() {
+            db.execute(
+                "INSERT INTO table_rows (table_seq, id, updated_at, batch, body) \
+                 VALUES (1, ?1, '2026-01-01T00:00:00Z', 0, jsonb(?2))",
+                params![row["id"].as_str().unwrap(), row["body"].to_string()],
+            )
+            .unwrap();
+        }
+        db
+    }
+
+    fn readable() -> Withholding {
+        Withholding {
+            every: true,
+            readable: None,
+        }
+    }
+
+    #[test]
+    fn the_row_filters_and_totals_both_sides_share_answer_what_the_working_copy_answers() {
+        let corpus: Value = serde_json::from_str(CORPUS).unwrap();
+        let columns: Map<String, Value> = corpus["table"]["columns"].as_object().unwrap().clone();
+        let db = held(&corpus);
+        for case in corpus["table"]["filters"].as_array().unwrap() {
+            let text = case["filter"].as_str().unwrap();
+            let filter = sql::table_filter(text, |name| columns.contains_key(name)).unwrap();
+            let selected = selection(Some(1), Some(&filter), &readable(), None).unwrap();
+            let mut statement = db
+                .prepare(&format!("SELECT r.id{} ORDER BY r.id", selected.text))
+                .unwrap();
+            let ids: Vec<String> = statement
+                .query_map(params_from_iter(selected.values.iter()), |row| row.get(0))
+                .unwrap()
+                .collect::<std::result::Result<_, _>>()
+                .unwrap();
+            assert_eq!(json!(ids), case["ids"], "{text}");
+        }
+        for case in corpus["table"]["totals"].as_array().unwrap() {
+            let filter = case["filter"]
+                .as_str()
+                .map(|text| sql::table_filter(text, |name| columns.contains_key(name)).unwrap());
+            let selected = selection(Some(1), filter.as_ref(), &readable(), None).unwrap();
+            let adding = sql::adding(&columns);
+            let mut query = Sql::new("SELECT COUNT(*)");
+            for adding in &adding {
+                query.push(", ");
+                query.append(&aggregate(&readable(), adding));
+            }
+            query.append(&selected);
+            let found = store::single(&db.unchecked_transaction().unwrap(), &query).unwrap();
+            let mut found = found.into_iter();
+            let mut totals = Map::new();
+            let row_count = total_value("integer", "count", &found.next().unwrap());
+            for Adding { name, kind, way } in &adding {
+                let bound = found.next().unwrap();
+                totals.insert(name.clone(), json!({ way: total_value(kind, way, &bound) }));
+            }
+            let answer = json!({ "row_count": row_count, "totals": totals });
+            assert_eq!(answer, case["answer"], "{}", case["filter"]);
+        }
+    }
 }

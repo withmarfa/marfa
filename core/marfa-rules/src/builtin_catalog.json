@@ -2528,7 +2528,7 @@
     },
     "removal_threshold": {
      "type": "object",
-     "description": "When removing files pauses for confirmation: more than `files` files and more than `fraction` of the folder at once. Defaults to 10 and 0.25."
+     "description": "Removals pause above both `files` and `fraction` of bound files, or above `ceiling` alone. Defaults are 10, 0.25 and 100. Each pass is judged separately."
     },
     "full_pass_interval_seconds": {
      "type": "integer",

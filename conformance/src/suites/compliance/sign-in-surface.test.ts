@@ -36,6 +36,7 @@ const FORM_DOORS = [
 beforeAll(async () => {
   server = await bootFreshServer("sign-in-surface", {
     MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
   });
   // The origin the surface trusts is its own, which discovery names as the
   // issuer.
@@ -245,7 +246,7 @@ describe("the sign-in surface", () => {
     expect((await signIn(OWNER.password, "192.0.2.4")).status).toBe(200);
   });
 
-  it("holds one address to ten attempts at an account, and leaves the owner signing in from another", async () => {
+  it("holds one address to ten attempts at one email, and leaves the owner signing in from another", async () => {
     const guesser = "203.0.113.10";
     for (let i = 0; i < 10; i++) {
       expect((await signIn("not the password", guesser)).status).toBe(401);

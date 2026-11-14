@@ -40,7 +40,8 @@ pub struct SettingsArgs {
     /// TYPE=DIR relative to the folder's root, repeatable.
     #[arg(long = "first-placement", value_name = "TYPE=DIR")]
     pub first_placement: Vec<String>,
-    /// When a removal pauses, as a JSON object: `files` and `fraction`.
+    /// When a removal pauses, as a JSON object: past both `files` and
+    /// `fraction`, or past `ceiling` alone.
     #[arg(long, value_name = "JSON")]
     pub removal_threshold: Option<String>,
     /// Seconds between the watch's passes that read every file in the

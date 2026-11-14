@@ -370,18 +370,16 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
     };
 
     // What a proxy on this machine reaches the server from.
-    let subnet = match runtime {
+    let source = match runtime {
         Runtime::Docker => {
-            // The network gives the proxy a range that survives a restart.
-            match docker.network_subnet(&net)? {
-                Some(subnet) => subnet,
+            // The network keeps its gateway across a restart.
+            match docker.network_gateways(&net)? {
+                Some(gateways) => gateways,
                 None => {
                     steps.say(&format!("Making the Docker network {net}..."));
                     docker.create_network(&net)?;
-                    docker.network_subnet(&net)?.ok_or_else(|| {
-                        CliError::Install(format!(
-                            "Docker made the network {net} with no IPv4 range"
-                        ))
+                    docker.network_gateways(&net)?.ok_or_else(|| {
+                        CliError::Install(format!("Docker made no network named {net}"))
                     })?
                 }
             }
@@ -412,12 +410,14 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
         .unwrap_or_else(|| EnvFile::parse(files::SETTINGS_HEADER));
     if external {
         let of = match runtime {
-            Runtime::Docker => format!("the range of the Docker network {net}"),
+            Runtime::Docker => format!(
+                "the gateway of the Docker network {net}, which a tunnel or proxy on this machine connects from"
+            ),
             Runtime::Native => {
                 "the address a proxy on this machine reaches the server from".to_string()
             }
         };
-        let problems = external_problems(&settings, access, &subnet, &of);
+        let problems = external_problems(&settings, access, &source, &of);
         if !problems.is_empty() {
             return Err(CliError::Usage(format!(
                 "{} cannot run this install yet:\n  - {}",
@@ -443,7 +443,7 @@ pub fn install(args: InstallArgs, out: &Printer) -> Result<(), CliError> {
                 settings.set(secret, &envfile::secret()?)?;
             }
         }
-        let (cidrs, header) = proxy_trust(runtime, access, &subnet);
+        let (cidrs, header) = proxy_trust(runtime, access, &source);
         match cidrs {
             Some(cidrs) => settings.set(names::PROXY_CIDRS, &cidrs)?,
             None => settings.remove(names::PROXY_CIDRS),

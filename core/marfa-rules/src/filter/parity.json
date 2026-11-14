@@ -1,0 +1,96 @@
+{
+  "types": [
+    { "id": "acme.task", "fields": { "state": { "type": "status", "status_values": [
+      { "value": "todo", "group": "not_started" },
+      { "value": "doing", "group": "in_progress" },
+      { "value": "done", "group": "completed" },
+      { "value": "dropped", "group": "canceled" }
+    ] } } },
+    { "id": "acme.chore", "parent": "acme.task", "fields": { "state": { "type": "status", "status_values": [
+      { "value": "waiting", "group": "in_progress" }
+    ] } } },
+    { "id": "acme.note", "fields": { "state": { "type": "string" } } }
+  ],
+  "items": [
+    { "id": "t1", "type": "acme.task", "state": "active", "occurred_at": "2026-01-01T00:00:00Z",
+      "properties": { "state": "todo", "rating": 5, "note": "A_b", "flag": true }, "tags": ["5.0", "x"] },
+    { "id": "t2", "type": "acme.task", "state": "active", "occurred_at": "2026-01-01T00:00:00Z",
+      "properties": { "state": "doing", "rating": 2, "note": "Axb" }, "tags": [] },
+    { "id": "t3", "type": "acme.chore", "state": "active", "occurred_at": "2026-01-01T00:00:00Z",
+      "properties": { "state": "waiting", "rating": "9" }, "tags": ["x"] },
+    { "id": "t4", "type": "acme.note", "state": "archived", "occurred_at": "2026-01-01T00:00:00Z",
+      "properties": { "state": "done", "rating": 7.5, "emails": [{ "value": "b@x.test", "label": "work" }, { "value": "c@x.test" }] }, "tags": [] },
+    { "id": "t5", "type": "acme.task", "state": "trashed", "occurred_at": "2026-01-01T00:00:00Z",
+      "properties": { "state": "zzz", "ranks": [{ "value": 5 }, { "value": "5" }] }, "tags": [] },
+    { "id": "t6", "type": "acme.task", "state": "active", "occurred_at": "2026-03-01T00:00:00Z",
+      "properties": {}, "tags": [] }
+  ],
+  "filters": [
+    { "filter": "state eq \"active\"", "ids": ["t1", "t2", "t3", "t6"] },
+    { "filter": "state neq \"active\" OR type eq \"acme.chore\"", "ids": ["t3", "t4", "t5"] },
+    { "filter": "id starts_with \"t\" AND occurred_at lt \"2026-02-01T00:00:00Z\"", "ids": ["t1", "t2", "t3", "t4", "t5"] },
+    { "filter": "properties.rating gt 4", "ids": ["t1", "t3", "t4"] },
+    { "filter": "properties.rating eq 5", "ids": ["t1"] },
+    { "filter": "properties.rating neq 5", "ids": ["t2", "t3", "t4"] },
+    { "filter": "properties.rating eq \"9\"", "ids": ["t3"] },
+    { "filter": "properties.rating exists", "ids": ["t1", "t2", "t3", "t4"] },
+    { "filter": "properties.note contains \"_\"", "ids": ["t1"] },
+    { "filter": "properties.note starts_with \"A\"", "ids": ["t1", "t2"] },
+    { "filter": "properties.note not_exists", "ids": ["t3", "t4", "t5", "t6"] },
+    { "filter": "properties.flag eq true", "ids": ["t1"] },
+    { "filter": "properties.emails.value eq \"b@x.test\"", "ids": ["t4"] },
+    { "filter": "properties.emails.label eq \"work\"", "ids": ["t4"] },
+    { "filter": "properties.ranks.value eq 5", "ids": ["t5"] },
+    { "filter": "properties.ranks.value eq \"5\"", "ids": ["t5"] },
+    { "filter": "properties.emails.value eq 1", "ids": [] },
+    { "filter": "tags contains \"x\"", "ids": ["t1", "t3"] },
+    { "filter": "tags exists", "ids": ["t1", "t3"] },
+    { "filter": "tags not_exists", "ids": ["t2", "t4", "t5", "t6"] },
+    { "filter": "status_group eq \"in_progress\"", "ids": ["t2", "t3"] },
+    { "filter": "status_group neq \"completed\"", "ids": ["t1", "t2", "t3"] },
+    { "filter": "status_group exists", "ids": ["t1", "t2", "t3"] },
+    { "filter": "status_group not_exists", "ids": ["t4", "t5", "t6"] },
+    { "filter": "status_group eq \"canceled\"", "ids": [] },
+    { "filter": "properties.rating gt 4 AND state eq \"active\"", "ids": ["t1", "t3"] },
+    { "filter": "properties.rating gt 7 OR status_group eq \"in_progress\" OR tags contains \"5.0\"", "ids": ["t1", "t2", "t3", "t4"] }
+  ],
+  "table": {
+    "columns": {
+      "qty": { "type": "integer", "adds_up": "sum" },
+      "cap": { "type": "integer", "adds_up": "max" },
+      "price": { "type": "number", "adds_up": "average" },
+      "born": { "type": "date", "adds_up": "min" },
+      "seen": { "type": "datetime", "adds_up": "max" },
+      "label": { "type": "string", "adds_up": "count" }
+    },
+    "rows": [
+      { "id": "r1", "body": { "qty": 2, "cap": 10, "price": 1.5, "born": "2026-01-02", "seen": "2026-01-01T10:00:00+05:00", "label": "a_b" } },
+      { "id": "r2", "body": { "qty": 3, "cap": 7, "price": 2.5, "born": "2025-12-31", "seen": "2026-01-01T06:00:00Z", "label": "Axb" } },
+      { "id": "r3", "body": { "qty": "x", "born": "2026-02-01" } },
+      { "id": "r4", "body": { "price": 4.0, "seen": "2026-01-01T03:00:00-04:00" } }
+    ],
+    "filters": [
+      { "filter": "values.qty gt 2", "ids": ["r2"] },
+      { "filter": "values.qty eq 2", "ids": ["r1"] },
+      { "filter": "values.qty neq 2", "ids": ["r2", "r3"] },
+      { "filter": "values.label starts_with \"A\"", "ids": ["r1", "r2"] },
+      { "filter": "values.label contains \"_\"", "ids": ["r1"] },
+      { "filter": "values.born lt \"2026-01-02\"", "ids": ["r2"] },
+      { "filter": "values.price not_exists", "ids": ["r3"] },
+      { "filter": "values.qty exists OR values.price exists", "ids": ["r1", "r2", "r3", "r4"] },
+      { "filter": "id eq \"r1\"", "ids": ["r1"] },
+      { "filter": "values.qty gt 100", "ids": [] }
+    ],
+    "totals": [
+      { "filter": null, "answer": { "row_count": 4, "totals": {
+        "qty": { "sum": 5 }, "cap": { "max": 10 }, "price": { "average": 2.6666666666666665 },
+        "born": { "min": "2025-12-31" }, "seen": { "max": "2026-01-01T07:00:00.000Z" }, "label": { "count": 2 } } } },
+      { "filter": "values.qty gt 2", "answer": { "row_count": 1, "totals": {
+        "qty": { "sum": 3 }, "cap": { "max": 7 }, "price": { "average": 2.5 },
+        "born": { "min": "2025-12-31" }, "seen": { "max": "2026-01-01T06:00:00.000Z" }, "label": { "count": 1 } } } },
+      { "filter": "values.qty gt 100", "answer": { "row_count": 0, "totals": {
+        "qty": { "sum": 0 }, "cap": { "max": null }, "price": { "average": null },
+        "born": { "min": null }, "seen": { "max": null }, "label": { "count": 0 } } } }
+    ]
+  }
+}

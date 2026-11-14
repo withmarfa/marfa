@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::extract::{Path, State};
 use axum::http::{StatusCode, Uri};
-use marfa_rules::{filter, time, validation};
+use marfa_rules::{filter, search, time, validation};
 use serde_json::{Map, Value};
 
 use super::answer::{Answer, json_answer};
@@ -174,11 +174,13 @@ fn ask_of(sent: &Map<String, Value>) -> Result<Ask> {
         states: States::Named(vec![state]),
         source: text_of(&filter, "source")?,
         tier: one_of(&filter, "tier", &TIERS)?,
-        tags: strings(&filter, "tags")?
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|tag| !tag.trim().is_empty())
-            .collect(),
+        tags: search::filter_tags(
+            strings(&filter, "tags")?
+                .unwrap_or_default()
+                .iter()
+                .map(String::as_str),
+        )
+        .map_err(|past| invalid_field("filter.tags", past.message))?,
         filter: expression,
         occurred_after: timestamp(&filter, "occurred_after", time::normalize_bound)?,
         occurred_before: timestamp(&filter, "occurred_before", time::normalize_bound)?,

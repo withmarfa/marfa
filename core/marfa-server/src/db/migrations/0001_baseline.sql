@@ -821,18 +821,14 @@ CREATE TABLE IF NOT EXISTS passkeys (
 
 CREATE INDEX IF NOT EXISTS passkeys_owner ON passkeys (owner_id);
 
--- A ceremony under way. The browser holds a token and this table its digest,
--- so a copy of the database starts nothing. A row goes at its first use.
-CREATE TABLE IF NOT EXISTS passkey_challenges (
+-- Answered passkey challenges, kept one challenge life past their end.
+CREATE TABLE IF NOT EXISTS passkey_challenges_answered (
     digest TEXT PRIMARY KEY NOT NULL,
-    purpose TEXT NOT NULL CHECK (purpose IN ('add', 'prove')),
-    origin TEXT NOT NULL,
-    session_id TEXT,
-    state TEXT NOT NULL,
     expires_at TEXT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
-CREATE INDEX IF NOT EXISTS passkey_challenges_expiry ON passkey_challenges (expires_at);
+CREATE INDEX IF NOT EXISTS passkey_challenges_answered_expiry
+    ON passkey_challenges_answered (expires_at);
 
 -- A blob is bytes under the digest of their content. `hash` is `sha256:` and
 -- 64 lowercase hex characters; `mime_type` is the first type recorded.

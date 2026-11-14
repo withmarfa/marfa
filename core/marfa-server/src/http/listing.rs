@@ -4,7 +4,7 @@ use std::sync::Arc;
 use axum::extract::State;
 use axum::http::{StatusCode, Uri};
 use marfa_rules::query::{SortDirection, SortField, list_entry, refuse_states, type_entries};
-use marfa_rules::{filter, time, validation};
+use marfa_rules::{filter, search, time, validation};
 use serde_json::Value;
 
 use super::answer::{Answer, json_answer, text_answer};
@@ -262,14 +262,13 @@ fn beneath_of(params: &Params) -> Result<Option<String>> {
 }
 
 fn ask_of(params: &Params, default: States) -> Result<Ask> {
-    let tags = params
-        .one("tags")?
-        .into_iter()
-        .flat_map(|tags| tags.split(','))
-        .map(str::trim)
-        .filter(|tag| !tag.is_empty())
-        .map(str::to_string)
-        .collect();
+    let tags = search::filter_tags(
+        params
+            .one("tags")?
+            .into_iter()
+            .flat_map(|tags| tags.split(',')),
+    )
+    .map_err(past_bound)?;
     Ok(Ask {
         types: params.one("type")?.map_or(Ok(Vec::new()), types_of)?,
         system: false,
@@ -411,7 +410,12 @@ fn query_of(params: &Params) -> Result<String> {
     if q.contains('\0') {
         return Err(invalid_field("q", "q cannot hold a NUL character."));
     }
+    search::check_query(q).map_err(past_bound)?;
     Ok(q.trim().to_string())
+}
+
+fn past_bound(past: search::PastBound) -> Refusal {
+    invalid_field(past.field, past.message).with_detail("invalid_parameters", [past.field])
 }
 
 fn search_sort_of(params: &Params) -> Result<Sort> {

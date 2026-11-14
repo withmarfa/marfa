@@ -42,6 +42,7 @@ let keysMinted = 0;
 beforeAll(async () => {
   server = await bootFreshServer("owner-sign-ins", {
     MARFA_TRUSTED_PROXY_HEADER: CLIENT_HEADER,
+    MARFA_TRUSTED_PROXY_CIDRS: "127.0.0.0/8",
     // How long a write waits for the lock before it gives up, kept short for
     // the case that holds the lock from outside.
     MARFA_TEST_TUNING: "write_wait_ms=1000",

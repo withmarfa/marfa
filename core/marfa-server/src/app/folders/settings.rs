@@ -26,7 +26,8 @@ pub const SETTINGS: [&str; 10] = [
 ];
 
 const DEFAULTS: [&str; 5] = ["type", "tier", "properties", "tags", "edges"];
-const THRESHOLD: [&str; 2] = ["files", "fraction"];
+const REMOVAL_THRESHOLD: [&str; 3] = ["files", "fraction", "ceiling"];
+const ADDITION_THRESHOLD: [&str; 2] = ["files", "fraction"];
 const MAX_PATTERNS: usize = 1_000;
 const MAX_TEXT: usize = 1_024;
 const MAX_DEFAULT_EDGE_TYPES: usize = 100;
@@ -48,8 +49,8 @@ pub fn undeclared(body: &Map<String, Value>, allowed: &[&str]) -> Vec<String> {
     for (name, declared) in [
         ("query", &QUERY[..]),
         ("defaults", &DEFAULTS[..]),
-        ("removal_threshold", &THRESHOLD[..]),
-        ("addition_threshold", &THRESHOLD[..]),
+        ("removal_threshold", &REMOVAL_THRESHOLD[..]),
+        ("addition_threshold", &ADDITION_THRESHOLD[..]),
     ] {
         if let Some(inner) = body.get(name).and_then(Value::as_object) {
             undeclared_in(inner, declared, &format!("{name}."), &mut paths);
@@ -212,6 +213,10 @@ fn check_threshold(settings: &Map<String, Value>, name: &str) -> Result<()> {
             format!("{name}.files is a whole number from 0 to 9007199254740991."),
         ),
         ("fraction", format!("{name}.fraction is from 0 to 1.")),
+        (
+            "ceiling",
+            format!("{name}.ceiling is a whole number from 0 to 9007199254740991."),
+        ),
     ] {
         if threshold.get(key).is_some_and(|number| !number.is_number()) {
             return Err(at(&format!("{name}.{key}"), message));
@@ -309,6 +314,7 @@ fn threshold(settings: &Map<String, Value>, name: &str) -> rules::Threshold {
     rules::Threshold {
         files: number("files"),
         fraction: number("fraction"),
+        ceiling: number("ceiling"),
     }
 }
 

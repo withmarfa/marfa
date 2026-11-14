@@ -28,6 +28,7 @@ const OWNER = {
 beforeAll(async () => {
   state = await mkdtemp(join(tmpdir(), "marfa-owner-conformance-"));
   vi.stubEnv("MARFA_TRUSTED_PROXY_HEADER", "x-conformance-client");
+  vi.stubEnv("MARFA_TRUSTED_PROXY_CIDRS", "127.0.0.0/8");
   server = await bootUnclaimedServer({ state });
   vi.stubEnv("MARFA_API_URL", server.url);
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
@@ -469,9 +470,30 @@ describe("claiming the one owner", () => {
           )
         ).status,
       ).toBe(401);
+    // Then the address's own limit across every email, so that no email
+    // signs in from it.
+    for (let i = 0; i < 20; i++)
+      expect(
+        (
+          await post(
+            "/auth/sign-in",
+            { email: `stranger-${String(i)}@example.test`, password },
+            lockedAddress,
+          )
+        ).status,
+      ).not.toBe(200);
     expect((await post("/auth/sign-in", OWNER, lockedAddress)).status).toBe(
       429,
     );
+    expect(
+      (
+        await post(
+          "/auth/sign-in",
+          { email: "stranger-new@example.test", password },
+          lockedAddress,
+        )
+      ).status,
+    ).toBe(429);
     expect((await local("/_control/owner/recover", { password })).status).toBe(
       200,
     );

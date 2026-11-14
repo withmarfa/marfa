@@ -2342,6 +2342,22 @@ When the private local process sends `confirm_sign_in_address_change` set to `tr
 
 **Tests:** `compliance/instance-addresses.test.ts › is not moved, and the answer names the consequences, until a write confirms it`.
 
+### `instance/sign-in-address-ends-sessions`
+
+When the private local process sends `confirm_sign_in_address_change` set to `true` with a new sign-in address, the server MUST end every browser session in the write that stores the address, so that no session cookie made before it opens anything afterward.
+
+**Reason:** the confirmation tells the person that everyone signed in on a browser is signed out (`browser_sessions_end`). Only the private local process makes the change, so no browser session confirms it and none is kept: the owner signs in again at the new address. Keys and app grants are not browser sessions, and the change leaves them as they were.
+
+**Tests:** `compliance/instance-addresses.test.ts › ends every browser session, so a session token from before the move opens nothing under either cookie name`.
+
+### `instance/sign-in-address-forgets-devices`
+
+When the private local process confirms a move of the sign-in address, the server MUST count each later password sign-in that carries a device cookie set before the move as one with no device cookie.
+
+**Reason:** a device cookie is signed for the owner's credentials as they stand, and the move renews them with the browser sessions it ends, so no browser stays known.
+
+**Tests:** `compliance/sign-in-limits.test.ts › counts a device cookie set before a confirmed move of the sign-in address as no device cookie`.
+
 ### `instance/sign-in-needs-address`
 
 While no sign-in address is set, if a caller sends `POST /auth/sign-in` over a connection whose own address is not on the loopback, or names through a trusted proxy an address that is not on the loopback, then the server MUST answer `403 forbidden` with a message that says how to set the sign-in address.
@@ -2447,8 +2463,8 @@ The environment variables below are read once, when the server starts. Each is n
 | `S3_FORCE_PATH_STYLE`                   | `true`                                               | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Whether the object store is addressed by path rather than by virtual host. Read only when `S3_ENDPOINT` is set.                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | `S3_PREFIX`                             | `marfa`                                              | `/`-joined segments of letters, digits, `.`, `_` and `-`           | The key prefix the instance keeps everything under in the bucket: its files under `blobs/` and its backups under `backups/`. Each running instance on a bucket needs its own; a server that replaces an instance starts on its prefix. A `/` at either end is dropped; a `.` or `..` segment is refused.                                                                                                                                                                                                                            |
 | `MARFA_ENRICHMENT_TESSDATA_DIR`         | None                                                 | Any text                                                           | A folder of OCR language models.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| `MARFA_TRUSTED_PROXY_CIDRS`             | None                                                 | Comma-separated CIDR ranges, IPv4 or IPv6                          | The address ranges of the proxies whose `X-Forwarded-For` header the server believes. When empty, the header is ignored.                                                                                                                                                                                                                                                                                                                                                                                                            |
-| `MARFA_TRUSTED_PROXY_HEADER`            | None                                                 | An HTTP header name                                                | The name of a header that the platform's edge overwrites with the client address. It takes precedence over `MARFA_TRUSTED_PROXY_CIDRS`.                                                                                                                                                                                                                                                                                                                                                                                             |
+| `MARFA_TRUSTED_PROXY_CIDRS`             | None                                                 | Comma-separated CIDR ranges, IPv4 or IPv6                          | The address ranges of the proxies whose `X-Forwarded-For` header, or the header `MARFA_TRUSTED_PROXY_HEADER` names, the server believes. When empty, `X-Forwarded-For` is ignored.                                                                                                                                                                                                                                                                                                                                                  |
+| `MARFA_TRUSTED_PROXY_HEADER`            | None                                                 | An HTTP header name                                                | The name of a header that the platform's edge overwrites with the client address, believed only from a peer inside `MARFA_TRUSTED_PROXY_CIDRS`, which it needs. While it is set, `X-Forwarded-For` is ignored.                                                                                                                                                                                                                                                                                                                      |
 | `MARFA_KEY_SALT`                        | None. Generated on first start into `marfa.secrets`. | Text with no whitespace around it                                  | The salt for hashing API keys and app tokens. Changing it invalidates every existing key and token. Unset, the server uses the salt in `marfa.secrets`, which it generated on first start.                                                                                                                                                                                                                                                                                                                                          |
 | `MARFA_AUTH_SECRET`                     | None. Generated on first start into `marfa.secrets`. | Text of at least 32 characters, with no whitespace around it       | The secret that signs sign-in cookies, authorize queries, reach proofs and credential-free blob links. It must be at least 32 characters. Unset, the server uses the secret in `marfa.secrets`, which it generated on first start.                                                                                                                                                                                                                                                                                                  |
 | `MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES` | `false`                                              | `true`, `1`, `yes`, `on`, `false`, `0`, `no` or `off`, in any case | Whether outbound webhooks may reach loopback, private and other non-public addresses.                                                                                                                                                                                                                                                                                                                                                                                                                                               |
@@ -2537,13 +2553,13 @@ While both `MARFA_TRUSTED_PROXY_HEADER` and `MARFA_TRUSTED_PROXY_CIDRS` are set,
 
 **Tests:** `compliance/trusted-proxy.test.ts › is read only from a peer inside the ranges when ranges are set`.
 
-### `instance/proxy-header-alone`
+### `instance/proxy-header-needs-ranges`
 
-While `MARFA_TRUSTED_PROXY_HEADER` is set and `MARFA_TRUSTED_PROXY_CIDRS` is not, the server MUST read a caller's address from the header whatever the peer is.
+If `MARFA_TRUSTED_PROXY_HEADER` is set and `MARFA_TRUSTED_PROXY_CIDRS` is not, then the server MUST refuse to start with exit status 1 and a line that names `MARFA_TRUSTED_PROXY_CIDRS` as the setting to add.
 
-**Reason:** the header names an edge that overwrites it, which says nothing reaches the server except through that edge.
+**Reason:** the header holds the caller's address only when the edge that writes it sent the request, and the ranges are what tell the server which peers are that edge. A tunnel to a native server on the same machine connects from `127.0.0.0/8,::1/128`; a platform that does not publish its edge's addresses names `0.0.0.0/0,::/0`, so trusting every peer is a setting someone wrote down.
 
-**Tests:** `compliance/trusted-proxy.test.ts › is read whatever the peer is while no range is set, and only when it holds one address`.
+**Tests:** `compliance/trusted-proxy.test.ts › without MARFA_TRUSTED_PROXY_CIDRS stops the server starting, with a line that names the ranges to set`, `compliance/trusted-proxy.test.ts › is read only from a peer inside the ranges when ranges are set`.
 
 ### `instance/proxy-header-single`
 
@@ -2551,7 +2567,7 @@ If the header named by `MARFA_TRUSTED_PROXY_HEADER` holds a list, is sent more t
 
 **Reason:** an edge writes exactly one address, so anything else did not come from it.
 
-**Tests:** `compliance/trusted-proxy.test.ts › is read whatever the peer is while no range is set, and only when it holds one address`.
+**Tests:** `compliance/trusted-proxy.test.ts › is read from a peer inside the ranges only when it holds one address`.
 
 ### `instance/proxy-forwarded-walk`
 

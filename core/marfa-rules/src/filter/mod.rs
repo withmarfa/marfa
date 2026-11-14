@@ -5,6 +5,7 @@ use crate::error::{Result, RuleError};
 use crate::number;
 
 mod model;
+pub mod sql;
 
 pub use model::{
     EdgeDirection, FilterCondition, FilterExpression, FilterField, FilterJoin, FilterOperator,

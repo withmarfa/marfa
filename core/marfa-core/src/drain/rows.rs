@@ -15,8 +15,9 @@ use super::{
 use crate::error::CoreError;
 use crate::http::{Answer, REQUEST_LIMIT};
 use crate::model::{QueuedWrite, RowConflict, Verdict, WriteKind};
-use crate::row_writes::{self, MAX_OPERATIONS, Op, Taken};
+use crate::row_writes::{self, Op, Taken};
 use crate::{Core, Result, store};
+use marfa_rules::rows::MAX_OPERATIONS;
 
 pub(super) struct Standing<'a> {
     pub rows: &'a HashMap<&'a str, &'a QueuedWrite>,

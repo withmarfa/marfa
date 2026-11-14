@@ -194,11 +194,19 @@ When a current settings file omits a setting, a device MUST advise writing an em
 
 **Tests:** `device/folders-contract-a.test.ts › advises empty values when an edit removes a current setting`.
 
-### `folders/settings-watch-slice-delay`
+### `folders/settings-watch-refill`
 
-When the settings change to require another slice during a running watch, a device MUST defer hydration of that slice until the next push or watch restart.
+When changed folder settings require another type or tier slice, or name other member states or another filter, during a running watch, a device MUST fetch the items that slice holds and write their files without the watch being restarted.
 
-**Tests:** `device/folders-contract-a.test.ts › hydrates a changed watch slice at the next push rather than during the watch`.
+**Reason:** a watch started at login can run for days, and a person who widens a query expects its items to appear.
+
+**Tests:** `device/folders-contract-a.test.ts › fetches what a widened query holds at the running watch's next pass`, `› says a widened query waits while the server cannot be reached, and fetches it once it answers`.
+
+### `folders/settings-watch-refill-waits`
+
+If a running watch cannot fetch the items its changed folder settings require, then the CLI MUST say that the changed query waits and why.
+
+**Tests:** `device/folders-contract-a.test.ts › says a widened query waits while the server cannot be reached, and fetches it once it answers`.
 
 ## Local refusals and first sync
 
@@ -3758,6 +3766,12 @@ When a settings-file write crashes before landing, a device MUST retain the old 
 
 **Tests:** `device/folders-identity.test.ts › keeps its settings file its own when a crash cuts off writing it`.
 
+### `folders/write-crash-move-kept`
+
+When a pull's move of a file is cut off after the file is renamed and before the move is recorded, a device MUST NOT queue deletion of the item while its file is at the new path.
+
+**Tests:** `device/folders-placement.test.ts › keeps the item when %s cuts off another Mac's move after the rename`.
+
 ### `folders/write-editor-race`
 
 When a person changes a file before a pull's final check, a device MUST preserve that save instead of overwriting, removing, or letting go of the file.
@@ -4860,15 +4874,15 @@ When two folder queries both hold an item and each folder has its own bound file
 
 ### `folders/missing-file-trashed`
 
-When a missing folder file’s deletion grace expires, no other folder holds the moved file and `folders/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
+When a missing folder file’s deletion grace expires, no other folder holds the moved file, no other file present in the same folder is bound to its item and `folders/missing-file-changed-revives` does not restore the file, a device MUST queue deletion of its item.
 
 **Reason:** the files of one sweep are decided before any of them is trashed, so files deleted together are all trashed, whichever the sweep reaches first and whether they link one another. A link line in a file shows the note it names by title, and a note already trashed by the same sweep would otherwise read as a change made elsewhere.
 
-**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`.
+**Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`, `device/folders-placement.test.ts › keeps the item when %s cuts off another Mac's move after the rename`.
 
 ### `folders/missing-file-trashed-path-reported`
 
-When a missing folder file’s deletion grace expires, no other folder holds the moved file and `folders/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
+When a missing folder file’s deletion grace expires, no other folder holds the moved file, no other file present in the same folder is bound to its item and `folders/missing-file-changed-revives` does not restore the file, a device MUST name the path in the scan report’s `trashed`.
 
 **Tests:** `device/folders-one-mac.test.ts › trashes a missing file found in no folder on the Mac, and says so`, `device/folders-one-mac.test.ts › takes a file item at a document name moved to another folder as that item, and trashes it only where no folder holds it`, `device/folders-one-mac.test.ts › trashes an unchanged file item's missing file from a scan with no server, whose bytes it no longer holds`.
 
@@ -6748,9 +6762,23 @@ If an unmatched file is missing from the directory or has changed when its remov
 
 ### `folders/removal-threshold`
 
-When a folder assesses a large removal, a device MUST pause it only when its file count exceeds both `removal_threshold.files` and `removal_threshold.fraction` of bound files, defaulting to 10 and 0.25.
+When a folder assesses a large removal, a device MUST pause it only when its file count exceeds both `removal_threshold.files` and `removal_threshold.fraction` of bound files, defaulting to 10 and 0.25, or exceeds `removal_threshold.ceiling`, defaulting to 100.
 
-**Tests:** `device/folders.test.ts › pauses a large removal made on disk`, `device/folders.test.ts › follows the settings' removal threshold`, `device/folders-contract-b.test.ts › pauses only past both default removal thresholds ($missing of $total)`.
+**Tests:** `device/folders.test.ts › pauses a large removal made on disk`, `device/folders.test.ts › follows the settings' removal threshold`, `device/folders-contract-b.test.ts › pauses only past both default removal thresholds ($missing of $total)`, `› pauses a pass that removes more than 100 files whatever their share, judging each pass alone`.
+
+### `folders/removal-ceiling`
+
+When a folder assesses a large removal whose file count exceeds `removal_threshold.ceiling`, defaulting to 100, a device MUST pause it, whatever share of bound files it is.
+
+**Reason:** in a large folder a quarter is hundreds of files, too many to lose without being asked.
+
+**Tests:** `device/folders-contract-b.test.ts › pauses a pass that removes more than 100 files whatever their share, judging each pass alone`.
+
+### `folders/removal-judged-per-pass`
+
+When a folder assesses a large removal, a device MUST NOT count the files whose deletions an earlier pass sent.
+
+**Tests:** `device/folders-contract-b.test.ts › pauses a pass that removes more than 100 files whatever their share, judging each pass alone`.
 
 ### `folders/disk-removal-paused`
 

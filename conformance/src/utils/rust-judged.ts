@@ -307,6 +307,7 @@ export const RUST_JUDGED: readonly string[] = [
   "src/suites/compliance/restore-items-shape.test.ts",
   "src/suites/compliance/retention-policy.test.ts",
   "src/suites/compliance/schema-enforcement.test.ts",
+  "src/suites/compliance/search-bounds.test.ts",
   "src/suites/compliance/search-depth.test.ts",
   "src/suites/compliance/search-matching.test.ts",
   "src/suites/compliance/search-ordering.test.ts",

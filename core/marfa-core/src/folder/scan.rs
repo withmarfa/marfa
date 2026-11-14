@@ -1309,6 +1309,11 @@ impl Folder {
                 .map(|row| (row.path, row.item_id))
                 .collect()
         };
+        let present: HashSet<String> = bound
+            .iter()
+            .filter(|row| seen.contains(&row.path))
+            .map(|row| row.item_id.clone())
+            .collect();
         for row in bound {
             if let Some(gone) = self.root_gone() {
                 report.root_gone = Some(gone);
@@ -1331,6 +1336,13 @@ impl Folder {
                     state::journal_clear(&conn, &row.path)?;
                 }
                 report.unreached += 1;
+                continue;
+            }
+            // An interrupted move can leave a binding at its missing source path.
+            if present.contains(&row.item_id) {
+                let conn = self.core.conn()?;
+                state::unbind(&conn, &row.path)?;
+                state::journal_clear(&conn, &row.path)?;
                 continue;
             }
             // An unread part of the inventory may hold a file moved from

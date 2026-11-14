@@ -2648,6 +2648,7 @@ dependencies = [
  "fd-lock",
  "getrandom 0.4.3",
  "hex",
+ "ipnet",
  "keyring",
  "libc",
  "marfa-acl",
@@ -2762,6 +2763,7 @@ dependencies = [
 name = "marfa-server"
 version = "0.0.0"
 dependencies = [
+ "aes-gcm",
  "arc-swap",
  "argon2 0.6.0",
  "askama",
