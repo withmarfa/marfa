@@ -8,7 +8,7 @@ import WeightedShards, {
   secondsOf,
   shardLoads,
 } from "./shard-sequencer.js";
-import { SHARD_SECONDS, UNKNOWN_SECONDS } from "./shard-weights.js";
+import { RUN_APART, SHARD_SECONDS, UNKNOWN_SECONDS } from "./shard-weights.js";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
@@ -68,6 +68,12 @@ describe("the weights", () => {
     expect(missing).toEqual([]);
   });
 
+  it("name no file a job of its own runs", () => {
+    expect(
+      Object.keys(SHARD_SECONDS).filter((p) => RUN_APART.includes(p)),
+    ).toEqual([]);
+  });
+
   it("name only files of the projects that are split", () => {
     const sharded = new Set([
       ...suiteFiles("compliance"),
@@ -93,12 +99,37 @@ describe("the sequencer vitest runs for --shard", () => {
     return taken.map((spec) => spec.moduleId);
   }
 
-  it("runs every compliance file in exactly one of the shards", async () => {
+  const apart = RUN_APART.map((path) => resolve(root, path));
+
+  it("runs every compliance file but those run apart in exactly one of the shards", async () => {
     expect(files.length).toBeGreaterThan(100);
     const taken = (
       await Promise.all([1, 2, 3, 4].map((index) => shard(index, 4)))
     ).flat();
-    expect(taken.sort()).toEqual(specs.map((spec) => spec.moduleId).sort());
+    expect(taken.sort()).toEqual(
+      specs
+        .map((spec) => spec.moduleId)
+        .filter((id) => !apart.includes(id))
+        .sort(),
+    );
+  });
+
+  it("leaves a file run apart out of every shard, where a run without --shard keeps it", async () => {
+    // The witness: the file exists and a whole run takes it.
+    expect(apart.length).toBeGreaterThan(0);
+    for (const id of apart) {
+      expect(specs.map((spec) => spec.moduleId)).toContain(id);
+    }
+    const whole = new WeightedShards({
+      config: { root },
+    } as unknown as Vitest);
+    expect((await whole.shard(specs)).map((spec) => spec.moduleId)).toEqual(
+      specs.map((spec) => spec.moduleId),
+    );
+    const taken = (
+      await Promise.all([1, 2, 3, 4].map((index) => shard(index, 4)))
+    ).flat();
+    for (const id of apart) expect(taken).not.toContain(id);
   });
 
   it("runs the same files for the same shard on every machine", async () => {

@@ -71,7 +71,8 @@ export const JOBS = [
   // The contract run against the Rust server (`core/marfa-server/`), in two
   // groups of shards that share one build of the server and one score. The
   // server's own: the fixtures of the compliance, correctness and sync
-  // projects, and the server a release ships, built without its test hooks.
+  // projects, and the fixture that runs the server a release ships, built
+  // without its test hooks.
   // It reads what the server is built from (`SERVER_CRATES`), the fixtures it
   // runs and the meter.
   "rust-contract-server",
@@ -647,15 +648,13 @@ export interface Shard {
   module: boolean;
   /** Whether it holds every status the server drew to its declaration. */
   statuses: boolean;
-  /** Whether it needs the server a release ships, built without test hooks: only the compliance fixture that runs that program does. */
-  release: boolean;
 }
 
 const split = (
   project: string,
   count: number,
   lane: Shard["lane"],
-  rest: Pick<Shard, "binary" | "module" | "release">,
+  rest: Pick<Shard, "binary" | "module">,
 ): Shard[] =>
   Array.from({ length: count }, (_, i) => ({
     name: `${project} ${String(i + 1)}/${String(count)}`,
@@ -675,12 +674,10 @@ export const SHARDS: readonly Shard[] = [
     binary: false,
     module: false,
     statuses: true,
-    release: false,
   },
-  ...split("compliance", 12, "rust-contract-server", {
+  ...split("compliance", 10, "rust-contract-server", {
     binary: false,
     module: false,
-    release: true,
   }),
   {
     name: "cli",
@@ -690,12 +687,10 @@ export const SHARDS: readonly Shard[] = [
     binary: true,
     module: false,
     statuses: true,
-    release: false,
   },
-  ...split("device", 6, "rust-contract-device", {
+  ...split("device", 8, "rust-contract-device", {
     binary: true,
     module: true,
-    release: false,
   }),
 ];
 
