@@ -335,7 +335,7 @@ impl Clock {
     pub fn advance(&self, ms: u64) -> Result<u64, Refused> {
         let mut guard = self.guard();
         let (wall, steady) = self.readings();
-        guard.look(wall, steady);
+        let held = guard.look(wall, steady);
         let mut state = self.state();
         let offset = state
             .offset_ms
@@ -348,6 +348,10 @@ impl Clock {
         state.offset_ms = offset;
         drop(state);
         let (wall, steady) = self.readings();
+        if !held {
+            // A server that ran this long would have looked all along the way.
+            guard.trusted = guard.trusted.map(|trusted| trusted.max(wall));
+        }
         guard.look(wall, steady);
         drop(guard);
         self.tell_moved();
@@ -628,7 +632,10 @@ mod tests {
         ));
         assert!(!guard.look(T0 + 10_000, DAY_MS + 11_000));
         assert_eq!(guard.trusted, Some(T0 + 10_000));
-        assert_eq!(guard.standing(T0 + 10_500, DAY_MS + 11_500), Standing::Agrees);
+        assert_eq!(
+            guard.standing(T0 + 10_500, DAY_MS + 11_500),
+            Standing::Agrees
+        );
     }
 
     #[test]
