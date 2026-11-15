@@ -276,6 +276,11 @@ describe("what a change runs", () => {
       [...RUST, ...ENRICHMENT, "image", "quick-checks", "version-fields"],
     ],
     [
+      "the action that installs the compiler, which every job that builds Rust runs",
+      [".github/actions/rust-toolchain/action.yml"],
+      [...RUST, ...ENRICHMENT, "image", "quick-checks", "version-fields"],
+    ],
+    [
       "the core's compiler version, since a new compiler can break any build of the core",
       ["core/rust-toolchain.toml"],
       [...RUST, ...ENRICHMENT, "image", "quick-checks", "version-fields"],
