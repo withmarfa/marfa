@@ -21,6 +21,8 @@ const OWN_FIELDS: [&str; 8] = [
     "tier",
     "tags",
 ];
+/// A sort names these and no other own field; a group does not name `last_activity_at`.
+const SORT_ONLY: [&str; 1] = ["last_activity_at"];
 const DATE_FIELDS: [&str; 3] = ["created_at", "updated_at", "occurred_at"];
 const BUCKETS: [&str; 4] = ["day", "week", "month", "year"];
 const TIERS: [&str; 3] = ["library", "feed", "all"];
@@ -80,8 +82,12 @@ fn is_property(field: &str) -> bool {
         && characters.all(|rest| rest.is_ascii_alphanumeric() || rest == '_')
 }
 
-fn is_sort_field(field: &str) -> bool {
+fn is_group_field(field: &str) -> bool {
     OWN_FIELDS.contains(&field) || is_property(field)
+}
+
+fn is_sort_field(field: &str) -> bool {
+    is_group_field(field) || SORT_ONLY.contains(&field)
 }
 
 fn is_edge_field(field: &str, catalog: &Catalog) -> bool {
@@ -210,7 +216,7 @@ fn check_sort(value: &Value) -> Result<()> {
         {
             return Err(at(
                 &format!("sort.{index}.by"),
-                "A view sorts by an own field or properties.<name>.",
+                "A view sorts by an own field, last_activity_at or properties.<name>.",
             ));
         }
         if !matches!(
@@ -254,7 +260,7 @@ fn check_group(value: &Value, catalog: &Catalog) -> Result<()> {
         return Err(at("group", "group must be an object."));
     };
     let by = group.get("by").and_then(Value::as_str).unwrap_or_default();
-    if !is_sort_field(by) && !is_edge_field(by, catalog) {
+    if !is_group_field(by) && !is_edge_field(by, catalog) {
         return Err(at(
             "group.by",
             "A view groups by an own field, properties.<name>, or a registered edge type.",

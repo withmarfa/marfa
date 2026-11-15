@@ -130,7 +130,7 @@ fn every_compiled_read_carries_the_callers_reach() {
                 "word",
                 &Ranking([None, None]),
                 &order,
-                (21, 0),
+                (21, 0, None),
             )
             .unwrap(),
             &ask,
