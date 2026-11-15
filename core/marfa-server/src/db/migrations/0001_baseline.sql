@@ -162,9 +162,6 @@ CREATE INDEX IF NOT EXISTS items_event_always ON items (seq)
             OR COALESCE(CASE WHEN json_type(properties, '$.ends_at') = 'text' THEN julianday(json_extract(properties, '$.ends_at')) END,
                         julianday(json_extract(properties, '$.starts_at')) + json_extract(properties, '$.duration') / 86400.0)
                - julianday(json_extract(properties, '$.starts_at')) > 31.0));
-CREATE INDEX IF NOT EXISTS items_event_slot
-    ON items (julianday(json_extract(properties, '$.original_starts_at')))
-    WHERE json_type(properties, '$.original_starts_at') = 'text';
 
 -- One per table of an item that has held a row, kept by the row write. AUTOINCREMENT: a purged
 -- item's rows outlive its summary until housekeeping removes them, keyed by its seq.

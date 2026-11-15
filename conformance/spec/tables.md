@@ -1880,7 +1880,9 @@ When `GET /search` orders hits of one item that tie, the server MUST put the ite
 
 ### `tables/search-row-cursor`
 
-When a client sends back the `next_cursor` of each page of a `GET /search` whose hits include rows, the server MUST continue the ranking, so that walking to `null` delivers every item hit and every row hit once.
+When a client sends back the `next_cursor` of each page of a `GET /search` whose hits include rows with the same query while no item it may read and no row of one is written, the server MUST continue the ranking, so that walking to `null` delivers every item hit and every row hit once.
+
+**Reason:** a write to a row changes the count of entries and tokens its table's hits are weighed by, so it moves their rank as a write to an item does (`search-and-filters/search-cursor`).
 
 **Tests:** `compliance/table-rows-search.test.ts › walks a search whose hits include rows to a null cursor, delivering every hit once`.
 

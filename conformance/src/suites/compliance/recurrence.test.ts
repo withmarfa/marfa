@@ -987,6 +987,46 @@ describe("the window", () => {
     ]);
   });
 
+  it("leaves empty the slot of a multi-week occurrence in a window that holds the slot long after it began", async () => {
+    // Each occurrence runs 20 days, so a window on 15 May holds the occurrence
+    // that began on 2 May, 13 days before it.
+    const series = await event({
+      starts_at: "2055-05-02T10:00:00.000Z",
+      duration: 20 * 86400,
+      recurrence: ["RRULE:FREQ=MONTHLY;COUNT=3"],
+    });
+    const moved = await event({
+      starts_at: "2058-08-01T10:00:00.000Z",
+      ends_at: "2058-08-01T11:00:00.000Z",
+      original_starts_at: "2055-05-02T10:00:00.000Z",
+    });
+    const edge = await client.createEdge({
+      source_id: series,
+      target_id: moved,
+      edge_type: "parent-of",
+    });
+    expect(edge.status).toBe(201);
+
+    const own = (rows: Row[]) =>
+      rows.filter((o) => o.item.id === series || o.item.id === moved);
+    // The witnesses: the next occurrence still runs in a window of the same
+    // kind, and the moved one shows at its new time.
+    expect(
+      own(await window("2055-06-15T00:00:00Z", "2055-06-16T00:00:00Z")).map(
+        (o) => o.starts_at,
+      ),
+    ).toEqual(["2055-06-02T10:00:00.000Z"]);
+    expect(
+      own(await window("2058-08-01T00:00:00Z", "2058-08-02T00:00:00Z")).map(
+        (o) => o.item.id,
+      ),
+    ).toEqual([moved]);
+    // The window holds the slot the occurrence left, so shows nothing of it.
+    expect(
+      own(await window("2055-05-15T00:00:00Z", "2055-05-16T00:00:00Z")),
+    ).toEqual([]);
+  });
+
   it("refuses a window longer than 400 days, and one holding more than 5000 occurrences", async () => {
     const long = await client.listOccurrences({
       from: "2043-01-01T00:00:00Z",

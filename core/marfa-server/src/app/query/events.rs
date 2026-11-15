@@ -22,9 +22,7 @@ const ZONE_DAYS: f64 = 5.0;
 /// Each expression and condition here is the one its partial index holds, or the planner cannot use the index.
 const STARTS: &str = "json_extract(properties, '$.starts_at')";
 const ENDS: &str = "json_extract(properties, '$.ends_at')";
-const SLOT: &str = "json_extract(properties, '$.original_starts_at')";
 const HAS_START: &str = "json_type(properties, '$.starts_at') = 'text'";
-const HAS_SLOT: &str = "json_type(properties, '$.original_starts_at') = 'text'";
 const IS_SERIES: &str = "json_type(properties, '$.recurrence') IN ('array', 'object', 'text', 'integer', 'real', 'true', 'false')";
 
 /// The condition of `items_event_always`: a series, an event whose start or end no date function reads, and an event longer than [`SHORT_DAYS`].
@@ -38,7 +36,7 @@ fn always() -> String {
     )
 }
 
-/// The events a window can hold: those starting near it, and every series, long or undatable event.
+/// The events a window can hold: those starting near it, every series, long or undatable event, and every exception of a series read.
 fn candidates(from_ms: i64, to_ms: i64) -> Sql {
     let day = |ms: i64| ms as f64 / DAY_MS + UNIX_EPOCH_DAY;
     let (from, to) = (day(from_ms), day(to_ms));
@@ -50,16 +48,14 @@ fn candidates(from_ms: i64, to_ms: i64) -> Sql {
     sql.push(" AND ");
     sql.bind(Cell::Real(to + ZONE_DAYS));
     sql.push(&format!(
-        " UNION SELECT seq FROM items INDEXED BY items_event_start WHERE {HAS_START} \
-           AND julianday({STARTS}) IS NULL \
-         UNION SELECT seq FROM items INDEXED BY items_event_always WHERE {} \
-         UNION SELECT seq FROM items INDEXED BY items_event_slot WHERE {HAS_SLOT} \
-           AND julianday({SLOT}) BETWEEN ",
+        " UNION SELECT seq FROM items INDEXED BY items_event_always WHERE {} \
+         UNION SELECT x.seq FROM (SELECT id FROM items INDEXED BY items_event_always WHERE {}) s \
+           CROSS JOIN edges e INDEXED BY edges_source ON e.source_id = s.id AND e.edge_type = '{PARENT_OF}' \
+           CROSS JOIN items x ON x.id = e.target_id \
+         WHERE json_type(x.properties, '$.original_starts_at') = 'text'",
+        always(),
         always()
     ));
-    sql.bind(Cell::Real(from - ZONE_DAYS));
-    sql.push(" AND ");
-    sql.bind(Cell::Real(to + ZONE_DAYS));
     sql
 }
 
@@ -272,7 +268,9 @@ mod tests {
             "{plan}"
         );
         assert!(
-            plan.contains("SEARCH items USING INDEX items_event_slot"),
+            plan.contains("USING INDEX items_event_always")
+                && plan.contains("SEARCH e USING INDEX edges_source")
+                && plan.contains("SEARCH x USING"),
             "{plan}"
         );
         assert!(
@@ -368,8 +366,22 @@ mod tests {
         }
     }
 
+    fn bind(db: &Connection, seq: i64, series: i64, exception: i64) {
+        db.execute(
+            "INSERT INTO edges (seq, id, source_id, target_id, edge_type, properties, version, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, 'parent-of', jsonb('{}'), 1, '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            params![
+                seq,
+                format!("edge-{seq}"),
+                format!("event-{series}"),
+                format!("event-{exception}")
+            ],
+        )
+        .unwrap();
+    }
+
     #[test]
-    fn a_series_and_an_exception_are_read_for_the_slot_a_window_holds() {
+    fn a_series_and_every_exception_bound_to_it_are_read() {
         let db = held();
         put(
             &db,
@@ -382,21 +394,55 @@ mod tests {
             &json!({"starts_at": "2020-01-02T12:00:00Z", "original_starts_at": "2028-05-02T10:00:00Z"}),
         );
         put(&db, 3, &json!({"starts_at": "2019-01-01T00:00:00Z"}));
-        assert_eq!(
-            read(
-                &db,
-                instant("2028-05-01T00:00:00Z"),
-                instant("2028-05-04T00:00:00Z")
-            ),
-            vec![1, 2]
+        // An event naming a slot but bound to no series is read only by its own start.
+        put(
+            &db,
+            4,
+            &json!({"starts_at": "2019-01-02T12:00:00Z", "original_starts_at": "2028-05-02T10:00:00Z"}),
         );
-        assert_eq!(
-            read(
-                &db,
-                instant("2028-06-01T00:00:00Z"),
-                instant("2028-06-04T00:00:00Z")
-            ),
-            vec![1]
+        // A child that is no exception is not read for being a child.
+        put(&db, 5, &json!({"starts_at": "2019-01-03T00:00:00Z"}));
+        bind(&db, 1, 1, 2);
+        bind(&db, 2, 1, 5);
+        for window in [
+            ("2028-05-01T00:00:00Z", "2028-05-04T00:00:00Z"),
+            ("2028-06-01T00:00:00Z", "2028-06-04T00:00:00Z"),
+        ] {
+            assert_eq!(
+                read(&db, instant(window.0), instant(window.1)),
+                vec![1, 2],
+                "{window:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_exception_is_read_for_a_slot_long_before_a_window_the_occurrence_still_overlaps() {
+        let db = held();
+        // A monthly series of 20-day occurrences: the slot of 2028-05-02 overlaps a window of 2028-05-15.
+        put(
+            &db,
+            1,
+            &json!({
+                "starts_at": "2028-05-02T10:00:00Z",
+                "duration": 20 * 86_400,
+                "recurrence": ["RRULE:FREQ=MONTHLY"],
+            }),
         );
+        put(
+            &db,
+            2,
+            &json!({"starts_at": "2030-08-01T00:00:00Z", "original_starts_at": "2028-05-02T10:00:00Z"}),
+        );
+        bind(&db, 1, 1, 2);
+        let (from, to) = (
+            instant("2028-05-15T00:00:00Z"),
+            instant("2028-05-16T00:00:00Z"),
+        );
+        assert!(
+            instant("2028-05-02T10:00:00Z") < from - Duration::days(10),
+            "the slot lies more than 10 days before the window"
+        );
+        assert_eq!(read(&db, from, to), vec![1, 2]);
     }
 }
