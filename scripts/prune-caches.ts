@@ -150,7 +150,7 @@ function gh(...args: string[]): string {
 /** `gh` reports an HTTP error as `gh: <message> (HTTP <status>)` on stderr. */
 export function isNotFound(error: unknown): boolean {
   const stderr = (error as { stderr?: unknown }).stderr;
-  return typeof stderr === "string" && /\(HTTP 404\)/.test(stderr);
+  return typeof stderr === "string" && stderr.includes("(HTTP 404)");
 }
 
 function megabytes(bytes: number): string {

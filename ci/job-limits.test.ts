@@ -86,6 +86,9 @@ const LIMITS: Record<string, number> = {
   // and the test below holds the job to their sum.
   "benchmarks.yml:scale": 180,
   "benchmarks.yml:report-failure": 5,
+  // No runs yet: the workflow is new, and it deletes a few hundred caches at most.
+  "cache-upkeep.yml:prune": 5,
+  "cache-upkeep.yml:report-failure": 5,
   // One run so far, which took 0.1 minutes.
   "pdfium-upkeep.yml:prepare": 10,
   "pdfium-upkeep.yml:report-failure": 5,
