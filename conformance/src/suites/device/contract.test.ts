@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   answers,
+  bulkGetOf,
   certifiedRead,
   cursorAhead,
   copyHeadRead,
@@ -2864,10 +2865,25 @@ describe("the contract the working copy was built for", () => {
     scripted.copyAnswer("GET", "/", naming(answers.root(builtFor), BUILT_FOR));
     expect((await device.drain()).ok).toBe(true);
 
-    // The witness: the run made a read, a write, a stream and a read of the
-    // root, so the loop below holds each kind to the rule.
+    // A pinned item is read again in a bulk read, a read made with a body.
+    const pinned = wireItem({ id: "pinned", type: "core.bookmark" });
+    scripted.copyAnswer("GET", "/items/pinned", answers.updated(pinned));
+    scripted.copyAnswer(
+      "POST",
+      "/items/bulk-get",
+      bulkGetOf([certifiedRead(answers.updated(pinned))], {
+        withReach: true,
+        system: false,
+      }),
+    );
+    expect((await device.pin("pinned")).ok).toBe(true);
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+
+    // The witness: the run made a read, a write, a stream, a bulk read and a
+    // read of the root, so the loop below holds each kind to the rule.
     const made = sent(scripted);
     expect(made).toContain("POST /items");
+    expect(made).toContain("POST /items/bulk-get");
     expect(made).toContain("GET /events");
     expect(made).toContain("GET /");
     for (const request of scripted.requests) {
