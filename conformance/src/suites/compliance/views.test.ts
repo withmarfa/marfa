@@ -561,6 +561,90 @@ describe("the view door", () => {
     }
   });
 
+  it("takes the longest title, types list and group lists, and refuses one more, on a create and on a change", async () => {
+    const types = (n: number) => Array.from({ length: n }, () => "core.note");
+    const values = (n: number) => Array.from({ length: n }, (_, i) => `v${i}`);
+    const longest = {
+      title: "t".repeat(500),
+      query: { types: types(100) },
+      group: { by: "state", order: values(1000), hidden: values(1000) },
+    };
+
+    // The witness: the longest of each is taken, on a create and on a change.
+    const { id } = await view(longest);
+    const stored = (await client.getItem(id)).data.item.properties;
+    expect(stored.title).toBe(longest.title);
+    const changed = await client.updateView(id, { version: 1, ...longest });
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+
+    for (const [name, settings] of [
+      ["title", { title: "t".repeat(501) }],
+      ["title", { title: "" }],
+      ["query.types", { query: { types: types(101) } }],
+      ["group.order", { group: { by: "state", order: values(1001) } }],
+      ["group.hidden", { group: { by: "state", hidden: values(1001) } }],
+    ] as const) {
+      const created = await client.createView({
+        title: "refused",
+        ...settings,
+      });
+      const changing = await client.updateView(id, {
+        version: 2,
+        ...settings,
+      });
+      for (const r of [created, changing]) {
+        expect(r.status, name).toBe(400);
+        const refusal = r.error as unknown as Refusal;
+        expect(refusal.error.code, name).toBe("validation_error");
+        expect(refusal.error.details?.errors?.[0]?.path, name).toBe(name);
+      }
+    }
+    expect((await client.getItem(id)).data.item.version).toBe(2);
+  });
+
+  it("refuses a write of a view through the tag, extension, trash and restore doors, from a key the view door admits", async () => {
+    const minted = await client.createKey({
+      label: "view-item-doors",
+      source: `${ctx.source}-view-item-doors`,
+      type_permissions: { "system.view": "write", "core.note": "write" },
+      extension_permissions: { demo: "write" },
+    });
+    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
+    trackKey(ctx, minted.data.id);
+    const wide = new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
+
+    // The witness: this key writes a view through its own door, and the
+    // same tag and extension doors take an item of another type it may write.
+    const { id } = await view({}, wide);
+    const plain = await wide.createItem({
+      type: "core.note",
+      properties: { body: "a note" },
+    });
+    expect(plain.status, JSON.stringify(plain.error)).toBe(201);
+    trackItem(ctx, plain.data.item.id);
+    expect((await wide.addTags(plain.data.item.id, ["a"])).status).toBe(200);
+    expect(
+      (await wide.setItemExtension(plain.data.item.id, "demo", { a: 1 }))
+        .status,
+    ).toBe(200);
+
+    const answers = [
+      await wide.addTags(id, ["a"]),
+      await wide.removeTag(id, "a"),
+      await wide.setItemExtension(id, "demo", { a: 1 }),
+      await wide.deleteItemExtension(id, "demo"),
+      await wide.trashItems([id]),
+      await wide.restoreItem(id),
+    ];
+    for (const [door, r] of answers.entries()) {
+      expect(r.status, String(door)).toBe(403);
+      expect(r.error?.error.code, String(door)).toBe("type_not_permitted");
+    }
+    const unchanged = (await client.getItem(id)).data.item;
+    expect(unchanged.state).toBe("active");
+    expect(unchanged.version).toBe(1);
+  });
+
   it("refuses a create missing its title with missing_required_field naming title", async () => {
     const r = await client.createView({ sort: [] });
     expect(r.status).toBe(400);
