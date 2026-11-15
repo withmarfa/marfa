@@ -55,30 +55,40 @@ enum Taken {
     Unlocked(String),
 }
 
-fn take_lock(root: &Path, place: Place) -> Result<Taken, Failure> {
+/// The folder's lock, or why its file system takes none; anything else refuses the start.
+fn lock_or_why(root: &Path, place: Place) -> Result<Result<File, String>, Failure> {
     let named = place.named(root);
-    let why = match server_lock::take(&root.join(LOCK)) {
-        Ok(file) => return Ok(Taken::Locked(file)),
-        Err(Untaken::Held) => {
-            return Err(Failure::start(match place {
-                Place::Blobs => format!(
-                    "{named} is open in another Marfa server. Stop that server, or give this one \
-                     a blob folder of its own."
-                ),
-                Place::BackupFiles => format!(
-                    "{named} is open in another Marfa server, which runs a copy of this \
-                     instance. Stop that server, or give this one a backup folder of its own."
-                ),
-            }));
+    match server_lock::take(&root.join(LOCK)) {
+        Ok(file) => Ok(Ok(file)),
+        Err(Untaken::Held) => Err(Failure::start(match place {
+            Place::Blobs => format!(
+                "{named} is open in another Marfa server. Stop that server, or give this one a \
+                 blob folder of its own."
+            ),
+            Place::BackupFiles => format!(
+                "{named} is open in another Marfa server, which runs a copy of this instance. \
+                 Stop that server, or give this one a backup folder of its own."
+            ),
+        })),
+        Err(Untaken::Unsupported(error)) => {
+            Ok(Err(format!("its file system takes no locks ({error})")))
         }
-        Err(Untaken::Unsupported(error)) => format!("its file system takes no locks ({error})"),
-        Err(Untaken::Refused(why)) => format!("its lock file {why}"),
-    };
-    match place {
-        Place::Blobs => Err(Failure::start(format!(
-            "{named} could not be locked: {why}"
+        // The lock file of a server running as another account is refused here too.
+        Err(Untaken::Refused(why)) => Err(Failure::start(format!(
+            "{named} could not be locked: its lock file {why}"
         ))),
-        Place::BackupFiles => {
+    }
+}
+
+fn unlockable(place: Place, root: &Path, why: &str) -> Failure {
+    Failure::start(format!("{} could not be locked: {why}", place.named(root)))
+}
+
+fn take_lock(root: &Path, place: Place) -> Result<Taken, Failure> {
+    match (lock_or_why(root, place)?, place) {
+        (Ok(file), _) => Ok(Taken::Locked(file)),
+        (Err(why), Place::Blobs) => Err(unlockable(place, root, &why)),
+        (Err(why), Place::BackupFiles) => {
             tracing::warn!(
                 folder = %root.display(),
                 reason = %why,
@@ -91,13 +101,7 @@ fn take_lock(root: &Path, place: Place) -> Result<Taken, Failure> {
 
 /// Takes the blob folder's lock, which the server does not start without.
 pub fn lock_blobs(root: &Path) -> Result<File, Failure> {
-    match take_lock(root, Place::Blobs)? {
-        Taken::Locked(file) => Ok(file),
-        Taken::Unlocked(why) => Err(Failure::start(format!(
-            "{} could not be locked: {why}",
-            Place::Blobs.named(root)
-        ))),
-    }
+    lock_or_why(root, Place::Blobs)?.map_err(|why| unlockable(Place::Blobs, root, &why))
 }
 
 /// What a folder holds before the server takes it as its disk store.
@@ -599,6 +603,7 @@ impl Drop for Scratch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server_lock::without_locks;
     use tempfile::TempDir;
 
     #[test]
@@ -662,36 +667,75 @@ mod tests {
         );
     }
 
-    /// A lock file the server cannot take, as a file system without locks leaves it.
-    fn unlockable(root: &Path) {
-        fs::create_dir_all(root.join(LOCK)).unwrap();
+    /// A folder holding an upload in progress in `tmp`.
+    fn half_written(root: &Path) -> PathBuf {
+        let half = root.join(TMP).join("half");
         fs::create_dir_all(root.join(TMP)).unwrap();
-        fs::write(root.join(TMP).join("half"), b"left").unwrap();
+        fs::write(&half, b"left").unwrap();
+        half
     }
 
     #[test]
-    fn a_backup_files_area_that_cannot_be_locked_opens_unlocked_and_says_why() {
+    fn a_backup_files_area_on_a_file_system_without_locks_opens_unlocked_and_says_why() {
         let dir = TempDir::new().unwrap();
         let area = dir.path().join("area");
-        unlockable(&area);
-        let disk = Disk::open(&area, Place::BackupFiles, None).unwrap();
-        assert!(disk.unlocked().is_some_and(|why| why.contains("lock file")));
-        assert!(!area.join(TMP).join("half").exists());
+        let half = half_written(&area);
+        let disk = without_locks(|| Disk::open(&area, Place::BackupFiles, None)).unwrap();
+        assert!(
+            disk.unlocked()
+                .is_some_and(|why| why.contains("takes no locks")),
+            "{:?}",
+            disk.unlocked()
+        );
+        assert!(!half.exists());
 
         let adopted = dir.path().join("adopted");
-        unlockable(&adopted);
-        let claimed = Disk::claim(&adopted, &Uuid::now_v7().to_string()).unwrap();
+        fs::create_dir_all(&adopted).unwrap();
+        let id = Uuid::now_v7().to_string();
+        let claimed = without_locks(|| Disk::claim(&adopted, &id)).unwrap();
         assert!(claimed.unlocked().is_some());
 
         let blobs = dir.path().join("blobs");
-        unlockable(&blobs);
-        let refused = Disk::open(&blobs, Place::Blobs, None).unwrap_err();
+        let half = half_written(&blobs);
+        let refused = without_locks(|| Disk::open(&blobs, Place::Blobs, None)).unwrap_err();
         assert!(
             refused.message.contains("could not be locked"),
             "{}",
             refused.message
         );
-        assert!(blobs.join(TMP).join("half").exists());
+        assert!(half.exists());
+        let refused = without_locks(|| lock_blobs(&blobs)).unwrap_err();
+        assert!(
+            refused.message.contains("takes no locks"),
+            "{}",
+            refused.message
+        );
+    }
+
+    #[test]
+    fn a_backup_files_area_whose_lock_file_is_refused_refuses_the_start_and_keeps_its_tmp() {
+        let dir = TempDir::new().unwrap();
+        let area = dir.path().join("area");
+        // The witness: the area opens, locked, while its lock file is one the server can take.
+        drop(Disk::open(&area, Place::BackupFiles, None).unwrap());
+        let half = half_written(&area);
+        // What the lock file of a server running as another account fails too.
+        fs::remove_file(area.join(LOCK)).unwrap();
+        fs::create_dir(area.join(LOCK)).unwrap();
+        let refused = Disk::open(&area, Place::BackupFiles, None).unwrap_err();
+        assert!(
+            refused
+                .message
+                .starts_with("The backup folder's files area")
+                && refused.message.contains("its lock file"),
+            "{}",
+            refused.message
+        );
+        assert!(half.exists());
+        let id = Uuid::now_v7().to_string();
+        let refused = Disk::claim(&area, &id).unwrap_err();
+        assert!(refused.to_string().contains("its lock file"), "{refused}");
+        assert!(half.exists());
     }
 
     #[test]

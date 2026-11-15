@@ -382,8 +382,9 @@ mod tests {
     fn a_backup_files_area_left_unlocked_asks_for_a_look_and_a_locked_one_does_not() {
         let dir = tempfile::tempdir().unwrap();
         let area = dir.path().join("files").join("instance");
-        std::fs::create_dir_all(area.join(".server-lock")).unwrap();
-        let open = Disk::open(&area, Place::BackupFiles, None).unwrap();
+        let open =
+            crate::server_lock::without_locks(|| Disk::open(&area, Place::BackupFiles, None))
+                .unwrap();
         let concern = unlocked(&open).expect("no entry for an unlocked folder");
         assert_eq!(
             (concern.kind, concern.reference.as_str()),
