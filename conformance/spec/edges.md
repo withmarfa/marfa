@@ -954,7 +954,7 @@ If `POST /edges` names a target whose type the edge type's `target_type_constrai
 
 If `POST /edges` names an end whose item type is not registered, and the edge type's constraint list for that end is not empty and does not hold `*`, then the server MUST answer `400 edge_constraint_violation`.
 
-**Reason:** the type's parent and roles are not known, so the list cannot be judged and the write fails closed. A restore keeps such an edge as the archive holds it (`search-and-filters/restore-edges-end-unregistered`).
+**Reason:** the type's parent and roles are not known, so the list cannot be judged and the write fails closed. A restore keeps such an edge as the archive holds it (`archive/restore-edges-end-unregistered`).
 
 **Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit`.
 
@@ -1838,7 +1838,7 @@ When `DELETE /edge-types/{id}` deletes a registration that stored edges name, th
 
 While an edge's type is not registered, the server MUST return the edge from `GET /edges/{id}`, `GET /edges`, `GET /items/{id}/edges`, `GET /items/{id}/backrefs` and the `edges` of an item read.
 
-**Reason:** a forced delete keeps the edges (`edges/types-delete-force-keeps`), and an edge nothing can describe is still an edge a person made. An edge restored under an edge type that is not registered is read the same way (`search-and-filters/restore-edges-unregistered`).
+**Reason:** a forced delete keeps the edges (`edges/types-delete-force-keeps`), and an edge nothing can describe is still an edge a person made. An edge restored under an edge type that is not registered is read the same way (`archive/restore-edges-unregistered`).
 
 **Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`.
 

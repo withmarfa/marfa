@@ -412,7 +412,7 @@ If a registration or replacement declares `compatible_with` naming a type nothin
 
 If an otherwise permitted `PUT /types/{id}` or `DELETE /types/{id}` would break a registered type's `compatible_with` claim, directly or through inherited fields on either side, then the server MUST refuse the change with `422 compatible_with_violation` naming the affected claimants in `details.dependent_type_ids`, including a deletion with `force=true`.
 
-**Reason:** compatibility is a maintained promise, so accepted registrations remain valid when exported and restored under `search-and-filters/restore-compatible-types`.
+**Reason:** compatibility is a maintained promise, so accepted registrations remain valid when exported and restored under `archive/restore-compatible-types`.
 
 **Tests:** `compliance/restore-compatible-types.test.ts › refuses a target change that breaks a reader and restores the accepted registry`.
 
@@ -1290,7 +1290,7 @@ While a type is unregistered, the server MUST let an item of it have its tags, e
 
 While a type is unregistered, the server MUST return its items from `GET /items/{id}`, `GET /items`, `GET /search`, `GET /items/{id}/versions` and `GET /items/{id}/edges`.
 
-**Reason:** a forced delete keeps the items (`types/delete-force`), and an item nothing can describe is still an item a person made. An item restored under an unregistered type is read the same way (`search-and-filters/restore-items-orphan`).
+**Reason:** a forced delete keeps the items (`types/delete-force`), and an item nothing can describe is still an item a person made. An item restored under an unregistered type is read the same way (`archive/restore-items-orphan`).
 
 **Tests:** `compliance/restore-items-shape.test.ts › restores an item of a force-deleted type as the archive holds it, writable for tags, extensions and lifecycle, and restores its own export again`.
 

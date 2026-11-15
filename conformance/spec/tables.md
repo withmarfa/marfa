@@ -1820,7 +1820,7 @@ When `POST /restore` succeeds, the server MUST answer in `rows_imported` the num
 
 When `POST /restore` counts an item as a duplicate, the server MUST leave the rows the instance holds for it as they are and write none of the archive's.
 
-**Reason:** a restore replaces nothing the instance holds (`search-and-filters/restore-duplicate-kept`).
+**Reason:** a restore replaces nothing the instance holds (`archive/restore-duplicate-kept`).
 
 **Tests:** `compliance/table-rows-archive.test.ts › leaves the rows of an item counted as a duplicate as they are, counting the archive's in rows_skipped`.
 
@@ -1866,7 +1866,7 @@ If the `values` of a line of `rows.ndjson.gz`, written as JSON, are longer than 
 
 If a line of `rows.ndjson.gz` does not come after the line before it in the order `tables/archive-rows-order` states, then the server MUST answer `400 validation_error` naming the line.
 
-**Reason:** an export never writes repeated or out-of-order rows. This check does not detect a missing line; `search-and-filters/restore-line-counts` checks the counts.
+**Reason:** an export never writes repeated or out-of-order rows. This check does not detect a missing line; `archive/restore-line-counts` checks the counts.
 
 **Tests:** `compliance/table-rows-archive.test.ts › refuses a row out of order or repeated, naming its line`.
 

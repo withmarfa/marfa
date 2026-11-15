@@ -302,7 +302,7 @@ describe("a restore of an edge whose type was force-deleted", () => {
     });
 
     // An edge whose type no instance could have registered is no archive an
-    // instance wrote (`search-and-filters/restore-edge-type`).
+    // instance wrote (`archive/restore-edge-type`).
     const refused = await owner(third).restoreArchive(
       carrying(lineOf("Not An Edge Type")),
     );

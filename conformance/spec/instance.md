@@ -184,14 +184,6 @@ When a key holding `config.manage` sends `GET /config`, the server MUST answer a
 
 **Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/instance-config.test.ts › answers one identity to every caller, keeps it across a restart, and shares it with no other instance`.
 
-### `instance/id-in-archive`
-
-When a credential that may export sends `GET /export?format=archive`, the server MUST write into the archive's `manifest.json` an `instance_id` equal to the one the root answers.
-
-**Reason:** the manifest is a file nothing echoes back, so an export that wrote another name, or none, would go unnoticed at every other operation.
-
-**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
-
 ### `instance/id-same-every-answer`
 
 The server MUST answer every request for the description with the same `instance_id`.
@@ -375,30 +367,6 @@ When `GET /` is answered with the description, the server MUST answer `contract`
 When `GET /openapi.json` is answered, the server MUST answer `info.version` as the text of the number the root answers as `contract`.
 
 **Tests:** `compliance/instance.test.ts › carries one contract version at the root and in its document`.
-
-### `instance/archive-version`
-
-When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 1.
-
-**Reason:** the version is the one marker of the archive's layout, and a restore reads every version up to its own build's and refuses a later one (`search-and-filters/restore-version`). A field or a line kind added within a version is optional to a reader of that version (`search-and-filters/archive-version-additions`): a restore skips a field it does not read and a line kind it does not know, and names the kind (`search-and-filters/restore-unknown-field`, `search-and-filters/restore-unknown-line-kind`). An archive with a new entry, line file or field that a restore must read is a new version, because an older build would skip what it does not know.
-
-**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
-
-### `instance/archive-format`
-
-When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `format` of `marfa-archive`.
-
-**Reason:** a restore knows an archive by its format before it reads its version, and refuses a manifest without one as written before Marfa 0.1 (`search-and-filters/restore-format`).
-
-**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`.
-
-### `instance/archive-written-by`
-
-When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `written_by` of `marfa-server` and the version of the build, separated by a space.
-
-**Reason:** a restore that refuses an archive written before Marfa 0.1, or at a later version, names the build that wrote it, and only the manifest says which build that was.
-
-**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
 
 ### `instance/contract-header`
 
@@ -784,7 +752,7 @@ Where both `S3_BUCKET` and `MARFA_BACKUP_PATH` are set, the server MUST refuse t
 
 ### `instance/backup-holds-export`
 
-When the server takes a backup, the server MUST put in it the items, edges, rows and instance lines that `GET /export?format=archive&state=any&files=false` would send a key that holds every permission and reaches every type at that moment, but for the `source` lines that `search-and-filters/archive-sources` gives a backup.
+When the server takes a backup, the server MUST put in it the items, edges, rows and instance lines that `GET /export?format=archive&state=any&files=false` would send a key that holds every permission and reaches every type at that moment, but for the `source` lines that `archive/archive-sources` gives a backup.
 
 **Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything`.
 
@@ -822,7 +790,7 @@ When the private local command sends `POST /backups`, the server MUST answer in 
 
 If an item, an earlier version of an item or an edge a backup would hold takes more than 67108864 bytes on its archive line, then the server MUST answer `POST /backups` with `409 export_entry_unrestorable`, with `details.entry` naming the item or edge, without putting the backup.
 
-**Reason:** a restore reads no line longer (`search-and-filters/restore-text-cap`), so such a backup could never be restored, and an owner told at the time can correct the item while the earlier backups still stand.
+**Reason:** a restore reads no line longer (`archive/restore-text-cap`), so such a backup could never be restored, and an owner told at the time can correct the item while the earlier backups still stand.
 
 **Tests:** `compliance/archive-line-cap.test.ts › refuses an export and a backup whose item line is past the limit, naming the item`.
 
@@ -2826,14 +2794,6 @@ If the database exists, `marfa.secrets` does not and `MARFA_KEY_SALT` is unset w
 **Reason:** a new salt would end every key, so a lost file is for the owner to restore and never for the server to replace.
 
 **Tests:** `compliance/hook-free-server.test.ts › uses the secret in the file, and refuses to replace a file that was lost`.
-
-### `instance/secrets-not-exported`
-
-When the server writes an archive export, the server MUST NOT include `marfa.secrets` in it.
-
-**Reason:** an export is meant to be shared and restored elsewhere, and the secrets belong to the instance that made them.
-
-**Tests:** `compliance/hook-free-server.test.ts › leaves marfa.secrets out of an export, whether the file was generated or the secrets came from the environment`.
 
 ### `instance/files-private`
 

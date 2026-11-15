@@ -12,7 +12,7 @@ import {
  * that makes a type an event leaves an item whose rule no calendar read can
  * unfold: the way to make such an item through the HTTP API alone. The shape of
  * a type is no such way, because a restore does not hold an item to it
- * (`search-and-filters/restore-items-shape-free`).
+ * (`archive/restore-items-shape-free`).
  */
 let server: FreshServer | undefined;
 let working: MarfaClient;

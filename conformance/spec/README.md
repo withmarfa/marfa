@@ -27,7 +27,8 @@ The contract has two halves.
 - `connectors.md`: a program outside the server that has a connector registration: it registers under its key, heartbeats, reports its runs, holds its registration, and keeps its state and agreements on the instance.
 - `inbound-webhooks.md`: a connector's inbound endpoints, the operation a sender posts to, and the deliveries a connector reads and marks handled.
 - `events.md`: the event stream, its frames and filters, and outbound webhooks.
-- `search-and-filters.md`: the query grammar every listing shares, search, the counts, the lookup by link, natural key or id, export and restore.
+- `search-and-filters.md`: the query grammar every listing shares, search, the counts, the lookup by link, natural key or id, and the export of items.
+- `archive.md`: the archive an export writes and a restore reads: its entries and manifest, what it carries, and what a restore takes from it.
 - `occurrences.md`: how `GET /occurrences` unfolds a series across zones and clock changes, what a window includes, and what a write may store as a schedule.
 - `keys-and-oauth.md`: keys, what they reach and their levers, and sign-in: discovery, registration, authorization with consent, tokens, grants, the device grant and the sign-in pages.
 - `mcp.md`: the MCP endpoint, who may call it, the tools a credential is offered, and how the tools guard the items they change and the files they fetch.
@@ -57,9 +58,9 @@ Within one 0.x minor release, five rules hold:
 
 1. **A server may add.** An operation, a field, a code, an event type or a feature that is new does not break a client built for the contract.
 2. **A server never changes or removes what exists.** What a client reads keeps its name, its shape and its meaning.
-3. **A client ignores what it does not know.** A device reads a member, a feature or an event type it does not know as it reads an answer without it (`device/answer-added-members`, `device/event-type-unknown`), and a restore skips a field or a line kind it does not know (`search-and-filters/restore-unknown-field`, `search-and-filters/restore-unknown-line-kind`).
+3. **A client ignores what it does not know.** A device reads a member, a feature or an event type it does not know as it reads an answer without it (`device/answer-added-members`, `device/event-type-unknown`), and a restore skips a field or a line kind it does not know (`archive/restore-unknown-field`, `archive/restore-unknown-line-kind`).
 4. **Every client names its contract version.** A device sends it in `X-Marfa-Contract` on every request but a read of the root or of `/health` (`device/contract-sent`), and the server refuses a request that names another (`instance/contract-request-other`).
-5. **A build opens what an earlier build of the same minor stored.** A server upgrades its database (`instance/upgrade-migrates-older`), a device upgrades its store (`device/schema-upgrade`) and a restore reads an archive of every version up to its own (`search-and-filters/restore-version`).
+5. **A build opens what an earlier build of the same minor stored.** A server upgrades its database (`instance/upgrade-migrates-older`), a device upgrades its store (`device/schema-upgrade`) and a restore reads an archive of every version up to its own (`archive/restore-version`).
 
 The first two rules compare one release with another, so no fixture holds a single build to them: a change to `openapi.json` or to a statement is reviewed against them. The fixtures of `instance/upgrade-migrates-older` wait on issue #2802 and those of `device/schema-upgrade` on issue #3065, so rule 5 has no fixture yet for the upgrade of a database or of a store.
 
