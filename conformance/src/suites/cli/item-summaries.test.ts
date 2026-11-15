@@ -192,13 +192,13 @@ it("stops an uncertain bin emptying and exposes its outcome through the real soc
   }
 });
 
-it("pages the bin and empties it by itself, saying how many have gone", async () => {
+async function fillBinThroughClient(count: number): Promise<number> {
   const client = new MarfaClient({
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
   });
   const made = await client.bulkItems(
-    Array.from({ length: 230 }, (_, at) => ({
+    Array.from({ length: count }, (_, at) => ({
       type: "core.note",
       properties: { title: `Bin witness ${String(at)}` },
     })),
@@ -209,35 +209,59 @@ it("pages the bin and empties it by itself, saying how many have gone", async ()
     const moved = await client.trashItems(ids.slice(at, at + 20));
     expect(moved.status, JSON.stringify(moved.error)).toBe(200);
   }
-  const local = cli.viaSocket(server.controlSocket);
-
-  const listed = await local.json<{
-    data: { id: string }[];
-    next_cursor: null;
-  }>(["items", "bin", "list", "--all", "--limit", "50"]);
-  const held = listed.data.length;
-  expect(held).toBeGreaterThanOrEqual(230);
+  const listed = await cli
+    .viaSocket(server.controlSocket)
+    .json<{ data: { id: string }[]; next_cursor: null }>([
+      "items",
+      "bin",
+      "list",
+      "--all",
+      "--limit",
+      "50",
+    ]);
   expect(listed.next_cursor).toBeNull();
-  expect(new Set(listed.data.map((row) => row.id)).size).toBe(held);
+  expect(new Set(listed.data.map((row) => row.id)).size).toBe(
+    listed.data.length,
+  );
+  expect(listed.data.length).toBeGreaterThanOrEqual(count);
+  return listed.data.length;
+}
 
-  const emptied = await local.run([
-    "items",
-    "bin",
-    "empty",
-    "--confirm",
-    "PURGE",
-  ]);
+const emptyBin = () =>
+  cli
+    .viaSocket(server.controlSocket)
+    .run(["items", "bin", "empty", "--confirm", "PURGE"]);
+
+it("sends each batch's cursor back until the server names none, so a bin of more than 200 empties in one command", async () => {
+  await fillBinThroughClient(230);
+  const emptied = await emptyBin();
+  expect(emptied.code, emptied.stderr).toBe(0);
+  const after = await cli
+    .viaSocket(server.controlSocket)
+    .json<{ data: unknown[] }>(["items", "bin", "list"]);
+  expect(after.data).toEqual([]);
+});
+
+it("prints how many items have been deleted so far after each batch and the total at the end", async () => {
+  const held = await fillBinThroughClient(230);
+  const emptied = await emptyBin();
   expect(emptied.code, emptied.stderr).toBe(0);
   const said = emptied.stdout.trim().split("\n");
   expect(said[0]).toBe("200 items deleted so far");
   expect(said.at(-1)).toBe(`${String(held)} items deleted from the bin`);
-  const after = await local.json<{ data: unknown[] }>(["items", "bin", "list"]);
-  expect(after.data).toEqual([]);
+});
 
-  const again = await local.json<{
-    purged: number;
-    stayed: number;
-    failures: unknown[];
-  }>(["items", "bin", "empty", "--confirm", "PURGE"]);
+it("exits 0 when no deletion was left unconfirmed, and reports nothing to do on an empty bin", async () => {
+  await fillBinThroughClient(3);
+  expect((await emptyBin()).code).toBe(0);
+  const again = await cli
+    .viaSocket(server.controlSocket)
+    .json<{ purged: number; stayed: number; failures: unknown[] }>([
+      "items",
+      "bin",
+      "empty",
+      "--confirm",
+      "PURGE",
+    ]);
   expect(again).toEqual({ purged: 0, stayed: 0, failures: [] });
 });

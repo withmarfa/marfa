@@ -1458,6 +1458,12 @@ When the server answers `POST /items/trash-preview`, the server MUST NOT change 
 
 **Tests:** `compliance/trash-preview.test.ts › writes nothing`.
 
+### `items/trash-ids-bounds`
+
+If `ids` on `POST /items/trash` or `POST /items/trash-preview` holds no ID or more than 20, then the server MUST answer `400 validation_error` naming `ids`.
+
+**Tests:** `compliance/trash-preview.test.ts › takes 1 to 20 ids and refuses none or 21 with 400 validation_error naming ids, moving nothing`.
+
 ### `items/trash-preview-hidden`
 
 When the trash a preview describes would move an item whose type the key may not read, the server MUST NOT list that item or count it.
@@ -2672,13 +2678,51 @@ If a `GET /search` query contains a NUL character, then the server MUST answer `
 
 When the private local command calls `GET /trash`, the server MUST return a page of summaries containing `id`, `type`, `version`, `name`, `source`, `created_at`, `trashed_at`, `trashed_by` and `eligible_for_deletion_at`, with `retention_days` beside the page.
 
-**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+**Tests:** `compliance/owner-trash.test.ts › lists a trashed item as a summary with its fields and retention_days beside the page`.
 
 ### `items/owner-trash-selection`
 
-When `GET /trash` lists items, the server MUST select only trashed non-system items admitted by instance source filtering, applying exact `type` and name-only `q` filters before cursor pagination in descending creation-time and ID order.
+When the private local command calls `GET /trash`, the server MUST list only items in the bin.
 
-**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+**Tests:** `compliance/owner-trash.test.ts › lists only the items in the bin`.
+
+### `items/owner-trash-source-filter`
+
+If the instance's source filter does not admit an item, then the server MUST NOT list it on `GET /trash`.
+
+**Tests:** `compliance/owner-trash.test.ts › leaves out of the bin the items whose source the instance's source filter does not admit`.
+
+### `items/owner-trash-type`
+
+When `GET /trash` names `type`, the server MUST list only items whose type is exactly that identifier.
+
+**Tests:** `compliance/owner-trash.test.ts › lists the items of the type it names and no other, matching the identifier exactly`.
+
+### `items/owner-trash-search`
+
+When `GET /trash` names `q`, the server MUST list only items whose name contains `q`, trimmed, without regard to case.
+
+**Tests:** `compliance/owner-trash.test.ts › matches q as a case-insensitive substring of the name alone, with the query trimmed`.
+
+### `items/owner-trash-search-page`
+
+When `GET /trash` names `q` and `limit`, the server MUST fill the page with matching items for as long as that many remain.
+
+**Reason:** a bin of many items must not hide a match behind newer items that do not match.
+
+**Tests:** `compliance/owner-trash.test.ts › applies q before the page, so a match behind newer items still fills the page`.
+
+### `items/owner-trash-order`
+
+When `GET /trash` lists items, the server MUST list them newest `created_at` first, and by descending ID among items created at the same time.
+
+**Tests:** `compliance/owner-trash.test.ts › lists the bin newest created first, with the id as the tie-break, whatever order the items went there`.
+
+### `items/owner-trash-q-limit`
+
+If `q` on `GET /trash` or `GET /items/summaries` is longer than 500 Unicode characters, then the server MUST answer `400 validation_error` naming `q`.
+
+**Tests:** `compliance/owner-trash.test.ts › takes a q of 500 characters on GET %s and refuses one of 501, naming q`.
 
 ### `items/owner-trash-limit-default`
 
@@ -2692,41 +2736,107 @@ If `GET /trash` names a `limit` that is not a whole number of 1 to 200, then the
 
 **Tests:** `compliance/page-limits.test.ts › $door refuses a limit of 0, a negative and a non-number, naming limit`, `› $door takes its largest page and refuses a limit past it or a fraction`.
 
+### `items/owner-trash-cursor`
+
+If `GET /trash` names a `cursor` it did not issue, then the server MUST answer `400 validation_error`.
+
+**Tests:** `compliance/owner-trash.test.ts › refuses a cursor the bin did not issue with 400 validation_error`.
+
 ### `items/owner-trash-actions`
 
-When the private local command posts to `/items/summaries/{id}/trash`, `/restore` or `/purge` under that item summary, the server MUST apply the corresponding item lifecycle operation, including its cascade, restoration and connection protections.
+When the private local command posts to `/items/summaries/{id}/trash`, `/restore` or `/purge` with the item's current `version`, the server MUST answer `200` with the item's summary: `id`, `type`, `version`, `name`, `source` and `created_at`.
 
-**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+**Tests:** `compliance/owner-trash.test.ts › answers a move to the bin, a restore and a purge with the item's summary`.
+
+### `items/owner-trash-move`
+
+When the private local command moves an item to the bin, the server MUST also move every item `items/trash-cascade` takes with it.
+
+**Tests:** `compliance/owner-trash.test.ts › moves an item to the bin with the children it takes, and leaves a key unable to read either`.
+
+### `items/owner-trash-restore`
+
+When the private local command restores an item from the bin, the server MUST also restore every item that went to the bin with it (`items/restore-cascade`).
+
+**Tests:** `compliance/owner-trash.test.ts › restores an item with the children that went to the bin with it`.
+
+### `items/owner-trash-purge`
+
+When the private local command purges an item in the bin, the server MUST delete it for good.
+
+**Tests:** `compliance/owner-trash.test.ts › purges an item in the bin for good, and refuses to purge one that is not in the bin`.
+
+### `items/owner-trash-purge-state`
+
+If the private local command purges an item that is not in the bin, then the server MUST answer `400 invalid_transition` and leave the item.
+
+**Tests:** `compliance/owner-trash.test.ts › purges an item in the bin for good, and refuses to purge one that is not in the bin`.
+
+### `items/owner-trash-blocked`
+
+If a move to the bin that the private local command asks for meets a `block` edge (`items/trash-blocked`), then the server MUST answer `400 edge_constraint_violation` with the message `Another item prevents this item from moving to the trash.` and leave the item.
+
+**Tests:** `compliance/owner-trash.test.ts › refuses a move to the bin of an item that a block edge points to, with 400 and a fixed message, and leaves the item`.
+
+### `items/owner-trash-id`
+
+If an owner trash action names an ID that is not well formed, then the server MUST answer `400 invalid_id`.
+
+**Tests:** `compliance/owner-trash.test.ts › refuses an owner trash action that names a malformed id with 400 invalid_id`.
+
+### `items/owner-trash-missing`
+
+If an owner trash action names an item that no item holds, then the server MUST answer `404 item_not_found`.
+
+**Tests:** `compliance/owner-trash.test.ts › refuses an owner trash action that names an item no item holds with 404 item_not_found`.
+
+### `items/owner-trash-local-only`
+
+If a request that carries a key calls `GET /trash`, `POST /trash/empty` or an owner trash action, then the server MUST answer `403 forbidden` with `details.needs` set to `local` (`errors/needs-local`).
+
+**Tests:** `compliance/owner-trash.test.ts › refuses a key every owner trash door, naming the local command it needs`.
 
 ### `items/owner-trash-content-boundary`
 
 When an owner trash operation succeeds or fails, the server MUST exclude item properties, metadata, history and edge content from its response, including any `current` value on a version conflict.
 
-**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+**Tests:** `compliance/owner-trash.test.ts › keeps item content out of every answer to an owner trash action, the current summary of a stale version included`.
 
 ### `items/owner-trash-version`
 
 If an owner trash action's required `version` differs from the item's current version, then the server MUST answer `409 version_conflict` with the current item summary and leave the item unchanged.
 
-**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+**Tests:** `compliance/owner-trash.test.ts › answers a stale version with 409 version_conflict and the item's current summary, leaving it unchanged`.
 
 ### `items/trash-identity`
 
-When an item enters the trash, the server MUST retain the responsible sign-in's identity and name at that time beside its deletion time until restoration, with null identity where no sign-in is known.
+When an item enters the bin, the server MUST report the sign-in that moved it as `trashed_by`, with `kind`, `id` and `name`, and the time it moved as `trashed_at`.
 
-**Tests:** `compliance/owner-trash.test.ts › preserves deletion identity and time through an archive and clears them on restoration`.
+**Tests:** `compliance/owner-trash.test.ts › gives an item's trashed_by the sign-in that last moved it to the bin, and trashed_at the time`, `› preserves deletion identity and time through an archive and clears them on restoration`.
 
 ### `items/trash-archive-identity`
 
-When an archive exports and restores a trashed item, the server MUST preserve its recorded `trashed_at` and `trashed_by`, leaving missing historical values null.
+When an archive exports and restores a trashed item, the server MUST preserve its recorded `trashed_at` and `trashed_by`.
 
 **Tests:** `compliance/owner-trash.test.ts › preserves deletion identity and time through an archive and clears them on restoration`.
 
 ### `items/owner-empty-trash`
 
-When the private local command posts to `/trash/empty`, the server MUST attempt at most 200 selected items that still have their selected version and trash state, returning the committed purge count, per-item failures and the next batch cursor.
+When the private local command posts to `/trash/empty`, the server MUST attempt at most 200 items of the bin, the first 200 that `GET /trash` lists.
 
-**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+**Tests:** `compliance/owner-trash.test.ts › attempts at most 200 items of the bin in a batch, those a listing of the bin gives first`.
+
+### `items/owner-empty-trash-cursor`
+
+When the private local command posts to `/trash/empty`, the server MUST return `next_cursor` as the cursor that continues the bin after the last item of the batch, or null at the end of the bin.
+
+**Tests:** `compliance/owner-trash.test.ts › returns the cursor that continues a batch at the item after it, and null at the end of the bin`.
+
+### `items/owner-empty-trash-changed`
+
+If an item the batch selected has left the bin by the time the batch reaches it, then the server MUST keep the item and list it in `failures` with `invalid_transition`.
+
+**Tests:** `compliance/owner-trash.test.ts › keeps an item that left the bin after the batch selected it, and lists it in failures as invalid_transition`.
 
 ### `items/owner-empty-trash-count`
 
@@ -2750,27 +2860,71 @@ When a caller runs `marfa --socket PATH items bin list`, `move`, `restore`, `pur
 
 ### `items/owner-empty-bin-cli`
 
-When a caller runs `marfa --socket PATH items bin empty --confirm PURGE`, the CLI MUST send each batch's `next_cursor` back to `POST /trash/empty` until the server names none, print how many items have been deleted so far after each batch and the total at the end, and exit `0` when no deletion was left unconfirmed.
+When a caller runs `marfa --socket PATH items bin empty --confirm PURGE`, the CLI MUST send each batch's `next_cursor` back to `POST /trash/empty` until the server names none.
 
 **Reason:** the server deletes at most 200 items at a time, so a person with a bigger bin would otherwise copy a cursor between runs.
 
-**Tests:** `cli/item-summaries.test.ts › pages the bin and empties it by itself, saying how many have gone`.
+**Tests:** `cli/item-summaries.test.ts › sends each batch's cursor back until the server names none, so a bin of more than 200 empties in one command`.
+
+### `items/owner-empty-bin-progress`
+
+When a caller runs `marfa --socket PATH items bin empty --confirm PURGE`, the CLI MUST print how many items have been deleted so far after each batch and the total at the end.
+
+**Tests:** `cli/item-summaries.test.ts › prints how many items have been deleted so far after each batch and the total at the end`.
+
+### `items/owner-empty-bin-exit`
+
+When a caller runs `marfa --socket PATH items bin empty --confirm PURGE` and no deletion was left unconfirmed, the CLI MUST exit `0`.
+
+**Tests:** `cli/item-summaries.test.ts › exits 0 when no deletion was left unconfirmed, and reports nothing to do on an empty bin`.
+
+### `items/owner-empty-bin-unconfirmed`
+
+If a batch of `marfa --socket PATH items bin empty --confirm PURGE` lists a deletion that could not be confirmed, then the CLI MUST exit with a code other than `0`.
+
+**Tests:** `cli/item-summaries.test.ts › stops an uncertain bin emptying and exposes its outcome through the real socket CLI`.
 
 ### `items/owner-trash-eligibility`
 
-When a trash summary has a recorded deletion time and effective retention is positive, the server MUST return `eligible_for_deletion_at` as the deletion time plus that many days, or null when the deadline is outside the supported date range.
+When retention is positive, the server MUST return a trash summary's `eligible_for_deletion_at` as `trashed_at` plus that many days.
 
-**Reason:** This is eligibility for a later sweep, not an exact deletion promise. Disabled expiry and missing historical deletion times return null.
+**Reason:** this is eligibility for a later sweep, not an exact deletion promise.
 
-**Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
+**Tests:** `compliance/owner-trash.test.ts › gives eligible_for_deletion_at as the deletion time plus the retention days`.
+
+### `items/owner-trash-eligibility-off`
+
+While the trash retention is 0 days, the server MUST return `eligible_for_deletion_at` as null.
+
+**Tests:** `compliance/owner-trash.test.ts › gives eligible_for_deletion_at as null while the retention is 0 days`.
 
 ### `items/owner-trash-unknown-outcome`
 
-If an owner trash write has an unresolved transaction outcome, then the server MUST report `details.write_outcome: unknown` without claiming the item was kept or deleted.
+If the commit of an owner purge cannot be confirmed, then the server MUST answer `500 internal_error` with `details.write_outcome` set to `unknown` and a message that does not say whether the item was kept.
 
-**Reason:** An unavailable commit witness cannot prove rollback. A single-item action answers 500; an empty-trash batch includes the uncertain failure, stops processing and returns no continuation cursor. The caller reads current state before a manual retry.
+**Reason:** an unavailable commit witness cannot prove rollback, so the caller reads current state before a manual retry.
 
-**Tests:** `cli/item-summaries.test.ts › stops an uncertain bin emptying and exposes its outcome through the real socket CLI`.
+**Tests:** `compliance/owner-trash.test.ts › answers a purge whose commit cannot be confirmed with 500 and write_outcome unknown, without saying whether the item was kept`.
+
+### `items/owner-empty-trash-unknown`
+
+If the commit of a purge in an emptying batch cannot be confirmed, then the server MUST list the item in `failures` with `details.write_outcome` set to `unknown`.
+
+**Tests:** `compliance/owner-trash.test.ts › lists the item whose purge could not be confirmed in failures, with write_outcome unknown`.
+
+### `items/owner-empty-trash-stop`
+
+If the commit of a purge in an emptying batch cannot be confirmed, then the server MUST attempt no further item of that batch.
+
+**Tests:** `compliance/owner-trash.test.ts › attempts no further item of a batch after one whose purge could not be confirmed`.
+
+### `items/owner-empty-trash-no-cursor`
+
+If the commit of a purge in an emptying batch cannot be confirmed, then the server MUST return a null `next_cursor`.
+
+**Reason:** the caller reads current state before it empties the bin again.
+
+**Tests:** `compliance/owner-trash.test.ts › returns no cursor after a batch that stopped for a purge it could not confirm`.
 
 ## Private local authority
 
