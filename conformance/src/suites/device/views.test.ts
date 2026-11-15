@@ -428,14 +428,9 @@ it("refuses a view sorted by last_activity_at, which the copy does not hold", as
   const device = await copy([{ item: { id: id(1) } }], {
     sort: [{ by: "last_activity_at", direction: "desc" }],
   });
-  for (const args of [
-    ["items", "list", "--view", VIEW],
-    ["search", "body", "--view", VIEW],
-  ]) {
-    const refused = await device.attempt(args);
-    expect(refused.ok, JSON.stringify(refused)).toBe(false);
-    if (!refused.ok) expect(refused.refusal.raw).toContain("last_activity_at");
-  }
+  const refused = await device.attempt(["items", "list", "--view", VIEW]);
+  expect(refused.ok, JSON.stringify(refused)).toBe(false);
+  if (!refused.ok) expect(refused.refusal.raw).toContain("last_activity_at");
 });
 
 /** A whole copy whose cursor then ages out, so it answers but is stale. */

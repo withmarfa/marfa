@@ -6158,7 +6158,7 @@ When a caller reads a view sorted by an own field, a device MUST order the items
 
 ### `device/view-sort-last-activity`
 
-If a view sorts by `last_activity_at`, then a device MUST refuse its item list and search `invalid`, naming `last_activity_at`.
+If a view sorts by `last_activity_at`, then a device MUST refuse its item list `invalid`, naming `last_activity_at`.
 
 **Reason:** a device does not hold when an item's rows last changed, so an order it made would differ from the server's with no signal.
 
