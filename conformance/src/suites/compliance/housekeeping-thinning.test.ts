@@ -8,6 +8,7 @@ import {
 } from "../../utils/fresh-server.js";
 import {
   DAY_MS,
+  HOUR_MS,
   movedClock,
   QUIET_SCHEDULE,
   quiet,
@@ -26,7 +27,9 @@ import {
  * How the `version-thinning` job takes the policy: from the instance
  * defaults for each field no type in the chain declares, from the instance
  * defaults for an item whose type is gone, and from the type as it stands
- * when a version is removed.
+ * when a version is removed. A type that declares some of the windows leaves
+ * the others to the defaults, so the windows an item thins by can stand out
+ * of order.
  *
  * The instance defaults are the server's settings, set here to values
  * unlike the built-in ones, so a job that read any other value thins an item
@@ -46,6 +49,19 @@ const DEFAULTS = {
   MARFA_VERSION_DAILY_SNAPSHOT_DAYS: "2",
   MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS: "20",
 };
+
+/** Moves the clock to the first noon UTC an hour or more on. */
+async function toNoon(clock: ReturnType<typeof movedClock>): Promise<void> {
+  const soon = new Date(clock.now() + 60 * 60_000);
+  let noon = Date.UTC(
+    soon.getUTCFullYear(),
+    soon.getUTCMonth(),
+    soon.getUTCDate(),
+    12,
+  );
+  if (noon < soon.getTime()) noon += DAY_MS;
+  await clock.advance(noon - clock.now());
+}
 
 /** Moves the clock out of the minute before a UTC midnight, so the writes of
  *  a case that wants one date all carry it. */
@@ -189,6 +205,80 @@ describe("version thinning by the instance defaults", () => {
       // The witness: the policy the removed type held, kept by a type that
       // still holds it.
       expect(await history(writer, witness)).toEqual([1, 2, 3, 4]);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "thins by day inside the daily window where a type declares only a weekly_snapshot_days of 0",
+    async () => {
+      const bare = await register(writer);
+      const weeklyZero = await register(writer, { weekly_snapshot_days: 0 });
+      // The witness: a recent window of thirty days holds every snapshot of
+      // the history below but the oldest, so none goes for being a second one
+      // of its day.
+      const keeping = await register(writer, { recent_days: 30 });
+      const ids = [
+        await item(writer, bare),
+        await item(writer, weeklyZero),
+        await item(writer, keeping),
+      ];
+
+      // The run is a noon, thirty-one days on, and a snapshot is written at
+      // each of these: thirty-one days before it, past every default window;
+      // 22:00 on the second day before it, and 08:00 and 10:00 on the day
+      // before it, all three past the recent window of a day and inside the
+      // daily window of two, the last two on one UTC day; and two hours before it.
+      await toNoon(clock);
+      for (const id of ids) await update(writer, id, 1);
+      const steps = [
+        31 * DAY_MS - 38 * HOUR_MS,
+        10 * HOUR_MS,
+        2 * HOUR_MS,
+        24 * HOUR_MS,
+        2 * HOUR_MS,
+      ];
+      for (const [at, step] of steps.entries()) {
+        await clock.advance(step);
+        if (at < steps.length - 1) {
+          for (const id of ids) await update(writer, id, 1);
+        }
+      }
+      await thin(server);
+
+      // The default weekly window of twenty days removes the oldest, and the
+      // daily window removes the earlier of the two on one day.
+      expect(await history(writer, ids[0])).toEqual([2, 4, 5]);
+      // A weekly window of 0 keeps the oldest, past every window, and the
+      // daily window of two days still keeps only the latest of a day.
+      expect(await history(writer, ids[1])).toEqual([1, 2, 4, 5]);
+      expect(await history(writer, ids[2])).toEqual([2, 3, 4, 5]);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps every snapshot inside a recent_days a type declares alone, though it is longer than the weekly window",
+    async () => {
+      const bare = await register(writer);
+      // The type names a recent window of thirty days, longer than the
+      // default weekly window of twenty.
+      const declaring = await register(writer, { recent_days: 30 });
+      const ids = [await item(writer, bare), await item(writer, declaring)];
+
+      // Three snapshots on one day, and one more as the run nears.
+      await toNoon(clock);
+      for (const id of ids) await update(writer, id, 3);
+      await clock.advance(25 * DAY_MS);
+      for (const id of ids) await update(writer, id, 1);
+      await clock.advance(1_000);
+      await thin(server);
+
+      // The first three are twenty-five days old, past the default weekly
+      // window and inside the declared recent window: the type keeps all
+      // four, and the defaults keep only the newest.
+      expect(await history(writer, ids[0])).toEqual([4]);
+      expect(await history(writer, ids[1])).toEqual([1, 2, 3, 4]);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );

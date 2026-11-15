@@ -4,7 +4,7 @@ The periodic jobs the server runs on itself, such as the trash purge, version th
 
 ## Registered jobs
 
-The server registers the following jobs, each run at the interval in the table. An owner changes the interval of `backup` alone. Three jobs are listed only where something switches them on (`housekeeping/switched-jobs`); the others are listed on every instance. Settings are listed in [Settings](instance.md#settings).
+The server registers the following jobs, each run at the interval in the table. An owner changes the interval of `backup` alone. Three jobs are listed only where something switches them on (`housekeeping/switched-heartbeat`, `housekeeping/switched-blob-orphans` and `housekeeping/switched-backup`); the others are listed on every instance. Settings are listed in [Settings](instance.md#settings).
 
 <!-- housekeeping-table:start -->
 
@@ -52,17 +52,31 @@ The server MUST list `trash-purge`, `version-thinning`, `feed-expiry`, `event-lo
 
 **Tests:** `compliance/housekeeping-listing.test.ts › lists the twelve jobs every instance runs, and no job that something switches on, on an instance with none of them`, `compliance/credential-cleanup.test.ts › lists every job the server runs, and runs the credential clean-up on demand`.
 
-### `housekeeping/switched-jobs`
+### `housekeeping/switched-heartbeat`
 
-The server MUST list `heartbeat` where `MARFA_HEARTBEAT_URL` is set, `blob-orphans` where the stored setting `blob_cleanup_enabled` is `true`, and `backup` where the instance has a backup folder or an object store and the stored setting `backup_interval_seconds` is above 0.
+The server MUST list `heartbeat` where `MARFA_HEARTBEAT_URL` is set.
+
+**Tests:** `compliance/housekeeping-listing.test.ts › lists each job that something switches on, where it is switched on, and leaves it out where it is not`.
+
+### `housekeeping/switched-blob-orphans`
+
+The server MUST list `blob-orphans` where the stored setting `blob_cleanup_enabled` is `true`.
 
 **Reason:** the listing says what the instance runs. A stored setting takes effect without a restart (`instance/live-work`), so the listing follows it.
 
 **Tests:** `compliance/housekeeping-listing.test.ts › lists each job that something switches on, where it is switched on, and leaves it out where it is not`.
 
+### `housekeeping/switched-backup`
+
+The server MUST list `backup` where the instance has a backup folder or an object store and the stored setting `backup_interval_seconds` is above 0.
+
+**Reason:** as for `housekeeping/switched-blob-orphans`.
+
+**Tests:** `compliance/housekeeping-listing.test.ts › lists each job that something switches on, where it is switched on, and leaves it out where it is not`.
+
 ### `housekeeping/switched-off-not-listed`
 
-Where the condition `housekeeping/switched-jobs` gives for a job does not hold, the server MUST leave that job out of the listing.
+Where the condition that `housekeeping/switched-heartbeat`, `housekeeping/switched-blob-orphans` or `housekeeping/switched-backup` gives for a job does not hold, the server MUST leave that job out of the listing.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`, `compliance/backups.test.ts › takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing`, `compliance/housekeeping-listing.test.ts › lists each job that something switches on, where it is switched on, and leaves it out where it is not`.
 
@@ -116,7 +130,7 @@ When a caller authorized by `instance.maintain` or local authority asks to run a
 
 ### `housekeeping/switched-off-not-run`
 
-Where the condition `housekeeping/switched-jobs` gives for a job does not hold, when a caller authorized by `instance.maintain` or local authority asks to run it, the server MUST answer `404 housekeeping_job_not_found`.
+Where the condition that `housekeeping/switched-heartbeat`, `housekeeping/switched-blob-orphans` or `housekeeping/switched-backup` gives for a job does not hold, when a caller authorized by `instance.maintain` or local authority asks to run it, the server MUST answer `404 housekeeping_job_not_found`.
 
 **Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`, `compliance/backups.test.ts › takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing`, `compliance/housekeeping-listing.test.ts › lists each job that something switches on, where it is switched on, and leaves it out where it is not`.
 
@@ -396,19 +410,21 @@ When no type in an item's type chain declares a field of `version_policy`, the s
 
 The server MUST keep every snapshot of an item that is no older than `recent_days` of the item's effective `version_policy`.
 
-**Tests:** `compliance/housekeeping-thinning-rules.test.ts › keeps every snapshot no older than recent_days, and removes those older than weekly_snapshot_days`.
+**Reason:** the windows are tried in the order `recent_days`, `daily_snapshot_days`, `weekly_snapshot_days`, and a snapshot is judged by the first that holds it. The effective windows of an item can stand out of order, because a type that names some of them takes the others from its chain or the instance settings.
+
+**Tests:** `compliance/housekeeping-thinning-rules.test.ts › keeps every snapshot no older than recent_days, and removes those older than weekly_snapshot_days`, `compliance/housekeeping-thinning.test.ts › keeps every snapshot inside a recent_days a type declares alone, though it is longer than the weekly window`.
 
 ### `housekeeping/thinning-daily`
 
-The server MUST keep, of an item's snapshots older than `recent_days` and no older than `daily_snapshot_days`, only the latest of each UTC calendar day, and remove the others.
+The server MUST keep, of an item's snapshots older than `recent_days` and no older than `daily_snapshot_days`, only the latest of each UTC calendar day, and remove the others, except the newest version (`housekeeping/thinning-newest`).
 
 **Reason:** two snapshots an hour apart on either side of a UTC midnight are on two days, so each is the latest of its own, and a day is not the 24 hours before the run.
 
-**Tests:** `compliance/housekeeping-thinning-rules.test.ts › keeps the latest snapshot of each UTC calendar day past recent_days, up to daily_snapshot_days`.
+**Tests:** `compliance/housekeeping-thinning-rules.test.ts › keeps the latest snapshot of each UTC calendar day past recent_days, up to daily_snapshot_days`, `compliance/housekeeping-thinning.test.ts › thins by day inside the daily window where a type declares only a weekly_snapshot_days of 0`.
 
 ### `housekeeping/thinning-weekly`
 
-The server MUST keep, of an item's snapshots older than `daily_snapshot_days` and no older than `weekly_snapshot_days`, only the latest of each ISO week, and remove the others.
+The server MUST keep, of an item's snapshots older than `recent_days`, older than `daily_snapshot_days` and no older than `weekly_snapshot_days`, only the latest of each ISO week, and remove the others, except the newest version (`housekeeping/thinning-newest`).
 
 **Reason:** an ISO week starts on a Monday, so two snapshots an hour apart on either side of a Sunday midnight are in two weeks, and a week is not the seven days before the run.
 
@@ -416,17 +432,17 @@ The server MUST keep, of an item's snapshots older than `daily_snapshot_days` an
 
 ### `housekeeping/thinning-expired`
 
-Where `weekly_snapshot_days` of an item's effective `version_policy` is above 0, the server MUST remove every snapshot of the item older than `weekly_snapshot_days`, except its newest version.
+Where `weekly_snapshot_days` of an item's effective `version_policy` is above 0, the server MUST remove every snapshot of the item older than `recent_days`, older than `daily_snapshot_days` and older than `weekly_snapshot_days`, except its newest version.
 
 **Tests:** `compliance/housekeeping-thinning-rules.test.ts › keeps every snapshot no older than recent_days, and removes those older than weekly_snapshot_days`, `› keeps the latest snapshot of each ISO week past daily_snapshot_days, up to weekly_snapshot_days`.
 
 ### `housekeeping/thinning-zero`
 
-Where `weekly_snapshot_days` of an item's effective `version_policy` is 0, the server MUST NOT remove a snapshot of the item for its age.
+Where `weekly_snapshot_days` of an item's effective `version_policy` is 0, the server MUST NOT remove for its age a snapshot of the item that is older than `recent_days` and older than `daily_snapshot_days`.
 
-**Reason:** the windows run in order, with `recent_days` no larger than `daily_snapshot_days` and that no larger than `weekly_snapshot_days` (`types/version-policy-order`), so a weekly window of 0 leaves no window that thins and means that age keeps every snapshot, as a retention of 0 does (`housekeeping/retention-zero-keeps`). A `recent_days` or `daily_snapshot_days` of 0 is an empty window, so no snapshot is kept for being within it.
+**Reason:** a weekly window of 0 leaves no window that thins past the daily one, so age keeps every snapshot past it, as a retention of 0 does (`housekeeping/retention-zero-keeps`). The daily window still thins the snapshots inside it. A `recent_days` or `daily_snapshot_days` of 0 is an empty window, so no snapshot is kept for being within it.
 
-**Tests:** `compliance/housekeeping-thinning-rules.test.ts › removes no snapshot by age where weekly_snapshot_days is 0, and keeps nothing by recent_days or daily_snapshot_days where they are 0`.
+**Tests:** `compliance/housekeeping-thinning-rules.test.ts › removes no snapshot by age where weekly_snapshot_days is 0, and keeps nothing by recent_days or daily_snapshot_days where they are 0`, `compliance/housekeeping-thinning.test.ts › thins by day inside the daily window where a type declares only a weekly_snapshot_days of 0`.
 
 ### `housekeeping/thinning-newest`
 
@@ -438,17 +454,25 @@ The server MUST NOT remove the snapshot with the highest version of an item.
 
 ### `housekeeping/thinning-max-versions`
 
-Where more snapshots of an item remain after its windows than `max_versions` of its effective `version_policy`, the server MUST remove the oldest of them until `max_versions` remain, and the newest version stays whatever `max_versions` is (`housekeeping/thinning-newest`).
+Where more snapshots of an item remain after its windows than `max_versions` of its effective `version_policy`, the server MUST remove the oldest of them until `max_versions` remain.
 
 **Tests:** `compliance/housekeeping-thinning-rules.test.ts › drops the oldest of the snapshots the windows keep past max_versions, and never the newest`, `compliance/housekeeping-thinning.test.ts › takes max_versions from the instance default when no type in the chain declares it`.
 
 ### `housekeeping/thinning-unread-time`
 
-The server MUST NOT remove a snapshot whose stored time is not RFC 3339 UTC text with milliseconds, whatever the item's policy says, and it leaves such a snapshot out of the count `max_versions` limits.
+The server MUST NOT remove a snapshot whose stored time is not RFC 3339 UTC text with milliseconds, whatever the item's policy says.
 
 **Reason:** the age of such a snapshot cannot be told, and a removal is for good.
 
-**Tests:** `compliance/housekeeping-thinning-rules.test.ts › keeps a snapshot whose stored time does not read, and counts it against no cap`.
+**Tests:** `compliance/housekeeping-thinning-rules.test.ts › keeps a snapshot whose stored time does not read, and counts it toward max_versions`.
+
+### `housekeeping/thinning-unread-time-cap`
+
+The server MUST count a snapshot whose stored time is not RFC 3339 UTC text with milliseconds toward `max_versions` of the item's effective `version_policy`, and take the excess from the oldest snapshots whose stored time reads.
+
+**Reason:** a snapshot kept for its time stays in the history, so it counts as one of the versions the item holds. Where too few snapshots read to take the excess from, more than `max_versions` remain, because the snapshots that do not read are never removed (`housekeeping/thinning-unread-time`).
+
+**Tests:** `compliance/housekeeping-thinning-rules.test.ts › keeps a snapshot whose stored time does not read, and counts it toward max_versions`.
 
 ### `housekeeping/thinning-minimum`
 

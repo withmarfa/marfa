@@ -937,7 +937,7 @@
             "type": "integer",
             "minimum": 0,
             "maximum": 36500,
-            "description": "How many days back Marfa keeps one version per week, after the daily window. A week is an ISO week. Marfa deletes older versions, but always keeps the latest. 0 keeps every version."
+            "description": "How many days back Marfa keeps one version per week, after the daily window. A week is an ISO week. Marfa deletes older versions, but always keeps the latest. 0 deletes no version for its age once it is past the daily window."
           },
           "max_versions": {
             "type": "integer",

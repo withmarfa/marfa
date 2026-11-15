@@ -288,7 +288,7 @@ describe("version thinning by the policy a type declares", () => {
   );
 
   it(
-    "keeps a snapshot whose stored time does not read, and counts it against no cap",
+    "keeps a snapshot whose stored time does not read, and counts it toward max_versions",
     async () => {
       const old = [10 * DAY_MS, 9 * DAY_MS, 8 * DAY_MS, 7 * DAY_MS];
       const windows = {
@@ -300,7 +300,7 @@ describe("version thinning by the policy a type declares", () => {
         recent_days: 100,
         daily_snapshot_days: 100,
         weekly_snapshot_days: 100,
-        max_versions: 1,
+        max_versions: 2,
       };
       const { ids } = await written(WEDNESDAY, old, [windows, wide, wide]);
       // A hand edit leaves a time no door writes, on the second snapshot of
@@ -320,12 +320,14 @@ describe("version thinning by the policy a type declares", () => {
       // Beyond every window the first and third go; the second, whose age
       // cannot be read, and the newest stay.
       expect(aged).toEqual([2, 4]);
-      // A cap of one removes only what it can read the age of, so the newest
-      // stays with the second.
+      // The four snapshots are all within the windows and the cap is two.
+      // The second counts toward the cap, so two are to go, and they come
+      // from the oldest whose time reads: the first and the third. A count
+      // that left the second out would remove only the first.
       expect(capped).toEqual([2, 4]);
-      // The witness: the same cap on a history whose times all read leaves
-      // the newest alone.
-      expect(witness).toEqual([4]);
+      // The witness: the same cap on a history whose times all read removes
+      // the oldest two and keeps the other two.
+      expect(witness).toEqual([3, 4]);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
