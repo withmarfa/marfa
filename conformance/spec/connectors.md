@@ -972,7 +972,7 @@ A connector treats a vendor entry as new only if the vendor changed it after the
 
 ### `connectors/tombstone-write-accepted`
 
-When a key creates an item that holds a link or natural key a tombstone records, the server MUST create a new item, whatever the tombstone's `settled_at`.
+When a key sends `POST /items` for an item that holds a link or natural key a tombstone records, the server MUST answer `201` with a new item, whatever the tombstone's `settled_at`.
 
 **Reason:** the decision to write a vendor entry belongs to the connector, which reads the tombstone at `POST /items/lookup`. The server compares no time and refuses nothing a tombstone names, and the new item takes the place of the tombstone (`items/tombstone-cleared`).
 

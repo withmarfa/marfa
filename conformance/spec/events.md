@@ -1740,7 +1740,7 @@ When an ordinary write follows a bulk write of 50,000 items with fan-out disable
 
 While other subscriptions have receivers that do not answer, the server MUST start a healthy subscription's due delivery without waiting for those attempts to finish whenever the limits of `events/delivery-maker-share`, `events/delivery-maker-free`, `events/delivery-maker-headroom` and `events/delivery-maker-isolation` permit its attempt to start.
 
-**Reason:** a subscription has one attempt in flight (`events/attempt-one-in-flight`), so a slow receiver holds only its own subscription's turn. Those limits hold a delivery back only for its maker's share of the attempts the server runs at once and for that total, so a healthy subscription whose maker is within its share waits only while the server is running its most attempts.
+**Reason:** a subscription has one attempt in flight (`events/attempt-one-in-flight`), so a slow receiver holds only its own subscription's turn. Those limits hold a delivery back only for its maker's share of the 64 attempts the server runs at once and for that total, so a healthy subscription whose maker is within its share waits only while 64 attempts are in flight.
 
 **Tests:** `compliance/webhook-delivery.test.ts › delivers promptly while eight other subscriptions never answer`.
 
@@ -1828,7 +1828,7 @@ When a slot of the pool that deliveries share comes free and the deliveries of m
 
 `GET /audit` lists what the server recorded about the writes the events above announce, and about the exports it accepts.
 
-Each entry names what it records in `action`. The first table gives the `action` of each write the audit log records for items, edges, views, folders, types, sources, keys, settings, webhooks, connectors, exports and tables, and of each job the server runs on itself. The second table gives the `action` of a sign-in, of an OAuth client, grant or token, and of the owner's setup code and password change. Each row gives the `kind` that `events/audit-kind` sorts the action under. The server records further entries for the owner's profile, passkeys and password recovery and for the other changes to a grant; their actions are not part of the contract, and `events/audit-kind` sorts them by the part before their first period.
+Each entry names what it records in `action`. The first table gives the `action` of each write the audit log records for items, edges, views, folders, types, sources, keys, settings, webhooks, connectors, exports and tables, and of each job the server runs on itself. The second table gives the `action` of a sign-in, of an OAuth client, grant or token, and of the owner's setup code and password change. Each row gives the `kind` that `events/audit-kind` sorts the action under. The server records further entries, among them those for the owner's profile, passkeys and password recovery, a setup ticket, a revoked token, a replayed code and any other change to a client or grant; their actions are not part of the contract, and `events/audit-kind` sorts them by the part before their first period.
 
 | Action                       | Written when                                                                    | Kind           |
 | ---------------------------- | ------------------------------------------------------------------------------- | -------------- |
