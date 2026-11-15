@@ -140,7 +140,13 @@ Where `MARFA_CLAIM_ADDRESS` is set, when an instance with no owner starts, the s
 
 ### `instance-claim/claim-address-refused`
 
-If `MARFA_CLAIM_ADDRESS` is not an origin that starts with `https://` or names `localhost`, `127.0.0.1` or `[::1]`, then the server MUST refuse to start, exiting with status 1 and a refusal line that names `MARFA_CLAIM_ADDRESS`.
+If `MARFA_CLAIM_ADDRESS` is not an origin that starts with `https://` or names `localhost`, `127.0.0.1` or `[::1]`, then the server MUST exit with status 1 instead of starting.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses to start on a MARFA_CLAIM_ADDRESS that is %s, naming the setting`.
+
+### `instance-claim/claim-address-refused-line`
+
+If `MARFA_CLAIM_ADDRESS` is not an origin that starts with `https://` or names `localhost`, `127.0.0.1` or `[::1]`, then the server MUST log one refusal line that names `MARFA_CLAIM_ADDRESS`.
 
 **Tests:** `compliance/remote-claim.test.ts › refuses to start on a MARFA_CLAIM_ADDRESS that is %s, naming the setting`.
 
@@ -304,6 +310,12 @@ When an instance starts with `MARFA_OWNER_RECOVERY` off, the server MUST answer 
 
 **Tests:** `compliance/remote-claim.test.ts › prints a recovery code at each start of an instance with an owner while MARFA_OWNER_RECOVERY is on, and ends it at a start with the setting off`.
 
+### `instance-claim/recovery-code-off-recover`
+
+When an instance starts with `MARFA_OWNER_RECOVERY` off, the server MUST answer `POST /setup/recover` with a recovery code an earlier start printed with `401 setup_proof_invalid`.
+
+**Tests:** `compliance/remote-claim.test.ts › prints a recovery code at each start of an instance with an owner while MARFA_OWNER_RECOVERY is on, and ends it at a start with the setting off`.
+
 ### `instance-claim/recovery-code-unowned`
 
 While an instance has no owner, the server MUST NOT print a recovery code.
@@ -348,7 +360,13 @@ When `POST /setup/exchange` accepts a recovery code, the server MUST set a setup
 
 ### `instance-claim/recovery-code-password`
 
-When `POST /setup/recover` sets a new password with a recovery code or its setup cookie, the server MUST accept the new password and refuse the replaced password at password sign-in.
+When `POST /setup/recover` sets a new password with a recovery code or its setup cookie, the server MUST accept the new password at password sign-in.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`, `› leaves after a recovery by code the state the private socket's recovery leaves`.
+
+### `instance-claim/recovery-code-old-password`
+
+When `POST /setup/recover` sets a new password with a recovery code or its setup cookie, the server MUST refuse the replaced password at password sign-in.
 
 **Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`, `› leaves after a recovery by code the state the private socket's recovery leaves`.
 
@@ -378,7 +396,7 @@ When `POST /setup/recover` sets a new password, the server MUST preserve connect
 
 ### `instance-claim/recovery-password-rules`
 
-If the new password sent to `POST /setup/recover` breaks the rule the private local command's recovery applies, then the server MUST refuse it with `400 validation_error`.
+If the new password sent to `POST /setup/recover` is shorter than 8 or longer than 128 characters, then the server MUST refuse it with `400 validation_error`.
 
 **Tests:** `compliance/remote-claim.test.ts › refuses a new password the private socket's recovery refuses, and keeps the code for another try`.
 
@@ -393,6 +411,12 @@ When `POST /setup/recover` refuses a new password with `400 validation_error`, t
 If an address has made ten recovery code attempts in fifteen minutes, then the server MUST refuse its next attempt with `429 rate_limited`.
 
 **Tests:** `compliance/remote-claim.test.ts › limits recovery code attempts to ten per address in fifteen minutes`.
+
+### `instance-claim/recovery-code-concurrent`
+
+When two requests with the same recovery code arrive at once, the server MUST accept only one of them and refuse the other with `401 setup_proof_invalid`.
+
+**Tests:** `compliance/remote-claim.test.ts › accepts only one of two uses of a recovery code sent at once, to recover and to exchange`.
 
 ### `instance-claim/recovery-code-private`
 
