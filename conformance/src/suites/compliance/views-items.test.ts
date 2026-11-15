@@ -14,8 +14,11 @@ import {
   trackKey,
   trackView,
   cleanup,
+  getOwnerClient,
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
+import { generateId } from "../../generators/items.js";
+import { itemsArchive } from "../../utils/archive.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -554,6 +557,54 @@ describe("the view's items door", () => {
       sort: [{ by: "occurred_at", direction: "desc" }],
     });
     expect(await listed(down, 1)).toEqual([third.id, second.id, first.id]);
+  });
+
+  it("orders by last_activity_at, moved by a later write, and breaks a tie on it in its direction", async () => {
+    const source = await freshSource();
+    const first = await note(source, "One");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const second = await note(source, "Two");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const third = await note(source, "Three");
+    const up = await viewOf(source, {
+      sort: [{ by: "last_activity_at", direction: "asc" }],
+    });
+    const down = await viewOf(source, {
+      sort: [{ by: "last_activity_at", direction: "desc" }],
+    });
+    expect(await listed(up)).toEqual([first.id, second.id, third.id]);
+    expect(await listed(down)).toEqual([third.id, second.id, first.id]);
+
+    const changed = await writers.get(source)!.updateItem(first.id, {
+      properties: { title: "One, again" },
+      version: 1,
+    });
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+    expect(await listed(up)).toEqual([second.id, third.id, first.id]);
+    expect(await listed(down)).toEqual([first.id, third.id, second.id]);
+
+    // No write door gives two items one last_activity_at, but an archive may.
+    const tied = [generateId(), generateId(), generateId()].sort();
+    const at = "2024-05-05T00:00:00.000Z";
+    const restored = await getOwnerClient().restoreArchive(
+      itemsArchive(
+        tied.map((id) => ({
+          id,
+          type: "core.note",
+          source,
+          properties: { title: "Tied" },
+          created_at: at,
+          updated_at: at,
+          last_activity_at: at,
+        })),
+      ),
+    );
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    for (const id of tied) trackItem(ctx, id);
+    const asc = (await listed(up, 1)).slice(0, 3);
+    const desc = (await listed(down, 1)).slice(-3);
+    expect(asc).toEqual(tied);
+    expect(desc).toEqual([...tied].reverse());
   });
 
   it("breaks a tie by descending ID where the view names no sort", async () => {

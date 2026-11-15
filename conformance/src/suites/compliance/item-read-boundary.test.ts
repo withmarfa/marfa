@@ -307,7 +307,7 @@ it("withholds occurrence fields derived from an unreadable relationship", async 
   expect(
     (await call("GET", `/edges/${edge.id}`, undefined, noEdges)).status,
   ).toBe(404);
-  const exceptionRow = async (key: string) => {
+  const window = async (key: string) => {
     const response = await call(
       "GET",
       "/occurrences?from=2028-05-01T00:00:00Z&to=2028-05-03T00:00:00Z",
@@ -316,10 +316,21 @@ it("withholds occurrence fields derived from an unreadable relationship", async 
     );
     expect(response.status).toBe(200);
     const { data } = (await response.json()) as {
-      data: { item: { id: string }; series_id?: string; replaces?: string }[];
+      data: {
+        item: { id: string };
+        starts_at: string;
+        series_id?: string;
+        replaces?: string;
+      }[];
     };
-    return data.find((row) => row.item.id === exceptionId);
+    return data;
   };
+  const exceptionRow = async (key: string) =>
+    (await window(key)).find((row) => row.item.id === exceptionId);
+  const seriesStarts = async (key: string) =>
+    (await window(key))
+      .filter((row) => row.item.id === seriesId)
+      .map((row) => row.starts_at);
   expect(await exceptionRow(reader)).toMatchObject({
     series_id: seriesId,
     replaces: "2028-05-02T10:00:00.000Z",
@@ -328,6 +339,10 @@ it("withholds occurrence fields derived from an unreadable relationship", async 
   expect(row).toBeDefined();
   expect(row).not.toHaveProperty("series_id");
   expect(row).not.toHaveProperty("replaces");
+  // The slot the exception left is empty for both keys: the series is read
+  // either way, and the exception moved the slot whether or not it names it.
+  expect(await seriesStarts(reader)).toEqual(["2028-05-01T10:00:00.000Z"]);
+  expect(await seriesStarts(noEdges)).toEqual(["2028-05-01T10:00:00.000Z"]);
 });
 
 // A failed try can leave a hold set and the clock moved, which the retry would start from.

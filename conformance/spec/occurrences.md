@@ -212,9 +212,11 @@ When a series has `all_day: true`, the server MUST start each occurrence at loca
 
 ### `occurrences/moved-replaces`
 
-When an `active` event with an `original_starts_at` that the credential may read is joined to a series by a `parent-of` edge that the credential may read, the server MUST show it in place of the series' occurrence at that instant.
+When an `active` event with an `original_starts_at` that the credential may read is joined to a series by a `parent-of` edge, the server MUST show it in place of the series' occurrence at that instant, whether or not the credential may read the edge.
 
-**Tests:** `compliance/recurrence.test.ts › shows a moved occurrence only in the window its own times overlap`, `› carries series_id and replaces on a moved occurrence in a window that holds both times`.
+**Reason:** the slot is a fact of the two events the credential reads, and only the `series_id` and `replaces` fields disclose the edge (`occurrences/moved-ids-hidden`).
+
+**Tests:** `compliance/recurrence.test.ts › shows a moved occurrence only in the window its own times overlap`, `› carries series_id and replaces on a moved occurrence in a window that holds both times`, `compliance/item-read-boundary.test.ts › withholds occurrence fields derived from an unreadable relationship`.
 
 ### `occurrences/moved-ids`
 
@@ -242,7 +244,7 @@ The server MUST show a moved occurrence at its own `starts_at` and `ends_at`.
 
 When a window holds the occurrence that an `active` stored exception the credential may read moved away, and not the exception's own times, the server MUST show nothing at that occurrence.
 
-**Tests:** `compliance/recurrence.test.ts › shows a moved occurrence only in the window its own times overlap`.
+**Tests:** `compliance/recurrence.test.ts › shows a moved occurrence only in the window its own times overlap`, `› leaves the slot a moved occurrence left empty only while the exception is readable`, `compliance/item-read-boundary.test.ts › withholds occurrence fields derived from an unreadable relationship`.
 
 ### `occurrences/moved-once`
 
@@ -312,7 +314,7 @@ When a window is read, the server MUST read a whole-day event by the span that `
 
 **Reason:** a reading by the UTC midnights would leave the event out of a window that touches its day only at the zone's midnights, and put it in one that does not.
 
-**Tests:** `compliance/recurrence.test.ts › places a whole-day event by its zone's midnights, single or repeating`.
+**Tests:** `compliance/recurrence.test.ts › places a whole-day event by its zone's midnights, single or repeating`, `› places a whole-day event in the window by the day it holds in a zone far ahead of or behind UTC`.
 
 ## What a window includes
 
@@ -320,13 +322,25 @@ When a window is read, the server MUST read a whole-day event by the span that `
 
 The server MUST include in a window every event that starts before the window ends and ends after it opens, as RFC 4791 reads a time range, an event or series occurrence that is already running when the window opens included.
 
-**Tests:** `compliance/recurrence.test.ts › includes every event that overlaps it, and no event that ends as it opens`.
+**Tests:** `compliance/recurrence.test.ts › includes every event that overlaps it, and no event that ends as it opens`, `› includes a repeating event across the window whether the series began long before it or inside it`.
 
 ### `occurrences/window-ended`
 
 The server MUST NOT include in a window an event that ends exactly as the window opens.
 
 **Tests:** `compliance/recurrence.test.ts › includes every event that overlaps it, and no event that ends as it opens`.
+
+### `occurrences/window-spanning`
+
+The server MUST include in a window an event that starts before the window opens and ends after it closes, however long the event runs.
+
+**Tests:** `compliance/recurrence.test.ts › includes an event that runs across the whole window, however long, and none that starts as the window ends`.
+
+### `occurrences/window-starts-at-end`
+
+The server MUST NOT include in a window an event that has a length and starts exactly as the window ends.
+
+**Tests:** `compliance/recurrence.test.ts › includes an event that runs across the whole window, however long, and none that starts as the window ends`.
 
 ### `occurrences/window-point-from`
 

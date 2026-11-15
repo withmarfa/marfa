@@ -2963,7 +2963,7 @@ export interface components {
             message?: string;
         };
         /**
-         * @description A field: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier`, `tags`) or `properties.<name>`.
+         * @description A field: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `last_activity_at`, `type`, `state`, `tier`, `tags`) or `properties.<name>`.
          * @example properties.status
          */
         ViewField: string;
@@ -2984,7 +2984,7 @@ export interface components {
         /** @description How a view groups its items. */
         ViewGroup: {
             /**
-             * @description The field to group by: a field, or `edge[<type>]` or `backref[<type>]` for the item an edge of that type joins.
+             * @description The field to group by: a field other than `last_activity_at`, which only a sort takes, or `edge[<type>]` or `backref[<type>]` for the item an edge of that type joins.
              * @example properties.status
              */
             by: string;

@@ -1194,9 +1194,9 @@ When a batch changes rows, the server MUST leave the item's `updated_at` and `ve
 
 ### `tables/last-activity-sort`
 
-When `GET /items` names `sort` `last_activity_at`, the server MUST answer the items by `last_activity_at` in the `direction` it names.
+When `GET /items` names `sort` `last_activity_at`, the server MUST answer the items by `last_activity_at` in the `direction` it names, a tie by item ID in the same direction.
 
-**Tests:** `compliance/table-rows-lifecycle.test.ts › lists items by last_activity_at`.
+**Tests:** `compliance/table-rows-lifecycle.test.ts › lists items by last_activity_at`, `correctness/pagination.test.ts › orders a listing by last_activity_at, a tie by id in the same direction, and pages through the tie`.
 
 ## Announcing rows
 
@@ -1864,11 +1864,11 @@ When `GET /search` names no `sort`, or `sort=relevance`, the server MUST rank a 
 
 ### `tables/search-row-sort`
 
-When `GET /search` names `sort=created_at`, `sort=updated_at`, `sort=occurred_at` or `sort=properties.<field>`, the server MUST order a row hit by its item's value.
+When `GET /search` names `sort=created_at`, `sort=updated_at`, `sort=occurred_at`, `sort=last_activity_at` or `sort=properties.<field>`, the server MUST order a row hit by its item's value.
 
 **Reason:** a hit for a row is still an item, so it sorts where its item does.
 
-**Tests:** `compliance/table-rows-search.test.ts › orders a sorted search's row hits by their item's value and breaks ties by item, own hit first, then table and row id`.
+**Tests:** `compliance/table-rows-search.test.ts › orders a sorted search's row hits by their item's value and breaks ties by item, own hit first, then table and row id`, `compliance/search-walk-writes.test.ts › orders a search by last_activity_at, which a row moves and updated_at does not`.
 
 ### `tables/search-row-ties`
 
@@ -1880,9 +1880,19 @@ When `GET /search` orders hits of one item that tie, the server MUST put the ite
 
 ### `tables/search-row-cursor`
 
-When a client sends back the `next_cursor` of each page of a `GET /search` whose hits include rows, the server MUST continue the ranking, so that walking to `null` delivers every item hit and every row hit once.
+When a client sends back the `next_cursor` of each page of a `GET /search` whose hits include rows with the same query while no item it may read and no row of one is written, the server MUST continue the ranking, so that walking to `null` delivers every item hit and every row hit once.
+
+**Reason:** a write to a row changes the count of entries and tokens its table's hits are weighed by, so it moves their rank as a write to an item does (`search-and-filters/search-cursor`).
 
 **Tests:** `compliance/table-rows-search.test.ts › walks a search whose hits include rows to a null cursor, delivering every hit once`.
+
+### `tables/search-row-cursor-writes`
+
+When a client walks a `GET /search` that names a `sort` other than `relevance` and whose hits include rows, by sending back the `next_cursor` of each page, and rows are written or deleted between the pages, the server MUST deliver once each row hit whose row exists throughout the walk.
+
+**Reason:** a row hit sits after its item's own hit by table name and row ID (`tables/search-row-ties`), so a position names the row and a write before it moves nothing.
+
+**Tests:** `compliance/search-walk-writes.test.ts › delivers each row that exists throughout once when rows are added and removed between pages`.
 
 ### `tables/search-row-depth`
 

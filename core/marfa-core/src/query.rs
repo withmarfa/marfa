@@ -148,6 +148,8 @@ pub(crate) fn list_where(
     )
 }
 
+pub(crate) const NO_LAST_ACTIVITY: &str = "A device does not hold when an item's rows last changed, so it does not sort by last_activity_at.";
+
 pub(crate) fn list_where_with(
     conn: &Connection,
     clauses: &[String],
@@ -168,10 +170,7 @@ pub(crate) fn list_where_with(
         SortField::property(name)?;
     }
     if sort.field == SortField::LastActivityAt {
-        return Err(marfa_rules::error::RuleError::validation(
-            "A device does not hold when an item's rows last changed, so it does not sort by last_activity_at.",
-        )
-        .into());
+        return Err(marfa_rules::error::RuleError::validation(NO_LAST_ACTIVITY).into());
     }
     let order_sql = match &sort.field {
         // Rows with no scalar there go last in either direction, and ties

@@ -2569,9 +2569,12 @@ describe("files and items", () => {
       await new Promise((resolve) => setTimeout(resolve, 6_000));
       await writing.stop();
       whole = readFileSync(copying);
+      // A stall of the writer longer than the settle window lets the watch
+      // send the file part-way, so the whole file is the upload to wait for.
       await vi.waitFor(
         () => {
           expect(sentTitles(harness!)).toContain("movie.bin");
+          expect(uploads().at(-1)?.length).toBe(whole.length);
         },
         { timeout: 30_000, interval: 100 },
       );

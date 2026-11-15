@@ -24,7 +24,7 @@ The server MUST take as a view's `sort` a list of at most 10 keys of `by` and `d
 
 ### `views/field`
 
-The server MUST take as a sort `by` and a `group.by` an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier` or `tags`) or `properties.<name>`, and as a `group.by` also `edge[<type>]` or `backref[<type>]` for a registered edge type.
+The server MUST take as a sort `by` and a `group.by` an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier` or `tags`) or `properties.<name>`, as a sort `by` also `last_activity_at`, and as a `group.by` also `edge[<type>]` or `backref[<type>]` for a registered edge type.
 
 **Tests:** `compliance/views.test.ts › takes a sort and a group on a date, an edge and a property, and refuses none of them`, `› refuses a malformed setting %j with %s naming %s, on a create and on a change`.
 
@@ -242,7 +242,7 @@ Where a view sorts by a field an item does not hold, the server MUST list that i
 
 Where a view has a sort and items tie on every sort key, the server MUST list them by ascending ID, or by the direction of the key when the view sorts by one timestamp alone.
 
-**Tests:** `compliance/views-items.test.ts › breaks a tie by the item's ID, and a tie on the one timestamp key in that key's direction`, `› orders by every key in turn, up to ten, and pages through a tie on the leading keys`.
+**Tests:** `compliance/views-items.test.ts › breaks a tie by the item's ID, and a tie on the one timestamp key in that key's direction`, `› orders by last_activity_at, moved by a later write, and breaks a tie on it in its direction`, `› orders by every key in turn, up to ten, and pages through a tie on the leading keys`.
 
 ### `views/items-order-default-ties`
 

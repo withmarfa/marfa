@@ -3,11 +3,12 @@
 use std::collections::HashMap;
 
 use marfa_rules::search::{MARK_CLOSE, MARK_OPEN, fts_phrases, snippet_html};
+use rusqlite::types::Value;
 use serde_json::{Value as Json, json};
 
 use super::compile::{Ask, Sql, judge, selection};
-use super::cursor::{Secret, refused};
-use super::order::{Order, Sort};
+use super::cursor::{Position, Secret, refused};
+use super::order::{Order, Sort, alias};
 use super::reach::Reach;
 use crate::app::App;
 use crate::app::access::Caller;
@@ -198,6 +199,71 @@ fn matched(
     Ok(())
 }
 
+/// The hit a sorted search continues after, and how many hits the walk has delivered so far.
+pub(super) struct Seek {
+    position: Position,
+    hit: i64,
+    table: Option<String>,
+    row: Option<String>,
+    taken: i64,
+}
+
+impl Seek {
+    fn payload(&self) -> Json {
+        let at = self.position.payload();
+        json!([at[0], at[1], self.hit, self.table, self.row, self.taken])
+    }
+
+    fn from_payload(payload: &Json, width: usize) -> Result<Seek> {
+        let [keys, id, hit, table, row, taken] =
+            payload.as_array().map(Vec::as_slice).unwrap_or_default()
+        else {
+            return Err(refused());
+        };
+        let position = Position::from_payload(&json!([keys, id]), width)?;
+        let named = match (hit.as_i64(), table.as_str(), row.as_str()) {
+            (Some(0), None, None) => (0, None, None),
+            (Some(1), Some(table), Some(row)) => {
+                (1, Some(table.to_string()), Some(row.to_string()))
+            }
+            _ => return Err(refused()),
+        };
+        let taken = taken
+            .as_i64()
+            .filter(|taken| (1..DEPTH).contains(taken))
+            .ok_or_else(refused)?;
+        Ok(Seek {
+            position,
+            hit: named.0,
+            table: named.1,
+            row: named.2,
+            taken,
+        })
+    }
+
+    /// The condition for the hits after this one, in the order a search lists them: by the keys and the item's id, then an item's own hit before its row hits by table and row id.
+    fn after(&self, sql: &mut Sql, order: &Order) {
+        sql.push("(");
+        order.after_id(sql, &self.position, "id");
+        sql.push(" OR (");
+        order.level_with(sql, &self.position, "id");
+        sql.push(" AND ");
+        match (&self.table, &self.row) {
+            (Some(table), Some(row)) => {
+                sql.push("hit = 1 AND (tname > ");
+                sql.bind(table.clone());
+                sql.push(" OR (tname = ");
+                sql.bind(table.clone());
+                sql.push(" AND rid > ");
+                sql.bind(row.clone());
+                sql.push("))");
+            }
+            _ => sql.push("hit > 0"),
+        }
+        sql.push("))");
+    }
+}
+
 pub(super) fn search_sql(
     reach: &Reach,
     ask: &Ask,
@@ -205,9 +271,18 @@ pub(super) fn search_sql(
     expression: &str,
     ranking: &Ranking,
     order: &Order,
-    (take, offset): (i64, i64),
+    (take, offset, seek): (i64, i64, Option<&Seek>),
 ) -> Result<Sql> {
-    let mut sql = Sql::new("SELECT hit, seq, rank, tname, rid, entry, columns FROM (");
+    let mut sql = Sql::new("SELECT hit, seq, rank, tname, rid, entry, columns, id");
+    for (at, _) in order
+        .keys
+        .iter()
+        .enumerate()
+        .filter(|(_, key)| !key.relevance)
+    {
+        sql.push(&format!(", {}", alias(at)));
+    }
+    sql.push(" FROM (");
     for (at, source) in SOURCES.iter().enumerate() {
         if at > 0 {
             sql.push(" UNION ALL ");
@@ -222,6 +297,10 @@ pub(super) fn search_sql(
         matched(&mut sql, source, reach, ask, catalog, (expression, narrow))?;
     }
     sql.push(")");
+    if let Some(seek) = seek {
+        sql.push(" WHERE ");
+        seek.after(&mut sql, order);
+    }
     order.order_by_named(&mut sql, "id");
     sql.push(", hit, tname, rid LIMIT ");
     sql.bind(take);
@@ -299,6 +378,7 @@ struct Hit {
     seq: i64,
     rank: f64,
     row: Option<RowHit>,
+    position: Position,
 }
 
 struct RowHit {
@@ -308,7 +388,7 @@ struct RowHit {
     columns: String,
 }
 
-fn hit_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Hit> {
+fn hit_of(row: &rusqlite::Row<'_>, width: usize) -> rusqlite::Result<Hit> {
     let named = match row.get::<_, i64>(0)? {
         0 => None,
         _ => Some(RowHit {
@@ -318,10 +398,17 @@ fn hit_of(row: &rusqlite::Row<'_>) -> rusqlite::Result<Hit> {
             columns: row.get(6)?,
         }),
     };
+    let keys = (0..width)
+        .map(|at| row.get::<_, Value>(8 + at))
+        .collect::<rusqlite::Result<Vec<Value>>>()?;
     Ok(Hit {
         seq: row.get(1)?,
         rank: row.get(2)?,
         row: named,
+        position: Position {
+            keys,
+            id: row.get(7)?,
+        },
     })
 }
 
@@ -362,6 +449,17 @@ fn offset_of(secret: &Secret, scope: &str, cursor: Option<&str>) -> Result<i64> 
         .ok_or_else(refused)
 }
 
+fn seek_of(
+    secret: &Secret,
+    scope: &str,
+    cursor: Option<&str>,
+    width: usize,
+) -> Result<Option<Seek>> {
+    cursor
+        .map(|cursor| Seek::from_payload(&secret.open(scope, cursor)?, width))
+        .transpose()
+}
+
 fn page(read: &Reader<'_, '_>, secret: &Secret, search: &Search) -> Result<String> {
     let reach = Reach::of(read)?;
     judge(read, &search.ask)?;
@@ -375,7 +473,16 @@ fn page(read: &Reader<'_, '_>, secret: &Secret, search: &Search) -> Result<Strin
         search.include,
     ])
     .to_string();
-    let offset = offset_of(secret, &scope, search.cursor.as_deref())?;
+    // Relevance scores move with every write, so it can only continue from a count.
+    let keyed = search.sort.field.is_some();
+    let width = order.keys.iter().filter(|key| !key.relevance).count();
+    let (seek, offset) = if keyed {
+        let seek = seek_of(secret, &scope, search.cursor.as_deref(), width)?;
+        let taken = seek.as_ref().map_or(0, |seek| seek.taken);
+        (seek, taken)
+    } else {
+        (None, offset_of(secret, &scope, search.cursor.as_deref())?)
+    };
     let Some(phrases) = fts_phrases(&search.q) else {
         return Ok("{\"data\":[],\"next_cursor\":null}".to_string());
     };
@@ -389,11 +496,13 @@ fn page(read: &Reader<'_, '_>, secret: &Secret, search: &Search) -> Result<Strin
         &expression,
         &ranking,
         &order,
-        (take, offset),
+        (take, if keyed { 0 } else { offset }, seek.as_ref()),
     )?;
     let mut statement = read.tx.prepare_cached(&sql.text)?;
     let ranked: Vec<Hit> = statement
-        .query_map(rusqlite::params_from_iter(&sql.values), hit_of)?
+        .query_map(rusqlite::params_from_iter(&sql.values), |row| {
+            hit_of(row, width)
+        })?
         .collect::<rusqlite::Result<_>>()?;
     let best_first = search.sort.field.is_none()
         && !matches!(search.sort.direction, Some(SortDirection::Ascending));
@@ -432,10 +541,23 @@ fn page(read: &Reader<'_, '_>, secret: &Secret, search: &Search) -> Result<Strin
             metadata.unwrap_or_else(|| "null".to_string())
         ));
     }
-    let next_cursor = if more && next < DEPTH {
-        Json::from(secret.issue(&scope, &json!(next))?).to_string()
-    } else {
-        "null".to_string()
+    let next_cursor = match shown.last().filter(|_| more && next < DEPTH) {
+        None => "null".to_string(),
+        Some(last) if keyed => {
+            let (hit, table, row) = match &last.row {
+                Some(row) => (1, Some(row.table.clone()), Some(row.id.clone())),
+                None => (0, None, None),
+            };
+            let seek = Seek {
+                position: last.position.clone(),
+                hit,
+                table,
+                row,
+                taken: next,
+            };
+            Json::from(secret.issue(&scope, &seek.payload())?).to_string()
+        }
+        Some(_) => Json::from(secret.issue(&scope, &json!(next))?).to_string(),
     };
     Ok(format!(
         "{{\"data\":[{}],\"next_cursor\":{next_cursor}}}",

@@ -1191,8 +1191,8 @@
       },
       "ViewField": {
         "type": "string",
-        "pattern": "^(?:title|created_at|updated_at|occurred_at|type|state|tier|tags|properties\\.[A-Za-z_][A-Za-z0-9_]*)$",
-        "description": "A field: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier`, `tags`) or `properties.<name>`.",
+        "pattern": "^(?:title|created_at|updated_at|occurred_at|last_activity_at|type|state|tier|tags|properties\\.[A-Za-z_][A-Za-z0-9_]*)$",
+        "description": "A field: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `last_activity_at`, `type`, `state`, `tier`, `tags`) or `properties.<name>`.",
         "example": "properties.status"
       },
       "ViewTier": {
@@ -1238,7 +1238,7 @@
         "properties": {
           "by": {
             "type": "string",
-            "description": "The field to group by: a field, or `edge[<type>]` or `backref[<type>]` for the item an edge of that type joins.",
+            "description": "The field to group by: a field other than `last_activity_at`, which only a sort takes, or `edge[<type>]` or `backref[<type>]` for the item an edge of that type joins.",
             "example": "properties.status"
           },
           "bucket": {

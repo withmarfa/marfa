@@ -91,7 +91,7 @@ fn title_key(catalog: &Catalog) -> Sql {
 
 fn key_of(by: &str, descending: bool, catalog: &Catalog) -> Option<Key> {
     let (expression, nullable) = match by {
-        "created_at" | "updated_at" | "occurred_at" | "type" | "state" => {
+        "created_at" | "updated_at" | "occurred_at" | "last_activity_at" | "type" | "state" => {
             (Sql::new(&format!("i.{by}")), false)
         }
         "tier" => (Sql::new("i.tier"), true),
@@ -135,7 +135,7 @@ fn order_of(id: &str, settings: &Map<String, Json>, catalog: &Catalog) -> Result
             only.descending
                 && matches!(
                     key.get("by").and_then(Json::as_str),
-                    Some("created_at" | "updated_at" | "occurred_at")
+                    Some("created_at" | "updated_at" | "occurred_at" | "last_activity_at")
                 )
         }
         _ => false,

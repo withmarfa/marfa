@@ -1184,7 +1184,7 @@ When `GET /items` names `updated_after`, the server MUST order the items by `upd
 
 ### `search-and-filters/listing-sort-invalid`
 
-If `GET /items` names a `sort` that is not `created_at`, `updated_at`, `occurred_at` or `properties.<field>` with a field of lowercase letters, digits and underscores, or a `direction` that is not `asc` or `desc`, then the server MUST answer `400 validation_error` naming the parameter.
+If `GET /items` names a `sort` that is not `created_at`, `updated_at`, `occurred_at`, `last_activity_at` or `properties.<field>` with a field of lowercase letters, digits and underscores, or a `direction` that is not `asc` or `desc`, then the server MUST answer `400 validation_error` naming the parameter.
 
 **Tests:** `correctness/pagination.test.ts › refuses a sort or direction it does not take`.
 
@@ -1266,7 +1266,9 @@ The server MUST NOT let an item or a row that a credential may not read change t
 
 ### `search-and-filters/search-cursor`
 
-When a client sends back the `next_cursor` of a page of `GET /search` with the same query, the server MUST continue the ranking, so that walking to `null` delivers every hit once.
+When a client sends back the `next_cursor` of a page of `GET /search` with the same query while no item it may read is written, the server MUST continue the ranking, so that walking to `null` delivers every hit once.
+
+**Reason:** BM25 weighs a word by how many entries of the corpus hold it, so a write moves every hit's rank and a walk read across writes reads several rankings. `search-and-filters/search-cursor-sorted-writes` states what a walk by a column keeps while writes land.
 
 **Tests:** `compliance/envelope.test.ts › walks to a null cursor, delivering every hit once`.
 
@@ -1302,6 +1304,14 @@ When a client sends back the `next_cursor` of each page of a `GET /search` that 
 
 **Tests:** `compliance/search-ordering.test.ts › walks a sorted search to the end, delivering every hit once`, `compliance/datetime-property-compare.test.ts › orders a search by instant, and pages through it with a cursor`.
 
+### `search-and-filters/search-cursor-sorted-writes`
+
+When a client walks a `GET /search` that names a `sort` other than `relevance` by sending back the `next_cursor` of each page, and items are created, changed or deleted between the pages, the server MUST deliver once each hit that exists throughout the walk and whose sort value does not change.
+
+**Reason:** a position in the order of a column is the value and the ID of the last hit, and it stays where it was whatever is written, while a count of hits delivered moves with every write before it.
+
+**Tests:** `compliance/search-walk-writes.test.ts › delivers each item that exists throughout once when items are created, edited and deleted between pages, in property order`, `› delivers each item that exists throughout once while the ties of a value are split by a page and joined by a new item`, `› delivers each item that exists throughout once, in last_activity_at order, whichever way and with new items at either end`, `› delivers each item that exists throughout once when a sort value changes between pages, never delivering an item that was not changed twice`.
+
 ### `search-and-filters/search-depth`
 
 When a page of `GET /search` holds the 10,000th hit of the ranking, the server MUST answer `next_cursor` of `null`.
@@ -1326,9 +1336,9 @@ When `GET /search` names `direction=asc` and no `sort` or `sort=relevance`, the 
 
 ### `search-and-filters/search-sort-column`
 
-When `GET /search` names `sort=created_at`, `sort=updated_at` or `sort=occurred_at`, the server MUST order the hits by that column, newest first unless `direction=asc`.
+When `GET /search` names `sort=created_at`, `sort=updated_at`, `sort=occurred_at` or `sort=last_activity_at`, the server MUST order the hits by that column, newest first unless `direction=asc`.
 
-**Tests:** `compliance/search-ordering.test.ts › orders a search by a time column, newest first unless told otherwise`.
+**Tests:** `compliance/search-ordering.test.ts › orders a search by a time column, newest first unless told otherwise`, `compliance/search-walk-writes.test.ts › orders a search by last_activity_at, which a row moves and updated_at does not`, `correctness/pagination.test.ts › orders a search by last_activity_at, a tie by id ascending in both directions, and pages through the tie`.
 
 ### `search-and-filters/search-sort-property`
 
@@ -1338,15 +1348,15 @@ When `GET /search` names `sort=properties.<field>`, the server MUST order the hi
 
 ### `search-and-filters/search-sort-ties`
 
-When `GET /search` orders hits that tie on relevance or on a property, the server MUST order them by item ID ascending in both directions.
+When `GET /search` orders hits that tie on relevance, on a time column or on a property, the server MUST order them by item ID ascending in both directions.
 
 **Reason:** an unordered tie is two answers to one query.
 
-**Tests:** `compliance/search-ordering.test.ts › breaks a tie by item ID, ascending`, `compliance/search-matching.test.ts › $name: $query`.
+**Tests:** `compliance/search-ordering.test.ts › breaks a tie by item ID, ascending`, `compliance/search-matching.test.ts › $name: $query`, `correctness/pagination.test.ts › orders a search by last_activity_at, a tie by id ascending in both directions, and pages through the tie`.
 
 ### `search-and-filters/search-sort-invalid`
 
-If `GET /search` names a `sort` that is not `relevance`, `created_at`, `updated_at`, `occurred_at` or `properties.<field>` with a field of lowercase letters, digits and underscores, or a `direction` that is not `asc` or `desc`, then the server MUST answer `400 validation_error` naming the parameter.
+If `GET /search` names a `sort` that is not `relevance`, `created_at`, `updated_at`, `occurred_at`, `last_activity_at` or `properties.<field>` with a field of lowercase letters, digits and underscores, or a `direction` that is not `asc` or `desc`, then the server MUST answer `400 validation_error` naming the parameter.
 
 **Tests:** `compliance/search-ordering.test.ts › refuses a sort or direction it does not take`.
 

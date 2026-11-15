@@ -191,6 +191,7 @@ describe("the order of the listing", () => {
   let ordered: MarfaClient;
   let source: string;
   let newestFirst: string[];
+  let activeFirst: string[];
   const ids = async (query: string): Promise<string[]> => {
     const page = await ordered.rawRequest<{ data: { id: string }[] }>(
       `/items?source=${encodeURIComponent(source)}&${query}`,
@@ -210,13 +211,24 @@ describe("the order of the listing", () => {
     const restored = await getOwnerClient().restoreArchive(
       itemsArchive(
         [
-          { id: newer!, created_at: at(3), updated_at: at(1) },
+          {
+            id: newer!,
+            created_at: at(3),
+            updated_at: at(1),
+            last_activity_at: at(8),
+          },
           ...tied.map((id, i) => ({
             id,
             created_at: at(2),
             updated_at: at(4 + i),
+            last_activity_at: at(12),
           })),
-          { id: older!, created_at: at(1), updated_at: at(9) },
+          {
+            id: older!,
+            created_at: at(1),
+            updated_at: at(9),
+            last_activity_at: at(9),
+          },
         ].map((row) => ({
           ...row,
           type: "core.note",
@@ -228,6 +240,8 @@ describe("the order of the listing", () => {
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     expect(restored.data.imported).toBe(5);
     newestFirst = [newer!, ...[...tied].reverse(), older!];
+    // `last_activity_at` ties on three of the five.
+    activeFirst = [...[...tied].reverse(), older!, newer!];
     for (const id of newestFirst) trackItem(ctx, id);
     for (const id of tied) {
       const row = await ordered.getItem(id);
@@ -258,6 +272,81 @@ describe("the order of the listing", () => {
     expect(walked).toEqual(newestFirst);
   });
 
+  it("orders a listing by last_activity_at, a tie by id in the same direction, and pages through the tie", async () => {
+    expect(await ids("sort=last_activity_at")).toEqual(activeFirst);
+    expect(await ids("sort=last_activity_at&direction=desc")).toEqual(
+      activeFirst,
+    );
+    const quietFirst = [...activeFirst].reverse();
+    expect(await ids("sort=last_activity_at&direction=asc")).toEqual(
+      quietFirst,
+    );
+    // The witness: the column is not the order of created_at or updated_at.
+    expect(activeFirst).not.toEqual(newestFirst);
+    for (const [direction, expected] of [
+      ["desc", activeFirst],
+      ["asc", quietFirst],
+    ] as const) {
+      const walked: string[] = [];
+      let cursor: string | null | undefined;
+      do {
+        const page = await ordered.listItems({
+          source,
+          sort: "last_activity_at",
+          direction,
+          limit: 1,
+          cursor: cursor ?? undefined,
+        });
+        expect(page.ok, JSON.stringify(page.error)).toBe(true);
+        walked.push(...page.data.data.map((row) => row.id));
+        cursor = page.data.next_cursor;
+      } while (cursor);
+      expect(walked, direction).toEqual(expected);
+    }
+  });
+
+  it("orders a search by last_activity_at, a tie by id ascending in both directions, and pages through the tie", async () => {
+    const tied = activeFirst.slice(0, 3).sort();
+    const [older, newer] = activeFirst.slice(3) as [string, string];
+    const hits = async (direction: string, extra = "") => {
+      const page = await ordered.rawRequest<{
+        data: { item: { id: string } }[];
+        next_cursor: string | null;
+      }>(
+        `/search?q=listing&source=${encodeURIComponent(source)}&sort=last_activity_at&direction=${direction}${extra}`,
+      );
+      expect(page.status, JSON.stringify(page.error)).toBe(200);
+      return page.data;
+    };
+    expect((await hits("desc")).data.map((hit) => hit.item.id)).toEqual([
+      ...tied,
+      older,
+      newer,
+    ]);
+    expect((await hits("asc")).data.map((hit) => hit.item.id)).toEqual([
+      newer,
+      older,
+      ...tied,
+    ]);
+    for (const direction of ["desc", "asc"]) {
+      const walked: string[] = [];
+      let cursor: string | null = null;
+      do {
+        const page = await hits(
+          direction,
+          `&limit=1${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`,
+        );
+        walked.push(...page.data.map((hit) => hit.item.id));
+        cursor = page.next_cursor;
+      } while (cursor);
+      expect(walked, direction).toEqual(
+        direction === "desc"
+          ? [...tied, older, newer]
+          : [newer, older, ...tied],
+      );
+    }
+  });
+
   it("orders a listing by updated_at when it names that sort", async () => {
     const [newer, ...others] = newestFirst;
     const older = others.pop();
@@ -286,6 +375,7 @@ describe("the order of the listing", () => {
     }
     // The witness: the door takes each of the orders it declares.
     expect(await ids("sort=occurred_at")).toHaveLength(newestFirst.length);
+    expect(await ids("sort=last_activity_at")).toHaveLength(newestFirst.length);
     expect(await ids("sort=properties.body_2")).toHaveLength(
       newestFirst.length,
     );

@@ -152,7 +152,11 @@ fn shown_times(event: &Event, slot: i64) -> (i64, Option<i64>) {
 pub async fn read(app: &App, caller: &Caller, window: Window) -> Result<String> {
     let faults = app.faults.clone();
     reading(app, caller, move |read| {
-        let rows = events(read, window.type_filter.as_deref())?;
+        let rows = events(
+            read,
+            window.type_filter.as_deref(),
+            (window.from, window.to),
+        )?;
         let rules = &read.catalog.rules;
         let answered = |row: &Event| {
             window
@@ -172,6 +176,7 @@ pub async fn read(app: &App, caller: &Caller, window: Window) -> Result<String> 
             .collect();
 
         let mut bound: HashMap<usize, usize> = HashMap::new();
+        let mut disclosed: HashSet<usize> = HashSet::new();
         let targets: Vec<&str> = exception_rows.iter().map(|at| rows[*at].id.as_str()).collect();
         for (source, target) in parents(read, &targets)? {
             let (Some(&series), Some(&exception)) =
@@ -179,11 +184,16 @@ pub async fn read(app: &App, caller: &Caller, window: Window) -> Result<String> 
             else {
                 continue;
             };
-            if is_series(&rows[series])
-                && rows[exception].original_starts_at.is_some()
+            if !is_series(&rows[series]) || rows[exception].original_starts_at.is_none() {
+                continue;
+            }
+            // Any reader loses the slot; only a reader of the edge is told the series.
+            bound.entry(exception).or_insert(series);
+            if !disclosed.contains(&exception)
                 && read.caller.may_read_edge("parent-of", &rows[series].type_id)
             {
-                bound.entry(exception).or_insert(series);
+                bound.insert(exception, series);
+                disclosed.insert(exception);
             }
         }
         let mut moved: HashMap<usize, Vec<(usize, i64)>> = HashMap::new();
@@ -301,12 +311,13 @@ pub async fn read(app: &App, caller: &Caller, window: Window) -> Result<String> 
                                     continue;
                                 }
                                 let (start, end) = shown_times(moved_row, slot);
+                                let named = disclosed.contains(&exception);
                                 push(Shown {
                                     row: exception,
                                     start,
                                     end,
-                                    series: Some(at),
-                                    replaces: Some(slot),
+                                    series: named.then_some(at),
+                                    replaces: named.then_some(slot),
                                 })?;
                             }
                             None => push(Shown {
@@ -341,9 +352,11 @@ pub async fn read(app: &App, caller: &Caller, window: Window) -> Result<String> 
             if !overlaps(start, end, &window) {
                 continue;
             }
-            let (series, replaces) = match bound.get(&at).and_then(|series| {
-                slot_of(row).map(|slot| (*series, slot))
-            }) {
+            let (series, replaces) = match bound
+                .get(&at)
+                .filter(|_| disclosed.contains(&at))
+                .and_then(|series| slot_of(row).map(|slot| (*series, slot)))
+            {
                 Some((series, slot)) => (Some(series), Some(slot)),
                 None => (None, None),
             };

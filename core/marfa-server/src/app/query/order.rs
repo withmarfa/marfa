@@ -39,7 +39,7 @@ fn column(name: &str) -> Sql {
     Sql::new(&format!("i.{name}"))
 }
 
-fn alias(at: usize) -> String {
+pub(super) fn alias(at: usize) -> String {
     format!("k{at}")
 }
 
@@ -208,11 +208,16 @@ impl Order {
     /// The condition for the rows after `position`. The position's values are
     /// compared, never looked up, so a row purged since still places a page.
     pub fn after(&self, sql: &mut Sql, position: &Position) {
+        self.after_id(sql, position, "i.id");
+    }
+
+    /// As [`Order::after`], with the id read from the column `id`.
+    pub fn after_id(&self, sql: &mut Sql, position: &Position, id: &str) {
         if let [key] = self.keys.as_slice()
             && !key.nullable
             && key.descending == self.id_descending
         {
-            sql.push(&format!("({}, i.id) ", alias(0)));
+            sql.push(&format!("({}, {id}) ", alias(0)));
             sql.push(if key.descending { "<" } else { ">" });
             sql.push(" (");
             sql.bind(position.keys[0].clone());
@@ -248,11 +253,8 @@ impl Order {
             }
         }
         let mut last = tied;
-        last.push(if self.id_descending {
-            "i.id < "
-        } else {
-            "i.id > "
-        });
+        last.push(id);
+        last.push(if self.id_descending { " < " } else { " > " });
         last.bind(position.id.clone());
         branches.push(last);
         sql.push("(");
@@ -265,5 +267,16 @@ impl Order {
             sql.push(")");
         }
         sql.push(")");
+    }
+
+    /// The condition for the rows that tie with `position` on every key and on its id.
+    pub fn level_with(&self, sql: &mut Sql, position: &Position, id: &str) {
+        for (at, value) in position.keys.iter().enumerate().take(self.keys.len()) {
+            sql.push(&format!("{} IS ", alias(at)));
+            sql.bind(value.clone());
+            sql.push(" AND ");
+        }
+        sql.push(&format!("{id} = "));
+        sql.bind(position.id.clone());
     }
 }

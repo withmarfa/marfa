@@ -148,6 +148,21 @@ CREATE INDEX IF NOT EXISTS items_bin_age ON items (trashed_at)
     WHERE state = 'trashed';
 CREATE INDEX IF NOT EXISTS items_activity ON items (last_activity_at, id);
 
+-- The calendar reads an event by its start, so a window reads the events near it and not every event.
+-- `app/query/events.rs` names each index and repeats its expression and condition.
+CREATE INDEX IF NOT EXISTS items_event_start
+    ON items (julianday(json_extract(properties, '$.starts_at')))
+    WHERE json_type(properties, '$.starts_at') = 'text';
+-- What a window reads whatever its range: a series, an event whose start or end no date function reads,
+-- and an event longer than 31 days, which a start near the window cannot find.
+CREATE INDEX IF NOT EXISTS items_event_always ON items (seq)
+    WHERE json_type(properties, '$.recurrence') IN ('array', 'object', 'text', 'integer', 'real', 'true', 'false')
+        OR (json_type(properties, '$.starts_at') = 'text' AND (julianday(json_extract(properties, '$.starts_at')) IS NULL
+            OR (json_type(properties, '$.ends_at') = 'text' AND julianday(json_extract(properties, '$.ends_at')) IS NULL)
+            OR COALESCE(CASE WHEN json_type(properties, '$.ends_at') = 'text' THEN julianday(json_extract(properties, '$.ends_at')) END,
+                        julianday(json_extract(properties, '$.starts_at')) + json_extract(properties, '$.duration') / 86400.0)
+               - julianday(json_extract(properties, '$.starts_at')) > 31.0));
+
 -- One per table of an item that has held a row, kept by the row write. AUTOINCREMENT: a purged
 -- item's rows outlive its summary until housekeeping removes them, keyed by its seq.
 CREATE TABLE IF NOT EXISTS table_summaries (
