@@ -92,7 +92,7 @@ Each job is named as GitHub shows it.
      --signer-workflow withmarfa/marfa/.github/workflows/release.yml --source-ref refs/tags/v<version>
    ```
 
-3. The package is on npm: `npm view @withmarfa/client@<version> version`. `@withmarfa/core` is no longer published, and the release neither builds nor checks it.
+3. The package is on npm: `npm view @withmarfa/client@<version> version`.
 4. If step 5 of [Before you tag](#before-you-tag) wrote anything, add it to the notes. `gh release edit --notes-file` replaces the whole body, so write the current body to a file first (`gh release view v<version> --json body --jq .body`), add the words, and edit with that file.
 5. The tap: `gh variable list` shows whether `HOMEBREW_TAP` is `publish`, and the formula the tap holds names its version:
 

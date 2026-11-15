@@ -124,7 +124,7 @@ Access is read the same way wherever a person sees it: on the pages where they a
 
 ### Devices and folders
 
-- **device**: Something that keeps a working copy of a slice and a queue of writes, through the core: an app built on the Swift SDK or the Node module, or the CLI. A folder is a device whose face is a directory.
+- **device**: Something that keeps a working copy of a slice and a queue of writes, through the core: an app built on the Swift SDK, or the CLI. A folder is a device whose face is a directory.
 - **core**: The Rust engine every native client embeds, through UniFFI to Swift and a native module to Node.
 - **working copy**: A device's local copy of its slice. A copy, not a peer: the server is the truth.
 - **slice**: The declared subset of an instance one device holds: a type list and a tier, and any edge types it holds whole. What a working copy is a copy of.
