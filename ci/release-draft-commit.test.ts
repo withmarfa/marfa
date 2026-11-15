@@ -179,17 +179,6 @@ describe("the draft of a release", () => {
       expect(result.said).toContain("gh release delete v0.1.0");
     },
   );
-
-  it("leaves a public release alone, whatever commit it names", () => {
-    const result = draft({
-      isDraft: false,
-      targetCommitish: OTHER,
-      assets: [],
-    });
-    expect(result.status, result.said).toBe(0);
-    expect(result.writes).toEqual([]);
-    expect(result.said).toContain("already released");
-  });
 });
 
 const platform = (revision: string | null) => ({

@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut, check or repair a Marfa release. Tags the next 0.0.N on a green commit of main, follows release.yml job by job, checks the six release files, the server image, the npm packages and the Homebrew tap, and finishes a failed or partial run. Use when asked to release, tag a version, check a release, or fix a release run.
+description: Cut, check or repair a Marfa release. Tags the next version on a green commit of main, follows release.yml job by job, checks the six release files, the server image, the npm packages and the Homebrew tap, and finishes a failed or partial run. Use when asked to release, tag a version, check a release, or fix a release run.
 ---
 
 # Cut a Marfa release
@@ -10,11 +10,11 @@ A release is a git tag `v<version>` on a commit of `main`. Pushing the tag runs 
 ## The version
 
 - Every manifest in the tree carries `0.0.0`, and `ci/version-fields.test.ts` refuses any other. A version exists only as a tag. `release.yml` stamps it into every manifest in its own checkout with `scripts/release/stamp-version.sh`; never run that script in yours.
-- The next version is the highest `v0.0.N` tag plus 0.0.1. `Read the version` accepts nothing else: it refuses any `major.minor` but `0.0`, so a `v0.1.0` tag fails there, and any patch below 70.
+- The next version is the highest released `v*` tag plus a patch (`0.1.3` then `0.1.4`), or the next minor at patch 0 (`0.1.3` then `0.2.0`), which is for a breaking change. `Read the version` accepts nothing else. It refuses a version that goes back, skips one, repeats a released one, or has a major above 0 (a `1.x` needs the gate changed on purpose). The first `v0.1.0` follows the last `0.0.N` this way, and no `0.0.N` is released after it.
 - Find the highest tag:
 
   ```bash
-  git ls-remote --tags --refs origin 'refs/tags/v0.0.*' | sed 's#.*/v0\.0\.##' | sort -n | tail -1
+  git ls-remote --tags --refs origin 'refs/tags/v*' | sed 's#.*/v##' | sort -V | tail -1
   ```
 
 ## Before you tag
@@ -26,8 +26,13 @@ A release is a git tag `v<version>` on a commit of `main`. Pushing the tag runs 
    gh run list --workflow ci.yml --commit <sha> --event push --json conclusion,headBranch
    ```
 
-3. Check `core.yml` yourself, because the release does not: its live checks on macOS (the command line, the folder watch, the Swift package) run on a push to `main` in that workflow, not in `ci.yml`. Its `paths` filter skips some pushes; then the latest run on an earlier commit vouches for it. A failed or cancelled run means the commit is not ready.
-4. Check that the previous tag is a published release, not a draft (`gh release view v0.0.<N-1> --json isDraft`). `Read the version` refuses a version whose predecessor is only tagged.
+3. Check that `core.yml` passed for the commit. `Require green Core` refuses a tag without it. The live checks on macOS (the command line, the folder watch, the Swift package) run in `core.yml` on a push to `main` that touches the core, and its `paths` filter skips other pushes. A commit with no run of its own is vouched for by the nearest earlier run on `main`, when no commit since changed a path the filter lists. A run that failed, was cancelled or timed out, or is still running, refuses the release, and so does a comparison that fails for any reason but a 404 (re-run the job); for a run still going, wait for it and re-run the job:
+
+   ```bash
+   gh run list --workflow core.yml --branch main --json headSha,status,conclusion,createdAt --limit 10
+   ```
+
+4. Check that the previous tag is a published release, not a draft (`gh release view v<previous version> --json isDraft`). `Read the version` refuses a version whose predecessor is only tagged, or that is itself released already.
 5. If the database schema (`core/marfa-server/src/db/migrations/`) or the archive layout changed since the previous release, write down what an owner must do before upgrading. Every release's notes start with the same `scripts/release/upgrade-note.md`, so add the words to this release's notes once it is public (step 4 of [Check the release](#check-the-release)).
 6. To prove a change to the release itself or to the native pins before tagging, run a dry run on the commit and wait for it:
 
@@ -48,7 +53,7 @@ gh run watch <run id> --exit-status
 
 Each job is named as GitHub shows it.
 
-1. **Require green CI:** for a tag, a successful `ci.yml` run for the commit, from a push to `main` or a dispatch.
+1. **Require green CI** and **Require green Core:** for a tag, a successful `ci.yml` run for the commit, from a push to `main` or a dispatch, and a successful `core.yml` run for it or for the nearest run before it with no core change since (`scripts/release/require-core-run.sh`).
 2. **Read the version:** the gate in [The version](#the-version). It also refuses a version when a higher one is released, and a commit that is not after the previous release's.
 3. **Build the programs (macOS),** on `macos-26`: stamps the version, packs `@withmarfa/core` (the Apple silicon `.node` module) and `@withmarfa/client`, and builds `marfa` and `marfa-server` for `aarch64-apple-darwin` with `scripts/release/build-programs.sh`. Each program must report `<program> <version>`.
 4. **Sign the programs:** signs both with the Developer ID under the hardened runtime and has Apple notarize them (`scripts/release/sign-binary.sh`, six `APPLE_*` secrets; a dry run signs too), packs `marfa-<version>-darwin-arm64.tar.gz`, boots it and reads a PDF and a picture with it (`check-archive.sh`, `prove-reading.sh`).

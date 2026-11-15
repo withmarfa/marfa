@@ -30,12 +30,12 @@ const script = workflow.jobs.version?.steps.find(
 )?.run;
 
 interface World {
-  /** Versions whose tags are on the remote. */
-  tags: number[];
+  /** Versions whose tags are on the remote, such as `0.1.0`. */
+  tags: string[];
   /** Versions that have a public release. */
-  released: number[];
+  released: string[];
   /** Versions that have a draft release. */
-  drafts?: number[];
+  drafts?: string[];
   /** What the compare answers, relative to the previous release. */
   relation?: string;
 }
@@ -60,7 +60,8 @@ function release(world: World, run: Run) {
     stub(
       "git",
       `#!/bin/sh
-for n in none ${world.tags.join(" ")}; do [ "$n" = none ] || printf 'abc123\\trefs/tags/v0.0.%s\\n' "$n"; done
+for n in none ${world.tags.join(" ")}; do [ "$n" = none ] || printf 'abc123\\trefs/tags/v%s\\n' "$n"; done
+printf 'abc123\\trefs/tags/vlatest\\nabc123\\trefs/tags/v0.0.70-rc1\\n'
 `,
     );
     stub(
@@ -68,7 +69,7 @@ for n in none ${world.tags.join(" ")}; do [ "$n" = none ] || printf 'abc123\\tre
       `#!/bin/sh
 case "$1" in
   release)
-    version="\${3#v0.0.}"
+    version="\${3#v}"
     for n in none ${world.released.join(" ")}; do [ "$n" = "$version" ] && { echo false; exit 0; }; done
     for n in none ${(world.drafts ?? []).join(" ")}; do [ "$n" = "$version" ] && { echo true; exit 0; }; done
     echo "release not found" >&2
@@ -121,118 +122,164 @@ ${script ?? "exit 1"}`,
 const tagged = (version: string, world: World) =>
   release(world, { tag: `v${version}` });
 
+const refused = (run: ReturnType<typeof release>, said: string) => {
+  expect(run.status, run.said).toBe(1);
+  expect(run.output).toBe("");
+  expect(run.said).toContain(said);
+};
+
 describe("the version a tag names", () => {
   it("finds the step rather than passing over none", () => {
-    expect(script).toContain("first_rust=70");
+    expect(script).toContain("next_minor");
   });
 
-  it("accepts the next version after the last release", () => {
-    const run = tagged("0.0.71", { tags: [66, 70, 71], released: [66, 70] });
+  it("accepts the next patch after the last release", () => {
+    const run = tagged("0.0.71", {
+      tags: ["0.0.70", "0.0.71"],
+      released: ["0.0.70"],
+    });
     expect(run.status, run.said).toBe(0);
     expect(run.output).toBe("version=0.0.71\n");
   });
 
-  it.each([1, 67, 68, 69])(
-    "refuses 0.0.%i, which is below the first Rust release",
-    (version) => {
-      const run = tagged(`0.0.${String(version)}`, {
-        tags: [66, version],
-        released: [66],
-      });
-      expect(run.status).toBe(1);
-      expect(run.output).toBe("");
-      expect(run.said).toContain("below 0.0.70, the first Rust release");
-    },
-  );
-
-  it("accepts 0.0.70 after 0.0.66, the one gap a release may leave", () => {
-    const run = tagged("0.0.70", { tags: [65, 66, 70], released: [65, 66] });
-    expect(run.status, run.said).toBe(0);
-    expect(run.output).toBe("version=0.0.70\n");
-    expect(run.said).toContain("first Rust release");
-  });
-
-  it("refuses any other gap, including the one after 0.0.70", () => {
-    for (const version of [71, 72]) {
-      const run = tagged(`0.0.${String(version)}`, {
-        tags: [66, version],
-        released: [66],
-      });
-      expect(run.status, `0.0.${String(version)}`).toBe(1);
-      expect(run.said).toContain("does not follow the tags before it");
-    }
-    const after = tagged("0.0.72", { tags: [66, 70, 72], released: [66, 70] });
-    expect(after.status).toBe(1);
-    expect(after.said).toContain("the next version is 0.0.71");
-  });
-
-  it("refuses 0.0.70 when 0.0.66 was tagged but never released", () => {
-    const run = tagged("0.0.70", { tags: [65, 66, 70], released: [65] });
-    expect(run.status).toBe(1);
-    expect(run.said).toContain("0.0.66 is tagged but not released");
-  });
-
-  it("refuses a tag made below a version that is already released", () => {
-    const run = tagged("0.0.71", {
-      tags: [66, 70, 71, 72],
-      released: [66, 70, 72],
+  it.each([
+    ["0.1.0", ["0.0.70", "0.0.71"]],
+    ["0.1.1", ["0.0.71", "0.1.0"]],
+    ["0.1.4", ["0.1.0", "0.1.3"]],
+    ["0.2.0", ["0.1.0", "0.1.3"]],
+    ["0.10.0", ["0.9.12"]],
+    ["0.1.0", ["0.0.71"]],
+  ])("accepts %s after %j", (version, tags) => {
+    const run = tagged(version, {
+      tags: [...tags, version],
+      released: tags,
     });
-    expect(run.status).toBe(1);
-    expect(run.said).toContain("0.0.72 is already released");
+    expect(run.status, run.said).toBe(0);
+    expect(run.output).toBe(`version=${version}\n`);
+  });
+
+  it("accepts 0.0.1 when no release exists", () => {
+    const run = tagged("0.0.1", { tags: ["0.0.1"], released: [] });
+    expect(run.status, run.said).toBe(0);
+  });
+
+  it("finds the previous release among tags of every series", () => {
+    const run = tagged("0.1.1", {
+      tags: ["0.0.70", "0.0.71", "0.1.0", "0.1.1"],
+      released: ["0.0.70", "0.0.71", "0.1.0"],
+    });
+    expect(run.status, run.said).toBe(0);
+  });
+
+  it("ignores a tag that is not a plain version", () => {
+    const run = tagged("0.0.71", {
+      tags: ["0.0.70", "0.0.71"],
+      released: ["0.0.70"],
+    });
+    expect(run.status, run.said).toBe(0);
+  });
+
+  it.each([
+    ["0.0.72", ["0.0.71", "0.1.0"], "0.1.0 is already released"],
+    ["0.0.71", ["0.0.70", "0.0.71", "0.1.0"], "0.1.0 is already released"],
+    ["0.1.2", ["0.0.71", "0.1.0"], "the next version is 0.1.1, or 0.2.0"],
+    ["0.3.0", ["0.0.71", "0.1.0"], "the next version is 0.1.1, or 0.2.0"],
+    ["0.2.1", ["0.1.0", "0.1.3"], "the next version is 0.1.4, or 0.2.0"],
+    ["0.0.73", ["0.0.71"], "the next version is 0.0.72, or 0.1.0"],
+    ["0.2.0", ["0.0.71"], "the next version is 0.0.72, or 0.1.0"],
+    ["0.1.1", ["0.0.71"], "the next version is 0.0.72, or 0.1.0"],
+  ])("refuses %s after %j", (version, released, said) => {
+    refused(tagged(version, { tags: [...released, version], released }), said);
+  });
+
+  it("refuses a second 0.1.0, which is already released", () => {
+    refused(
+      tagged("0.1.0", {
+        tags: ["0.0.71", "0.1.0"],
+        released: ["0.0.71", "0.1.0"],
+      }),
+      "0.1.0 is already released",
+    );
+  });
+
+  it("refuses 1.0.0, the next minor's patch zero but a major above 0", () => {
+    refused(
+      tagged("1.0.0", { tags: ["0.1.0", "1.0.0"], released: ["0.1.0"] }),
+      "a major above 0",
+    );
+  });
+
+  it("refuses a 0.1.0 tagged while 0.0.72 is only tagged", () => {
+    refused(
+      tagged("0.1.0", {
+        tags: ["0.0.71", "0.0.72", "0.1.0"],
+        released: ["0.0.71"],
+      }),
+      "0.0.72 is tagged but not released",
+    );
+  });
+
+  it("refuses 0.0.72 when the last release is above it", () => {
+    refused(
+      tagged("0.0.72", {
+        tags: ["0.0.71", "0.0.72", "0.1.0", "0.1.1"],
+        released: ["0.0.71", "0.1.1"],
+      }),
+      "0.1.1 is already released",
+    );
   });
 
   it("waits for a higher tag that is only a draft, as two tags pushed together do", () => {
     const run = tagged("0.0.71", {
-      tags: [66, 70, 71, 72],
-      released: [66, 70],
-      drafts: [72],
+      tags: ["0.0.70", "0.0.71", "0.0.72"],
+      released: ["0.0.70"],
+      drafts: ["0.0.72"],
     });
     expect(run.status, run.said).toBe(0);
   });
 
   it("refuses a commit that does not come after the previous release", () => {
-    const run = tagged("0.0.71", {
-      tags: [66, 70, 71],
-      released: [66, 70],
-      relation: "behind",
-    });
-    expect(run.status).toBe(1);
-    expect(run.said).toContain("is behind of v0.0.70");
+    refused(
+      tagged("0.1.0", {
+        tags: ["0.0.71", "0.1.0"],
+        released: ["0.0.71"],
+        relation: "behind",
+      }),
+      "is behind of v0.0.71",
+    );
   });
 
-  it.each(["v0.1.0", "v1.0.0", "v0.0.70-rc1", "v0.0", "vlatest", "v0.0.070"])(
-    "refuses the tag %s, which is not a 0.0.N version",
+  it.each(["v1.0.0", "v0.0.70-rc1", "v0.0", "vlatest", "v0.0.070", "v0.1.0.0"])(
+    "refuses the tag %s, which is not a version this gate releases",
     (tag) => {
-      const run = release({ tags: [66], released: [66] }, { tag });
+      const run = release({ tags: ["0.0.71"], released: ["0.0.71"] }, { tag });
       expect(run.status).toBe(1);
       expect(run.output).toBe("");
     },
   );
 
   it("takes a dry run's version from the input and applies the same rules", () => {
-    const accepted = release(
-      { tags: [66], released: [66] },
-      { dispatch: "0.0.70" },
-    );
+    const world = { tags: ["0.0.71"], released: ["0.0.71"] };
+    const accepted = release(world, { dispatch: "0.1.0" });
     expect(accepted.status, accepted.said).toBe(0);
-    expect(accepted.output).toBe("version=0.0.70\n");
-    const refused = release(
-      { tags: [66], released: [66] },
-      { dispatch: "0.0.69" },
+    expect(accepted.output).toBe("version=0.1.0\n");
+    refused(
+      release(world, { dispatch: "0.2.0" }),
+      "the next version is 0.0.72, or 0.1.0",
     );
-    expect(refused.status).toBe(1);
-    expect(refused.said).toContain("below 0.0.70");
-    const shell = release(
-      { tags: [66], released: [66] },
-      { dispatch: "0.0.67; echo hacked" },
+    refused(release(world, { dispatch: "1.0.0" }), "a major above 0");
+    refused(
+      release(world, { dispatch: "0.0.70" }),
+      "0.0.71 is already released",
     );
+    const shell = release(world, { dispatch: "0.0.72; echo hacked" });
     expect(shell.status).toBe(1);
     expect(shell.said).not.toContain("hacked\n");
   });
 
   it("refuses a run that is not at a tag ref", () => {
     const run = release(
-      { tags: [66], released: [66] },
+      { tags: ["0.0.71"], released: ["0.0.71"] },
       { ref: "refs/heads/main" },
     );
     expect(run.status).toBe(1);
