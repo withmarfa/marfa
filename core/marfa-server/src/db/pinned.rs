@@ -20,11 +20,18 @@ const PINS: &[Pin] = &[Pin {
     holds: "bccfcf2a1081613b2c508d9feed709acf6f690a3b4044a4d29c180f79ea325f0",
 }];
 
-const BEFORE_AND_FROM_0_1: &str = "Before Marfa 0.1, a database an earlier build wrote is refused \
-    anyway: if the change is meant, write the new digests in PINS in the same pull request and \
-    say so in its description. From Marfa 0.1, a release's databases must keep opening: put the \
-    migration back as it was, and make the change a new numbered migration in MIGRATIONS with an \
-    entry of its own in PINS.";
+const BEFORE_0_1: &str = "Before Marfa 0.1, no release promises that its databases keep opening: \
+    if the change is meant, write the new digests in PINS in the same pull request and say so in \
+    its description.";
+
+const FROM_0_1_MIGRATION: &str = "From Marfa 0.1, a release's databases must keep opening: put \
+    the migration back as it was, and make the change a new numbered migration in MIGRATIONS with \
+    an entry of its own in PINS.";
+
+const FROM_0_1_MADE: &str = "From Marfa 0.1, a release's databases must keep opening, and a new \
+    migration cannot help, because the start compares a file with its own version, made by this \
+    build, before any later migration runs: keep what this build makes from the pinned SQL as it \
+    was.";
 
 fn sha256(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -49,14 +56,14 @@ fn every_schema_version_makes_the_database_pinned_for_it() {
         assert!(
             pin.file == file,
             "the migration for schema version {version} changed, and is now {pinned}. \
-             {BEFORE_AND_FROM_0_1}"
+             {BEFORE_0_1} {FROM_0_1_MIGRATION}"
         );
         assert!(
             pin.holds == holds,
             "a database made through schema version {version} no longer holds what is pinned, \
-             though the migration's SQL did not change: MIGRATIONS changed, or a new SQLite makes \
-             the same SQL differently, and the start would refuse a database made before it. It \
-             is now {pinned}. {BEFORE_AND_FROM_0_1}"
+             though no migration's SQL changed: SQLite, or how this build makes a database from \
+             its migrations, now makes the same SQL differently, and the start may refuse a \
+             database made before. It is now {pinned}. {BEFORE_0_1} {FROM_0_1_MADE}"
         );
     }
     assert_eq!(
