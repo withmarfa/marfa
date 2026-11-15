@@ -33168,11 +33168,11 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't have `metadata.edge_types:write`.\n- `edge_permission_denied`: your edge map doesn't grant write on `id` or `reverse_name`. `details.edge_type` names it.",
+            "description": "- `forbidden`: you don't have `metadata.edge_types:write`.\n- `edge_permission_denied`: your edge map doesn't grant write on `id` or `reverse_name`. `details.edge_type` names it.\n- `type_not_permitted`: the edge type cascades on delete and holds edges whose targets are of a type you can't write. `details.grant` names the missing grant.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EdgePermissionDeniedOrForbiddenRefusal"
+                  "$ref": "#/components/schemas/EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"
                 }
               }
             },

@@ -18740,6 +18740,7 @@ export interface operations {
             /**
              * @description - `forbidden`: you don't have `metadata.edge_types:write`.
              *     - `edge_permission_denied`: your edge map doesn't grant write on `id` or `reverse_name`. `details.edge_type` names it.
+             *     - `type_not_permitted`: the edge type cascades on delete and holds edges whose targets are of a type you can't write. `details.grant` names the missing grant.
              */
             403: {
                 headers: {
@@ -18749,7 +18750,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenRefusal"];
+                    "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description `edge_type_not_found`: constraint evolution names no registered edge type. */
