@@ -66,10 +66,10 @@ fn take_as(path: &Path, me: u32) -> Result<File, Untaken> {
     let unread = |error: io::Error| Untaken::Refused(format!("could not be read: {error}"));
     let held = file.metadata().map_err(unread)?;
     if held.is_file() && held.nlink() == 1 && held.uid() != me {
-        return Err(Untaken::Refused(format!(
-            "belongs to account {}, not the server's; a network share that maps every owner to one account does this",
-            held.uid()
-        )));
+        return Err(Untaken::Refused(
+            "belongs to another account; a network share that maps every owner to one account does this"
+                .into(),
+        ));
     }
     if !held.is_file() || held.nlink() != 1 {
         return Err(Untaken::Refused(
