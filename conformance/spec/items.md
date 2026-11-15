@@ -2284,7 +2284,13 @@ When a key sends `PUT /items/{id}/extensions/{namespace}`, the server MUST repla
 
 If the data of `PUT /items/{id}/extensions/{namespace}`, written as compact JSON, is longer than 102400 Unicode characters, then the server MUST answer `400 validation_error`.
 
-**Reason:** a client measures the limit by counting characters of the text it sends with no spaces, not bytes, so a character outside ASCII counts once. The namespace's data stays as it stood.
+**Reason:** a client counts the characters of the text it sends, not bytes, so a character outside ASCII counts once.
+
+**Tests:** `compliance/extensions.test.ts › takes extension data of 102400 Unicode characters of compact JSON and refuses one more with 400 validation_error, leaving the namespace as it stood`.
+
+### `items/extension-limit-kept`
+
+If `PUT /items/{id}/extensions/{namespace}` is refused under `items/extension-limit`, then the server MUST leave the namespace's data as it stood.
 
 **Tests:** `compliance/extensions.test.ts › takes extension data of 102400 Unicode characters of compact JSON and refuses one more with 400 validation_error, leaving the namespace as it stood`.
 
@@ -2806,6 +2812,12 @@ If an owner trash action names an item that no item holds, then the server MUST 
 
 **Tests:** `compliance/owner-trash.test.ts › refuses an owner trash action that names an item no item holds with 404 item_not_found`.
 
+### `items/owner-trash-hidden`
+
+If an owner trash action names a system item, or an item the instance's source filter does not admit, then the server MUST answer `404 item_not_found` and leave the item.
+
+**Tests:** `compliance/owner-trash.test.ts › answers an owner trash action on a system item, or one the source filter hides, with 404 item_not_found and leaves it`.
+
 ### `items/owner-trash-local-only`
 
 If a request that carries a key calls `GET /trash`, `POST /trash/empty` or an owner trash action, then the server MUST answer `403 forbidden` with `details.needs` set to `local` (`errors/needs-local`).
@@ -2836,6 +2848,12 @@ When an archive exports and restores a trashed item, the server MUST preserve it
 
 **Tests:** `compliance/owner-trash.test.ts › preserves deletion identity and time through an archive and clears them on restoration`.
 
+### `items/trash-archive-unrecorded`
+
+When an archive restores an item in the bin whose line records no `trashed_at` and no `trashed_by`, the server MUST restore the item to the bin with `trashed_at` and `trashed_by` null.
+
+**Tests:** `compliance/owner-trash.test.ts › restores an archived item in the bin that records no time or sign-in with both null, and no deletion deadline`.
+
 ### `items/owner-empty-trash`
 
 When the private local command posts to `/trash/empty`, the server MUST attempt at most 200 items of the bin, the first 200 that `GET /trash` lists.
@@ -2853,6 +2871,12 @@ When the private local command posts to `/trash/empty`, the server MUST return `
 If an item the batch selected has left the bin by the time the batch reaches it, then the server MUST keep the item and list it in `failures` with `invalid_transition`.
 
 **Tests:** `compliance/owner-trash.test.ts › keeps an item that left the bin after the batch selected it, and lists it in failures as invalid_transition`.
+
+### `items/owner-empty-trash-version`
+
+If an item the batch selected has changed version by the time the batch reaches it, then the server MUST keep the item and list it in `failures` with `version_conflict`.
+
+**Tests:** `compliance/owner-trash.test.ts › keeps an item whose version changed after the batch selected it, and lists it in failures as version_conflict`.
 
 ### `items/owner-empty-trash-count`
 
@@ -2884,15 +2908,21 @@ When a caller runs `marfa --socket PATH items bin empty --confirm PURGE`, the CL
 
 ### `items/owner-empty-bin-progress`
 
-When a caller runs `marfa --socket PATH items bin empty --confirm PURGE`, the CLI MUST print how many items have been deleted so far after each batch and the total at the end.
+When a caller runs `marfa --socket PATH items bin empty --confirm PURGE` without `--json`, the CLI MUST print how many items have been deleted so far after each batch that has a `next_cursor`, and the total at the end.
 
-**Tests:** `cli/item-summaries.test.ts › prints how many items have been deleted so far after each batch and the total at the end`.
+**Tests:** `cli/item-summaries.test.ts › prints how many items have been deleted so far after each batch that has another to follow, and the total at the end`.
+
+### `items/owner-empty-bin-json`
+
+When a caller runs `marfa --socket PATH items bin empty --confirm PURGE --json`, the CLI MUST print one JSON object holding `purged`, `stayed` and `failures`, and no line for a batch.
+
+**Tests:** `cli/item-summaries.test.ts › prints one JSON object of purged, stayed and failures under --json, with no line for a batch`.
 
 ### `items/owner-empty-bin-exit`
 
 When a caller runs `marfa --socket PATH items bin empty --confirm PURGE` and no deletion was left unconfirmed, the CLI MUST exit `0`.
 
-**Tests:** `cli/item-summaries.test.ts › exits 0 when no deletion was left unconfirmed, and reports nothing to do on an empty bin`.
+**Tests:** `cli/item-summaries.test.ts › exits 0 when no deletion was left unconfirmed`.
 
 ### `items/owner-empty-bin-unconfirmed`
 
@@ -2914,19 +2944,45 @@ While the trash retention is 0 days, the server MUST return `eligible_for_deleti
 
 **Tests:** `compliance/owner-trash.test.ts › gives eligible_for_deletion_at as null while the retention is 0 days`.
 
+### `items/owner-trash-eligibility-unrecorded`
+
+If a trash summary has no `trashed_at`, then the server MUST return `eligible_for_deletion_at` as null whatever the retention.
+
+**Tests:** `compliance/owner-trash.test.ts › restores an archived item in the bin that records no time or sign-in with both null, and no deletion deadline`.
+
 ### `items/owner-trash-unknown-outcome`
 
-If the commit of an owner purge cannot be confirmed, then the server MUST answer `500 internal_error` with `details.write_outcome` set to `unknown` and a message that does not say whether the item was kept.
+If the commit of an owner trash, restore or purge cannot be confirmed and the volume is not out of room, then the server MUST answer `500 internal_error` with `details.write_outcome` set to `unknown`.
 
 **Reason:** an unavailable commit witness cannot prove rollback, so the caller reads current state before a manual retry.
 
-**Tests:** `compliance/owner-trash.test.ts › answers a purge whose commit cannot be confirmed with 500 and write_outcome unknown, without saying whether the item was kept`.
+**Tests:** `compliance/owner-trash.test.ts › answers an owner trash, restore or purge whose commit cannot be confirmed with 500 and write_outcome unknown`.
+
+### `items/owner-trash-storage-full`
+
+If a volume with no room turns away the commit of an owner trash, restore or purge, then the server MUST answer `507 insufficient_storage` with `details.write_outcome` set to `unknown`.
+
+**Reason:** the commit may have landed before the volume turned it away (`errors/storage-full-unknown`).
+
+**Tests:** `compliance/owner-trash.test.ts › answers an owner trash, restore or purge that a full volume turns away with 507 and write_outcome unknown`.
+
+### `items/owner-trash-unknown-message`
+
+When the server answers an owner trash, restore or purge with `details.write_outcome` set to `unknown`, the server MUST NOT say in the message whether the item was kept or deleted.
+
+**Tests:** `compliance/owner-trash.test.ts › answers an owner trash, restore or purge whose commit cannot be confirmed with 500 and write_outcome unknown`.
 
 ### `items/owner-empty-trash-unknown`
 
 If the commit of a purge in an emptying batch cannot be confirmed, then the server MUST list the item in `failures` with `details.write_outcome` set to `unknown`.
 
 **Tests:** `compliance/owner-trash.test.ts › lists the item whose purge could not be confirmed in failures, with write_outcome unknown`.
+
+### `items/owner-empty-trash-storage-full`
+
+If a volume with no room turns away the commit of a purge in an emptying batch, then the server MUST list the item in `failures` with `insufficient_storage` and `details.write_outcome` set to `unknown`.
+
+**Tests:** `compliance/owner-trash.test.ts › stops a batch at a purge that a full volume turns away, listing it as insufficient_storage with write_outcome unknown`.
 
 ### `items/owner-empty-trash-stop`
 

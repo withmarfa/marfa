@@ -10,6 +10,7 @@ import type { SseEvent } from "../../utils/sse.js";
 import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 import { localFetch } from "../../utils/control-request.js";
 import { generateId } from "../../generators/items.js";
+import { itemsArchive } from "../../utils/archive.js";
 type RefusalBody = { error: { details?: unknown } };
 let server: FreshServer;
 beforeAll(async () => {
@@ -466,6 +467,8 @@ it("refuses a key every owner trash door, naming the local command it needs", as
   for (const [path, body] of [
     ["/trash", undefined],
     [`/items/summaries/${item.id}/trash?version=1`, {}],
+    [`/items/summaries/${item.id}/restore?version=1`, {}],
+    [`/items/summaries/${item.id}/purge?version=1`, {}],
     ["/trash/empty", {}],
   ] as const) {
     const refused = await key(path, body);
@@ -844,30 +847,60 @@ it("keeps an item that left the bin after the batch selected it, and lists it in
   expect(await status(again)).toBe(200);
 });
 
-it("answers a purge whose commit cannot be confirmed with 500 and write_outcome unknown, without saying whether the item was kept", async () => {
-  await drainBin();
-  const id = await binned(tagged());
-  await server.setFault("fail:commit=item.purge");
-  try {
-    const answer = await act(id, "purge");
-    expect(answer.status).toBe(500);
-    const body = (await answer.json()) as {
-      error: {
-        code: string;
-        message: string;
-        details?: { write_outcome?: string };
-      };
-    };
-    expect(body.error.code).toBe("internal_error");
-    expect(body.error.details?.write_outcome).toBe("unknown");
-    expect(body.error.message).not.toMatch(
-      /\b(kept|deleted|removed|purged)\b/i,
-    );
-    expect((await server.faults()).some((fault) => fault.fired > 0)).toBe(true);
-  } finally {
-    await server.clearFault();
+type Refused = {
+  error: {
+    code: string;
+    message: string;
+    details?: { write_outcome?: string };
+  };
+};
+
+const OWNER_WRITES = [
+  ["trash", "item.delete"],
+  ["restore", "item.restore"],
+  ["purge", "item.purge"],
+] as const;
+
+async function readyFor(action: string) {
+  const tag = tagged();
+  if (action === "trash") return note(tag);
+  const id = await binned(tag);
+  const row = (await bin(`?q=${tag}`)).data.find((listed) => listed.id === id)!;
+  return { id, version: row.version };
+}
+
+async function commitTurnedAway(point: string, status: number, code: string) {
+  for (const [action, write] of OWNER_WRITES) {
+    const { id, version } = await readyFor(action);
+    await server.setFault(`${point}=${write}`);
+    try {
+      const refused = await act(id, action, version);
+      expect(refused.status, action).toBe(status);
+      const body = (await refused.json()) as Refused;
+      expect(body.error.code, action).toBe(code);
+      expect(body.error.details?.write_outcome, action).toBe("unknown");
+      expect(body.error.message, action).not.toMatch(
+        /\b(kept|deleted|removed|purged|restored|trashed)\b/i,
+      );
+      expect(
+        (await server.faults()).some((fault) => fault.fired > 0),
+        action,
+      ).toBe(true);
+    } finally {
+      await server.clearFault();
+    }
+    // The witness: nothing landed and the fault acted once, so the same action lands.
+    expect((await act(id, action, version)).status, action).toBe(200);
   }
   await drainBin();
+}
+
+it("answers an owner trash, restore or purge whose commit cannot be confirmed with 500 and write_outcome unknown", async () => {
+  await commitTurnedAway("fail:commit", 500, "internal_error");
+});
+
+it("answers an owner trash, restore or purge that a full volume turns away with 507 and write_outcome unknown", async () => {
+  await commitTurnedAway("fail:commit-full", 507, "insufficient_storage");
 });
 
 async function uncertainBatch(count: number) {
@@ -920,5 +953,148 @@ it("returns no cursor after a batch that stopped for a purge it could not confir
   // The witness: the same bin answers a cursor once the purge can be confirmed.
   const resumed = await emptyBin();
   expect(resumed.next_cursor).toEqual(expect.any(String));
+  await drainBin();
+});
+
+it("stops a batch at a purge that a full volume turns away, listing it as insufficient_storage with write_outcome unknown", async () => {
+  await drainBin();
+  await fillBin(3, tagged());
+  const listed = await wholeBin();
+  await server.setFault("fail:commit-full=item.purge");
+  try {
+    const stopped = await emptyBin();
+    expect((await server.faults()).some((fault) => fault.fired > 0)).toBe(true);
+    expect(stopped.failures).toEqual([
+      expect.objectContaining({
+        id: listed[0],
+        code: "insufficient_storage",
+        details: { write_outcome: "unknown" },
+      }),
+    ]);
+    expect(stopped.purged).toBe(0);
+    expect(stopped.next_cursor).toBeNull();
+  } finally {
+    await server.clearFault();
+  }
+  // The witness: the fault acted once, so a second attempt would have purged.
+  expect(await wholeBin()).toEqual(listed);
+  expect((await emptyBin()).purged).toBe(3);
+});
+
+it("keeps an item whose version changed after the batch selected it, and lists it in failures as version_conflict", async () => {
+  await drainBin();
+  await binned(tagged());
+  await binned(tagged());
+
+  // The witness: with nothing changed, both are purged.
+  const witness = await emptyBin();
+  expect(witness.purged).toBe(2);
+  expect(witness.failures).toEqual([]);
+
+  const tag = tagged();
+  const again = await binned(tag);
+  const version = (await bin(`?q=${tag}`)).data[0]!.version;
+  await server.setFault("hold:write=item.purge@1");
+  try {
+    const pending = owner("/trash/empty", { method: "POST" });
+    await server.waitForHold("hold:write");
+    expect((await act(again, "restore", version)).status).toBe(200);
+    const changed = await fetch(`${server.apiUrl}/items/${again}`, {
+      method: "PATCH",
+      headers: {
+        authorization: `Bearer ${server.workingKey}`,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        version,
+        properties: { title: `${tag} changed` },
+      }),
+    });
+    expect(changed.status).toBe(200);
+    expect((await act(again, "trash", version + 1)).status).toBe(200);
+    await server.clearFault("hold:write");
+    const emptied = (await (await pending).json()) as Awaited<
+      ReturnType<typeof emptyBin>
+    >;
+    expect(emptied.purged).toBe(0);
+    expect(emptied.failures).toEqual([
+      expect.objectContaining({ id: again, code: "version_conflict" }),
+    ]);
+  } finally {
+    await server.clearFault();
+  }
+  expect((await bin(`?q=${tag}`)).data.map((row) => row.id)).toEqual([again]);
+});
+
+it("restores an archived item in the bin that records no time or sign-in with both null, and no deletion deadline", async () => {
+  await drainBin();
+  await retention(60);
+  const tag = tagged();
+  const witness = await binned(`${tag} recorded`);
+  const unrecorded = generateId();
+  const restored = await owner("/restore", {
+    method: "POST",
+    headers: { "content-type": "application/x-tar" },
+    body: itemsArchive([
+      {
+        id: unrecorded,
+        type: "core.note",
+        source: "owner-trash-archive",
+        state: "trashed",
+        properties: { title: `${tag} unrecorded` },
+      },
+    ]),
+  });
+  expect(restored.status).toBe(200);
+  const rows = (await bin(`?q=${tag}`)).data;
+  const row = rows.find((listed) => listed.id === unrecorded)!;
+  expect(row.trashed_at).toBeNull();
+  expect(row.trashed_by).toBeNull();
+  expect(row.eligible_for_deletion_at).toBeNull();
+  // The witness: an item moved to the bin has all three.
+  const recorded = rows.find((listed) => listed.id === witness)!;
+  expect(recorded.trashed_at).toEqual(expect.any(String));
+  expect(recorded.trashed_by).toEqual(expect.any(Object));
+  expect(recorded.eligible_for_deletion_at).toEqual(expect.any(String));
+  await drainBin();
+});
+
+it("answers an owner trash action on a system item, or one the source filter hides, with 404 item_not_found and leaves it", async () => {
+  const made = await key("/folders", { title: tagged() });
+  expect(made.status).toBe(201);
+  const folder = ((await made.json()) as { item: { id: string } }).item;
+  const binnedTag = tagged();
+  const hiddenBinned = await binned(binnedTag);
+  const binnedVersion = (await bin(`?q=${binnedTag}`)).data[0]!.version;
+  const hiddenActive = await note(tagged());
+  const refuse = async (id: string, action: string, version: number) => {
+    const refused = await act(id, action, version);
+    expect(refused.status, `${id} ${action}`).toBe(404);
+    expect(
+      ((await refused.json()) as { error: { code: string } }).error.code,
+    ).toBe("item_not_found");
+  };
+  for (const action of ["trash", "restore", "purge"]) {
+    await refuse(folder.id, action, 1);
+  }
+  await setConfig({
+    enforcement: {
+      source_filter: { types: ["core.note"], sources: ["unwritten-source"] },
+    },
+  });
+  try {
+    await refuse(hiddenBinned, "restore", binnedVersion);
+    await refuse(hiddenBinned, "purge", binnedVersion);
+    await refuse(hiddenActive.id, "trash", hiddenActive.version);
+  } finally {
+    await setConfig({ enforcement: null });
+  }
+  // The witness: with the filter gone the same items answer their actions.
+  expect((await act(hiddenBinned, "restore", binnedVersion)).status).toBe(200);
+  expect(
+    (await act(hiddenActive.id, "trash", hiddenActive.version)).status,
+  ).toBe(200);
+  const read = await key(`/items/${hiddenBinned}`);
+  expect(read.status).toBe(200);
   await drainBin();
 });

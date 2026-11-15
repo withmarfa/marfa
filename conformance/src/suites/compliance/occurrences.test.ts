@@ -168,13 +168,16 @@ describe("occurrences", () => {
     }
 
     expect((await client.transitionItem(archived, "active")).status).toBe(200);
+    expect((await client.transitionItem(trashed, "active")).status).toBe(200);
     expect((await client.transitionItem(series, "active")).status).toBe(200);
     expect(await startsOf(series, from, to)).toEqual([
       "2032-05-10T12:00:00.000Z",
       "2032-05-11T12:00:00.000Z",
       "2032-05-12T12:00:00.000Z",
     ]);
-    expect((await window(from, to)).map((o) => o.item.id)).toContain(archived);
+    const again = (await window(from, to)).map((o) => o.item.id);
+    expect(again).toContain(archived);
+    expect(again).toContain(trashed);
   });
 
   it("expands events inside the window and excludes those outside it", async () => {

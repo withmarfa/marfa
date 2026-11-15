@@ -242,18 +242,37 @@ it("sends each batch's cursor back until the server names none, so a bin of more
   expect(after.data).toEqual([]);
 });
 
-it("prints how many items have been deleted so far after each batch and the total at the end", async () => {
+it("prints how many items have been deleted so far after each batch that has another to follow, and the total at the end", async () => {
   const held = await fillBinThroughClient(230);
   const emptied = await emptyBin();
   expect(emptied.code, emptied.stderr).toBe(0);
   const said = emptied.stdout.trim().split("\n");
-  expect(said[0]).toBe("200 items deleted so far");
-  expect(said.at(-1)).toBe(`${String(held)} items deleted from the bin`);
+  expect(said).toEqual([
+    "200 items deleted so far",
+    `${String(held)} items deleted from the bin`,
+  ]);
 });
 
-it("exits 0 when no deletion was left unconfirmed, and reports nothing to do on an empty bin", async () => {
+it("exits 0 when no deletion was left unconfirmed", async () => {
   await fillBinThroughClient(3);
-  expect((await emptyBin()).code).toBe(0);
+  const emptied = await emptyBin();
+  expect(emptied.code, emptied.stderr).toBe(0);
+  const again = await emptyBin();
+  expect(again.code, again.stderr).toBe(0);
+});
+
+it("prints one JSON object of purged, stayed and failures under --json, with no line for a batch", async () => {
+  const held = await fillBinThroughClient(230);
+  const emptied = await cli
+    .viaSocket(server.controlSocket)
+    .json<{ purged: number; stayed: number; failures: unknown[] }>([
+      "items",
+      "bin",
+      "empty",
+      "--confirm",
+      "PURGE",
+    ]);
+  expect(emptied).toEqual({ purged: held, stayed: 0, failures: [] });
   const again = await cli
     .viaSocket(server.controlSocket)
     .json<{ purged: number; stayed: number; failures: unknown[] }>([
