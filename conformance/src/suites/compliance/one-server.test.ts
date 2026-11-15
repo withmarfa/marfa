@@ -1,4 +1,12 @@
-import { link, mkdtemp, realpath, rm, symlink } from "node:fs/promises";
+import {
+  chmod,
+  link,
+  mkdtemp,
+  realpath,
+  rm,
+  stat,
+  symlink,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -189,6 +197,28 @@ describe("a second server on a running server's files", () => {
       await ended;
       expect(await health()).toBe(200);
       expect(await spool()).toEqual([]);
+    },
+    FRESH_SERVER_TIMEOUT_MS,
+  );
+});
+
+describe("a restart on lock files opened to the server's group", () => {
+  it(
+    "is not refused, and makes the lock files private again",
+    async () => {
+      const locks = [
+        `${first.sqlitePath}.server-lock`,
+        join(blobFolder(first), ".server-lock"),
+      ];
+      const mode = async (path: string) => (await stat(path)).mode & 0o777;
+      const exit = await first.restart(async () => {
+        // What a mount's group setting, such as Kubernetes fsGroup, or `chmod -R g+rw` leaves.
+        for (const lock of locks) await chmod(lock, 0o660);
+        expect(await Promise.all(locks.map(mode))).toEqual([0o660, 0o660]);
+      });
+      expect(exit.code).toBe(0);
+      expect(await health()).toBe(200);
+      expect(await Promise.all(locks.map(mode))).toEqual([0o600, 0o600]);
     },
     FRESH_SERVER_TIMEOUT_MS,
   );

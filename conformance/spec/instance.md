@@ -110,9 +110,17 @@ While an entry of kind `backup` with the reference `run` or `store` is listed, t
 
 **Tests:** `compliance/backup-folder.test.ts › says at once in health and attention that the folder's disk is not there, with the files that wait, and clears once it is back and replication has caught up`, `compliance/blob-store-silent.test.ts › answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up`.
 
+### `instance/attention-backup-unlocked`
+
+Where `MARFA_BACKUP_PATH` is set and the file system that holds `<MARFA_BACKUP_PATH>/files/<instance id>/` takes no file locks, when `GET /attention` completes its checks, the server MUST include one entry of kind `backup` with the reference `folder_unlocked`, whose description names that folder.
+
+**Reason:** a copy of this instance started on the same backup folder could remove the files this one is still copying there.
+
+**Tests:** waiting on #3116.
+
 ### `instance/attention-backup-quiet`
 
-Where a destination is set, while it takes copies, no file waits for one, the last backup run was whole, the copy record holds a copy in the destination of each file the last backup put names and `backup_interval_seconds` is above 0, the server MUST NOT include an entry of kind `backup` in `GET /attention`.
+Where a destination is set, while it takes copies, no file waits for one, the last backup run was whole, the copy record holds a copy in the destination of each file the last backup put names, `backup_interval_seconds` is above 0 and no entry is listed under `instance/attention-backup-unlocked`, the server MUST NOT include an entry of kind `backup` in `GET /attention`.
 
 **Tests:** `compliance/backup-folder.test.ts › says nothing in health or attention while the folder answers and no file waits for its copy`, `cli/attention.test.ts › shares private-socket attention, keeps known concerns, and refuses every other credential`.
 
@@ -683,6 +691,14 @@ Where `MARFA_BACKUP_PATH` names a folder inside the data directory or the blob f
 **Reason:** a backup there is lost with what it backs up.
 
 **Tests:** `compliance/backup-folder.test.ts › refuses to start with a backup folder inside its blob folder, or one that does not exist, and makes none`.
+
+### `instance/backup-folder-unlocked-start`
+
+Where `MARFA_BACKUP_PATH` is set and the file system that holds `<MARFA_BACKUP_PATH>/files/<instance id>/` takes no file locks, the server MUST NOT refuse to start because it cannot keep another server from that folder.
+
+**Reason:** the server runs without its backup folder, so it starts and tells the owner under `instance/attention-backup-unlocked`. A lock file there that belongs to another account, or has a second link, still refuses the start, since it is what a copy of the instance running as another account leaves.
+
+**Tests:** waiting on #3116.
 
 ### `instance/backup-one-destination`
 
@@ -1829,6 +1845,14 @@ If the server's database file has more than one hard link, then the server MUST 
 **Reason:** a second hard link is a second name for the same file, and SQLite keeps a write-ahead log beside each name it opens a file by. A server started on the other name would write the file through a log of its own while the first writes through its log, and damage it.
 
 **Tests:** `compliance/one-server.test.ts › is refused on a second hard link to the database, and says why`.
+
+### `instance/open-lock-file-mode`
+
+When the server starts and its own account owns the file `<database file>.server-lock` beside its database or the file `.server-lock` in its blob folder, and that file has one hard link, the server MUST NOT refuse to start for the file's mode.
+
+**Reason:** a mount's group setting, such as Kubernetes `fsGroup`, a `chmod -R` or a restore under another mode opens the file to a group, and the server makes it private to its own account again. A lock file that belongs to another account or has a second link still refuses the start, since another server may hold it.
+
+**Tests:** `compliance/one-server.test.ts › is not refused, and makes the lock files private again`.
 
 ### `instance/open-held-leaves-files`
 
