@@ -349,7 +349,7 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
     state TEXT NOT NULL CHECK (state IN ('in_flight', 'complete')),
     created_at TEXT NOT NULL,
     completed_at TEXT,
-    response_status INTEGER,
+    response_status INTEGER CHECK (response_status BETWEEN 100 AND 599),
     response_body BLOB,
     requirements TEXT NOT NULL DEFAULT '[]',
     PRIMARY KEY (credential, idempotency_key)

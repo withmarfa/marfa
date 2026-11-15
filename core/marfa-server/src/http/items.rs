@@ -184,8 +184,7 @@ fn replayed(kept: Kept) -> Response {
                 .map(str::to_string)
         })
         .and_then(|code| HeaderValue::from_str(&code).ok());
-    let status = StatusCode::from_u16(kept.status).unwrap_or(StatusCode::OK);
-    let mut response = text_answer(status, kept.body);
+    let mut response = text_answer(kept.status, kept.body);
     let headers = response.headers_mut();
     headers.insert(REPLAYED_HEADER, HeaderValue::from_static("true"));
     if let Some(code) = code {
