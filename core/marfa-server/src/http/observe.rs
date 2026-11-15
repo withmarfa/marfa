@@ -82,11 +82,30 @@ fn judge_contract(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
     let mut named = headers.get_all(CONTRACT_HEADER).iter();
     match (named.next(), named.next()) {
         (None, _) => Ok(()),
-        (Some(value), None) if value.as_bytes() == app.contract().to_string().as_bytes() => Ok(()),
+        (Some(value), None) if is_number(value.as_bytes(), app.contract()) => Ok(()),
         _ => Err(Refusal::new(
             Code::ContractMismatch,
             "X-Marfa-Contract names another contract than this server speaks. Nothing was done.",
         )),
+    }
+}
+
+/// Whether `digits` are exactly the plain digits that write `number`.
+fn is_number(digits: &[u8], number: u32) -> bool {
+    let mut rest = number;
+    let mut at = digits.len();
+    loop {
+        let Some(previous) = at.checked_sub(1) else {
+            return false;
+        };
+        if digits[previous] != b'0' + (rest % 10) as u8 {
+            return false;
+        }
+        at = previous;
+        rest /= 10;
+        if rest == 0 {
+            return at == 0;
+        }
     }
 }
 
@@ -231,4 +250,37 @@ pub async fn remember_route(matched: MatchedPath, request: Request, next: Next) 
         let _ = notes.route.set(matched.as_str().to_string());
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_number;
+
+    #[test]
+    fn a_number_is_only_the_plain_digits_that_write_it() {
+        for (digits, number, is) in [
+            ("0", 0, true),
+            ("1", 1, true),
+            ("10", 10, true),
+            ("4294967295", u32::MAX, true),
+            ("", 0, false),
+            ("00", 0, false),
+            ("01", 1, false),
+            ("010", 10, false),
+            ("0", 10, false),
+            ("1", 10, false),
+            ("100", 10, false),
+            ("+1", 1, false),
+            (" 1", 1, false),
+            ("1 ", 1, false),
+            ("11", 1, false),
+            ("1", 11, false),
+        ] {
+            assert_eq!(
+                is_number(digits.as_bytes(), number),
+                is,
+                "{digits} {number}"
+            );
+        }
+    }
 }

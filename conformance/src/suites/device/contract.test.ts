@@ -177,6 +177,22 @@ function naming(answer: Answer, contract: string | string[] | null): Answer {
   return { ...answer, contract };
 }
 
+/** The server's own `412 contract_mismatch`, which it answers before it acts. */
+function declined(contract: string): Answer {
+  return {
+    kind: "json",
+    status: 412,
+    body: {
+      error: {
+        code: "contract_mismatch",
+        message: "X-Marfa-Contract names another contract.",
+      },
+    },
+    headers: { "x-error-code": "contract_mismatch" },
+    contract,
+  };
+}
+
 describe("the contract the binary was built for", () => {
   it("refuses an answer on another contract rather than reading it", async () => {
     server = await scriptItems(String(builtFor + 1));
@@ -288,6 +304,37 @@ describe("the contract the binary was built for", () => {
       outcome.stderr,
       "a write refused for its contract did not say it may have taken effect",
     ).toContain("may have taken effect");
+    expect(sent(server)).toEqual(["POST /items"]);
+  });
+
+  it("says a write the server refused 412 contract_mismatch was refused before it acted, not that it may have taken effect", async () => {
+    server = await ScriptedServer.start();
+    server.copyAnswer("POST", "/items", declined(String(builtFor + 1)));
+    const outcome = await marfa([
+      "--json",
+      "--url",
+      server.url,
+      "--key",
+      KEY,
+      "items",
+      "create",
+      "--type",
+      "core.note",
+      "--properties",
+      JSON.stringify({ title: "declined", body: "declined" }),
+    ]);
+    expect(outcome.code, outcome.stderr).toBe(1);
+    const told = refusal(outcome.stderr);
+    expect(told.error.code).toBe("contract_mismatch");
+    expect(told.error.server?.status).toBe(412);
+    expect(
+      told.error.message,
+      "a write the server refused before acting did not say so",
+    ).toContain("refused it before it acted");
+    expect(
+      told.error.message,
+      "a write the server refused before acting was said to have taken effect",
+    ).not.toContain("may have taken effect");
     expect(sent(server)).toEqual(["POST /items"]);
   });
 
@@ -3110,6 +3157,102 @@ describe("the contract the working copy was built for", () => {
       ]);
     }
     expect(posts()).toEqual(["/blobs", "/blobs", "/items"]);
+  });
+
+  it("says a write the server refused 412 contract_mismatch was refused before it acted, leaving it unsent for the next drain", async () => {
+    harness = await hydratedHarness("contract-drain-declined");
+    const { server: scripted, device } = harness;
+    const queued = await device.create({
+      type: "core.note",
+      properties: { title: "declined", body: "declined" },
+    });
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    const id = queued.value.item_id ?? "";
+    scriptWrites(scripted, {
+      read: [answers.updated(wireItem({ id }))],
+      create: [
+        declined(String(builtFor + 1)),
+        declined(String(builtFor + 1)),
+        answers.created(wireItem({ id })),
+      ],
+    });
+    // Twice, so the first refusal is shown to leave the write as a first
+    // attempt still, with no earlier attempt to name.
+    for (const attempt of [1, 2]) {
+      const refused = await device.drain();
+      expect(refused.ok, `attempt ${String(attempt)}`).toBe(false);
+      if (refused.ok) return;
+      expect(refused.refusal.code).toBe("contract_mismatch");
+      expect(
+        refused.refusal.raw,
+        "a write the server refused before acting did not say so",
+      ).toContain("refused this attempt before it acted");
+      expect(
+        refused.refusal.raw,
+        "a write the server refused before acting was said to have taken effect",
+      ).not.toContain("may have taken effect");
+      expect(
+        refused.refusal.raw,
+        "a first attempt was said to follow an earlier one",
+      ).not.toContain("earlier attempt");
+    }
+
+    // The witness: the same write is then answered, under its key.
+    const drained = await device.drain();
+    expect(drained.ok, JSON.stringify(drained)).toBe(true);
+    if (drained.ok) {
+      expect(drained.value.verdicts.map((entry) => entry.verdict)).toEqual([
+        "accepted",
+      ]);
+    }
+    const keys = scripted.requests
+      .filter((request) => request.method === "POST")
+      .filter((request) => request.pathname === "/items")
+      .map((request) => request.headers["idempotency-key"]);
+    expect(keys).toEqual([
+      queued.value.idempotency_key,
+      queued.value.idempotency_key,
+      queued.value.idempotency_key,
+    ]);
+  });
+
+  it("says the outcome of an earlier attempt stays unknown when the server refuses a write sent before 412 contract_mismatch", async () => {
+    harness = await hydratedHarness("contract-drain-declined-after");
+    const { server: scripted, device } = harness;
+    const queued = await device.create({
+      type: "core.note",
+      properties: { title: "lost then declined", body: "lost then declined" },
+    });
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    const id = queued.value.item_id ?? "";
+    scriptWrites(scripted, {
+      read: [answers.updated(wireItem({ id }))],
+      create: [
+        { kind: "drop" },
+        declined(String(builtFor + 1)),
+        answers.created(wireItem({ id })),
+      ],
+      lookup: [answers.lookup([]), answers.lookup([]), answers.lookup([])],
+    });
+    // The first attempt reaches the server and its answer is lost.
+    await device.drain();
+    const refused = await device.drain();
+    expect(refused.ok).toBe(false);
+    if (refused.ok) return;
+    expect(refused.refusal.code).toBe("contract_mismatch");
+    expect(
+      refused.refusal.raw,
+      "a write sent before was not said to follow an attempt whose outcome is unknown",
+    ).toContain("outcome of an earlier attempt");
+    expect(refused.refusal.raw).toContain(
+      "refused this attempt before it acted",
+    );
+    expect(
+      refused.refusal.raw,
+      "this attempt's refusal was said to have taken effect",
+    ).not.toContain("may have taken effect");
   });
 
   it("keeps an item a 404 naming no contract says is gone, since a proxy's says nothing of the server's items", async () => {

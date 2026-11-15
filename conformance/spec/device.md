@@ -3022,11 +3022,25 @@ When an answer names the CLI's own contract on two header lines, the CLI MUST re
 
 ### `device/command-write-sent`
 
-If the answer to a write the CLI sent names another contract, then the CLI MUST say in its refusal that the write was sent and may have taken effect.
+If the answer to a write the CLI sent names another contract and is not the server's own `412 contract_mismatch`, then the CLI MUST say in its refusal that the write was sent and may have taken effect.
 
 **Reason:** the contract is named by the answer, so the server acted on the write before the CLI could read that it speaks another contract.
 
 **Tests:** `device/contract.test.ts › says a write it refused for its contract was sent and may have taken effect`, `› holds both app narrowing responses to the contract through its private socket`.
+
+### `device/command-write-declined`
+
+If the answer to a write the CLI sent is the server's own `412 contract_mismatch`, then the CLI MUST say in its refusal that the server refused the write before it acted.
+
+**Reason:** the server judges the contract before it acts on a request, so a write it refused for its contract changed nothing.
+
+**Tests:** `device/contract.test.ts › says a write the server refused 412 contract_mismatch was refused before it acted, not that it may have taken effect`.
+
+### `device/command-write-declined-not-sent`
+
+If the answer to a write the CLI sent is the server's own `412 contract_mismatch`, then the CLI MUST NOT say in its refusal that the write may have taken effect.
+
+**Tests:** `device/contract.test.ts › says a write the server refused 412 contract_mismatch was refused before it acted, not that it may have taken effect`.
 
 ### `device/command-unnamed-refusal`
 
@@ -3956,9 +3970,39 @@ When a device refuses the answer to a read `contract_mismatch`, a device MUST NO
 
 ### `device/contract-write-unsettled`
 
-If a write's answer names another contract, then a device MUST say in its refusal that the write may have taken effect.
+If a write's answer names another contract and is not the server's own `412 contract_mismatch`, then a device MUST say in its refusal that the write may have taken effect.
 
 **Tests:** `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`, `› ends the pass at the first answer on another contract, sending nothing after it`.
+
+### `device/contract-write-declined`
+
+If the answer to a write is the server's own `412 contract_mismatch`, then a device MUST say in its refusal that the server refused this attempt before it acted.
+
+**Reason:** the server judges the contract before it acts on a request, so an attempt it refused for its contract changed nothing.
+
+**Tests:** `device/contract.test.ts › says a write the server refused 412 contract_mismatch was refused before it acted, leaving it unsent for the next drain`.
+
+### `device/contract-write-declined-not-sent`
+
+If the answer to a write is the server's own `412 contract_mismatch`, then a device MUST NOT say in its refusal that the write may have taken effect.
+
+**Tests:** `device/contract.test.ts › says a write the server refused 412 contract_mismatch was refused before it acted, leaving it unsent for the next drain`, `› says the outcome of an earlier attempt stays unknown when the server refuses a write sent before 412 contract_mismatch`.
+
+### `device/contract-write-declined-unsent`
+
+When the server refuses a write's first attempt with `412 contract_mismatch`, a device MUST leave the write as a first attempt.
+
+**Reason:** the write was not acted on, so the next refusal or answer is of a first attempt too, with no earlier attempt whose outcome is unknown.
+
+**Tests:** `device/contract.test.ts › says a write the server refused 412 contract_mismatch was refused before it acted, leaving it unsent for the next drain`.
+
+### `device/contract-write-declined-earlier`
+
+If the server refuses a write sent before with `412 contract_mismatch`, then a device MUST say in its refusal that the outcome of an earlier attempt of the write stays unknown.
+
+**Reason:** an attempt whose answer the device never read may have taken effect, and this refusal says nothing of it.
+
+**Tests:** `device/contract.test.ts › says the outcome of an earlier attempt stays unknown when the server refuses a write sent before 412 contract_mismatch`.
 
 ### `device/contract-write-resent`
 

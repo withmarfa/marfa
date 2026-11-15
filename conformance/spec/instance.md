@@ -440,7 +440,7 @@ The server MUST NOT refuse a request for naming no `X-Marfa-Contract`.
 
 The server MUST judge `X-Marfa-Contract` on every request, whatever its method, its path and its credential.
 
-**Tests:** `compliance/contract-request.test.ts › refuses another contract on every operation the document publishes, and on a path no operation serves`.
+**Tests:** `compliance/contract-request.test.ts › refuses another contract on every operation the document publishes, and on a path no operation serves`, `› refuses another contract on HEAD and OPTIONS, the MCP door, the OAuth token door, the device code door, an inbound endpoint, a well-known document and a route over the private socket`.
 
 ### `instance/contract-request-first`
 

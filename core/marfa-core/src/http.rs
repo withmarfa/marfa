@@ -12,7 +12,7 @@ use ureq::unversioned::transport::{
 use url::Url;
 
 use crate::contract::CONTRACT_VERSION;
-use crate::error::{CoreError, ServerAnswer};
+use crate::error::{ContractRefusal, CoreError, ServerAnswer};
 use crate::model::SliceTier;
 use crate::wire::{
     WireEdge, WireErrorEnvelope, WireItem, WireItemWithMetadata, WireMetadata, WirePage,
@@ -2067,12 +2067,21 @@ impl Http {
         if speaks_contract(CONTRACT_VERSION, served.as_deref(), status) {
             return Ok(());
         }
+        // The server's own refusal of the contract names its code in a
+        // header, so it is told apart without waiting on the body.
+        let declined = status == 412
+            && header(response, "X-Error-Code").as_deref() == Some("contract_mismatch");
         Err(CoreError::ContractMismatch {
             origin: self.origin(),
             served,
             expected: CONTRACT_VERSION,
             status: Some(status),
-            write_sent,
+            write_sent: write_sent && !declined,
+            refusal: if declined {
+                ContractRefusal::Declined
+            } else {
+                ContractRefusal::Unread
+            },
         })
     }
 
@@ -2765,6 +2774,7 @@ mod tests {
             expected: 3,
             status: Some(200),
             write_sent: false,
+            refusal: ContractRefusal::Unread,
         }
         .to_string();
         assert!(read.contains("answered 200 on contract 4"), "{read}");
@@ -2776,11 +2786,36 @@ mod tests {
             expected: 3,
             status: Some(201),
             write_sent: true,
+            refusal: ContractRefusal::Unread,
         }
         .to_string();
         assert!(write.contains("answered 201 naming no contract"), "{write}");
         assert!(write.contains("check the URL"), "{write}");
         assert!(write.contains("may have taken effect"), "{write}");
+        for (refusal, earlier) in [
+            (ContractRefusal::Declined, false),
+            (ContractRefusal::DeclinedAfterEarlierAttempt, true),
+        ] {
+            let declined = CoreError::ContractMismatch {
+                origin: "https://marfa.example".into(),
+                served: Some("4".into()),
+                expected: 3,
+                status: Some(412),
+                write_sent: false,
+                refusal,
+            }
+            .to_string();
+            assert!(
+                declined.contains("refused this attempt before it acted"),
+                "{declined}"
+            );
+            assert!(!declined.contains("may have taken effect"), "{declined}");
+            assert_eq!(
+                declined.contains("an earlier attempt"),
+                earlier,
+                "{declined}"
+            );
+        }
     }
 
     #[test]

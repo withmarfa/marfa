@@ -3774,6 +3774,7 @@ mod tests {
                 expected: 3,
                 status: Some(201),
                 write_sent: true,
+                refusal: marfa_core::ContractRefusal::Unread,
             }),
             vec![
                 ("origin", json!("https://marfa.example")),
@@ -3921,6 +3922,7 @@ mod tests {
             expected: 3,
             status: Some(200),
             write_sent: false,
+            refusal: marfa_core::ContractRefusal::Unread,
         });
         assert!(error.0.starts_with("contract_mismatch: "), "{}", error.0);
     }

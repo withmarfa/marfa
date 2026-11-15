@@ -4,6 +4,8 @@ import { v7 as uuidv7 } from "uuid";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
+import { controlRequest } from "../../utils/control-request.js";
+import { send as sendRaw } from "../../utils/inbound-sender.js";
 import { publishedOperations } from "../../utils/openapi.js";
 import { cleanup, createTestContext, trackItem } from "../../utils/setup.js";
 
@@ -137,6 +139,24 @@ describe("a request that names a contract", () => {
       });
       expect(res.status, path).toBe(200);
     }
+
+    // A sender and an app's token request are built for no contract.
+    const endpoint = await client.createInboundEndpoint(
+      (await client.registerConnector({ name: `${ctx.runId} no contract` }))
+        .data.id,
+    );
+    expect(endpoint.status).toBe(201);
+    expect(
+      (await sendRaw(apiUrl, endpoint.data.path, "hello")).status,
+      "an inbound endpoint",
+    ).toBe(202);
+    const token = await fetch(`${apiUrl}/auth/oauth2/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "grant_type=authorization_code",
+    });
+    expect(token.status, "the OAuth token door").toBe(400);
+    await token.body?.cancel();
   });
 
   it("refuses a request naming another contract, or a value that is not the digits of this one, 412 contract_mismatch", async () => {
@@ -231,6 +251,139 @@ describe("a request that names a contract", () => {
     const refused = await send(nowhere, { headers: { [HEADER]: other } });
     expect(refused.status).toBe(412);
     expect(await codeOf(refused)).toBe("contract_mismatch");
+  });
+
+  it("refuses another contract on HEAD and OPTIONS, the MCP door, the OAuth token door, the device code door, an inbound endpoint, a well-known document and a route over the private socket", async () => {
+    const other = String(BigInt(own) + 1n);
+    const form = {
+      "Content-Type": "application/x-www-form-urlencoded",
+    };
+    const doors: {
+      name: string;
+      method: string;
+      path: string;
+      body?: string;
+      headers?: Record<string, string>;
+      credential?: boolean;
+    }[] = [
+      { name: "HEAD of an operation", method: "HEAD", path: "/items" },
+      { name: "OPTIONS of an operation", method: "OPTIONS", path: "/items" },
+      {
+        name: "HEAD of the root",
+        method: "HEAD",
+        path: "/",
+        credential: false,
+      },
+      {
+        name: "OPTIONS of a path no operation serves",
+        method: "OPTIONS",
+        path: `/no-door-${randomUUID()}`,
+      },
+      {
+        name: "the MCP door",
+        method: "POST",
+        path: "/mcp",
+        body: "{}",
+      },
+      {
+        name: "the OAuth token door",
+        method: "POST",
+        path: "/auth/oauth2/token",
+        body: "grant_type=authorization_code",
+        headers: form,
+        credential: false,
+      },
+      {
+        name: "the device code door",
+        method: "POST",
+        path: "/auth/device/code",
+        body: "client_id=none",
+        headers: form,
+        credential: false,
+      },
+      {
+        name: "a well-known document",
+        method: "GET",
+        path: "/.well-known/oauth-protected-resource",
+        credential: false,
+      },
+      {
+        name: "an authorization server document",
+        method: "GET",
+        path: "/auth/.well-known/oauth-authorization-server",
+        credential: false,
+      },
+    ];
+    for (const door of doors) {
+      const plain = await fetch(`${apiUrl}${door.path}`, {
+        method: door.method,
+        headers: {
+          ...(door.credential === false
+            ? {}
+            : { Authorization: `Bearer ${apiKey}` }),
+          ...door.headers,
+        },
+        body: door.body,
+      });
+      // The witness: the same request naming no contract is judged by the
+      // door itself.
+      expect(plain.status, `${door.name} without the header`).not.toBe(412);
+      await plain.body?.cancel();
+      const res = await fetch(`${apiUrl}${door.path}`, {
+        method: door.method,
+        headers: {
+          ...(door.credential === false
+            ? {}
+            : { Authorization: `Bearer ${apiKey}` }),
+          ...door.headers,
+          [HEADER]: other,
+        },
+        body: door.body,
+      });
+      expect(res.status, door.name).toBe(412);
+      expect(res.headers.get("X-Error-Code"), door.name).toBe(
+        "contract_mismatch",
+      );
+      expect(res.headers.get(HEADER), door.name).toBe(own);
+      if (door.method !== "HEAD") {
+        expect(await codeOf(res), door.name).toBe("contract_mismatch");
+      }
+      await res.body?.cancel();
+    }
+
+    const endpoint = await client.createInboundEndpoint(
+      (await client.registerConnector({ name: `${ctx.runId} contract door` }))
+        .data.id,
+    );
+    expect(endpoint.status).toBe(201);
+    const sent = await sendRaw(apiUrl, endpoint.data.path, "hello", [
+      HEADER,
+      other,
+    ]);
+    expect(sent.status, "an inbound endpoint").toBe(412);
+    expect(JSON.parse(sent.body).error.code).toBe("contract_mismatch");
+    // The witness: the same sender naming this contract is received.
+    expect(
+      (await sendRaw(apiUrl, endpoint.data.path, "hello", [HEADER, own]))
+        .status,
+    ).toBe(202);
+
+    const socket = process.env.MARFA_CONTROL_SOCKET;
+    if (!socket) throw new Error("MARFA_CONTROL_SOCKET is required");
+    const refused = await controlRequest(socket, "/", {
+      headers: { [HEADER]: other },
+    });
+    expect(refused.status, "a route over the private socket").toBe(412);
+    expect((refused.body.error as { code: string }).code).toBe(
+      "contract_mismatch",
+    );
+    expect(
+      (
+        await controlRequest(socket, "/", {
+          headers: { [HEADER]: own },
+        })
+      ).status,
+    ).toBe(200);
   });
 
   it("answers 412 before it judges the credential, the instance and the body", async () => {

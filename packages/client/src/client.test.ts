@@ -198,6 +198,24 @@ describe("the contract check", () => {
       String(CONTRACT_VERSION),
     ]);
   });
+
+  it("names no contract on a read of the root or of health, which say what the server speaks", async () => {
+    const server = stubServer();
+    const client = make(server, "https://marfa.example/api");
+    await client.GET("/");
+    await client.GET("/health");
+    expect(server.seen.map((request) => request.contract)).toEqual([
+      null,
+      null,
+    ]);
+    // The witness: another door names it.
+    await client.GET("/edge-types");
+    expect(server.seen.map((request) => request.contract)).toEqual([
+      null,
+      null,
+      String(CONTRACT_VERSION),
+    ]);
+  });
 });
 
 describe("what a caller's own code sees", () => {

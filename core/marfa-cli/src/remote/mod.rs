@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use marfa_core::contract::CONTRACT_VERSION;
 use marfa_core::http::{Call, CallBody, Http, Renew, Reply, ReplyBody};
-use marfa_core::{Core, CoreError, Server};
+use marfa_core::{ContractRefusal, Core, CoreError, Server};
 use serde_json::Value;
 
 use crate::auth;
@@ -323,12 +323,14 @@ fn renewal_error(error: CliError) -> CoreError {
             served,
             expected,
             write_sent,
+            refusal,
             status,
         } => CoreError::ContractMismatch {
             origin,
             served,
             expected,
             write_sent,
+            refusal,
             status,
         },
         CliError::Redirected {
@@ -640,6 +642,7 @@ impl Remote {
             }),
             expected: CONTRACT_VERSION,
             write_sent: false,
+            refusal: ContractRefusal::Unread,
             status: None,
         })
     }
@@ -1045,6 +1048,7 @@ mod tests {
                 served: Some("other".into()),
                 expected: 1,
                 write_sent: false,
+                refusal: ContractRefusal::Unread,
                 status,
             };
             let expected = error.envelope();
