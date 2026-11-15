@@ -1972,6 +1972,46 @@ describe("how a drain sends row writes", () => {
     expect(left).not.toContain(writes[0]!.id);
     expect(left).not.toContain(writes[1]!.id);
   });
+
+  it("keeps a refused row write through a clearing, and takes it out only when a caller discards it", async () => {
+    const type = await tableType();
+    const kept = await itemOf(type);
+    const taken = await itemOf(type);
+    const device = await holding(type, "clear-refused-rows");
+    const refusedWrite = value(
+      await device.writeRows(kept, "steps", [
+        { op: "put", values: { count: 1, note: "the rows a person wrote" } },
+      ]),
+    );
+    const acceptedWrite = value(
+      await device.writeRows(taken, "steps", [
+        { op: "put", values: { count: 2 } },
+      ]),
+    );
+    const trashed = await working.deleteItem(kept);
+    expect(trashed.ok, JSON.stringify(trashed.error)).toBe(true);
+    const report = value(await device.drain());
+    expect(verdictOf(report, refusedWrite.id)).toBe("refused");
+    expect(verdictOf(report, acceptedWrite.id)).toBe("accepted");
+
+    // The witness: a clearing takes the answered write it is meant to take.
+    expect(
+      value(await device.forget()),
+      "a clearing took no answered write, or took the refused row write with it",
+    ).toBe(1);
+    const left = value(await device.queue()).map((one) => one.id);
+    expect(left).not.toContain(acceptedWrite.id);
+    expect(
+      left,
+      "a clearing took the refused row write with the answered ones, so the rows a person wrote are gone with nothing saying so",
+    ).toEqual([refusedWrite.id]);
+    expect((await queued(device, refusedWrite.id)).refusal).toMatchObject({
+      code: "item_not_found",
+    });
+
+    expect(value(await device.discard(refusedWrite.id))).toBe(true);
+    expect(value(await device.queue())).toEqual([]);
+  });
 });
 
 describe("a batch the drain cannot settle at once", () => {

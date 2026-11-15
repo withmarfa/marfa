@@ -4960,9 +4960,25 @@ When a file at a name other than `.md` or `.markdown` (in any letter case) arriv
 
 When a file at a `.md` or `.markdown` name (in any letter case) that carries no ID arrives from another folder, where the file it left was a note bound by identity or bytes or a new note whose ID line was never written, a device MUST admit the arriving file as a new item.
 
-**Reason:** a note's Markdown file carries its ID line, so a Markdown file without one is not that note's file. A `.txt` note moved to another folder as `.md` is a new item there. A new note moved before its ID line is written has no item bound to it, and the folder it left cannot name an item the arriving file belongs to, so the receiving folder admits it with every edit made before and after the move, and the first folder trashes nothing (`folders/move-no-second-item`). Every way tried to bind a file that has no ID line yet opened a worse failure than this second item.
+**Reason:** a note's Markdown file carries its ID line, so a Markdown file without one is not that note's file. A `.txt` note moved to another folder as `.md` is a new item there. A new note moved before its ID line is written has no item bound to it, and the folder it left cannot name an item the arriving file belongs to, so the receiving folder admits it with every edit made before and after the move. What the folder it left does with the original item is stated apart (`folders/moved-new-note-original-trashed`, `folders/moved-new-note-original-written-back`). Every way tried to bind a file that has no ID line yet opened a worse failure than this second item.
 
 **Tests:** `device/folders-one-mac.test.ts › makes a new item of a text note moved to another folder as Markdown, and keeps its words`, `device/folders-one-mac.test.ts › makes a second item of a new note moved before its id line is written, and keeps its edits`.
+
+### `folders/moved-new-note-original-trashed`
+
+When a folder has sent a new note as an item but has not written the file's ID line, the file moves to another registered folder, the folder it left finds the file in no folder past its deletion grace, and the item, rendered, holds nothing the file did not show, a device MUST queue deletion of the item in the folder it left.
+
+**Reason:** the receiving folder admits the moved file as a new item (`folders/moved-arrival-markdown-new`), and no file carries the original's ID line except the receiving folder's own write of it, so the missing file is a deletion of what it showed (`folders/missing-file-trashed`). The original's words are in the new item. A file that begins with a header showing the properties the item holds, such as its `title`, shows all of it.
+
+**Tests:** `cli/folder.test.ts › trashes the original item of a new note moved to another folder before its ID line, where the file showed what the item holds`.
+
+### `folders/moved-new-note-original-written-back`
+
+When a folder has sent a new note as an item but has not written the file's ID line, the file moves to another registered folder, the folder it left finds the file in no folder, and the item, rendered, holds a property the file did not show, a device MUST write the item's file again in the folder it left.
+
+**Reason:** the receiving folder admits the moved file as a new item (`folders/moved-arrival-markdown-new`), so the missing file is read as the file of an item that holds more than it showed (`folders/missing-file-changed-revives`), not as a deletion of what the file showed. A file with a heading or plain text shows no `title`, and the item holds one the folder took from the file. Both folders then hold both items, each with the words it was sent with.
+
+**Tests:** `cli/folder.test.ts › writes back the original item of a new note moved to another folder before its ID line, where the file showed less than the item holds (%s)`.
 
 ### `folders/moved-file-item-bytes`
 
@@ -6072,6 +6088,20 @@ When another registered folder no longer holds an item for a non-state reason an
 
 **Tests:** `device/folders-one-mac.test.ts › takes in a file another folder let go`.
 
+### `folders/moved-unmatched-taken-back`
+
+When a file moves into a registered folder whose query does not hold its item for a reason other than the item's state, the file is unchanged since the folder it left wrote it, and the query of the folder it left holds the item, a device MUST take the file back into the folder it left once the rename grace has passed.
+
+**Reason:** the person moved a file, not the note, and the receiving folder keeps the file as `unmatched` (`folders/unmatched-file-kept`), so the item would show in no folder it belongs to. The folder it left holds the item without a file and takes the file as it takes one another folder let go (`folders/take-in-file`), so the item stays one item at one version, and trashes nothing (`folders/move-keeps-item`). A folder whose query leaves the item out by its state keeps the file, as it keeps a file of an item that left it by its state (`folders/take-in-file`).
+
+**Tests:** `cli/folder.test.ts › takes a note's file back into the folder it left, and says so, when the folder it was moved into does not hold the note`, `cli/folder.test.ts › leaves a note's file in the folder it was moved into when that folder's query leaves the note out by its state`.
+
+### `folders/moved-unmatched-taken-back-count`
+
+When a device takes a file back into the folder it left under `folders/moved-unmatched-taken-back`, a device MUST count the file as `taken` in the pull report of that folder.
+
+**Tests:** `cli/folder.test.ts › takes a note's file back into the folder it left, and says so, when the folder it was moved into does not hold the note`.
+
 ### `folders/take-in-edited-source-kept`
 
 When another folder’s let-go file was edited since that folder last read it, a device MUST leave the source file for its own folder to send.
@@ -6780,9 +6810,11 @@ When a folder assesses a large removal whose file count exceeds `removal_thresho
 
 ### `folders/removal-judged-per-pass`
 
-When a folder assesses a large removal, a device MUST NOT count the files whose deletions an earlier pass sent.
+When a folder assesses a large removal, a device MUST judge only the files that pass removes, counting none whose deletions an earlier pass sent, whichever of `removal_threshold.files`, `removal_threshold.fraction` and `removal_threshold.ceiling` it judges them against.
 
-**Tests:** `device/folders-contract-b.test.ts › pauses a pass that removes more than 100 files whatever their share, judging each pass alone`.
+**Reason:** a folder whose person removes a few files at a time is no folder losing many at once, so a guard that added passes together would pause every removal once enough had been sent.
+
+**Tests:** `device/folders-contract-b.test.ts › pauses a pass that removes more than 100 files whatever their share, judging each pass alone`, `› pauses nothing where two passes each remove files under the default thresholds, though together they pass them`.
 
 ### `folders/disk-removal-paused`
 

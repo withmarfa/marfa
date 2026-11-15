@@ -107,5 +107,13 @@ it("refuses a surrogate escape with no partner and leaves a device able to hydra
   const hydrated = await device(second).hydrate([type], "library");
   expect(hydrated.ok, JSON.stringify(hydrated)).toBe(true);
   if (hydrated.ok) expect(hydrated.value.items).toBe(1);
+  const hydratedHeld = await device(second).get(pair);
+  expect(hydratedHeld.ok, JSON.stringify(hydratedHeld)).toBe(true);
+  if (hydratedHeld.ok) {
+    expect(hydratedHeld.value.properties).toMatchObject({
+      body: "a 😀",
+      "name 😀": ["😀"],
+    });
+  }
   expect((await device(second).get(lone)).ok).toBe(false);
 });

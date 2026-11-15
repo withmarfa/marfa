@@ -1386,6 +1386,48 @@ describe("reading a table on a device", () => {
     expect(back.held).toBe(true);
     expect(back.data).toEqual((await serverPage(binned)).data);
   });
+
+  it("answers a local search with the items alone, though the copy holds the rows the server's search answers", async () => {
+    const type = await tableType({
+      steps: {
+        columns: {
+          ...STEPS.columns,
+          note: { type: "string", searchable: true },
+        },
+      },
+    });
+    const item = await itemOf(type);
+    counter += 1;
+    const word = `zyxrow${String(counter)}`;
+    await write(item, [
+      { op: "put", values: { count: 1, note: `${word} in a searchable row` } },
+    ]);
+    const own = await hydrated([type], "search-rows");
+    value(await own.holdTable(type, "steps"));
+
+    // The witness: the server's search answers the row, and the copy holds it.
+    const served = await working.search(word, { limit: 50 });
+    expect(served.status, JSON.stringify(served.error)).toBe(200);
+    expect(
+      served.data.data.map((hit) => hit.row?.table),
+      "the server's search did not answer the row, so a device's silence proves nothing",
+    ).toEqual(["steps"]);
+    const held = await deviceRows(own, item);
+    expect(held.held).toEqual([true]);
+    expect(held.rows.map((row) => row.values.note)).toEqual([
+      `${word} in a searchable row`,
+    ]);
+
+    // The copy answers a local search from its items, and finds the item by
+    // its own title, so the search does reach the item.
+    expect(
+      value(await own.search(word)),
+      "a local search answered a hit for a row of a table",
+    ).toEqual([]);
+    expect(value(await own.search("Steps")).map((hit) => hit.item.id)).toEqual([
+      item,
+    ]);
+  });
 });
 
 describe("a gap in the stream", () => {
