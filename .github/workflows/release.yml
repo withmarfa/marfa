@@ -580,7 +580,7 @@ jobs:
     name: Build the server image (${{ matrix.platform }})
     needs: [version, programs-linux]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write

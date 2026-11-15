@@ -1167,7 +1167,7 @@ jobs:
     needs: [changes, rust-contract]
     if: ${{ !cancelled() && needs.rust-contract.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.restore-drill != 'false') }}
     name: Restore drill
-    timeout-minutes: 10
+    timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1270,7 +1270,7 @@ jobs:
     needs: [changes, rust-contract-macos]
     if: ${{ !cancelled() && needs.rust-contract-macos.result == 'success' }}
     name: Rust contract on macOS (${{ matrix.name }})
-    timeout-minutes: 45
+    timeout-minutes: 50
     runs-on: macos-26
     strategy:
       fail-fast: false
@@ -1425,7 +1425,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.image != 'false') }}
     name: Server image
-    timeout-minutes: 50
+    timeout-minutes: 60
     runs-on: ubuntu-latest
     env:
       TARGET: x86_64-unknown-linux-musl

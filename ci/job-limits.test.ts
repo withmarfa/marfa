@@ -57,14 +57,19 @@ const LIMITS: Record<string, number> = {
   "ci.yml:rust-contract": 45,
   "ci.yml:rust-contract-release": 45,
   "ci.yml:rust-contract-shards": 25,
+  // One run so far, which took 0.6 minutes.
   "ci.yml:rust-contract-release-check": 10,
   "ci.yml:rust-contract-score": 10,
-  "ci.yml:restore-drill": 10,
+  // Installing the object store and Litestream from outside archives took 15.1
+  // minutes in one healthy run; the p90 is 2.1.
+  "ci.yml:restore-drill": 30,
+  // Three runs so far.
   "ci.yml:rust-contract-macos": 40,
-  "ci.yml:rust-contract-macos-shards": 45,
+  "ci.yml:rust-contract-macos-shards": 50,
   "ci.yml:rust-contract-macos-score": 5,
-  // The native build again, and the image after it.
-  "ci.yml:image": 50,
+  // The native build again, and the image after it: a cold native rebuild took
+  // up to 41.7 minutes.
+  "ci.yml:image": 60,
   "ci.yml:types-freshness": 5,
   "ci.yml:version-fields": 5,
   "ci.yml:clients-freshness": 5,
@@ -76,25 +81,29 @@ const LIMITS: Record<string, number> = {
   // The Rust analysis takes 11 to 17 minutes; the others a few.
   "codeql.yml:analyze": 30,
   "benchmarks.yml:server": 30,
-  "benchmarks.yml:benchmarks": 100,
+  "benchmarks.yml:benchmarks": 105,
   // The seed alone takes 15 to 45 minutes; each step has a budget of its own,
   // and the test below holds the job to their sum.
   "benchmarks.yml:scale": 180,
   "benchmarks.yml:report-failure": 5,
+  // One run so far, which took 0.1 minutes.
   "pdfium-upkeep.yml:prepare": 10,
   "pdfium-upkeep.yml:report-failure": 5,
   "pr-description.yml:description": 5,
   "release.yml:require-green-ci": 5,
   "release.yml:require-green-core": 5,
   "release.yml:version": 5,
+  // Eleven runs so far, the slowest 43.9 minutes.
   "release.yml:programs-macos": 90,
   // `sign-binary.sh` waits up to 30 minutes for Apple's notary, for each of two programs.
   "release.yml:sign": 75,
   "release.yml:programs-linux": 70,
   "release.yml:run-linux": 5,
   "release.yml:collect": 5,
-  "release.yml:image": 20,
+  "release.yml:image": 15,
+  // Pulls from the package registries and the image registry, which can stall.
   "release.yml:install-proof": 10,
+  // Uploads to GitHub, npm and the image registry, which can stall.
   "release.yml:publish": 15,
   "release.yml:tap": 5,
 };

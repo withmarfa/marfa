@@ -73,7 +73,7 @@ jobs:
   benchmarks:
     name: Performance, load and hydration
     needs: server
-    timeout-minutes: 100
+    timeout-minutes: 105
     runs-on: ubuntu-latest
     env:
       CONFORMANCE_SERVER_HOOK_FREE: "true"
