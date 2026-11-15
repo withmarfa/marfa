@@ -540,18 +540,19 @@ mod tests {
 
     #[tokio::test]
     async fn a_confirmation_whose_write_fails_leaves_the_clock_as_it_was() {
-        let db = Db::open(
-            &Options {
-                path: DatabasePath::Memory,
-                write_wait: Duration::from_secs(5),
-                readers: 1,
-                migrations: NO_CLOCK_TABLE,
-                reserve: 0,
-            },
-            Arc::default(),
-        )
-        .map_err(|failure| failure.message)
-        .unwrap();
+        let options = Options {
+            path: DatabasePath::Memory,
+            write_wait: Duration::from_secs(5),
+            readers: 1,
+            migrations: NO_CLOCK_TABLE,
+            reserve: 0,
+        };
+        let lock = crate::db::Lock::take(&options.path)
+            .map_err(|failure| failure.message)
+            .unwrap();
+        let db = Db::open(&options, lock, Arc::default())
+            .map_err(|failure| failure.message)
+            .unwrap();
         let clock = Arc::new(Clock::new(0));
         clock.pause(true);
         let now = clock.instant().ms();
@@ -573,18 +574,19 @@ mod tests {
 
     #[tokio::test]
     async fn a_confirmation_changes_nothing_a_clean_up_reads_until_its_write_commits() {
-        let db = Db::open(
-            &Options {
-                path: DatabasePath::Memory,
-                write_wait: Duration::from_secs(5),
-                readers: 1,
-                migrations: crate::db::migrate::MIGRATIONS,
-                reserve: 0,
-            },
-            Arc::default(),
-        )
-        .map_err(|failure| failure.message)
-        .unwrap();
+        let options = Options {
+            path: DatabasePath::Memory,
+            write_wait: Duration::from_secs(5),
+            readers: 1,
+            migrations: crate::db::migrate::MIGRATIONS,
+            reserve: 0,
+        };
+        let lock = crate::db::Lock::take(&options.path)
+            .map_err(|failure| failure.message)
+            .unwrap();
+        let db = Db::open(&options, lock, Arc::default())
+            .map_err(|failure| failure.message)
+            .unwrap();
         let clock = Arc::new(Clock::new(0));
         clock.pause(true);
         clock.now_ms();
