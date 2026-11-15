@@ -530,6 +530,7 @@ fn proof_stands(
             Purpose::Claim => invalid_proof(),
             Purpose::Recovery => invalid_recovery(),
         }),
+        None if matches!(purpose, Purpose::Recovery) => Err(invalid_recovery()),
         _ => Ok(()),
     }
 }
@@ -657,6 +658,17 @@ mod tests {
                 "{digest}"
             );
         }
+    }
+
+    #[test]
+    fn a_recovery_with_no_proof_is_refused_where_a_local_claim_needs_none() {
+        let mut db = database();
+        let tx = db.transaction().unwrap();
+        let now = at(NOW);
+        assert!(proof_stands(&tx, Purpose::Claim, None, now).is_ok());
+        instance::mark_claimed(&tx, "2026-11-15T00:00:00Z", "owner").unwrap();
+        let refused = proof_stands(&tx, Purpose::Recovery, None, now).unwrap_err();
+        assert_eq!(refused.code, Code::SetupProofInvalid);
     }
 
     #[test]
