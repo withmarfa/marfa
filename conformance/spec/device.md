@@ -3200,6 +3200,36 @@ The CLI MUST take the contract the server speaks from the `X-Marfa-Contract` hea
 
 **Tests:** `device/contract.test.ts › takes the served contract from the answer's header, whatever the root's body says`, `› sends no mint to a server whose root names another contract, or none`.
 
+### `device/contract-sent`
+
+When a device sends a request to a server other than a read of the root or of `/health`, a device MUST name in `X-Marfa-Contract` the contract it was built for.
+
+**Reason:** the server refuses a request that names another contract before it acts (`instance/contract-request-other`), so a device on a contract the server has left changes nothing there.
+
+**Tests:** `device/contract.test.ts › reads every door on its own contract, so the refusal above is the contract's`, `› names its contract on every request but a read of the root, a write, a read and a stream among them`.
+
+### `device/contract-not-sent-to-root`
+
+When a device reads the root or `/health` of a server, a device MUST NOT name `X-Marfa-Contract`.
+
+**Reason:** the root says which contract a server speaks, and the server refuses a request that names another contract, so a device that named its own there could not learn what a server on another contract speaks (`device/status-other-contract`).
+
+**Tests:** `device/contract.test.ts › reads every door on its own contract, so the refusal above is the contract's`, `› names its contract on every request but a read of the root, a write, a read and a stream among them`.
+
+### `device/answer-added-members`
+
+When a server's answer carries a member a device does not know, a device MUST read the answer as it reads one without the member.
+
+**Reason:** a server on the contract a device was built for may add to what it answers, and never changes or removes what a device reads.
+
+**Tests:** `device/contract.test.ts › lists items from a page and an item that carry a member the CLI does not know, as it lists them without`, `› reads the root of a server that names a member and a feature it does not know`, `› applies an item event that carries a member it does not know, and skips an event of a type it does not know`.
+
+### `device/event-type-unknown`
+
+When an event stream carries an event of a type a device does not know, a device MUST skip the event and take the cursor past it.
+
+**Tests:** `device/contract.test.ts › applies an item event that carries a member it does not know, and skips an event of a type it does not know`.
+
 ### `device/status-other-contract`
 
 When `status` reads a server on another contract, the CLI MUST report the contract the server speaks beside the one it was built for, and exit 0.

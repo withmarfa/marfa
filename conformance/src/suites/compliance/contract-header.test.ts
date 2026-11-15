@@ -76,3 +76,34 @@ describe("X-Marfa-Contract on the limiter's and the origin layer's answers", () 
     );
   }, 120_000);
 });
+
+describe("X-Marfa-Contract in a request from a page", () => {
+  it("allows a request header naming the contract in a preflight from an origin the instance allows", async () => {
+    const preflight = (asked: string, origin: string) =>
+      fetch(`${server!.apiUrl}/items`, {
+        method: "OPTIONS",
+        headers: {
+          Origin: origin,
+          "Access-Control-Request-Method": "POST",
+          "Access-Control-Request-Headers": asked,
+        },
+      });
+    const allowed = await preflight(
+      "authorization,content-type,x-marfa-contract",
+      ORIGIN,
+    );
+    const names = (allowed.headers.get("Access-Control-Allow-Headers") ?? "")
+      .toLowerCase()
+      .split(",")
+      .map((name) => name.trim());
+    expect(names).toContain("x-marfa-contract");
+
+    // The witness: an origin the instance does not allow is given no
+    // allowance, so the answer above is the origin layer's.
+    const refused = await preflight(
+      "authorization,content-type,x-marfa-contract",
+      "https://other.example.test",
+    );
+    expect(refused.headers.get("Access-Control-Allow-Headers")).toBeNull();
+  }, 120_000);
+});

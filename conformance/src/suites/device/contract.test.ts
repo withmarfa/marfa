@@ -164,6 +164,10 @@ function refusal(stderr: string): {
 const sent = (scripted: ScriptedServer) =>
   scripted.requests.map((r) => `${r.method} ${r.pathname}`);
 
+/** A read of the root or of `/health`, which say which contract a server speaks. */
+const readsDescription = (request: { method: string; pathname: string }) =>
+  request.method === "GET" && ["/", "/health"].includes(request.pathname);
+
 /** A JSON answer naming `contract` rather than the server's. */
 function naming(answer: Answer, contract: string | string[] | null): Answer {
   if (answer.kind !== "json") {
@@ -2663,6 +2667,14 @@ describe("every command holds the server to the contract", () => {
           .not.toBe("contract_mismatch");
       }
       expect.soft(server.requests.length, label).toBeGreaterThan(0);
+      for (const request of server.requests) {
+        expect
+          .soft(
+            request.headers["x-marfa-contract"],
+            `${label}: ${request.method} ${request.pathname}`,
+          )
+          .toBe(readsDescription(request) ? undefined : BUILT_FOR);
+      }
       if (outcome.stdout !== "") printed.push(row.command);
       await server.stop();
       server = undefined;
@@ -2677,6 +2689,115 @@ describe("every command holds the server to the contract", () => {
         )
         .sort(),
     );
+  });
+});
+
+/**
+ * A server on the contract a device was built for may have added to what it
+ * answers, and a device reads what it knows and ignores the rest.
+ */
+describe("a server that has added to its answers", () => {
+  const added = { added_member: { kind: "new", nested: [1, 2] } };
+
+  it("lists items from a page and an item that carry a member the CLI does not know, as it lists them without", async () => {
+    const page = (extra: Record<string, unknown>) => ({
+      data: [{ ...wireItem({ id: "n1" }), ...extra }],
+      next_cursor: null,
+      ...extra,
+    });
+    const listed = async (extra: Record<string, unknown>) => {
+      server = await ScriptedServer.start();
+      server.copyAnswer("GET", "/items", {
+        kind: "json",
+        status: 200,
+        body: page(extra),
+      });
+      const outcome = await listItems(server.url);
+      await server.stop();
+      server = undefined;
+      return outcome;
+    };
+    // The witness: the page without the member is listed.
+    const plain = await listed({});
+    expect(plain.code, plain.stderr).toBe(0);
+    const extended = await listed(added);
+    expect(extended.code, extended.stderr).toBe(0);
+    const rows = (text: string) =>
+      (JSON.parse(text) as { data: { id: string }[] }).data.map(
+        (row) => row.id,
+      );
+    expect(rows(extended.stdout)).toEqual(rows(plain.stdout));
+  });
+
+  it("reads the root of a server that names a member and a feature it does not know", async () => {
+    server = await ScriptedServer.start();
+    const root = answers.root(builtFor);
+    if (root.kind !== "json") throw new Error("the root is JSON");
+    const body = root.body as Record<string, unknown>;
+    server.copyAnswer(
+      "GET",
+      "/",
+      naming(
+        {
+          ...root,
+          body: {
+            ...body,
+            ...added,
+            features: [...(body.features as string[]), "a-feature-not-yet"],
+          },
+        },
+        BUILT_FOR,
+      ),
+    );
+    server.copyAnswer("GET", "/health", {
+      kind: "json",
+      status: 200,
+      body: { status: "ok", ...added },
+    });
+    const outcome = await marfa(["--json", "--url", server.url, "status"]);
+    expect(outcome.code, outcome.stderr).toBe(0);
+    expect(JSON.parse(outcome.stdout)).toMatchObject({
+      health: { status: "ok" },
+    });
+  });
+
+  it("applies an item event that carries a member it does not know, and skips an event of a type it does not know", async () => {
+    harness = await startHarness("contract-added");
+    const { server: scripted, device } = harness;
+    scriptHydration(scripted, { head: "10" });
+    const known = copyItemEvent("11", "item.created", {
+      ...wireItem({ id: "n2" }),
+      ...added,
+    });
+    const knownFrame = {
+      ...known,
+      data: { ...(known.data as Record<string, unknown>), ...added },
+    };
+    scripted.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("13", [
+        knownFrame,
+        copyItemEvent("12", "item.not_yet_invented", wireItem({ id: "n9" })),
+        copyItemEvent("13", "item.created", wireItem({ id: "n3" })),
+      ]),
+    );
+    expect((await device.hydrate(["core.note"], "library")).ok).toBe(true);
+    const caught = await device.catchUp();
+    expect(caught.ok, JSON.stringify(caught)).toBe(true);
+    expect((await device.get("n2")).ok, "the item with a new member").toBe(
+      true,
+    );
+    expect(
+      (await device.get("n9")).ok,
+      "an event of a type no device knows was applied",
+    ).toBe(false);
+    expect(
+      (await device.get("n3")).ok,
+      "an event after the one it did not know",
+    ).toBe(true);
+    const status = await device.status();
+    expect(status.ok && status.value.event_cursor).toBe("13");
   });
 });
 
@@ -2717,6 +2838,45 @@ describe("the contract the working copy was built for", () => {
       expect(status.ok && status.value.hydration).toBe("never");
     },
   );
+
+  it("names its contract on every request but a read of the root, a write, a read and a stream among them", async () => {
+    harness = await hydratedHarness("contract-sent");
+    const { server: scripted, device } = harness;
+    scripted.copyAnswer(
+      "GET",
+      "/events",
+      copyReplay("11", [
+        copyItemEvent("11", "item.created", wireItem({ id: "n2" })),
+      ]),
+    );
+    expect((await device.catchUp()).ok).toBe(true);
+    const queued = await device.create({
+      type: "core.note",
+      properties: { title: "named", body: "named" },
+    });
+    expect(queued.ok).toBe(true);
+    if (!queued.ok) return;
+    const id = queued.value.item_id ?? "";
+    scriptWrites(scripted, {
+      read: [answers.updated(wireItem({ id }))],
+      create: [answers.created(wireItem({ id }))],
+    });
+    scripted.copyAnswer("GET", "/", naming(answers.root(builtFor), BUILT_FOR));
+    expect((await device.drain()).ok).toBe(true);
+
+    // The witness: the run made a read, a write, a stream and a read of the
+    // root, so the loop below holds each kind to the rule.
+    const made = sent(scripted);
+    expect(made).toContain("POST /items");
+    expect(made).toContain("GET /events");
+    expect(made).toContain("GET /");
+    for (const request of scripted.requests) {
+      expect(
+        request.headers["x-marfa-contract"],
+        `${request.method} ${request.pathname}`,
+      ).toBe(readsDescription(request) ? undefined : BUILT_FOR);
+    }
+  });
 
   it("refuses a hydration from a server on another contract, holding nothing", async () => {
     harness = await startHarness("contract-hydrate");

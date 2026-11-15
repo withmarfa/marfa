@@ -43,6 +43,20 @@ The contract has two halves.
 - `queue-and-verdicts.md`: the queue, the version on every write, the six verdicts, and which failures retry.
 - `folders.md`: a directory on a machine as a device, and the rules that hold there.
 
+## Compatibility
+
+The contract version is the integer in `info.version` of `openapi.json`. It names the compatibility line, so it changes only with a change that breaks the line, and an addition leaves it as it is. A new minor release before 1.0 may break the line, and its release notes say what changed and how to move; from 1.0 a break needs a new major version.
+
+Within one 0.x minor release, five rules hold:
+
+1. **A server may add.** An operation, a field, a code, an event type or a feature that is new does not break a client built for the contract.
+2. **A server never changes or removes what exists.** What a client reads keeps its name, its shape and its meaning.
+3. **A client ignores what it does not know.** A device reads a member, a feature or an event type it does not know as it reads an answer without it (`device/answer-added-members`, `device/event-type-unknown`), and a restore skips a field or a line kind it does not know (`search-and-filters/restore-unknown-field`, `search-and-filters/restore-unknown-line-kind`).
+4. **Every client names its contract version.** A device sends it in `X-Marfa-Contract` on every request but a read of the root or of `/health` (`device/contract-sent`), and the server refuses a request that names another (`instance/contract-request-other`).
+5. **A build opens what an earlier build of the same minor stored.** A server upgrades its database (`instance/upgrade-migrates-older`), a device upgrades its store (`device/schema-upgrade`) and a restore reads an archive of every version up to its own (`search-and-filters/restore-version`).
+
+The first two rules compare one release with another, so no fixture holds a single build to them: a change to `openapi.json` or to a statement is reviewed against them.
+
 ## How a statement is written
 
 ```markdown
