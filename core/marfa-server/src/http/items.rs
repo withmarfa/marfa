@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::extract::rejection::PathRejection;
 use axum::extract::{FromRequest, FromRequestParts, Path, Request, State};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
 use marfa_rules::error::{RuleError, field_code};
 use marfa_rules::{names, time, validation};
