@@ -1,5 +1,6 @@
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { RUN_APART } from "./shard-weights.js";
 
 /** The projects whose files are the contract the Rust server is held to. */
 export const CONTRACT_PROJECTS = [
@@ -165,12 +166,15 @@ export function inProjects(
  * judge: only theirs. The reports must name
  * nothing else. A report of another project's file is a shard that ran and
  * would go unjudged, so the projects asked for and the shards that ran
- * disagree, and the score cannot say which is right.
+ * disagree, and the score cannot say which is right. A file in `RUN_APART`
+ * is a file no shard runs, so a run that did not start its job (`runApart`
+ * false) does not owe it.
  */
 export function scopeToProjects(
   reports: readonly VitestReport[],
   files: readonly string[],
   projects: readonly ContractProject[],
+  runApart = true,
 ): string[] {
   const stray = reports
     .flatMap((report) =>
@@ -186,7 +190,10 @@ export function scopeToProjects(
       `--projects names ${projects.join(",")}, but the reports name files of other projects, which would go unjudged: ${stray.slice(0, 5).join(", ")}`,
     );
   }
-  return files.filter((file) => inProjects(file, projects));
+  return files.filter(
+    (file) =>
+      inProjects(file, projects) && (runApart || !RUN_APART.includes(file)),
+  );
 }
 
 const projectOf = (file: string): string => file.split("/")[2] ?? "";

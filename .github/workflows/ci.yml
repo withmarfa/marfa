@@ -58,6 +58,7 @@ jobs:
     outputs:
       quick-checks: ${{ steps.classify.outputs.quick-checks }}
       workspace: ${{ steps.classify.outputs.workspace }}
+      lint: ${{ steps.classify.outputs.lint }}
       core-checks: ${{ steps.classify.outputs.core-checks }}
       swift-package: ${{ steps.classify.outputs.swift-package }}
       core-checks-linux: ${{ steps.classify.outputs.core-checks-linux }}
@@ -67,6 +68,7 @@ jobs:
       mcp-conformance: ${{ steps.classify.outputs.mcp-conformance }}
       rust-contract-server: ${{ steps.classify.outputs.rust-contract-server }}
       rust-contract-device: ${{ steps.classify.outputs.rust-contract-device }}
+      rust-contract-release: ${{ steps.classify.outputs.rust-contract-release }}
       rust-contract-macos: ${{ steps.classify.outputs.rust-contract-macos }}
       restore-drill: ${{ steps.classify.outputs.restore-drill }}
       image: ${{ steps.classify.outputs.image }}
@@ -136,7 +138,7 @@ jobs:
 
   lint:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.workspace != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.lint != 'false') }}
     name: Lint
     timeout-minutes: 5
     runs-on: ubuntu-latest
@@ -746,7 +748,7 @@ jobs:
   # hooks)`, is the only thing that waits for this.
   rust-contract-release:
     needs: changes
-    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false') }}
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-release != 'false') }}
     name: Rust server without test hooks
     timeout-minutes: 45
     runs-on: ubuntu-latest
@@ -1016,7 +1018,7 @@ jobs:
   # here and the shards never wait for that build.
   rust-contract-release-check:
     needs: [changes, rust-contract, rust-contract-release]
-    if: ${{ !cancelled() && needs.rust-contract.result == 'success' && needs.rust-contract-release.result == 'success' && needs.changes.result == 'success' && needs.changes.outputs.rust-contract-server != 'false' }}
+    if: ${{ !cancelled() && needs.rust-contract.result == 'success' && needs.rust-contract-release.result == 'success' && needs.changes.result == 'success' && needs.changes.outputs.rust-contract-release != 'false' }}
     name: Rust contract (server without test hooks)
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -1115,9 +1117,10 @@ jobs:
         env:
           BUILD: ${{ needs.rust-contract.result }}
           SHARDS: ${{ needs.rust-contract-shards.result }}
-          # The server's own group is owed the build without test hooks and
-          # the fixture that runs it; the device's group alone is not.
-          SERVER_OWED: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' }}
+          # A change to what the server is built from, or to the fixture that
+          # runs the build without test hooks and what it loads, owes that
+          # build and the fixture; a change to other fixtures does not.
+          RELEASE_OWED: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust-contract-release != 'false' }}
           RELEASE: ${{ needs.rust-contract-release.result }}
           RELEASE_CHECK: ${{ needs.rust-contract-release-check.result }}
         run: |
@@ -1126,7 +1129,7 @@ jobs:
             echo "::error::The Rust server was owed a build and every shard, and one did not pass."
             exit 1
           fi
-          if [ "$SERVER_OWED" = true ] && { [ "$RELEASE" != success ] || [ "$RELEASE_CHECK" != success ]; }; then
+          if [ "$RELEASE_OWED" = true ] && { [ "$RELEASE" != success ] || [ "$RELEASE_CHECK" != success ]; }; then
             echo "::error::The server a release ships was owed a build and its fixture, and one did not pass."
             exit 1
           fi
@@ -1147,9 +1150,12 @@ jobs:
         working-directory: conformance
         # The projects of the shards that ran, from the list that made the
         # matrix. A project left out is not judged; one named and not run fails.
+        # The fixture that runs apart from the shards is judged only when the
+        # classifier ran it, and a file it owes that no report names fails.
         env:
           PROJECTS: ${{ needs.changes.outputs.rust-projects }}
-        run: pnpm rust:score --reports "$RUNNER_TEMP/rust-contract-reports" --projects "$PROJECTS" --markdown "$GITHUB_STEP_SUMMARY"
+          RUN_APART: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust-contract-release != 'false' }}
+        run: pnpm rust:score --reports "$RUNNER_TEMP/rust-contract-reports" --projects "$PROJECTS" --run-apart "$RUN_APART" --markdown "$GITHUB_STEP_SUMMARY"
 
   # The restore drill: a Rust server with an object store takes a backup,
   # its data directory is deleted, and a fresh server on the same bucket
