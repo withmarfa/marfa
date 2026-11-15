@@ -475,7 +475,7 @@ mod tests {
     }
 
     #[test]
-    fn a_lock_that_is_a_link_or_shared_is_refused_and_left_alone() {
+    fn a_lock_that_is_a_link_is_refused_and_left_alone_and_one_open_to_others_made_private() {
         let (_dir, root) = private_root();
         let path = root.join("marfa.sock");
         set_mode(&root, 0o700);
@@ -495,9 +495,10 @@ mod tests {
         std::fs::remove_file(lock_path(&path)).unwrap();
 
         std::fs::write(lock_path(&path), "").unwrap();
-        set_mode(&lock_path(&path), 0o644);
-        let said = refusal(&path);
-        assert!(said.contains("mode 0600"), "{said}");
+        set_mode(&lock_path(&path), 0o664);
+        drop(Claim::take(&path).unwrap());
+        let mode = std::fs::metadata(lock_path(&path)).unwrap().mode() & 0o777;
+        assert_eq!(mode, PRIVATE_FILE);
     }
 
     #[test]
