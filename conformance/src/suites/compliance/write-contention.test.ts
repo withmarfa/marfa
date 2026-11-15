@@ -146,7 +146,7 @@ describe("contention on the write lock", () => {
     expect(mixed.data.counts.created).toBe(1);
   }, 120_000);
 
-  it("names the budget it spent, so the setting is observable", async () => {
+  it("names the write wait it spent in details.budget_ms", async () => {
     // The wiring from the write wait through config to the
     // retry is otherwise invisible: a server that ignored the variable
     // would answer the same `503` five seconds later, and a fixture

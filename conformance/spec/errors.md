@@ -342,7 +342,7 @@ The server MUST declare `503 write_contention` in its OpenAPI document on every 
 
 When the server answers `503 write_contention` after a write waited for the write lock, the server MUST carry the write wait it spent, in milliseconds, in `details.budget_ms`.
 
-**Tests:** `compliance/write-contention.test.ts › names the budget it spent, so the setting is observable`.
+**Tests:** `compliance/write-contention.test.ts › names the write wait it spent in details.budget_ms`.
 
 ### `errors/contention-wait`
 

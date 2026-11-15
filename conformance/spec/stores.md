@@ -728,7 +728,7 @@ When a run of `blob-orphans` finds a blob that something references, the server 
 
 ### `stores/orphan-purges-after-grace`
 
-When a run of `blob-orphans` finds a blob reported by an earlier run at least `blob_cleanup_grace_seconds` ago, still unreferenced, and named by no backup the server began in the attached object store since the oldest one it keeps there, the server MUST purge it.
+When a run of `blob-orphans` finds a blob reported by an earlier run at least `blob_cleanup_grace_seconds` ago, still unreferenced, and named by no backup the server began in its backup destination, the backup folder or the object store, since the oldest one it keeps there, the server MUST purge it.
 
 **Reason:** a report made by the run itself waits for the next run. At a grace of zero, the next run purges even when it starts in the same millisecond as the report.
 
@@ -747,6 +747,14 @@ While fewer than `blob_cleanup_grace_seconds` have passed since the server last 
 **Reason:** a client that uploads bytes before writing the item naming them has at least the grace to finish, because an upload clears any earlier orphan report (`stores/orphan-upload-lifts`). With successful runs at the configured interval and nothing else keeping the blob, the report and purge take at most the grace plus two intervals after the upload: between one and three days at the default grace of a day and a daily run.
 
 **Tests:** `compliance/blob-store-settings.test.ts › leaves a report's first time alone and purges only once the report is older than the grace`.
+
+### `stores/orphan-upload-default-grace`
+
+Where `blob_cleanup_grace_seconds` has no value of its own, the server MUST keep a blob that nothing references for 86400 seconds after its upload before `blob-orphans` purges it.
+
+**Reason:** a client that uploads bytes before it writes the item naming them has a day to finish, and an instance that never set the grace keeps that promise (`stores/orphan-upload-kept`).
+
+**Tests:** `compliance/blob-orphan-grace.test.ts › stays for a day after its upload, and a run after that day purges it`.
 
 ### `stores/orphan-purge-not-found`
 

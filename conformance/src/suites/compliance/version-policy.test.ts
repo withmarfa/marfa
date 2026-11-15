@@ -34,28 +34,35 @@ function declared(
 }
 
 describe("a type's version policy", () => {
-  it("registers a policy of whole positive numbers in order", async () => {
+  it("registers a policy of whole numbers in range and in order", async () => {
     for (const policy of [
       { max_versions: 1 },
+      { max_versions: 1000000 },
       { recent_days: 7, daily_snapshot_days: 30, weekly_snapshot_days: 365 },
       { recent_days: 30, daily_snapshot_days: 30, weekly_snapshot_days: 30 },
+      { recent_days: 0, daily_snapshot_days: 0, weekly_snapshot_days: 0 },
+      { recent_days: 0, daily_snapshot_days: 30 },
       { daily_snapshot_days: 30 },
-      { recent_days: 100000 },
+      { recent_days: 36500, daily_snapshot_days: 36500 },
+      { weekly_snapshot_days: 36500 },
     ]) {
       const r = await client.registerType(declared(policy));
       expect(r.status, JSON.stringify(policy)).toBe(201);
     }
   });
 
-  it.each([0, -1, 1.5])(
-    "refuses a number that is not a whole positive one, naming the field: %s",
-    async (value) => {
-      for (const key of [
-        "max_versions",
-        "recent_days",
-        "daily_snapshot_days",
-        "weekly_snapshot_days",
-      ]) {
+  it.each([
+    "recent_days",
+    "daily_snapshot_days",
+    "weekly_snapshot_days",
+    "max_versions",
+  ])(
+    "refuses a number outside the range of its field, naming the field: %s",
+    async (key) => {
+      // A window takes 0 to 36500 days, and `max_versions` 1 to 1000000.
+      const outside =
+        key === "max_versions" ? [0, -1, 1.5, 1000001] : [-1, 1.5, 36501];
+      for (const value of outside) {
         const r = await client.registerType(declared({ [key]: value }));
         expect(r.status, `${key}: ${String(value)}`).toBe(400);
         expect(r.error?.error.code).toBe("invalid_schema");
@@ -74,6 +81,7 @@ describe("a type's version policy", () => {
         "weekly_snapshot_days",
       ],
       [{ recent_days: 400, weekly_snapshot_days: 365 }, "weekly_snapshot_days"],
+      [{ recent_days: 1, daily_snapshot_days: 0 }, "daily_snapshot_days"],
     ];
     for (const [policy, field] of cases) {
       const r = await client.registerType(declared(policy));

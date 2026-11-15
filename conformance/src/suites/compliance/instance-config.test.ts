@@ -780,7 +780,7 @@ describe("the instance display name", () => {
 });
 
 it(
-  "keeps live settings across restart, preserves omitted choices and clears to the environment",
+  "keeps live settings across restart, preserves omitted choices and clears to the default",
   async () => {
     const client = configKey();
     const chosen = {

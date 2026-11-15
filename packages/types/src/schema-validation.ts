@@ -126,6 +126,12 @@ export const FORMAT_TO_FIELD_TYPE: Readonly<
  */
 export const MAX_FEED_DAYS = 36_500;
 
+/** The most days a `version_policy` window may name: the instance setting's own bound. */
+export const MAX_POLICY_DAYS = 36_500;
+
+/** The most versions `version_policy.max_versions` may name: the instance setting's own bound. */
+export const MAX_POLICY_VERSIONS = 1_000_000;
+
 /**
  * The property names full-text search indexes whatever their field type. A
  * thumbnail may not take one, because its base64 would then be searchable.
@@ -1730,20 +1736,32 @@ function validateVersionPolicy(
     "recent_days",
     "daily_snapshot_days",
     "weekly_snapshot_days",
-    "max_versions",
   ]) {
     const value = vp[key];
     if (value === undefined) continue;
-    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
+    if (!isWholeWithin(value, 0, MAX_POLICY_DAYS)) {
       errors.push(
         issue({
           field: `version_policy.${key}`,
-          expected: "a positive integer",
+          expected: `a whole number of days from 0 to ${String(MAX_POLICY_DAYS)}`,
           actual: describe(value),
           hint: `Omit ${key} to inherit the instance default.`,
         }),
       );
     }
+  }
+  if (
+    vp.max_versions !== undefined &&
+    !isWholeWithin(vp.max_versions, 1, MAX_POLICY_VERSIONS)
+  ) {
+    errors.push(
+      issue({
+        field: "version_policy.max_versions",
+        expected: `a whole number from 1 to ${String(MAX_POLICY_VERSIONS)}`,
+        actual: describe(vp.max_versions),
+        hint: "Omit max_versions to inherit the instance default.",
+      }),
+    );
   }
   // Windows are ages counted back from now, so a later window with a
   // smaller bound is empty.
@@ -1756,9 +1774,7 @@ function validateVersionPolicy(
   let longest = 0;
   for (const key of windows) {
     const value = vp[key];
-    if (typeof value !== "number" || !Number.isInteger(value) || value < 1) {
-      continue;
-    }
+    if (!isWholeWithin(value, 0, MAX_POLICY_DAYS)) continue;
     if (ahead !== undefined && value < longest) {
       errors.push(
         issue({
@@ -1774,6 +1790,19 @@ function validateVersionPolicy(
       ahead = key;
     }
   }
+}
+
+function isWholeWithin(
+  value: unknown,
+  least: number,
+  most: number,
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= least &&
+    value <= most
+  );
 }
 
 function validateMergePolicy(

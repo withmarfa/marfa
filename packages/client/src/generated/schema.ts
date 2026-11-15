@@ -2841,9 +2841,9 @@ export interface components {
         VersionPolicy: {
             /** @description How many days back Marfa keeps every version of an item. Counts from now. */
             recent_days?: number;
-            /** @description How many days back Marfa keeps one version per day, after the recent window. */
+            /** @description How many days back Marfa keeps one version per day, after the recent window. A day is a UTC calendar day. */
             daily_snapshot_days?: number;
-            /** @description How many days back Marfa keeps one version per week, after the daily window. Marfa deletes older versions, but always keeps the latest. */
+            /** @description How many days back Marfa keeps one version per week, after the daily window. A week is an ISO week. Marfa deletes older versions, but always keeps the latest. 0 deletes no version for its age once it is past the daily window. */
             weekly_snapshot_days?: number;
             /** @description The most versions Marfa keeps for an item. Past it, Marfa drops the oldest first. */
             max_versions?: number;

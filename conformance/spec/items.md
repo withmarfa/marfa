@@ -1104,6 +1104,26 @@ When the server answers a request under an `Idempotency-Key` with `401`, `403` o
 
 **Tests:** `sync/idempotency-replay.test.ts › does not keep a 403 answer, so the key works once the grant is added`.
 
+### `items/idempotency-kept-for`
+
+The server MUST replay the answer it kept under an `Idempotency-Key` to a repeat sent less than `event_log_retention_hours` after the first request.
+
+**Reason:** the answer is kept by the same clean-up as the event log, so an owner who shortens the event log shortens this window too ([Settings](instance.md#stored-settings)). A client that resends a queued write after the window runs it again.
+
+**Tests:** `compliance/housekeeping-idempotency.test.ts › replays an answer until event_log_retention_hours has passed, and runs the key as a first attempt after`.
+
+### `items/idempotency-kept-for-ever`
+
+Where `event_log_retention_hours` is 0, the server MUST keep the answers it holds under an `Idempotency-Key` without a time limit.
+
+**Tests:** `compliance/housekeeping-idempotency.test.ts › replays an answer for as long as the event log is kept when event_log_retention_hours is 0`.
+
+### `items/idempotency-expired`
+
+When a credential repeats a request under an `Idempotency-Key` after `event_log_retention_hours` has passed since the first request and the `event-log-cleanup` job has run, the server MUST treat the repeat as a first request.
+
+**Tests:** `compliance/housekeeping-idempotency.test.ts › replays an answer until event_log_retention_hours has passed, and runs the key as a first attempt after`.
+
 ### `items/idempotency-unproven-file-not-kept`
 
 When the server refuses a write under an `Idempotency-Key` with `404 blob_not_found` under `blobs/proof-file-refused`, the server MUST NOT keep the answer.

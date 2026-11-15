@@ -890,7 +890,7 @@ CREATE TABLE IF NOT EXISTS blob_copy_failures (
     PRIMARY KEY (hash, store_id)
 ) STRICT, WITHOUT ROWID;
 
--- Who uploaded a blob: an API key's id, or the grant id of an app's tokens.
+-- Who uploaded a blob: an API key's id, or the app for its owner, which every token of the app for that owner shares.
 CREATE TABLE IF NOT EXISTS blob_proofs (
     hash TEXT NOT NULL REFERENCES blobs (hash) ON DELETE CASCADE,
     holder TEXT NOT NULL,

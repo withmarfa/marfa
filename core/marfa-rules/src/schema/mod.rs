@@ -49,6 +49,8 @@ pub const TYPE_ROLES: [&str; 1] = ["container"];
 pub const ROLE_PREFIX: &str = "role:";
 pub const MAX_LABEL_LENGTH: usize = 100;
 pub const MAX_FEED_DAYS: i64 = 36_500;
+pub const MAX_POLICY_DAYS: i64 = 36_500;
+pub const MAX_POLICY_VERSIONS: i64 = 1_000_000;
 pub const MERGE_STRATEGIES: [&str; 2] = ["last_writer_wins", "keep_both_copies"];
 pub const REFUSED_TYPE_KEYS: [&str; 3] = ["states", "default_state", "transitions"];
 

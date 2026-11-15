@@ -70,7 +70,7 @@ When a credential that may upload sends `POST /blobs` with bytes the server does
 
 When a credential that may upload sends `POST /blobs` with bytes the server already holds under another media type, the server MUST answer `201` with the `mime_type` recorded first.
 
-**Reason:** the type is the uploader's word, so the first upload fixes it and no later upload changes what the bytes are served as. The answer therefore tells an uploader whether the instance already held those bytes (`blobs/read-unreadable`).
+**Reason:** the type is the uploader's word, so the first upload fixes it and no later upload changes what the bytes are served as. An uploader that sends a type other than the one it expects to be recorded therefore sees from the answer whether the instance already held those bytes (`blobs/read-unreadable`).
 
 **Tests:** `compliance/blob-served.test.ts › answers a second upload under another type with the type the first fixed, on every link`, `› answers a HEAD, a ranged read and a link with the type the first upload fixed`.
 
@@ -192,11 +192,11 @@ If a credential that may not upload sends `POST /blobs`, then the server MUST an
 
 ### `blobs/upload-app-grant`
 
-When an app's access token sends `POST /blobs` and the server takes the upload, the server MUST credit the upload to the app's grant, so that every access token issued under that grant holds the proof of the bytes.
+When an app's access token sends `POST /blobs` and the server takes the upload, the server MUST credit the upload to the app for the person who approved it, so that every access token the app holds for that person holds the proof of the bytes.
 
 **Reason:** a refresh replaces the token, and a digest the app names after one would otherwise stop lending.
 
-**Tests:** `compliance/blob-reach-app.test.ts › are credited to its grant, so a digest it names after a refresh lends`.
+**Tests:** `compliance/blob-reach-app.test.ts › are credited to its app for its owner, so a digest it names after a refresh lends`.
 
 ### `blobs/upload-operator-key`
 
@@ -596,7 +596,7 @@ When a working key or an app's access token writes an item through `POST /items`
 
 **Reason:** a credential that may write an item could otherwise read any blob whose hash it knows by naming it there, which is as good as downloading and uploading the bytes again.
 
-**Tests:** `compliance/blob-reach.test.ts › lends a digest named by a new item only when its writer sent the bytes`, `› lends a digest named by an upsert onto a natural key only when its writer sent the bytes`, `› lends a digest named by a patch at the current version only when its writer sent the bytes`, `› lends a digest new to the base of a stale merge only when its writer sent the bytes`, `› lends a digest named by a keep-both write only when its writer sent the bytes`, `› lends a digest named by a retype only when its writer sent the bytes`, `› lends a digest named by a bulk create only when its writer sent the bytes`, `› lends a digest named by a bulk update only when its writer sent the bytes`, `› lends a digest named by a bulk action only when its writer sent the bytes`, `› lends no reach through a digest written by a key that never sent the bytes`, `› lends through a digest written by a key that could read the blob`, `compliance/blob-reach-app.test.ts › are credited to its grant, so a digest it names after a refresh lends`.
+**Tests:** `compliance/blob-reach.test.ts › lends a digest named by a new item only when its writer sent the bytes`, `› lends a digest named by an upsert onto a natural key only when its writer sent the bytes`, `› lends a digest named by a patch at the current version only when its writer sent the bytes`, `› lends a digest new to the base of a stale merge only when its writer sent the bytes`, `› lends a digest named by a keep-both write only when its writer sent the bytes`, `› lends a digest named by a retype only when its writer sent the bytes`, `› lends a digest named by a bulk create only when its writer sent the bytes`, `› lends a digest named by a bulk update only when its writer sent the bytes`, `› lends a digest named by a bulk action only when its writer sent the bytes`, `› lends no reach through a digest written by a key that never sent the bytes`, `› lends through a digest written by a key that could read the blob`, `compliance/blob-reach-app.test.ts › are credited to its app for its owner, so a digest it names after a refresh lends`.
 
 ### `blobs/proof-file-refused`
 

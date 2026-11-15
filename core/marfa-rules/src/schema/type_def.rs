@@ -9,9 +9,9 @@ use super::field::{Shape, label_issue, normalize_field, validate_field_shape};
 use super::registry::Ancestry;
 use super::tables::judge_tables;
 use super::{
-    Issue, MAX_FEED_DAYS, MERGE_STRATEGIES, Obj, REFUSED_TYPE_KEYS, Registry, TYPE_ROLES, as_obj,
-    describe, icon_issue, kind, names, number, positive_integer, required, text, unread_keys,
-    whole,
+    Issue, MAX_FEED_DAYS, MAX_POLICY_DAYS, MAX_POLICY_VERSIONS, MERGE_STRATEGIES, Obj,
+    REFUSED_TYPE_KEYS, Registry, TYPE_ROLES, as_obj, describe, icon_issue, kind, names, number,
+    required, text, unread_keys, whole,
 };
 use crate::builtin;
 use crate::catalog::{Naming, merge_field_definition};
@@ -753,25 +753,30 @@ fn validate_version_policy(obj: &Obj, errors: &mut Vec<Issue>) {
         ));
         return;
     };
-    for key in [
-        "recent_days",
-        "daily_snapshot_days",
-        "weekly_snapshot_days",
-        "max_versions",
-    ] {
-        if policy.contains_key(key) && !positive_integer(policy.get(key)) {
+    for key in ["recent_days", "daily_snapshot_days", "weekly_snapshot_days"] {
+        if policy.contains_key(key) && !whole_within(policy.get(key), 0, MAX_POLICY_DAYS) {
             errors.push(Issue::new(
                 format!("version_policy.{key}"),
-                "a positive integer",
+                format!("a whole number of days from 0 to {MAX_POLICY_DAYS}"),
                 describe(policy.get(key)),
                 format!("Omit {key} to inherit the instance default."),
             ));
         }
     }
+    if policy.contains_key("max_versions")
+        && !whole_within(policy.get("max_versions"), 1, MAX_POLICY_VERSIONS)
+    {
+        errors.push(Issue::new(
+            "version_policy.max_versions",
+            format!("a whole number from 1 to {MAX_POLICY_VERSIONS}"),
+            describe(policy.get("max_versions")),
+            "Omit max_versions to inherit the instance default.",
+        ));
+    }
     let mut ahead: Option<&str> = None;
     let mut longest = 0.0;
     for key in ["recent_days", "daily_snapshot_days", "weekly_snapshot_days"] {
-        if !positive_integer(policy.get(key)) {
+        if !whole_within(policy.get(key), 0, MAX_POLICY_DAYS) {
             continue;
         }
         let value = number(policy.get(key)).unwrap_or_default();
@@ -790,6 +795,10 @@ fn validate_version_policy(obj: &Obj, errors: &mut Vec<Issue>) {
             ahead = Some(key);
         }
     }
+}
+
+fn whole_within(value: Option<&Value>, least: i64, most: i64) -> bool {
+    number(value).is_some_and(|n| whole(n) && n >= least as f64 && n <= most as f64)
 }
 
 fn validate_merge_policy(obj: &Obj, visible: &HashSet<&str>, errors: &mut Vec<Issue>) {
@@ -1467,6 +1476,55 @@ mod tests {
             .into_iter()
             .map(|i| (i.field, i.code))
             .collect()
+    }
+
+    fn policy_refused(policy: Value) -> Vec<String> {
+        refused(json!({
+            "id": "user.policy",
+            "fields": {"title": {"type": "string"}},
+            "version_policy": policy,
+        }))
+        .into_iter()
+        .map(|(field, _)| field)
+        .collect()
+    }
+
+    #[test]
+    fn a_version_policy_takes_the_instance_settings_ranges() {
+        for policy in [
+            json!({"max_versions": 1}),
+            json!({"max_versions": 1_000_000}),
+            json!({"recent_days": 0, "daily_snapshot_days": 0, "weekly_snapshot_days": 0}),
+            json!({"recent_days": 0, "daily_snapshot_days": 36_500}),
+            json!({}),
+        ] {
+            let found = policy_refused(policy.clone());
+            assert!(found.is_empty(), "{policy} {found:?}");
+        }
+        for key in ["recent_days", "daily_snapshot_days", "weekly_snapshot_days"] {
+            for bad in [
+                json!(-1),
+                json!(1.5),
+                json!("7"),
+                json!(null),
+                json!(36_501),
+            ] {
+                assert_eq!(
+                    policy_refused(json!({ key: bad })),
+                    vec![format!("version_policy.{key}")]
+                );
+            }
+        }
+        for bad in [json!(0), json!(1.5), json!(null), json!(1_000_001)] {
+            assert_eq!(
+                policy_refused(json!({"max_versions": bad})),
+                vec!["version_policy.max_versions".to_string()]
+            );
+        }
+        assert_eq!(
+            policy_refused(json!({"recent_days": 1, "daily_snapshot_days": 0})),
+            vec!["version_policy.daily_snapshot_days".to_string()]
+        );
     }
 
     #[test]
