@@ -309,8 +309,7 @@ pub async fn owner_purge(
 }
 
 /// Each row is purged at the version the page read, in a write of its own so that other
-/// requests pass between pages. A row that went with an earlier host, or that someone else
-/// removed, is gone, not a failure, and the count is of the rows the purges took.
+/// requests pass between pages. A row already gone is not a failure.
 pub async fn empty(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     caller.require_local()?;
     query::only(&uri, &["cursor"])?;

@@ -144,7 +144,7 @@ pub fn batch(sent: &[Value], most: usize) -> Result<Vec<Op>, Refused> {
         .collect()
 }
 
-/// The first whole number a float would change in the `values` of an operation, read as written in `text`, where the batch sits at `root`, a path of member names from the root of the text.
+/// The first whole number a float would change in an operation's `values`, read as written in `text`, with the batch at `root`.
 pub fn refuse_inexact_text(text: &str, root: &[&str]) -> Result<(), Refused> {
     match integers::inexact_entry_under(text, root, "operations", "values") {
         Some((index, error)) => Err(inexact(index, error)),
