@@ -4775,7 +4775,7 @@ describe("writing", () => {
     const written = read(harness, "Note.md");
     expect(written).toContain("marfa_version: 1");
 
-    door?.update(id, { properties: {}, version: 1 });
+    door?.update(id, { source_id: "moved-elsewhere", version: 1 });
     const moved = await harness.folder.push();
     expect(moved.ok, JSON.stringify(moved)).toBe(true);
     if (!moved.ok) return;

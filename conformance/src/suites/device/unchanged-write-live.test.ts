@@ -73,7 +73,11 @@ it("accepts a drained edit the server answers as unchanged, reports it replayed,
     verdict: "accepted",
     replayed: true,
   });
-  expect(value(await device.queue()).length).toBe(0);
+  const queued = value(await device.queue());
+  expect(queued.map((entry) => entry.verdict)).toEqual([
+    "accepted",
+    "accepted",
+  ]);
   const read = await client.getItem(id);
   expect(read.data.item.version).toBe(held.version);
   expect(value(await device.get(id)).version).toBe(held.version);

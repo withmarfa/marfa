@@ -445,7 +445,9 @@ describe("the scripted answers match the server's", () => {
     });
     for (const mode of ["merge", "replace"] as const) {
       const patch = {
-        version: mode === "merge" ? 1 : 2,
+        // The merge stores nothing, so the replace names the version the
+        // item still holds.
+        version: 1,
         properties_mode: mode,
         properties: {
           body: "text",

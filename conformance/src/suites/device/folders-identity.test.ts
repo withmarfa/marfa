@@ -2060,7 +2060,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     expect(scan.ok && scan.value.missing).toBe(1);
     edges.logItem(
       "item.updated",
-      door!.update(id, { properties: {}, version: 1 }),
+      door!.update(id, { source_id: "moved-elsewhere", version: 1 }),
     );
     const caught = await harness.folder.device().catchUp();
     expect(caught.ok && caught.value.applied).toBe(1);
