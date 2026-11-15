@@ -608,7 +608,7 @@ Where `MARFA_HEARTBEAT_URL` is set, while a restore runs, the server MUST send t
 
 ## A clock far from the trusted time
 
-The server's time is the time it stamps writes with and judges age by. The trusted time is the newest server time the server used while clean-up was not held or, if it has used none since, the time last confirmed (`housekeeping/clock-confirm`, `housekeeping/clock-steady-day`). The fixtures here set the server's clock without time passing, through the test hook `POST /_control/test/clock` with `jump_ms` (`conformance/TARGET-INTERFACE.md`, "The clock"), and pass time with the adapter's `clock advance`.
+The server's time is the time it stamps writes with and judges age by. The trusted time is the time last confirmed (`housekeeping/clock-confirm`, `housekeeping/clock-steady-day`) or, if later, the latest time the server's clock has read since while clean-up was not held. The fixtures here set the server's clock without time passing, through the test hook `POST /_control/test/clock` with `jump_ms` (`conformance/TARGET-INTERFACE.md`, "The clock"), and pass time with the adapter's `clock advance`.
 
 ### `housekeeping/clock-ahead-held`
 
@@ -648,7 +648,7 @@ When the private local command sends `POST /_control/clock/confirm` (`marfa hous
 
 **Reason:** an instance that was off for months looks the same as a clock set wrong, and only the owner can say which it is.
 
-**Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`, `› stamps nothing earlier than the trusted time when the clock is set back, and keeps that time through a crash`.
+**Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`, `› stamps by the clock when it is set back, and keeps the trusted time through a crash`.
 
 ### `housekeeping/clock-steady-day`
 
@@ -660,37 +660,31 @@ When the server's clock has run for 24 hours without a jump while it is more tha
 
 ### `housekeeping/clock-steady-day-restart`
 
-If the server restarts while its clock is more than 7 days later than the trusted time, then the server MUST count toward the 24 hours of `housekeeping/clock-steady-day` the time since they began, the time it was stopped included, unless its clock at the start is earlier than its clock was at the last write it committed.
+If the server restarts while its clock is more than 7 days later than the trusted time, then the server MUST count toward the 24 hours of `housekeeping/clock-steady-day` only the time that passed while it ran.
 
-**Reason:** a supervisor, an upgrade or a crash restarts a server, and a day that began again at each restart might never end. A clock set forward while the server was stopped cannot be told from the time it was stopped, so it counts, and the 7-day margin of `housekeeping/clock-ahead-held` still holds clean-up for a clock set far forward. A clock set back while the server was stopped only shortens the time counted, and one set back past the last write begins the day again.
+**Reason:** a supervisor, an upgrade or a crash restarts a server, and a day that began again at each restart might never end: a server restarted every day still adds up a day of running. A clock set forward while the server was stopped cannot be told from the time it was stopped, so the time stopped never counts, and a restart never ends a hold by itself. The server keeps the count with every write it commits, and each held job records a run at least once an hour, so a restart loses at most the time since the last of them.
 
-**Tests:** `compliance/clock-hold.test.ts › counts the day it holds clean-up across a restart, and ends the hold a day after it began`.
+**Tests:** `compliance/clock-hold.test.ts › counts the day it holds clean-up across a restart, and ends the hold a day after it began`, `› keeps clean-up held after a restart with the clock moved further ahead while it was stopped`.
 
-### `housekeeping/clock-stamp-not-earlier`
+### `housekeeping/clock-followed`
 
-When the server commits a write, the server MUST NOT stamp what the write changes earlier than the trusted time when the write began.
+The server MUST take its clock's time as the server's time, whether the clock is earlier or later than the trusted time.
 
-**Reason:** a clock set back would otherwise stamp a change before the changes it follows, and a client that reads by `updated_after` would miss it. A time the server reads before a write begins, such as a key's `last_used_at`, can be a few milliseconds earlier than a write that committed in the meantime.
+**Reason:** a server time kept from going back would run ahead of the clock by every step back, and a receiver refuses a webhook signature whose time is minutes off. A write stamped after the clock steps back can be earlier than writes before it, so a client that catches up by `updated_after` can miss it. Marfa's devices catch up by the event cursor, which the clock does not move.
 
-**Tests:** `compliance/clock-hold.test.ts › stamps nothing earlier than the trusted time when the clock is set back, and keeps that time through a crash`.
+**Tests:** `compliance/clock-hold.test.ts › stamps by the clock when it is set back, and keeps the trusted time through a crash`, `› stamps by the clock again once a clock set far ahead is set right`.
 
 ### `housekeeping/clock-kept-through-crash`
 
-If the server stops without warning after it has answered a write, then the server MUST NOT stamp a later write earlier than that write.
+If the server stops without warning after it has answered a write it made while clean-up was not held, then the server MUST start again with a trusted time no earlier than the time it stamped that write with.
 
-**Tests:** `compliance/clock-hold.test.ts › stamps nothing earlier than the trusted time when the clock is set back, and keeps that time through a crash`.
+**Tests:** `compliance/clock-hold.test.ts › stamps by the clock when it is set back, and keeps the trusted time through a crash`.
 
-### `housekeeping/clock-set-right`
+### `housekeeping/clock-behind-waits`
 
-When a clock that was more than 7 days later than the trusted time is set right, the server MUST stamp later writes by the clock and not by the time it read while the clock was ahead.
+When the server's clock steps back, the server MUST run each housekeeping job and end each rate-limit window no later than its interval or window after the step.
 
-**Tests:** `compliance/clock-hold.test.ts › stamps by the clock again once a clock set far ahead is set right`.
-
-### `housekeeping/clock-behind-runs-on`
-
-While the server's clock is earlier than the trusted time, the server MUST move the server's time on from the trusted time at the rate time passes.
-
-**Reason:** a server time that stood still until the clock caught up would stop every schedule, retry wait, rate-limit window and expiry for that long. The server's time stays ahead of the clock by the step back until the clock is set forward or the owner confirms it (`housekeeping/clock-confirm`). A restart closes the gap by the time since the server's last write, because the server takes its time from that write.
+**Reason:** a wait measured to a time the clock reached before the step would otherwise last as long as the step as well, and a day's step back would stop the heartbeat and refuse a client for a day.
 
 **Tests:** `compliance/clock-hold.test.ts › runs its jobs on schedule while the clock is a day behind`, `› ends a rate-limit window while the clock is a day behind`.
 
@@ -700,4 +694,4 @@ While the server's clock is earlier than the trusted time, the server MUST run e
 
 **Reason:** a clock behind only moves every cutoff earlier, so it removes less, never more.
 
-**Tests:** `compliance/clock-hold.test.ts › stamps nothing earlier than the trusted time when the clock is set back, and keeps that time through a crash`, `› runs its jobs on schedule while the clock is a day behind`.
+**Tests:** `compliance/clock-hold.test.ts › stamps by the clock when it is set back, and keeps the trusted time through a crash`, `› runs its jobs on schedule while the clock is a day behind`.

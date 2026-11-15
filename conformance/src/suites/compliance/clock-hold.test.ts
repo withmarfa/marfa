@@ -24,10 +24,9 @@ import { beatReceiver } from "../../utils/beat-receiver.js";
 
 /**
  * A server's clock set far ahead of the trusted time holds every job that
- * deletes, and a clock set back stamps nothing earlier and runs the server's
- * time on from the trusted time. The clock is set, without time passing,
- * through the test hook's `jump_ms`; `advanceClock` is time passing, which
- * the server follows.
+ * deletes, and the server stamps by its clock either way. The clock is set,
+ * without time passing, through the test hook's `jump_ms`; `advanceClock` is
+ * time passing, which the server follows.
  */
 
 afterAll(stopFreshServers, 2 * FRESH_SERVER_TIMEOUT_MS);
@@ -367,6 +366,36 @@ describe("the clean-up jobs while the clock is far ahead", () => {
     },
     FRESH_SERVER_TIMEOUT_MS * 3 + 120_000,
   );
+
+  it(
+    "keeps clean-up held after a restart with the clock moved further ahead while it was stopped",
+    async () => {
+      const server = await bootFreshServer("clock-hold-moved", QUIET_SCHEDULE);
+      const writer = writerOf(server);
+      const made = await writer.createItem(
+        createNote({ properties: { title: "binned" } }),
+      );
+      expect(made.status).toBe(201);
+      expect((await writer.trashItems([made.data.item.id])).status).toBe(200);
+
+      await jump(server, 30 * DAY_MS);
+      expect((await runJob(server, "trash-purge")).outcome).toBe("held");
+
+      // Stopped, and started again with the clock two days further on.
+      await server.restart({
+        env: { MARFA_TEST_CLOCK_OFFSET_MS: String(32 * DAY_MS) },
+      });
+      server.clockOffsetMs = 32 * DAY_MS;
+      expect((await runJob(server, "trash-purge")).outcome).toBe("held");
+      const held = (await health(server)).housekeeping.held;
+      expect(held?.reason).toBe("clock_ahead");
+      expect(
+        Date.parse(held!.ends_at) - Date.parse(held!.clock_at),
+      ).toBeGreaterThan(23 * HOUR_MS);
+      expect(await binnedOn(server)).toBe(1);
+    },
+    FRESH_SERVER_TIMEOUT_MS * 2 + 120_000,
+  );
 });
 
 describe("the server's time while the clock is behind", () => {
@@ -403,31 +432,42 @@ describe("the server's time while the clock is behind", () => {
         MARFA_RATE_LIMIT_REQUESTS: "3",
         MARFA_RATE_LIMIT_WINDOW_SECONDS: "5",
       });
-      await jump(server, -DAY_MS);
       const listed = () =>
         fetch(`${server.apiUrl}/items?type=core.note&limit=1`, {
           headers: { authorization: `Bearer ${server.workingKey}` },
         });
+      /** Spends the window and answers how long the refusal says to wait. */
+      const refusedFor = async (): Promise<number> => {
+        let refused: Response | undefined;
+        for (let sent = 0; sent < 5 && refused === undefined; sent += 1) {
+          const answer = await listed();
+          await answer.body?.cancel();
+          if (answer.status === 429) refused = answer;
+          else expect(answer.status).toBe(200);
+        }
+        expect(
+          refused,
+          "the fourth request in a window was not refused",
+        ).toBeDefined();
+        const wait = Number(refused!.headers.get("retry-after"));
+        expect(wait).toBeGreaterThan(0);
+        expect(wait).toBeLessThanOrEqual(5);
+        return wait;
+      };
+      const admittedAfter = async (seconds: number): Promise<void> => {
+        await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+        const after = await listed();
+        await after.body?.cancel();
+        expect(after.status).toBe(200);
+      };
 
-      let refused: Response | undefined;
-      for (let sent = 0; sent < 5 && refused === undefined; sent += 1) {
-        const answer = await listed();
-        await answer.body?.cancel();
-        if (answer.status === 429) refused = answer;
-        else expect(answer.status).toBe(200);
-      }
-      expect(
-        refused,
-        "the fourth request in a window was not refused",
-      ).toBeDefined();
-      const wait = Number(refused!.headers.get("retry-after"));
-      expect(wait).toBeGreaterThan(0);
-      expect(wait).toBeLessThanOrEqual(5);
+      // A window opened before the step back.
+      await refusedFor();
+      await jump(server, -DAY_MS);
+      await admittedAfter(6);
 
-      await new Promise((resolve) => setTimeout(resolve, (wait + 1) * 1000));
-      const after = await listed();
-      await after.body?.cancel();
-      expect(after.status).toBe(200);
+      // A window opened after it.
+      await admittedAfter((await refusedFor()) + 1);
     },
     FRESH_SERVER_TIMEOUT_MS + 120_000,
   );
@@ -435,38 +475,39 @@ describe("the server's time while the clock is behind", () => {
 
 describe("the times the server stamps", () => {
   it(
-    "stamps nothing earlier than the trusted time when the clock is set back, and keeps that time through a crash",
+    "stamps by the clock when it is set back, and keeps the trusted time through a crash",
     async () => {
       const server = await bootFreshServer("clock-hold-stamps", QUIET_SCHEDULE);
 
       const first = await created(writerOf(server), "before the step back");
       await jump(server, -DAY_MS);
-      // The witness that the clock now reads a day earlier.
       expect((await clockConcerns(server)).map((c) => c.reference)).toEqual([
         "clock_behind",
       ]);
       const after = await created(writerOf(server), "after the step back");
-      expect(Date.parse(after)).toBeGreaterThanOrEqual(Date.parse(first));
+      expect(Date.parse(after)).toBeLessThan(Date.parse(first) - 23 * HOUR_MS);
       await jump(server, DAY_MS);
+      expect(await clockConcerns(server)).toEqual([]);
 
       // A write two days ahead, and the server killed right after it.
       await jump(server, 2 * DAY_MS);
       const ahead = await created(writerOf(server), "two days ahead");
       expect(Date.parse(ahead)).toBeGreaterThan(Date.now() + DAY_MS);
       await server.restart({ signal: "SIGKILL" });
+      // The clock reads right again, and the trusted time is still two days on.
       expect((await clockConcerns(server)).map((c) => c.reference)).toEqual([
         "clock_behind",
       ]);
       const restarted = await created(writerOf(server), "after the crash");
-      expect(Date.parse(restarted)).toBeGreaterThanOrEqual(Date.parse(ahead));
+      expect(Math.abs(Date.parse(restarted) - Date.now())).toBeLessThan(
+        HOUR_MS,
+      );
       // A held job is not held by a clock behind.
       expect((await runJob(server, "trash-purge")).outcome).toBe("ok");
 
-      // Once the owner confirms the clock, the server stamps by it again.
+      // Once the owner confirms the clock, it is no longer behind.
       await confirm(server);
       expect(await clockConcerns(server)).toEqual([]);
-      const confirmed = await created(writerOf(server), "after the confirm");
-      expect(Date.parse(confirmed)).toBeLessThan(Date.parse(ahead) - DAY_MS);
     },
     FRESH_SERVER_TIMEOUT_MS * 2 + 120_000,
   );

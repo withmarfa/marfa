@@ -36,7 +36,7 @@ If `GET /attention` carries a query field, then the server MUST answer `400 vali
 
 ### `instance/attention-concerns`
 
-When `GET /attention` completes its checks, the server MUST include degraded or down health components, housekeeping jobs whose last run failed, connectors whose last run failed or that report problems or have said nothing for more than 24 hours, active folders whose current sign-ins report problems, paused removals or a first sync waiting, live keys expiring within the next seven days inclusive, and a clock more than 7 days later or more than an hour earlier than the trusted time (`housekeeping/clock-ahead-held`, `housekeeping/clock-behind-runs-on`).
+When `GET /attention` completes its checks, the server MUST include degraded or down health components, housekeeping jobs whose last run failed, connectors whose last run failed or that report problems or have said nothing for more than 24 hours, active folders whose current sign-ins report problems, paused removals or a first sync waiting, live keys expiring within the next seven days inclusive, and a clock more than 7 days later or more than an hour earlier than the trusted time (`housekeeping/clock-ahead-held`, `housekeeping/clock-followed`).
 
 **Reason:** connector silence follows the latest registration, heartbeat, or received run; folder totals exclude historical sign-ins and do not claim that a copy is online.
 
@@ -134,11 +134,11 @@ While the server's clock is more than 7 days later than the trusted time (`house
 
 ### `instance/attention-clock-behind`
 
-While the server's clock is more than an hour earlier than the trusted time (`housekeeping/clock-behind-runs-on`), the server MUST answer `GET /attention` with a concern of kind `clock` and reference `clock_behind`.
+While the server's clock is more than an hour earlier than the trusted time, the server MUST answer `GET /attention` with a concern of kind `clock` and reference `clock_behind`.
 
-**Reason:** the server keeps its own time, and stamps writes by it, until the clock catches up (`housekeeping/clock-behind-runs-on`), which an owner should know of.
+**Reason:** the server stamps writes by its clock (`housekeeping/clock-followed`), so a write can carry an earlier time than writes before it, which an owner should know of.
 
-**Tests:** `compliance/clock-hold.test.ts › stamps nothing earlier than the trusted time when the clock is set back, and keeps that time through a crash`.
+**Tests:** `compliance/clock-hold.test.ts › stamps by the clock when it is set back, and keeps the trusted time through a crash`.
 
 ### `instance/attention-unavailable`
 
@@ -2218,7 +2218,7 @@ While `MARFA_TEST_HOOKS` is true, the server MUST stamp the stored sign-in and c
 
 If `advance_ms` asks the clock to move back, then the server MUST refuse and keep the time it reads.
 
-**Reason:** an advance is time passing, which never runs back. A clock set back is `jump_ms`, and the server stamps nothing earlier than the trusted time (`housekeeping/clock-stamp-not-earlier`).
+**Reason:** an advance is time passing, which never runs back. A clock set back is `jump_ms`.
 
 **Tests:** `compliance/test-hooks.test.ts › refuses to move the clock back, and keeps the time it reads`.
 
