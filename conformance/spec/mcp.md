@@ -152,7 +152,7 @@ If more items match a `marfa_find` call than it returns, then the server MUST an
 
 ### `mcp/find-hint`
 
-If more items match a `marfa_find` call than it returns, then the server MUST answer a `hint` that says more items match and how to narrow the call or read the next page.
+If more items match a `marfa_find` call than it returns, then the server MUST answer a `hint` that says more items match, how to narrow the call and how to read the next page.
 
 **Reason:** an agent that reads a short answer as the whole answer reports a part as the whole.
 
