@@ -23,6 +23,7 @@ import {
   type ReportedTest,
   type VitestReport,
 } from "./rust-score.js";
+import { RUN_APART } from "./shard-weights.js";
 
 const A = "src/suites/compliance/a.test.ts";
 const B = "src/suites/compliance/b.test.ts";
@@ -350,6 +351,45 @@ describe("the files of the contract", () => {
       A,
       "src/suites/device/nested/d.test.ts",
     ]);
+  });
+});
+
+describe("a run that did not start the fixture that runs apart", () => {
+  const apart = RUN_APART[0] ?? "";
+  const files = [A, apart];
+  const compliance = ["compliance"] as const;
+  const reports: VitestReport[] = [
+    { testResults: [result(A, "passed", ["passed"])] },
+  ];
+
+  it("owes it when the run started it, so that a file no report names fails", () => {
+    expect(apart.startsWith("src/suites/compliance/")).toBe(true);
+    const owed = scoreRun(
+      reports,
+      scopeToProjects(reports, files, compliance),
+      LINUX,
+    );
+    expect(owed.failures).toEqual([`${apart}: no report names it`]);
+  });
+
+  it("does not owe it when the run left it out, and still judges every other file", () => {
+    const left = scoreRun(
+      reports,
+      scopeToProjects(reports, files, compliance, false),
+      LINUX,
+    );
+    expect(left.failures).toEqual([]);
+    expect(left.files.map((file) => file.file)).toEqual([A]);
+    const failing: VitestReport[] = [
+      { testResults: [result(A, "failed", ["failed"])] },
+    ];
+    expect(
+      scoreRun(
+        failing,
+        scopeToProjects(failing, files, compliance, false),
+        LINUX,
+      ).failures,
+    ).toEqual([`${A}: 0 of 1 tests passed`]);
   });
 });
 

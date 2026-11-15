@@ -3,14 +3,16 @@
  * Vitest JSON reports its shards wrote.
  *
  *   tsx scripts/rust-score.ts --reports <dir> [--markdown <file>]
- *     [--platform <name>] [--projects <a,b>]
+ *     [--platform <name>] [--projects <a,b>] [--run-apart <true|false>]
  *
  * Reads every `vitest.json` under `--reports`, prints the score as Markdown
  * and appends it to `--markdown` when given (CI passes the job summary).
  * `--platform` names the platform the reports were written on, as
  * `process.platform` does, and is this machine's by default; a test that runs
  * only on another is left out. `--projects` scores only those contract
- * projects, for a run of some of them. Exits non-zero when a fixture file of
+ * projects, for a run of some of them. `--run-apart false` leaves out the
+ * fixtures that run apart from the shards (`RUN_APART`), for a run that did not
+ * start the job that runs them. Exits non-zero when a fixture file of
  * those projects did not pass whole or no report names it, and when there is
  * no report at all. A test that passed only on a retry passes, and is listed in
  * the Markdown and as a warning annotation.
@@ -37,15 +39,16 @@ interface Args {
   markdown?: string;
   platform: string;
   projects: readonly ContractProject[];
+  runApart: boolean;
 }
 
 const USAGE =
-  "usage: rust-score.ts --reports <dir> [--markdown <file>] [--platform <name>] [--projects <a,b>]";
+  "usage: rust-score.ts --reports <dir> [--markdown <file>] [--platform <name>] [--projects <a,b>] [--run-apart <true|false>]";
 
 function parseArgs(argv: string[]): Args {
   const out: Record<string, string> = {};
   for (let i = 0; i < argv.length; i += 2) {
-    const name = /^--(reports|markdown|platform|projects)$/.exec(
+    const name = /^--(reports|markdown|platform|projects|run-apart)$/.exec(
       argv[i] ?? "",
     )?.[1];
     const value = argv[i + 1];
@@ -62,11 +65,18 @@ function parseArgs(argv: string[]): Args {
       return project;
     },
   );
+  if (
+    out["run-apart"] !== undefined &&
+    !/^(true|false)$/.test(out["run-apart"])
+  ) {
+    throw new Error("--run-apart is true or false");
+  }
   return {
     reports: resolve(out.reports),
     markdown: out.markdown === undefined ? undefined : resolve(out.markdown),
     platform: out.platform ?? process.platform,
     projects,
+    runApart: out["run-apart"] !== "false",
   };
 }
 
@@ -90,7 +100,7 @@ const reports = paths.map(
 );
 const score = scoreRun(
   reports,
-  scopeToProjects(reports, contractFiles(ROOT), args.projects),
+  scopeToProjects(reports, contractFiles(ROOT), args.projects, args.runApart),
   { platform: args.platform },
 );
 const markdown = renderScore(score);
