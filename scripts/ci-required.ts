@@ -570,6 +570,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^core\/marfa-server\/src\/http\/pages\/words\.rs$/,
     ["workspace", "core-checks-linux", ...RUST_SERVER],
   ],
+  // The list of routes the server serves and does not publish, which
+  // `conformance/src/utils/coverage-unpublished.test.ts` reads.
+  [
+    /^core\/marfa-server\/src\/http\/document\.rs$/,
+    ["core-checks-linux", "conformance-offline", ...RUST_SERVER],
+  ],
   // The rest of the server is built and tested on Linux, and its contract is
   // run by the Rust contract jobs, with the real `marfa` binary, and by MCP
   // conformance and the restore drill; the live
@@ -752,7 +758,7 @@ const split = (
   project: string,
   count: number,
   lane: Shard["lane"],
-  rest: Pick<Shard, "binary" | "module">,
+  rest: Pick<Shard, "binary" | "module"> & Partial<Pick<Shard, "statuses">>,
 ): Shard[] =>
   Array.from({ length: count }, (_, i) => ({
     name: `${project} ${String(i + 1)}/${String(count)}`,
@@ -776,6 +782,7 @@ export const SHARDS: readonly Shard[] = [
   ...split("compliance", 10, "rust-contract-server", {
     binary: false,
     module: false,
+    statuses: true,
   }),
   {
     name: "cli",

@@ -71,7 +71,7 @@ const HTTP_METHODS = ["get", "head", "post", "put", "patch", "delete"];
  * The statuses each sign-in route and discovery document answers, which no
  * document declares because none publishes them, so they are declared here
  * and held as a published operation's are: a status a run draws and this
- * does not list fails the run. `authentication.md` and `keys-and-oauth.md`
+ * does not list fails the run. `authentication.md`, `keys-and-oauth.md` and `instance.md`
  * rule what each answers and when.
  */
 export const SIGN_IN_ROUTE_STATUSES: Readonly<
@@ -84,26 +84,26 @@ export const SIGN_IN_ROUTE_STATUSES: Readonly<
   "GET /.well-known/oauth-protected-resource/mcp/schema": [200],
   "GET /.well-known/oauth-protected-resource/mcp/admin": [200],
   "GET /auth/sign-in": [200, 400],
-  "POST /auth/sign-in": [200, 302, 400, 401, 403],
+  "POST /auth/sign-in": [200, 302, 400, 401, 403, 413],
   "POST /auth/confirm": [200, 400, 401, 403, 409, 429],
-  "POST /auth/sign-out": [200, 500],
+  "POST /auth/sign-out": [200, 401, 403, 500],
   "POST /auth/passkeys/registration/options": [200, 400, 401, 403],
   "POST /auth/passkeys/registration": [201, 400, 401, 403, 409, 500],
-  "POST /auth/passkeys/sign-in/options": [200, 403, 429],
-  "POST /auth/passkeys/sign-in": [200, 400, 401, 403, 500],
+  "POST /auth/passkeys/sign-in/options": [200, 403, 413, 429],
+  "POST /auth/passkeys/sign-in": [200, 400, 401, 403, 413, 500],
   // Refuses owner-only email writes before redirecting:
   // instance-claim/profile-email-write-scope.
   "GET /auth/oauth2/authorize": [200, 302, 400],
   "GET /auth/authorize": [200, 302, 400, 404],
-  "POST /auth/authorize/decision": [200, 302, 400, 403, 500],
+  "POST /auth/authorize/decision": [200, 302, 400, 403, 413, 500],
   "GET /auth/error": [200],
-  "POST /auth/oauth2/token": [200, 400, 401],
-  "POST /auth/oauth2/revoke": [200, 400, 401],
-  "POST /auth/device/code": [200, 400, 401, 429],
+  "POST /auth/oauth2/token": [200, 400, 401, 413],
+  "POST /auth/oauth2/revoke": [200, 400, 401, 413],
+  "POST /auth/device/code": [200, 400, 401, 413, 429],
   "GET /auth/device": [200],
-  "POST /auth/device": [302, 403],
+  "POST /auth/device": [302, 403, 413],
   "GET /auth/device/consent": [200, 302, 400],
-  "POST /auth/device/consent": [200, 302, 400, 403, 404],
+  "POST /auth/device/consent": [200, 302, 400, 403, 404, 413],
   "GET /auth/owner/passkeys": [200, 302, 401, 403],
 };
 

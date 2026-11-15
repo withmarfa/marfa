@@ -125,6 +125,63 @@ describe("a device code", () => {
     expect(body.device_code).toBeUndefined();
   });
 
+  it("is refused 400 invalid_scope for a scope under a permission root that is not one of the twelve permissions, and issued for each of the twelve", async () => {
+    const registered = await fetch(`${server!.apiUrl}/auth/oauth2/register`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        client_name: "device-grant-permission-scopes",
+        application_type: "native",
+        grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
+        response_types: [],
+        token_endpoint_auth_method: "none",
+      }),
+    });
+    expect(registered.status).toBe(201);
+    const { client_id } = (await registered.json()) as { client_id: string };
+    const code = (scope: string): Promise<Response> =>
+      fetch(`${server!.apiUrl}/auth/device/code`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id, scope }),
+      });
+
+    // The witness: each of the twelve is issued a code.
+    for (const permission of [
+      "audit.read",
+      "blobs.manage",
+      "config.manage",
+      "connectors.manage",
+      "grants.manage",
+      "instance.maintain",
+      "instance.read",
+      "items.purge",
+      "keys.manage",
+      "keys.mint",
+      "schema.write",
+      "webhooks.manage",
+    ]) {
+      const issued = await code(permission);
+      expect(issued.status, permission).toBe(200);
+      await issued.body?.cancel();
+    }
+    for (const scope of [
+      "items.write",
+      "items.bogus",
+      "keys.x",
+      "schema.read",
+      "items.*:read",
+      "schema.*:write",
+      "items.purge:read",
+    ]) {
+      const refused = await code(scope);
+      expect(refused.status, scope).toBe(400);
+      const body = (await refused.json()) as Record<string, unknown>;
+      expect(body.error, scope).toBe("invalid_scope");
+      expect(body.device_code, scope).toBeUndefined();
+    }
+  });
+
   it("is refused 400 invalid_scope for offline_access when its client may not refresh", async () => {
     // The witness: the same scope without `offline_access` is issued a code.
     expect((await ask("core.note:read")).status).toBe(200);

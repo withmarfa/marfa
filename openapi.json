@@ -12976,11 +12976,11 @@
             }
           },
           "403": {
-            "description": "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.\n- `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.",
+            "description": "- `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.\n- `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.\n- `forbidden`: `type` names `system.connection` and you don't hold `grants.manage`. `details.required_scope` names it.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EdgePermissionDeniedOrTypeNotPermittedRefusal"
+                  "$ref": "#/components/schemas/EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"
                 }
               }
             },
@@ -25023,7 +25023,14 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                  "anyOf": [
+                    {
+                      "$ref": "#/components/schemas/InstanceChangedRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
+                    }
+                  ]
                 }
               }
             },
@@ -26899,6 +26906,9 @@
                   "anyOf": [
                     {
                       "$ref": "#/components/schemas/UndoConflictRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InstanceChangedRefusal"
                     },
                     {
                       "$ref": "#/components/schemas/IdempotencyKeyInFlightRefusal"
@@ -32501,11 +32511,11 @@
             }
           },
           "400": {
-            "description": "`invalid_schema`: `icon` isn't the ID of an icon in a pinned set (`details.errors` names it).\n- `validation_error`: the query has a parameter this endpoint doesn't take.",
+            "description": "- `invalid_schema`: `icon` isn't the ID of an icon in a pinned set (`details.errors` names it).\n- `missing_required_field`: the body has no `icon`. `details.field` names it.\n- `validation_error`: the query has a parameter this endpoint doesn't take.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/InvalidSchemaOrValidationErrorRefusal"
+                  "$ref": "#/components/schemas/InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal"
                 }
               }
             },
@@ -33158,11 +33168,11 @@
             }
           },
           "403": {
-            "description": "- `forbidden`: you don't have `metadata.edge_types:write`.\n- `edge_permission_denied`: your edge map doesn't grant write on `id` or `reverse_name`. `details.edge_type` names it.",
+            "description": "- `forbidden`: you don't have `metadata.edge_types:write`.\n- `edge_permission_denied`: your edge map doesn't grant write on `id` or `reverse_name`. `details.edge_type` names it.\n- `type_not_permitted`: the edge type cascades on delete and holds edges whose targets are of a type you can't write. `details.grant` names the missing grant.",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/EdgePermissionDeniedOrForbiddenRefusal"
+                  "$ref": "#/components/schemas/EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"
                 }
               }
             },
@@ -57241,6 +57251,27 @@
               }
             }
           },
+          "409": {
+            "description": "`instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InstanceChangedRefusal"
+                }
+              }
+            },
+            "headers": {
+              "X-Marfa-Contract": {
+                "$ref": "#/components/headers/X-Marfa-Contract"
+              },
+              "X-Request-ID": {
+                "$ref": "#/components/headers/X-Request-ID"
+              },
+              "X-Error-Code": {
+                "$ref": "#/components/headers/X-Error-Code"
+              }
+            }
+          },
           "412": {
             "description": "`contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done.",
             "content": {
@@ -60158,6 +60189,9 @@
                       "$ref": "#/components/schemas/HousekeepingJobRunningRefusal"
                     },
                     {
+                      "$ref": "#/components/schemas/InstanceChangedRefusal"
+                    },
+                    {
                       "$ref": "#/components/schemas/NoBackupDestinationRefusal"
                     }
                   ]
@@ -60415,6 +60449,9 @@
                     },
                     {
                       "$ref": "#/components/schemas/HousekeepingJobRunningRefusal"
+                    },
+                    {
+                      "$ref": "#/components/schemas/InstanceChangedRefusal"
                     },
                     {
                       "$ref": "#/components/schemas/NoBackupDestinationRefusal"

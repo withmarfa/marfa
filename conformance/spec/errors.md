@@ -300,7 +300,7 @@ When a request other than `OPTIONS` names a path no operation serves, and is not
 
 ### `errors/unmatched-method`
 
-When a request other than `OPTIONS` names a method no operation serves on a path that another method serves, the server MUST answer `404 not_found` and not `405`.
+When a request other than `OPTIONS` names a method no operation serves on a path that another method serves, and is not a `GET` or `DELETE` to an MCP endpoint (`mcp/post-only`), the server MUST answer `404 not_found` and not `405`.
 
 **Tests:** `compliance/unmatched-paths.test.ts › answers a method no door serves on a path another method serves 404 not_found, not 405`, `› answers a PATCH to an item's metadata 404 not_found, under an Idempotency-Key it then keeps no record of, and writes nothing`, `› answers a method no door serves 404 not_found whatever instance it names`, `› answers a GET or POST under /auth/ that no door serves 404 not_found, and a method no door serves there`.
 
@@ -461,6 +461,14 @@ When the server answers `403 type_not_permitted` because a key holds no grant, o
 **Reason:** a client holding a write that the refusal stopped can tell a narrowed key from a write that will never land, and send it again once the grant is back. A folder operation names `system.folder`, and a view operation `system.view`.
 
 **Tests:** `compliance/write-refusal-details.test.ts › names the type, edge type or extension namespace and the level the key lacks`, `› names the level read where the key may not read the type, on a list, its counts and an export`.
+
+### `errors/grant-type-unregistered`
+
+When a credential holding no grant on an identifier sends `POST /items` naming it as the type, the server MUST answer `403 type_not_permitted` with the same message and `details` whether or not a type registers the identifier, apart from the identifier itself.
+
+**Reason:** The refusal says the credential may not reach the type, never that the type exists, so a credential cannot use a write to learn which types an instance registers.
+
+**Tests:** `compliance/write-refusal-details.test.ts › answers a type nothing registers as it answers a registered type the key holds no grant on, on a write`.
 
 ### `errors/grant-edge-type`
 

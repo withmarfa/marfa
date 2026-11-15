@@ -340,6 +340,154 @@ describe("the request an app sends", () => {
     expect(sent?.searchParams.get("state")).toBe("signed-in-fixture");
   });
 
+  it("sends a refusal from nobody signed in to the error page for a web app the person approved, and to its redirect URI once they are signed in", async () => {
+    const web = "https://approved.example/callback";
+    const app = await registerApp(server, NOTES, {
+      application_type: "web",
+      redirect_uris: [web],
+    });
+    const asked = (
+      proof: ReturnType<typeof pkce> | undefined,
+      extra: Record<string, string> = {},
+    ) => {
+      const query = authorizeQuery(app.clientId, NOTES, proof, extra);
+      query.set("redirect_uri", web);
+      return query;
+    };
+    const approved = await decide(
+      server,
+      origin,
+      cookie,
+      await consentScreen(asked(pkce())),
+      true,
+      [NOTES],
+    );
+    expect(approved?.href.startsWith(web), String(approved)).toBe(true);
+    const ownPage = new URL(server.apiUrl).origin;
+    for (const [refused, error] of [
+      [() => asked(undefined), "invalid_request"],
+      [() => asked(pkce(), { prompt: "none" }), "login_required"],
+      [
+        () => asked(pkce(), { response_type: "token" }),
+        "unsupported_response_type",
+      ],
+      [
+        () => asked(pkce(), { scope: "nothing.grantable:read" }),
+        "invalid_scope",
+      ],
+    ] as const) {
+      // The witness: the person signed in, whose consent covers the address,
+      // is sent the same refusal there, except the one signed-in answer a
+      // silent request has instead.
+      if (error !== "login_required") {
+        const witness = await landing(refused());
+        expect(witness?.href.startsWith(web), String(witness)).toBe(true);
+        expect(witness?.searchParams.get("error")).toBe(error);
+      }
+      const sent = await landing(refused(), null);
+      expect(sent?.origin, String(sent)).toBe(ownPage);
+      expect(sent?.pathname).toBe("/auth/error");
+      expect(sent?.searchParams.get("error")).toBe(error);
+    }
+  });
+
+  it("sends a request for a response type other than code to the redirect URI as unsupported_response_type", async () => {
+    const app = await registerApp(server, NOTES);
+    for (const type of ["token", "id_token", ""]) {
+      const sent = await landing(
+        authorizeQuery(app.clientId, NOTES, pkce(), { response_type: type }),
+      );
+      expect(sent?.href.startsWith(CALLBACK), String(sent)).toBe(true);
+      expect(sent?.searchParams.get("error")).toBe("unsupported_response_type");
+    }
+    const missing = authorizeQuery(app.clientId, NOTES, pkce());
+    missing.delete("response_type");
+    const sent = await landing(missing);
+    expect(sent?.searchParams.get("error")).toBe("unsupported_response_type");
+    // The witness: the same request with the code type reaches the consent screen.
+    const asked = await landing(authorizeQuery(app.clientId, NOTES, pkce()));
+    expect(asked?.pathname).toBe("/auth/authorize");
+  });
+
+  it("sends a request from an app not registered for the authorization code grant to the redirect URI as unauthorized_client", async () => {
+    const device = "urn:ietf:params:oauth:grant-type:device_code";
+    const app = await registerApp(server, NOTES, { grant_types: [device] });
+    const sent = await landing(authorizeQuery(app.clientId, NOTES, pkce()));
+    expect(sent?.href.startsWith(CALLBACK), String(sent)).toBe(true);
+    expect(sent?.searchParams.get("error")).toBe("unauthorized_client");
+    // The witness: an app registered for the grant reaches the consent screen.
+    const registered = await registerApp(server, NOTES);
+    const asked = await landing(
+      authorizeQuery(registered.clientId, NOTES, pkce()),
+    );
+    expect(asked?.pathname).toBe("/auth/authorize");
+  });
+
+  it("answers a device code request from an app not registered for the device grant 400 unauthorized_client", async () => {
+    const ask = (clientId: string): Promise<Response> =>
+      fetch(`${server.apiUrl}/auth/device/code`, {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams({ client_id: clientId, scope: NOTES }),
+      });
+    const app = await registerApp(server, NOTES);
+    const refused = await ask(app.clientId);
+    expect(refused.status).toBe(400);
+    expect(((await refused.json()) as { error: string }).error).toBe(
+      "unauthorized_client",
+    );
+    // The witness: an app registered for the grant is issued a code.
+    const registered = await registerApp(server, NOTES, {
+      grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
+    });
+    const issued = await ask(registered.clientId);
+    expect(issued.status, await issued.clone().text()).toBe(200);
+    await issued.body?.cancel();
+  });
+
+  it("answers a token request for a grant the app is not registered for 400 unauthorized_client", async () => {
+    const app = await registerApp(server, NOTES, {
+      grant_types: ["authorization_code"],
+    });
+    const refused = await token(server, {
+      grant_type: "urn:ietf:params:oauth:grant-type:device_code",
+      device_code: "not-a-code",
+      client_id: app.clientId,
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error).toBe("unauthorized_client");
+    // The witness: a grant the app is registered for gets as far as judging the code.
+    const registered = await token(server, {
+      grant_type: "authorization_code",
+      code: "not-a-code",
+      redirect_uri: CALLBACK,
+      code_verifier: pkce().verifier,
+      client_id: app.clientId,
+    });
+    expect(registered.status).toBe(400);
+    expect(registered.body.error).toBe("invalid_grant");
+
+    // A refresh token needs the refresh grant or the authorization code grant,
+    // which allows it.
+    const device = await registerApp(server, NOTES, {
+      grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
+    });
+    const refresh = (clientId: string) =>
+      token(server, {
+        grant_type: "refresh_token",
+        refresh_token: "not-a-token",
+        client_id: clientId,
+      });
+    const deviceOnly = await refresh(device.clientId);
+    expect(deviceOnly.status).toBe(400);
+    expect(deviceOnly.body.error).toBe("unauthorized_client");
+    // The witness: an app registered for the authorization code grant alone
+    // gets as far as judging the token.
+    const allowed = await refresh(app.clientId);
+    expect(allowed.status).toBe(400);
+    expect(allowed.body.error).toBe("invalid_grant");
+  });
+
   it("is sent to the error page, never to a redirect URI the app did not register", async () => {
     const app = await registerApp(server, NOTES);
     const query = authorizeQuery(app.clientId, NOTES, pkce());

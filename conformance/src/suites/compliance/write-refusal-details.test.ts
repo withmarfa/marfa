@@ -143,6 +143,39 @@ describe("a refusal caused by a missing grant names it", () => {
     });
   });
 
+  it("answers a type nothing registers as it answers a registered type the key holds no grant on, on a write", async () => {
+    const reader = await keyWith("unregistered", {
+      type_permissions: { "core.task": "read" },
+    });
+    const refusal = async (type: string) => {
+      const res = await reader.rawRequest<unknown>("/items", {
+        method: "POST",
+        body: { type, source: ctx.source, properties: {} },
+      });
+      expect(res.status, type).toBe(403);
+      const error = res.error?.error as unknown as {
+        code: string;
+        message: string;
+        details: { grant: { kind: string; name: string; level: string } };
+      };
+      expect(error.code, type).toBe("type_not_permitted");
+      expect(error.details.grant.name, type).toBe(type);
+      return {
+        code: error.code,
+        message: error.message.replaceAll(type, "<type>"),
+        grant: { ...error.details.grant, name: "<type>" },
+      };
+    };
+
+    // The witness: the registered type is one that exists, and the key
+    // holds nothing on it.
+    const registered = await client.getType("core.note");
+    expect(registered.status).toBe(200);
+    const known = await refusal("core.note");
+    const unknown = await refusal("core.nothing_registers_this");
+    expect(unknown).toEqual(known);
+  });
+
   it("names the level read where the key may not read the type, on a list, its counts and an export", async () => {
     const holder = await keyWith("note-reader", {
       type_permissions: { "core.note": "read" },

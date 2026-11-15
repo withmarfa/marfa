@@ -571,6 +571,16 @@ describe("what a change runs", () => {
       ["quick-checks", "core-native", "image", ...RUST_SERVER],
     ],
     [
+      "the server's list of unpublished routes, which an offline conformance test reads",
+      ["core/marfa-server/src/http/document.rs"],
+      [
+        "quick-checks",
+        "core-checks-linux",
+        "conformance-offline",
+        ...RUST_SERVER,
+      ],
+    ],
+    [
       "the settings, whose names the Dockerfile sets",
       ["core/marfa-server/src/settings/start.rs"],
       ["quick-checks", "core-checks-linux", ...RUST_SERVER, "image"],

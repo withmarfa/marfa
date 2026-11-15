@@ -1064,6 +1064,45 @@ describe("a browser session's idle week", () => {
     expect((await stored(id)).updated_at).toBeGreaterThan(recorded);
   }, 30_000);
 
+  it("records a use and sends no cookie with a 5xx answer, and sends it once the same request answers", async () => {
+    const browser = await signIn();
+    const id = await idOf(browser);
+    const changePassword = (next: string): Promise<Response> =>
+      fetch(`${server.apiUrl}/auth/owner/password`, {
+        method: "POST",
+        headers: {
+          cookie: browser.cookie,
+          origin,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          current_password: OWNER.password,
+          new_password: next,
+        }),
+      });
+    await pass(2 * MINUTE);
+    const recorded = (await stored(id)).updated_at;
+    await server.setFault("fail:audit=owner.password.changed");
+    try {
+      const failed = await changePassword("owner-sign-ins unused password");
+      expect(failed.status).toBe(500);
+      expect(failed.headers.getSetCookie()).toEqual([]);
+      expect(
+        (await server.faults()).find((f) => f.name === "fail:audit")?.fired,
+      ).toBe(1);
+    } finally {
+      await server.clearFault();
+    }
+    // The request was admitted with its use recorded, so a renewal was owed.
+    const used = (await stored(id)).updated_at;
+    expect(used).toBeGreaterThan(recorded);
+
+    await pass(2 * MINUTE);
+    const answered = await changePassword("short");
+    expect(answered.status).toBe(400);
+    expect(cookieMaxAge(answered, browser.cookie)).toBe(COOKIE_SECONDS);
+  }, 30_000);
+
   it("does not record a use within a minute of the last one", async () => {
     const browser = await signIn();
     const id = await idOf(browser);
