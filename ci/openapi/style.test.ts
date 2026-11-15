@@ -291,6 +291,7 @@ describe("the API description follows API-STYLE.md", () => {
     // a door declaring the shared refusal in its own words is caught too.
     const shared = new Map([
       ["401", "UnauthorizedRefusal"],
+      ["412", "ContractMismatchRefusal"],
       ["413", "RequestTooLargeRefusal"],
       ["429", "RateLimitedRefusal"],
       ["503", "WriteContentionRefusal"],

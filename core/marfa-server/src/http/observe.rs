@@ -11,13 +11,13 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
-use super::answer::{Page, Unhandled, asks_for_html};
+use super::answer::{Page, Unhandled, asks_for_html, refusal_answer};
 use super::body::Shared;
 use super::caller_address::caller_address;
 use super::listening::Peer;
 use super::pages::{self, Notice};
 use crate::app::provenance::{self, Origin};
-use crate::app::refusal::Code;
+use crate::app::refusal::{Code, Refusal};
 use crate::app::{App, instance};
 use crate::listener::{Declaration, Transport};
 use crate::log;
@@ -75,6 +75,21 @@ async fn offer_page(app: &App, response: &mut Response) {
     }
 }
 
+const CONTRACT_HEADER: &str = "x-marfa-contract";
+
+/// A request that names a contract names this server's own, as one whole number in plain digits, or is refused.
+fn judge_contract(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
+    let mut named = headers.get_all(CONTRACT_HEADER).iter();
+    match (named.next(), named.next()) {
+        (None, _) => Ok(()),
+        (Some(value), None) if value.as_bytes() == app.contract().to_string().as_bytes() => Ok(()),
+        _ => Err(Refusal::new(
+            Code::ContractMismatch,
+            "X-Marfa-Contract names another contract than this server speaks. Nothing was done.",
+        )),
+    }
+}
+
 pub async fn observe(State(observed): State<Observed>, request: Request, next: Next) -> Response {
     let (parts, body) = request.into_parts();
     let body = Shared::new(body);
@@ -124,7 +139,10 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         client_ip: caller_address.map(|address| address.to_string()),
         via: None,
     };
-    let mut response = provenance::within(origin, next.run(request)).await;
+    let mut response = match judge_contract(&observed.app, request.headers()) {
+        Ok(()) => provenance::within(origin, next.run(request)).await,
+        Err(refusal) => refusal_answer(&refusal),
+    };
     if upload && !body.is_whole() {
         // An upload refused before its body was read drops the body with the connection.
         response

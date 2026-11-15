@@ -74,6 +74,12 @@ use query::Secret;
 
 const READERS: usize = 4;
 
+/// The contract version this build speaks, which `openapi.json` states.
+const BUILT_CONTRACT: u32 = {
+    assert!(marfa_rules::contract::CONTRACT_VERSION <= u32::MAX as u64);
+    marfa_rules::contract::CONTRACT_VERSION as u32
+};
+
 pub(crate) async fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T, Failure> + Send + 'static,
 ) -> Result<T, Failure> {
@@ -301,11 +307,14 @@ impl App {
 
     #[cfg(feature = "test-hooks")]
     pub fn contract(&self) -> u32 {
-        self.settings.start.contract_version.unwrap_or(0)
+        self.settings
+            .start
+            .contract_version
+            .unwrap_or(BUILT_CONTRACT)
     }
 
     #[cfg(not(feature = "test-hooks"))]
     pub fn contract(&self) -> u32 {
-        0
+        BUILT_CONTRACT
     }
 }

@@ -12,7 +12,7 @@ import type { paths } from "./generated/schema.js";
 export type { components, operations, paths } from "./generated/schema.js";
 export { CONTRACT_VERSION };
 
-/** The response header every answer carries its contract version in. */
+/** The header every answer carries its contract version in, and every request this client sends names its own in. */
 export const CONTRACT_HEADER = "X-Marfa-Contract";
 
 /**
@@ -73,8 +73,9 @@ function checkCredential(credential: string): void {
 }
 
 /**
- * A typed client for one instance. Every answer is checked for the contract
- * version this client was generated for, and one that names another, or a
+ * A typed client for one instance. Every request names the contract version
+ * this client was generated for, so a server on another one refuses it
+ * before acting. Every answer is checked for that version, and one that names another, or a
  * success that names none, is refused with {@link ContractMismatchError}
  * rather than read. An error answer with no header is handed on as it
  * came, since a proxy in front of the server answers without one and its
@@ -130,6 +131,7 @@ export function createClient(options: ClientOptions): MarfaClient {
     // sent to.
     const headers = new Headers(request.headers);
     headers.set("Authorization", `Bearer ${credential}`);
+    headers.set(CONTRACT_HEADER, expected);
     return hold(
       await fetcher(new Request(request, { headers, redirect: "error" })),
     );

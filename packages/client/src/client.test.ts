@@ -20,7 +20,11 @@ interface Answer {
  *  this client's contract unless told otherwise, recording what it was
  *  asked. */
 function stubServer(answer: (path: string) => Answer = () => ({})) {
-  const seen: { url: string; authorization: string | null }[] = [];
+  const seen: {
+    url: string;
+    authorization: string | null;
+    contract: string | null;
+  }[] = [];
   const redirects: Request["redirect"][] = [];
   const fetch = (input: string | URL | Request, init?: RequestInit) => {
     const request = new Request(input, init);
@@ -29,6 +33,7 @@ function stubServer(answer: (path: string) => Answer = () => ({})) {
     seen.push({
       url: path,
       authorization: request.headers.get("Authorization"),
+      contract: request.headers.get(CONTRACT_HEADER),
     });
     const {
       status = 200,
@@ -170,9 +175,27 @@ describe("the contract check", () => {
     const second = await client.GET("/edge-types");
     expect(first.data).toEqual({ data: [], next_cursor: null });
     expect(second.response.ok).toBe(true);
+    const contract = String(CONTRACT_VERSION);
     expect(server.seen).toEqual([
-      { url: "/edge-types", authorization: "Bearer k" },
-      { url: "/edge-types", authorization: "Bearer k" },
+      { url: "/edge-types", authorization: "Bearer k", contract },
+      { url: "/edge-types", authorization: "Bearer k", contract },
+    ]);
+  });
+
+  it("names its contract on every request, a write and a request that names its own header included", async () => {
+    const server = stubServer();
+    const client = make(server);
+    await client.GET("/edge-types");
+    await client.POST("/items", {
+      body: { type: "core.note", properties: {} },
+    });
+    await client.GET("/edge-types", {
+      headers: { [CONTRACT_HEADER]: "9999" },
+    });
+    expect(server.seen.map((request) => request.contract)).toEqual([
+      String(CONTRACT_VERSION),
+      String(CONTRACT_VERSION),
+      String(CONTRACT_VERSION),
     ]);
   });
 });

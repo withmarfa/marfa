@@ -610,8 +610,15 @@ impl NormalizedType {
     }
 }
 
+/// Sent on every request but the reads of the root and of `/health`, which say which contract a server speaks.
 pub const CONTRACT_HEADER: &str = "X-Marfa-Contract";
 pub const INSTANCE_HEADER: &str = "X-Marfa-Instance-Id";
+
+fn names_contract(call: &Call) -> bool {
+    let describes = call.method == Method::Get
+        && (call.segments.iter().all(|segment| segment.is_empty()) || call.segments == ["health"]);
+    !describes
+}
 /// The code, and the expiry reason, of a write another instance refused.
 pub const INSTANCE_CHANGED: &str = "instance_changed";
 
@@ -1621,6 +1628,7 @@ impl Http {
                 .uri(url.as_str())
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
+                .header(CONTRACT_HEADER, CONTRACT_VERSION.to_string())
                 .header("Authorization", authorization);
             if let Some(key) = key {
                 request = request.header("Idempotency-Key", key);
@@ -1779,6 +1787,7 @@ impl Http {
                 .agent
                 .get(url.as_str())
                 .header("Accept", "text/event-stream")
+                .header(CONTRACT_HEADER, CONTRACT_VERSION.to_string())
                 .config()
                 .timeout_recv_body(Some(body_timeout))
                 .timeout_global(global)
@@ -1856,6 +1865,7 @@ impl Http {
         } else {
             Budget::Whole
         };
+        let names_contract = names_contract(&call);
         let builder = |authorization: Option<&str>| {
             let mut builder = ureq::http::Request::builder()
                 .method(call.method.as_str())
@@ -1873,6 +1883,9 @@ impl Http {
             }
             if json {
                 builder = builder.header("Content-Type", "application/json");
+            }
+            if names_contract {
+                builder = builder.header(CONTRACT_HEADER, CONTRACT_VERSION.to_string());
             }
             if let Some(instance) = self
                 .instance
@@ -2144,6 +2157,7 @@ impl Http {
                         .agent
                         .get(url.as_str())
                         .header("Accept", "application/json")
+                        .header(CONTRACT_HEADER, CONTRACT_VERSION.to_string())
                         .header("Authorization", authorization);
                     if let Some(reach) = conditional {
                         request = request.header("X-Marfa-Reach", reach);
@@ -2161,6 +2175,7 @@ impl Http {
                         .post(url.as_str())
                         .header("Accept", "application/json")
                         .header("Content-Type", "application/json")
+                        .header(CONTRACT_HEADER, CONTRACT_VERSION.to_string())
                         .header("Authorization", authorization);
                     if let Some(reach) = conditional {
                         request = request.header("X-Marfa-Reach", reach);
@@ -2446,6 +2461,40 @@ mod tests {
                         (part.starts_with('{') && part.ends_with('}')) || part == segment
                     })
             })
+    }
+
+    fn call<'a>(method: Method, segments: &'a [&'a str]) -> Call<'a> {
+        Call {
+            method,
+            segments,
+            params: &[],
+            headers: &[],
+            body: CallBody::None,
+            credential: true,
+            stream: false,
+        }
+    }
+
+    #[test]
+    fn a_call_names_its_contract_except_a_read_of_the_root_or_of_health() {
+        for (method, segments) in [
+            (Method::Get, vec!["items"]),
+            (Method::Get, vec!["health", "x"]),
+            (Method::Post, vec![""]),
+            (Method::Post, vec!["health"]),
+            (Method::Post, vec!["items"]),
+        ] {
+            assert!(
+                names_contract(&call(method, &segments)),
+                "{method:?} {segments:?}"
+            );
+        }
+        for segments in [vec![], vec![""], vec!["health"]] {
+            assert!(
+                !names_contract(&call(Method::Get, &segments)),
+                "{segments:?}"
+            );
+        }
     }
 
     #[test]

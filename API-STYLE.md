@@ -89,7 +89,7 @@ A person reading the API reference, and an agent or a code generator reading the
   - `id_reused`: `id` belongs to a different item. `details.differs` says what differs.
   ```
 
-- **The shared responses, `401`, `413`, `429`, `500` and `503`, take one text each**, the same on every operation that returns them. **(checked: one text per shared code)** Where a status means something else on one operation, the operation declares its own.
+- **The shared responses, `401`, `412`, `413`, `429`, `500` and `503`, take one text each**, the same on every operation that returns them. **(checked: one text per shared code)** Where a status means something else on one operation, the operation declares its own.
 - **(checked: at most 400 characters)**
 
 ## Streams and requests Marfa sends
