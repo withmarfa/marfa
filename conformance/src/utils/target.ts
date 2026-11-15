@@ -16,7 +16,10 @@ export const TEST_OWNER = {
 };
 
 export function redactSetupProof(log: string): string {
-  return log.replace(/(setup|recovery) code: [A-Z2-7-]+/g, "$1 code: [redacted]");
+  return log.replace(
+    /(setup|recovery) code: [A-Z2-7-]+/g,
+    "$1 code: [redacted]",
+  );
 }
 
 export interface TargetCredentials {

@@ -111,9 +111,7 @@ async function answer(
   return { status: response.status, code: body.error?.code };
 }
 
-async function storedConfig(
-  socket: string,
-): Promise<Record<string, unknown>> {
+async function storedConfig(socket: string): Promise<Record<string, unknown>> {
   const read = await controlRequest(socket, "/config");
   expect(read.status).toBe(200);
   return read.body;
@@ -136,11 +134,10 @@ async function pageText(url: string, cookie?: string): Promise<string> {
 
 /** Whether a password sign-in with `password` gives the owner a session. */
 async function signsIn(server: FreshServer, password: string) {
-  return signInOwnerWithPassword(
-    server.apiUrl,
-    new URL(server.apiUrl).origin,
-    { email: TEST_OWNER.email, password },
-  ).then(
+  return signInOwnerWithPassword(server.apiUrl, new URL(server.apiUrl).origin, {
+    email: TEST_OWNER.email,
+    password,
+  }).then(
     () => true,
     () => false,
   );
@@ -220,9 +217,7 @@ function forged(
           "x-forwarded-host": "marfa.attacker.example",
           "x-forwarded-proto": "https",
           [CLIENT]: ELSEWHERE,
-          ...(body === undefined
-            ? {}
-            : { "content-type": "application/json" }),
+          ...(body === undefined ? {} : { "content-type": "application/json" }),
         },
       },
       (response) => {
@@ -252,9 +247,9 @@ describe("the claim address", () => {
       const set = await bootUnclaimed("claim-address-set", {
         MARFA_CLAIM_ADDRESS: `${CLAIM_ADDRESS}/`,
       });
-      expect(
-        (await storedConfig(set.controlSocket)).sign_in_address,
-      ).toBe(CLAIM_ADDRESS);
+      expect((await storedConfig(set.controlSocket)).sign_in_address).toBe(
+        CLAIM_ADDRESS,
+      );
       expect(serverOutput(set.state)).toMatch(
         new RegExp(
           `Claim this Marfa at ${CLAIM_ADDRESS}/setup with setup code: [A-Z2-7-]+`,
@@ -281,10 +276,12 @@ describe("the claim address", () => {
       });
       // The private socket's claim is open to the machine as before.
       expect(
-        (await controlRequest(plain.controlSocket, "/_control/setup/claim", {
-          method: "POST",
-          body: TEST_OWNER,
-        })).status,
+        (
+          await controlRequest(plain.controlSocket, "/_control/setup/claim", {
+            method: "POST",
+            body: TEST_OWNER,
+          })
+        ).status,
       ).toBe(201);
 
       const set = await bootUnclaimed("claim-address-claim", {
@@ -299,8 +296,8 @@ describe("the claim address", () => {
       );
       expect(claimed.status).toBe(201);
       expect(
-        (await controlRequest(set.controlSocket, "/_control/setup/status"))
-          .body.claimed,
+        (await controlRequest(set.controlSocket, "/_control/setup/status")).body
+          .claimed,
       ).toBe(true);
     },
     2 * FRESH_SERVER_TIMEOUT_MS,
@@ -344,10 +341,12 @@ describe("the claim address", () => {
       );
       expect(ignored(state)).toBe(0);
       expect(
-        (await controlRequest(controlSocket, "/_control/setup/claim", {
-          method: "POST",
-          body: TEST_OWNER,
-        })).status,
+        (
+          await controlRequest(controlSocket, "/_control/setup/claim", {
+            method: "POST",
+            body: TEST_OWNER,
+          })
+        ).status,
       ).toBe(201);
       const moved = await controlRequest(controlSocket, "/config", {
         method: "PATCH",
@@ -412,9 +411,9 @@ describe("the claim address", () => {
         body: { sign_in_address: CLAIM_ADDRESS },
       });
       expect(set.status, JSON.stringify(set.body)).toBe(200);
-      expect(
-        (await storedConfig(server.controlSocket)).sign_in_address,
-      ).toBe(CLAIM_ADDRESS);
+      expect((await storedConfig(server.controlSocket)).sign_in_address).toBe(
+        CLAIM_ADDRESS,
+      );
       expect(
         await forged(
           server.url,
@@ -423,9 +422,9 @@ describe("the claim address", () => {
           JSON.stringify({ ...TEST_OWNER, code }),
         ),
       ).toBe(201);
-      expect(
-        (await storedConfig(server.controlSocket)).sign_in_address,
-      ).toBe(CLAIM_ADDRESS);
+      expect((await storedConfig(server.controlSocket)).sign_in_address).toBe(
+        CLAIM_ADDRESS,
+      );
     },
     FRESH_SERVER_TIMEOUT_MS,
   );
@@ -696,10 +695,14 @@ describe("owner recovery", () => {
       const short = "short";
       expect(
         (
-          await controlRequest(server.controlSocket, "/_control/owner/recover", {
-            method: "POST",
-            body: { password: short },
-          })
+          await controlRequest(
+            server.controlSocket,
+            "/_control/owner/recover",
+            {
+              method: "POST",
+              body: { password: short },
+            },
+          )
         ).status,
       ).toBe(400);
       expect(
@@ -752,7 +755,12 @@ describe("owner recovery", () => {
       }
       expect(
         await answer(
-          await post(server.apiUrl, "/setup/exchange", { code }, from("192.0.2.1")),
+          await post(
+            server.apiUrl,
+            "/setup/exchange",
+            { code },
+            from("192.0.2.1"),
+          ),
         ),
       ).toEqual({ status: 429, code: "rate_limited" });
       expect(
@@ -794,15 +802,13 @@ describe("owner recovery", () => {
       const health = await (await fetch(`${server.apiUrl}/health`)).text();
       const local = await controlRequest(server.controlSocket, "/health");
 
-      const lines = (await server.output())
-        .split("\n")
-        .flatMap((line) => {
-          try {
-            return [JSON.parse(line) as Record<string, unknown>];
-          } catch {
-            return [];
-          }
-        });
+      const lines = (await server.output()).split("\n").flatMap((line) => {
+        try {
+          return [JSON.parse(line) as Record<string, unknown>];
+        } catch {
+          return [];
+        }
+      });
       const requests = lines.filter(
         (line) =>
           typeof line.level !== "string" || typeof line.message !== "string",
