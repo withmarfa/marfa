@@ -677,29 +677,25 @@ jobs:
     runs-on: ubuntu-latest
     env:
       TARGET: x86_64-unknown-linux-musl
-      # Whether the compliance shards, which run a release's program, are owed.
-      RELEASE_OWED: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' }}
     steps:
       - uses: actions/checkout@v7
-      - name: Key the servers on everything they are built from
+      - name: Key the server on everything it is built from
         id: key
-        run: echo "key=marfa-rust-servers-$RUNNER_OS-${{ hashFiles('core/Cargo.toml', 'core/Cargo.lock', 'core/.cargo/**', 'core/marfa-server/**', 'core/marfa-rules/**', 'core/marfa-enrichment/**', 'core/marfa-acl/**', 'core/marfa-allocator/**', 'core/marfa-telemetry/**', 'openapi.json', 'packages/types/generated/icon-set-*.json', '.github/actions/native-build-image/**', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=marfa-rust-server-hooks-$RUNNER_OS-${{ hashFiles('core/Cargo.toml', 'core/Cargo.lock', 'core/.cargo/**', 'core/marfa-server/**', 'core/marfa-rules/**', 'core/marfa-enrichment/**', 'core/marfa-acl/**', 'core/marfa-allocator/**', 'core/marfa-telemetry/**', 'openapi.json', 'packages/types/generated/icon-set-*.json', '.github/actions/native-build-image/**', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
       # Saved by `main` only, and restored for a pull request only, by the
       # exact key: a server a pull request gets was built from these files.
-      - name: Restore the servers
-        id: servers
+      - name: Restore the server
+        id: server
         if: ${{ github.event_name == 'pull_request' }}
         uses: actions/cache/restore@v6
         with:
-          path: ${{ runner.temp }}/marfa-servers
+          path: ${{ runner.temp }}/marfa-server
           key: ${{ steps.key.outputs.key }}
-      # The first build of a target asks for 40 GB of free disk, and the
-      # runner starts with less. These are the toolchains it does not use.
-      - name: Free disk space
-        if: ${{ steps.servers.outputs.cache-hit != 'true' }}
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          df -h /
+      # The runner starts with about 88 GB free, and this build uses about 6,
+      # so nothing is removed to make room.
+      - name: Show the free disk space
+        if: ${{ steps.server.outputs.cache-hit != 'true' }}
+        run: df -h /
       - name: Choose the folder for downloads and results
         run: echo "MARFA_NATIVE_ROOT=$RUNNER_TEMP/marfa-native" >> "$GITHUB_ENV"
       # The server is built with the file readers linked in, the way the
@@ -709,10 +705,10 @@ jobs:
       # saved: PDFium's finished library and the pinned downloads.
       - name: Key the cache on the pins, the patches and the build scripts
         id: native
-        if: ${{ steps.servers.outputs.cache-hit != 'true' }}
+        if: ${{ steps.server.outputs.cache-hit != 'true' }}
         run: echo "key=marfa-native-$RUNNER_OS-${{ hashFiles('core/marfa-enrichment/native/manifest.txt', 'core/marfa-enrichment/native/patches/**', 'core/marfa-enrichment/native/build.sh', 'core/marfa-enrichment/native/pdfium.sh', 'core/marfa-enrichment/native/tesseract.sh', 'core/marfa-enrichment/native/models.sh', 'core/marfa-enrichment/native/lib.sh', 'core/marfa-enrichment/native/linux/**') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the downloads and the PDFium library
-        if: ${{ steps.servers.outputs.cache-hit != 'true' }}
+        if: ${{ steps.server.outputs.cache-hit != 'true' }}
         uses: actions/cache/restore@v6
         with:
           path: |
@@ -722,30 +718,23 @@ jobs:
       # The image is restored from the cache, never built from the package
       # archive when the cache holds it; `main` saves it.
       - name: Make the build image
-        if: ${{ steps.servers.outputs.cache-hit != 'true' }}
+        if: ${{ steps.server.outputs.cache-hit != 'true' }}
         uses: ./.github/actions/native-build-image
       - name: Build the Rust server
-        if: ${{ steps.servers.outputs.cache-hit != 'true' }}
+        id: build
+        if: ${{ steps.server.outputs.cache-hit != 'true' }}
         env:
           MARFA_SERVER_FEATURES: test-hooks
         run: core/marfa-enrichment/native/release.sh "$TARGET" --server
       - name: Set the server aside
-        if: ${{ steps.servers.outputs.cache-hit != 'true' }}
-        run: install -D "$RUNNER_TEMP/marfa-native/out/$TARGET/marfa-server" "$RUNNER_TEMP/marfa-servers/hooks/marfa-server"
-      # The compliance fixture that runs a release's program needs a binary
-      # without test hooks, and no other fixture does. `main` builds it every
-      # time.
-      - name: Build the Rust server without test hooks
-        id: release
-        if: ${{ steps.servers.outputs.cache-hit != 'true' && env.RELEASE_OWED == 'true' }}
-        run: |
-          core/marfa-enrichment/native/release.sh "$TARGET" --server
-          install -D "$RUNNER_TEMP/marfa-native/out/$TARGET/marfa-server" "$RUNNER_TEMP/marfa-servers/release/marfa-server"
-      - name: Save the servers
-        if: ${{ steps.release.outcome == 'success' && github.ref == 'refs/heads/main' }}
+        id: aside
+        if: ${{ steps.server.outputs.cache-hit != 'true' }}
+        run: install -D "$RUNNER_TEMP/marfa-native/out/$TARGET/marfa-server" "$RUNNER_TEMP/marfa-server/marfa-server"
+      - name: Save the server
+        if: ${{ steps.aside.outcome == 'success' && github.ref == 'refs/heads/main' }}
         uses: actions/cache/save@v6
         with:
-          path: ${{ runner.temp }}/marfa-servers
+          path: ${{ runner.temp }}/marfa-server
           key: ${{ steps.key.outputs.key }}
       # Every shard downloads it, and a re-run of one shard does too, so it
       # is kept as long as the shards' reports. It is an input, not a
@@ -754,15 +743,84 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: rust-contract-server
-          path: ${{ runner.temp }}/marfa-servers/hooks/marfa-server
+          path: ${{ runner.temp }}/marfa-server/marfa-server
           if-no-files-found: error
           retention-days: 3
+
+  # The program a release ships, built without test hooks, in a job of its
+  # own so that the build the shards wait for is the one with the hooks. The
+  # one compliance fixture that runs it, `Rust contract (server without test
+  # hooks)`, is the only thing that waits for this.
+  rust-contract-release:
+    needs: changes
+    if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false') }}
+    name: Rust server without test hooks
+    timeout-minutes: 60
+    runs-on: ubuntu-latest
+    env:
+      TARGET: x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v7
+      - name: Key the server on everything it is built from
+        id: key
+        run: echo "key=marfa-rust-server-release-$RUNNER_OS-${{ hashFiles('core/Cargo.toml', 'core/Cargo.lock', 'core/.cargo/**', 'core/marfa-server/**', 'core/marfa-rules/**', 'core/marfa-enrichment/**', 'core/marfa-acl/**', 'core/marfa-allocator/**', 'core/marfa-telemetry/**', 'openapi.json', 'packages/types/generated/icon-set-*.json', '.github/actions/native-build-image/**', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+      # Saved by `main` only, and restored for a pull request only, by the
+      # exact key: a server a pull request gets was built from these files.
+      - name: Restore the server
+        id: server
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ runner.temp }}/marfa-server
+          key: ${{ steps.key.outputs.key }}
+      # The runner starts with about 88 GB free, and this build uses about 6,
+      # so nothing is removed to make room.
+      - name: Show the free disk space
+        if: ${{ steps.server.outputs.cache-hit != 'true' }}
+        run: df -h /
+      - name: Choose the folder for downloads and results
+        run: echo "MARFA_NATIVE_ROOT=$RUNNER_TEMP/marfa-native" >> "$GITHUB_ENV"
+      # The server is built with the file readers linked in, the way the
+      # native job builds them: in the pinned image, for the static musl
+      # target, from the sources `native/manifest.txt` pins. The same key as
+      # the native job's, so that both restore what a push to `main` there
+      # saved: PDFium's finished library and the pinned downloads.
+      - name: Key the cache on the pins, the patches and the build scripts
+        id: native
+        if: ${{ steps.server.outputs.cache-hit != 'true' }}
+        run: echo "key=marfa-native-$RUNNER_OS-${{ hashFiles('core/marfa-enrichment/native/manifest.txt', 'core/marfa-enrichment/native/patches/**', 'core/marfa-enrichment/native/build.sh', 'core/marfa-enrichment/native/pdfium.sh', 'core/marfa-enrichment/native/tesseract.sh', 'core/marfa-enrichment/native/models.sh', 'core/marfa-enrichment/native/lib.sh', 'core/marfa-enrichment/native/linux/**') }}" >> "$GITHUB_OUTPUT"
+      - name: Restore the downloads and the PDFium library
+        if: ${{ steps.server.outputs.cache-hit != 'true' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ runner.temp }}/marfa-native/downloads
+            ${{ runner.temp }}/marfa-native/archives
+          key: ${{ steps.native.outputs.key }}
+      # The image is restored from the cache, never built from the package
+      # archive when the cache holds it; `main` saves it.
+      - name: Make the build image
+        if: ${{ steps.server.outputs.cache-hit != 'true' }}
+        uses: ./.github/actions/native-build-image
+      - name: Build the Rust server without test hooks
+        id: build
+        if: ${{ steps.server.outputs.cache-hit != 'true' }}
+        run: core/marfa-enrichment/native/release.sh "$TARGET" --server
+      - name: Set the server aside
+        id: aside
+        if: ${{ steps.server.outputs.cache-hit != 'true' }}
+        run: install -D "$RUNNER_TEMP/marfa-native/out/$TARGET/marfa-server" "$RUNNER_TEMP/marfa-server/marfa-server"
+      - name: Save the server
+        if: ${{ steps.aside.outcome == 'success' && github.ref == 'refs/heads/main' }}
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ runner.temp }}/marfa-server
+          key: ${{ steps.key.outputs.key }}
       - name: Keep the server without test hooks
-        if: ${{ env.RELEASE_OWED == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: rust-contract-release-server
-          path: ${{ runner.temp }}/marfa-servers/release/marfa-server
+          path: ${{ runner.temp }}/marfa-server/marfa-server
           if-no-files-found: error
           retention-days: 3
 
@@ -798,16 +856,6 @@ jobs:
         run: |
           chmod +x "$RUNNER_TEMP/rust-contract-server/marfa-server"
           echo "MARFA_SERVER_BIN=$RUNNER_TEMP/rust-contract-server/marfa-server" >> "$GITHUB_ENV"
-      - if: ${{ matrix.release }}
-        uses: actions/download-artifact@v8
-        with:
-          name: rust-contract-release-server
-          path: ${{ runner.temp }}/rust-contract-release-server
-      - name: Name the server a release ships
-        if: ${{ matrix.release }}
-        run: |
-          chmod +x "$RUNNER_TEMP/rust-contract-release-server/marfa-server"
-          echo "MARFA_SERVER_RELEASE_BIN=$RUNNER_TEMP/rust-contract-release-server/marfa-server" >> "$GITHUB_ENV"
 
       # The CLI and device fixtures drive the `marfa` binary, and the device
       # fixtures the Node module. The keys leave
@@ -967,6 +1015,83 @@ jobs:
         working-directory: conformance
         run: pnpm garage:down --state "$RUNNER_TEMP/garage"
 
+  # The compliance fixture that runs the program a release ships, which needs
+  # the build without test hooks and, for its witnesses, the one with them
+  # and a server booted from it. No other fixture needs the first, so it runs
+  # here and the shards never wait for that build.
+  rust-contract-release-check:
+    needs: [changes, rust-contract, rust-contract-release]
+    if: ${{ !cancelled() && needs.rust-contract.result == 'success' && needs.rust-contract-release.result == 'success' && needs.changes.result == 'success' && needs.changes.outputs.rust-contract-server != 'false' }}
+    name: Rust contract (server without test hooks)
+    timeout-minutes: 20
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: pnpm
+      # Nothing in the workspace is built for the Rust server.
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v8
+        with:
+          name: rust-contract-server
+          path: ${{ runner.temp }}/rust-contract-server
+      - uses: actions/download-artifact@v8
+        with:
+          name: rust-contract-release-server
+          path: ${{ runner.temp }}/rust-contract-release-server
+      - name: Name the servers
+        run: |
+          chmod +x "$RUNNER_TEMP/rust-contract-server/marfa-server" "$RUNNER_TEMP/rust-contract-release-server/marfa-server"
+          echo "MARFA_SERVER_BIN=$RUNNER_TEMP/rust-contract-server/marfa-server" >> "$GITHUB_ENV"
+          echo "MARFA_SERVER_RELEASE_BIN=$RUNNER_TEMP/rust-contract-release-server/marfa-server" >> "$GITHUB_ENV"
+      - name: Boot the Rust server
+        working-directory: conformance
+        env:
+          CONFORMANCE_SERVER_IDLE_MS: "0"
+        run: |
+          pnpm marfa:up --state "$RUNNER_TEMP/marfa"
+          cat "$RUNNER_TEMP/marfa/env" >> "$GITHUB_ENV"
+      # Like a shard: a failed test does not fail the step, the score counts it.
+      - name: Run the fixture
+        working-directory: conformance
+        run: |
+          report="$RUNNER_TEMP/rust-contract-report/vitest.json"
+          mkdir -p "$(dirname "$report")"
+          status=0
+          pnpm exec vitest run --project compliance src/suites/compliance/hook-free-server.test.ts --retry=0 --reporter=default --reporter=json "--outputFile.json=$report" || status=$?
+          echo "Vitest exited with status $status."
+          test -s "$report"
+      - name: Keep the report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-contract-report-release
+          overwrite: true
+          path: ${{ runner.temp }}/rust-contract-report/vitest.json
+          if-no-files-found: error
+          retention-days: 3
+      - name: Keep the server log
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: rust-contract-server-log-release
+          overwrite: true
+          retention-days: 3
+          path: |
+            ${{ runner.temp }}/marfa/server.log
+            ${{ runner.temp }}/marfa/server.stderr
+            ${{ runner.temp }}/marfa/fresh-server-logs/
+          if-no-files-found: ignore
+      - name: Stop the server
+        if: always()
+        working-directory: conformance
+        run: pnpm marfa:down --state "$RUNNER_TEMP/marfa"
+
   # The score of the Rust server against the contract: tests passing out of
   # all, by file, in the job summary (`conformance/TARGET-INTERFACE.md` says how it is
   # counted). It fails when a fixture file did not pass whole,
@@ -975,20 +1100,36 @@ jobs:
   # exactly when the classifier owes a run, so a build or shard skipped while
   # a run is owed fails here.
   rust-contract-score:
-    needs: [changes, rust-contract, rust-contract-shards]
+    needs:
+      [
+        changes,
+        rust-contract,
+        rust-contract-release,
+        rust-contract-shards,
+        rust-contract-release-check,
+      ]
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' || needs.changes.outputs.rust-contract-device != 'false') }}
     name: Rust contract score
     timeout-minutes: 8
     runs-on: ubuntu-latest
     steps:
-      - name: Require the build and every shard to have run
+      - name: Require the builds and every shard to have run
         env:
           BUILD: ${{ needs.rust-contract.result }}
           SHARDS: ${{ needs.rust-contract-shards.result }}
+          # The server's own group is owed the build without test hooks and
+          # the fixture that runs it; the device's group alone is not.
+          SERVER_OWED: ${{ needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' }}
+          RELEASE: ${{ needs.rust-contract-release.result }}
+          RELEASE_CHECK: ${{ needs.rust-contract-release-check.result }}
         run: |
-          echo "Build: $BUILD. Shards: $SHARDS."
+          echo "Build: $BUILD. Shards: $SHARDS. Without test hooks: $RELEASE, run: $RELEASE_CHECK."
           if [ "$BUILD" != success ] || [ "$SHARDS" != success ]; then
             echo "::error::The Rust server was owed a build and every shard, and one did not pass."
+            exit 1
+          fi
+          if [ "$SERVER_OWED" = true ] && { [ "$RELEASE" != success ] || [ "$RELEASE_CHECK" != success ]; }; then
+            echo "::error::The server a release ships was owed a build and its fixture, and one did not pass."
             exit 1
           fi
       - uses: actions/checkout@v7
@@ -1465,6 +1606,8 @@ jobs:
         mcp-conformance,
         conformance,
         rust-contract,
+        rust-contract-release,
+        rust-contract-release-check,
         rust-contract-shards,
         rust-contract-score,
         rust-contract-macos,
@@ -1518,6 +1661,8 @@ jobs:
         mcp-conformance,
         conformance,
         rust-contract,
+        rust-contract-release,
+        rust-contract-release-check,
         rust-contract-shards,
         rust-contract-score,
         rust-contract-macos,

@@ -1,6 +1,6 @@
 import { relative, sep } from "node:path";
 import { BaseSequencer, type TestSpecification } from "vitest/node";
-import { SHARD_SECONDS, UNKNOWN_SECONDS } from "./shard-weights.js";
+import { RUN_APART, SHARD_SECONDS, UNKNOWN_SECONDS } from "./shard-weights.js";
 
 /** What a file is expected to take, by its path from the package root. */
 export function secondsOf(path: string): number {
@@ -45,7 +45,8 @@ export function shardLoads(
  * Vitest's own `--shard` hashes each path and gives every shard the same
  * number of files, so a shard that draws two of the five slowest files runs
  * twice as long as the one that draws none. This splits by the time each file
- * takes instead, and only when `--shard` is given.
+ * takes instead, and only when `--shard` is given. A file in `RUN_APART` is in
+ * no shard.
  */
 export default class WeightedShards extends BaseSequencer {
   override shard(files: TestSpecification[]): Promise<TestSpecification[]> {
@@ -54,7 +55,8 @@ export default class WeightedShards extends BaseSequencer {
     const { index, count } = config.shard;
     const pathOf = (file: TestSpecification) =>
       relative(config.root, file.moduleId).split(sep).join("/");
-    const mine = new Set(assignShards(files.map(pathOf), count)[index - 1]);
+    const paths = files.map(pathOf).filter((path) => !RUN_APART.includes(path));
+    const mine = new Set(assignShards(paths, count)[index - 1]);
     return Promise.resolve(files.filter((file) => mine.has(pathOf(file))));
   }
 }

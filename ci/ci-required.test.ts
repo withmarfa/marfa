@@ -1181,6 +1181,8 @@ const NOT_CLASSIFIED = [
   "report-failure",
   // The jobs after each Rust server build wait for it, and
   // `ci/rust-contract.test.ts` pins them.
+  "rust-contract-release",
+  "rust-contract-release-check",
   "rust-contract-shards",
   "rust-contract-score",
   "rust-contract-macos-shards",
@@ -1609,8 +1611,17 @@ describe("what a job reads reaches it", () => {
       "marfa-telemetry",
     ]);
     const { jobs } = workflow("ci.yml");
-    const steps = jobs["rust-contract"]?.steps ?? [];
-    const globs = hashedGlobs(steps.find((s) => s.id === "key"));
+    const hooked = jobs["rust-contract"]?.steps ?? [];
+    const released = jobs["rust-contract-release"]?.steps ?? [];
+    const globs = hashedGlobs(hooked.find((s) => s.id === "key"));
+    // The two builds are keyed on the same files, and by a name of their own.
+    expect(hashedGlobs(released.find((s) => s.id === "key"))).toEqual(globs);
+    expect(hooked.find((s) => s.id === "key")?.run).toContain(
+      "marfa-rust-server-hooks-",
+    );
+    expect(released.find((s) => s.id === "key")?.run).toContain(
+      "marfa-rust-server-release-",
+    );
     // The witness: the helpers read a list, and tell a file in it from one out.
     expect(globs.length).toBeGreaterThan(0);
     expect(hashes(globs, "core/marfa-server/src/lib.rs")).toBe(true);
@@ -1660,25 +1671,31 @@ describe("what a job reads reaches it", () => {
     }
 
     // Restored only for a pull request, by the exact key; saved by `main`
-    // only, once both servers are built.
-    const restore = steps.find((s) => s.id === "servers");
-    expect(restore?.if).toBe("${{ github.event_name == 'pull_request' }}");
-    expect(restore?.uses).toMatch(/^actions\/cache\/restore@/);
-    expect(restore?.with?.key).toBe("${{ steps.key.outputs.key }}");
-    const save = steps.find((s) => s.uses?.startsWith("actions/cache/save@"));
-    expect(save?.if).toBe(
-      "${{ steps.release.outcome == 'success' && github.ref == 'refs/heads/main' }}",
-    );
-    expect(save?.with?.key).toBe("${{ steps.key.outputs.key }}");
-    expect(save?.with?.path).toBe(restore?.with?.path);
-    // What is restored is what is built where it misses: nothing builds on a hit.
-    for (const name of [
-      "Build the Rust server",
-      "Set the server aside",
-      "Build the Rust server without test hooks",
-    ]) {
-      expect(steps.find((s) => s.name === name)?.if, name).toContain(
-        "steps.servers.outputs.cache-hit != 'true'",
+    // only, once the server is built.
+    for (const steps of [hooked, released]) {
+      const restore = steps.find((s) => s.id === "server");
+      expect(restore?.if).toBe("${{ github.event_name == 'pull_request' }}");
+      expect(restore?.uses).toMatch(/^actions\/cache\/restore@/);
+      expect(restore?.with?.key).toBe("${{ steps.key.outputs.key }}");
+      const save = steps.find((s) => s.uses?.startsWith("actions/cache/save@"));
+      expect(save?.if).toBe(
+        "${{ steps.aside.outcome == 'success' && github.ref == 'refs/heads/main' }}",
+      );
+      expect(save?.with?.key).toBe("${{ steps.key.outputs.key }}");
+      expect(save?.with?.path).toBe(restore?.with?.path);
+      // What is restored is what is built where it misses: nothing builds on a hit.
+      expect(steps.filter((s) => s.run?.includes("release.sh")).length).toBe(1);
+      for (const name of [
+        "Show the free disk space",
+        "Make the build image",
+        "Set the server aside",
+      ]) {
+        expect(steps.find((s) => s.name === name)?.if, name).toContain(
+          "steps.server.outputs.cache-hit != 'true'",
+        );
+      }
+      expect(steps.find((s) => s.id === "build")?.if, "the build").toContain(
+        "steps.server.outputs.cache-hit != 'true'",
       );
     }
   });

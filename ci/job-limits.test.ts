@@ -42,15 +42,19 @@ const jobsOf = (file: string): [string, Job][] =>
  */
 const KEPT_ON_SUCCESS = new Set([
   // The score job reads every shard's report, and each shard downloads the
-  // server the build job made, so both are inputs and not diagnostics.
+  // server the build job made, so both are inputs and not diagnostics. The
+  // job that runs the fixture for the server without test hooks reports the
+  // same way, and downloads the build of that server.
   "ci.yml:rust-contract:Keep the server",
-  "ci.yml:rust-contract:Keep the server without test hooks",
+  "ci.yml:rust-contract-release:Keep the server without test hooks",
   "ci.yml:rust-contract-shards:Keep the report",
+  "ci.yml:rust-contract-release-check:Keep the report",
   "ci.yml:rust-contract-macos:Keep what is under test",
   "ci.yml:rust-contract-macos-shards:Keep the report",
   // A shard passes when a test fails, which only the score reports, so its
   // log is kept for that failure.
   "ci.yml:rust-contract-shards:Keep the server log",
+  "ci.yml:rust-contract-release-check:Keep the server log",
   // Both nightly jobs download it, so it is an input and not a diagnostic.
   "benchmarks.yml:server:Keep the server",
   "benchmarks.yml:benchmarks:Keep the load reports",

@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { parse } from "yaml";
 import { describe, expect, it } from "vitest";
+import { RUN_APART } from "../conformance/src/utils/shard-weights.js";
 import {
   projectsOf as projectsOfShards,
   SHARDS,
@@ -41,6 +42,8 @@ const { jobs } = parse(
 ) as { jobs: Record<string, Job> };
 
 const build = jobs["rust-contract"];
+const release = jobs["rust-contract-release"];
+const releaseCheck = jobs["rust-contract-release-check"];
 const shards = jobs["rust-contract-shards"];
 const score = jobs["rust-contract-score"];
 /** The shards the classifier hands the job, which `changes` filters by what a change can affect. */
@@ -67,7 +70,7 @@ describe("the Rust server's release build", () => {
     );
   });
 
-  it("is the release build of marfa-server with the file readers linked in, on a standard Linux runner, and is uploaded for the shards", () => {
+  it("is the release build of marfa-server with the test hooks and the file readers linked in, on a standard Linux runner, and is uploaded for the shards", () => {
     expect(build?.["runs-on"]).toBe("ubuntu-latest");
     expect(build?.env?.TARGET).toBe("x86_64-unknown-linux-musl");
     const hooked = step(build, "Build the Rust server");
@@ -76,44 +79,102 @@ describe("the Rust server's release build", () => {
     );
     expect(hooked.env?.MARFA_SERVER_FEATURES).toBe("test-hooks");
     const upload = step(build, "Keep the server");
+    expect(upload.with?.name).toBe("rust-contract-server");
     expect(upload.with?.path).toBe(
-      "${{ runner.temp }}/marfa-servers/hooks/marfa-server",
+      "${{ runner.temp }}/marfa-server/marfa-server",
     );
     expect(upload.with?.["if-no-files-found"]).toBe("error");
   });
 
-  it("builds the program a release ships a second time, without the test hooks, and uploads it for the shards", () => {
-    const names = (build?.steps ?? []).map((candidate) => candidate.name);
-    // After the hooked server is set aside: the second build replaces the output.
-    expect(names.indexOf("Set the server aside")).toBeGreaterThan(-1);
+  it("builds nothing the shards do not need, so that they wait for one build only", () => {
+    const text = JSON.stringify(build?.steps);
+    expect(text).not.toContain("rust-contract-release-server");
     expect(
-      names.indexOf("Build the Rust server without test hooks"),
-    ).toBeGreaterThan(names.indexOf("Set the server aside"));
-    const free = step(build, "Build the Rust server without test hooks");
-    expect(free.run).toContain(
+      build?.steps.filter((candidate) => candidate.run?.includes("release.sh")),
+    ).toHaveLength(1);
+    expect(JSON.stringify(shards?.steps)).not.toContain(
+      "rust-contract-release-server",
+    );
+    expect(JSON.stringify(shards?.steps)).not.toContain(
+      "MARFA_SERVER_RELEASE_BIN",
+    );
+  });
+});
+
+describe("the Rust server a release ships", () => {
+  it("is built without the test hooks, in a job of its own that nothing but its fixture waits for, and is uploaded", () => {
+    expect(needsOf(release)).toEqual(["changes"]);
+    expect(release?.if).toBe(
+      "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false') }}",
+    );
+    expect(release?.["runs-on"]).toBe("ubuntu-latest");
+    expect(release?.env?.TARGET).toBe("x86_64-unknown-linux-musl");
+    const built = step(release, "Build the Rust server without test hooks");
+    expect(built.run).toBe(
       'core/marfa-enrichment/native/release.sh "$TARGET" --server',
     );
-    expect(free.env?.MARFA_SERVER_FEATURES).toBeUndefined();
-    // Owed to the server's shards only, which the compliance fixture that
-    // runs a release's program is in.
-    expect(free.if).toContain("env.RELEASE_OWED == 'true'");
-    expect(build?.env?.RELEASE_OWED).toBe(
-      "${{ needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' }}",
-    );
-    const upload = step(build, "Keep the server without test hooks");
-    expect(upload.if).toBe("${{ env.RELEASE_OWED == 'true' }}");
+    expect(built.env?.MARFA_SERVER_FEATURES).toBeUndefined();
+    const upload = step(release, "Keep the server without test hooks");
     expect(upload.with?.name).toBe("rust-contract-release-server");
+    expect(upload.with?.path).toBe(
+      "${{ runner.temp }}/marfa-server/marfa-server",
+    );
     expect(upload.with?.["if-no-files-found"]).toBe("error");
-    expect(
-      shards?.steps.some(
-        (candidate) =>
-          candidate.uses?.startsWith("actions/download-artifact") &&
-          candidate.with?.name === "rust-contract-release-server",
-      ),
-    ).toBe(true);
-    expect(step(shards, "Name the server a release ships").run).toContain(
+    const downloaders = Object.entries(jobs as Record<string, Partial<Job>>)
+      .filter(([, job]) =>
+        (job.steps ?? []).some(
+          (candidate) =>
+            candidate.uses?.startsWith("actions/download-artifact") &&
+            candidate.with?.name === "rust-contract-release-server",
+        ),
+      )
+      .map(([id]) => id);
+    expect(downloaders).toEqual(["rust-contract-release-check"]);
+  });
+
+  it("is run by the one fixture that needs it, after both builds, and its report is scored with the shards'", () => {
+    expect(needsOf(releaseCheck)).toEqual([
+      "changes",
+      "rust-contract",
+      "rust-contract-release",
+    ]);
+    expect(releaseCheck?.if).toContain(
+      "needs.rust-contract.result == 'success'",
+    );
+    expect(releaseCheck?.if).toContain(
+      "needs.rust-contract-release.result == 'success'",
+    );
+    expect(releaseCheck?.if).toContain(
+      "needs.changes.outputs.rust-contract-server != 'false'",
+    );
+    expect(step(releaseCheck, "Name the servers").run).toContain(
       "MARFA_SERVER_RELEASE_BIN=",
     );
+    expect(step(releaseCheck, "Name the servers").run).toContain(
+      "MARFA_SERVER_BIN=",
+    );
+    expect(step(releaseCheck, "Boot the Rust server").run).toContain(
+      "pnpm marfa:up",
+    );
+    const run = step(releaseCheck, "Run the fixture").run ?? "";
+    expect(run).toContain(
+      "--project compliance src/suites/compliance/hook-free-server.test.ts",
+    );
+    expect(run).toContain("--reporter=json");
+    expect(run).toContain('test -s "$report"');
+    const keep = step(releaseCheck, "Keep the report");
+    expect(keep.if).toBe("always()");
+    expect(keep.with?.name).toBe("rust-contract-report-release");
+    expect(keep.with?.["if-no-files-found"]).toBe("error");
+    expect(step(releaseCheck, "Stop the server").if).toBe("always()");
+    // The file it runs is the one the shards leave out, and the one that
+    // reads the build without test hooks.
+    expect(RUN_APART).toEqual([
+      "src/suites/compliance/hook-free-server.test.ts",
+    ]);
+    expect(
+      readFileSync(resolve(ROOT, "conformance", RUN_APART[0] ?? ""), "utf8"),
+    ).toContain("MARFA_SERVER_RELEASE_BIN");
   });
 });
 
@@ -184,29 +245,6 @@ describe("the Rust contract shards", () => {
       "compliance",
     ]);
     expect(lanes("rust-contract-device")).toEqual(["cli", "device"]);
-    // Only the compliance fixture that runs a release's program reads it, so
-    // only the compliance shards download the build without test hooks.
-    for (const entry of matrix) {
-      expect(entry.release, entry.name).toBe(
-        entry.args.includes("--project compliance"),
-      );
-    }
-    expect(matrix.some((entry) => entry.release)).toBe(true);
-    expect(
-      readFileSync(
-        resolve(
-          ROOT,
-          "conformance/src/suites/compliance/hook-free-server.test.ts",
-        ),
-        "utf8",
-      ),
-    ).toContain("MARFA_SERVER_RELEASE_BIN");
-    // The two steps that fetch and name it are the ones that wait on it.
-    expect(
-      shards?.steps.filter(
-        (candidate) => candidate.if === "${{ matrix.release }}",
-      ).length,
-    ).toBe(2);
   });
 
   it("boot the downloaded server through the meter and write a report whether or not a test failed", () => {
@@ -266,7 +304,9 @@ describe("the Rust contract score", () => {
     expect(needsOf(score)).toEqual([
       "changes",
       "rust-contract",
+      "rust-contract-release",
       "rust-contract-shards",
+      "rust-contract-release-check",
     ]);
     expect(score?.if).toBe(
       "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' || needs.changes.outputs.rust-contract-device != 'false') }}",
@@ -274,6 +314,14 @@ describe("the Rust contract score", () => {
     const first = score?.steps[0];
     expect(first?.run).toContain('[ "$BUILD" != success ]');
     expect(first?.run).toContain('[ "$SHARDS" != success ]');
+    // The server's own group is also owed the build without test hooks and
+    // its fixture; the device's group alone is not.
+    expect(first?.run).toContain('[ "$SERVER_OWED" = true ]');
+    expect(first?.run).toContain('[ "$RELEASE" != success ]');
+    expect(first?.run).toContain('[ "$RELEASE_CHECK" != success ]');
+    expect(first?.env?.SERVER_OWED).toBe(
+      "${{ needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' }}",
+    );
   });
 
   it("scores the reports of every shard into the job summary", () => {
@@ -300,6 +348,8 @@ describe("the Rust contract score", () => {
     for (const waiter of ["gate", "report-failure"]) {
       for (const name of [
         "rust-contract",
+        "rust-contract-release",
+        "rust-contract-release-check",
         "rust-contract-shards",
         "rust-contract-score",
       ]) {
