@@ -2963,7 +2963,7 @@ export interface components {
             message?: string;
         };
         /**
-         * @description A field: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier`, `tags`) or `properties.<name>`.
+         * @description A field: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `last_activity_at`, `type`, `state`, `tier`, `tags`) or `properties.<name>`. A group does not take `last_activity_at`.
          * @example properties.status
          */
         ViewField: string;

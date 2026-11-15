@@ -1191,8 +1191,8 @@
       },
       "ViewField": {
         "type": "string",
-        "pattern": "^(?:title|created_at|updated_at|occurred_at|type|state|tier|tags|properties\\.[A-Za-z_][A-Za-z0-9_]*)$",
-        "description": "A field: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `type`, `state`, `tier`, `tags`) or `properties.<name>`.",
+        "pattern": "^(?:title|created_at|updated_at|occurred_at|last_activity_at|type|state|tier|tags|properties\\.[A-Za-z_][A-Za-z0-9_]*)$",
+        "description": "A field: an own field (`title`, `created_at`, `updated_at`, `occurred_at`, `last_activity_at`, `type`, `state`, `tier`, `tags`) or `properties.<name>`. A group does not take `last_activity_at`.",
         "example": "properties.status"
       },
       "ViewTier": {
