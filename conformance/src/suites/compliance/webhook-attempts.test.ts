@@ -59,13 +59,14 @@ interface Hook {
 
 /**
  * A receiver that answers each request as `answer` says: a status after a
- * delay, or `undefined` to hold the request open without ever answering.
+ * delay, or `undefined` to hold the request open without ever answering. A
+ * plan with `after` answers once that promise settles, before its delay.
  */
 async function startHook(
   answer: (
     path: string,
     arrival: number,
-  ) => { status: number; afterMs: number } | undefined,
+  ) => { status: number; afterMs: number; after?: Promise<void> } | undefined,
 ): Promise<Hook> {
   const arrivals: Arrival[] = [];
   const connected = new Map<string, number[]>();
@@ -97,11 +98,13 @@ async function startHook(
         res.on("close", finish);
         return;
       }
-      setTimeout(() => {
-        res.writeHead(plan.status);
-        res.end("ok");
-        finish();
-      }, plan.afterMs);
+      void (plan.after ?? Promise.resolve()).then(() => {
+        setTimeout(() => {
+          res.writeHead(plan.status);
+          res.end("ok");
+          finish();
+        }, plan.afterMs);
+      });
     });
   });
   server.on("connection", (socket) => {
@@ -145,9 +148,16 @@ const eventIdOf = (arrival: Arrival): bigint =>
 
 describe("the attempts a webhook receiver is sent", () => {
   it("sends a later event before the retry of an earlier one, whose event_id gives the order", async () => {
+    // The first attempt is held open until the second event exists, so the
+    // second note is written before the first attempt's retry wait begins.
+    let release!: () => void;
+    const released = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const hook = await startHook((_, arrival) => ({
       status: arrival === 1 ? 500 : 200,
       afterMs: 0,
+      ...(arrival === 1 && { after: released }),
     }));
     const id = await subscribe(hook, "/order");
     try {
@@ -155,9 +165,10 @@ describe("the attempts a webhook receiver is sent", () => {
       await waitFor("the first attempt", async () =>
         hook.arrivals.length >= 1 ? true : undefined,
       );
+      const second = await makeNote("order-second");
+      release();
       // The retry of the first event waits a second; the second event is
       // due at once.
-      const second = await makeNote("order-second");
       await waitFor(
         "the second event and the first event's retry",
         async () => (hook.arrivals.length >= 3 ? true : undefined),

@@ -5,7 +5,7 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   type FreshServer,
 } from "../../utils/fresh-server.js";
-import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
+import { QUIET_SCHEDULE, quiet, runJob } from "../../utils/moved-clock.js";
 import type { SseEvent } from "../../utils/sse.js";
 import {
   announces,
@@ -20,7 +20,6 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 let server: FreshServer;
 let working: MarfaClient;
-let operator: MarfaClient;
 
 beforeAll(async () => {
   server = await bootFreshServer("stream-prologue-holds", QUIET_SCHEDULE);
@@ -28,11 +27,10 @@ beforeAll(async () => {
     baseUrl: server.apiUrl,
     apiKey: server.workingKey,
   });
-  operator = new MarfaClient({
-    baseUrl: server.apiUrl,
-    apiKey: server.managementKey,
-  });
-}, FRESH_SERVER_TIMEOUT_MS);
+  // A job's first run comes some seconds after boot whatever its interval, so
+  // it is made before the case that runs the job by hand.
+  await quiet(server, ["event-log-cleanup"]);
+}, 2 * FRESH_SERVER_TIMEOUT_MS);
 
 const taps: StreamTap[] = [];
 afterEach(async () => {
@@ -253,8 +251,7 @@ describe("a replay the retention sweep overtakes", () => {
       await note("retired-second");
       await server.advanceClock(31 * DAY_MS);
       const kept = await note("kept");
-      const ran = await operator.runHousekeeping("event-log-cleanup");
-      expect(ran.status, JSON.stringify(ran.error)).toBe(200);
+      expect((await runJob(server, "event-log-cleanup")).outcome).toBe("ok");
 
       // The witness that the sweep retired the events the replay was to read.
       const probe = await open({ lastEventId: before });

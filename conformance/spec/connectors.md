@@ -968,7 +968,7 @@ When the server records a `connector_state.delete` audit entry, the server MUST 
 
 ## A vendor entry a purge left a tombstone for
 
-A connector treats a vendor entry as new only if the vendor changed it after the `settled_at` of the tombstone that records its link or natural key (`items/tombstone`), and it moves `settled_at` with `POST /items/tombstones` when its own write changed the vendor's copy (`items/tombstone-settle`).
+A tombstone records the link and the natural key of a purged item, with the `settled_at` a connector reads at `POST /items/lookup` (`items/tombstone`). The statements here say what the server does with a write for a vendor entry that a tombstone records.
 
 ### `connectors/tombstone-write-accepted`
 
