@@ -5,7 +5,8 @@ name: Cache upkeep
 # last beside it until nothing has read it for seven days. Each day this keeps
 # the newest few of each kind and deletes the rest (`scripts/prune-caches.ts`
 # says which and why), so that what a job restores is never pushed out by what
-# no job will. It deletes no cache it does not recognize.
+# no job will. It leaves alone a cache of `main` whose key it does not
+# recognize.
 #
 # A failed scheduled run is reported like the other scheduled workflows.
 on:

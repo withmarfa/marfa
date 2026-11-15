@@ -8,7 +8,7 @@
  * more than a gigabyte of binaries nothing would restore again. This keeps
  * the newest few of each kind and deletes the rest, and a cache saved from
  * any ref but `main`, which only that ref can read, once it is a day old.
- * A key it does not recognize is never touched.
+ * A cache of `main` whose key it does not recognize is never touched.
  *
  *   node scripts/prune-caches.ts [--dry-run]
  *
