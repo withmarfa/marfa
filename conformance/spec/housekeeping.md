@@ -424,7 +424,7 @@ Where `weekly_snapshot_days` of an item's effective `version_policy` is above 0,
 
 Where `weekly_snapshot_days` of an item's effective `version_policy` is 0, the server MUST NOT remove a snapshot of the item for its age.
 
-**Reason:** the windows run in order, with `recent_days` no larger than `daily_snapshot_days` and that no larger than `weekly_snapshot_days` (`types/version-policy-values`), so a weekly window of 0 leaves no window that thins and means that age keeps every snapshot, as a retention of 0 does (`housekeeping/retention-zero-keeps`). A `recent_days` or `daily_snapshot_days` of 0 is an empty window, so no snapshot is kept for being within it.
+**Reason:** the windows run in order, with `recent_days` no larger than `daily_snapshot_days` and that no larger than `weekly_snapshot_days` (`types/version-policy-order`), so a weekly window of 0 leaves no window that thins and means that age keeps every snapshot, as a retention of 0 does (`housekeeping/retention-zero-keeps`). A `recent_days` or `daily_snapshot_days` of 0 is an empty window, so no snapshot is kept for being within it.
 
 **Tests:** `compliance/housekeeping-thinning-rules.test.ts › removes no snapshot by age where weekly_snapshot_days is 0, and keeps nothing by recent_days or daily_snapshot_days where they are 0`.
 
