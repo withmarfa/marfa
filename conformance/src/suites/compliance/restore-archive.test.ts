@@ -332,6 +332,14 @@ describe("restore", () => {
         reshape: (m) => without(m, "connector_agreement_count"),
         path: "connector_agreement_count",
       },
+      {
+        reshape: (m) => without(m, "enforcement_count"),
+        path: "enforcement_count",
+      },
+      {
+        reshape: (m) => ({ ...m, enforcement_count: "0" }),
+        path: "enforcement_count",
+      },
     ];
 
     for (const { reshape, path } of cases) {
@@ -738,6 +746,78 @@ describe("restore", () => {
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     trackItem(ctx, first);
     expect(restored.data.imported).toBe(1);
+  });
+
+  it("refuses rows.ndjson.gz carried twice, and a row line longer than 64 MiB, and writes nothing", async () => {
+    const id = uuidv7();
+    const items = [
+      lineFile("items", archivedLine(id, "beside the rows") + "\n"),
+    ];
+    const twice = await owner.restoreArchive(
+      around(items, [lineFile("rows", "")]),
+    );
+    expect(twice.status).toBe(400);
+    expect(twice.error?.error.code).toBe("validation_error");
+    expect(twice.error?.error.message).toContain(
+      "rows.ndjson.gz more than once",
+    );
+    expect((await client.getItem(id)).status).toBe(404);
+
+    const long = await owner.restoreArchive(
+      tar([
+        manifest,
+        lineFile("files", ""),
+        lineFile("instance", ""),
+        ...items,
+        lineFile("versions", ""),
+        lineFile("edges", ""),
+        lineFile("rows", Buffer.alloc(64 * 1024 * 1024 + 1, "x")),
+      ]),
+    );
+    expect(long.status).toBe(400);
+    expect(long.error?.error.code).toBe("validation_error");
+    expect(long.error?.error.message).toContain("Line 1 of rows.ndjson.gz");
+    expect(long.error?.error.details?.entry).toBe("rows.ndjson.gz");
+    expect((await client.getItem(id)).status).toBe(404);
+
+    // The witness: the same archive with the rows carried once restores.
+    const restored = await owner.restoreArchive(around(items));
+    expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
+    trackItem(ctx, id);
+    expect(restored.data.imported).toBe(1);
+  });
+
+  it("restores an archive whose manifest carries no created_at", async () => {
+    const id = uuidv7();
+    const archive = (reshape: (m: Record<string, unknown>) => unknown) =>
+      itemsArchive(
+        [
+          {
+            id,
+            type: "core.note",
+            source: ctx.source,
+            properties: { body: "a manifest with no time" },
+          },
+        ],
+        [],
+        [],
+        reshape,
+      );
+    const bare = await owner.restoreArchive(
+      archive((m) =>
+        Object.fromEntries(
+          Object.entries(m).filter(([key]) => key !== "created_at"),
+        ),
+      ),
+    );
+    expect(bare.ok, JSON.stringify(bare.error)).toBe(true);
+    trackItem(ctx, id);
+    expect(bare.data.imported).toBe(1);
+
+    // The witness: the manifest as built, with its time, restores the item as a duplicate.
+    const timed = await owner.restoreArchive(archive((m) => m));
+    expect(timed.ok, JSON.stringify(timed.error)).toBe(true);
+    expect(timed.data.duplicates).toBe(1);
   });
 
   it("refuses an archive that carries an item on two lines, naming the item, and writes nothing", async () => {

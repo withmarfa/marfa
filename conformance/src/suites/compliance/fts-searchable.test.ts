@@ -69,6 +69,41 @@ describe("FTS — searchable:false honoring", () => {
     expect(result.data.data.map((hit) => hit.item.id)).not.toContain(id);
   });
 
+  it("matches a query whose words are split between an item's tag and its text", async () => {
+    const word = `splitbody${ctx.runId}`;
+    const tag = `splittag${ctx.runId}`;
+    const make = async (body: string, tags: string[]) => {
+      const created = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body },
+        tags,
+      });
+      expect(created.ok, JSON.stringify(created.error)).toBe(true);
+      trackItem(ctx, created.data.item.id);
+      return created.data.item.id;
+    };
+    const both = await make(`${word} beside its tag`, [tag]);
+    const textOnly = await make(`${word} with no tag`, []);
+    const tagOnly = await make("a note of another text", [tag]);
+
+    const result = await client.search(`${word} ${tag}`, { limit: 50 });
+    expect(result.ok).toBe(true);
+    const found = result.data.data.map((hit) => hit.item.id);
+    expect(found).toContain(both);
+    // The witness: each word alone finds the item that holds it, and the
+    // query asks for both, so the answer is the item that holds both.
+    expect(found).not.toContain(textOnly);
+    expect(found).not.toContain(tagOnly);
+    for (const [query, id] of [
+      [word, textOnly],
+      [tag, tagOnly],
+    ] as const) {
+      const alone = await client.search(query, { limit: 50 });
+      expect(alone.data.data.map((hit) => hit.item.id)).toContain(id);
+    }
+  });
+
   it("field with searchable:false is excluded from full-text matches", async () => {
     const typeId = `user.searchable-test-${ctx.runId}`;
     const reg = await client.registerType({
