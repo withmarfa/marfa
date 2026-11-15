@@ -166,12 +166,12 @@ describe("bulk", () => {
     const merged = `bulk-mode-merge-${ctx.runId}`;
     const mergedId = await seed(merged);
     const merge = await client.bulkItems(
-      entry(merged, { from: "Original" }, {}),
+      entry(merged, { from: "Changed" }, {}),
     );
     expect(merge.data.results[0]!.outcome).toBe("updated");
     expect((await client.getItem(mergedId)).data.item.properties).toEqual({
       body: "Whole",
-      from: "Original",
+      from: "Changed",
       to: ["Set"],
     });
 
@@ -302,11 +302,7 @@ describe("bulk", () => {
       trackItem(ctx, other!);
 
       const page = await client.bulkItems({
-        items: [
-          entry("same", "a"),
-          entry("other", "b"),
-          entry("new", "a"),
-        ],
+        items: [entry("same", "a"), entry("other", "b"), entry("new", "a")],
         mode: "upsert",
         atomic,
       });

@@ -1869,7 +1869,9 @@ describe("item versioning", () => {
     expect(added.status, JSON.stringify(added.error)).toBe(200);
     expect(added.data.acknowledged).toBeUndefined();
     expect(added.data.item.version).toBe(1);
-    const held = await client.listItemEdges(r.data.item.id, { edge_type: "about" });
+    const held = await client.listItemEdges(r.data.item.id, {
+      edge_type: "about",
+    });
     expect(held.data.data.length).toBe(1);
 
     const again = await client.updateItem(r.data.item.id, {
@@ -1887,7 +1889,9 @@ describe("item versioning", () => {
     });
     expect(removed.status, JSON.stringify(removed.error)).toBe(200);
     expect(removed.data.acknowledged).toBeUndefined();
-    const gone = await client.listItemEdges(r.data.item.id, { edge_type: "about" });
+    const gone = await client.listItemEdges(r.data.item.id, {
+      edge_type: "about",
+    });
     expect(gone.data.data.length).toBe(0);
   });
 

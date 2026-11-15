@@ -64,14 +64,15 @@ describe("deduplication", () => {
     trackItem(ctx, id);
     expect(first.data.item.version).toBe(1);
 
-    // The repeat with nothing between: an upsert, not an acknowledgement.
-    const repeat = await client.createItem(body("sent"));
+    // The repeat naming other properties: an upsert, not an acknowledgement.
+    const repeat = await client.createItem(body("resent"));
     expect(repeat.status, JSON.stringify(repeat.error)).toBe(200);
     expect(repeat.data.item.id).toBe(id);
     expect(repeat.data.item.version).toBe(2);
+    expect(repeat.data.item.properties.body).toBe("resent");
     expect(repeat.data).not.toHaveProperty("acknowledged");
 
-    // An edit made at version 1 is overwritten by the repeat's properties.
+    // An edit made at version 2 is overwritten by the next repeat's properties.
     const edited = await client.updateItem(id, {
       properties: { body: "edited" },
       version: 2,

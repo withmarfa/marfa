@@ -146,7 +146,7 @@ When the server answers a write with `Idempotency-Replayed: true`, or with `ackn
 
 **Reason:** a caller can then tell a write that landed now from one that had already landed.
 
-**Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `› sends an edit of its own create on the version that create made where the server answers a repeat of it`.
+**Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `› sends an edit of its own create on the version that create made where the server answers a repeat of it`, `device/unchanged-write-live.test.ts › accepts a drained edit the server answers as unchanged, reports it replayed, and keeps the item at the version it held`.
 
 ## Creates sent in pages
 
