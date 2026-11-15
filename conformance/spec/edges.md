@@ -954,7 +954,7 @@ If `POST /edges` names a target whose type the edge type's `target_type_constrai
 
 If `POST /edges` names an end whose item type is not registered, and the edge type's constraint list for that end is not empty and does not hold `*`, then the server MUST answer `400 edge_constraint_violation`.
 
-**Reason:** the type's parent and roles are not known, so the list cannot be judged and the write fails closed. A restore keeps such an edge as the archive holds it (`search-and-filters/restore-edges-end-unregistered`).
+**Reason:** the type's parent and roles are not known, so the list cannot be judged and the write fails closed. A restore keeps such an edge as the archive holds it (`archive/restore-edges-end-unregistered`).
 
 **Tests:** `compliance/restore-edges-constraint-types.test.ts › keeps an edge whose source constraint names the deleted type, and still refuses a registered end the constraint does not admit`.
 
@@ -1070,7 +1070,7 @@ If `POST /edges` names a `parent-of` edge that closes a cycle only through an ed
 
 When a credential sends `GET /edge-types`, the server MUST list `in-folder` as `many-to-many`, from any type to `system.folder`, with `cascade_on_delete` `orphan`, `written_at` `none`, no `reverse_name` and a `path` in its `property_schema`.
 
-**Reason:** `in-folder` places an item in a folder, and its `path` is the file's path relative to the folder's root (`items/folder-create`, `folders/placement-path`). No file writes the edge (`folders/placement-not-document`), so it names no end.
+**Reason:** `in-folder` places an item in a folder, and its `path` is the file's path relative to the folder's root (`items/folder-create`, `folder-files/placement-path`). No file writes the edge (`folder-files/placement-not-document`), so it names no end.
 
 **Tests:** `compliance/edge-types.test.ts › ships in-folder from any item to a system.folder, carrying its path`.
 
@@ -1520,7 +1520,7 @@ When a credential sends `GET /edge-types`, the server MUST list `reverse_name` `
 
 When a credential sends `GET /edge-types`, the server MUST list `written_at` `target` on `parent-of`, `source` on `attached-to` and `references`, and `none` on `in-folder`.
 
-**Reason:** `written_at` is the end whose file writes the edge in a folder, and a child names its parent (`folders/edge-writing-end`). `none` says no file writes the edge, as for a file's placement.
+**Reason:** `written_at` is the end whose file writes the edge in a folder, and a child names its parent (`folder-documents/edge-writing-end`). `none` says no file writes the edge, as for a file's placement.
 
 **Tests:** `compliance/edge-types.test.ts › lists the end whose file writes each shipped edge type`, `› ships in-folder from any item to a system.folder, carrying its path`.
 
@@ -1838,7 +1838,7 @@ When `DELETE /edge-types/{id}` deletes a registration that stored edges name, th
 
 While an edge's type is not registered, the server MUST return the edge from `GET /edges/{id}`, `GET /edges`, `GET /items/{id}/edges`, `GET /items/{id}/backrefs` and the `edges` of an item read.
 
-**Reason:** a forced delete keeps the edges (`edges/types-delete-force-keeps`), and an edge nothing can describe is still an edge a person made. An edge restored under an edge type that is not registered is read the same way (`search-and-filters/restore-edges-unregistered`).
+**Reason:** a forced delete keeps the edges (`edges/types-delete-force-keeps`), and an edge nothing can describe is still an edge a person made. An edge restored under an edge type that is not registered is read the same way (`archive/restore-edges-unregistered`).
 
 **Tests:** `compliance/restore-edges-unregistered.test.ts › keeps the edge as the archive holds it, reads it as the origin does, and restores its own export again`.
 

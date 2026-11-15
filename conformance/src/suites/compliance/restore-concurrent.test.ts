@@ -117,7 +117,7 @@ describe("a restore that commits", () => {
 
       const restoring = ownerOf(ordered).restoreArchive(restore.bytes);
       // A write the restore holds is refused `write_contention` and writes
-      // nothing (`search-and-filters/restore-writers-refused`); only the
+      // nothing (`archive/restore-writers-refused`); only the
       // writes that committed have events to order.
       const answers = await writesWhile(restoring, async () => {
         const r = await worker.createItem({

@@ -1016,7 +1016,7 @@ describe("the scripted answers match the server's", () => {
   });
 
   it("holds the scripted folder door's whole-properties edits, moves and lifecycle to the server's", async () => {
-    // What a folder sends from a file's frontmatter (`folders/current-replaces-properties`): its
+    // What a folder sends from a file's frontmatter (`folder-documents/current-replaces-properties`): its
     // whole properties from a versioned file, a retype, and a state.
     const door = new FolderDoor();
     const id = uuidv7();
@@ -2396,7 +2396,7 @@ describe("the scripted answers match the server's", () => {
       },
     );
     // A folder writes a file's body and name to the properties these name
-    // (`folders/body-property` and `folders/title-property`), so the ones the fixtures lean on are held here.
+    // (`folder-documents/body-property` and `folder-documents/title-property`), so the ones the fixtures lean on are held here.
     for (const id of ["core.event", "core.highlight", "core.bookmark"]) {
       expectFidelity(
         `the display hints of ${id}`,
@@ -2466,7 +2466,7 @@ describe("the scripted answers match the server's", () => {
         // protocol's: `core.entity.person` carries twenty fields here and
         // would carry a different twenty elsewhere. A device reads a type
         // for its parent, its title and body fields and the names it declares
-        // (`device/catch-up-catalog-first`, `folders/body-property` and `folders/title-property`), so mirroring the schema would be
+        // (`device/catch-up-catalog-first`, `folder-documents/body-property` and `folder-documents/title-property`), so mirroring the schema would be
         // this file holding a copy of a seed that changes without it.
         absent: [
           "row.fields",

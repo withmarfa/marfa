@@ -4,7 +4,7 @@
 //! again; the folder's record of its files, in tables whose shape seldom
 //! changes; and what the folder records of itself in the store's meta. So a
 //! folder's writer replaces it with a store of this build's shape that keeps
-//! the record and the meta, as a hydration does (`folders/refused-store-replaced`).
+//! the record and the meta, as a hydration does (`folder-setup/refused-store-replaced`).
 
 use std::path::Path;
 use std::sync::Arc;
@@ -17,10 +17,10 @@ use crate::{Core, CoreError, FolderStore, Result, Server, store};
 /// Whether the meta key `key` is one the folder records of itself and no
 /// hydration brings back: every key a folder sets starts `folder_`; the
 /// server the store was filled from goes with them, so the new store is
-/// filled from the same instance (`folders/refused-store-kept`,
-/// `folders/refused-store-origin-kept`); and so does each purge remembered
+/// filled from the same instance (`folder-setup/refused-store-kept`,
+/// `folder-setup/refused-store-origin-kept`); and so does each purge remembered
 /// of a pinned row, since no hydration brings a purged row back and only
-/// that record tells the folder its file goes (`folders/refused-store-purge-kept`).
+/// that record tells the folder its file goes (`folder-setup/refused-store-purge-kept`).
 /// What else a hydration keeps no folder needs: the source a credential was
 /// learned to stamp, which is asked again; the file cache's budget, which
 /// only a device's own store is given; and what each write in the queue,

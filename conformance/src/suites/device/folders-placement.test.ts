@@ -74,7 +74,7 @@ import {
 /** Document names in the three extensions and more than one letter case. */
 const DOC_NAMES = ["notes.md", "NOTES.MD", "Notes.Markdown", "Notes.TXT"];
 /** The document names whose file can name a note's item ID: a `.txt` file
- *  carries no ID line (`folders/raw-text-body`). */
+ *  carries no ID line (`folder-files/raw-text-body`). */
 const MARKDOWN_NAMES = DOC_NAMES.filter(
   (name) => !name.toLowerCase().endsWith(".txt"),
 );
@@ -4127,7 +4127,7 @@ describe("writing", () => {
    * machine retitles it and the next push writes that out at version 2.
    * Answers the door, what it holds, and the text the editor still holds.
    * The new title differs only in case unless named, so the file keeps its
-   * name (`folders/title-in-step`).
+   * name (`folder-documents/title-in-step`).
    */
   async function heldWhileRetitled(
     label: string,
@@ -5533,7 +5533,7 @@ describe("writing", () => {
     // It moves into a dot-led directory rather than being deleted and
     // rewritten, because the device, inode and birth time have to survive
     // for the arrival to be a rename rather than a new file
-    // (`folders/identity-rename`), and the walk does not enter a dot-led directory.
+    // (`folder-files/identity-rename`), and the walk does not enter a dot-led directory.
     const graceStarted = Date.now();
     mkdirSync(join(harness.dir, ".stash"), { recursive: true });
     renameSync(
@@ -5956,7 +5956,7 @@ describe("a file that is not a document", () => {
     expect(readFileSync(join(harness.dir, "photo.png"))).toEqual(bytes);
     expect(existsSync(join(harness.dir, "broken.txt"))).toBe(false);
 
-    // Its own write is not read back as a change (`folders/write-no-echo`).
+    // Its own write is not read back as a change (`folder-files/write-no-echo`).
     const scanned = await harness.folder.scan();
     expect(scanned.ok).toBe(true);
     if (!scanned.ok) return;

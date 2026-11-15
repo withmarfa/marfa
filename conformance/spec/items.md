@@ -764,7 +764,7 @@ When a key sends `POST /items/titles` with `names`, the server MUST answer `200`
 
 When a key sends `POST /items/titles`, the server MUST match a title to a name if they are equal after each loses the Unicode `White_Space` at either end, is put in normalization form NFC, has Unicode full case folding applied with no locale rule, and is put in NFC again.
 
-**Reason:** a device compares names the same way (`folders/name-comparison`), so a lookup that folded otherwise would find an item the device calls another name, or miss one it calls the same. Full case folding makes `ΟΔΟΣ` and `οδος` one name, and `Straße` and `STRASSE` one name.
+**Reason:** a device compares names the same way (`folder-documents/name-comparison`), so a lookup that folded otherwise would find an item the device calls another name, or miss one it calls the same. Full case folding makes `ΟΔΟΣ` and `οδος` one name, and `Straße` and `STRASSE` one name.
 
 **Tests:** `compliance/item-titles.test.ts › finds a title by its folded form and by the name as typed, for every case of the shared fold`.
 
@@ -2334,7 +2334,7 @@ When a key writes or deletes an extension namespace, the server MUST announce `m
 
 ## The folder operations
 
-A folder's settings are a `system.folder` item, written only through `/folders`. What a folder does with them is `folders.md`'s.
+A folder's settings are a `system.folder` item, written only through `/folders`. What a folder does with them is in the `folder-` chapters.
 
 ### `items/folder-create`
 
@@ -2462,7 +2462,7 @@ If a request to `POST /folders` or `PATCH /folders/{id}` carries a key that its 
 
 If a `first_placement` directory holds a `..` name, wherever it climbs back, or a folder's `query.filter` holds a `backref` condition, then the server MUST answer `400 validation_error`, naming the setting in `details.errors[0].path`, before it writes anything.
 
-**Reason:** a device treats a placement with a `..` name as outside the folder and writes no file there (`folders/placement-outside`), and a folder on disk cannot follow a `backref` condition (`folders/search-refuse-unsupported`), so a folder made with either would be stuck on every device.
+**Reason:** a device treats a placement with a `..` name as outside the folder and writes no file there (`folder-files/placement-outside`), and a folder on disk cannot follow a `backref` condition (`folder-setup/search-refuse-unsupported`), so a folder made with either would be stuck on every device.
 
 **Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› takes the settings a device can follow, on a create and on a change`.
 
@@ -2510,7 +2510,7 @@ If an `include` or an `ignore` list compiles to more than 1 MiB for a device to 
 
 When `POST /folders` or `PATCH /folders/{id}` names `*` in `query.types`, the server MUST store the query as sent.
 
-**Reason:** `*` is every type but `system.*` (`folders/search-default-types`), which a device follows, though a view's `query.types` lists no `*`.
+**Reason:** `*` is every type but `system.*` (`folder-setup/search-default-types`), which a device follows, though a view's `query.types` lists no `*`.
 
 **Tests:** `compliance/folders.test.ts › takes the star in a folder's query types and reads it back`.
 
@@ -2892,44 +2892,6 @@ If an item the batch selected was already removed, whether with its host earlier
 
 **Tests:** `compliance/owner-trash.test.ts › counts every item emptying the bin removes, parts included, and reports no failure for a part that went with its host`.
 
-### `items/owner-trash-cli`
-
-When a caller runs `marfa --socket PATH items bin list`, `move`, `restore`, `purge` or `empty`, the CLI MUST use the corresponding owner summary operation through private local authority.
-
-**Tests:** `cli/item-summaries.test.ts › manages trash through local authority with summary responses`, `device/contract.test.ts › holds every bin command to the contract through its private socket`.
-
-### `items/owner-empty-bin-cli`
-
-When a caller runs `marfa --socket PATH items bin empty --confirm PURGE`, the CLI MUST send each batch's `next_cursor` back to `POST /trash/empty` until the server names none.
-
-**Reason:** the server deletes at most 200 items at a time, so a person with a bigger bin would otherwise copy a cursor between runs.
-
-**Tests:** `cli/item-summaries.test.ts › sends each batch's cursor back until the server names none, so a bin of more than 200 empties in one command`.
-
-### `items/owner-empty-bin-progress`
-
-When a caller runs `marfa --socket PATH items bin empty --confirm PURGE` without `--json`, the CLI MUST print how many items have been deleted so far after each batch that has a `next_cursor`, and the total at the end.
-
-**Tests:** `cli/item-summaries.test.ts › prints how many items have been deleted so far after each batch that has another to follow, and the total at the end`.
-
-### `items/owner-empty-bin-json`
-
-When a caller runs `marfa --socket PATH items bin empty --confirm PURGE --json`, the CLI MUST print one JSON object holding `purged`, `stayed` and `failures`.
-
-**Tests:** `cli/item-summaries.test.ts › prints one JSON object of purged, stayed and failures under --json, with no line for a batch`.
-
-### `items/owner-empty-bin-exit`
-
-When a caller runs `marfa --socket PATH items bin empty --confirm PURGE` and no deletion was left unconfirmed, the CLI MUST exit `0`.
-
-**Tests:** `cli/item-summaries.test.ts › exits 0 when no deletion was left unconfirmed`.
-
-### `items/owner-empty-bin-unconfirmed`
-
-If a batch of `marfa --socket PATH items bin empty --confirm PURGE` lists a deletion that could not be confirmed, then the CLI MUST exit with a code other than `0`.
-
-**Tests:** `cli/item-summaries.test.ts › stops an uncertain bin emptying and exposes its outcome through the real socket CLI`.
-
 ### `items/owner-trash-eligibility`
 
 When retention is positive, the server MUST return a trash summary's `eligible_for_deletion_at` as `trashed_at` plus that many days.
@@ -3004,6 +2966,6 @@ If the commit of a purge in an emptying batch cannot be confirmed, or a full vol
 
 When a request carries only private local authority, with a body the operation takes, to an item, edge, tag, metadata, extension, tombstone, search or occurrence operation, or to `GET /events`, other than `GET /items/summaries`, an owner trash operation, or reading or cancelling a bulk-action job, the server MUST answer `401 unauthorized`.
 
-**Reason:** private local authority is the instance's own authority: setup, recovery, keys, sign-ins, restore, items by name through their summaries and the owner trash, and blob bytes (`blobs/read-operator-key`). It holds no type map, and every content operation, the event stream included, answers within one, so the server account reaches content through a key it mints through the socket, whose map bounds what it reaches and whose ID names it in the audit log. Counts and exports are held closed to it by `search-and-filters/owner-read-boundary`.
+**Reason:** private local authority is the instance's own authority: setup, recovery, keys, sign-ins, restore, items by name through their summaries and the owner trash, and blob bytes (`blobs/read-blobs-manage-or-local`). It holds no type map, and every content operation, the event stream included, answers within one, so the server account reaches content through a key it mints through the socket, whose map bounds what it reaches and whose ID names it in the audit log. Counts and exports are held closed to it by `search-and-filters/owner-read-boundary`.
 
 **Tests:** `compliance/local-authority-content.test.ts › refuses every item, edge, tag, search and occurrence door through the private socket with 401, where the working key is admitted`, `› refuses item and edge writes through the private socket with 401 and changes nothing, where the working key writes`, `› refuses restore and purge of a binned item through the private socket with 401 on the item doors, where the working key restores`, `› refuses every bulk action through the private socket with 401, purge included, where the working key is admitted`, `› queues no bulk action through the private socket, where the working key's job tags the item`, `› refuses the event stream through the private socket with 401, where the working key opens it`, `› refuses every edge door through the private socket with 401 and changes nothing, where the working key reads and writes`, `› refuses metadata and extension writes through the private socket with 401 and changes nothing, where the working key writes`, `› refuses settling a tombstone through the private socket with 401 and changes nothing, where the working key moves it`, `cli/instance.test.ts › explains a 401 through the private socket as an operation that needs a key, for streamed and plain commands`.

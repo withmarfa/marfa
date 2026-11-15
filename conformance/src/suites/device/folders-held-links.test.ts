@@ -30,17 +30,17 @@ import {
 
 // A document is created whatever its links name, and a link held because
 // its name matched no item, or more than one, is resolved again once the
-// working copy changes (`folders/create-before-links`,
-// `folders/edge-held-retried`, `folders/edge-held-quiet`,
-// `folders/edge-held-created`, `folders/edge-held-cleared`,
-// `folders/edge-held-never-guessed`). A name
+// working copy changes (`folder-documents/create-before-links`,
+// `folder-documents/edge-held-retried`, `folder-documents/edge-held-quiet`,
+// `folder-documents/edge-held-created`, `folder-documents/edge-held-cleared`,
+// `folder-documents/edge-held-never-guessed`). A name
 // the server refused to look up on its own is not asked again
-// (`folders/edge-lookup-no-repeat`), while the names of a lookup it refused
+// (`folder-documents/edge-lookup-no-repeat`), while the names of a lookup it refused
 // as a whole wait and are asked again at the next scan
-// (`folders/edge-lookup-call-retried`). A held file the person deletes, or one
+// (`folder-documents/edge-lookup-call-retried`). A held file the person deletes, or one
 // whose edit the server refused, goes to the bin unless another device
-// changed its item (`folders/missing-held-line-unchanged`,
-// `folders/missing-refused-edit-unchanged`).
+// changed its item (`folder-files/missing-held-line-unchanged`,
+// `folder-files/missing-refused-edit-unchanged`).
 
 let folder: FolderHarness | undefined;
 afterEach(async () => {

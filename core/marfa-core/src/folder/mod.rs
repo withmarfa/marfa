@@ -618,7 +618,7 @@ impl Folder {
     /// Why the store this open found was refused, where the open replaced
     /// it: another build of the core made it, and it held no write still to
     /// be sent and no answer the folder had yet to record
-    /// (`folders/refused-store-replaced`).
+    /// (`folder-setup/refused-store-replaced`).
     pub fn replaced_store(&self) -> Option<&str> {
         self.replaced.as_deref()
     }
@@ -3182,7 +3182,7 @@ mod tests {
         .unwrap();
     }
 
-    /// `folders/copy-query-change-hydrates`: what the copy holds follows the
+    /// `folder-setup/copy-query-change-hydrates`: what the copy holds follows the
     /// query's states and filter, and not a `beneath` the copy cannot narrow
     /// by or the same states named in another order.
     #[test]
@@ -4796,7 +4796,7 @@ mod tests {
         );
         renamed_on_the_server(&folder, "b.md", "bee", "bee.md");
         settle_selecting(&folder, &mut selection);
-        // The link names the item by its new title (`folders/body-link-retitled`),
+        // The link names the item by its new title (`folder-documents/body-link-retitled`),
         // so it still carries the edge.
         let text = std::fs::read_to_string(dir.path().join("a.md")).unwrap();
         assert!(text.contains("[[bee]]"), "{text}");

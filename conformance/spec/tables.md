@@ -924,7 +924,7 @@ If a `cursor` follows a row whose sort value is a text of more than 128 bytes in
 
 ### `tables/rows-filter`
 
-When `GET /items/{id}/tables/{table}/rows` or `GET /items/{id}/tables/{table}/totals` names a `filter`, the server MUST select the rows it selects under the grammar of `search-and-filters/filter-doors`, reading `values.<column>` as a column and `id` and `updated_at` as the row's own, and bounding a value by a number only on a number as `search-and-filters/filter-range-numbers` says.
+When `GET /items/{id}/tables/{table}/rows` or `GET /items/{id}/tables/{table}/totals` names a `filter`, the server MUST select the rows it selects under the grammar of `search-and-filters/filter-one-grammar`, reading `values.<column>` as a column and `id` and `updated_at` as the row's own, and bounding a value by a number only on a number as `search-and-filters/filter-range-numbers` says.
 
 **Reason:** a client that filters items filters rows with the same expressions.
 
@@ -1454,7 +1454,7 @@ While a type is unregistered, the server MUST answer `GET /items/{id}/tables` fo
 
 **Tests:** `compliance/table-rows-lifecycle.test.ts › keeps the rows of an item whose type a forced delete removed, answering no table until the type is registered again`.
 
-### `tables/orphan-rows-doors`
+### `tables/orphan-table-operations`
 
 While a type is unregistered, the server MUST answer each door under `/items/{id}/tables/{table}` for an item of it with `404 table_not_found`.
 
@@ -1820,7 +1820,7 @@ When `POST /restore` succeeds, the server MUST answer in `rows_imported` the num
 
 When `POST /restore` counts an item as a duplicate, the server MUST leave the rows the instance holds for it as they are and write none of the archive's.
 
-**Reason:** a restore replaces nothing the instance holds (`search-and-filters/restore-duplicate-kept`).
+**Reason:** a restore replaces nothing the instance holds (`archive/restore-duplicate-kept`).
 
 **Tests:** `compliance/table-rows-archive.test.ts › leaves the rows of an item counted as a duplicate as they are, counting the archive's in rows_skipped`.
 
@@ -1866,7 +1866,7 @@ If the `values` of a line of `rows.ndjson.gz`, written as JSON, are longer than 
 
 If a line of `rows.ndjson.gz` does not come after the line before it in the order `tables/archive-rows-order` states, then the server MUST answer `400 validation_error` naming the line.
 
-**Reason:** an export never writes repeated or out-of-order rows. This check does not detect a missing line; `search-and-filters/restore-line-counts` checks the counts.
+**Reason:** an export never writes repeated or out-of-order rows. This check does not detect a missing line; `archive/restore-line-counts` checks the counts.
 
 **Tests:** `compliance/table-rows-archive.test.ts › refuses a row out of order or repeated, naming its line`.
 

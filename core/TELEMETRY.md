@@ -69,7 +69,7 @@ The binary enables the feature and installs a subscriber that exports a trace ov
 
 A malformed `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` turns off the trace for that run and leaves the exception as it was. Without `--json`, the binary prints one line on standard error that names the variable, never its value; with `--json`, it prints nothing. A header, timeout, sampler or ratio that cannot be used is left out, and the default applies.
 
-`folders autostart on` carries the telemetry settings of the shell that runs it to the watch at login, as `conformance/spec/folders.md` states.
+`folders autostart on` carries the telemetry settings of the shell that runs it to the watch at login, as `conformance/spec/folder-setup.md` states.
 
 ### The trace
 

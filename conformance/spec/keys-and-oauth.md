@@ -415,72 +415,6 @@ When a key's authenticated use has been recorded, the server MUST answer its `la
 
 **Tests:** `compliance/key-last-used.test.ts › last_used_at is set after first use`, `› last_used_at is a valid ISO 8601 timestamp`, `› last_used_at appears in list response`.
 
-## The CLI's keys
-
-### `keys-and-oauth/command-mint-nothing`
-
-When `marfa keys create` runs with `--no-permissions`, the CLI MUST mint a key holding nothing in `permissions` and in each of the five maps.
-
-**Tests:** `cli/instance.test.ts › mints, lists, changes and revokes a key, and a revoked key is refused with exit 5`.
-
-### `keys-and-oauth/command-update-nothing`
-
-When `marfa keys update` runs with `--no-permissions`, the CLI MUST name `permissions` and every map empty, so the key holds nothing in any of them.
-
-**Reason:** A key minted too wide is narrowed to nothing in place, rather than revoked and minted again.
-
-**Tests:** `cli/instance.test.ts › mints, lists, changes and revokes a key, and a revoked key is refused with exit 5`.
-
-### `keys-and-oauth/command-update-one-map`
-
-When `marfa keys update` runs with one `--no-<map>` option, the CLI MUST empty that map and leave every other family as it was.
-
-**Tests:** `cli/instance.test.ts › empties one key permission map at a time and retains every other family`.
-
-### `keys-and-oauth/command-expires-in`
-
-When `marfa keys create` or `marfa keys update` runs with `--expires-in`, the CLI MUST send `expires_at` as the time on its own clock plus that duration.
-
-**Reason:** The duration is the CLI's, measured on its own clock; the server holds only the time it is sent.
-
-**Tests:** `cli/instance.test.ts › mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5`.
-
-### `keys-and-oauth/command-expires-at`
-
-When `marfa keys create` or `marfa keys update` runs with `--expires-at`, the CLI MUST send that time as `expires_at`, as it was written.
-
-**Tests:** `cli/instance.test.ts › mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5`.
-
-### `keys-and-oauth/command-no-expiry`
-
-When `marfa keys update` runs with `--no-expiry`, the CLI MUST send `expires_at` as `null`.
-
-**Tests:** `cli/instance.test.ts › mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5`.
-
-### `keys-and-oauth/command-expiry-duration`
-
-If `marfa keys create` or `marfa keys update` runs with an `--expires-in` that is not a whole number above zero and one of the units `s`, `m`, `h`, `d` or `w`, then the CLI MUST exit 1 with the code `invalid` and send nothing.
-
-**Tests:** `cli/instance.test.ts › mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5`.
-
-### `keys-and-oauth/command-expiry-conflict`
-
-If `marfa keys create` or `marfa keys update` runs with both `--expires-in` and `--expires-at`, then the CLI MUST exit 2 with the code `usage`.
-
-**Tests:** `cli/instance.test.ts › mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5`.
-
-### `keys-and-oauth/command-no-expiry-conflict`
-
-If `marfa keys update` runs with `--no-expiry` and with `--expires-in` or `--expires-at`, then the CLI MUST exit 2 with the code `usage`.
-
-**Tests:** `cli/instance.test.ts › mints a key with an expiry, changes and clears it, and a key past it is refused with exit 5`.
-
-### `keys-and-oauth/command-revoked-key`
-
-When the server refuses a request the CLI sends under a revoked key, the CLI MUST exit 5 and report `unauthorized`.
-
-**Tests:** `cli/instance.test.ts › mints, lists, changes and revokes a key, and a revoked key is refused with exit 5`.
-
 ## Expiry
 
 A key's `expires_at` is when it stops working, or `null` where it never does. `POST /keys` and `PATCH /keys/{id}` may name it.
@@ -1975,15 +1909,9 @@ When the consent screen or the device approval page shows a row it names itself,
 
 The server MUST name the levels of access on the consent screen and the device approval page as "Read and edit", "Read only" and "No access", and each of the twelve permissions by the title in `GLOSSARY.md`, "Access words".
 
-**Reason:** Access reads the same wherever a person meets it: on these pages and in the CLI's output (`keys-and-oauth/access-words-cli`). The words are kept in `GLOSSARY.md`, one description of access in the server builds every page that shows it, and `ci/access-words.test.ts` holds the glossary's tables to the server's words and the CLI's, which no fixture here can reach.
+**Reason:** Access reads the same wherever a person meets it: on these pages and in the CLI's output (`cli/access-words-cli`). The words are kept in `GLOSSARY.md`, one description of access in the server builds every page that shows it, and `ci/access-words.test.ts` holds the glossary's tables to the server's words and the CLI's, which no fixture here can reach.
 
 **Tests:** `compliance/approval-screens.test.ts › offers a type asked at both levels as one control on both pages`, `› describes each permission in the same words on both pages`.
-
-### `keys-and-oauth/access-words-cli`
-
-Where the CLI prints what a key or an app holds in its readable output, the CLI MUST name each level of access it prints as "Read and edit", "Read only" or "No access", and each permission by the title the approval pages use.
-
-**Tests:** `cli/access-words.test.ts › prints what a key holds in the words the approval pages use`.
 
 ## A client's registration
 

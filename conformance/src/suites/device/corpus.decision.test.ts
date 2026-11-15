@@ -25,7 +25,17 @@ import {
 
 const here = dirname(fileURLToPath(import.meta.url));
 const specDir = resolve(here, "../../../spec");
-const CHAPTERS = ["device.md", "queue-and-verdicts.md", "folders.md"];
+const CHAPTERS = [
+  "device.md",
+  "queue-and-verdicts.md",
+  "cli.md",
+  "folder-setup.md",
+  "folder-documents.md",
+  "folder-files.md",
+  "folder-sync.md",
+  "folder-guards.md",
+  "folder-speed.md",
+];
 
 interface Statement {
   chapter: string;
@@ -88,9 +98,9 @@ describe("separate rule metadata", () => {
     const title = titlesIn("cli/folder.test.ts")[0];
     expect(title).toBeDefined();
     const statement = readText(
-      "folders.md",
+      "folder-setup.md",
       [
-        "### `folders/" + "sample-rule`",
+        "### `folder-setup/" + "sample-rule`",
         "",
         "The CLI MUST answer.",
         "",
@@ -209,7 +219,7 @@ describe("every device statement is asserted by something", () => {
     const skips = (text: string) => SKIPS.test(text);
     // GitHub's hosted Macs clamp every process at utility, so no run there
     // can show a thread lowered to it: the priority fixture skips where its
-    // sibling reads the clamp, and asserts `folders/watch-utility-priority`
+    // sibling reads the clamp, and asserts `folder-setup/watch-utility-priority`
     // on a Mac that does not clamp. The core's own tests read each thread's
     // class from inside the process, which a clamp does not hide. It names
     // the clamp as `unobservable` first, which the Rust score lists and

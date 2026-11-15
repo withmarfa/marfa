@@ -198,7 +198,7 @@ When an app's access token sends `POST /blobs` and the server takes the upload, 
 
 **Tests:** `compliance/blob-reach-app.test.ts › are credited to its app for its owner, so a digest it names after a refresh lends`.
 
-### `blobs/upload-operator-key`
+### `blobs/upload-blobs-manage-or-local`
 
 When a caller authorized by `blobs.manage` or local authority sends `POST /blobs` with a body the server takes, the server MUST answer `201`.
 
@@ -494,7 +494,7 @@ If a working key or an app's access token lacking `blobs.manage` whose type map 
 
 **Tests:** `compliance/blob-reach.test.ts › refuses every blob door to a key whose type map reaches no type, and stores nothing it sends`, `› refuses a key reaching no type the code on every blob door and the status on HEAD, for an unknown and a malformed hash alike`, `compliance/blob-reach-app.test.ts › is refused every blob door as a key reaching no type is`.
 
-### `blobs/read-operator-key`
+### `blobs/read-blobs-manage-or-local`
 
 When a caller authorized by `blobs.manage` or local authority sends `GET /blobs/{hash}`, `HEAD /blobs/{hash}`, `GET /blobs/{hash}/url` or `GET /blobs/{hash}/copies`, the server MUST serve every blob it holds, referenced or not, without requiring a type map.
 
@@ -740,7 +740,7 @@ Where the instance serves a link, if a fetch of it meets more than one refusal, 
 
 ## Export and restore
 
-### `blobs/export-operator-refused`
+### `blobs/export-blobs-manage-no-map-refused`
 
 If a key or app token with `blobs.manage` and no type map sends `GET /export`, then the server MUST answer `403 type_not_permitted`, whether it asks for `ndjson` or for the archive.
 

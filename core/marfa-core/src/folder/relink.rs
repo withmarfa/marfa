@@ -1,6 +1,6 @@
 //! Wiki links to an item retitled since they were written, rewritten in the
 //! bodies of this folder's documents to name it by its new title, as Obsidian
-//! does (`folders/body-link-retitled`).
+//! does (`folder-documents/body-link-retitled`).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -107,7 +107,7 @@ impl Folder {
     /// write its body now: its file is as the folder last read or wrote it,
     /// nothing holds it, no write of it waits, each item it links to took
     /// its new title on the server, and the body reads as the same links
-    /// after the rewrite (`folders/body-link-retitled-reparsed`).
+    /// after the rewrite (`folder-documents/body-link-retitled-reparsed`).
     fn relinked_body(
         &self,
         host: &str,
@@ -204,7 +204,7 @@ impl Folder {
     /// Forgets each rewrite the server took. One it refused is taken out of
     /// the queue and not tried again until the document changes; one that
     /// met another writer's change (`version_conflict`) is withdrawn alone,
-    /// so every write behind it goes on (`folders/body-link-retitled-behind`),
+    /// so every write behind it goes on (`folder-documents/body-link-retitled-behind`),
     /// and worked out again against what the server holds.
     fn settle_relinks(&self, report: &mut PullReport) -> Result<bool> {
         let queued = store::meta_under(&*self.core.conn()?, QUEUED)?;

@@ -184,14 +184,6 @@ When a key holding `config.manage` sends `GET /config`, the server MUST answer a
 
 **Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/instance-config.test.ts › answers one identity to every caller, keeps it across a restart, and shares it with no other instance`.
 
-### `instance/id-in-archive`
-
-When a credential that may export sends `GET /export?format=archive`, the server MUST write into the archive's `manifest.json` an `instance_id` equal to the one the root answers.
-
-**Reason:** the manifest is a file nothing echoes back, so an export that wrote another name, or none, would go unnoticed at every other operation.
-
-**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
-
 ### `instance/id-same-every-answer`
 
 The server MUST answer every request for the description with the same `instance_id`.
@@ -280,7 +272,7 @@ When a write repeats an `Idempotency-Key` and its body, naming the instance's ow
 
 **Tests:** `compliance/instance-header.test.ts › keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`.
 
-### `instance/write-instance-every-door`
+### `instance/write-instance-every-operation`
 
 The server MUST judge `X-Marfa-Instance-Id` on every write.
 
@@ -376,30 +368,6 @@ When `GET /openapi.json` is answered, the server MUST answer `info.version` as t
 
 **Tests:** `compliance/instance.test.ts › carries one contract version at the root and in its document`.
 
-### `instance/archive-version`
-
-When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `version` of 1.
-
-**Reason:** the version is the one marker of the archive's layout, and a restore reads every version up to its own build's and refuses a later one (`search-and-filters/restore-version`). A field or a line kind added within a version is optional to a reader of that version (`search-and-filters/archive-version-additions`): a restore skips a field it does not read and a line kind it does not know, and names the kind (`search-and-filters/restore-unknown-field`, `search-and-filters/restore-unknown-line-kind`). An archive with a new entry, line file or field that a restore must read is a new version, because an older build would skip what it does not know.
-
-**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
-
-### `instance/archive-format`
-
-When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `format` of `marfa-archive`.
-
-**Reason:** a restore knows an archive by its format before it reads its version, and refuses a manifest without one as written before Marfa 0.1 (`search-and-filters/restore-format`).
-
-**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`, `compliance/export.test.ts › opens an archive with its manifest, and the manifest counts what the archive holds`.
-
-### `instance/archive-written-by`
-
-When a credential that may export sends `GET /export?format=archive`, the server MUST write the archive's `manifest.json` with a `written_by` of `marfa-server` and the version of the build, separated by a space.
-
-**Reason:** a restore that refuses an archive written before Marfa 0.1, or at a later version, names the build that wrote it, and only the manifest says which build that was.
-
-**Tests:** `compliance/instance-identity.test.ts › names itself the same way at the root, at /config and in an archive`.
-
 ### `instance/contract-header`
 
 The server MUST send `X-Marfa-Contract`, with the number the root answers as `contract`, on every answer to a request whose request line, headers and `Host` it can parse, whether it is a read, a refusal, a page, a stream, a download, a request the rate limiter refuses or a preflight.
@@ -436,7 +404,7 @@ The server MUST NOT refuse a request for naming no `X-Marfa-Contract`.
 
 **Tests:** `compliance/contract-request.test.ts › serves a request naming no contract, and one naming this contract, as it serves each other`.
 
-### `instance/contract-request-every-door`
+### `instance/contract-request-every-operation`
 
 The server MUST judge `X-Marfa-Contract` on every request, whatever its method, its path and its credential.
 
@@ -784,7 +752,7 @@ Where both `S3_BUCKET` and `MARFA_BACKUP_PATH` are set, the server MUST refuse t
 
 ### `instance/backup-holds-export`
 
-When the server takes a backup, the server MUST put in it the items, edges, rows and instance lines that `GET /export?format=archive&state=any&files=false` would send a key that holds every permission and reaches every type at that moment, but for the `source` lines that `search-and-filters/archive-sources` gives a backup.
+When the server takes a backup, the server MUST put in it the items, edges, rows and instance lines that `GET /export?format=archive&state=any&files=false` would send a key that holds every permission and reaches every type at that moment, but for the `source` lines that `archive/archive-sources` gives a backup.
 
 **Tests:** `compliance/backups.test.ts › puts one object in the prefix's backups folder for its instance, named for its created_at, holding what an archive export with state any and files false holds for a key that reaches everything`.
 
@@ -822,7 +790,7 @@ When the private local command sends `POST /backups`, the server MUST answer in 
 
 If an item, an earlier version of an item or an edge a backup would hold takes more than 67108864 bytes on its archive line, then the server MUST answer `POST /backups` with `409 export_entry_unrestorable`, with `details.entry` naming the item or edge, without putting the backup.
 
-**Reason:** a restore reads no line longer (`search-and-filters/restore-text-cap`), so such a backup could never be restored, and an owner told at the time can correct the item while the earlier backups still stand.
+**Reason:** a restore reads no line longer (`archive/restore-text-cap`), so such a backup could never be restored, and an owner told at the time can correct the item while the earlier backups still stand.
 
 **Tests:** `compliance/archive-line-cap.test.ts › refuses an export and a backup whose item line is past the limit, naming the item`.
 
@@ -1260,7 +1228,7 @@ When `GET /health` is answered, the server MUST answer the overall `status` as `
 
 **Tests:** `compliance/instance.test.ts › answers /health without a credential and names its components`, `compliance/health.test.ts › answers 503 with the database down when the database refuses a read, and 200 once it answers`, `› answers 503 with the database write down when the database refuses a write, and 200 once it takes one`, `› answers 503 with blob storage down when the disk store refuses, and 200 once it answers`, `› answers 200 and degraded while the write is refused, and ok once the lock is released`.
 
-### `instance/health-down-503`
+### `instance/health-down-unavailable`
 
 When any component is `down`, the server MUST answer `GET /health` with `503`.
 
@@ -1268,7 +1236,7 @@ When any component is `down`, the server MUST answer `GET /health` with `503`.
 
 **Tests:** `compliance/health.test.ts › answers 503 with the database down when the database refuses a read, and 200 once it answers`, `› answers 503 with the database write down when the database refuses a write, and 200 once it takes one`, `› answers 503 with blob storage down when the disk store refuses, and 200 once it answers`.
 
-### `instance/health-not-down-200`
+### `instance/health-not-down-ok`
 
 When no component is `down`, the server MUST answer `GET /health` with `200`, whether the overall `status` is `ok` or `degraded`.
 
@@ -1504,7 +1472,7 @@ When the server refuses to start on a database under `instance/upgrade-refuses-s
 
 **Tests:** `compliance/database-file.test.ts › says in its refusal to export with the build that wrote the file, start on a fresh file and restore the archive there, and that the restore can refuse`.
 
-### `instance/upgrade-exit-78`
+### `instance/upgrade-exit-refusal`
 
 If the server refuses to start on a database under `instance/upgrade-refuses-schema`, `instance/upgrade-refuses-newer` or `instance/upgrade-keeps-references`, then the server MUST exit with status 78.
 
@@ -1512,7 +1480,7 @@ If the server refuses to start on a database under `instance/upgrade-refuses-sch
 
 **Tests:** `compliance/database-file.test.ts › exits with status 78, not 1, when it refuses a database this build did not write`, `› refuses a database that lacks a table and holds a row in one it creates, and changes nothing`, `› refuses a database that lacks a table and has a column it does not declare, though it holds no rows`, `› refuses to start on a database a newer build wrote, and leaves it as it was`.
 
-### `instance/upgrade-exit-1`
+### `instance/upgrade-exit-failure`
 
 If the server stops for a failure to start that is not a refusal under `instance/upgrade-refuses-schema`, `instance/upgrade-refuses-newer` or `instance/upgrade-keeps-references`, then the server MUST exit with status 1.
 
@@ -1588,7 +1556,7 @@ When the server is stopped, the server MUST let the bulk action, the housekeepin
 
 **Tests:** `compliance/stop-waits-for-work.test.ts › lets the bulk action and the housekeeping run finish before the storage closes, and exits 0`, `compliance/stop-webhook.test.ts › records a webhook delivery released by shutdown before closing storage`.
 
-### `instance/stop-exit-0`
+### `instance/stop-exit-clean`
 
 When the server is stopped on `SIGTERM` or `SIGINT` and the server and its storage have closed, the server MUST exit with status 0.
 
@@ -1596,7 +1564,7 @@ When the server is stopped on `SIGTERM` or `SIGINT` and the server and its stora
 
 **Tests:** `compliance/instance-lifecycle.test.ts › exits with status 0 within eight seconds when stopped on %s`, `› exits with status 0 within eight seconds when stopped with an event stream open`.
 
-### `instance/stop-within-eight`
+### `instance/stop-exits-in-time`
 
 When the server is stopped on `SIGTERM` or `SIGINT`, the server MUST exit within eight seconds of the signal.
 
@@ -1604,7 +1572,7 @@ When the server is stopped on `SIGTERM` or `SIGINT`, the server MUST exit within
 
 **Tests:** `compliance/instance-lifecycle.test.ts › exits with status 0 within eight seconds when stopped on %s`, `› exits with status 0 within eight seconds when stopped with an event stream open`, `compliance/stream-shutdown.test.ts › ends the stream with stream_incomplete and server_stopping, closes it, and stops within ten seconds`.
 
-### `instance/stop-exit-1-open-request`
+### `instance/stop-exit-failed-open-request`
 
 If a request that was open at the signal is still open when the server's wait for requests ends, then the server MUST exit with status 1.
 
@@ -1612,7 +1580,7 @@ If a request that was open at the signal is still open when the server's wait fo
 
 **Tests:** `compliance/instance-lifecycle.test.ts › exits with status 1, not 0, when a request in flight is still open at the end of the stop's wait`.
 
-### `instance/stop-slow-run-exit-0`
+### `instance/stop-slow-run-exit-clean`
 
 If a bulk action or a housekeeping run outlives the stop's wait for it while the server and its storage close within theirs, then the server MUST exit with status 0.
 
@@ -1682,7 +1650,7 @@ If the public listener reads a request body whole, other than one sent to `POST 
 
 **Tests:** `compliance/public-body.test.ts › is answered 408 request_timeout with the connection closed when it has not arrived by the deadline, and is taken when it arrives in time`, `› answers 401 unauthorized to a declared body before any of it is sent, when no credential comes with it`.
 
-### `instance/open-door-body-declared`
+### `instance/public-body-declared`
 
 If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/authorize/decision`, `POST /auth/oauth2/token`, `POST /auth/oauth2/revoke`, `POST /auth/device/code`, `POST /auth/device` or `POST /auth/device/consent` declares a body longer than 32768 bytes, then the server MUST answer `413 request_too_large` before it reads any of the body.
 
@@ -1690,7 +1658,7 @@ If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POS
 
 **Tests:** `compliance/public-body.test.ts › answers 413 to a body over 32768 bytes declared to it, before any of it is sent`.
 
-### `instance/open-door-body-streamed`
+### `instance/public-body-streamed`
 
 If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/authorize/decision`, `POST /auth/oauth2/token`, `POST /auth/oauth2/revoke`, `POST /auth/device/code`, `POST /auth/device` or `POST /auth/device/consent` sends more than 32768 bytes of body without declaring its length, then the server MUST answer `413 request_too_large`.
 
@@ -2308,7 +2276,7 @@ Telemetry has two parts, each with settings of its own. Traces and log records a
 
 When `MARFA_POSTHOG_HOST` is an `https` address, or an `http` address on this machine, with no user name or password, `MARFA_POSTHOG_PROJECT_TOKEN` is set, `OTEL_SDK_DISABLED` is not `true`, the effective reporting preference `error_reporting_enabled` is on, and a request ends in an unhandled fault, the server MUST send one exception report, whatever the `OTEL_EXPORTER_OTLP_*` settings are.
 
-**Reason:** an operator who wants error tracking should not have to run an OTLP collector for it, and a collector that cannot be reached is the traces' trouble alone. This is the rule the command line follows (`device/cli-exception-report`), so one set of shell settings means the same to both. The stored `error_reporting_enabled` choice defaults to on.
+**Reason:** an operator who wants error tracking should not have to run an OTLP collector for it, and a collector that cannot be reached is the traces' trouble alone. This is the rule the command line follows (`cli/cli-exception-report`), so one set of shell settings means the same to both. The stored `error_reporting_enabled` choice defaults to on.
 
 **Tests:** `compliance/telemetry-exception-alone.test.ts › are sent with the PostHog host and project token alone, and no trace or log record`.
 
@@ -2826,14 +2794,6 @@ If the database exists, `marfa.secrets` does not and `MARFA_KEY_SALT` is unset w
 **Reason:** a new salt would end every key, so a lost file is for the owner to restore and never for the server to replace.
 
 **Tests:** `compliance/hook-free-server.test.ts › uses the secret in the file, and refuses to replace a file that was lost`.
-
-### `instance/secrets-not-exported`
-
-When the server writes an archive export, the server MUST NOT include `marfa.secrets` in it.
-
-**Reason:** an export is meant to be shared and restored elsewhere, and the secrets belong to the instance that made them.
-
-**Tests:** `compliance/hook-free-server.test.ts › leaves marfa.secrets out of an export, whether the file was generated or the secrets came from the environment`.
 
 ### `instance/files-private`
 

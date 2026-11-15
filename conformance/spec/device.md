@@ -1,10 +1,10 @@
 # The device
 
-A device holds a working copy: a local store of one slice of one server, hydrated over HTTP, kept current from the event log and read locally, with a queue of the writes the server has not answered. `queue-and-verdicts.md` states the queue and the answer to every write, `folders.md` states a folder, and the server's own chapters state what the server answers.
+A device holds a working copy: a local store of one slice of one server, hydrated over HTTP, kept current from the event log and read locally, with a queue of the writes the server has not answered. `queue-and-verdicts.md` states the queue and the answer to every write, the `folder-` chapters state a folder, and the server's own chapters state what the server answers.
 
 ## The working copy
 
-A slice is a type list, a tier, which is `library`, `feed` or `all`, and the edge types it holds whole. A slice may also hold a query, which is a folder's member states, its filter and the item it narrows beneath (`folders/copy-holds-query`). A slice takes an item when the item's type is a type the slice names, or a type under one by name or by declared parent, at a tier the slice holds, and, where the slice has a query, the item is in one of the query's states or in the bin, the filter matches it and, where the query names an item to narrow beneath, the item is the named item or one reached from it along the `parent-of` edges the copy held, at any depth, at the last settle of its reach (`device/catch-up-beneath-leaves`), or the item is a conflicted copy (`queue-and-verdicts.md`) in one of the query's states or in the bin. A pin holds one item by id whatever the slice says of it.
+A slice is a type list, a tier, which is `library`, `feed` or `all`, and the edge types it holds whole. A slice may also hold a query, which is a folder's member states, its filter and the item it narrows beneath (`folder-setup/copy-holds-query`). A slice takes an item when the item's type is a type the slice names, or a type under one by name or by declared parent, at a tier the slice holds, and, where the slice has a query, the item is in one of the query's states or in the bin, the filter matches it and, where the query names an item to narrow beneath, the item is the named item or one reached from it along the `parent-of` edges the copy held, at any depth, at the last settle of its reach (`device/catch-up-beneath-leaves`), or the item is a conflicted copy (`queue-and-verdicts.md`) in one of the query's states or in the bin. A pin holds one item by id whatever the slice says of it.
 
 ### `device/slice-held`
 
@@ -44,7 +44,7 @@ Where a slice has a query, a device MUST hold an item of a type and a tier the s
 
 Where a slice has a query, a device MUST hold a conflicted copy of a type and a tier the slice takes that is in one of the query's states or in the bin, whether or not the query's filter matches it.
 
-**Reason:** a conflicted copy is written beside the file it came from (`folders/conflict-copy-file`), and carries the `conflicted-copy` tag rather than the tags the filter asks for.
+**Reason:** a conflicted copy is written beside the file it came from (`folder-sync/conflict-copy-file`), and carries the `conflicted-copy` tag rather than the tags the filter asks for.
 
 **Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`.
 
@@ -130,9 +130,9 @@ When a pinned create is answered with the id of another item, a device MUST move
 
 ### `device/pin-create-lasts`
 
-When a device pins a create its slice does not take (`queue-and-verdicts/create-outside-pinned`), a device MUST keep the pin, on the id the create is answered with, until the caller takes it off, the server accepts a purge of the item (`device/purge-accepted`), the read after an answer to a write of the item finds no such item, in the server's bin or out of it, the read after a discard of the item's create finds no such item (`queue-and-verdicts/discard-unlanded-pin-read`), an event says the item was purged, or a folder that binds a file to the item lets the item go once no file or line of the folder needs it (`folders/edge-pin-release`).
+When a device pins a create its slice does not take (`queue-and-verdicts/create-outside-pinned`), a device MUST keep the pin, on the id the create is answered with, until the caller takes it off, the server accepts a purge of the item (`device/purge-accepted`), the read after an answer to a write of the item finds no such item, in the server's bin or out of it, the read after a discard of the item's create finds no such item (`queue-and-verdicts/discard-unlanded-pin-read`), an event says the item was purged, or a folder that binds a file to the item lets the item go once no file or line of the folder needs it (`folder-documents/edge-pin-release`).
 
-**Reason:** a device cannot tell when an app stops showing an item it created, so the pin ends only on the caller's word, on the server's word that the item is gone (`device/pin-refused-create` and `device/catch-up-purged-pin`), or with a folder that took the one pin as its own by binding a file to the item. A pin that a body's link (`device/body-pin`) or a folder's line (`folders/edge-pin-held`) made on an item before a create was answered with that item becomes the create's, so the link's or the line's release leaves it. The pin moves with the item (`device/pin-follows-create` and `queue-and-verdicts/landed-pin-moves`) and outlasts every hydration (`device/pin-survives-hydration`), which reads it again (`device/hydrate-pins-batched`). A hydration keeps the pin of an item its read leaves out, such as one in the bin or one the key can no longer read (`device/pin-gone-kept`).
+**Reason:** a device cannot tell when an app stops showing an item it created, so the pin ends only on the caller's word, on the server's word that the item is gone (`device/pin-refused-create` and `device/catch-up-purged-pin`), or with a folder that took the one pin as its own by binding a file to the item. A pin that a body's link (`device/body-pin`) or a folder's line (`folder-documents/edge-pin-held`) made on an item before a create was answered with that item becomes the create's, so the link's or the line's release leaves it. The pin moves with the item (`device/pin-follows-create` and `queue-and-verdicts/landed-pin-moves`) and outlasts every hydration (`device/pin-survives-hydration`), which reads it again (`device/hydrate-pins-batched`). A hydration keeps the pin of an item its read leaves out, such as one in the bin or one the key can no longer read (`device/pin-gone-kept`).
 
 **Tests:** `device/pins-live.test.ts › keeps the pin of its own create outside its slice past the answer and the next hydration, until it is taken off`, `device/purge-live.test.ts › takes the item and its pin out once the server accepts, and the event after changes nothing`, `device/catch-up.test.ts › takes the pin off an item whose create was refused`, `› takes the pin off a purged item`, `device/folders-identity.test.ts › lets go of the pin of an item whose file's path another item takes`.
 
@@ -1054,7 +1054,7 @@ When a hydration completes, a device MUST report the types, tier and edge types 
 
 ### `device/hydrate-every-type`
 
-When a hydration declares `*` alone, or a folder whose query names no type or names `*` hydrates its copy, a device MUST read the item listing naming no type, which leaves `system.*` out (`folders/search-default-types`), and report the slice's types as `*`.
+When a hydration declares `*` alone, or a folder whose query names no type or names `*` hydrates its copy, a device MUST read the item listing naming no type, which leaves `system.*` out (`folder-setup/search-default-types`), and report the slice's types as `*`.
 
 **Tests:** `device/hydrate-every-type.test.ts › hydrates every type but system.* from the listing naming no type`, `device/hydrate-every-type-live.test.ts › holds every type registered before the hydration in one pass, and takes a later item of each by its event`, `device/folders.test.ts › holds exactly what its query matches`, `› takes every type, and any default type, where its query names no type or the star`.
 
@@ -1068,7 +1068,7 @@ When a hydration declares `*` beside `system.*` types, a device MUST hold every 
 
 While a device's slice is `*` alone, a device MUST NOT apply an event for a `system.*` item that is not pinned.
 
-**Reason:** the listing the slice reads leaves `system.*` out (`folders/search-default-types`), so a copy that took one by event would hold what no hydration of the same slice holds. A pinned item keeps taking its updates, whatever the slice.
+**Reason:** the listing the slice reads leaves `system.*` out (`folder-setup/search-default-types`), so a copy that took one by event would hold what no hydration of the same slice holds. A pinned item keeps taking its updates, whatever the slice.
 
 **Tests:** `device/hydrate-every-type.test.ts › takes no system item by event, but one that is pinned`.
 
@@ -2020,7 +2020,7 @@ When a local search names a type or tags, a device MUST narrow it as a local lis
 
 ### `device/filter-as-server`
 
-When a local list or a local search names a filter the server's listing grammar takes (`search-and-filters/filter-doors`), a device MUST answer the items the server answers from the same items, except that it refuses a `backref` condition on an edge type the copy does not hold whole (`device/filter-backref`).
+When a local list or a local search names a filter the server's listing grammar takes (`search-and-filters/filter-one-grammar`), a device MUST answer the items the server answers from the same items, except that it refuses a `backref` condition on an edge type the copy does not hold whole (`device/filter-backref`).
 
 **Reason:** a copy that answered one expression otherwise than the server would show one set of items offline and another online for the same question.
 
@@ -2183,12 +2183,6 @@ When a caller reads an edge by id that its copy holds, a device MUST answer the 
 **Reason:** an app that learns an edge changed reads that edge alone, which may have moved to another item. The CLI reads it with `device edges get`.
 
 **Tests:** `device/batch-reads.test.ts › answers one edge, many in the order named, and refuses one not held`, `› answers an edge at the ends a catch-up moved it to`.
-
-### `device/edge-get-unheld`
-
-If a read of one edge by id names an edge its copy does not hold, then the CLI MUST refuse it `not_found` with `not_held` as the envelope's `local` code.
-
-**Tests:** `device/batch-reads.test.ts › answers one edge, many in the order named, and refuses one not held`.
 
 ### `device/edge-bulk-get`
 
@@ -2568,7 +2562,7 @@ If the bytes of a queued upload are beside the store but cannot be opened when a
 
 **Tests:** `device/queue.test.ts › leaves an upload whose held bytes cannot be opened unanswered, and says why`.
 
-### `device/attach-three-writes`
+### `device/attach-upload-file-edge`
 
 When a device attaches a file to an item, a device MUST queue an upload, a file item naming the bytes, and an `attached-to` edge from the file item to the item.
 
@@ -2988,235 +2982,7 @@ While a hydration has started and none has completed since, a device MUST report
 
 **Tests:** `device/attachments-offline.test.ts › are unknown from the start of a hydration until one completes, while a trim keeps their bytes and takes the rest`.
 
-## The server the CLI talks to
-
-The CLI is built for one contract version, the version of the document it was generated from, and every answer names the contract it speaks in `X-Marfa-Contract` (`instance/contract-header`).
-
-### `device/command-contract-mismatch`
-
-If an answer to a command other than `status` and `whoami` names a contract other than the one the CLI was built for, then the CLI MUST refuse it `contract_mismatch` with exit 1.
-
-**Reason:** a body shaped for another contract may be shaped and sized in ways the CLI cannot read. `status` and `whoami` exist to say which contract a server speaks, so they report it and exit 0 (`device/status-other-contract`, `device/whoami-other-contract`).
-
-**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status and whoami`, `› refuses an event stream on another contract, and reads one on its own`, `› reads every door on its own contract, so the refusal above is the contract's`, `› names an invocation for every command in the table, and nothing else`, `› drives every command the binary has, or says why not`, `device/contract.test.ts › refuses a content response on another contract from a bound folder push`, `› holds item summaries to the contract through its private socket`, `› holds both app narrowing responses to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds every backup command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile picture upload to the contract through its ordinary credential`, `› holds the owner picture upload to the contract through its private socket`, `› holds every bin command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
-
-### `device/command-mismatch-prints-nothing`
-
-When the CLI refuses an answer for its contract, the CLI MUST print nothing of the answer.
-
-**Tests:** `device/contract.test.ts › refuses an answer on another contract rather than reading it`, `› refuses contract_mismatch from every command but status and whoami`, `› holds item summaries to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds every backup command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile picture upload to the contract through its ordinary credential`, `› holds the owner picture upload to the contract through its private socket`, `› holds every bin command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
-
-### `device/command-unnamed-success`
-
-If a success names no contract, then the CLI MUST refuse it `contract_mismatch` with exit 1.
-
-**Tests:** `device/contract.test.ts › refuses a success that names no contract`, `› holds item summaries to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds every backup command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile picture upload to the contract through its ordinary credential`, `› holds the owner picture upload to the contract through its private socket`, `› holds every bin command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
-
-### `device/command-contract-twice`
-
-If an answer names its contract on two header lines that differ, then the CLI MUST refuse it `contract_mismatch`.
-
-**Tests:** `device/contract.test.ts › refuses an answer that names its contract twice, differently`.
-
-### `device/command-contract-repeated`
-
-When an answer names the CLI's own contract on two header lines, the CLI MUST read it as an answer on that contract.
-
-**Tests:** `device/contract.test.ts › refuses an answer that names its contract twice, differently`.
-
-### `device/command-write-sent`
-
-If the answer to a write the CLI sent names another contract and is not the server's own `412 contract_mismatch`, then the CLI MUST say in its refusal that the write was sent and may have taken effect.
-
-**Reason:** the contract is named by the answer, so the server acted on the write before the CLI could read that it speaks another contract.
-
-**Tests:** `device/contract.test.ts › says a write it refused for its contract was sent and may have taken effect`, `› holds both app narrowing responses to the contract through its private socket`.
-
-### `device/command-write-declined`
-
-If the answer to a write the CLI sent is the server's own `412 contract_mismatch`, then the CLI MUST say in its refusal that the server refused the write before it acted.
-
-**Reason:** the server judges the contract before it acts on a request, so a write it refused for its contract changed nothing.
-
-**Tests:** `device/contract.test.ts › says a write the server refused 412 contract_mismatch was refused before it acted, not that it may have taken effect`.
-
-### `device/command-write-declined-not-sent`
-
-If the answer to a write the CLI sent is the server's own `412 contract_mismatch`, then the CLI MUST NOT say in its refusal that the write may have taken effect.
-
-**Tests:** `device/contract.test.ts › says a write the server refused 412 contract_mismatch was refused before it acted, not that it may have taken effect`.
-
-### `device/command-unnamed-refusal`
-
-If a refusal names no contract, then the CLI MUST report it `unnamed_answer` with exit 3, naming its status.
-
-**Reason:** the server names its contract on every answer, so a refusal naming none is from something in front of it, such as a proxy.
-
-**Tests:** `device/contract.test.ts › hands on a refusal that names no contract, as a proxy's would`.
-
-### `device/command-unreachable-origin`
-
-If the CLI cannot reach the server it was sent to, then the CLI MUST report it `network` with exit 3, in a message that names the server by its scheme, host and port alone.
-
-**Reason:** a person with several servers needs to know which one did not answer, and a gateway's path or a credential in the address must not reach a terminal or a log.
-
-**Tests:** `cli/exits.test.ts › leaves by 3 when the server cannot be reached`.
-
-### `device/command-unreachable-code-once`
-
-If the CLI reports `network`, then the CLI MUST NOT begin the message with the word `network`.
-
-**Reason:** a surface that prints the code beside the message would show it twice.
-
-**Tests:** `cli/exits.test.ts › leaves by 3 when the server cannot be reached`.
-
-### `device/command-unreachable-hint`
-
-If a connection to a server on this machine is refused, then the CLI MUST ask a person whether the server is running and name `marfa server status`.
-
-**Reason:** a refused connection means nothing listens at the address, and a person who sees only that nothing answered cannot tell a stopped server from a wrong address. Another failure, such as a timeout, does not say that the server is stopped.
-
-**Tests:** `cli/exits.test.ts › asks a person whether the server is running when nothing listens on this machine, and says so only to a person`.
-
-### `device/command-unreachable-hint-not-in-json`
-
-If a connection to a server is refused and `--json` is set, then the CLI MUST NOT add advice to the envelope's message.
-
-**Reason:** a script reads the envelope's code and message, and advice for a person would change what it matches.
-
-**Tests:** `cli/exits.test.ts › asks a person whether the server is running when nothing listens on this machine, and says so only to a person`.
-
-### `device/command-local-only-refusal`
-
-If the server refuses a command with `details.needs` set to `local`, then the CLI MUST tell a person that the private local command can do it.
-
-**Reason:** the server says which refusals only the private local command can mend, so the CLI decides by that detail and not by the words of the message.
-
-**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key the private command is the way`.
-
-### `device/command-local-only-refusal-details`
-
-If the server refuses a command with `details`, then the CLI MUST carry `details` unchanged in the `--json` envelope's `server` member.
-
-**Reason:** a script decides what to do from the server's own detail, not from the CLI's advice.
-
-**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key the private command is the way`.
-
-### `device/command-address-change-flag`
-
-If a person runs `config update` or `config replace` with `--confirm-address-change`, then the CLI MUST send `confirm_sign_in_address_change` set to `true` with the body.
-
-**Reason:** the server holds a sign-in address change until it is confirmed, and a person confirms it by naming the flag after reading what the change does.
-
-**Tests:** `cli/owner-commands.test.ts › holds a sign-in address change until its flag confirms it, and tells a key the private command is the way`.
-
-### `device/command-upload-refusal-reported`
-
-If the server refuses an upload before it reads the file, then the CLI MUST report the refusal's status, code and message.
-
-**Reason:** a server that refuses early closes the connection while the CLI is still sending, and a CLI that holds the file back until the server's go-ahead, for up to two seconds, reads the answer the server gave, which is the only thing that tells a person why the upload failed.
-
-**Tests:** `cli/attach.test.ts › reports the server's refusal of an upload it made before reading the file, not a broken connection`, `cli/archive-blobs.test.ts › reports the refusal of a large archive the server refuses before or while it arrives`.
-
-### `device/command-upload-refusal-not-network`
-
-If the server refuses an upload before it reads the file, then the CLI MUST NOT report a network failure.
-
-**Reason:** the server answered, and a network failure would send a person to the connection instead of the refusal.
-
-**Tests:** `cli/attach.test.ts › reports the server's refusal of an upload it made before reading the file, not a broken connection`.
-
-### `device/command-server-status-says-health`
-
-If the server of an install answers `/health` as degraded or down, then the CLI MUST say so in `marfa server status`, with the components at fault.
-
-**Reason:** a server that answers has not gone silent, and "not answering" is for a server that gave no answer.
-
-**Tests:** `cli/server-status.test.ts › says a server that answers degraded is degraded, and leaves by 0`, `› says a server that answers down is down, not silent, and leaves by 0`.
-
-### `device/command-server-status-exits-zero`
-
-If the server of an install answers `/health` as degraded or down, then the CLI MUST leave `marfa server status` by 0.
-
-**Reason:** a script reads `running`, `answering` and `health` in the `--json` report, and a non-zero exit would fail the scripts that pipe `status` to learn how the server is.
-
-**Tests:** `cli/server-status.test.ts › says a server that answers degraded is degraded, and leaves by 0`, `› says a server that answers down is down, not silent, and leaves by 0`.
-
-### `device/command-server-status-says-no-backups`
-
-If the server of an install answers `/health` with `backups.status` `off` and `backups.reason` `no_backup_destination`, then the CLI MUST say in `marfa server status` that no backups are kept.
-
-**Reason:** an install made with no destination keeps no backup, and the person who made it has no other sign.
-
-**Tests:** `cli/server-status.test.ts › says no backups are kept, and how to set one, when the server has no destination`.
-
-### `device/command-server-status-backup-setting`
-
-If the server of an install answers `/health` with `backups.reason` `no_backup_destination`, then the CLI MUST name in `marfa server status` `MARFA_BACKUP_PATH`, `S3_BUCKET`, the install's settings file and `marfa server restart`.
-
-**Reason:** a person needs to know which setting to add, where, and how to make the server read it.
-
-**Tests:** `cli/server-status.test.ts › says no backups are kept, and how to set one, when the server has no destination`.
-
-### `device/command-server-status-says-backups-off`
-
-If the server of an install answers `/health` with `backups.reason` `turned_off`, then the CLI MUST say in `marfa server status` that scheduled backups are turned off.
-
-**Tests:** `cli/server-status.test.ts › says scheduled backups are turned off, apart from having no destination`.
-
-### `device/command-server-status-off-not-none`
-
-If the server of an install answers `/health` with `backups.reason` `turned_off`, then the CLI MUST NOT say in `marfa server status` that no backups are kept.
-
-**Reason:** an interval of 0 is a choice about the schedule, and a destination is set.
-
-**Tests:** `cli/server-status.test.ts › says scheduled backups are turned off, apart from having no destination`.
-
-### `device/command-server-status-quiet-backups`
-
-If the server of an install answers `/health` with `backups.status` `ok`, then the CLI MUST NOT mention backups in the text of `marfa server status`.
-
-**Tests:** `cli/server-status.test.ts › says nothing of backups that run`.
-
-### `device/command-server-status-json-backups`
-
-When the server of an install answers `/health` with a `backups` object, the CLI MUST give `marfa server status --json` a `backups` member with its `status`, its `reason` and the `say` the text shows, or `null` when the text says nothing.
-
-**Reason:** a script reads the report, and the words are the same for it as for a person.
-
-**Tests:** `cli/server-status.test.ts › says no backups are kept, and how to set one, when the server has no destination`, `› says nothing of backups that run`.
-
-### `device/command-redirect`
-
-If an answer to the CLI is a `3xx`, then the CLI MUST refuse it `redirect` with exit 1, naming the status and the destination, without following it.
-
-**Tests:** `device/contract.test.ts › refuses a redirect without following it`.
-
-### `device/command-no-root-first`
-
-When the CLI sends a call other than a mint, `status` or `whoami`, the CLI MUST send that call alone, with no read of the server's root before it.
-
-**Tests:** `device/contract.test.ts › reads an answer on its own contract, sending only the call`, `› holds item summaries to the contract through its private socket`, `› holds every owner passkey command to the contract through its private socket`, `› holds every backup command to the contract through its private socket`, `› holds owner update to the contract through its private socket`, `› holds profile update to the contract through its ordinary credential`, `› holds the profile picture upload to the contract through its ordinary credential`, `› holds the owner picture upload to the contract through its private socket`, `› holds every bin command to the contract through its private socket`, `› holds folder inventory to the contract through its private socket`, `› holds attention to the contract through its private socket`.
-
-### `device/command-mint-root-first`
-
-When the CLI sends a write whose answer is the only copy of what it mints, `keys create` or `webhooks create`, the CLI MUST first read the server's root.
-
-**Reason:** a mint refused for its contract has already minted a key or a secret nobody can read.
-
-**Tests:** `device/contract.test.ts › sends no mint to a server whose root names another contract, or none`.
-
-### `device/command-mint-not-sent`
-
-If the server's root names another contract, or none, then the CLI MUST NOT send a mint.
-
-**Tests:** `device/contract.test.ts › sends no mint to a server whose root names another contract, or none`.
-
-### `device/command-root-header`
-
-The CLI MUST take the contract the server speaks from the `X-Marfa-Contract` header of the root's answer, whatever the root's body says.
-
-**Tests:** `device/contract.test.ts › takes the served contract from the answer's header, whatever the root's body says`, `› sends no mint to a server whose root names another contract, or none`.
+## The contract a device names
 
 ### `device/contract-sent`
 
@@ -3230,7 +2996,7 @@ When a device sends a request to a server other than a read of the root or of `/
 
 When a device reads the root or `/health` of a server, a device MUST NOT name `X-Marfa-Contract`.
 
-**Reason:** the root says which contract a server speaks, and the server refuses a request that names another contract, so a device that named its own there could not learn what a server on another contract speaks (`device/status-other-contract`).
+**Reason:** the root says which contract a server speaks, and the server refuses a request that names another contract, so a device that named its own there could not learn what a server on another contract speaks (`cli/status-other-contract`).
 
 **Tests:** `device/contract.test.ts › reads every door on its own contract, so the refusal above is the contract's`, `› names its contract on every request but a read of the root, a write, a read and a stream among them`.
 
@@ -3247,650 +3013,6 @@ When a server's answer carries a member a device does not know, a device MUST re
 When an event stream carries an event of a type a device does not know, a device MUST skip the event and take the cursor past it.
 
 **Tests:** `device/contract.test.ts › applies an item event that carries a member it does not know, and skips an event of a type it does not know`.
-
-### `device/status-other-contract`
-
-When `status` reads a server on another contract, the CLI MUST report the contract the server speaks beside the one it was built for, and exit 0.
-
-**Tests:** `device/contract.test.ts › still says which server this is, and that its contract is another`, `› says in words that the server speaks another contract`, `› takes the served contract from the answer's header, whatever the root's body says`.
-
-### `device/status-other-contract-no-counts`
-
-When `status` reads a server on another contract, the CLI MUST NOT ask it for the item counts.
-
-**Tests:** `device/contract.test.ts › still says which server this is, and that its contract is another`.
-
-### `device/whoami-other-contract`
-
-When `whoami` reads a server on another contract, the CLI MUST report the contract the server speaks beside the one it was built for, and exit 0.
-
-**Tests:** `device/contract.test.ts › takes the served contract from the answer's header, whatever the root's body says`.
-
-### `device/whoami-person`
-
-When `whoami` runs with an access token on a server on its own contract, the CLI MUST report the server's answer to `GET /profile` as the credential's `person`.
-
-**Tests:** `cli/login.test.ts › signs in with a device code approved in a browser session, and the token reaches the data plane`.
-
-### `device/whoami-ended-token`
-
-If the server answers `whoami`'s `GET /profile` with `401`, then the CLI MUST exit 5 and print nothing on standard output.
-
-**Reason:** A token that has ended names no one, and a script that checks who it is signed in as must not read a success.
-
-**Tests:** `cli/login.test.ts › signs in with a device code approved in a browser session, and the token reaches the data plane`.
-
-### `device/whoami-key`
-
-When `whoami` runs with a credential that is not an access token on a server on its own contract, the CLI MUST report the server's answer to `GET /keys/current` as the credential's `key`.
-
-**Tests:** `cli/exits.test.ts › leaves whoami by 5 when the server refuses the key, and names a key it accepts`, `device/contract.test.ts › takes the served contract from the answer's header, whatever the root's body says`.
-
-### `device/whoami-ended-key`
-
-If the server answers `whoami`'s `GET /keys/current` with `401`, then the CLI MUST exit 5 and print nothing on standard output.
-
-**Reason:** A key that was revoked, or never minted, reaches nothing, and a script that checks its credential must not read a success.
-
-**Tests:** `cli/exits.test.ts › leaves whoami by 5 when the server refuses the key, and names a key it accepts`.
-
-### `device/status-counts-not-permitted`
-
-If the server refuses `status` the item counts `403 type_not_permitted`, then the CLI MUST still describe the server, say the counts need a working key and exit 0.
-
-**Reason:** a credential whose type permissions reach no type is refused the counts (`keys-and-oauth/permissions-no-content`).
-
-**Tests:** `device/contract.test.ts › describes the server to a key that reaches no type, and says the counts need a working key`.
-
-### `device/status-counts-refused`
-
-If the server refuses `status` the item counts for any other reason, then the CLI MUST fail with that refusal.
-
-**Tests:** `device/contract.test.ts › hands on any other refusal of the counts`.
-
-### `device/operations-offline`
-
-The CLI MUST print its table of operations without sending a request.
-
-**Tests:** `device/contract.test.ts › sends nothing to print the table`.
-
-### `device/claim-stdin`
-
-When `setup claim --stdin` runs, the CLI MUST read the email, password and setup code from a JSON object on standard input.
-
-**Reason:** passwords and setup codes must not be left in shell history or process arguments.
-
-**Tests:** `device/contract.test.ts › claims the owner with setup proof and password read from structured stdin`.
-
-### `device/claim-invalid-stdin`
-
-If `setup claim --stdin` reads blank or malformed JSON, then the CLI MUST refuse it `invalid`.
-
-**Tests:** `device/contract.test.ts › claims the owner with setup proof and password read from structured stdin`.
-
-### `device/claim-invalid-not-sent`
-
-If `setup claim --stdin` reads blank or malformed JSON, then the CLI MUST NOT send a claim.
-
-**Tests:** `device/contract.test.ts › claims the owner with setup proof and password read from structured stdin`.
-
-### `device/claim-refused-proof-exit`
-
-If the server answers `setup claim` `401 setup_proof_invalid`, then the CLI MUST exit `1`, with the server's code in the error's `server.code`.
-
-**Reason:** a wrong, spent or replaced setup code is a refusal that asking for a new code fixes, so the exit `5` for a missing or ended credential (`sign in again`) would send a person or an agent to the wrong remedy.
-
-**Tests:** `device/contract.test.ts › exits 1, not 5, when the server refuses the setup code`.
-
-### `device/local-socket-exclusive`
-
-When `--socket PATH` is supplied, the CLI MUST reject ordinary URL or credential selection.
-
-**Tests:** `device/contract.test.ts › refuses ambiguous or unavailable sockets without falling back to HTTP`.
-
-### `device/local-socket-no-fallback`
-
-If the selected private socket cannot be reached safely, then the CLI MUST fail without falling back to HTTP or stored credentials.
-
-**Tests:** `device/contract.test.ts › refuses ambiguous or unavailable sockets without falling back to HTTP`.
-
-### `device/local-socket-streamed`
-
-When a command given `--socket PATH` streams its answer, the CLI MUST send that request through the socket and to no other address.
-
-**Reason:** a streamed answer is read on its own connection, which has to reach the private socket as every other request does.
-
-**Tests:** `cli/instance.test.ts › downloads a blob through the private socket, byte for byte`, `device/contract.test.ts › explains a 401 through --socket as an operation that needs a key, with the credential exit`.
-
-### `device/local-socket-needs-key`
-
-If the server answers `401` to a request that a command sent through `--socket PATH`, then the CLI MUST fail with exit `5`, saying the operation needs a key, which `--socket` does not carry.
-
-**Reason:** direct local authority carries no key, so the `401` is not an expired or wrong key, and the usual advice to sign in again would mislead.
-
-**Tests:** `device/contract.test.ts › explains a 401 through --socket as an operation that needs a key, with the credential exit`, `cli/instance.test.ts › explains a 401 through the private socket as an operation that needs a key, for streamed and plain commands`.
-
-### `device/local-socket-names-key-needs`
-
-If the server answers `401` to a request that a command sent through `--socket PATH`, then the CLI MUST say that item properties, edges, tags, search, counts, events and exports need a key, and that `items summaries`, `items bin`, the `blobs` commands, and `items bulk-action job` and `items bulk-action cancel` work through `--socket` without one.
-
-**Reason:** a person who ran a command that needs a key through the socket needs to know which commands the socket reaches before choosing a key, as `items/local-authority-content` and `search-and-filters/owner-read-boundary` set.
-
-**Tests:** `device/contract.test.ts › explains a 401 through --socket as an operation that needs a key, with the credential exit`, `cli/instance.test.ts › explains a 401 through the private socket as an operation that needs a key, for streamed and plain commands`.
-
-### `device/redeliver-request`
-
-When `webhooks redeliver <id> <delivery_id>` runs, the CLI MUST send one `POST /webhooks/{id}/deliveries/{delivery_id}/redeliver` using its selected credential or private socket and no body, each identifier encoded as a path segment of its own.
-
-**Reason:** the server decides from its current authority and retained deliveries whether to send again (`events/redeliver-current`).
-
-**Tests:** `device/contract.test.ts › posts redelivery with encoded ids and no body`, `› sends webhook reads and retries through the private socket`.
-
-### `device/credential-lock-unsafe`
-
-If the CLI's credential lock is not safe to use, then the CLI MUST refuse `invalid`, naming the credential lock, before it sends anything.
-
-**Tests:** `device/credential-locks.test.ts › refuses an unsafe credential lock across environment overrides before contacting the server`, `› refuses to keep a key under an unsafe credential lock, keeping nothing and sending nothing`, `› refuses a sign-in under an unsafe credential lock before asking for a code`.
-
-### `device/credential-lock-taken`
-
-While another process changes the credential kept for a server, as a refresh, `logout` or `keys forget` does, the CLI MUST keep no credential for that server through `login` or `keys keep` until that change ends.
-
-**Reason:** a credential written beside a refresh in another process would be overwritten by the refreshed one, or brought back after a logout.
-
-**Tests:** `device/credential-locks.test.ts › keeps a key only once another process has finished changing the kept credential`, `› keeps a sign-in's token only once another process has finished changing the kept credential`.
-
-### `device/credential-refresh-then-logout`
-
-If `logout` runs while another process refreshes the kept sign-in for the same server, then the CLI MUST revoke the refresh token that the refresh keeps.
-
-**Reason:** a revocation of the token the refresh replaced would leave the rotated one standing.
-
-**Tests:** `device/credential-locks.test.ts › revokes the token a refresh under way keeps, when a sign-out waits on it`.
-
-### `device/credential-logout-then-refresh`
-
-If a refresh of a kept sign-in starts while `logout` for the same server runs in another process, then the CLI MUST NOT refresh or keep again the sign-in that `logout` forgets.
-
-**Reason:** a refresh that read the credential before the logout ended would bring back a sign-in the person ended.
-
-**Tests:** `device/credential-locks.test.ts › brings back no sign-in a sign-out under way forgets, when a refresh waits on it`.
-
-### `device/command-logout-forgets`
-
-When `logout` signs out of a kept sign-in, the CLI MUST forget the kept token, whether or not the server takes its revocation.
-
-**Tests:** `device/credential-locks.test.ts › reports a sign-out the server did not revoke as revoked: false, and forgets the token either way`.
-
-### `device/command-logout-not-revoked`
-
-If `logout` signs out of a sign-in that kept no revocation endpoint, or whose revocation the server refuses or cannot be reached for, then the CLI MUST report `revoked: false`.
-
-**Reason:** a sign-out that claimed a revocation it never had would leave a person believing a token is dead while it stands until it expires.
-
-**Tests:** `device/credential-locks.test.ts › reports a sign-out the server did not revoke as revoked: false, and forgets the token either way`.
-
-### `device/command-keys-forget-offline`
-
-When `keys forget` runs, the CLI MUST forget the credential kept for the server without sending a request.
-
-**Reason:** a credential is often forgotten for a server that is gone.
-
-**Tests:** `device/credential-locks.test.ts › forgets a kept key without sending anything`.
-
-### `device/command-keys-keep-checks-current-key`
-
-When `keys keep` is given a key, the CLI MUST check the key with `GET /keys/current` and no other request before it keeps the key.
-
-**Reason:** every key may read itself, whatever permissions and types it holds (`keys-and-oauth/current-key`). A check through an item route would refuse a key that holds only permissions, which works from `MARFA_API_KEY` all the same (`keys-and-oauth/permissions-no-content`).
-
-**Tests:** `device/credential-locks.test.ts › keeps a key that reaches no type, checking it with the key's own read and nothing else`.
-
-### `device/command-keys-keep-keeps-key-without-type`
-
-When the server answers `GET /keys/current` to a key that reaches no type, the CLI MUST keep the key for the server.
-
-**Tests:** `device/credential-locks.test.ts › keeps a key that reaches no type, checking it with the key's own read and nothing else`.
-
-### `device/command-keys-keep-refuses-spent-key`
-
-If the server answers the check of `keys keep` `401 unauthorized`, as it does for a key that is revoked, expired or unknown, then the CLI MUST keep nothing and exit 5.
-
-**Tests:** `device/credential-locks.test.ts › keeps nothing of $name, refusing it with exit $exit`.
-
-### `device/command-keys-keep-refuses-access-token`
-
-If the server answers the check of `keys keep` `403 forbidden`, as it does for an app's access token (`keys-and-oauth/current-key-app`), then the CLI MUST keep nothing and refuse it `invalid` with exit 1, saying the credential is not a key.
-
-**Reason:** an access token ends within the hour, and `login` keeps a sign-in that renews it.
-
-**Tests:** `device/credential-locks.test.ts › keeps nothing of $name, refusing it with exit $exit`.
-
-### `device/command-keys-keep-refuses-wrong-server`
-
-If the answer to the check of `keys keep` names another contract than the CLI was built for or none, then the CLI MUST keep nothing and refuse it as it refuses any such answer (`device/command-contract-mismatch`, `device/command-unnamed-refusal`).
-
-**Tests:** `device/credential-locks.test.ts › keeps no key for $name, refusing it with exit $exit`.
-
-### `device/command-keychain-unreadable`
-
-If no server is named by `--url`, `MARFA_API_URL` or a key, and the keychain that holds the current server cannot be read, then the CLI MUST report it `no_keychain` with exit 4, keeping the keychain's own reason, except for a command that runs on held bytes alone.
-
-**Reason:** `no_server` tells a person to name a server, which does not help when a server is kept but a locked, missing or unreadable keychain hides it. While the keychain is off, or holds no current server, nothing is kept and `no_server` with exit 2 is right. `folders pull`, `folders restore` and `device blobs get` need no server for the bytes they hold, and over SSH on a Mac, where there is no default keychain, refusing them would stop work that needs no credential, so they run on what the device holds.
-
-**Tests:** `device/contract.test.ts › reports a keychain that cannot be read as itself, not as no server named`, `device/contract.test.ts › runs a command on held bytes alone when the keychain cannot be read`.
-
-### `device/command-events-refuses-cursor`
-
-If the stream that `events` reads sends a `cursor_ahead` or `catchup_too_old` frame (`events/cursor-ahead`, `events/catchup-too-old`), then the CLI MUST end the command `invalid` with exit 1, saying the cursor is not one the server's log holds.
-
-**Reason:** the server answers `200` and ends the stream with the frame, so the status of the answer says nothing of the refusal, and a script that reads only the exit status would take a refused cursor for a stream that ended well.
-
-**Tests:** `device/contract.test.ts › refuses a cursor the stream ends with $name for, with exit 1 and the envelope on standard error`.
-
-### `device/command-events-prints-refusing-frame`
-
-When the CLI ends `events` for a `cursor_ahead`, `catchup_too_old` or `stream_incomplete` frame, the CLI MUST print the frame it read on standard output before it ends.
-
-**Tests:** `device/contract.test.ts › refuses a cursor the stream ends with $name for, with exit 1 and the envelope on standard error`, `device/contract.test.ts › ends the command on a stream_incomplete frame for $reason with exit $exit, printing the frame`.
-
-### `device/command-events-refuses-incomplete`
-
-If the stream that `events` reads sends a `stream_incomplete` frame whose `reason` is not `credential_ended` (`events/incomplete-closes`), then the CLI MUST end the command `stream_incomplete` with exit 3.
-
-**Reason:** the stream can no longer deliver what it opened with, and the answer's status says nothing of it. A script that reads only the exit status would take a stream that stopped early for one that ended well. Exit 3 tells it to follow again from the frame's `cursor`.
-
-**Tests:** `device/contract.test.ts › ends the command on a stream_incomplete frame for $reason with exit $exit, printing the frame`.
-
-### `device/command-stream-credential-ended`
-
-If the stream that a command reads sends a `stream_incomplete` frame whose `reason` is `credential_ended` (`events/credential-revoked`), then the CLI MUST end the command `unauthorized` with exit 5, whichever command reads the stream.
-
-**Reason:** the key or token that held the stream has ended, so reading again with it will not work. Exit 5 says to get a new credential, where exit 3 would send a script to retry. One place decides it, so `events`, `hydrate` and `catch-up` agree.
-
-**Tests:** `device/contract.test.ts › ends the command on a stream_incomplete frame for $reason with exit $exit, printing the frame`, `device/cli-outcomes.test.ts › ends $command on a stream_incomplete frame for credential_ended with exit 5`.
-
-### `device/command-events-frame-name-decides`
-
-If a `cursor_ahead`, `catchup_too_old` or `stream_incomplete` frame that `events` reads carries no data, or data that is not JSON, then the CLI MUST end the command as it does for the frame with its data, with the details the data would have named reported as unknown.
-
-**Reason:** the frame's name alone says the stream is over, so a frame the CLI cannot read must not read as a stream that ended well.
-
-**Tests:** `device/contract.test.ts › ends the command on a $event frame whose data is $data as it does for the frame with its data`.
-
-### `device/command-cleartext-warning`
-
-If the CLI is about to send a key or a token to an `http` address whose host is not `localhost`, an address in `127.0.0.0/8` or `::1`, and neither `--allow-http` nor `MARFA_ALLOW_HTTP` states that it is intended, then the CLI MUST print a warning that names the address on standard error before it sends the credential.
-
-**Reason:** a credential sent over plain `http` can be read by anyone on the path, and the owner may not have noticed the scheme of the address that was named.
-
-**Tests:** `cli/cleartext.test.ts › warns before it sends a key to a plain http address on another host, and then sends it`, `› warns before a working copy sends a key to a plain http address on another host`.
-
-### `device/command-cleartext-sends`
-
-When the CLI has printed the plain `http` warning, the CLI MUST go on to send the request.
-
-**Reason:** an owner's private network may already be encrypted below the address, so the warning informs and does not refuse.
-
-**Tests:** `cli/cleartext.test.ts › warns before it sends a key to a plain http address on another host, and then sends it`.
-
-### `device/command-cleartext-sign-in`
-
-If `login` is given an `http` address whose host is not `localhost`, an address in `127.0.0.0/8` or `::1`, and neither `--allow-http` nor `MARFA_ALLOW_HTTP` states that it is intended, then the CLI MUST print a warning that names the address on standard error before it sends a request to it.
-
-**Reason:** a sign-in sends a device code and receives tokens, and the person types a password on the address's sign-in page.
-
-**Tests:** `cli/cleartext.test.ts › warns before a sign-in sends anything to a plain http address on another host`.
-
-### `device/login-code-ended`
-
-If the server answers the poll of the device code that `login` waits on with `invalid_grant` or `expired_token`, then the CLI MUST end the sign-in with `device_code_ended` and exit 3, saying in its message that the code is no longer valid and to run `marfa login` again.
-
-**Reason:** the server removes an unentered device code when 1000 newer ones are held (`keys-and-oauth/device-code-unentered-bound`), and answers one that ran out `expired_token`. A new `login` can succeed where the same code cannot, so the refusal is not one a retry fails to change (exit 1).
-
-**Tests:** `cli/login.test.ts › ends a login whose device code the server removed with exit 3, saying to run marfa login again`, `› ends a login whose device code ran out with exit 3, saying to run marfa login again`.
-
-### `device/command-cleartext-loopback`
-
-Where the address of the server is `http` and its host is `localhost`, an address in `127.0.0.0/8` or `::1`, the CLI MUST NOT print the plain `http` warning.
-
-**Reason:** a request to this machine does not cross a network.
-
-**Tests:** `cli/cleartext.test.ts › prints no warning for a plain http address on this machine, which it reaches with the key`.
-
-### `device/command-cleartext-https`
-
-Where the address of the server is `https`, the CLI MUST NOT print the plain `http` warning.
-
-**Tests:** `cli/cleartext.test.ts › prints no warning for an https address, which it reaches`.
-
-### `device/command-loopback-no-proxy`
-
-When a command sends a request to `localhost`, an address in `127.0.0.0/8` or `::1`, the CLI MUST send it directly, whatever proxy the environment names, and that holds for a request made by following a redirect as for the first one.
-
-**Reason:** a proxy cannot reach this machine, and would be handed the request with its key, and one that cannot reach it makes the checks of `marfa server` report the wrong health. A redirect names a new destination, so the rule is applied to it again.
-
-**Tests:** `cli/key-and-files.test.ts › never goes through a proxy the environment names, and one to another host does`, `› is sent through the proxy or not by where it goes, each time`, `cli/server-status.test.ts › asks the server on this machine directly, whatever proxy the environment names`.
-
-### `device/command-redirect-no-credentials`
-
-If a command follows a redirect from the docs site or from a link to a blob that changes the scheme, the host or the port, then the CLI MUST send no `Authorization`, `Proxy-Authorization` or `Cookie` header and no header whose name starts with `X-Marfa-` on that request or on any later request of the command, whatever `MARFA_API_KEY` holds.
-
-**Reason:** the headers that say who is asking belong to the origin the command began at. An address that redirect names is another party's, and a later redirect back to the first origin does not make it the first one again.
-
-**Tests:** `cli/key-and-files.test.ts › is sent through the proxy or not by where it goes, each time`, `› leaves what names the caller behind when it goes to another host or port`.
-
-### `device/command-key-own-server`
-
-If `--url` names a server other than the one `MARFA_API_URL` names, `MARFA_API_KEY` is set and `--key` is not given, then the CLI MUST exit 2 with `usage` and send no request.
-
-**Reason:** the two variables are exported as a pair for one server, and the key must not go to another.
-
-**Tests:** `cli/key-and-files.test.ts › goes only to the server MARFA_API_URL names, and a --url for another server refuses`.
-
-### `device/command-output-owner-only`
-
-When a command writes to a file named by `--output`, the CLI MUST make the file readable and writable by its owner alone, whatever the umask.
-
-**Reason:** an export or a download holds what the key could read, and a file made under the usual umask is open to other accounts on the machine.
-
-**Tests:** `cli/key-and-files.test.ts › is readable by its owner alone whatever the umask, for an export and a download`.
-
-### `device/command-output-whole`
-
-If a transfer to a file named by `--output` ends before the whole answer arrives, or a blob's bytes do not hash to the digest asked for, then the CLI MUST end with any earlier file at that path unchanged and no partial file beside it.
-
-**Reason:** a person keeps the earlier file until a whole one replaces it.
-
-**Tests:** `cli/key-and-files.test.ts › replaces the file at --output only when the download arrives whole and matches its digest`.
-
-### `device/command-text-printable`
-
-When a command prints text a server holds, without `--json`, the CLI MUST print each control character and bidirectional formatting character in it as an escape sequence, a newline, a tab and an escape that starts a colour included, and add its own line breaks, columns and colour only around that text, and print two names that differ in any character as two different names.
-
-**Reason:** a title, a name or a message is text on the line it was printed on, and must not move the cursor, erase a line, retitle the window, reorder what follows it, start a row of its own or colour what follows it, and an object holding both of two names that differ only by such a character must not show one value for them.
-
-**Tests:** `cli/key-and-files.test.ts › prints no control or bidirectional character from a title, and --json is unchanged`, `› print no control or bidirectional character from a view's title`, `› stays on its own line, in its own column and uncoloured, in a list, the overview and a device's views`, `› says a key's label on the line of that key, however the label is written`, `› shows each as its own entry, with no control character on the terminal`.
-
-### `device/command-cleartext-allow-flag`
-
-Where `--allow-http` is given, the CLI MUST NOT print the plain `http` warning.
-
-**Tests:** `cli/cleartext.test.ts › prints no warning where --allow-http states it is intended, and sends the key`.
-
-### `device/command-cleartext-allow-env`
-
-Where `MARFA_ALLOW_HTTP` is set to `1`, `true`, `yes` or `on`, the CLI MUST NOT print the plain `http` warning.
-
-**Tests:** `cli/cleartext.test.ts › prints no warning where MARFA_ALLOW_HTTP states it is intended, and warns where it does not`.
-
-### `device/command-get-any-state`
-
-When `marfa items get` runs, the CLI MUST send `state=any`.
-
-**Reason:** a person reading an item by its id is asking for that item, the bin included.
-
-**Tests:** `cli/items.test.ts › takes a note through archive, the bin, restore, and the purge`.
-
-### `device/command-get-shows-state`
-
-When `marfa items get` prints an item whose state is not `active` without `--json`, the CLI MUST print its state in brackets, such as `[trashed]`.
-
-**Tests:** `cli/items.test.ts › takes a note through archive, the bin, restore, and the purge`.
-
-### `device/command-row-path`
-
-If the server refuses the one operation that `marfa rows put` or `marfa rows patch` sends, then the CLI MUST name the refused field by its path within the row, such as `values.amount`, in the message and in each `details.errors` path.
-
-**Reason:** the person wrote one row, not a batch, so `operations.0` names nothing they sent. `marfa rows write` sends a batch and keeps the server's paths.
-
-**Tests:** `cli/tables.test.ts › names the column of a refused put or patch, where a batch names the operation too`.
-
-### `device/command-row-no-operation`
-
-If the server refuses the one operation that `marfa rows put` or `marfa rows patch` sends, then the CLI MUST leave `details.operation` out of the refusal it prints.
-
-**Tests:** `cli/tables.test.ts › names the column of a refused put or patch, where a batch names the operation too`.
-
-### `device/command-row-keyed`
-
-When `marfa rows write`, `put`, `patch`, `delete` or `undo` is given `--idempotency-key`, the CLI MUST send the value as `Idempotency-Key` on the one request the command makes.
-
-**Reason:** a person or a script that sends a `patch`, a `delete` or an undo again after an answer it lost needs the server to answer the first one (`tables/rows-keyed-once`), and the command makes no key of its own because it cannot know the write is a retry.
-
-**Tests:** `cli/tables.test.ts › sends the key of a row write, so a repeat is answered from the record and writes once`.
-
-### `device/command-row-unkeyed`
-
-When `marfa rows write`, `put`, `patch`, `delete` or `undo` is not given `--idempotency-key`, the CLI MUST NOT send an `Idempotency-Key`.
-
-**Tests:** `cli/tables.test.ts › sends the key of a row write, so a repeat is answered from the record and writes once`.
-
-## Profiles
-
-A profile is a section of `profiles.toml`, a file a person writes by hand, that names a server and where its key comes from. It is not the owner's profile (`GLOSSARY.md`).
-
-### `device/profile-file-place`
-
-The CLI MUST read profiles from `Library/Application Support/Marfa/profiles.toml` under `HOME` on macOS, and elsewhere from `marfa/profiles.toml` under `XDG_CONFIG_HOME`, or under `HOME/.config` where `XDG_CONFIG_HOME` is not set.
-
-**Tests:** `cli/profiles.test.ts › takes the server and key from --profile, reading none of the variables`.
-
-### `device/profile-flag-first`
-
-When `--profile NAME` is given, the CLI MUST take the server and the key from that profile and read none of `MARFA_API_URL`, `MARFA_API_KEY` and `MARFA_PROFILE`.
-
-**Reason:** a profile named on the command line is the most specific choice, and a variable exported for another server must neither redirect it nor lend it a key.
-
-**Tests:** `cli/profiles.test.ts › takes the server and key from --profile, reading none of the variables`.
-
-### `device/profile-flag-alone`
-
-If `--profile` is given with `--url` or `--key`, then the CLI MUST exit 2 with `usage` and send no request.
-
-**Tests:** `cli/profiles.test.ts › refuses --profile beside --url or --key`.
-
-### `device/profile-env-below-flags`
-
-When `--url` or `--key` is given, the CLI MUST NOT read `MARFA_PROFILE`.
-
-**Tests:** `cli/profiles.test.ts › reads no MARFA_PROFILE beside --url or --key`.
-
-### `device/profile-env-alone`
-
-If `MARFA_PROFILE` is set beside a `MARFA_API_URL` or `MARFA_API_KEY` that is not empty, and none of `--profile`, `--url` and `--key` is given, then the CLI MUST exit 2 with `usage` and send no request.
-
-**Reason:** any reading of the two together either sends one server's key to the other or picks a server the person did not mean.
-
-**Tests:** `cli/profiles.test.ts › refuses MARFA_PROFILE beside MARFA_API_URL or MARFA_API_KEY, sending nothing`.
-
-### `device/profile-key-own-server`
-
-The CLI MUST NOT send a profile's key to any server but the one the profile names.
-
-**Tests:** `cli/profiles.test.ts › takes the server and key from --profile, reading none of the variables`, `› refuses MARFA_PROFILE beside MARFA_API_URL or MARFA_API_KEY, sending nothing`.
-
-### `device/profile-no-other-key`
-
-While a profile names the server, the CLI MUST NOT send that server any key but the profile's.
-
-**Tests:** `cli/profiles.test.ts › sends a profile's server no key but the profile's`.
-
-### `device/profile-key-command-key`
-
-When a profile's key command exits 0 having printed one line, the CLI MUST send that line, without the white space around it, as the profile's key.
-
-**Tests:** `cli/profiles.test.ts › takes the server and key from --profile, reading none of the variables`.
-
-### `device/profile-key-command-argv`
-
-When the CLI runs a profile's key command, the CLI MUST run the program and arguments the profile lists, without a shell.
-
-**Reason:** a shell would read quotes, variables and separators in the arguments, so a value meant literally would run as a command.
-
-**Tests:** `cli/profiles.test.ts › runs the key command once in a run, as an argument list without a shell, with no standard input`.
-
-### `device/profile-key-command-stdin`
-
-When the CLI runs a profile's key command, the CLI MUST give it no standard input.
-
-**Reason:** the CLI's standard input can carry a body or a key meant for the command the person ran.
-
-**Tests:** `cli/profiles.test.ts › runs the key command once in a run, as an argument list without a shell, with no standard input`.
-
-### `device/profile-key-command-once`
-
-The CLI MUST run a profile's key command at most once in a run.
-
-**Reason:** a key command can ask the person to approve it, and a run sends many requests.
-
-**Tests:** `cli/profiles.test.ts › runs the key command once in a run, as an argument list without a shell, with no standard input`.
-
-### `device/profile-key-command-failed`
-
-If a profile's key command cannot be started, exits other than 0, is ended by a signal, stops or starts a program that stops, as reading from or writing to the terminal makes it, prints nothing, prints more than one line, prints more than 16 KiB or prints text that is not UTF-8, then the CLI MUST exit 5 with `key_command` and send no request that carries a key.
-
-**Reason:** the key command runs in a process group of its own, so a terminal that it, or a program it starts, reads or writes stops that process with `SIGTTIN` or `SIGTTOU`, and no one is there to continue it. A shell running a pipeline waits on a stopped program for ever.
-
-**Tests:** `cli/profiles.test.ts › refuses a key command that fails with key_command and exit 5, sending nothing and showing none of its output`.
-
-### `device/profile-key-command-names`
-
-If the CLI refuses a profile's key command, then the CLI MUST name the profile and the program in the message.
-
-**Tests:** `cli/profiles.test.ts › refuses a key command that fails with key_command and exit 5, sending nothing and showing none of its output`.
-
-### `device/profile-key-command-quiet`
-
-If the CLI refuses a profile's key command, then the CLI MUST NOT print anything the command printed on its standard output.
-
-**Reason:** what a failing key command printed may be the key, or part of it.
-
-**Tests:** `cli/profiles.test.ts › refuses a key command that fails with key_command and exit 5, sending nothing and showing none of its output`.
-
-### `device/profile-file-writable`
-
-If the profile file, or the folder that holds it, can be written by anyone but its owner, through its group or other mode bits or, on macOS, through an allow entry of its access control list, then the CLI MUST exit 2 with `usage` and print nothing the file holds.
-
-**Reason:** whoever can change the file can name a key command, which the CLI runs as the person.
-
-**Tests:** `cli/profiles.test.ts › refuses a profile file or folder others can write, or a field it does not know, never showing what the file holds`.
-
-### `device/profile-unknown-field`
-
-If a profile in the file holds a field the CLI does not know, then the CLI MUST exit 2 with `usage` and print no value from the file.
-
-**Reason:** a misspelled `key_command` would otherwise leave the profile taking its key from the keychain unseen.
-
-**Tests:** `cli/profiles.test.ts › refuses a profile file or folder others can write, or a field it does not know, never showing what the file holds`.
-
-### `device/command-write-line`
-
-When a command is about to send a server, with a key or without one, or the private socket that `--socket` names, the first request in its run that can change data, the CLI MUST first print `marfa: writing to <origin>` on standard error as one plain line, with `unix:<path>` as the origin of the socket, followed by ` (profile <name>)` where a profile named that server.
-
-**Reason:** a person or an agent with a test server and a real one sees which one a write goes to before it is made.
-
-**Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, under --json too, and nothing for a read`.
-
-### `device/command-read-no-line`
-
-When a command sends a server only requests that change no data, including a read sent as `POST` and each step of signing in (registering the client, asking for a device code, asking for a token, refreshing it and revoking it), the CLI MUST NOT print `marfa: writing to`.
-
-**Reason:** signing in changes no data the server holds, so the line would warn of a write that is not made.
-
-**Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, under --json too, and nothing for a read`, `cli/login.test.ts › signs in with a device code approved in a browser session, and the token reaches the data plane`.
-
-### `device/command-json-refusal-last`
-
-While `--json` is given, if a command is refused, then the CLI MUST print the refusal as one JSON object on the last line of standard error, after any plain line such as a warning or the line of `device/command-write-line`.
-
-**Tests:** `cli/profiles.test.ts › names the server and profile on stderr before the first write, under --json too, and nothing for a read`.
-
-### `device/command-json-refusal-members`
-
-While `--json` is given, if a command is refused, then the CLI MUST give the refusal object an `exit` member and an `error` member holding `code`, `message`, `server`, `local` and `retry_after_seconds`.
-
-**Tests:** `cli/exits.test.ts › leaves by 1 when the server refuses, carrying the server's answer`, `› names no server in a refusal the working copy made itself, and the code it gave it`.
-
-### `device/command-json-server-answered`
-
-If a server answered the request a command is refused for, then the CLI MUST give the refusal's `server` member the answer's `status`, `code` and `details` as the server sent them, whatever code the CLI names the refusal by.
-
-**Reason:** a script reads `server` to learn what the server said, such as the `401` behind a `copy_expired` or an `unauthorized` that ended a watch, and the member holds only what a server sent.
-
-**Tests:** `cli/exits.test.ts › leaves by 1 when the server refuses, carrying the server's answer`, `› reports a server's refusal to a device command in server, with no local code`, `› carries the server's own 401 beside the copy_expired a refused key ends a hydration with`, `device/refusal-answers.test.ts › names the answer behind a copy a hydration expired, with the details the server sent`.
-
-### `device/command-json-server-null`
-
-If a command is refused without a server having answered the request, then the CLI MUST set the refusal's `server` member to `null`.
-
-**Reason:** a refusal the working copy makes itself says nothing of the server, and a script that read a status from it would conclude the server was asked.
-
-**Tests:** `cli/exits.test.ts › names no server in a refusal the working copy made itself, and the code it gave it`.
-
-### `device/command-json-local-code`
-
-If the working copy names a refusal by a code that no server sent for it, then the CLI MUST give the refusal's `local` member that `code` and its `details`.
-
-**Reason:** the code says why the copy refused, such as `not_held` for an item outside it, or `credential_refused` for a watch that stopped after the server refused its key, and has no place in `server`, which holds only a server's words.
-
-**Tests:** `cli/exits.test.ts › names no server in a refusal the working copy made itself, and the code it gave it`.
-
-### `device/command-json-local-null`
-
-If a refusal carries no code of the working copy's own beyond the code a server sent, then the CLI MUST set the refusal's `local` member to `null`.
-
-**Tests:** `cli/exits.test.ts › reports a server's refusal to a device command in server, with no local code`.
-
-### `device/refusal-server-answered`
-
-If a server answered the request a call is refused for, then a device MUST carry the answer's `status`, `code` and `details` as the refusal's `server` member, whatever code it names the refusal by.
-
-**Reason:** the member is what an app reads to tell the server's word from the device's own, and the same answer reads the same through the command line and a binding.
-
-**Tests:** `device/refusal-answers.test.ts › names the answer behind a copy a hydration expired, with the details the server sent`, `› names the answer a server gave a refused read of its types`, `› names the answer a server gave for a folder it does not hold, where a folder is added`, `device/folders-contract-a.test.ts › names the answer a server gave when it accepts a settings edit and then does not return the folder`.
-
-### `device/refusal-server-absent`
-
-If no server answered the request a call is refused for, then a device MUST carry no `server` member on the refusal.
-
-**Reason:** an app that read a status from a refusal the working copy made on its own would conclude that the server was asked.
-
-**Tests:** `device/refusal-answers.test.ts › carries no server answer on a refusal the copy made without asking`.
-
-### `device/profile-socket-refused`
-
-If `--profile`, or a `MARFA_PROFILE` that is not empty, is given with `--socket`, then the CLI MUST exit 2 with `usage`.
-
-**Tests:** `cli/profiles.test.ts › refuses --profile and MARFA_PROFILE beside --socket, and --profile on server commands`.
-
-### `device/profile-server-command-refused`
-
-If a `marfa server` command is given `--profile`, then the CLI MUST exit 2 with `usage`.
-
-**Reason:** the command runs Docker on this machine and contacts no Marfa server, so a person who gave a profile would believe it was used.
-
-**Tests:** `cli/profiles.test.ts › refuses --profile and MARFA_PROFILE beside --socket, and --profile on server commands`.
-
-### `device/profile-keychain-commands`
-
-Where a profile has a key command, if `login` without `--print-token`, `logout`, `keys keep` or `keys forget` is given that profile, then the CLI MUST exit 2 with `usage`.
-
-**Reason:** the profile never reads the keychain, so the command would change nothing the profile uses.
-
-**Tests:** `cli/profiles.test.ts › refuses keychain commands for a profile whose key comes from a key command`.
-
-### `device/whoami-profile`
-
-When `whoami` runs with a profile, the CLI MUST report the profile's name as `profile`.
-
-**Tests:** `cli/profiles.test.ts › takes the server and key from --profile, reading none of the variables`.
-
-### `device/whoami-key-command`
-
-When `whoami` runs with a profile that has a key command, the CLI MUST report `key_command` as the credential's `from`.
-
-**Tests:** `cli/profiles.test.ts › takes the server and key from --profile, reading none of the variables`.
 
 ## The working copy's contract
 
@@ -4170,18 +3292,6 @@ When a held stream is told to stop, a device MUST end it at once, even while a s
 
 **Tests:** `device/catch-up.test.ts › ends a follow at once when stopped while its stream is still being asked for`.
 
-### `device/command-follow-interrupted`
-
-When `follow` is interrupted, the CLI MUST end it with its report, as when its time is up.
-
-**Tests:** `device/catch-up.test.ts › prints its report when interrupted, as it does when its time is up`.
-
-### `device/command-follow-reader-gone`
-
-When the reader of `follow`'s output has gone, the CLI MUST end the follow.
-
-**Tests:** `device/catch-up.test.ts › ends a follow whose reader has gone, rather than going on untold`.
-
 ### `device/follow-unreachable`
 
 If a held stream cannot be had for a reason that clears on its own, then a device MUST tell its caller `server.unreachable` once, with why and naming no item and no edge, however many attempts follow.
@@ -4436,14 +3546,6 @@ While a watch has failed, a device MUST NOT hold a stream for it until a hydrati
 
 **Tests:** `device/binding-watch-calls.test.ts › holds no stream for a failed watch until a catch-up has ended, and holds one then`.
 
-### `device/command-watch-failed`
-
-If a watch fails, then the CLI MUST end `watch` with the error that failed it.
-
-**Reason:** no hydration or catch-up in the command's own process would start the watch again.
-
-**Tests:** `device/watch.test.ts › tells the server is reachable when the stream ends on the server's own answer, then that it failed`.
-
 ### `device/watch-takeover`
 
 When a hydration or a catch-up is called on a working copy that has a watch, a device MUST take the stream from the watch for the call, without its caller stopping the watch.
@@ -4507,14 +3609,6 @@ While a device holds a watch of a store opened to read, a device MUST tell each 
 **Reason:** a reader that polls tells saves made within one poll once, and a listener that joined after a save read its version when it joined.
 
 **Tests:** `device/watch.test.ts › tells a reading handle each save another process makes`, `device/reader-watch-live.test.ts › tells a never-hydrated reader about a concurrent save without a hydration warning or server contact`.
-
-### `device/reader-watch-no-hydration-hint`
-
-While a store is opened to read, when a caller runs `device watch` before a first hydration, the CLI MUST omit the hint to hydrate first.
-
-**Reason:** a reader watches local saves without holding the writer handle or asking the server, so hydration is not needed.
-
-**Tests:** `device/reader-watch-live.test.ts › tells a never-hydrated reader about a concurrent save without a hydration warning or server contact`.
 
 ### `device/watch-reads-failed`
 
@@ -4604,21 +3698,9 @@ If a device is asked to open a store to read at a path where no store has been m
 
 **Tests:** `device/working-copy.test.ts › opens a store to read without claiming the writer role, and is told when it saves`, `device/cli-outcomes.test.ts › reports an absent reading store: %j`.
 
-### `device/command-reader-no-store`
-
-If a command opens a store to read at a path where no store has been made, then the CLI MUST refuse it `no_store` with exit 2.
-
-**Tests:** `device/cli-outcomes.test.ts › reports an absent reading store: %j`, `device/working-copy.test.ts › opens a store to read without claiming the writer role, and is told when it saves`.
-
-### `device/command-reader-not-a-store`
-
-If a command opens a store to read at a path that holds a file that is not a store, then the CLI MUST NOT refuse it `no_store`.
-
-**Tests:** `device/cli-outcomes.test.ts › reports an absent reading store: %j`.
-
 ### `device/wrong-schema`
 
-If a store records another schema version than the one this build makes, then a device MUST refuse every open of it to read, and every open of it as a writer that does not upgrade it (`device/schema-upgrade`), `wrong_schema` before it reads anything, naming the store's path, unless the open replaces a folder's store (`folders/refused-store-replaced`).
+If a store records another schema version than the one this build makes, then a device MUST refuse every open of it to read, and every open of it as a writer that does not upgrade it (`device/schema-upgrade`), `wrong_schema` before it reads anything, naming the store's path, unless the open replaces a folder's store (`folder-setup/refused-store-replaced`).
 
 **Reason:** a store outlives the app that made it, and a build reads only the shape its own version names. A store that records no version is one an earlier build made.
 
@@ -4846,12 +3928,6 @@ If a store's writer lock file cannot be written when a device opens the store to
 
 **Tests:** `device/working-copy.test.ts › refuses to open for writing a store whose lock file cannot be written, and still reads it`.
 
-### `device/command-writer-lock-unwritable`
-
-If a command opens a store to write and its writer lock file cannot be written, then the CLI MUST exit 4.
-
-**Tests:** `device/working-copy.test.ts › refuses to open for writing a store whose lock file cannot be written, and still reads it`.
-
 ### `device/reader-lock-unwritable`
 
 While a store's writer lock file cannot be written, a device MUST open the store to read.
@@ -4887,20 +3963,6 @@ If a store holds an index entry out of step with its row, then a device MUST ref
 **Reason:** a copy taken while the store was written can leave one. Each page reads, so only a check of each index against its rows finds it, and a write that meets it is refused. A check that read such a store as whole would leave a person no way to set it aside.
 
 **Tests:** `device/damaged-store.test.ts › refuses a store whose index is out of step with its rows store_damaged, naming it, and sets it aside`.
-
-### `device/store-damaged-names`
-
-When the CLI refuses a store `store_damaged`, the CLI MUST name the store's path.
-
-**Reason:** damage met part way through a read does not know which file it is in. The CLI names the store it was given, and an app asks the binding to check the store, which names it.
-
-**Tests:** `device/damaged-store.test.ts › refuses a damaged store store_damaged, naming it and the writes its queue holds, and leaves it as it was`.
-
-### `device/store-damaged-says`
-
-When the CLI refuses a store `store_damaged`, the CLI MUST say how many writes its queue holds that the server has not taken, waiting, blocked, refused or dead, or that its queue cannot be read whole.
-
-**Tests:** `device/damaged-store.test.ts › refuses a damaged store store_damaged, naming it and the writes its queue holds, and leaves it as it was`, `› says a damaged store's queue cannot be read whole where its rows do not read`.
 
 ### `device/store-damaged-kept`
 
@@ -5101,24 +4163,6 @@ If a device is asked to replace a refused store whose set-aside stopped part way
 **Reason:** a store made at the path would hide the writes the stopped set-aside carried.
 
 **Tests:** `device/binding-remove-store.test.ts › refuses to remove or replace a store whose set-aside stopped part way, until a set-aside finishes it`.
-
-## Where a store is made
-
-### `device/command-makes-store`
-
-When `hydrate` or `status` names a path where no store has been made, the CLI MUST make a store there.
-
-**Reason:** the state report is how a caller learns that a hydration is owed before the first one.
-
-**Tests:** `device/working-copy.test.ts › makes a store only to hydrate or to report its state, and refuses a path with none to every other command`.
-
-### `device/command-no-store`
-
-If a `device` command other than `hydrate` and `status` names a path where no store has been made, then the CLI MUST refuse it `no_store` and leave the path as it found it.
-
-**Reason:** a read answered from a store made for a mistyped path is an empty copy that reads as a real one, and a write queued there is a queue nothing will drain.
-
-**Tests:** `device/working-copy.test.ts › makes a store only to hydrate or to report its state, and refuses a path with none to every other command`.
 
 ## Who may read a store
 
@@ -5642,7 +4686,7 @@ If the read that follows a write's answer fails, then a device MUST keep the ver
 
 ## Saving before a first sync
 
-### `device/save-before-sync`
+### `device/save-before-hydration`
 
 While its copy has never hydrated, a device MUST take a write, checked against the types the copy holds.
 
@@ -5650,25 +4694,25 @@ While its copy has never hydrated, a device MUST take a write, checked against t
 
 **Tests:** `device/save-before-sync.test.ts › saves a note against the types Marfa ships, shows it to a read, and queues it`.
 
-### `device/save-before-sync-queued`
+### `device/save-before-hydration-queued`
 
 While its copy has never hydrated, a device MUST queue each write it takes.
 
 **Tests:** `device/save-before-sync.test.ts › saves a note against the types Marfa ships, shows it to a read, and queues it`.
 
-### `device/save-before-sync-shown`
+### `device/save-before-hydration-shown`
 
 While its copy has never hydrated, a device MUST show a write it takes to a local read at once.
 
 **Tests:** `device/save-before-sync.test.ts › saves a note against the types Marfa ships, shows it to a read, and queues it`, `device/working-copy.test.ts › answers a read before any hydration from what the copy holds`.
 
-### `device/save-before-sync-library`
+### `device/save-before-hydration-library`
 
 While its copy has never hydrated, a device MUST hold a create that names no tier at the tier `library`.
 
 **Tests:** `device/save-before-sync.test.ts › saves a note against the types Marfa ships, shows it to a read, and queues it`, `device/save-before-sync-live.test.ts › sends what it saved with no server once it has joined, after registering the type the key may`.
 
-### `device/save-before-sync-joins`
+### `device/save-before-hydration-joins`
 
 When a copy that has never hydrated hydrates against a server, a device MUST keep its queue so the first drain sends it.
 
@@ -5974,12 +5018,6 @@ When a stop is raised during a hydration, a catch-up or a drain, a device MUST e
 
 **Tests:** `device/stop.test.ts › ends it between pages, leaving a copy marked partial and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
-### `device/command-stopped-exit`
-
-When a hydration, a catch-up or a drain that the CLI stopped on Ctrl-C ends `canceled`, the CLI MUST exit with status 3.
-
-**Tests:** `device/stop.test.ts › ends it between pages, leaving a copy marked partial and a queue that is as it was`, `› ends it while it waits on a stream, keeping the cursor it had`, `› ends it without waiting on the write in flight, which the next drain sends again under its key`.
-
 ### `device/stop-hydration-replacing`
 
 When a hydration that has begun replacing the copy is stopped, a device MUST leave a copy that reports its hydration `in_progress` until a hydration completes.
@@ -6034,20 +5072,6 @@ When a drain is stopped, a device MUST leave every write it had not sent queued 
 
 **Tests:** `device/stop.test.ts › ends it without waiting on the write in flight, which the next drain sends again under its key`.
 
-### `device/command-second-ctrl-c`
-
-When the CLI receives a second Ctrl-C before the call has stopped, the CLI MUST end the process at once with status 130.
-
-**Tests:** `device/stop.test.ts › ends the process on a second Ctrl-C, where a first one waits for the call to notice`.
-
-### `device/command-changes-interrupted`
-
-When `marfa device changes` is interrupted after it reports that it is watching, the CLI MUST end it with status 130.
-
-**Reason:** a helper that is told to stop is not one whose time ran out, which ends with status 0, and a caller tells the two apart by the status.
-
-**Tests:** `device/working-copy.test.ts › ends a changes helper with status 130 when interrupted, where one whose time is up ends with 0`.
-
 ### `device/stop-before-read-returns`
 
 When a stop is raised before an in-flight read returns, a device MUST end the hydration or the catch-up `canceled`, even where the read then fails.
@@ -6080,7 +5104,7 @@ When a stop ends a hydration, a catch-up, a drain or a read of the server's item
 
 ### `device/tag-bound`
 
-If a create, a tag add, a metadata replace, a file added with tags, or a folder's scan of a document's tags (`folders/document-name-refusal`) adds a tag that is empty, only Unicode `White_Space`, exactly `.` or `..`, or longer than 128 characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, a tag add, a metadata replace, a file added with tags, or a folder's scan of a document's tags (`folder-documents/document-name-refusal`) adds a tag that is empty, only Unicode `White_Space`, exactly `.` or `..`, or longer than 128 characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** a write the server refuses (`items/tag-text`, `items/tag-dot-segment`) stays in the queue until a drain, long after the person saved it, so the bound is held where the write is made.
 
@@ -6088,7 +5112,7 @@ If a create, a tag add, a metadata replace, a file added with tags, or a folder'
 
 ### `device/tag-count`
 
-If a create, a tag add, a metadata replace, a file added with tags, or a folder's scan of a document's tags (`folders/document-name-refusal`) names more than 100 tags, or would leave the item the copy shows more than 100 tags and more than it held, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, a tag add, a metadata replace, a file added with tags, or a folder's scan of a document's tags (`folder-documents/document-name-refusal`) names more than 100 tags, or would leave the item the copy shows more than 100 tags and more than it held, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** the server holds the same bound (`items/tags-count`), and a write it refuses would come back refused long after the person saved it.
 
@@ -6108,7 +5132,7 @@ When a write adds a tag the server takes, a device MUST take it and queue it, a 
 
 ### `device/property-name-empty`
 
-If a create, an edit or a folder's scan of a document (`folders/document-name-refusal`) names a property with no characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, an edit or a folder's scan of a document (`folder-documents/document-name-refusal`) names a property with no characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** the server refuses such a name on every write (`items/property-name-empty`), and a device that took it would hold an item the server never will.
 
@@ -6346,12 +5370,6 @@ If hydration is incomplete, or its copy is stale, then a device MUST refuse to e
 
 **Tests:** `device/views.test.ts › refuses a partially hydrated view's %s with hydration_incomplete instead of reporting partial totals`, `› refuses a stale copy's view %s with hydration_incomplete while the copy itself still answers`.
 
-### `device/view-cli-selection`
-
-When a caller narrows `device items list` or `device search` by a saved view, the CLI MUST accept `--view` and refuse `--folder` as an unknown option.
-
-**Tests:** `device/views.test.ts › accepts --view and refuses the removed --folder option`.
-
 ## Views written through a copy
 
 ### `device/view-write-at-once`
@@ -6478,7 +5496,7 @@ When a caller reads a folder the copy holds, a device MUST answer its state and 
 
 When a caller lists or searches in a folder, a device MUST answer the items of the query's types and their subtypes, in the tiers the query holds, in the states it names or `active` and `archived` where it names none, that its `filter` matches, and no `system.*` item.
 
-**Reason:** an app that shows a folder beside the folder on disk would otherwise show one set of items there and another in the files, with nothing to say which is right (`folders/search-match`).
+**Reason:** an app that shows a folder beside the folder on disk would otherwise show one set of items there and another in the files, with nothing to say which is right (`folder-setup/search-match`).
 
 **Tests:** `device/folder-settings-live.test.ts › lists and searches in a folder what the folder's query holds`.
 
@@ -6568,7 +5586,7 @@ If folder settings sent through a working copy carry a `filter` the listing gram
 
 If folder settings sent through a working copy name a default type or a default tier that the folder's query does not hold, then a device MUST refuse them `invalid` before anything is sent.
 
-**Reason:** a new file made with such a default would fall outside its own folder (`folders/default-search-refusal`), and the server takes the settings.
+**Reason:** a new file made with such a default would fall outside its own folder (`folder-documents/default-search-refusal`), and the server takes the settings.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings the server would refuse, or defaults its query would not hold, before anything is sent`.
 
@@ -7298,7 +6316,7 @@ Where a slice's tier is `all`, when a local edit, a drain's answer, a catch-up o
 
 ## Links and embeds in a body
 
-A body written through a working copy is read by the rule a folder reads a Markdown file's body by (`folders/body-reference` and `folders/embed-edge`). These rules say what a working copy does, which has no directory and no file record.
+A body written through a working copy is read by the rule a folder reads a Markdown file's body by (`folder-documents/body-reference` and `folder-documents/embed-edge`). These rules say what a working copy does, which has no directory and no file record.
 
 ### `device/body-edges`
 
@@ -7310,7 +6328,7 @@ When a create or an edit through a working copy changes an item's body, a device
 
 ### `device/body-field`
 
-A device MUST read an item's body from the property `folders/body-property` names: the type's `body_field`, or `body` for a type that names none.
+A device MUST read an item's body from the property `folder-documents/body-property` names: the type's `body_field`, or `body` for a type that names none.
 
 **Reason:** `core.event` keeps its body in `description`, so a link there is a link.
 
@@ -7358,7 +6376,7 @@ If a body's link names no item by an id the copy holds and no item the item alre
 
 ### `device/body-link-forms`
 
-When a body carries `[[name|shown]]` or `[[name#part]]`, a device MUST read the link as naming `name`, unless the whole text between the brackets names another item or is itself unsettled, which makes the link ambiguous (`folders/body-link-ambiguity`).
+When a body carries `[[name|shown]]` or `[[name#part]]`, a device MUST read the link as naming `name`, unless the whole text between the brackets names another item or is itself unsettled, which makes the link ambiguous (`folder-documents/body-link-ambiguity`).
 
 **Tests:** `device/body-edges-live.test.ts › reads an alias and a heading as the name before them, and a link in code as text`.
 
@@ -7424,7 +6442,7 @@ When a body's change names an edge, a device MUST queue the edge as a write of i
 
 When a body's link names an item only the server holds, a device MUST pin that item before it queues the edge.
 
-**Reason:** a copy holds no edge to an item it does not hold, and the pin lets the copy say offline what the link names, as a folder pins the other end of a line (`folders/edge-pin-held`).
+**Reason:** a copy holds no edge to an item it does not hold, and the pin lets the copy say offline what the link names, as a folder pins the other end of a line (`folder-documents/edge-pin-held`).
 
 **Tests:** `device/body-edges-live.test.ts › pins an item only the server holds before its edge is queued, and lets the pin go once no edge needs it`.
 
@@ -7446,7 +6464,7 @@ When a body names an edge of a type and ends the copy holds already, a device MU
 
 ### `device/body-edge-refused`
 
-If the server refuses a body's edge write, then a device MUST keep the refused write in the queue until it is discarded or a folder clears it (`folders/clears-satisfied-edge-refusal`, `folders/clears-repeated-edge-refusal`).
+If the server refuses a body's edge write, then a device MUST keep the refused write in the queue until it is discarded or a folder clears it (`folder-sync/clears-satisfied-edge-refusal`, `folder-sync/clears-repeated-edge-refusal`).
 
 **Reason:** a refused write is kept as any refused write is (`queue-and-verdicts/clear-keeps-content` and `queue-and-verdicts/discard-refused`).
 
@@ -7530,7 +6548,7 @@ When a caller reads an item's links and embeds, a device MUST answer from the co
 
 When a write takes a link or an embed out of a body, a device MUST queue the delete of the `references` edge the body named through it.
 
-**Reason:** taking a link out removes its edge as in a folder (`folders/body-link-removal`). The body before the write is read against the same edges as the body after it, so a link both carry reads alike in both and is never removed by an edit elsewhere in the body.
+**Reason:** taking a link out removes its edge as in a folder (`folder-files/body-link-removal`). The body before the write is read against the same edges as the body after it, so a link both carry reads alike in both and is never removed by an edit elsewhere in the body.
 
 **Tests:** `device/body-edges-live.test.ts › takes the edge with a link taken out, and leaves edges of another type and ones no body named`, `› makes an embed of an image and of a video, by name and by path, a references edge to the file`, `› agrees with a folder on the same item, and neither repeats the other's edge`.
 
@@ -7818,7 +6836,7 @@ When a caller asks for the links in a text, a device MUST answer without a worki
 
 When a caller asks what a link could name, a device MUST answer every item the copy holds outside the bin that the link's name answers to by id, title or file path, without regard to case or Unicode normalization form.
 
-**Reason:** an editor offers the items a link could name as it is typed, and as `folders/edge-name-normalization` reads a name. The CLI asks with `device items link-candidates`.
+**Reason:** an editor offers the items a link could name as it is typed, and as `folder-documents/edge-name-normalization` reads a name. The CLI asks with `device items link-candidates`.
 
 **Tests:** `device/link-parts.test.ts › lists every item a name answers to, without regard to case or Unicode form`, `› binds an id the copy holds, and lists no item the copy does not hold`.
 
@@ -7826,7 +6844,7 @@ When a caller asks what a link could name, a device MUST answer every item the c
 
 When a caller asks what a link with a heading or an alias could name, a device MUST answer the items its whole text answers to as well as those its name answers to.
 
-**Reason:** the whole text naming another item makes the link ambiguous (`folders/body-link-ambiguity`).
+**Reason:** the whole text naming another item makes the link ambiguous (`folder-documents/body-link-ambiguity`).
 
 **Tests:** `device/link-parts.test.ts › lists both readings where the whole text and the name before a mark each answer`.
 
@@ -7920,7 +6938,7 @@ When a device refuses a write to a `system.*` item `type_not_permitted`, a devic
 
 **Tests:** `device/local-refusals.test.ts › refuses an item write to a system item on every door, before it saves or queues anything`.
 
-### `device/system-folder-door`
+### `device/system-folder-refusal-message`
 
 When a device refuses a write to a `system.folder` item `type_not_permitted`, a device MUST name the folder operations in the refusal's message.
 
@@ -7999,276 +7017,6 @@ If a local list or search names a `type`, or a type list with an entry, that is 
 **Reason:** an empty page is the one answer a caller cannot tell from a type that holds nothing, so a mistyped name, a type registered under another handle and a type deleted since the copy last read the catalog would read as nothing here offline and fail only online, where the server refuses them (`search-and-filters/type-unknown`). The copy holds the server's whole registry whatever its key reads, so a registered type the key may not read is not refused here, and a wildcard is not refused, because what it names may be nothing (`search-and-filters/type-wildcard-none`). A copy answers by the catalog it last read: a type registered since is refused until the copy reads the catalog again.
 
 **Tests:** `device/local-refusals.test.ts › refuses a list or a search naming a type its catalog does not hold, as the server does`, `device/read-lists.test.ts › refuses the list for an entry it would refuse alone`.
-
-## The docs site
-
-`marfa docs` reads the public docs site, `https://docs.marfa.so` unless `MARFA_DOCS_URL` names another. The docs site is not a Marfa instance: the command needs no server, working copy or key to read it.
-
-### `device/docs-site`
-
-When `marfa docs` sends a request, the CLI MUST send it to the address in `MARFA_DOCS_URL` where that holds more than white space, whatever `MARFA_API_URL` holds.
-
-**Reason:** an agent can read the docs before it has a server, a working copy or a key.
-
-**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`.
-
-### `device/docs-paths`
-
-When `marfa docs` reads the docs site, the CLI MUST read a page from `/<path>.md`, a search from `/api/docs/search` and the list of pages from `/api/docs/topics`.
-
-**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`.
-
-### `device/docs-no-credential`
-
-When `marfa docs` sends a request to the docs site, the CLI MUST send no credential, whatever `MARFA_API_KEY` holds.
-
-**Reason:** the docs site has no keys, so a credential sent to it would reach a host that never asked for one.
-
-**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`.
-
-### `device/docs-no-contract`
-
-When the docs site answers `marfa docs` naming no contract, the CLI MUST read the answer.
-
-**Reason:** the docs site names no contract, so the check the CLI holds a server's answers to would refuse every page.
-
-**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`.
-
-### `device/docs-page-missing`
-
-If the docs site answers `404` for the page `marfa docs` is given, then the CLI MUST exit 1 with `docs_page_not_found`, naming the path.
-
-**Reason:** a retry does not change a missing page. The message points to `marfa docs search`, where an agent that guessed a path can find the page it meant.
-
-**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`, `› names the page a docs site does not hold, and the site that answers with a fault`.
-
-### `device/docs-unreachable`
-
-If the docs site cannot be reached, or answers with a server fault or a status the CLI does not read, then the CLI MUST exit 3 with `docs_unreachable`, naming the site's address.
-
-**Reason:** a refused connection, a read that timed out and a `5xx` are statements about the environment rather than about the page asked for, and clear without anybody doing anything.
-
-**Tests:** `device/contract.test.ts › reads the docs site, which names no contract and is sent no credential`, `› names the page a docs site does not hold, and the site that answers with a fault`.
-
-### `device/docs-page-names`
-
-When `marfa docs` is given a page by its path, with or without leading and trailing slashes, a leading `docs/`, a trailing `.md`, a query or a fragment, or by the whole `http` or `https` address of the page, the CLI MUST read the one page at `/<path>.md`.
-
-**Tests:** `device/contract.test.ts › reads one docs page however it is named: with a slash, under docs/, with .md, or by its address`.
-
-### `device/docs-search-miss`
-
-When `marfa docs search` receives no hit and `--json` is not given, the CLI MUST print that no page matches, then the titles and paths of the pages whose title, path or description hold words of the query when the docs site lists any, then the line "`marfa docs topics` lists every page.", and exit 0.
-
-**Reason:** an agent that searched for a word the docs do not use has no next step in a bare "no match". A site that cannot list its pages still gets the plain miss, because the search itself succeeded.
-
-**Tests:** `device/contract.test.ts › helps a docs search that finds nothing, and reads one section of a page`.
-
-### `device/docs-search-miss-json`
-
-Where `--json` is given, when `marfa docs search` receives no hit, the CLI MUST print the answer of the docs site and send no request to `/api/docs/topics`.
-
-**Reason:** the answer of a search keeps one shape whether or not it found something, and a script reading it asked for nothing else.
-
-**Tests:** `device/contract.test.ts › helps a docs search that finds nothing, and reads one section of a page`.
-
-### `device/docs-section`
-
-When `marfa docs` is given a page and `--section` with the text or the anchor of one of the page's Markdown headings, in any case, the CLI MUST print the page from that heading up to the next heading of the same depth or a higher one, and where `--json` is given, report that text in `markdown` and the heading asked for in `section`.
-
-**Reason:** the changelog is longer than any agent needs to read to learn what one command does, and the site needs no change because the page is cut where it is read.
-
-**Tests:** `device/contract.test.ts › helps a docs search that finds nothing, and reads one section of a page`.
-
-### `device/docs-section-missing`
-
-If the page `marfa docs` is given has no heading named by `--section`, then the CLI MUST exit 1 with `docs_section_not_found`, naming the page and listing the page's headings.
-
-**Reason:** a retry does not change a heading the page lacks, and the list is the next step for an agent that guessed the wording.
-
-**Tests:** `device/contract.test.ts › helps a docs search that finds nothing, and reads one section of a page`.
-
-### `device/docs-json-refused`
-
-If the docs site answers a success to `marfa docs search` with anything but a JSON object whose `hits` is an array of hits that each carry a `title` and a `url`, or to `marfa docs topics` with anything but a JSON object whose `pages` is an array of pages that each carry a `title` and a `url`, then the CLI MUST exit 3 with `decoding`, printing nothing to standard output.
-
-**Reason:** an answer the CLI cannot read is not a refusal and not a lost connection, and printing it would pass a proxy's or a catch-all page's words off as the docs.
-
-**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs search or topics answer that is not the JSON read, printing none of it`.
-
-### `device/docs-html`
-
-If the docs site answers a page `marfa docs` asked for as `text/html`, then the CLI MUST exit 3 with `decoding`, printing nothing to standard output.
-
-**Reason:** a site's catch-all page is never the page asked for.
-
-**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs page served as HTML, printing none of it`.
-
-### `device/docs-too-large`
-
-If the body of a success the docs site answers `marfa docs` with is larger than 10 MiB, which is 10,485,760 bytes, then the CLI MUST exit 3 with `decoding`, printing nothing to standard output.
-
-**Reason:** a page or the list of pages is far smaller, so a body that large is not what the CLI asked for, and a retry does not change it. It is not `docs_unreachable`, which says the site may answer next time.
-
-**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs answer larger than the command reads`.
-
-### `device/docs-not-utf8`
-
-If the body of a success the docs site answers `marfa docs` with is not UTF-8, then the CLI MUST exit 3 with `decoding`, printing nothing to standard output.
-
-**Tests:** `device/contract.test.ts › exits 3 with decoding for a docs page that is not UTF-8`.
-
-### `device/docs-redirect-followed`
-
-When the docs site answers a request of `marfa docs` with a redirect that is no more than the fifth in a row, the CLI MUST follow it.
-
-**Reason:** the docs site may move a page, and the CLI sends no credential for a redirect to carry to another host. A working copy follows no redirect from a server (`device/redirect-not-followed`).
-
-**Tests:** `device/contract.test.ts › follows up to five redirects in a row from the docs site, and exits 3 with docs_unreachable past that`.
-
-### `device/docs-redirect-loop`
-
-If the docs site answers more than five redirects in a row to one request of `marfa docs`, then the CLI MUST exit 3 with `docs_unreachable`.
-
-**Reason:** more than five redirects in a row is a loop, which is the site failing.
-
-**Tests:** `device/contract.test.ts › follows up to five redirects in a row from the docs site, and exits 3 with docs_unreachable past that`.
-
-### `device/docs-json-url`
-
-Where `--json` is given, when `marfa docs` reads a page, the CLI MUST report in `url` the address it asked for, whether or not a redirect led it to another.
-
-**Tests:** `device/contract.test.ts › reports the address a docs page was asked for, not the one a redirect led to`.
-
-### `device/docs-url-key`
-
-If `--url`, `--key` or `--profile` is given to `marfa docs`, then the CLI MUST exit 2 with `usage` and send no request.
-
-**Reason:** each names a Marfa server or a credential for it, and the docs site takes neither, so a person who gave one would believe it was used.
-
-**Tests:** `device/contract.test.ts › refuses --url, --key and --profile on docs with usage, sending nothing`.
-
-### `device/docs-path-refused`
-
-If the page `marfa docs` is given, once leading and trailing slashes, a leading `docs/`, a trailing `.md`, a query and a fragment are taken away, is not one or more segments divided by `/`, each of one or more ASCII letters, digits, `-`, `_`, `.` or `~` and neither `.` nor `..`, then the CLI MUST exit 1 with `invalid` and send no request.
-
-**Reason:** a path outside that set could leave the docs site's pages or carry another request in its name.
-
-**Tests:** `device/contract.test.ts › refuses a docs page path it does not accept with invalid, sending nothing`.
-
-### `device/docs-site-refused`
-
-If `MARFA_DOCS_URL` holds more than white space and is not an `http` or `https` address with a host and no query or fragment, then the CLI MUST exit 1 with `invalid` and send no request.
-
-**Tests:** `device/contract.test.ts › refuses a docs address that is not http or https with invalid, sending nothing`.
-
-## Terminal output
-
-The CLI draws bold and color for the lines a person reads, on a terminal.
-
-### `device/no-escape-off-terminal`
-
-If a standard stream of the CLI is not a terminal, or `NO_COLOR` is set and not empty, or `TERM` is `dumb`, or `--json` is given, then the CLI MUST write no escape character (U+001B) of its own to that stream.
-
-**Reason:** An agent runs the CLI with no terminal and reads whatever it is sent, up to a limit, and a character that moves a cursor or sets a color is noise to it. Each stream is judged on its own, and a color never carries a meaning its words do not. The fixtures give the CLI no terminal, so the `NO_COLOR`, `TERM` and terminal halves are held by the CLI's own tests, which use a pseudo-terminal.
-
-**Tests:** `device/contract.test.ts › writes no escape character to a stream that is not a terminal, with NO_COLOR set, or under --json`.
-
-## A starting type definition
-
-`marfa types scaffold` prints a definition for a type identifier and its fields. It names no server, working copy or key, and sends nothing.
-
-### `device/types-scaffold-prints`
-
-When `marfa types scaffold` is given a type identifier, the CLI MUST print as JSON an object holding that `id`, the `parent` and `description` where given, and `fields` with one definition for each `--field`, in the order given, holding its `type`, `required: true` where `--required` names it, the `enum_values` of an `enum` and the `items_type` of an `array`.
-
-**Tests:** `device/types-scaffold.test.ts › prints the id, the fields in the order given, the parent and the description`.
-
-### `device/types-scaffold-needs-nothing`
-
-While no server, working copy or key is named, the CLI MUST print the definition `marfa types scaffold` is asked for.
-
-**Reason:** an agent can write a definition before it has an instance to put it on.
-
-**Tests:** `device/types-scaffold.test.ts › needs no server, working copy or key, and sends nothing where a server is named`.
-
-### `device/types-scaffold-offline`
-
-When `marfa types scaffold` runs, the CLI MUST send no request, whatever `MARFA_API_URL` and `MARFA_API_KEY` hold and whether it prints a definition or refuses.
-
-**Reason:** a definition is written on this machine, so naming a server must not make the command contact it.
-
-**Tests:** `device/types-scaffold.test.ts › needs no server, working copy or key, and sends nothing where a server is named`, `› refuses --url, --key, --profile and --socket with usage, sending nothing`.
-
-### `device/types-scaffold-no-server-options`
-
-If `marfa types scaffold` is given `--url`, `--key`, `--profile` or `--socket`, then the CLI MUST exit 2 with `usage`.
-
-**Reason:** the command uses none of them, so a person who gave one would believe it was used.
-
-**Tests:** `device/types-scaffold.test.ts › refuses --url, --key, --profile and --socket with usage, sending nothing`.
-
-### `device/types-scaffold-id-refused`
-
-If the identifier `marfa types scaffold` is given breaks the type grammar (`types/id-grammar`), is under a root `types/id-reserved-scope-root` names, or is under `core`, `system` or `marfa` (`types/id-reserved-namespace`), then the CLI MUST exit 1 with `invalid`, naming the reason.
-
-**Reason:** the server would refuse a registration of the identifier, so the definition printed for it would be one nothing could register.
-
-**Tests:** `device/types-scaffold.test.ts › refuses an id the grammar or a reserved root refuses, naming the reason`.
-
-### `device/types-scaffold-field-name-refused`
-
-If a `--field` of `marfa types scaffold` names a field an item has of its own (`types/field-shadows-item`), or a field already given, then the CLI MUST exit 1 with `invalid`, naming the reason.
-
-**Tests:** `device/types-scaffold.test.ts › refuses a field name an item has and a name given twice`.
-
-### `device/types-scaffold-field-type-refused`
-
-If a `--field` of `marfa types scaffold` gives a type outside the field grammar, an `enum` with no values, or an `array` with no element type (`types/field-grammar`), or an `array` whose element type is `thumbnail` (`types/thumbnail-name`), then the CLI MUST exit 1 with `invalid`, naming the reason.
-
-**Tests:** `device/types-scaffold.test.ts › refuses a field type outside the grammar, an enum with no values, and an array with no element type or of thumbnails`.
-
-### `device/types-scaffold-thumbnail-refused`
-
-If the fields of `marfa types scaffold` include a second `thumbnail` (`types/thumbnail-one`), or a `thumbnail` named `title`, `body`, `description` or `name` (`types/thumbnail-name`), then the CLI MUST exit 1 with `invalid`, naming the reason.
-
-**Tests:** `device/types-scaffold.test.ts › refuses a second thumbnail and a thumbnail named for a field search reads`.
-
-### `device/types-scaffold-parent-refused`
-
-If the `--parent` of `marfa types scaffold` breaks the type grammar or names the type itself, then the CLI MUST exit 1 with `invalid`, naming the reason.
-
-**Tests:** `device/types-scaffold.test.ts › refuses a parent that breaks the grammar or is the type itself`.
-
-### `device/types-scaffold-parent-shape-refused`
-
-If a `--field` of `marfa types scaffold` redeclares a field of a parent Marfa ships with another `type`, `format`, `items_type`, `searchable`, `max_length`, `max_items` or `enum_values`, or makes a field the parent requires optional (`types/child-shape`), then the CLI MUST exit 1 with `invalid`, naming the reason.
-
-**Reason:** the server refuses such a subtype with `inheritance_violation`, so the definition would not register.
-
-**Tests:** `device/types-scaffold.test.ts › refuses a field a shipped parent holds to another shape, or to be required`.
-
-### `device/types-scaffold-usage`
-
-If a `--field` of `marfa types scaffold` is not `NAME:TYPE` or gives a third part to a type that takes none, or a `--required` names a field no `--field` gives, then the CLI MUST exit 2 with `usage`.
-
-**Tests:** `device/types-scaffold.test.ts › refuses an option it cannot read with usage`.
-
-### `device/types-scaffold-declared`
-
-The CLI MUST print, for `marfa types scaffold`, a definition that `marfa device types declare` takes unchanged.
-
-**Reason:** a definition written for an app's working copy is declared as it stands.
-
-**Tests:** `device/types-scaffold.test.ts › declares what it printed on a working copy, unchanged`.
-
-### `device/types-scaffold-registered`
-
-The CLI MUST print, for `marfa types scaffold`, a definition that `marfa types register` registers unchanged where the key may register its identifier.
-
-**Reason:** the command exists so that a definition is not written by hand, and one that needed editing before it registered would not save that.
-
-**Tests:** `device/types-scaffold-live.test.ts › is registered unchanged by a key that may register its id, and by no other`.
 
 ## Search, matched as the server matches
 
@@ -8462,46 +7210,6 @@ A device MUST NOT put markup in an excerpt other than pairs of `<mark>` and `</m
 
 **Tests:** `device/search-live.test.ts › escapes the item's text in an excerpt as the server does`.
 
-## Telemetry
-
-The command line reports a run in two ways, and each has settings of its own: a trace over OTLP, and an exception report to error tracking. One being unset, or unusable, leaves the other as it was.
-
-### `device/cli-trace-endpoint`
-
-When neither `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` nor `OTEL_EXPORTER_OTLP_ENDPOINT` is set, the CLI MUST send no trace.
-
-**Reason:** Some agent hosts remove every `OTEL_` setting from the shells they give an agent, and a trace needs a collector to go to.
-
-**Tests:** `device/cli-exception-report.test.ts › sends one exception and no trace when only the error tracking settings are set`.
-
-### `device/cli-exception-report`
-
-When `MARFA_POSTHOG_HOST` is an `https` address, or an `http` address on this machine, with no user name or password, `MARFA_POSTHOG_PROJECT_TOKEN` is set, `OTEL_SDK_DISABLED` is not `true`, and a command ends in a fault, the CLI MUST send one exception report, whatever the `OTEL_EXPORTER_OTLP_*` settings are.
-
-**Reason:** An agent host that removes the `OTEL_` settings must not also silence the report of a fault, and an endpoint that cannot be used is the trace's trouble alone. A fault is what the command line or the core itself got wrong: a panic, including one the core caught and ended with the code `fault`; the local store failing for a reason of its own; an answer that cannot be read; or an answer status that the command line should never cause and that no refusal is named for, such as `405` or `415`.
-
-**Tests:** `device/cli-exception-report.test.ts › sends one exception and no trace when only the error tracking settings are set`, `› still sends the exception when the OTLP endpoint is not an address`.
-
-### `device/cli-exception-refusal-quiet`
-
-When a command ends in a refusal by design or in a failure of the server or the environment, the CLI MUST NOT send an exception report.
-
-**Reason:** A refusal by design is an answer that works as intended: a `4xx` answer that names a refusal, a usage error, a missing credential or a missing docs page. A failure of the environment is one a retry can clear: offline, a timeout, a rate limit, a `408` or `425` answer, or full local storage. A `5xx` answer is the server's own failure, which the server reports itself, including a `503` `write_contention` or `stream_capacity_exhausted` and a `507` `insufficient_storage`. None tells error tracking about a fault in the command line or the core, and reporting them would bury the faults.
-
-**Tests:** `device/cli-exception-report.test.ts › sends no exception when the command ends in a refusal by design`.
-
-### `device/cli-exception-success`
-
-When a command succeeds, the CLI MUST NOT send an exception report.
-
-**Tests:** `device/cli-exception-report.test.ts › sends no exception when the command succeeds`.
-
-### `device/cli-telemetry-disabled`
-
-When `OTEL_SDK_DISABLED` is `true`, the CLI MUST send neither a trace nor an exception report.
-
-**Tests:** `device/cli-exception-report.test.ts › sends nothing when the SDK is disabled, with an endpoint or without`.
-
 ## The codes a refusal carries
 
 A refusal the CLI reports carries one `code`, a lowercase snake case word. The first table lists the codes the working copy gives, which an app built on a binding switches on, and the second the codes only the CLI adds.
@@ -8576,6 +7284,22 @@ The CLI MUST list in its help, as the codes a refusal can carry, exactly the cod
 
 **Tests:** `device/error-codes.test.ts › lists in its help exactly the codes the contract lists`.
 
+### `device/refusal-server-answered`
+
+If a server answered the request a call is refused for, then a device MUST carry the answer's `status`, `code` and `details` as the refusal's `server` member, whatever code it names the refusal by.
+
+**Reason:** the member is what an app reads to tell the server's word from the device's own, and the same answer reads the same through the command line and a binding.
+
+**Tests:** `device/refusal-answers.test.ts › names the answer behind a copy a hydration expired, with the details the server sent`, `› names the answer a server gave a refused read of its types`, `› names the answer a server gave for a folder it does not hold, where a folder is added`, `device/folders-contract-a.test.ts › names the answer a server gave when it accepts a settings edit and then does not return the folder`.
+
+### `device/refusal-server-absent`
+
+If no server answered the request a call is refused for, then a device MUST carry no `server` member on the refusal.
+
+**Reason:** an app that read a status from a refusal the working copy made on its own would conclude that the server was asked.
+
+**Tests:** `device/refusal-answers.test.ts › carries no server answer on a refusal the copy made without asking`.
+
 ## What the real server cannot be made to produce
 
 The device fixtures drive a scripted server where the precondition cannot be arranged over the wire against the real one. `device/fidelity.test.ts` asserts that every scripted answer the real server can also give matches the real one's shape; these are the answers it cannot check.
@@ -8589,7 +7313,7 @@ The device fixtures drive a scripted server where the precondition cannot be arr
 - **A `5xx`.** The server answers one for a fault, and a fault it can be made to have is a defect rather than a fixture. Contention on the write lock is the other `5xx` it answers, and that one is the contract rather than a fault: `503 write_contention`, which a device retries without counting it against the write (`errors/contention`). It is provoked from outside this suite, by holding the lock from another process.
 - **A `429`.** Rate limiting is off on the run's server, because a run's own key minting would spend the key operations' allowance (`conformance/TARGET-INTERFACE.md`, "What `marfa:up` does"). The real server does answer one, and `keys-and-oauth/keys-rate-cap` asserts it against a server booted with the limiter on.
 - **A read answered before an event the copy has since taken.** A follow and a drain on one core race, and an event applied between a read's request and its write leaves the read older than the item the copy holds (`device/server-item-order`). The run's server answers a read with the item as it stands when it is asked, so the scripted server answers with the older item, standing for the read that lost the race.
-- **A placement path with a leading separator.** The edge operation refuses one (`edges/folder-path`), so only a path written past it carries one; the fixture serves one to hold the folder to reading it from its root (`folders/placement-root-relative`).
+- **A placement path with a leading separator.** The edge operation refuses one (`edges/folder-path`), so only a path written past it carries one; the fixture serves one to hold the folder to reading it from its root (`folder-files/placement-root-relative`).
 - **An aged-out cursor.** A cursor is too old only when the event after it has been retired (`events/catchup-too-old`), and an event is retired only once it is older than the retention, an hour at the shortest: a request can run the sweep but cannot age an event, so the terminal `catchup_too_old` frame cannot be provoked against the run's server. `compliance/catchup-too-old.test.ts` asserts the frame's shape against a server of its own, whose clock it moves past the retention before it runs the sweep.
 - **Another instance at the copy's origin.** The run has one server, and a device cannot be put in front of a second at its address while it runs. A server restored behind the copy is reachable: the `cursor_ahead` frame a cursor past the head gets is held against the real server's (`device/fidelity.test.ts`).
 - **A create queued under an id the server cannot hold.** A device refuses such an id before it queues it (`device/id-format`), so only a store an earlier build made carries one. `device/verdicts.test.ts` scripts the refusal and the read-back that follow it (`device/read-back-invalid-id`).

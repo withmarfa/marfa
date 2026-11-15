@@ -27,7 +27,7 @@ import { waitFor } from "../../utils/wait.js";
  * complete read is the witness that the archive is whole when nothing fails.
  * The server attaches only its disk: a blob whose read fails before its bytes
  * begin is read from another store that holds it, where there is one
- * (`search-and-filters/archive-blob-any-store`).
+ * (`archive/archive-blob-any-store`).
  */
 const BLOB_BYTES = 1024 * 1024;
 const ITEMS = 60;

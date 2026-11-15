@@ -1,6 +1,6 @@
 //! A body link to an item retitled since it was written is rewritten in the
 //! folder's file to name the item by its new title
-//! (`folders/body-link-retitled`).
+//! (`folder-documents/body-link-retitled`).
 
 use super::tests::{ScannedDir, scanned_folder};
 use super::*;

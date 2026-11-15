@@ -1650,7 +1650,7 @@ describe("a folder round trip", () => {
    * Runs a scenario on the registry of a Mac of its own: the folders other
    * scenarios made have no directory left, and a folder it cannot read holds
    * a missing file as possibly moved there
-   * (`folders/uncertain-move-deferred`).
+   * (`folder-files/uncertain-move-deferred`).
    */
   async function onOwnRegistry(scenario: () => Promise<void>): Promise<void> {
     const shared = process.env.MARFA_FOLDER_REGISTRY;

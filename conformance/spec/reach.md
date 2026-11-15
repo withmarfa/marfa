@@ -342,7 +342,7 @@ If `GET /items` names `X-Marfa-Reach` and no `include` that holds `metadata`, th
 
 **Tests:** `compliance/reach.test.ts › rejects unsupported conditional doors, malformed proofs and metadata-free item pages`, `compliance/reach-order.test.ts › is refused as one whose include lacks metadata is, under a reach that matches`.
 
-### `reach/conditional-door-refused`
+### `reach/unconditional-reach-refused`
 
 If a `GET` other than `GET /events` names `X-Marfa-Reach` on an operation that is not a conditional read, then the server MUST answer `400 validation_error`.
 

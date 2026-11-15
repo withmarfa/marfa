@@ -942,7 +942,7 @@ export interface FolderHarness {
   settings: FolderItem;
   /** What the hydration served, so a scripted write door knows those items. */
   items: Record<string, Array<{ item: WireItemOptions; tags?: string[] }>>;
-  /** The folder registry of the machine it is on (`folders/registry-lists-folders`). */
+  /** The folder registry of the machine it is on (`folder-setup/registry-lists-folders`). */
   registry: string;
   /** What the add reported, including what the first sync will do. */
   added: AddedFolder;

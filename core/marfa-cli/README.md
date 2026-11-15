@@ -3,7 +3,7 @@
 `marfa` is Marfa from the command line: every operation of one instance, a working copy of a slice of it under `marfa device`, and folders that hold a slice as files under `marfa folders`.
 
 - **Commands, options and exit codes:** `marfa --help`, and the same text in [COMMANDS.md](COMMANDS.md), which is generated from it. `marfa operations` maps each published operation to its command.
-- **What the binary does:** the contract states it, in `conformance/spec/device.md` (requests, profiles, credentials, the working copy), `queue-and-verdicts.md` (the queue and its drain) and `folders.md` (folders, the watch and syncing from login).
+- **What the binary does:** the contract states it, in `conformance/spec/cli.md` (requests, profiles, credentials, output and telemetry), `device.md` (the working copy), `queue-and-verdicts.md` (the queue and its drain) and the `folder-` chapters (folders, the watch and syncing from login).
 - **What it sends to a collector or to PostHog:** [core/TELEMETRY.md](../TELEMETRY.md).
 - **What a program on the machine can read:** the [record of folder watches](FOLDER-WATCH-RECORD.md), and the server's [folder health reports](FOLDER-HEALTH.md).
 
@@ -38,7 +38,7 @@ An agent, a script or a test runs `marfa` with no keychain prompt and no person 
 
 ## Syncing folders from login
 
-`marfa folders autostart on`, `off` and `status` manage the agent that runs `folders watch` at login, as `folders.md` states. These details are the binary's own:
+`marfa folders autostart on`, `off` and `status` manage the agent that runs `folders watch` at login, as `folder-setup.md` states. These details are the binary's own:
 
 - **Restart:** the launchd agent sets `KeepAlive` with `SuccessfulExit` false and `ThrottleInterval` 30; the systemd unit sets `Restart=on-failure` and `RestartSec=30`.
 - **A failed `on`:** an `on` that failed before the service manager took the new agent is taken up by the next `on`. launchd's old agent is unloaded before the file changes, and systemd's `NeedDaemonReload` shows a unit whose file changed since it was read.

@@ -361,7 +361,7 @@ impl Settings {
     }
 
     /// What a copy of the folder holds past its types and tier
-    /// (`folders/copy-holds-query`), `None` where that is all of them.
+    /// (`folder-setup/copy-holds-query`), `None` where that is all of them.
     pub(crate) fn copy_query(&self) -> Result<Option<crate::slice::SliceQuery>> {
         self.slice_query().for_copy()
     }

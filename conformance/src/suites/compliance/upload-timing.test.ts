@@ -45,7 +45,7 @@ let working: MarfaClient;
  * The two long uploads run together, so the file waits 66 seconds once. The
  * blob starts a part later and ends only after the restore has answered: a
  * write that lands while a restore writes is refused
- * (`search-and-filters/restore-writers-refused`).
+ * (`archive/restore-writers-refused`).
  */
 let longRestore: Promise<Long>;
 let longBlob: Promise<Long>;

@@ -90,7 +90,7 @@ When a drain sends a create on its own door whose caller named tags, a device MU
 
 **Tests:** `device/queue.test.ts › queues an edge, a tag and an extension as writes of their own`.
 
-### `queue-and-verdicts/door-answer-read`
+### `queue-and-verdicts/own-operation-success-read`
 
 When the server answers a write with the success its own operation gives, whether an item, an edge, the tags or extensions it changed, `{"ok": true}` or the hash of the bytes an upload sent, a device MUST give the write a verdict without counting a refusal against it.
 
@@ -260,7 +260,7 @@ If the server refuses the read that writes a page created owe, other than by an 
 
 A `write_rows` write is one batch an app made for one table of one item (`device.md`, "Writing a table on a device"). A drain sends it on the table's row door under its key, together with the writes to the same table queued straight after it, so the edits a person made offline land in few requests. The server writes all of a batch or none of it (`tables/rows-all-or-none`), so a drain answers each write of a batch on its own. The fixtures run the device in `device/table-writes-live.test.ts`.
 
-### `queue-and-verdicts/rows-door`
+### `queue-and-verdicts/rows-write-sent`
 
 When a drain sends a `write_rows` write, a device MUST send its operations as `POST /items/{id}/tables/{table}/rows` under the idempotency key of the first write of the batch it goes in.
 
@@ -492,7 +492,7 @@ When the server answers a batch `409 instance_changed`, a device MUST take every
 
 **Tests:** `device/table-writes-live.test.ts › marks every write of a batch another instance answers unsent and out of the batch, and sends them together again`.
 
-### `queue-and-verdicts/undo-door`
+### `queue-and-verdicts/undo-write-sent`
 
 When a drain sends an `undo_rows` write, a device MUST send it as `POST /items/{id}/tables/{table}/batches/{batch}/undo` under its idempotency key, in no batch with another write.
 
@@ -770,46 +770,6 @@ When a write a queued write depends on is answered, a device MUST keep it in the
 
 **Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
 
-### `queue-and-verdicts/command-queued-holds`
-
-When the CLI queues a write that depends on others and prints it as text, the CLI MUST print how many writes it depends on after `waiting on`.
-
-**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`, `› says in words what the writes of an attached or added file wait on, counting writes queued before them`.
-
-### `queue-and-verdicts/command-queued-after`
-
-When the CLI queues a write that follows another and prints it as text, the CLI MUST print the write it follows after `after`.
-
-**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
-
-### `queue-and-verdicts/command-queue-waiting`
-
-When the CLI prints the queue as text and exactly one of the writes a write depends on has no verdict, is `blocked`, or is a create refused onto an item its natural key names that no read has found yet, the CLI MUST name that write after `waiting on`.
-
-**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`, `› holds a write made to a refused create's item until a read finds the item its natural key names`, `› says in words what the writes of an attached or added file wait on, counting writes queued before them`.
-
-### `queue-and-verdicts/command-queue-not-waiting`
-
-When the CLI prints the queue as text and every write a write depends on is answered `accepted`, `merged`, `conflicted` or `refused`, is `dead`, or is no longer in the queue, and none is a create refused onto an item that no read has found yet, the CLI MUST NOT print `waiting on` for it.
-
-**Reason:** a dependency with such a verdict, or one withdrawn or discarded, no longer holds the write, though `depends_on` still names it.
-
-**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`, `› discards a refused create no read can land, refusing unsent the writes waiting on it`.
-
-### `queue-and-verdicts/command-queue-unlanded`
-
-When the CLI prints the queue as text, the CLI MUST print on the line of each create refused onto an item its natural key names that no read has found yet `its natural key names <id>, which no read has found; discard it to refuse the writes waiting on it`, with that item's id for `<id>`.
-
-**Reason:** nothing but a read that finds the item or a discard (`queue-and-verdicts/discard-unlanded-takes-out`) takes such a create, or the writes waiting on it, out of the queue.
-
-**Tests:** `device/queue.test.ts › discards a refused create no read can land, refusing unsent the writes waiting on it`.
-
-### `queue-and-verdicts/command-queue-after`
-
-When the CLI prints the queue as text, the CLI MUST name after `after` the write each write follows.
-
-**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
-
 ### `queue-and-verdicts/upload-sent-as-writer`
 
 Where the copy still holds an upload's bytes, when a device drains with a credential other than the one it sent that upload with, a renewed access token counting as the credential it replaced, and a write that waits on the upload has no verdict or is `blocked` for `credential_refused` or `awaiting_dependency`, a device MUST send the upload again with its current credential before it sends that write.
@@ -916,45 +876,11 @@ When the server answers a write in a drain with `Retry-After`, or answers a read
 
 **Tests:** `device/classification.test.ts › retries a 5xx and a 429 without counting them`, `› passes on the wait a read reconciling a refusal was asked for (contract %s)`, `device/queue.test.ts › reads the item a create landed on again after a failure that clears on its own`, `device/classification.test.ts › passes on at most 300 seconds of the wait a write was asked for`.
 
-## The CLI's drain
-
-What the CLI prints and exits with for a drain.
-
-### `queue-and-verdicts/command-drain-report`
-
-When a drain ends with a report and the CLI prints JSON, the CLI MUST print the whole report on standard output and nothing on standard error but the warning of `device/command-cleartext-warning` and the line of `device/command-write-line`.
-
-**Tests:** `device/cli-outcomes.test.ts › keeps the complete $label drain report with exit $exit`, `› preserves answered writes before an interrupted later write`.
-
-### `queue-and-verdicts/command-exit-stopped`
-
-When a drain stops because a refused credential parked the queue, the CLI MUST exit 5.
-
-**Tests:** `device/cli-outcomes.test.ts › keeps the complete $label drain report with exit $exit`.
-
-### `queue-and-verdicts/command-exit-undelivered`
-
-When a drain that a refused credential did not stop reports `unavailable` or a write `undelivered`, the CLI MUST exit 3.
-
-**Tests:** `device/cli-outcomes.test.ts › keeps the complete $label drain report with exit $exit`, `› preserves answered writes before an interrupted later write`, `› exits 3 for a pass the server could not finish that left nothing undelivered`, `› exits 3 for a write left undelivered by a pass the server finished`.
-
-### `queue-and-verdicts/command-exit-done`
-
-When a drain reports neither `stopped`, nor `unavailable`, nor a write `undelivered`, the CLI MUST exit 0, whatever verdicts the drain reached.
-
-**Tests:** `device/cli-outcomes.test.ts › reports completed refusals separately and keeps exit zero`.
-
-### `queue-and-verdicts/command-refused-count`
-
-When a drain refuses writes and the CLI prints its report as text, the CLI MUST print how many it refused as `refused <n> write(s)`.
-
-**Tests:** `device/cli-outcomes.test.ts › reports completed refusals separately and keeps exit zero`.
-
 ## The six verdicts
 
 Every write the server answers, and every write a drain settles without sending, carries one verdict from a closed set. What a device does not do on meeting one is `device/conflict-blocked`.
 
-### `queue-and-verdicts/verdicts-six`
+### `queue-and-verdicts/verdicts-closed`
 
 A device MUST give every write it settles exactly one of the verdicts `accepted`, `merged`, `conflicted`, `refused`, `blocked` and `dead`, and no other.
 
@@ -1162,7 +1088,7 @@ When a drain refuses a write without sending it, a device MUST report the refusa
 
 **Tests:** `device/verdicts.test.ts › refuses the writes that were waiting on a create the server refused`.
 
-### `queue-and-verdicts/blocked-reasons-five`
+### `queue-and-verdicts/blocked-reasons-closed`
 
 A device MUST give a `blocked` write exactly one of the eight reasons `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `awaiting_dependency`, `failing_alone`, `instance_changed` and `record_unread`, and no other.
 
@@ -1200,7 +1126,7 @@ When a write is blocked, a device MUST keep it laid over the item or edge it nam
 
 **Tests:** `device/classification.test.ts › withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the item back as the server holds it`.
 
-### `queue-and-verdicts/ceiling-five`
+### `queue-and-verdicts/refusal-ceiling-dead`
 
 When a fifth refusal is counted against a write, a device MUST give it the verdict `dead`.
 
@@ -1696,20 +1622,6 @@ When a failed renewal ends a drain, a device MUST leave the write whose `401` st
 
 **Tests:** `device/cli-outcomes.test.ts › ends the drain on a renewal that ends locally, keeping the answers before it and the write it met`.
 
-### `queue-and-verdicts/command-renewal-error`
-
-When a failed renewal ends a drain, the CLI MUST print the failure as its error on standard error and nothing on standard output.
-
-**Tests:** `device/cli-outcomes.test.ts › ends the drain on a renewal that ends locally, keeping the answers before it and the write it met`.
-
-### `queue-and-verdicts/command-renewal-signed-out`
-
-When a drain ends because renewing the credential finds the person signed out, the CLI MUST report `signed_out` with `server` null and exit 5.
-
-**Reason:** the error says the sign-in on this machine has ended, which is not a server's answer to the write.
-
-**Tests:** `device/cli-outcomes.test.ts › ends the drain on a renewal that ends locally, keeping the answers before it and the write it met`.
-
 ## A source the credential's key does not claim
 
 ### `queue-and-verdicts/unclaimed-source-blocks`
@@ -1846,7 +1758,7 @@ When a caller releases writes, a device MUST lay each of them back over the copy
 
 **Tests:** `device/waiting-projections.test.ts › sends an unsent dependent edit after release in %s order`, `› keeps a %s edit visible after a newer server item arrives`.
 
-### `queue-and-verdicts/withdraw-two-reasons`
+### `queue-and-verdicts/withdraw-refused-reasons`
 
 When a caller withdraws a write that is not `dead` and not `blocked` `ancestor_unavailable`, `conflict_unresolved`, `failing_alone`, `instance_changed` or `record_unread`, a device MUST answer that it withdrew no write, changing nothing.
 
@@ -1930,7 +1842,7 @@ When a caller clears the answered writes, a device MUST take out of the queue ea
 
 ### `queue-and-verdicts/clear-keeps-content`
 
-When a caller clears the answered writes, a device MUST keep every `refused` write that carried content: an item's create or edit, a metadata write, an extension written, a table rows write, and an edge's create or edit, other than one a folder clears (`folders/clears-satisfied-edge-refusal`, `folders/clears-repeated-edge-refusal`).
+When a caller clears the answered writes, a device MUST keep every `refused` write that carried content: an item's create or edit, a metadata write, an extension written, a table rows write, and an edge's create or edit, other than one a folder clears (`folder-sync/clears-satisfied-edge-refusal`, `folder-sync/clears-repeated-edge-refusal`).
 
 **Reason:** cleared with the answered writes, the words of an edit, or the rows of a table write, that the server refused because another device deleted the item would be gone with nothing saying so.
 
@@ -2202,7 +2114,7 @@ An edit is queued against the version the copy holds, and an edit waiting in the
 
 ### `queue-and-verdicts/own-create-edit-on-answer`
 
-When this device's create of an item or an edge is answered, a device MUST send each later unsent edit of it based on version 0 on the version the answer names, but where `queue-and-verdicts/create-merged-over`, `queue-and-verdicts/create-repeat-edit-on-one` or `queue-and-verdicts/page-create-edit-on-one` says otherwise.
+When this device's create of an item or an edge is answered, a device MUST send each later unsent edit of it based on version 0 on the version the answer names, but where `queue-and-verdicts/create-merged-over`, `queue-and-verdicts/create-repeat-edit-rebased` or `queue-and-verdicts/page-create-edit-rebased` says otherwise.
 
 **Reason:** an item or edge of this device's own unanswered create is at version 0, which the server never mints (`versions/create-claim-none`), so sent as it stands the edit names a snapshot no server holds and is blocked `ancestor_unavailable`.
 
@@ -2224,7 +2136,7 @@ When a create carrying a version above 0 is answered more than one version past 
 
 **Tests:** `device/queue.test.ts › sends an edit of its own create on the answer where the server applied it over another device's write that left what the edit changed alone`.
 
-### `queue-and-verdicts/create-repeat-edit-on-one`
+### `queue-and-verdicts/create-repeat-edit-rebased`
 
 When the server answers this device's create of an item or an edge as a repeat it had already taken, a device MUST send each later unsent edit of it based on version 0 on version 1.
 
@@ -2232,7 +2144,7 @@ When the server answers this device's create of an item or an edge as a repeat i
 
 **Tests:** `device/queue.test.ts › sends an edit of its own create on the version that create made where the server answers a repeat of it`.
 
-### `queue-and-verdicts/page-create-edit-on-one`
+### `queue-and-verdicts/page-create-edit-rebased`
 
 When a create a page made is settled on a read that finds the item or edge past version 1, a device MUST send each later unsent edit of it based on version 0 on version 1, unless the read finds an item holding, for every property the edit changed, what the copy held when the edit was made.
 
@@ -2528,7 +2440,7 @@ If the read of the item a create landed on meets an environmental failure, then 
 
 **Tests:** `device/queue.test.ts › reads the item a create landed on again after a failure that clears on its own`.
 
-### `queue-and-verdicts/landed-read-401-expires`
+### `queue-and-verdicts/landed-read-contract-expires`
 
 If the server answers the read of the item a create landed on `401` naming its contract, then a device MUST expire the copy, keeping the create's verdict and every other queued write as they were.
 
@@ -2828,7 +2740,7 @@ When a create carrying no natural key carries a null for a property its type doe
 
 ### `queue-and-verdicts/folder-gives-way`
 
-When a folder gives way to another machine's placement of a file (`folders/placement-give-way-queue`), a device MUST take out of the queue every write to that `in-folder` edge that is not `accepted`, a create refused as a duplicate among them, without a caller's withdraw or discard, other than a write queued after the move it gives way from (`folders/placement-give-way-newer-kept`).
+When a folder gives way to another machine's placement of a file (`folder-files/placement-give-way-queue`), a device MUST take out of the queue every write to that `in-folder` edge that is not `accepted`, a create refused as a duplicate among them, without a caller's withdraw or discard, other than a write queued after the move it gives way from (`folder-files/placement-give-way-newer-kept`).
 
 **Reason:** the refused create carries only a path the folder chose, from the item's title or where its file sat; the item and the file both stay, and the pull moves the file to the placement the server holds. Kept until discarded, the create would leave a refusal to discard for nearly every item two machines both pulled.
 

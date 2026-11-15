@@ -39,7 +39,7 @@ afterEach(async () => {
 
 const HELD = { id: "01a00000-0000-7000-8000-00000000000a", version: 3 };
 
-/** The eight, as the contract names them (`queue-and-verdicts/blocked-reasons-five`). */
+/** The eight, as the contract names them (`queue-and-verdicts/blocked-reasons-closed`). */
 const BLOCKED_REASONS = [
   "credential_refused",
   "key_spent",

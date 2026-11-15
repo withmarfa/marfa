@@ -1,10 +1,10 @@
 //! A folder takes out of its queue the answered writes it has recorded what
 //! it needs from, so what each drain reads stays the size of what is still to
 //! be answered or kept, not of every write the folder has sent
-//! (`folders/clears-recorded-answers`). It takes out too the refused edge
+//! (`folder-sync/clears-recorded-answers`). It takes out too the refused edge
 //! creates it has proved it no longer needs
-//! (`folders/clears-satisfied-edge-refusal`,
-//! `folders/clears-repeated-edge-refusal`).
+//! (`folder-sync/clears-satisfied-edge-refusal`,
+//! `folder-sync/clears-repeated-edge-refusal`).
 
 use std::collections::HashSet;
 

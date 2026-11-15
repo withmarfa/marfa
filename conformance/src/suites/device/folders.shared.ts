@@ -653,7 +653,7 @@ export function sentUpdates(
 }
 
 /** A queue without the folder's placements, for a fixture about the other
- *  writes a file makes (`folders/placement-create`). */
+ *  writes a file makes (`folder-files/placement-create`). */
 export function withoutPlacements(
   harness: FolderHarness,
   rows: QueuedWrite[],
@@ -665,7 +665,7 @@ export function withoutPlacements(
 }
 
 /** The verdicts on writes of items, without the placements a push also
- *  sends (`folders/push-send-placement`). */
+ *  sends (`folder-sync/push-send-placement`). */
 export function itemVerdicts(verdicts: DrainVerdict[]): DrainVerdict[] {
   return verdicts.filter((entry) => !entry.kind.endsWith("_edge"));
 }

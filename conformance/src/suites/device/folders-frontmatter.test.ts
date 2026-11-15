@@ -4737,7 +4737,7 @@ describe("embedded files", () => {
       expect(bound["Other/logo.png"]).toBe(idByTitle(created, "logo.png"));
       // Nothing lost: the item placed at the path keeps it and its own bytes
       // are written there, and the edited file is sent as a new item and
-      // takes a number in its name (`folders/placement-collision-order`).
+      // takes a number in its name (`folder-files/placement-collision-order`).
       expect(bound["chart.png"]).toBe(chart);
       expect(readFileSync(join(harness.dir, "chart.png"))).toEqual(png(6));
       expect(bound["chart (2).png"]).toBe(idByTitle(created, "chart.png"));
@@ -7606,7 +7606,7 @@ describe("what frontmatter says", () => {
     });
     expect((await harness.folder.pull()).ok).toBe(true);
     // An edit whose values the file already shows: the version moves, and
-    // the file is not written again for its line alone (`folders/version-only-pull`).
+    // the file is not written again for its line alone (`folder-documents/version-only-pull`).
     edges.logItem(
       "item.updated",
       door!.update(id, { properties: { title: "T" }, version: 1 }),

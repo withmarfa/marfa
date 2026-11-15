@@ -65,7 +65,7 @@ struct ScanStart {
 
 /// Set once the folder has read its documents' edges again under the rule
 /// that an embed is a `references` edge, attaching only a file the query
-/// does not hold (`folders/embed-rederived`).
+/// does not hold (`folder-documents/embed-rederived`).
 pub(super) const EMBEDS_REREAD: &str = "folder_embeds_references";
 
 /// What a pass holds between its phases.
@@ -2031,14 +2031,14 @@ impl Folder {
         }
     }
 
-    /// Reads together (`folders/narrowed-arrival-read-batched`) each id of
+    /// Reads together (`folder-files/narrowed-arrival-read-batched`) each id of
     /// `arriving` that the copy does not hold and the server may: a narrowed
     /// copy leaves out items the folder does not show, so such an id may
     /// still name an item on the server, read before the file makes a new one
-    /// (`folders/narrowed-arrival-read`). Answers each id read with why its
+    /// (`folder-files/narrowed-arrival-read`). Answers each id read with why its
     /// file waits, if it does. A file whose id the server answered it does
     /// not show is not asked again until its bytes or its id change
-    /// (`folders/narrowed-arrival-read-once`), and the bin is not asked,
+    /// (`folder-files/narrowed-arrival-read-once`), and the bin is not asked,
     /// since an item there leaves a new item too.
     fn read_arrivals(
         &self,
@@ -2517,7 +2517,7 @@ impl Folder {
 
     /// Decides for every file of `missing`, a path and its item, whether its
     /// item changed in what the file showed, before `let_go_missing` queues
-    /// the first delete (`folders/missing-file-trashed`).
+    /// the first delete (`folder-files/missing-file-trashed`).
     pub(super) fn decide_changed(
         &self,
         missing: &[(String, String)],

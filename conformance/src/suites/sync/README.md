@@ -5,7 +5,7 @@ The server's half of the write contract, checked over HTTP.
 A device keeps a local store, writes to it first and reconciles with the
 server afterwards. Some of the rules that make that safe are the device's and
 some are the server's; this project checks the server's. The device's are
-`spec/device.md`, `spec/queue-and-verdicts.md` and `spec/folders.md`, asserted
+`spec/device.md`, `spec/queue-and-verdicts.md` and the `spec/folder-` chapters, asserted
 by `src/suites/device/`.
 
 Run it with `pnpm test:sync`, or as part of `pnpm test:conformance`.

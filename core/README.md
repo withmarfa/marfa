@@ -2,7 +2,7 @@
 
 The Rust engine every native Marfa client embeds, and the server and command line built beside it. The engine keeps a local SQLite working copy of a slice of one Marfa server, current from the server's event log. Apps read the copy locally, and write to it through a queue that holds each write until the server answers it.
 
-The contract says what each part does: `conformance/spec/device.md`, `queue-and-verdicts.md` and `folders.md` for the engine and the command line, and the other chapters for the server.
+The contract says what each part does: `conformance/spec/device.md`, `queue-and-verdicts.md`, `cli.md` and the `folder-` chapters (`folder-setup.md`, `folder-documents.md`, `folder-files.md`, `folder-sync.md`, `folder-guards.md` and `folder-speed.md`) for the engine and the command line, and the other chapters for the server.
 
 ## Crates
 

@@ -1034,7 +1034,7 @@ If the same part of a body takes it past the limit as it is read and would also 
 
 When a key registers a connector, the server MUST expose all endpoints and retained deliveries for the key's own `source` through that registration.
 
-**Reason:** claimed sources do not establish inbound ownership. Inbound queues are operational state, and an archive carries none of it (`search-and-filters/archive-no-inbound`).
+**Reason:** claimed sources do not establish inbound ownership. Inbound queues are operational state, and an archive carries none of it (`archive/archive-no-inbound`).
 
 **Tests:** `compliance/inbound-source-continuity.test.ts › survives an interrupted successor registration and a discarded committed reply on the same database`.
 
