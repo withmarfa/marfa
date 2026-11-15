@@ -223,7 +223,7 @@ describe("a signed-in app's uploads", () => {
     await writing?.stop();
   }, FRESH_SERVER_TIMEOUT_MS);
 
-  it("are credited to its grant, so a digest it names after a refresh lends", async () => {
+  it("are credited to its app for its owner, so a digest it names after a refresh lends", async () => {
     const approved = await approvedApp(writing, [
       "core.note:read",
       "core.note:write",

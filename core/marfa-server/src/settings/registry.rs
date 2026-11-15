@@ -291,7 +291,7 @@ registry! {
     BLOB_MIN_COPIES: u64 = "blob_min_copies", COUNT, "1", "The fewest live copies the server keeps of each blob.";
     BLOB_CLEANUP_ENABLED: bool = "blob_cleanup_enabled", Rule::Boolean, "true", "Whether the `blob-orphans` job sweeps for blobs nothing references and purges them once they have stood in the orphan report for the grace.";
     BLOB_CLEANUP_GRACE_SECONDS: u64 = "blob_cleanup_grace_seconds", UP_TO_A_YEAR_OR_NONE, "86400", "How long a blob nothing references stands in the orphan report before a later run purges it, in seconds.";
-    BACKUP_INTERVAL_SECONDS: u64 = "backup_interval_seconds", UP_TO_A_YEAR_OR_NONE, "3600", "How often the `backup` job puts a backup in the object store when anything it holds has changed, in seconds. 0 turns scheduled backups off.";
+    BACKUP_INTERVAL_SECONDS: u64 = "backup_interval_seconds", UP_TO_A_YEAR_OR_NONE, "3600", "How often the `backup` job puts a backup in the backup folder or the object store when anything it holds has changed, in seconds. 0 turns scheduled backups off.";
     RATE_LIMIT_ENABLED: bool = "rate_limit_enabled", Rule::Boolean, "true", "Whether the rate limiter is on for the requests a key or app makes, app registrations, device code requests, passkey sign-in challenges and deliveries to inbound addresses.";
     RATE_LIMIT_REQUESTS: u64 = "rate_limit_requests", COUNT, "4000", "How many requests one key or app may make in each window, across every operation.";
     RATE_LIMIT_KEYS_REQUESTS: u64 = "rate_limit_keys_requests", COUNT, "200", "How many requests one key may make in each window to the operations under `/keys`.";
@@ -303,7 +303,7 @@ registry! {
     GRANT_INACTIVITY_DAYS: u64 = "grant_inactivity_days", Rule::Whole { min: 0, max: 36_500 }, "365", "How many days an app grant may go unused before it is retired. 0 never retires one.";
     TRASH_RETENTION_DAYS: u64 = "trash_retention_days", Rule::Whole { min: 0, max: 36_500 }, "60", "How many days a trashed item is kept before it is deleted. 0 keeps it for ever.";
     ROW_LOG_RETENTION_DAYS: u64 = "row_log_retention_days", Rule::Whole { min: 0, max: 36_500 }, "30", "How many days a table keeps a batch in its change log, so the batch can be undone. 0 keeps every batch.";
-    EVENT_LOG_RETENTION_HOURS: u64 = "event_log_retention_hours", Rule::Whole { min: 0, max: 876_000 }, "720", "How many hours the event log is kept. 0 keeps it for ever.";
+    EVENT_LOG_RETENTION_HOURS: u64 = "event_log_retention_hours", Rule::Whole { min: 0, max: 876_000 }, "720", "How many hours the event log and the kept answers to a write sent with an Idempotency-Key are kept. 0 keeps them for ever.";
     VERSION_RECENT_DAYS: u64 = "version_recent_days", Rule::Whole { min: 0, max: 36_500 }, "30", "For this many days, every version of an item is kept.";
     VERSION_DAILY_SNAPSHOT_DAYS: u64 = "version_daily_snapshot_days", Rule::Whole { min: 0, max: 36_500 }, "90", "Up to this many days, one version a day is kept.";
     VERSION_WEEKLY_SNAPSHOT_DAYS: u64 = "version_weekly_snapshot_days", Rule::Whole { min: 0, max: 36_500 }, "365", "Up to this many days, one version a week is kept.";

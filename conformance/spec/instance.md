@@ -1034,7 +1034,7 @@ Where `MARFA_BACKUP_PATH` is set, if the server answers `POST /backups/{instance
 
 Where `MARFA_BACKUP_PATH` is set, when the private local command sends `POST /backups/{instance_id}/{name}/restore`, the server MUST NOT read from the backup folder a file of which an attached store of the restoring instance holds a copy whole.
 
-**Reason:** a rollback on the instance that took the backup then needs room only for the files it lacks.
+**Reason:** a restore over the instance that took the backup then needs room only for the files it lacks.
 
 **Tests:** `compliance/backup-folder.test.ts › restores a backup over the instance that took it with room for none of the files it already holds`.
 
@@ -2050,7 +2050,7 @@ When a key holding `config.manage` sends `PUT /config` with `{}`, the server MUS
 
 ### `instance/config-read-set`
 
-When a key holding `config.manage` sends `GET /config`, the server MUST answer each setting that has been set with the value last written, the five retention fields and `enforcement` with its three levers among them.
+When a key holding `config.manage` sends `GET /config`, the server MUST answer each setting that has been set with the value last written, including `enforcement` with its three levers.
 
 **Tests:** `compliance/instance-config.test.ts › reads back each setting that has been set, and no field for one that has not`.
 
@@ -2446,7 +2446,7 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `blob_min_copies`                | `1`                | Whole number, 1 to 1000000                                | The fewest live copies a blob keeps. A drop that would leave fewer is refused.                                                                                                                                                                                                                                                         |
 | `blob_cleanup_enabled`           | `true`             | `true` or `false`                                         | Whether the `blob-orphans` job sweeps for unreferenced blobs. When off, no blob is reported or purged.                                                                                                                                                                                                                                 |
 | `blob_cleanup_grace_seconds`     | `86400` seconds    | Whole number of seconds, 0 to 31536000                    | How long an unreferenced blob stands in the orphan report before a later run purges it. At 0 the next run purges it.                                                                                                                                                                                                                   |
-| `backup_interval_seconds`        | `3600` seconds     | Whole number of seconds, 0 to 31536000                    | How often the `backup` job puts a backup in the object store when anything it holds has changed. At 0 scheduled backups are off.                                                                                                                                                                                                       |
+| `backup_interval_seconds`        | `3600` seconds     | Whole number of seconds, 0 to 31536000                    | How often the `backup` job puts a backup in the backup folder or the object store when anything it holds has changed. At 0 scheduled backups are off.                                                                                                                                                                                  |
 | `enrichment_enabled`             | `true`             | `true` or `false`                                         | Whether the server extracts text from uploaded files.                                                                                                                                                                                                                                                                                  |
 | `enrichment_ocr_enabled`         | `true`             | `true` or `false`                                         | Whether the server reads text from images with OCR. When off, images are recorded as unsupported.                                                                                                                                                                                                                                      |
 | `enrichment_max_blob_bytes`      | `20971520` bytes   | Whole number of bytes, 1 to 1099511627776                 | The largest blob the server extracts text from. A larger blob gets no extracted text.                                                                                                                                                                                                                                                  |
@@ -2471,8 +2471,8 @@ A duration an owner sets is in seconds, or in days or hours for a retention. Eac
 | `inbound_pending_retention_days` | `30` days          | Whole number of days, 0 to 36500                          | How long the server keeps an unhandled delivery. At 0 age does not expire a delivery.                                                                                                                                                                                                                                                  |
 | `audit_retention_days`           | `90` days          | Whole number of days, 0 to 36500                          | How long the server keeps audit entries and webhook delivery history. At 0 no entry expires by age.                                                                                                                                                                                                                                    |
 | `revoked_grant_retention_days`   | `90` days          | Whole number of days, 0 to 36500                          | How long a revoked application grant is kept. At 0 no revoked grant is purged.                                                                                                                                                                                                                                                         |
-| `grant_inactivity_days`          | `365` days         | Whole number of days, 0 to 36500                          | How long an application grant may go unused before the server retires it. At 0 grants are never retired. `/config` overrides it.                                                                                                                                                                                                       |
-| `event_log_retention_hours`      | `720` hours        | Whole number of hours, 0 to 876000                        | The least time an event stays in the event log, which bounds how far back a stream can replay. At 0 no event expires by age.                                                                                                                                                                                                           |
+| `grant_inactivity_days`          | `365` days         | Whole number of days, 0 to 36500                          | How long an application grant may go unused before the server retires it. At 0 grants are never retired.                                                                                                                                                                                                                               |
+| `event_log_retention_hours`      | `720` hours        | Whole number of hours, 0 to 876000                        | The least time an event stays in the event log, which bounds how far back a stream can replay, and the time the server keeps the answer to a write sent with an `Idempotency-Key`. At 0 neither expires by age.                                                                                                                        |
 | `version_recent_days`            | `30` days          | Whole number of days, 0 to 36500                          | The window in which the version policy keeps every version of an item.                                                                                                                                                                                                                                                                 |
 | `version_daily_snapshot_days`    | `90` days          | Whole number of days, 0 to 36500                          | The window in which the version policy keeps one version a day. It must be at least `version_recent_days`.                                                                                                                                                                                                                             |
 | `version_weekly_snapshot_days`   | `365` days         | Whole number of days, 0 to 36500                          | The window in which the version policy keeps one version a week. It must be at least `version_daily_snapshot_days`.                                                                                                                                                                                                                    |
@@ -2678,7 +2678,7 @@ When an authorized caller replaces or updates the configuration, the server MUST
 
 **Reason:** the owner can change version retention, unused-app retirement, file reading and reporting without restarting the server.
 
-**Tests:** `compliance/instance-config.test.ts › keeps live settings across restart, preserves omitted choices and clears to the environment`.
+**Tests:** `compliance/instance-config.test.ts › keeps live settings across restart, preserves omitted choices and clears to the default`.
 
 ### `instance/live-policy-validation`
 
@@ -2686,7 +2686,7 @@ If a configuration write would make the effective recent, daily and weekly versi
 
 **Reason:** validation includes the defaults exposed by clearing a stored setting. The receivers' addresses and credentials are start-only settings.
 
-**Tests:** `compliance/instance-config.test.ts › keeps live settings across restart, preserves omitted choices and clears to the environment`, `compliance/restore-says.test.ts › restores a reporting setting that is turned on where no receiver is set, names it, and still refuses turning it on again from off`.
+**Tests:** `compliance/instance-config.test.ts › keeps live settings across restart, preserves omitted choices and clears to the default`, `compliance/restore-says.test.ts › restores a reporting setting that is turned on where no receiver is set, names it, and still refuses turning it on again from off`.
 
 ### `instance/live-work`
 
