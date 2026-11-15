@@ -580,6 +580,54 @@ describe("owner recovery", () => {
   );
 
   it(
+    "accepts only one of two uses of a recovery code sent at once, to recover and to exchange",
+    async () => {
+      const [server, exchanging] = await Promise.all([
+        recoverable("recovery-race"),
+        recoverable("recovery-race-exchange"),
+      ]);
+      await Promise.all([server.restart(), exchanging.restart()]);
+      const code = await lastRecoveryCode(server);
+      const passwords = [`${NEW_PASSWORD} one`, `${NEW_PASSWORD} two`];
+      const recovered = await Promise.all(
+        passwords.map(async (password) =>
+          answer(
+            await post(server.apiUrl, "/setup/recover", { code, password }),
+          ),
+        ),
+      );
+      expect(recovered.map((one) => one.status).sort()).toEqual([200, 401]);
+      expect(recovered.find((one) => one.status === 401)?.code).toBe(
+        "setup_proof_invalid",
+      );
+      const won = passwords[recovered.findIndex((one) => one.status === 200)]!;
+      const lost = passwords.find((password) => password !== won)!;
+      expect(await signsIn(server, won)).toBe(true);
+      expect(await signsIn(server, lost)).toBe(false);
+
+      const next = await lastRecoveryCode(exchanging);
+      const origin = new URL(exchanging.apiUrl).origin;
+      const exchanged = await Promise.all(
+        [0, 1].map(async () =>
+          answer(
+            await post(
+              exchanging.apiUrl,
+              "/setup/exchange",
+              { code: next },
+              { origin },
+            ),
+          ),
+        ),
+      );
+      expect(exchanged.map((one) => one.status).sort()).toEqual([200, 401]);
+      expect(exchanged.find((one) => one.status === 401)?.code).toBe(
+        "setup_proof_invalid",
+      );
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
     "recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps",
     async () => {
       const server = await recoverable("recovery-page");
@@ -687,27 +735,28 @@ describe("owner recovery", () => {
       const server = await recoverable("recovery-password-rules");
       await server.restart();
       const code = await lastRecoveryCode(server);
-      const short = "short";
-      expect(
-        (
-          await controlRequest(
-            server.controlSocket,
-            "/_control/owner/recover",
-            {
-              method: "POST",
-              body: { password: short },
-            },
-          )
-        ).status,
-      ).toBe(400);
-      expect(
-        await answer(
-          await post(server.apiUrl, "/setup/recover", {
-            code,
-            password: short,
-          }),
-        ),
-      ).toEqual({ status: 400, code: "validation_error" });
+      for (const refused of ["7 chars", "x".repeat(129)]) {
+        expect(
+          (
+            await controlRequest(
+              server.controlSocket,
+              "/_control/owner/recover",
+              {
+                method: "POST",
+                body: { password: refused },
+              },
+            )
+          ).status,
+        ).toBe(400);
+        expect(
+          await answer(
+            await post(server.apiUrl, "/setup/recover", {
+              code,
+              password: refused,
+            }),
+          ),
+        ).toEqual({ status: 400, code: "validation_error" });
+      }
       expect(await signsIn(server, TEST_OWNER.password)).toBe(true);
       expect(
         (

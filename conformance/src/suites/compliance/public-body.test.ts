@@ -506,6 +506,7 @@ const OPEN_DOORS = [
   "/owner",
   "/setup/exchange",
   "/setup/claim",
+  "/setup/recover",
   "/auth/sign-in",
   "/auth/passkeys/sign-in/options",
   "/auth/passkeys/sign-in",

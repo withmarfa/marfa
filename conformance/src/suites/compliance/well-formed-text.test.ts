@@ -754,6 +754,7 @@ describe("a body whatever its content type states", () => {
     { path: "/items", credential: true },
     { path: "/auth/oauth2/register", credential: false },
     { path: "/setup/claim", credential: false },
+    { path: "/setup/recover", credential: false },
   ];
 
   it("is refused for a surrogate escape with no partner, from a key or on a door that takes none", async () => {
