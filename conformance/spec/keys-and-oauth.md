@@ -3003,7 +3003,7 @@ If the server answers a request that would renew a browser session with a `5xx` 
 
 **Reason:** The request may not have done what it set out to do, and a renewal on it would keep a session alive on the strength of a failure.
 
-**Tests:** waiting on #2892.
+**Tests:** `compliance/owner-sign-ins.test.ts › records a use and sends no cookie with a 5xx answer, and sends it once the same request answers`.
 
 ### `keys-and-oauth/session-cookie-other-name`
 
