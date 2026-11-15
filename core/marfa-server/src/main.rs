@@ -57,7 +57,7 @@ fn main() -> ExitCode {
     match start() {
         Ok(status) => ExitCode::from(status),
         Err(failure) => {
-            tracing::error!(error = %failure, "Failed to start server");
+            log::start_failed(&failure);
             ExitCode::from(failure.status)
         }
     }

@@ -9,8 +9,9 @@ use serde_json::json;
 use super::backups;
 use super::docker::Docker;
 use super::envfile::{self, EnvFile};
+use super::lifecycle::{Refusal, refused_update};
 use super::prompt::Prompter;
-use super::run::{self, REFUSED_DATABASE};
+use super::run;
 use super::service::{Control, Manager, Mark, Service};
 use super::systemd::Linger;
 use super::{
@@ -832,38 +833,56 @@ pub(super) enum Watch<'a> {
     },
 }
 
+/// What a log read gave, for a person: the log itself, or that it could not be read.
+fn shown(log: Option<&str>) -> &str {
+    log.unwrap_or("the log could not be read")
+}
+
 impl Watch<'_> {
     /// Why the server will not come up, when it has said so.
     fn failed(&self) -> Result<Option<String>, CliError> {
         Ok(match self {
-            Watch::Container { docker, name } => match docker.container(name)? {
-                Some(state) if matches!(state.status.as_str(), "exited" | "dead") => Some(format!(
-                    "the server stopped: {}\n{}",
-                    state.status,
-                    docker.logs_tail(name)
-                )),
-                _ => {
-                    let tail = docker.logs_tail(name);
-                    tail.contains(REFUSED_DATABASE).then(|| {
-                        format!("the server will not start on its database. Its log ends:\n{tail}")
-                    })
+            Watch::Container { docker, name } => {
+                let Some(state) = docker.container(name)? else {
+                    return Ok(None);
+                };
+                let log = state
+                    .started_at
+                    .as_deref()
+                    .and_then(|started_at| docker.log_since(name, started_at, Some(20)));
+                if matches!(state.status.as_str(), "exited" | "dead") {
+                    Some(format!(
+                        "the server stopped: {}\n{}",
+                        state.status,
+                        shown(log.as_deref())
+                    ))
+                } else {
+                    refusal(log)
                 }
-            },
-            Watch::Process { service, mark } => {
-                let tail = service.log_after(Some(mark), 20);
-                tail.contains(REFUSED_DATABASE).then(|| {
-                    format!("the server will not start on its database. Its log ends:\n{tail}")
-                })
             }
+            Watch::Process { .. } => refusal(self.log(20)),
         })
     }
 
-    fn tail(&self) -> String {
+    /// The last `lines` lines this start has logged: a container's current run, or a service's
+    /// log since the mark. A log from an earlier start is not this one. `None` when it could not
+    /// be read.
+    pub(super) fn log(&self, lines: usize) -> Option<String> {
         match self {
-            Watch::Container { docker, name } => docker.logs_tail(name),
-            Watch::Process { service, mark } => service.log_after(Some(mark), 20),
+            Watch::Container { docker, name } => docker.run_log(name, Some(lines)),
+            Watch::Process { service, mark } => service.log_after(Some(mark), lines),
         }
     }
+}
+
+/// What a start's log says when the server stopped before it changed its database.
+fn refusal(log: Option<String>) -> Option<String> {
+    let log = log?;
+    let why = match refused_update(&log)? {
+        Refusal::Database => "the server will not start on its database".to_string(),
+        Refusal::Upgrade(_) => "the server did not update its database".to_string(),
+    };
+    Some(format!("{why}. Its log ends:\n{log}"))
 }
 
 fn answers_health(port: u16) -> bool {
@@ -889,8 +908,11 @@ pub(super) fn wait_until_healthy(watch: &Watch, port: u16, seconds: u64) -> Resu
         }
         if Instant::now() >= deadline {
             return Err(CliError::Install(format!(
-                "the server did not become healthy in {seconds} seconds ({last}). Its log ends:\n{}",
-                watch.tail()
+                "the server did not become healthy in {seconds} seconds ({last}). {}",
+                match watch.log(20) {
+                    Some(log) => format!("Its log ends:\n{log}"),
+                    None => "The log could not be read.".to_string(),
+                }
             )));
         }
         std::thread::sleep(Duration::from_millis(500));

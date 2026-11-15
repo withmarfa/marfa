@@ -312,22 +312,29 @@ impl Service<'_> {
                     .and_then(|path| std::fs::metadata(path).ok())
                     .map_or(0, |meta| meta.len()),
             ),
-            _ => Mark::Time(
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map_or(0, |since| since.as_secs()),
-            ),
+            m => Mark::Journal(systemd::journal_mark(m.scope(), self.name)),
         }
     }
 
     /// The last lines the server logged, where this manager keeps them.
     pub fn log_tail(&self, lines: usize) -> String {
-        self.log_after(None, lines)
+        self.log_after(None, lines).unwrap_or_default()
     }
 
-    /// The last lines logged since `mark`, or ever.
-    pub fn log_after(&self, mark: Option<&Mark>, lines: usize) -> String {
-        match self.manager {
+    /// The last `lines` lines this service has logged that its log still holds, a file that
+    /// begins again being the only loss. Further back than `log_tail` reaches.
+    pub fn log_held(&self, lines: usize) -> Option<String> {
+        match (self.manager, launchd::server_log(self.name)) {
+            (Manager::Launchd, Ok(path)) => Some(tail_of_file_from(&path, 0, lines)),
+            (Manager::Launchd, Err(_)) => None,
+            _ => self.log_after(None, lines),
+        }
+    }
+
+    /// The last lines logged since `mark`, or ever. `None` when the log could not be read, which
+    /// is not the same as a log that holds nothing.
+    pub fn log_after(&self, mark: Option<&Mark>, lines: usize) -> Option<String> {
+        Some(match self.manager {
             Manager::Launchd => {
                 let read = |path: Result<PathBuf, CliError>| {
                     path.ok()
@@ -345,20 +352,20 @@ impl Service<'_> {
                 }
             }
             m => {
-                let since = match mark {
-                    Some(Mark::Time(since)) => Some(*since),
+                let positions = match mark {
+                    Some(Mark::Journal(positions)) => Some(positions.as_slice()),
                     _ => None,
                 };
-                systemd::log_tail(m.scope(), self.name, lines, since)
+                return systemd::log_tail(m.scope(), self.name, lines, positions);
             }
-        }
+        })
     }
 }
 
 /// Where a log stood.
 pub enum Mark {
     Bytes(u64),
-    Time(u64),
+    Journal(Vec<systemd::Position>),
 }
 
 /// The last `lines` lines of a file after its first `from` bytes, which a

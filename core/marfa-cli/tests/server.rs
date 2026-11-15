@@ -62,7 +62,9 @@ case "$1" in
     *:8.8.8) echo 'error getting credentials - err: exec: "docker-credential-x": executable file not found in $PATH' >&2; exit 1 ;;
   esac ;;
   rm) rm -f "$S/c-$3" ;;
-  inspect) echo '{"Status":"running"}' ;;
+  inspect)
+    # A container the engine cannot say the start of has a current run that cannot be told from an earlier one.
+    if [ -e "$S/started-at-unreadable" ]; then echo '{"Status":"running"}'; else echo '{"Status":"running","StartedAt":"2026-01-01T00:00:00.123456789Z"}'; fi ;;
   exec)
     case "$*" in
       *"setup status"*) if [ -e "$S/claimed" ]; then echo '{"claimed":true}'; else echo '{"claimed":false}'; fi ;;
@@ -70,7 +72,10 @@ case "$1" in
       *"config update"*) case "$*" in *'"sign_in_address":null'*) rm -f "$S/address" ;; *) printf '%s' "$*" | sed -n 's/.*"sign_in_address":"\([^"]*\)".*/\1/p' > "$S/address" ;; esac; echo '{}' ;;
       *"setup open"*) echo '{"url":"http://localhost/setup#handoff=TICKET123","expires_at":"2030-01-01T00:00:00Z"}' ;;
     esac ;;
-  logs) if [ -e "$S/server-log" ]; then cat "$S/server-log"; else echo "a line of the server's log"; fi ;;
+  logs)
+    # A container keeps the logs of its earlier runs; only a read bounded by the current run's start leaves them out.
+    case "$*" in *"--since 2026-01-01T00:00:00.123456789Z"*) ;; *) cat "$S/server-log-earlier" 2>/dev/null ;; esac
+    if [ -e "$S/server-log" ]; then cat "$S/server-log"; else echo "a line of the server's log"; fi ;;
   *) echo "unexpected: $*" >&2; exit 1 ;;
 esac
 "#;
@@ -183,6 +188,11 @@ begin() {
     echo "marfa-server will not start on the database (exit status 78)" >> "$H/Library/Logs/Marfa/$name.log"
     return 0
   fi
+  if [ -e "$S/logs-with" ]; then
+    mkdir -p "$H/Library/Logs/Marfa"
+    cat "$S/logs-with" >> "$H/Library/Logs/Marfa/$name.log"
+  fi
+  [ -e "$S/stops" ] && return 0
   port=$(sed -n 's/^MARFA_PORT=//p' "$dir/.env")
   touch "$S/go-$port"
 }
@@ -231,6 +241,8 @@ begin() {
     echo "marfa-server will not start on the database (exit status 78)" >> "$S/server-log"
     return 0
   fi
+  [ -e "$S/logs-with" ] && cat "$S/logs-with" >> "$S/server-log"
+  [ -e "$S/stops" ] && return 0
   port=$(sed -n 's/^MARFA_PORT=//p' "$dir/.env")
   touch "$S/go-$port"
 }
@@ -261,8 +273,30 @@ case "$1" in
 esac
 "#;
 
+/// The server's log as a journal: each line an entry, whose cursor is its number. A line logged
+/// after a cursor is read after it however little time has passed, and `journal-unreadable`
+/// makes every call fail.
 const FAKE_JOURNALCTL: &str = r#"#!/bin/sh
-cat "$FAKE_DOCKER_STATE/server-log" 2>/dev/null
+J="$FAKE_DOCKER_STATE/server-log"
+[ -e "$FAKE_DOCKER_STATE/journal-unreadable" ] && { echo "Failed to open journal" >&2; exit 1; }
+after=""; json=""; last=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --after-cursor=*) after="${1#--after-cursor=}" ;;
+    --output=json) json=1 ;;
+    -n) shift; last="$1" ;;
+  esac
+  shift
+done
+[ -e "$J" ] || exit 0
+count=$(wc -l < "$J" | tr -d ' ')
+if [ -n "$json" ]; then
+  [ "$count" -gt 0 ] && printf '{"__CURSOR":"c%s","MESSAGE":"x"}\n' "$count"
+  exit 0
+fi
+if [ -n "$after" ]; then tail -n +$(( ${after#c} + 1 )) "$J"
+elif [ -n "$last" ]; then tail -n "$last" "$J"
+else cat "$J"; fi
 exit 0
 "#;
 
@@ -1188,32 +1222,45 @@ fn an_upgrade_moves_forward_and_never_back() {
     assert!(stdout.contains("Already on 0.0.23"), "{stdout}");
 }
 
-#[test]
-fn an_upgrade_says_where_the_copy_of_the_database_is() {
-    let rig = Rig::new("upgrade-copy");
-    rig.installed(&["--access", "local"]);
-    fs::write(
-        rig.state.join("server-log"),
-        concat!(
-            r#"{"timestamp":"2026-01-01T00:00:00.000Z","level":"info","message":"Updating the database in /data/marfa.db from schema version 1 to 2.","schema_from":1,"schema_to":2,"backup_path":"/data/marfa.db.backup-schema-1-to-2-20260101T000000000Z"}"#,
-            "\n",
-            r#"{"timestamp":"2026-01-01T00:00:01.000Z","level":"info","message":"Updated the database in /data/marfa.db from schema version 1 to 2.","schema_from":1,"schema_to":2,"backup_path":"/data/marfa.db.backup-schema-1-to-2-20260101T000000000Z"}"#,
-            "\nnot a log line\n",
-        ),
-    )
-    .unwrap();
+/// A line in the shape the server writes it, which the shared definition names.
+fn log_line(level: &str, message: &str, fields: serde_json::Value) -> String {
+    let mut line = serde_json::json!({
+        "timestamp": "2026-01-01T00:00:00.000000Z",
+        "level": level,
+        "message": message,
+    });
+    for (name, value) in fields.as_object().unwrap() {
+        line[name] = value.clone();
+    }
+    line.to_string() + "\n"
+}
 
-    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait", "5"]);
-    assert_eq!(code, 0, "{stderr}");
-    assert!(stdout.contains("0.0.22 to 0.0.23"), "{stdout}");
-    assert!(stdout.contains("from schema version 1 to 2"), "{stdout}");
-    assert!(
-        stdout.contains("/data/marfa.db.backup-schema-1-to-2-20260101T000000000Z"),
-        "{stdout}"
-    );
+/// What a server of this release logs once it has upgraded a database.
+fn upgraded_line(from: u64, to: u64, copy: Option<&str>) -> String {
+    upgraded_line_by(env!("CARGO_PKG_VERSION"), from, to, copy)
+}
 
-    // Witness: a start that logged no update says nothing of one.
-    fs::write(rig.state.join("server-log"), "a line of the server's log\n").unwrap();
+fn upgraded_line_by(release: &str, from: u64, to: u64, copy: Option<&str>) -> String {
+    use marfa_rules::server_log::upgraded;
+    let mut fields = serde_json::json!({
+        upgraded::SCHEMA_FROM: from,
+        upgraded::SCHEMA_TO: to,
+        upgraded::RELEASE: release,
+    });
+    if let Some(copy) = copy {
+        fields[upgraded::COPY] = copy.into();
+    }
+    log_line("info", upgraded::MESSAGE, fields)
+}
+
+fn start_failed_line(error: &str) -> String {
+    use marfa_rules::server_log::{ERROR, START_FAILED};
+    log_line("error", START_FAILED, serde_json::json!({ ERROR: error }))
+}
+
+const COPY_PATH: &str = "/data/marfa.db.before-upgrade";
+
+fn upgrade_json(rig: &Rig, release: &str) -> serde_json::Value {
     let output = output_of(
         quiet::marfa()
             .args([
@@ -1221,7 +1268,7 @@ fn an_upgrade_says_where_the_copy_of_the_database_is() {
                 "server",
                 "upgrade",
                 "--release",
-                "0.0.24",
+                release,
                 "--wait",
                 "5",
                 "--dir",
@@ -1231,22 +1278,73 @@ fn an_upgrade_says_where_the_copy_of_the_database_is() {
             .env("FAKE_DOCKER_STATE", &rig.state)
             .env("MARFA_AUTOSTART_ROOT", rig.home()),
     );
-    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(report["release"], "0.0.24");
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+#[test]
+fn an_upgrade_says_where_the_copy_of_the_database_is_and_that_the_next_one_replaces_it() {
+    let rig = Rig::new("upgrade-copy");
+    rig.installed(&["--access", "local"]);
+    fs::write(
+        rig.state.join("server-log"),
+        upgraded_line(0, 1, None) + &upgraded_line(1, 2, Some(COPY_PATH)) + "not a log line\n",
+    )
+    .unwrap();
+
+    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("0.0.22 to 0.0.23"), "{stdout}");
+    assert!(stdout.contains("from schema version 1 to 2"), "{stdout}");
+    assert!(stdout.contains(COPY_PATH), "{stdout}");
+    assert!(
+        stdout.contains("next update of the database replaces that copy"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("until you remove"), "{stdout}");
+
+    fs::write(
+        rig.state.join("server-log"),
+        upgraded_line(1, 2, Some(COPY_PATH)),
+    )
+    .unwrap();
+    let report = upgrade_json(&rig, "0.0.24");
+    assert_eq!(report["database_update"]["schema_from"], 1);
+    assert_eq!(report["database_update"]["schema_to"], 2);
+    assert_eq!(report["database_update"]["copy"], COPY_PATH);
+
+    // Witness: a start that logged no update says nothing of one.
+    fs::write(rig.state.join("server-log"), "a line of the server's log\n").unwrap();
+    let report = upgrade_json(&rig, "0.0.25");
+    assert_eq!(report["release"], "0.0.25");
     assert_eq!(report["database_update"], serde_json::Value::Null);
+}
+
+#[test]
+fn an_upgrade_of_a_database_with_no_data_says_that_no_copy_was_made() {
+    let rig = Rig::new("upgrade-no-copy");
+    rig.installed(&["--access", "local"]);
+    fs::write(rig.state.join("server-log"), upgraded_line(1, 2, None)).unwrap();
+
+    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("from schema version 1 to 2"), "{stdout}");
+    assert!(stdout.contains("no copy was made"), "{stdout}");
+    assert!(!stdout.contains("before-upgrade"), "{stdout}");
+
+    fs::write(rig.state.join("server-log"), upgraded_line(2, 3, None)).unwrap();
+    let report = upgrade_json(&rig, "0.0.24");
+    assert_eq!(report["database_update"]["schema_to"], 3);
+    assert_eq!(report["database_update"]["copy"], serde_json::Value::Null);
 }
 
 #[test]
 fn a_retried_upgrade_still_says_where_the_copy_of_the_database_is() {
     let rig = Rig::new("upgrade-retry");
     rig.installed(&["--access", "local"]);
-    let copy = "/data/marfa.db.backup-schema-1-to-2-20260101T000000000Z";
     fs::write(rig.state.join("unhealthy"), "").unwrap();
     fs::write(
         rig.state.join("server-log"),
-        format!(
-            r#"{{"timestamp":"2026-01-01T00:00:01.000Z","level":"info","message":"Updated the database in /data/marfa.db from schema version 1 to 2.","schema_from":1,"schema_to":2,"backup_path":"{copy}"}}"#
-        ) + "\n",
+        upgraded_line(1, 2, Some(COPY_PATH)),
     )
     .unwrap();
 
@@ -1263,7 +1361,7 @@ fn a_retried_upgrade_still_says_where_the_copy_of_the_database_is() {
     assert_eq!(code, 0, "{stderr}");
     assert!(stdout.contains("Already on 0.0.23"), "{stdout}");
     assert!(stdout.contains("from schema version 1 to 2"), "{stdout}");
-    assert!(stdout.contains(copy), "{stdout}");
+    assert!(stdout.contains(COPY_PATH), "{stdout}");
 
     // Witness: a retry whose log records no update says nothing of a copy.
     fs::write(rig.state.join("server-log"), "a line of the server's log\n").unwrap();
@@ -1280,10 +1378,8 @@ fn an_upgrade_the_server_refuses_says_how_to_go_back() {
     fs::write(rig.state.join("unhealthy"), "").unwrap();
     fs::write(
         rig.state.join("server-log"),
-        concat!(
-            r#"{"timestamp":"2026-01-01T00:00:00.000Z","level":"error","message":"Failed to start server","error":"Updating the database in /data/marfa.db from schema version 1 to 2 failed. Nothing was changed."}"#,
-            "\nThis server will not start on the database at /data/marfa.db, and the message above says why and what to do.\n",
-        ),
+        start_failed_line("/data/marfa.db is at schema version 9, which a newer build wrote; this build reads schema version 2.")
+            + "This server will not start on the database at /data/marfa.db, and the message above says why and what to do.\n",
     )
     .unwrap();
 
@@ -1294,13 +1390,55 @@ fn an_upgrade_the_server_refuses_says_how_to_go_back() {
         started.elapsed() < Duration::from_secs(20),
         "it waited out --wait"
     );
-    assert!(stderr.contains("Nothing was changed"), "{stderr}");
+    assert!(stderr.contains("a newer build wrote"), "{stderr}");
     assert!(
         stderr.contains("0.0.23 did not update the database"),
         "{stderr}"
     );
     assert!(stderr.contains("MARFA_RELEASE=0.0.22"), "{stderr}");
     assert!(stderr.contains("marfa server start"), "{stderr}");
+}
+
+#[test]
+fn an_upgrade_whose_copy_the_server_could_not_make_says_why_and_how_to_go_back() {
+    let rig = Rig::new("upgrade-copy-refused");
+    rig.installed(&["--access", "local"]);
+    fs::write(rig.state.join("unhealthy"), "").unwrap();
+    let why = "/data/marfa.db was not upgraded from schema version 1, because the copy kept before an upgrade could not be written to /data/marfa.db.before-upgrade: it needs 900 bytes and must leave the disk reserve of 100 bytes, and 4096 bytes are free. Nothing was changed.";
+    fs::write(
+        rig.state.join("server-log"),
+        refused_line(marfa_rules::server_log::UpgradeRefusal::CopyNotMade, why),
+    )
+    .unwrap();
+
+    let started = std::time::Instant::now();
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait", "30"]);
+    assert_ne!(code, 0);
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "it waited out --wait"
+    );
+    assert!(
+        stderr.contains(
+            "0.0.23 did not update the database, because the copy kept first could not be made"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("4096 bytes are free"), "{stderr}");
+    assert!(stderr.contains("still reads it"), "{stderr}");
+    assert!(stderr.contains("MARFA_RELEASE=0.0.22"), "{stderr}");
+    assert!(stderr.contains("marfa server start"), "{stderr}");
+
+    // Witness: a start that failed for another reason is not taken for a refused copy.
+    fs::write(
+        rig.state.join("server-log"),
+        start_failed_line("The port 8080 is already taken (EADDRINUSE)"),
+    )
+    .unwrap();
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait", "1"]);
+    assert_ne!(code, 0);
+    assert!(!stderr.contains("the copy kept first"), "{stderr}");
+    assert!(!stderr.contains("still reads it"), "{stderr}");
 }
 
 #[test]
@@ -2770,6 +2908,273 @@ fn a_native_server_stops_starts_and_upgrades_with_its_service() {
     let (code, _, stderr) = rig.native(&["--access", "local"]);
     assert_eq!(code, 2, "{stderr}");
     assert!(stderr.contains("older"), "{stderr}");
+}
+
+impl Rig {
+    /// Puts the install on a release this binary cannot order, so that an upgrade moves it.
+    fn on_an_earlier_release(&self) {
+        fs::write(
+            self.dir.join(".env"),
+            self.file(".env")
+                .replace("MARFA_RELEASE=0.0.0", "MARFA_RELEASE=0.0.0-before"),
+        )
+        .unwrap();
+    }
+
+    /// What the server logs when the service starts it, and whether it then stays down.
+    fn the_server_logs(&self, lines: &str, stays_down: bool) {
+        fs::write(self.state.join("logs-with"), lines).unwrap();
+        if stays_down {
+            fs::write(self.state.join("stops"), "").unwrap();
+        }
+    }
+
+    /// Adds lines to the log the service manager keeps for the server: launchd's file, or the
+    /// journal's stand-in.
+    fn the_service_logged(&self, lines: &str) {
+        use std::io::Write;
+        let log = if cfg!(target_os = "macos") {
+            self.home().join("Library/Logs/Marfa/marfa.log")
+        } else {
+            self.state.join("server-log")
+        };
+        fs::create_dir_all(log.parent().unwrap()).unwrap();
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log)
+            .unwrap()
+            .write_all(lines.as_bytes())
+            .unwrap();
+    }
+}
+
+fn refused_line(refusal: marfa_rules::server_log::UpgradeRefusal, error: &str) -> String {
+    use marfa_rules::server_log::{ERROR, REFUSED, START_FAILED};
+    log_line(
+        "error",
+        START_FAILED,
+        serde_json::json!({ ERROR: error, REFUSED: refusal.name() }),
+    )
+}
+
+#[test]
+fn a_native_upgrade_the_server_declines_says_why_and_that_the_service_keeps_trying() {
+    use marfa_rules::server_log::UpgradeRefusal;
+    let rig = Rig::new("n-upgrade-declined");
+    rig.native_installed(&["--access", "local"]);
+    rig.on_an_earlier_release();
+    let why = "was not upgraded from schema version 1, because the copy kept before an upgrade could not be written: 4096 bytes are free. Nothing was changed.";
+    rig.the_server_logs(&refused_line(UpgradeRefusal::CopyNotMade, why), true);
+
+    let started = std::time::Instant::now();
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--wait", "30"]);
+    assert_ne!(code, 0, "{stderr}");
+    assert!(
+        started.elapsed() < Duration::from_secs(20),
+        "it waited out --wait"
+    );
+    assert!(
+        stderr.contains(
+            "0.0.0 did not update the database, because the copy kept first could not be made"
+        ),
+        "{stderr}"
+    );
+    assert!(stderr.contains("4096 bytes are free"), "{stderr}");
+    assert!(
+        stderr.contains("The service keeps trying to start 0.0.0"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("marfa server stop --dir"), "{stderr}");
+    assert!(stderr.contains("still reads it"), "{stderr}");
+
+    // The unreadable-settings refusal is told apart from a copy that could not be made.
+    let why = "was not upgraded, because its stored setting disk_reserve_bytes does not read as a number. Nothing was changed.";
+    rig.the_server_logs(&refused_line(UpgradeRefusal::SettingsUnreadable, why), true);
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--wait", "30"]);
+    assert_ne!(code, 0, "{stderr}");
+    assert!(
+        stderr.contains("because the settings stored in the database could not be used"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("the copy kept first"), "{stderr}");
+
+    // Witness: a start that stopped for another reason is not taken for a refusal.
+    rig.the_server_logs(
+        &start_failed_line("The port 8080 is already taken (EADDRINUSE)"),
+        true,
+    );
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--wait", "1"]);
+    assert_ne!(code, 0, "{stderr}");
+    assert!(!stderr.contains("did not update the database"), "{stderr}");
+    assert!(!stderr.contains("keeps trying"), "{stderr}");
+}
+
+#[test]
+fn a_native_upgrade_reads_only_what_this_start_logged() {
+    use marfa_rules::server_log::UpgradeRefusal;
+    let rig = Rig::new("n-upgrade-this-start");
+    rig.native_installed(&["--access", "local"]);
+    rig.on_an_earlier_release();
+    let refused = refused_line(UpgradeRefusal::CopyNotMade, "no room. Nothing was changed.");
+
+    // An earlier start's refusal, and an upgrade an earlier release logged, are not this one's.
+    rig.the_service_logged(
+        &(refused.clone() + &upgraded_line_by("0.0.0-before", 1, 2, Some(COPY_PATH))),
+    );
+    rig.the_server_logs(
+        &start_failed_line("The port 8080 is already taken (EADDRINUSE)"),
+        true,
+    );
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--wait", "1"]);
+    assert_ne!(code, 0, "{stderr}");
+    assert!(!stderr.contains("did not update the database"), "{stderr}");
+
+    fs::remove_file(rig.state.join("stops")).unwrap();
+    fs::remove_file(rig.state.join("logs-with")).unwrap();
+    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("Upgraded from 0.0.0-before to 0.0.0"),
+        "{stdout}"
+    );
+    assert!(!stdout.contains("schema version"), "{stdout}");
+    assert!(!stdout.contains(COPY_PATH), "{stdout}");
+
+    // Witness: the same upgrade, when this start logs one, reports it.
+    rig.on_an_earlier_release();
+    rig.the_server_logs(&upgraded_line(2, 3, None), false);
+    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("from schema version 2 to 3"), "{stdout}");
+    assert!(!stdout.contains("earlier start"), "{stdout}");
+    assert!(!stdout.contains(COPY_PATH), "{stdout}");
+}
+
+#[test]
+fn a_retried_native_upgrade_still_names_the_copy_an_earlier_start_made() {
+    let rig = Rig::new("n-upgrade-retry");
+    rig.native_installed(&["--access", "local"]);
+    rig.on_an_earlier_release();
+
+    // The wait ends while the server is still copying, so the release is not written down.
+    rig.the_server_logs("", true);
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--wait", "1"]);
+    assert_ne!(code, 0, "{stderr}");
+    assert!(rig.file(".env").contains("MARFA_RELEASE=0.0.0-before"));
+    fs::remove_file(rig.state.join("stops")).unwrap();
+
+    // Witness: what an earlier release logged is not this release's update.
+    rig.the_service_logged(&upgraded_line_by(
+        "0.0.0-before",
+        1,
+        2,
+        Some("/data/other.db"),
+    ));
+    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        !stdout.contains("other.db") && !stdout.contains("copy"),
+        "{stdout}"
+    );
+
+    // The first start finished the update after the wait ended, and the run again restarts the
+    // server, which finds nothing to update and logs nothing of one.
+    rig.on_an_earlier_release();
+    rig.the_service_logged(&upgraded_line(1, 2, Some(COPY_PATH)));
+    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(
+        stdout.contains("An earlier start of this release"),
+        "{stdout}"
+    );
+    assert!(stdout.contains("from schema version 1 to 2"), "{stdout}");
+    assert!(stdout.contains(COPY_PATH), "{stdout}");
+
+    rig.on_an_earlier_release();
+    let (code, json, stderr) = rig.marfa(&["--json", "upgrade", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    let report: serde_json::Value = serde_json::from_str(&json).expect(&json);
+    assert_eq!(report["database_update"]["copy"], COPY_PATH, "{json}");
+    assert_eq!(report["database_update"]["earlier_start"], true, "{json}");
+    assert_eq!(report["log_read"], true, "{json}");
+}
+
+// The journal's stand-in is the only log a test can make unreadable.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_native_upgrade_whose_log_cannot_be_read_does_not_say_no_copy_was_made() {
+    let rig = Rig::new("n-upgrade-unread");
+    rig.native_installed(&["--access", "local"]);
+    rig.on_an_earlier_release();
+    fs::write(rig.state.join("journal-unreadable"), "").unwrap();
+
+    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("The log could not be read"), "{stdout}");
+    assert!(!stdout.contains("no copy was made"), "{stdout}");
+
+    rig.on_an_earlier_release();
+    let (code, json, stderr) = rig.marfa(&["--json", "upgrade", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    let report: serde_json::Value = serde_json::from_str(&json).expect(&json);
+    assert_eq!(report["database_update"], serde_json::Value::Null, "{json}");
+    assert_eq!(report["log_read"], false, "{json}");
+}
+
+// What `docker logs` holds of a container's earlier runs is not what this start said.
+#[test]
+fn a_docker_upgrade_reads_only_the_containers_current_run() {
+    use marfa_rules::server_log::UpgradeRefusal;
+    let rig = Rig::new("upgrade-this-run");
+    rig.installed(&["--access", "local"]);
+    fs::write(
+        rig.state.join("server-log-earlier"),
+        refused_line(UpgradeRefusal::CopyNotMade, "no room. Nothing was changed.")
+            + &upgraded_line(1, 2, Some(COPY_PATH)),
+    )
+    .unwrap();
+    fs::write(rig.state.join("unhealthy"), "").unwrap();
+    fs::write(
+        rig.state.join("server-log"),
+        start_failed_line("The port 8080 is already taken (EADDRINUSE)"),
+    )
+    .unwrap();
+    let (code, _, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait", "1"]);
+    assert_ne!(code, 0, "{stderr}");
+    assert!(!stderr.contains("did not update the database"), "{stderr}");
+
+    fs::remove_file(rig.state.join("unhealthy")).unwrap();
+    fs::write(rig.state.join("server-log"), "a line of the server's log\n").unwrap();
+    let report = upgrade_json(&rig, "0.0.24");
+    assert_eq!(report["database_update"], serde_json::Value::Null);
+}
+
+#[test]
+fn a_docker_upgrade_whose_run_cannot_be_told_from_an_earlier_one_says_the_log_could_not_be_read() {
+    let rig = Rig::new("upgrade-unread");
+    rig.installed(&["--access", "local"]);
+    fs::write(
+        rig.state.join("server-log"),
+        upgraded_line(1, 2, Some(COPY_PATH)),
+    )
+    .unwrap();
+    fs::write(rig.state.join("started-at-unreadable"), "").unwrap();
+
+    let (code, stdout, stderr) = rig.marfa(&["upgrade", "--release", "0.0.23", "--wait", "5"]);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stdout.contains("The log could not be read"), "{stdout}");
+    assert!(!stdout.contains("no copy was made"), "{stdout}");
+    assert!(!stdout.contains(COPY_PATH), "{stdout}");
+    let report = upgrade_json(&rig, "0.0.24");
+    assert_eq!(report["database_update"], serde_json::Value::Null);
+    assert_eq!(report["log_read"], false);
+
+    // Witness: with the start readable, the same log is read and says so.
+    fs::remove_file(rig.state.join("started-at-unreadable")).unwrap();
+    let report = upgrade_json(&rig, "0.0.25");
+    assert_eq!(report["database_update"]["copy"], COPY_PATH);
+    assert_eq!(report["log_read"], true);
 }
 
 #[test]

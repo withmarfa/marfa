@@ -22,6 +22,7 @@ pub mod recurrence;
 pub mod rows;
 pub mod schema;
 pub mod search;
+pub mod server_log;
 pub mod thumbnail;
 pub mod time;
 pub mod type_move;

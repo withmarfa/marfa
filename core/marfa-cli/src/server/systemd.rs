@@ -316,38 +316,220 @@ pub fn linger(trace: bool) -> Result<Linger, CliError> {
     })
 }
 
+/// Where one journal selection stood before a start.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Position {
+    /// The selection held no entry, so everything it holds later is the start's.
+    Start,
+    /// The cursor of its last entry.
+    After(String),
+    /// The journal could not be asked.
+    Unknown,
+}
+
 /// A user service's lines may be in the system journal or the account's own, so each is tried.
-pub fn log_tail(scope: Scope, name: &str, lines: usize, since: Option<u64>) -> String {
+fn selections(scope: Scope, name: &str) -> Vec<Vec<String>> {
     let unit = service(name);
-    let selections: Vec<Vec<String>> = match scope {
+    match scope {
         Scope::User => vec![
             vec!["--user-unit".into(), unit.clone()],
             vec!["--user".into(), "-u".into(), unit],
         ],
         Scope::System => vec![vec!["-u".into(), unit]],
-    };
-    for selection in selections {
-        let mut command = Command::new(tool("journalctl"));
-        command
-            .args(&selection)
-            .args(["-n", &lines.to_string(), "--no-pager", "--output=cat"]);
-        if let Some(since) = since {
-            command.arg(format!("--since=@{since}"));
-        }
-        let text = command
-            .output()
-            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
-            .unwrap_or_default();
-        if !text.is_empty() {
-            return text;
+    }
+}
+
+fn journalctl(program: &Path, selection: &[String], more: &[&str]) -> Option<String> {
+    let output = Command::new(program)
+        .args(selection)
+        .args(more)
+        .arg("--no-pager")
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+/// The cursor of each selection's last entry, to read what is logged after it. A time would
+/// leave a line logged in the same second as the start on the wrong side.
+pub fn journal_mark(scope: Scope, name: &str) -> Vec<Position> {
+    marked_by(&tool("journalctl"), scope, name)
+}
+
+fn marked_by(program: &Path, scope: Scope, name: &str) -> Vec<Position> {
+    selections(scope, name)
+        .iter()
+        .map(|selection| {
+            let Some(text) = journalctl(program, selection, &["-n", "1", "--output=json"]) else {
+                return Position::Unknown;
+            };
+            match text.lines().find(|line| line.starts_with('{')) {
+                None => Position::Start,
+                Some(line) => serde_json::from_str::<serde_json::Value>(line)
+                    .ok()
+                    .and_then(|entry| entry["__CURSOR"].as_str().map(str::to_string))
+                    .map_or(Position::Unknown, Position::After),
+            }
+        })
+        .collect()
+}
+
+/// The last `lines` lines the unit logged, or those after `mark`. `None` when the journal
+/// could not be read, which is not the same as a journal that holds nothing.
+pub fn log_tail(
+    scope: Scope,
+    name: &str,
+    lines: usize,
+    mark: Option<&[Position]>,
+) -> Option<String> {
+    read_by(&tool("journalctl"), scope, name, lines, mark)
+}
+
+fn read_by(
+    program: &Path,
+    scope: Scope,
+    name: &str,
+    lines: usize,
+    mark: Option<&[Position]>,
+) -> Option<String> {
+    let mut unread = false;
+    for (at, selection) in selections(scope, name).iter().enumerate() {
+        let text = match mark.map(|mark| mark.get(at).unwrap_or(&Position::Unknown)) {
+            None => journalctl(
+                program,
+                selection,
+                &["-n", &lines.to_string(), "--output=cat"],
+            ),
+            Some(Position::Start) => journalctl(program, selection, &["--output=cat"]),
+            Some(Position::After(cursor)) => journalctl(
+                program,
+                selection,
+                &[&format!("--after-cursor={cursor}"), "--output=cat"],
+            ),
+            Some(Position::Unknown) => None,
+        };
+        match text {
+            Some(text) if !text.is_empty() => {
+                let all: Vec<&str> = text.lines().collect();
+                return Some(all[all.len().saturating_sub(lines)..].join("\n"));
+            }
+            Some(_) => {}
+            None => unread = true,
         }
     }
-    String::new()
+    (!unread).then(String::new)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A journal in a file, one line per entry, whose cursor is the number of its entries, and
+    /// which answers as `journalctl` does for the options the command line uses.
+    fn journal_in(folder: &Path) -> PathBuf {
+        let program = folder.join("journalctl");
+        std::fs::write(
+            &program,
+            r#"#!/bin/sh
+J="$(dirname "$0")/journal"
+[ -e "$(dirname "$0")/broken" ] && exit 1
+after=""; json=""; last=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --after-cursor=*) after="${1#--after-cursor=}" ;;
+    --output=json) json=1 ;;
+    -n) shift; last="$1" ;;
+  esac
+  shift
+done
+[ -e "$J" ] || touch "$J"
+count=$(wc -l < "$J" | tr -d ' ')
+if [ -n "$json" ]; then
+  [ "$count" -gt 0 ] && printf '{"__CURSOR":"c%s","MESSAGE":"x"}\n' "$count"
+  exit 0
+fi
+if [ -n "$after" ]; then tail -n +$(( ${after#c} + 1 )) "$J"
+elif [ -n "$last" ]; then tail -n "$last" "$J"
+else cat "$J"; fi
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        program
+    }
+
+    fn logged(folder: &Path, line: &str) {
+        use std::io::Write;
+        let mut journal = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(folder.join("journal"))
+            .unwrap();
+        writeln!(journal, "{line}").unwrap();
+    }
+
+    #[test]
+    fn a_journal_read_after_its_mark_leaves_out_a_line_logged_before_the_start_in_the_same_second()
+    {
+        let folder = tempfile::tempdir().unwrap();
+        let program = journal_in(folder.path());
+        logged(folder.path(), "refused by an earlier start");
+        let mark = marked_by(&program, Scope::System, "marfa");
+        assert_eq!(mark, [Position::After("c1".into())]);
+        logged(folder.path(), "this start's line");
+        assert_eq!(
+            read_by(&program, Scope::System, "marfa", 20, Some(&mark)).as_deref(),
+            Some("this start's line")
+        );
+        // Witness: with no mark the same journal gives the earlier line too.
+        assert!(
+            read_by(&program, Scope::System, "marfa", 20, None)
+                .unwrap()
+                .contains("refused by an earlier start")
+        );
+        // A journal with nothing before the start gives everything after it.
+        let empty = tempfile::tempdir().unwrap();
+        let program = journal_in(empty.path());
+        let mark = marked_by(&program, Scope::System, "marfa");
+        assert_eq!(mark, [Position::Start]);
+        logged(empty.path(), "first");
+        logged(empty.path(), "second");
+        assert_eq!(
+            read_by(&program, Scope::System, "marfa", 1, Some(&mark)).as_deref(),
+            Some("second")
+        );
+    }
+
+    #[test]
+    fn a_journal_that_cannot_be_read_is_not_one_that_holds_nothing() {
+        let folder = tempfile::tempdir().unwrap();
+        let program = journal_in(folder.path());
+        assert_eq!(
+            read_by(&program, Scope::User, "marfa", 20, None).as_deref(),
+            Some("")
+        );
+        std::fs::write(folder.path().join("broken"), "").unwrap();
+        let mark = marked_by(&program, Scope::User, "marfa");
+        assert_eq!(mark, [Position::Unknown, Position::Unknown]);
+        assert_eq!(
+            read_by(&program, Scope::User, "marfa", 20, Some(&mark)),
+            None
+        );
+        assert_eq!(read_by(&program, Scope::User, "marfa", 20, None), None);
+        assert_eq!(
+            read_by(
+                &folder.path().join("absent"),
+                Scope::System,
+                "marfa",
+                20,
+                None
+            ),
+            None
+        );
+    }
 
     fn unit(scope: Scope) -> Unit {
         Unit {
