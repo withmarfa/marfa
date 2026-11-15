@@ -202,49 +202,56 @@ describe("a replication run while no store answers", () => {
 });
 
 describe("health and attention while the object store does not answer", () => {
-  it("answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up", async () => {
-    const [hash] = await leaveBacklog(operator, working, [
-      bytesOf("waiting while the store hangs", 120),
-    ]);
-    const quiet = await healthDetail(server);
-    expect(quiet.backups).toMatchObject({ status: "ok", store_error: null });
+  // The claim is a latency bound: a pass on the second try would pass a slow answer.
+  it(
+    "answers health within its deadline, names the store and the files that wait, and clears once the store answers and replication has caught up",
+    { retry: 0 },
+    async () => {
+      const [hash] = await leaveBacklog(operator, working, [
+        bytesOf("waiting while the store hangs", 120),
+      ]);
+      const quiet = await healthDetail(server);
+      expect(quiet.backups).toMatchObject({ status: "ok", store_error: null });
 
-    await storesHang();
-    await runJob(operator, "blob-replicate", "error");
-    const before = Date.now();
-    const detail = await healthDetail(server);
-    expect(Date.now() - before).toBeLessThan(2500);
-    expect(detail.status).toBe("degraded");
-    expect(detail.backups).toMatchObject({
-      status: "failing",
-      copies_waiting: 1,
-    });
-    expect(typeof detail.backups.store_error).toBe("string");
-    const told = await backupConcerns(server);
-    expect(told.map((concern) => concern.reference)).toEqual(["store"]);
-    expect(told[0]!.title).toBe(
-      "Files are waiting for their copy in the object store",
-    );
-    expect(told[0]!.description).toContain("1 file waits for its second copy");
-    expect(
-      (await attentionOf(server)).some((concern) => concern.kind === "job"),
-    ).toBe(false);
+      await storesHang();
+      await runJob(operator, "blob-replicate", "error");
+      const before = Date.now();
+      const detail = await healthDetail(server);
+      expect(Date.now() - before).toBeLessThan(2500);
+      expect(detail.status).toBe("degraded");
+      expect(detail.backups).toMatchObject({
+        status: "failing",
+        copies_waiting: 1,
+      });
+      expect(typeof detail.backups.store_error).toBe("string");
+      const told = await backupConcerns(server);
+      expect(told.map((concern) => concern.reference)).toEqual(["store"]);
+      expect(told[0]!.title).toBe(
+        "Files are waiting for their copy in the object store",
+      );
+      expect(told[0]!.description).toContain(
+        "1 file waits for its second copy",
+      );
+      expect(
+        (await attentionOf(server)).some((concern) => concern.kind === "job"),
+      ).toBe(false);
 
-    await server.clearFault();
-    await replicateUntilCaughtUp(
-      operator,
-      "the object store's copy once it answers",
-    );
-    await runJob(operator, "blob-replicate");
-    expect((await operator.listBlobCopies(hash!)).data.data).toHaveLength(2);
-    const healed = await healthDetail(server);
-    expect(healed.backups).toMatchObject({
-      status: "ok",
-      store_error: null,
-      copies_waiting: 0,
-    });
-    expect(await backupConcerns(server)).toEqual([]);
-  });
+      await server.clearFault();
+      await replicateUntilCaughtUp(
+        operator,
+        "the object store's copy once it answers",
+      );
+      await runJob(operator, "blob-replicate");
+      expect((await operator.listBlobCopies(hash!)).data.data).toHaveLength(2);
+      const healed = await healthDetail(server);
+      expect(healed.backups).toMatchObject({
+        status: "ok",
+        store_error: null,
+        copies_waiting: 0,
+      });
+      expect(await backupConcerns(server)).toEqual([]);
+    },
+  );
 
   it("tells one file the object store refused as files waiting for their copy, not as a store that is gone", async () => {
     const [hash] = await leaveBacklog(operator, working, [

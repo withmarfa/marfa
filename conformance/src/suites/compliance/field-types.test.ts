@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -551,7 +552,7 @@ describe("an array field", () => {
   });
 
   it("checks the elements of a bulk entry, an upsert by natural key and a bulk upsert", async () => {
-    const key = `listy-${ctx.runId}`;
+    const key = `listy-${ctx.runId}-${randomUUID()}`;
     const bulk = await client.bulkItems({
       mode: "create_only",
       atomic: false,

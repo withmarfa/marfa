@@ -44,47 +44,52 @@ afterAll(async () => {
 }, FRESH_SERVER_TIMEOUT_MS);
 
 describe("GET /health while the credential clean-up runs", () => {
-  it("is answered between two grants of the retirement of inactive grants", async () => {
-    const job = "credential-cleanup";
-    const action = "auth.grant.retired";
-    // One sign-in serves every grant: the owner's address may make ten
-    // password attempts in fifteen minutes.
-    const origin = await issuerOrigin(server);
-    const cookie = await signIn(server, origin);
-    for (let made = 0; made < GRANTS; made += 10) {
-      await Promise.all(
-        Array.from({ length: 10 }, async () =>
-          connect(
-            server,
-            origin,
-            cookie,
-            await registerApp(server, NOTES),
-            NOTES,
+  // A failed try can leave a hold set and the clock moved, which the retry would start from.
+  it(
+    "is answered between two grants of the retirement of inactive grants",
+    { retry: 0, timeout: 900_000 },
+    async () => {
+      const job = "credential-cleanup";
+      const action = "auth.grant.retired";
+      // One sign-in serves every grant: the owner's address may make ten
+      // password attempts in fifteen minutes.
+      const origin = await issuerOrigin(server);
+      const cookie = await signIn(server, origin);
+      for (let made = 0; made < GRANTS; made += 10) {
+        await Promise.all(
+          Array.from({ length: 10 }, async () =>
+            connect(
+              server,
+              origin,
+              cookie,
+              await registerApp(server, NOTES),
+              NOTES,
+            ),
           ),
-        ),
-      );
-    }
-    const before = await audited(server, action);
+        );
+      }
+      const before = await audited(server, action);
 
-    const held = await heldWhenHealthAnswered(server, {
-      start: `hold:housekeeping:${job}`,
-      // Each grant's retirement is a write of its own, after a turn: the last.
-      later: `hold:write=${action}@${String(GRANTS)}`,
-      begin: async () => {
-        // The move makes the job due, and the scheduler may start it before
-        // this request does: either run waits at the hold.
-        await server.advanceClock(366 * DAY_MS);
-        const retiring = operatorOf(server).runHousekeeping(job);
-        return async () => {
-          const asked = await retiring;
-          if (asked.status !== 200) {
-            expect(asked.error?.error.code).toBe("housekeeping_job_running");
-            await runJob(server, job);
-          }
-          expect((await audited(server, action)) - before).toBe(GRANTS);
-        };
-      },
-    });
-    expect(held).toEqual([]);
-  }, 900_000);
+      const held = await heldWhenHealthAnswered(server, {
+        start: `hold:housekeeping:${job}`,
+        // Each grant's retirement is a write of its own, after a turn: the last.
+        later: `hold:write=${action}@${String(GRANTS)}`,
+        begin: async () => {
+          // The move makes the job due, and the scheduler may start it before
+          // this request does: either run waits at the hold.
+          await server.advanceClock(366 * DAY_MS);
+          const retiring = operatorOf(server).runHousekeeping(job);
+          return async () => {
+            const asked = await retiring;
+            if (asked.status !== 200) {
+              expect(asked.error?.error.code).toBe("housekeeping_job_running");
+              await runJob(server, job);
+            }
+            expect((await audited(server, action)) - before).toBe(GRANTS);
+          };
+        },
+      });
+      expect(held).toEqual([]);
+    },
+  );
 });

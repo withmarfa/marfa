@@ -485,8 +485,10 @@ describe("source-owned inbound continuity", () => {
       ).data.map((d) => d.id),
     ).toEqual([receipt]);
   });
+  // A failed try can leave a hold set and the clock moved, which the retry would start from.
   it.each(["revoked", "expired"])(
     "refuses registration when its key becomes %s while the writer is held",
+    { retry: 0 },
     async (standing) => {
       await server.restart({
         env: {

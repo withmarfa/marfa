@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { dirname } from "node:path";
@@ -732,7 +733,7 @@ it("clears the own time of an item whose create still waits to the server's crea
 });
 
 it("clears the own time of a keyed create that lands on an item the server holds", async () => {
-  const key = `cleared-${ctx.runId}`;
+  const key = `cleared-${ctx.runId}-${randomUUID()}`;
   const held = await make({
     source: ctx.source,
     source_id: key,
@@ -770,7 +771,7 @@ it("clears the own time of a keyed create that lands on an item the server holds
 });
 
 it("sends the time set after a clear on a keyed create that lands on a held item", async () => {
-  const key = `cleared-then-set-${ctx.runId}`;
+  const key = `cleared-then-set-${ctx.runId}-${randomUUID()}`;
   const held = await make({
     source: ctx.source,
     source_id: key,

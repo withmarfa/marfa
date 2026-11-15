@@ -62,232 +62,242 @@ const mint = (label: string, expiresIn: string) =>
     expiresIn,
   ]);
 
-it("shares private-socket attention, keeps known concerns, and refuses every other credential", async () => {
-  expect(await local.json(["attention"])).toEqual({ data: [] });
+// A failed try can leave a hold set and the clock moved, which the retry would start from.
+it(
+  "shares private-socket attention, keeps known concerns, and refuses every other credential",
+  { retry: 0 },
+  async () => {
+    expect(await local.json(["attention"])).toEqual({ data: [] });
 
-  const soon = await mint("Ending", "6d");
-  const later = await mint("Later", "9d");
-  const open = await local.json<Inventory>(["attention"]);
-  await expectMatchesSchema("GET", "/attention", 200, open);
-  expect(open.data).toEqual([
-    expect.objectContaining({ kind: "key", reference: soon.id }),
-  ]);
-  expect(Object.keys(open.data[0]).sort()).toEqual([
-    "description",
-    "kind",
-    "reference",
-    "title",
-  ]);
+    const soon = await mint("Ending", "6d");
+    const later = await mint("Later", "9d");
+    const open = await local.json<Inventory>(["attention"]);
+    await expectMatchesSchema("GET", "/attention", 200, open);
+    expect(open.data).toEqual([
+      expect.objectContaining({ kind: "key", reference: soon.id }),
+    ]);
+    expect(Object.keys(open.data[0]).sort()).toEqual([
+      "description",
+      "kind",
+      "reference",
+      "title",
+    ]);
 
-  // A check that cannot answer is one entry naming it, and the others still answer.
-  for (const [check, name] of [
-    ["health", "Health"],
-    ["housekeeping", "Housekeeping"],
-    ["connectors", "Connectors"],
-    ["folders", "Folders"],
-    ["keys", "API keys"],
-  ] as const) {
-    await server.setFault(`fail:attention=${check}`);
+    // A check that cannot answer is one entry naming it, and the others still answer.
+    for (const [check, name] of [
+      ["health", "Health"],
+      ["housekeeping", "Housekeeping"],
+      ["connectors", "Connectors"],
+      ["folders", "Folders"],
+      ["keys", "API keys"],
+    ] as const) {
+      await server.setFault(`fail:attention=${check}`);
+      try {
+        const incomplete = await local.json<Inventory>(["attention"]);
+        expect(incomplete.data).toContainEqual(
+          expect.objectContaining({ kind: "unavailable", reference: name }),
+        );
+        expect(
+          incomplete.data.filter((concern) => concern.kind === "unavailable"),
+        ).toHaveLength(1);
+        expect(
+          incomplete.data.some((concern) => concern.reference === soon.id),
+        ).toBe(check !== "keys");
+      } finally {
+        await server.clearFault();
+      }
+    }
+
+    // A check that does not answer in time is the same entry.
+    await server.setFault("hold:attention=connectors");
     try {
-      const incomplete = await local.json<Inventory>(["attention"]);
-      expect(incomplete.data).toContainEqual(
-        expect.objectContaining({ kind: "unavailable", reference: name }),
+      const slow = await local.json<Inventory>(["attention"]);
+      expect(slow.data).toContainEqual(
+        expect.objectContaining({
+          kind: "unavailable",
+          reference: "Connectors",
+        }),
       );
-      expect(
-        incomplete.data.filter((concern) => concern.kind === "unavailable"),
-      ).toHaveLength(1);
-      expect(
-        incomplete.data.some((concern) => concern.reference === soon.id),
-      ).toBe(check !== "keys");
+      expect(slow.data).toContainEqual(
+        expect.objectContaining({ kind: "key", reference: soon.id }),
+      );
     } finally {
       await server.clearFault();
     }
-  }
 
-  // A check that does not answer in time is the same entry.
-  await server.setFault("hold:attention=connectors");
-  try {
-    const slow = await local.json<Inventory>(["attention"]);
-    expect(slow.data).toContainEqual(
-      expect.objectContaining({ kind: "unavailable", reference: "Connectors" }),
-    );
-    expect(slow.data).toContainEqual(
-      expect.objectContaining({ kind: "key", reference: soon.id }),
-    );
-  } finally {
-    await server.clearFault();
-  }
+    await server.setFault("free:blobs=0");
+    try {
+      const impaired = await local.json<Inventory>(["attention"]);
+      expect(impaired.data).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ kind: "health", reference: "disk" }),
+          expect.objectContaining({ kind: "key", reference: soon.id }),
+        ]),
+      );
+    } finally {
+      await server.clearFault();
+    }
 
-  await server.setFault("free:blobs=0");
-  try {
-    const impaired = await local.json<Inventory>(["attention"]);
-    expect(impaired.data).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ kind: "health", reference: "disk" }),
-        expect.objectContaining({ kind: "key", reference: soon.id }),
-      ]),
-    );
-  } finally {
-    await server.clearFault();
-  }
+    const query = await controlRequest(server.controlSocket, "/attention?x=1");
+    expect(query.status).toBe(400);
 
-  const query = await controlRequest(server.controlSocket, "/attention?x=1");
-  expect(query.status).toBe(400);
+    // Neither a browser session nor a missing credential reaches the public door.
+    expect((await fetch(`${server.apiUrl}/attention`)).status).toBe(401);
+    const cookie = await fetch(`${server.apiUrl}/attention`, {
+      headers: { cookie: server.ownerCookie, origin: server.apiUrl },
+    });
+    expect(cookie.status).toBe(401);
+    for (const credential of [server.workingKey, server.managementKey]) {
+      const refused = await new Cli(
+        requireBinary(),
+        server.apiUrl,
+        credential,
+      ).refused(["attention"]);
+      expect(refused.envelope.error.code).toBe("forbidden");
+      expect(refused.envelope.error.server?.details).toEqual({
+        needs: "local",
+      });
+    }
 
-  // Neither a browser session nor a missing credential reaches the public door.
-  expect((await fetch(`${server.apiUrl}/attention`)).status).toBe(401);
-  const cookie = await fetch(`${server.apiUrl}/attention`, {
-    headers: { cookie: server.ownerCookie, origin: server.apiUrl },
-  });
-  expect(cookie.status).toBe(401);
-  for (const credential of [server.workingKey, server.managementKey]) {
-    const refused = await new Cli(
-      requireBinary(),
-      server.apiUrl,
-      credential,
-    ).refused(["attention"]);
-    expect(refused.envelope.error.code).toBe("forbidden");
-    expect(refused.envelope.error.server?.details).toEqual({ needs: "local" });
-  }
-
-  // A folder with a conflict reported by a current sign-in.
-  const writer = new Cli(requireBinary(), server.apiUrl, server.workingKey);
-  const folder = await writer.json<{ item: { id: string } }>([
-    "folders",
-    "create",
-    "--title",
-    "Sync concern",
-  ]);
-  const report = await fetch(
-    `${server.apiUrl}/folders/${folder.item.id}/status`,
-    {
-      method: "PUT",
-      headers: {
-        authorization: `Bearer ${server.workingKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        folder_store_id: "copy",
-        sequence: 1,
-        last_success_at: null,
-        pending_uploads: 0,
-        pending_downloads: 0,
-        paused_removals: 0,
-        first_sync_waiting: false,
-        problems: [{ code: "conflict", count: 1 }],
-      }),
-    },
-  );
-  expect(report.status).toBe(200);
-
-  // A job whose last run failed.
-  await server.setFault("fail:housekeeping:audit-cleanup");
-  try {
-    const ended = await local.json(["housekeeping", "run", "audit-cleanup"]);
-    expect(ended).toMatchObject({ name: "audit-cleanup", outcome: "error" });
-  } finally {
-    await server.clearFault();
-  }
-
-  // A connector that failed its last run, one that reports problems, and one that went quiet.
-  const connectorOf = async (label: string) => {
-    const minted = await mint(label, "30d");
-    const as = new Cli(requireBinary(), server.apiUrl, minted.key);
-    const registered = await as.json<{ id: string }>([
-      "connectors",
-      "register",
-      "--name",
-      label,
+    // A folder with a conflict reported by a current sign-in.
+    const writer = new Cli(requireBinary(), server.apiUrl, server.workingKey);
+    const folder = await writer.json<{ item: { id: string } }>([
+      "folders",
+      "create",
+      "--title",
+      "Sync concern",
     ]);
-    return { as, id: registered.id };
-  };
-  const failing = await connectorOf("Failing");
-  await failing.as.json([
-    "connectors",
-    "report",
-    "--started-at",
-    new Date(Date.now() - 60_000).toISOString(),
-    "--finished-at",
-    new Date().toISOString(),
-    "--outcome",
-    "failed",
-    "--error",
-    "the feed answered 500",
-  ]);
-  const troubled = await connectorOf("Troubled");
-  await troubled.as.json([
-    "connectors",
-    "hold",
-    troubled.id,
-    "--process",
-    "attention",
-  ]);
-  await troubled.as.json([
-    "connectors",
-    "state",
-    "put",
-    troubled.id,
-    "--process",
-    "attention",
-    "--body",
-    "{}",
-    "--problems",
-    '{"feed":"Feed unavailable"}',
-  ]);
-  const quiet = await connectorOf("Quiet");
+    const report = await fetch(
+      `${server.apiUrl}/folders/${folder.item.id}/status`,
+      {
+        method: "PUT",
+        headers: {
+          authorization: `Bearer ${server.workingKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          folder_store_id: "copy",
+          sequence: 1,
+          last_success_at: null,
+          pending_uploads: 0,
+          pending_downloads: 0,
+          paused_removals: 0,
+          first_sync_waiting: false,
+          problems: [{ code: "conflict", count: 1 }],
+        }),
+      },
+    );
+    expect(report.status).toBe(200);
 
-  const concerns = await local.json<Inventory>(["attention"]);
-  const byReference = new Map(
-    concerns.data.map((concern) => [concern.reference, concern]),
-  );
-  expect(byReference.get(folder.item.id)).toMatchObject({
-    kind: "folder",
-    title: "Sync concern needs a look",
-  });
-  expect(byReference.get("audit-cleanup")).toMatchObject({ kind: "job" });
-  expect(byReference.get(failing.id)).toMatchObject({
-    kind: "connector",
-    description: expect.stringContaining("the feed answered 500"),
-  });
-  expect(byReference.get(troubled.id)).toMatchObject({
-    kind: "connector",
-    description: expect.stringContaining("1 problem"),
-  });
-  expect(byReference.has(quiet.id)).toBe(false);
-  await expectMatchesSchema("GET", "/attention", 200, concerns);
+    // A job whose last run failed.
+    await server.setFault("fail:housekeeping:audit-cleanup");
+    try {
+      const ended = await local.json(["housekeeping", "run", "audit-cleanup"]);
+      expect(ended).toMatchObject({ name: "audit-cleanup", outcome: "error" });
+    } finally {
+      await server.clearFault();
+    }
 
-  // A revoked folder no longer needs a look.
-  await writer.json(["folders", "revoke", folder.item.id]);
-  const withoutFolder = await local.json<Inventory>(["attention"]);
-  expect(withoutFolder.data.map((concern) => concern.reference)).not.toContain(
-    folder.item.id,
-  );
+    // A connector that failed its last run, one that reports problems, and one that went quiet.
+    const connectorOf = async (label: string) => {
+      const minted = await mint(label, "30d");
+      const as = new Cli(requireBinary(), server.apiUrl, minted.key);
+      const registered = await as.json<{ id: string }>([
+        "connectors",
+        "register",
+        "--name",
+        label,
+      ]);
+      return { as, id: registered.id };
+    };
+    const failing = await connectorOf("Failing");
+    await failing.as.json([
+      "connectors",
+      "report",
+      "--started-at",
+      new Date(Date.now() - 60_000).toISOString(),
+      "--finished-at",
+      new Date().toISOString(),
+      "--outcome",
+      "failed",
+      "--error",
+      "the feed answered 500",
+    ]);
+    const troubled = await connectorOf("Troubled");
+    await troubled.as.json([
+      "connectors",
+      "hold",
+      troubled.id,
+      "--process",
+      "attention",
+    ]);
+    await troubled.as.json([
+      "connectors",
+      "state",
+      "put",
+      troubled.id,
+      "--process",
+      "attention",
+      "--body",
+      "{}",
+      "--problems",
+      '{"feed":"Feed unavailable"}',
+    ]);
+    const quiet = await connectorOf("Quiet");
 
-  // A day and more with nothing heard makes a connector quiet, and moves the week's window.
-  await server.advanceClock(2 * DAY_MS);
-  const afterwards = await local.json<Inventory>(["attention"]);
-  expect(afterwards.data).toContainEqual(
-    expect.objectContaining({
+    const concerns = await local.json<Inventory>(["attention"]);
+    const byReference = new Map(
+      concerns.data.map((concern) => [concern.reference, concern]),
+    );
+    expect(byReference.get(folder.item.id)).toMatchObject({
+      kind: "folder",
+      title: "Sync concern needs a look",
+    });
+    expect(byReference.get("audit-cleanup")).toMatchObject({ kind: "job" });
+    expect(byReference.get(failing.id)).toMatchObject({
       kind: "connector",
-      reference: quiet.id,
-      description: expect.stringContaining("more than a day"),
-    }),
-  );
-  expect(
-    afterwards.data
-      .filter((concern) => concern.kind === "key")
-      .map((concern) => concern.reference)
-      .sort(),
-  ).toEqual([soon.id, later.id].sort());
+      description: expect.stringContaining("the feed answered 500"),
+    });
+    expect(byReference.get(troubled.id)).toMatchObject({
+      kind: "connector",
+      description: expect.stringContaining("1 problem"),
+    });
+    expect(byReference.has(quiet.id)).toBe(false);
+    await expectMatchesSchema("GET", "/attention", 200, concerns);
 
-  // Revoked keys no longer need a look.
-  await local.json(["keys", "revoke", soon.id]);
-  await local.json(["keys", "revoke", later.id]);
-  const revoked = await local.json<Inventory>(["attention"]);
-  const references = revoked.data.map((concern) => concern.reference);
-  expect(references).not.toContain(soon.id);
-  expect(references).not.toContain(later.id);
-});
+    // A revoked folder no longer needs a look.
+    await writer.json(["folders", "revoke", folder.item.id]);
+    const withoutFolder = await local.json<Inventory>(["attention"]);
+    expect(
+      withoutFolder.data.map((concern) => concern.reference),
+    ).not.toContain(folder.item.id);
+
+    // A day and more with nothing heard makes a connector quiet, and moves the week's window.
+    await server.advanceClock(2 * DAY_MS);
+    const afterwards = await local.json<Inventory>(["attention"]);
+    expect(afterwards.data).toContainEqual(
+      expect.objectContaining({
+        kind: "connector",
+        reference: quiet.id,
+        description: expect.stringContaining("more than a day"),
+      }),
+    );
+    expect(
+      afterwards.data
+        .filter((concern) => concern.kind === "key")
+        .map((concern) => concern.reference)
+        .sort(),
+    ).toEqual([soon.id, later.id].sort());
+
+    // Revoked keys no longer need a look.
+    await local.json(["keys", "revoke", soon.id]);
+    await local.json(["keys", "revoke", later.id]);
+    const revoked = await local.json<Inventory>(["attention"]);
+    const references = revoked.data.map((concern) => concern.reference);
+    expect(references).not.toContain(soon.id);
+    expect(references).not.toContain(later.id);
+  },
+);
 
 it(
   "tells the owner in plain words that no backups are kept, and how to set one",

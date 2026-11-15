@@ -161,10 +161,16 @@ describe("the Rust server a release ships", () => {
       "--project compliance src/suites/compliance/hook-free-server.test.ts",
     );
     expect(run).toContain("--reporter=json");
+    // Like a shard, it retries a failed test once, and the score lists a pass
+    // on the retry.
+    expect(run).toContain("--retry=1");
+    expect(run).not.toContain("--retry=0");
     expect(run).toContain('test -s "$report"');
     const keep = step(releaseCheck, "Keep the report");
     expect(keep.if).toBe("always()");
     expect(keep.with?.name).toBe("rust-contract-report-release");
+    // The score downloads every artifact of that pattern, this one included.
+    expect(keep.with?.name?.startsWith("rust-contract-report-")).toBe(true);
     expect(keep.with?.["if-no-files-found"]).toBe("error");
     expect(step(releaseCheck, "Stop the server").if).toBe("always()");
     // The file it runs is the one the shards leave out, and the one that
@@ -260,9 +266,10 @@ describe("the Rust contract shards", () => {
     const run = step(shards, "Run the shard").run ?? "";
     // The step fails for a missing report and for nothing Vitest says.
     expect(run).toContain("--reporter=json");
-    // A retry would hide a flaky test: the reporters above replace the one
-    // that records it.
-    expect(run).toContain("--retry=0");
+    // A failed test is retried once. The reporters above replace the one that
+    // records a pass on a retry, so the score lists it from the report.
+    expect(run).toContain("--retry=1");
+    expect(run).not.toContain("--retry=0");
     expect(run).toContain("|| status=$?");
     expect(run).toContain('test -s "$report"');
     const keep = step(shards, "Keep the report");
@@ -460,7 +467,8 @@ describe("the Rust contract on macOS", () => {
   it("leaves the login keychain as it was, fails on a failed test and keeps the report whatever the verdict", () => {
     const run = step(macShards, "Run the shard").run ?? "";
     expect(run).toContain("../core/scripts/login-keychain-unchanged.sh");
-    expect(run).toContain("--retry=0");
+    expect(run).toContain("--retry=1");
+    expect(run).not.toContain("--retry=0");
     expect(run).toContain("--reporter=json");
     expect(run).not.toContain("|| status");
     const keep = step(macShards, "Keep the report");

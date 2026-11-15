@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   bootFreshServer,
@@ -84,7 +85,7 @@ describe("an Idempotency-Key repeated after its first answer was too large to ke
   it("answers 422 idempotency_result_not_retained, naming the first status, and writes nothing again", async () => {
     await registerWideType();
     const before = await liveItems();
-    const key = "retention-large-answer";
+    const key = `retention-large-answer-${randomUUID()}`;
 
     const first = await send("POST", "/items", wideItem("a"), {
       "Idempotency-Key": key,
@@ -116,7 +117,7 @@ describe("an Idempotency-Key repeated after its first answer was too large to ke
   it("replays an answer within the bound, so the refusal belongs to the size", async () => {
     // The witness for the case above: the same door, key and credential
     // replay the first answer when it was small enough to keep.
-    const key = "retention-small-answer";
+    const key = `retention-small-answer-${randomUUID()}`;
     const small = { type: "core.note", properties: { body: "kept" } };
     const first = await send("POST", "/items", small, {
       "Idempotency-Key": key,
@@ -136,52 +137,60 @@ describe("an Idempotency-Key repeated after its first answer was too large to ke
 });
 
 describe("an Idempotency-Key repeated while its first request is still being served", () => {
-  it("answers 409 idempotency_key_in_flight and writes nothing, until the claim is past its lease", async () => {
-    const request = { type: "core.note", properties: { body: "once" } };
-    const before = await liveItems();
+  // A failed try can leave the write held and the clock moved past a lease.
+  it(
+    "answers 409 idempotency_key_in_flight and writes nothing, until the claim is past its lease",
+    { retry: 0 },
+    async () => {
+      const request = { type: "core.note", properties: { body: "once" } };
+      const before = await liveItems();
 
-    // The control: with the record complete, a repeat is a replay.
-    const done = await send("POST", "/items", request, {
-      "Idempotency-Key": "in-flight-control",
-    });
-    expect(done.status).toBe(201);
-    const replayed = await send("POST", "/items", request, {
-      "Idempotency-Key": "in-flight-control",
-    });
-    expect(replayed.status).toBe(201);
-    expect(replayed.headers.get("Idempotency-Replayed")).toBe("true");
-    expect(await liveItems()).toBe(before + 1);
+      // The control: with the record complete, a repeat is a replay.
+      const control = `in-flight-control-${randomUUID()}`;
+      const done = await send("POST", "/items", request, {
+        "Idempotency-Key": control,
+      });
+      expect(done.status).toBe(201);
+      const replayed = await send("POST", "/items", request, {
+        "Idempotency-Key": control,
+      });
+      expect(replayed.status).toBe(201);
+      expect(replayed.headers.get("Idempotency-Replayed")).toBe("true");
+      expect(await liveItems()).toBe(before + 1);
 
-    // The first request holds its claim while its write waits.
-    const key = "in-flight-claim";
-    await server!.setFault("hold:write=item.create@1");
-    const first = send("POST", "/items", request, { "Idempotency-Key": key });
-    await server!.waitForHold("hold:write");
+      // The first request holds its claim while its write waits.
+      const key = `in-flight-claim-${randomUUID()}`;
+      await server!.setFault("hold:write=item.create@1");
+      const first = send("POST", "/items", request, { "Idempotency-Key": key });
+      await server!.waitForHold("hold:write");
 
-    // Ten seconds inside the 60-second lease, so that the bound is what holds
-    // the key and not the claim being new.
-    await clock.advance(50 * 1000);
-    const busy = await send("POST", "/items", request, {
-      "Idempotency-Key": key,
-    });
-    expect(busy.status).toBe(409);
-    expect(busy.headers.get("X-Error-Code")).toBe("idempotency_key_in_flight");
-    const body = (await busy.json()) as { error: { code: string } };
-    expect(body.error.code).toBe("idempotency_key_in_flight");
-    expect(await liveItems()).toBe(before + 1);
+      // Ten seconds inside the 60-second lease, so that the bound is what holds
+      // the key and not the claim being new.
+      await clock.advance(50 * 1000);
+      const busy = await send("POST", "/items", request, {
+        "Idempotency-Key": key,
+      });
+      expect(busy.status).toBe(409);
+      expect(busy.headers.get("X-Error-Code")).toBe(
+        "idempotency_key_in_flight",
+      );
+      const body = (await busy.json()) as { error: { code: string } };
+      expect(body.error.code).toBe("idempotency_key_in_flight");
+      expect(await liveItems()).toBe(before + 1);
 
-    // A claim nobody is serving does not hold the key for good: a writer
-    // that died leaves one, and the retry the code asks for takes it over
-    // once it is a second past the lease.
-    await clock.advance(11 * 1000);
-    const taken = await send("POST", "/items", request, {
-      "Idempotency-Key": key,
-    });
-    expect(taken.status).toBe(201);
-    expect(taken.headers.get("Idempotency-Replayed")).toBeNull();
-    await server!.clearFault("hold:write");
-    await first;
-  });
+      // A claim nobody is serving does not hold the key for good: a writer
+      // that died leaves one, and the retry the code asks for takes it over
+      // once it is a second past the lease.
+      await clock.advance(11 * 1000);
+      const taken = await send("POST", "/items", request, {
+        "Idempotency-Key": key,
+      });
+      expect(taken.status).toBe(201);
+      expect(taken.headers.get("Idempotency-Replayed")).toBeNull();
+      await server!.clearFault("hold:write");
+      await first;
+    },
+  );
 });
 
 describe("an Idempotency-Key repeated after the server's contract version changed", () => {
@@ -204,7 +213,7 @@ describe("an Idempotency-Key repeated after the server's contract version change
   it(
     "answers 422 idempotency_contract_changed, naming the first status, and writes nothing again",
     async () => {
-      const key = "contract-change";
+      const key = `contract-change-${randomUUID()}`;
       const request = { type: "core.note", properties: { body: "contract" } };
       const before = await liveItems();
       const first = await send("POST", "/items", request, {

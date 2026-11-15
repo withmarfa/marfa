@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MarfaClient } from "../../client/api.js";
 import {
@@ -56,12 +57,15 @@ describe("a conflicted copy written once", () => {
     });
     expect(winner.ok, JSON.stringify(winner.error)).toBe(true);
 
+    const key = `copy-once-after-the-record-${randomUUID()}`;
     const send = () =>
       writer.rawRequest<{
         conflict_resolution?: { conflicted_copy_id?: string };
       }>(`/items/${id}?conflict=auto`, {
         method: "PATCH",
-        headers: { "Idempotency-Key": "copy-once-after-the-record" },
+        headers: {
+          "Idempotency-Key": key,
+        },
         body: { properties: { body: "body from the loser" }, version },
       });
     const copiesOf = async () => {

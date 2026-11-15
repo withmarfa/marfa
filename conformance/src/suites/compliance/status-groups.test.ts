@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -493,7 +494,7 @@ describe("writing a status field", () => {
   });
 
   it("refuses an undeclared word in a bulk entry, an upsert by natural key and a bulk upsert", async () => {
-    const key = `status-${ctx.runId}`;
+    const key = `status-${ctx.runId}-${randomUUID()}`;
     const bulk = await client.bulkItems({
       mode: "create_only",
       atomic: false,

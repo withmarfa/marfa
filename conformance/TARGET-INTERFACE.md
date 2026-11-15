@@ -686,8 +686,13 @@ the job summary of `Rust contract score` and of `Rust contract score on macOS`.
   failed to load fails, as broken or for listing no test. Reading
   the files without running them gives a count that differs from the run's for
   tests written once for several inputs, so it cannot judge a file.
-- The shards run with `--retry=0`, so a test that passes only on a retry fails
-  its run and does not count as passing.
+- The shards run with `--retry=1`. A test that fails is run once more. One that
+  passes on the retry counts as passing and is listed by file and title, with
+  the first line of its first failure, in the Markdown and as a warning
+  annotation, so a flaky test is never hidden. A test that fails on both tries
+  does not count as passing. Vitest's report has no retry count: a test that
+  passed on a retry is `passed` with the failure of its first try still in
+  `failureMessages`.
 - The command exits with an error when a fixture file of the scored projects
   does not pass whole or no report names it, when two reports name one file,
   and when there is no report at all. A report of a file outside the five

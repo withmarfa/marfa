@@ -118,61 +118,67 @@ describe("a follow through a binding, told what its caller was last told", () =>
     expect(await fresh.stop()).toBeNull();
   });
 
-  it("tells a caller last told the server was unreachable nothing while an event cannot be applied, and that the server is reachable once it is", async () => {
-    const entered = wireItem({ id: "entered", version: 3 });
-    const followed = await bindingHarness("binding-told-stalled", {
-      streams: [
-        {
-          kind: "sse",
-          hold: true,
-          frames: [
-            connected,
-            copyStreamCursor("11"),
-            copyItemEvent("11", "item.updated", entered),
-          ],
-        },
-      ],
-    });
-    harness = followed;
-    const { server, device } = followed;
-    let read: Answer = BUSY;
-    server.copyAnswer("GET", "/items/entered", () => read);
-    const reads = () =>
-      server.requests.filter((request) => request.pathname === "/items/entered")
-        .length;
-    await device.clock.manual();
+  // A failed try can leave a hold set and the clock moved, which the retry would start from.
+  it(
+    "tells a caller last told the server was unreachable nothing while an event cannot be applied, and that the server is reachable once it is",
+    { retry: 0 },
+    async () => {
+      const entered = wireItem({ id: "entered", version: 3 });
+      const followed = await bindingHarness("binding-told-stalled", {
+        streams: [
+          {
+            kind: "sse",
+            hold: true,
+            frames: [
+              connected,
+              copyStreamCursor("11"),
+              copyItemEvent("11", "item.updated", entered),
+            ],
+          },
+        ],
+      });
+      harness = followed;
+      const { server, device } = followed;
+      let read: Answer = BUSY;
+      server.copyAnswer("GET", "/items/entered", () => read);
+      const reads = () =>
+        server.requests.filter(
+          (request) => request.pathname === "/items/entered",
+        ).length;
+      await device.clock.manual();
 
-    // The witness: a caller that was not told is told the event cannot be
-    // applied.
-    const fresh = await device.follow();
-    await untilTold(
-      fresh,
-      ["serverUnreachable"],
-      "an event the server would not let the device apply was told as nothing",
-    );
-    expect(await fresh.stop()).toBeNull();
+      // The witness: a caller that was not told is told the event cannot be
+      // applied.
+      const fresh = await device.follow();
+      await untilTold(
+        fresh,
+        ["serverUnreachable"],
+        "an event the server would not let the device apply was told as nothing",
+      );
+      expect(await fresh.stop()).toBeNull();
 
-    const before = streamsAsked(server).length;
-    const told = await device.follow({ toldUnreachable: true });
-    expect(await nextWait(device)).toBe(1_000);
-    await device.clock.advance(1_000);
-    expect(await nextWait(device)).toBe(2_000);
-    expect(streamsAsked(server).length - before).toBe(2);
-    expect(reads(), "the event was not tried on each stream").toBe(3);
-    expect(
-      told.kinds,
-      "a caller last told the server was lost was told it was back while the event still could not be applied",
-    ).toEqual([]);
+      const before = streamsAsked(server).length;
+      const told = await device.follow({ toldUnreachable: true });
+      expect(await nextWait(device)).toBe(1_000);
+      await device.clock.advance(1_000);
+      expect(await nextWait(device)).toBe(2_000);
+      expect(streamsAsked(server).length - before).toBe(2);
+      expect(reads(), "the event was not tried on each stream").toBe(3);
+      expect(
+        told.kinds,
+        "a caller last told the server was lost was told it was back while the event still could not be applied",
+      ).toEqual([]);
 
-    read = answers.updated({ ...entered, edges: {} });
-    await device.clock.advance(2_000);
-    await untilTold(
-      told,
-      ["serverReachable", "applied"],
-      "the event was applied without telling the caller the server was back, once, before it",
-    );
-    expect(await told.stop()).toBeNull();
-  });
+      read = answers.updated({ ...entered, edges: {} });
+      await device.clock.advance(2_000);
+      await untilTold(
+        told,
+        ["serverReachable", "applied"],
+        "the event was applied without telling the caller the server was back, once, before it",
+      );
+      expect(await told.stop()).toBeNull();
+    },
+  );
 });
 
 describe("the wait before a held stream is asked for again", () => {
@@ -228,135 +234,144 @@ describe("the wait before a held stream is asked for again", () => {
 });
 
 describe("what a follow through a binding tells", () => {
-  it("tells that the catalog changed, that the server was lost and is back, and what a drain did or failed to do, each as a change of its own kind apart from the events the stream applied", async () => {
-    let registered = false;
-    const followed = await bindingHarness("binding-change-kinds", {
-      setup: ({ server }) => {
-        // The hydration reads it once; every read after reads what the
-        // fixture has registered by then.
-        server.copyAnswer("GET", "/types", () =>
-          typeCatalog(
-            registered
-              ? [wireType("acme.late-note", { parent: "core.note" })]
-              : [],
+  // A failed try can leave a hold set and the clock moved, which the retry would start from.
+  it(
+    "tells that the catalog changed, that the server was lost and is back, and what a drain did or failed to do, each as a change of its own kind apart from the events the stream applied",
+    { retry: 0 },
+    async () => {
+      let registered = false;
+      const followed = await bindingHarness("binding-change-kinds", {
+        setup: ({ server }) => {
+          // The hydration reads it once; every read after reads what the
+          // fixture has registered by then.
+          server.copyAnswer("GET", "/types", () =>
+            typeCatalog(
+              registered
+                ? [wireType("acme.late-note", { parent: "core.note" })]
+                : [],
+            ),
+          );
+        },
+      });
+      harness = followed;
+      const { server, device, events } = followed;
+      // The first stream is refused, and the second carries one event.
+      events.set(BUSY, {
+        kind: "sse",
+        hold: true,
+        frames: [
+          connected,
+          copyStreamCursor("11"),
+          copyItemEvent(
+            "11",
+            "item.created",
+            wireItem({
+              id: "arrived",
+              properties: { title: "arrived", body: "live" },
+            }),
           ),
-        );
-      },
-    });
-    harness = followed;
-    const { server, device, events } = followed;
-    // The first stream is refused, and the second carries one event.
-    events.set(BUSY, {
-      kind: "sse",
-      hold: true,
-      frames: [
-        connected,
-        copyStreamCursor("11"),
-        copyItemEvent(
-          "11",
-          "item.created",
-          wireItem({
-            id: "arrived",
-            properties: { title: "arrived", body: "live" },
-          }),
-        ),
-      ],
-    });
-    await device.clock.manual();
-    // The first create is taken; the second is answered as another contract
-    // would answer it, which a drain cannot read.
-    takeCreates(server, (take) => [
-      take,
-      {
-        kind: "json",
-        status: 201,
-        body: {},
-        contract: String(Number(BUILT_FOR) + 1),
-      },
-    ]);
-    await queueNotes(device, "first");
+        ],
+      });
+      await device.clock.manual();
+      // The first create is taken; the second is answered as another contract
+      // would answer it, which a drain cannot read.
+      takeCreates(server, (take) => [
+        take,
+        {
+          kind: "json",
+          status: 201,
+          body: {},
+          contract: String(Number(BUILT_FOR) + 1),
+        },
+      ]);
+      await queueNotes(device, "first");
 
-    const lost = await device.follow();
-    expect(await nextWait(device)).toBe(1_000);
-    registered = true;
-    await device.clock.advance(1_000);
-    await vi.waitFor(
-      () => {
-        expect(lost.kinds).toContain("queueDrained");
-        expect(lost.kinds).toContain("applied");
-      },
-      { timeout: 10_000, interval: 20 },
-    );
-    expect(await lost.stop()).toBeNull();
+      const lost = await device.follow();
+      expect(await nextWait(device)).toBe(1_000);
+      registered = true;
+      await device.clock.advance(1_000);
+      await vi.waitFor(
+        () => {
+          expect(lost.kinds).toContain("queueDrained");
+          expect(lost.kinds).toContain("applied");
+        },
+        { timeout: 10_000, interval: 20 },
+      );
+      expect(await lost.stop()).toBeNull();
 
-    // A caller last told the server was lost, with a write the server will
-    // not take from it.
-    await queueNotes(device, "second");
-    events.set(LIVE);
-    const back = await device.follow({ toldUnreachable: true });
-    await untilTold(
-      back,
-      ["serverReachable", "queueNotDrained"],
-      "a drain that ended with an error was not told, or was told as drained",
-    );
-    expect(await back.stop()).toBeNull();
+      // A caller last told the server was lost, with a write the server will
+      // not take from it.
+      await queueNotes(device, "second");
+      events.set(LIVE);
+      const back = await device.follow({ toldUnreachable: true });
+      await untilTold(
+        back,
+        ["serverReachable", "queueNotDrained"],
+        "a drain that ended with an error was not told, or was told as drained",
+      );
+      expect(await back.stop()).toBeNull();
 
-    const told = [...lost.changes, ...back.changes];
-    const kinds = told.map((change) => change.kind);
-    expect(
-      [...new Set(kinds)].sort(),
-      "a change was told as the kind of another",
-    ).toEqual(
-      [
-        "applied",
-        "catalogChanged",
-        "queueDrained",
-        "queueNotDrained",
-        "serverReachable",
-        "serverUnreachable",
-      ].sort(),
-    );
-    const at = (kind: (typeof kinds)[number]) => kinds.indexOf(kind);
-    expect(at("serverUnreachable")).toBe(0);
-    expect(at("serverReachable")).toBe(1);
-    expect(
-      at("queueDrained"),
-      "the drain was told before the server was back",
-    ).toBeGreaterThan(at("serverReachable"));
-    expect(kinds.filter((kind) => kind === "applied")).toHaveLength(1);
+      const told = [...lost.changes, ...back.changes];
+      const kinds = told.map((change) => change.kind);
+      expect(
+        [...new Set(kinds)].sort(),
+        "a change was told as the kind of another",
+      ).toEqual(
+        [
+          "applied",
+          "catalogChanged",
+          "queueDrained",
+          "queueNotDrained",
+          "serverReachable",
+          "serverUnreachable",
+        ].sort(),
+      );
+      const at = (kind: (typeof kinds)[number]) => kinds.indexOf(kind);
+      expect(at("serverUnreachable")).toBe(0);
+      expect(at("serverReachable")).toBe(1);
+      expect(
+        at("queueDrained"),
+        "the drain was told before the server was back",
+      ).toBeGreaterThan(at("serverReachable"));
+      expect(kinds.filter((kind) => kind === "applied")).toHaveLength(1);
 
-    // An event the stream applied is the only change that names an event, a
-    // item or an edge.
-    for (const change of told) {
-      if (change.kind === "applied") {
-        expect(change).toEqual({
-          kind: "applied",
-          event: "item.created",
-          itemId: "arrived",
-          cursor: "11",
-        });
-      } else {
-        expect(
-          Object.keys(change).filter((name) =>
-            ["event", "itemId", "edgeId"].includes(name),
-          ),
-          `a change of kind ${change.kind} named an event or an item`,
-        ).toEqual([]);
+      // An event the stream applied is the only change that names an event, a
+      // item or an edge.
+      for (const change of told) {
+        if (change.kind === "applied") {
+          expect(change).toEqual({
+            kind: "applied",
+            event: "item.created",
+            itemId: "arrived",
+            cursor: "11",
+          });
+        } else {
+          expect(
+            Object.keys(change).filter((name) =>
+              ["event", "itemId", "edgeId"].includes(name),
+            ),
+            `a change of kind ${change.kind} named an event or an item`,
+          ).toEqual([]);
+        }
       }
-    }
-    const drained = told.find((change) => change.kind === "queueDrained");
-    expect(drained?.kind === "queueDrained" && drained.report.answered).toBe(1);
-    const notDrained = told.find((change) => change.kind === "queueNotDrained");
-    expect(
-      notDrained?.kind === "queueNotDrained" && notDrained.reason,
-      "the caller was not told why",
-    ).toContain("contract");
-    const unreachable = told[0];
-    expect(
-      unreachable?.kind === "serverUnreachable" && unreachable.reason,
-      "the caller was not told why",
-    ).toContain("503");
-  });
+      const drained = told.find((change) => change.kind === "queueDrained");
+      expect(drained?.kind === "queueDrained" && drained.report.answered).toBe(
+        1,
+      );
+      const notDrained = told.find(
+        (change) => change.kind === "queueNotDrained",
+      );
+      expect(
+        notDrained?.kind === "queueNotDrained" && notDrained.reason,
+        "the caller was not told why",
+      ).toContain("contract");
+      const unreachable = told[0];
+      expect(
+        unreachable?.kind === "serverUnreachable" && unreachable.reason,
+        "the caller was not told why",
+      ).toContain("503");
+    },
+  );
 });
 
 describe("a drain a held stream starts when its server is back", () => {

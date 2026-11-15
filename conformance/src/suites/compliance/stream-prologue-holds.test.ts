@@ -239,37 +239,42 @@ describe("a stream sends no id twice", () => {
 });
 
 describe("a replay the retention sweep overtakes", () => {
-  it("ends with catchup_too_old instead of replaying over the gap", async () => {
-    const before = await streamHead(server.apiUrl, server.workingKey);
-    await server.setFault("hold:stream-replay");
-    const tap = await open({ lastEventId: before });
-    await server.waitForHold("hold:stream-replay");
+  // A failed try can leave a hold set and the clock moved, which the retry would start from.
+  it(
+    "ends with catchup_too_old instead of replaying over the gap",
+    { retry: 0 },
+    async () => {
+      const before = await streamHead(server.apiUrl, server.workingKey);
+      await server.setFault("hold:stream-replay");
+      const tap = await open({ lastEventId: before });
+      await server.waitForHold("hold:stream-replay");
 
-    await note("retired-first");
-    await note("retired-second");
-    await server.advanceClock(31 * DAY_MS);
-    const kept = await note("kept");
-    const ran = await operator.runHousekeeping("event-log-cleanup");
-    expect(ran.status, JSON.stringify(ran.error)).toBe(200);
+      await note("retired-first");
+      await note("retired-second");
+      await server.advanceClock(31 * DAY_MS);
+      const kept = await note("kept");
+      const ran = await operator.runHousekeeping("event-log-cleanup");
+      expect(ran.status, JSON.stringify(ran.error)).toBe(200);
 
-    // The witness that the sweep retired the events the replay was to read.
-    const probe = await open({ lastEventId: before });
-    await probe.until(named("catchup_too_old"), "the sweep to have run");
+      // The witness that the sweep retired the events the replay was to read.
+      const probe = await open({ lastEventId: before });
+      await probe.until(named("catchup_too_old"), "the sweep to have run");
 
-    const keptId = await streamHead(server.apiUrl, server.workingKey);
-    await server.clearFault("hold:stream-replay");
-    await tap.untilClosed();
-    expect(tap.events.map((event) => event.event)).toEqual([
-      "stream_cursor",
-      "catchup_too_old",
-    ]);
-    const refusal = tap.events.at(-1)!;
-    expect(refusal.id).toBeUndefined();
-    expect(refusal.data).toMatchObject({
-      event_type: "catchup_too_old",
-      min_retained_id: keptId,
-      requested: before,
-    });
-    expect(tap.events.some(announces(kept))).toBe(false);
-  });
+      const keptId = await streamHead(server.apiUrl, server.workingKey);
+      await server.clearFault("hold:stream-replay");
+      await tap.untilClosed();
+      expect(tap.events.map((event) => event.event)).toEqual([
+        "stream_cursor",
+        "catchup_too_old",
+      ]);
+      const refusal = tap.events.at(-1)!;
+      expect(refusal.id).toBeUndefined();
+      expect(refusal.data).toMatchObject({
+        event_type: "catchup_too_old",
+        min_retained_id: keptId,
+        requested: before,
+      });
+      expect(tap.events.some(announces(kept))).toBe(false);
+    },
+  );
 });

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, beforeEach, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { MarfaItem, TestContext } from "../../client/types.js";
@@ -339,7 +340,7 @@ describe("read_only on items", () => {
   });
 
   it("answers read_only on a replayed write as registrations stand at the replay", async () => {
-    const idempotencyKey = `read-only-replay-${ctx.runId}`;
+    const idempotencyKey = `read-only-replay-${ctx.runId}-${randomUUID()}`;
     const create = () =>
       client.rawRequest<{ item: MarfaItem }>("/items", {
         method: "POST",

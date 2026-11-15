@@ -330,99 +330,104 @@ it("withholds occurrence fields derived from an unreadable relationship", async 
   expect(row).not.toHaveProperty("replaces");
 });
 
-it("keeps extensions, history, lookup and edge hydration in the authorized state", async () => {
-  for (const surface of [
-    "extensions",
-    "extension",
-    "history",
-    "lookup",
-    "outbound",
-    "backrefs",
-    "edges",
-  ] as const) {
-    const item = await note();
-    const target = await note();
-    const path = `/items/${item.id}`;
-    expect(
-      (
-        await call("PUT", `${path}/extensions/fixture.data`, {
-          data: { value: "public-extension" },
-        })
-      ).status,
-    ).toBe(200);
-    expect(
-      (
-        await call("POST", "/edges", {
-          source_id: item.id,
-          target_id: target.id,
-          edge_type: "about",
-        })
-      ).status,
-    ).toBe(201);
-    // Extension writes advance the item version.
-    const current = await call("GET", path);
-    const { item: beforeItem } = (await current.json()) as {
-      item: { id: string; version: number };
-    };
-    const readPath =
-      surface === "extensions"
-        ? `${path}/extensions`
-        : surface === "extension"
-          ? `${path}/extensions/fixture.data`
-          : surface === "history"
-            ? `${path}/versions`
-            : surface === "outbound"
-              ? `${path}/edges`
-              : surface === "backrefs"
-                ? `${path}/backrefs`
-                : surface === "edges"
-                  ? "/edges"
-                  : "/items/lookup";
-    const read = () =>
-      call(
-        surface === "lookup" ? "POST" : "GET",
-        readPath,
-        surface === "lookup"
-          ? { type: "core.note", ids: [item.id], include: ["edges"] }
-          : undefined,
-        reader,
-      );
-    const baseline = await read();
-    expect(baseline.status, surface).toBe(200);
-    const expected: unknown = await baseline.json();
-    await server.setFault("hold:read-hydration");
-    const pending = read();
-    try {
-      await server.waitForHold("hold:read-hydration");
-      await makePrivate(beforeItem);
+// A failed try can leave a hold set and the clock moved, which the retry would start from.
+it(
+  "keeps extensions, history, lookup and edge hydration in the authorized state",
+  { retry: 0 },
+  async () => {
+    for (const surface of [
+      "extensions",
+      "extension",
+      "history",
+      "lookup",
+      "outbound",
+      "backrefs",
+      "edges",
+    ] as const) {
+      const item = await note();
+      const target = await note();
+      const path = `/items/${item.id}`;
       expect(
         (
           await call("PUT", `${path}/extensions/fixture.data`, {
-            data: { value: "private-extension" },
+            data: { value: "public-extension" },
           })
         ).status,
       ).toBe(200);
       expect(
         (
           await call("POST", "/edges", {
-            source_id: target.id,
-            target_id: item.id,
+            source_id: item.id,
+            target_id: target.id,
             edge_type: "about",
-            properties: { detail: "private-relation" },
           })
         ).status,
       ).toBe(201);
-    } finally {
-      await server.clearFault();
+      // Extension writes advance the item version.
+      const current = await call("GET", path);
+      const { item: beforeItem } = (await current.json()) as {
+        item: { id: string; version: number };
+      };
+      const readPath =
+        surface === "extensions"
+          ? `${path}/extensions`
+          : surface === "extension"
+            ? `${path}/extensions/fixture.data`
+            : surface === "history"
+              ? `${path}/versions`
+              : surface === "outbound"
+                ? `${path}/edges`
+                : surface === "backrefs"
+                  ? `${path}/backrefs`
+                  : surface === "edges"
+                    ? "/edges"
+                    : "/items/lookup";
+      const read = () =>
+        call(
+          surface === "lookup" ? "POST" : "GET",
+          readPath,
+          surface === "lookup"
+            ? { type: "core.note", ids: [item.id], include: ["edges"] }
+            : undefined,
+          reader,
+        );
+      const baseline = await read();
+      expect(baseline.status, surface).toBe(200);
+      const expected: unknown = await baseline.json();
+      await server.setFault("hold:read-hydration");
+      const pending = read();
+      try {
+        await server.waitForHold("hold:read-hydration");
+        await makePrivate(beforeItem);
+        expect(
+          (
+            await call("PUT", `${path}/extensions/fixture.data`, {
+              data: { value: "private-extension" },
+            })
+          ).status,
+        ).toBe(200);
+        expect(
+          (
+            await call("POST", "/edges", {
+              source_id: target.id,
+              target_id: item.id,
+              edge_type: "about",
+              properties: { detail: "private-relation" },
+            })
+          ).status,
+        ).toBe(201);
+      } finally {
+        await server.clearFault();
+      }
+      const response = await pending;
+      expect(response.status, surface).toBe(200);
+      expect(await response.json(), surface).toEqual(expected);
+      expect((await call("GET", path, undefined, reader)).status).toBe(404);
+      const witness = await call("GET", `${path}?include=backrefs`);
+      expect(witness.status).toBe(200);
+      const visible = await witness.text();
+      expect(visible).toContain("private-extension");
+      expect(visible).toContain("private-relation");
     }
-    const response = await pending;
-    expect(response.status, surface).toBe(200);
-    expect(await response.json(), surface).toEqual(expected);
-    expect((await call("GET", path, undefined, reader)).status).toBe(404);
-    const witness = await call("GET", `${path}?include=backrefs`);
-    expect(witness.status).toBe(200);
-    const visible = await witness.text();
-    expect(visible).toContain("private-extension");
-    expect(visible).toContain("private-relation");
-  }
-});
+  },
+);

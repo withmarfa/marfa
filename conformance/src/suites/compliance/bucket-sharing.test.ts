@@ -175,116 +175,121 @@ describe("an object store's layout under its prefix", () => {
 });
 
 describe("two servers on one prefix", () => {
-  it("deletes none of the first server's objects from a server restored from its backup, through every clean-up, so the first server's backup still restores", async () => {
-    const store = ownObjectStore();
-    const bucket = bucketAt(store.S3_PREFIX);
-    const first = await boot("bucket-first", store);
-    const firstId = await instanceIdOf(first);
-    const both = await file(first, "a file both servers wrote");
-    const adopted = await file(first, "a file only the first server wrote");
-    const dropped = await file(first, "a file whose copy the second drops");
-    const backup = await ownerOf(first).runBackup();
-    expect(backup.status, JSON.stringify(backup.error)).toBe(200);
-    const backupName = backup.data.backup.name;
-    const written = await bucket.keys();
+  // A failed try can leave a hold set and the clock moved, which the retry would start from.
+  it(
+    "deletes none of the first server's objects from a server restored from its backup, through every clean-up, so the first server's backup still restores",
+    { retry: 0 },
+    async () => {
+      const store = ownObjectStore();
+      const bucket = bucketAt(store.S3_PREFIX);
+      const first = await boot("bucket-first", store);
+      const firstId = await instanceIdOf(first);
+      const both = await file(first, "a file both servers wrote");
+      const adopted = await file(first, "a file only the first server wrote");
+      const dropped = await file(first, "a file whose copy the second drops");
+      const backup = await ownerOf(first).runBackup();
+      expect(backup.status, JSON.stringify(backup.error)).toBe(200);
+      const backupName = backup.data.backup.name;
+      const written = await bucket.keys();
 
-    const second = await boot("bucket-second", store);
-    const { operator } = clientsFor(second);
-    const own = await clientsFor(second).working.uploadBlob(
-      both.bytes,
-      "text/plain",
-    );
-    expect(own.status).toBe(201);
-    await replicated(operator);
-    const ownObjects = (await bucket.keys()).filter(
-      (key) => !written.includes(key),
-    );
-    expect(
-      ownObjects.some((key) =>
-        key.includes(`/blobs/${both.hash.replace(/^sha256:/, "")}/`),
-      ),
-    ).toBe(true);
+      const second = await boot("bucket-second", store);
+      const { operator } = clientsFor(second);
+      const own = await clientsFor(second).working.uploadBlob(
+        both.bytes,
+        "text/plain",
+      );
+      expect(own.status).toBe(201);
+      await replicated(operator);
+      const ownObjects = (await bucket.keys()).filter(
+        (key) => !written.includes(key),
+      );
+      expect(
+        ownObjects.some((key) =>
+          key.includes(`/blobs/${both.hash.replace(/^sha256:/, "")}/`),
+        ),
+      ).toBe(true);
 
-    // A restore interrupted before its write, then every clean-up.
-    await second.setFault("hold:restore:before-commit");
-    const interrupted = ownerOf(second)
-      .restoreBackup(firstId, backupName)
-      .catch(() => undefined);
-    await second.waitForHold("hold:restore:before-commit");
-    await second.restart({ signal: "SIGKILL" });
-    await interrupted;
-    await cleanEverything(second);
-    expect(await bucket.keys()).toEqual(expect.arrayContaining(written));
+      // A restore interrupted before its write, then every clean-up.
+      await second.setFault("hold:restore:before-commit");
+      const interrupted = ownerOf(second)
+        .restoreBackup(firstId, backupName)
+        .catch(() => undefined);
+      await second.waitForHold("hold:restore:before-commit");
+      await second.restart({ signal: "SIGKILL" });
+      await interrupted;
+      await cleanEverything(second);
+      expect(await bucket.keys()).toEqual(expect.arrayContaining(written));
 
-    const restored = await ownerOf(second).restoreBackup(firstId, backupName);
-    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
-    expect(restored.data.blobs_missing).toEqual([]);
-    for (const kept of [both, adopted, dropped]) {
-      expect(await download(second, kept.hash)).toEqual({
-        status: 200,
-        bytes: kept.bytes,
-      });
-    }
-
-    // The witness: a file the second server wrote alone goes from the bucket.
-    const witness = await file(second, "a file only the second server wrote");
-    const witnessObjects = (await bucket.keys()).filter((key) =>
-      key.includes(`/blobs/${witness.hash.replace(/^sha256:/, "")}/`),
-    );
-    expect(witnessObjects.length).toBe(1);
-
-    const { operator: restarted } = clientsFor(second);
-    const s3 = (await restarted.listBlobStores()).data.data.find(
-      (found) => found.kind === "s3",
-    )!;
-    const drop = await restarted.deleteBlobCopy(dropped.hash, s3.id);
-    expect(drop.status, JSON.stringify(drop.error)).toBe(200);
-    for (const gone of [both, adopted, witness]) {
-      await unname(second, gone.item!);
-    }
-    await cleanEverything(second);
-    for (const gone of [both, adopted, witness]) {
-      expect((await download(second, gone.hash)).status).toBe(404);
-    }
-    await second.pauseClock(true);
-    try {
-      // Thinning lets the backups that named them go once 31 later days hold a backup.
-      for (let day = 1; day <= 32; day++) {
-        await second.advanceClock(DAY);
-        if (day < 32) {
-          const daily = await ownerOf(second).runBackup();
-          expect(daily.status, JSON.stringify(daily.error)).toBe(200);
-        } else {
-          await cleanEverything(second);
-        }
+      const restored = await ownerOf(second).restoreBackup(firstId, backupName);
+      expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+      expect(restored.data.blobs_missing).toEqual([]);
+      for (const kept of [both, adopted, dropped]) {
+        expect(await download(second, kept.hash)).toEqual({
+          status: 200,
+          bytes: kept.bytes,
+        });
       }
-    } finally {
-      await second.pauseClock(false);
-    }
 
-    const left = await bucket.keys();
-    expect(left).toEqual(expect.arrayContaining(written));
-    for (const key of [...ownObjects, ...witnessObjects]) {
-      expect(left).not.toContain(key);
-    }
+      // The witness: a file the second server wrote alone goes from the bucket.
+      const witness = await file(second, "a file only the second server wrote");
+      const witnessObjects = (await bucket.keys()).filter((key) =>
+        key.includes(`/blobs/${witness.hash.replace(/^sha256:/, "")}/`),
+      );
+      expect(witnessObjects.length).toBe(1);
 
-    const { operator: firstOperator } = clientsFor(first);
-    const integrity = await runJob<{ struck: number }>(
-      firstOperator,
-      "blob-integrity",
-    );
-    expect(integrity.result.struck).toBe(0);
-    const third = await boot("bucket-third", store);
-    const again = await ownerOf(third).restoreBackup(firstId, backupName);
-    expect(again.status, JSON.stringify(again.error)).toBe(200);
-    expect(again.data.blobs_missing).toEqual([]);
-    for (const kept of [both, adopted, dropped]) {
-      expect(await download(third, kept.hash)).toEqual({
-        status: 200,
-        bytes: kept.bytes,
-      });
-    }
-  });
+      const { operator: restarted } = clientsFor(second);
+      const s3 = (await restarted.listBlobStores()).data.data.find(
+        (found) => found.kind === "s3",
+      )!;
+      const drop = await restarted.deleteBlobCopy(dropped.hash, s3.id);
+      expect(drop.status, JSON.stringify(drop.error)).toBe(200);
+      for (const gone of [both, adopted, witness]) {
+        await unname(second, gone.item!);
+      }
+      await cleanEverything(second);
+      for (const gone of [both, adopted, witness]) {
+        expect((await download(second, gone.hash)).status).toBe(404);
+      }
+      await second.pauseClock(true);
+      try {
+        // Thinning lets the backups that named them go once 31 later days hold a backup.
+        for (let day = 1; day <= 32; day++) {
+          await second.advanceClock(DAY);
+          if (day < 32) {
+            const daily = await ownerOf(second).runBackup();
+            expect(daily.status, JSON.stringify(daily.error)).toBe(200);
+          } else {
+            await cleanEverything(second);
+          }
+        }
+      } finally {
+        await second.pauseClock(false);
+      }
+
+      const left = await bucket.keys();
+      expect(left).toEqual(expect.arrayContaining(written));
+      for (const key of [...ownObjects, ...witnessObjects]) {
+        expect(left).not.toContain(key);
+      }
+
+      const { operator: firstOperator } = clientsFor(first);
+      const integrity = await runJob<{ struck: number }>(
+        firstOperator,
+        "blob-integrity",
+      );
+      expect(integrity.result.struck).toBe(0);
+      const third = await boot("bucket-third", store);
+      const again = await ownerOf(third).restoreBackup(firstId, backupName);
+      expect(again.status, JSON.stringify(again.error)).toBe(200);
+      expect(again.data.blobs_missing).toEqual([]);
+      for (const kept of [both, adopted, dropped]) {
+        expect(await download(third, kept.hash)).toEqual({
+          status: 200,
+          bytes: kept.bytes,
+        });
+      }
+    },
+  );
 
   it("refuses to drop the disk copy of each file a restore found in the bucket until it writes a copy of its own, and then drops it", async () => {
     const store = ownObjectStore();

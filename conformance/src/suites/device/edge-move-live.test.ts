@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createServer, type Server } from "node:http";
 import { Readable } from "node:stream";
@@ -388,7 +389,7 @@ it("holds a move onto its own unanswered create, and sends it naming the item th
     const first = await note("first");
     const child = await note("child");
     const edge = await parentOf(first, child);
-    const key = `edge-move-${ctx.runId}`;
+    const key = `edge-move-${ctx.runId}-${randomUUID()}`;
     const landing = await note("held under its key", key);
     const device = () =>
       new CliDevice({

@@ -125,33 +125,38 @@ describe("thinning the backups", () => {
     }
   });
 
-  it("keeps every backup taken in the day before the one just put, however long the put took", async () => {
-    const start = await server.pauseClock(true);
-    try {
-      // Two on one day, which the newest-of-the-day rule would thin to one
-      // if the day were counted from when the put ended.
-      const earlier = await backUpAt(start + HOUR);
-      const later = await backUpAt(start + HOUR + 1);
-      const taken = start + 24 * HOUR;
-      await server.advanceClock(taken - (start + HOUR + 1));
+  // A failed try can leave a hold set and the clock moved, which the retry would start from.
+  it(
+    "keeps every backup taken in the day before the one just put, however long the put took",
+    { retry: 0 },
+    async () => {
+      const start = await server.pauseClock(true);
+      try {
+        // Two on one day, which the newest-of-the-day rule would thin to one
+        // if the day were counted from when the put ended.
+        const earlier = await backUpAt(start + HOUR);
+        const later = await backUpAt(start + HOUR + 1);
+        const taken = start + 24 * HOUR;
+        await server.advanceClock(taken - (start + HOUR + 1));
 
-      await server.setFault("hold:backup:put");
-      const run = ownerOf(server).runBackup();
-      await server.waitForHold("hold:backup:put");
-      await server.advanceClock(2 * HOUR);
-      await server.clearFault();
-      const done = await run;
-      expect(done.status, JSON.stringify(done.error)).toBe(200);
-      expect(done.data.backup.created_at).toBe(new Date(taken).toISOString());
+        await server.setFault("hold:backup:put");
+        const run = ownerOf(server).runBackup();
+        await server.waitForHold("hold:backup:put");
+        await server.advanceClock(2 * HOUR);
+        await server.clearFault();
+        const done = await run;
+        expect(done.status, JSON.stringify(done.error)).toBe(200);
+        expect(done.data.backup.created_at).toBe(new Date(taken).toISOString());
 
-      const left = await bucket.keys();
-      for (const put of [earlier, later]) {
-        expect(left).toContain(`${own}/${put.name}`);
+        const left = await bucket.keys();
+        for (const put of [earlier, later]) {
+          expect(left).toContain(`${own}/${put.name}`);
+        }
+      } finally {
+        await server.pauseClock(false);
       }
-    } finally {
-      await server.pauseClock(false);
-    }
-  });
+    },
+  );
 
   it("keeps every backup when one is put 40 days after the last, and when the next comes six weeks later", async () => {
     const own = ownObjectStore();

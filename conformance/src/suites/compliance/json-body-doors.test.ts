@@ -614,7 +614,7 @@ describe("an Idempotency-Key reused with a body sent under another Content-Type"
 
   it("answers 422 idempotency_key_reused to a retry sent as JSON after a first request that was not, and writes nothing", async () => {
     for (const notJson of ["text/plain", undefined]) {
-      const key = `not-json-first-${ctx.runId}-${String(notJson)}`;
+      const key = `not-json-first-${ctx.runId}-${String(notJson)}-${randomUUID()}`;
 
       const first = await post(key, notJson);
       expect(first.status, String(notJson)).toBe(400);
@@ -629,7 +629,7 @@ describe("an Idempotency-Key reused with a body sent under another Content-Type"
   });
 
   it("answers 422 idempotency_key_reused to a retry not sent as JSON after a first request that was, and replays nothing", async () => {
-    const key = `json-first-${ctx.runId}`;
+    const key = `json-first-${ctx.runId}-${randomUUID()}`;
 
     const first = await post(key, "application/json");
     expect(first.status).toBe(201);
@@ -654,7 +654,7 @@ describe("an Idempotency-Key reused with a body sent under another Content-Type"
   });
 
   it("replays to a retry that spells the JSON type another way", async () => {
-    const key = `spelling-${ctx.runId}`;
+    const key = `spelling-${ctx.runId}-${randomUUID()}`;
     const first = await post(key, "application/json; charset=utf-8");
     expect(first.status).toBe(201);
     const created = (await first.json()) as { item: { id: string } };

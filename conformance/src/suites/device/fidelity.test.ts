@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { FieldDefinition, TestContext } from "../../client/types.js";
@@ -2744,7 +2745,7 @@ describe("the scripted answers match the server's", () => {
   });
 
   it("matches the refusal a spent idempotency key gets", async () => {
-    const key = `fidelity-spent-${ctx.runId}`;
+    const key = `fidelity-spent-${ctx.runId}-${randomUUID()}`;
     const first = await client.rawRequest("/items", {
       method: "POST",
       headers: { "Idempotency-Key": key },
