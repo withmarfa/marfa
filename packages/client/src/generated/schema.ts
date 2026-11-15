@@ -7500,6 +7500,7 @@ export interface operations {
             /**
              * @description - `type_not_permitted`: your credential reaches no type, or `type` names a type you can't read with none readable under it.
              *     - `edge_permission_denied`: the filter has an `edge` or `backref` term for an edge type you can't read.
+             *     - `forbidden`: `type` names `system.connection` and you don't hold `grants.manage`. `details.required_scope` names it.
              */
             403: {
                 headers: {
@@ -7510,7 +7511,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["EdgePermissionDeniedOrTypeNotPermittedRefusal"];
+                    "application/json": components["schemas"]["EdgePermissionDeniedOrForbiddenOrTypeNotPermittedRefusal"];
                 };
             };
             /** @description `reach_changed`: the reach in `X-Marfa-Reach` has changed. Rebuild the working copy. */
@@ -14371,7 +14372,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -15245,7 +15246,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["UndoConflictRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
+                    "application/json": components["schemas"]["UndoConflictRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["IdempotencyKeyInFlightRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -18227,7 +18228,8 @@ export interface operations {
                 };
             };
             /**
-             * @description `invalid_schema`: `icon` isn't the ID of an icon in a pinned set (`details.errors` names it).
+             * @description - `invalid_schema`: `icon` isn't the ID of an icon in a pinned set (`details.errors` names it).
+             *     - `missing_required_field`: the body has no `icon`. `details.field` names it.
              *     - `validation_error`: the query has a parameter this endpoint doesn't take.
              */
             400: {
@@ -18238,7 +18240,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["InvalidSchemaOrValidationErrorRefusal"];
+                    "application/json": components["schemas"]["InvalidSchemaOrMissingRequiredFieldOrValidationErrorRefusal"];
                 };
             };
             /** @description `unauthorized`: the request has no credential, or its credential is not valid. For a key that has expired, `details.expired_at` says when it expired. */
@@ -31648,6 +31650,18 @@ export interface operations {
                     "application/json": components["schemas"]["RequestTimeoutRefusal"];
                 };
             };
+            /** @description `instance_changed`: `X-Marfa-Instance-Id` names another instance. Nothing is written. Rebuild the working copy from the instance at this address. */
+            409: {
+                headers: {
+                    "X-Marfa-Contract": components["headers"]["X-Marfa-Contract"];
+                    "X-Request-ID": components["headers"]["X-Request-ID"];
+                    "X-Error-Code": components["headers"]["X-Error-Code"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["InstanceChangedRefusal"];
+                };
+            };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
             412: {
                 headers: {
@@ -33150,7 +33164,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["ExportItemsUnrestorableRefusal"] | components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
+                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["ExportItemsUnrestorableRefusal"] | components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
@@ -33294,7 +33308,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
+                    "application/json": components["schemas"]["ConflictRefusal"] | components["schemas"]["HousekeepingJobRunningRefusal"] | components["schemas"]["InstanceChangedRefusal"] | components["schemas"]["NoBackupDestinationRefusal"];
                 };
             };
             /** @description `contract_mismatch`: `X-Marfa-Contract` names another contract version than this instance speaks, or is not a whole number. Nothing was done. */
