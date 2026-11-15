@@ -698,6 +698,20 @@ When a batch changes no row, the server MUST answer `batch` `null`.
 
 **Tests:** `compliance/table-rows.test.ts › takes a put sent twice as one row, the second unchanged`, `› acknowledges a delete of a row the table does not hold`.
 
+### `tables/rows-batch-time`
+
+When a batch changes at least one row, the server MUST answer the batch's time in `last_activity_at`.
+
+**Reason:** the batch's time is each changed row's `updated_at` and the `last_activity_at` of the `rows.changed` event (`tables/rows-event`). An item that held a later `last_activity_at` keeps it (`tables/last-activity`), so the answer can be earlier than the item's own.
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › answers the batch's time as last_activity_at, and the item's own where the batch changes no row`.
+
+### `tables/rows-batch-none-time`
+
+When a batch changes no row, the server MUST answer the item's `last_activity_at` in `last_activity_at`.
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › answers the batch's time as last_activity_at, and the item's own where the batch changes no row`.
+
 ### `tables/rows-keyed`
 
 The server MUST honor an `Idempotency-Key` on `POST /items/{id}/tables/{table}/rows` and `POST /items/{id}/tables/{table}/batches/{batch}/undo`, as `items/idempotency-replay` says.
@@ -738,9 +752,17 @@ If the server answers `422 idempotency_key_reused` to a batch, then the server M
 
 ### `tables/table-not-found`
 
-If a door under `/items/{id}/tables/{table}` names a table that the item's type does not declare and the item does not keep under `tables/own-table-listed`, then the server MUST answer `404 table_not_found`.
+If a door under `/items/{id}/tables/{table}` names a table that the item's type does not declare and the item does not keep under `tables/own-table-listed`, and the key may read the item, then the server MUST answer `404 table_not_found`.
 
 **Tests:** `compliance/table-rows.test.ts › answers table_not_found for a table the type does not declare`, `compliance/table-rows-own.test.ts › answers table_not_found for a table other than the one the item keeps`, `compliance/table-rows-undo.test.ts › answers table_not_found for an undo once a forced change removed the table`.
+
+### `tables/table-not-found-hidden`
+
+If a key may not read an item, then the server MUST answer each door under `/items/{id}/tables` `404 item_not_found`, and not `404 table_not_found`, for a table the item's type does not declare.
+
+**Reason:** `table_not_found` says that the item exists and what its type declares, which a key that may not read the item must not learn. `tables/rows-read-access` states the answer for a table the type declares.
+
+**Tests:** `compliance/table-rows.test.ts › answers item_not_found, and not table_not_found, to a key that may not read the item`.
 
 ## Who may read and write rows
 
@@ -863,6 +885,12 @@ If a `cursor` was answered for a listing with no `sort` and the table has since 
 If `limit` is not a whole number from 1 to 1000, then the server MUST answer `400 validation_error` naming `limit`.
 
 **Tests:** `compliance/table-rows-reads.test.ts › pages a table's rows by id, continuing by a signed cursor`.
+
+### `tables/rows-limit-default`
+
+When a caller sends `GET /items/{id}/tables/{table}/rows` with no `limit`, the server MUST answer at most 100 rows in `data`, with a `next_cursor` while more remain.
+
+**Tests:** `compliance/table-rows-reads.test.ts › answers 100 rows when no limit is named, and the rest on the next page`.
 
 ### `tables/rows-cursor`
 
@@ -1202,9 +1230,9 @@ When `GET /items` names `sort` `last_activity_at`, the server MUST answer the it
 
 ### `tables/rows-event`
 
-When a batch changes at least one row, the server MUST announce one `rows.changed` naming the `item` by `id`, `type` and `source`, the `table`, the `batch`, the item's `last_activity_at`, and in `rows` each row the batch changed, as `{ "id", "values" }` as the batch left it or `{ "id", "deleted": true }`.
+When a batch changes at least one row, the server MUST announce one `rows.changed` naming the `item` by `id`, `type` and `source`, the `table`, the `batch`, the batch's time as `last_activity_at`, and in `rows` each row the batch changed, as `{ "id", "values" }` as the batch left it or `{ "id", "deleted": true }`.
 
-**Reason:** a device applies a batch from one event on the one cursor, without a read; each row's `updated_at` is the event's `last_activity_at`.
+**Reason:** a device applies a batch from one event on the one cursor, without a read; each row's `updated_at` is the event's `last_activity_at`, which an item that held a later `last_activity_at` keeps (`tables/last-activity`).
 
 **Tests:** `compliance/table-rows-events.test.ts › announces one rows.changed per batch to a stream and a webhook`.
 
@@ -1396,9 +1424,9 @@ If a listing of batches names a `cursor` that was not answered for the same item
 
 ### `tables/log-retention`
 
-Where `row_log_retention_days` is positive, when the `table-row-cleanup` job runs, the server MUST remove from each table's change log every batch made more than that many days before, up to the oldest batch whose stored time does not read.
+Where `row_log_retention_days` is positive, when the `table-row-cleanup` job runs, the server MUST remove from the change logs every batch made more than that many days before, oldest first, and stop at the first batch, in any table, whose stored time does not read.
 
-**Reason:** the log is for taking back recent writes, not a history, and an old batch could no longer be undone over what came after it anyway.
+**Reason:** the log is for taking back recent writes, not a history, and an old batch could no longer be undone over what came after it anyway. The batches of every table are removed in the order they were made, so one whose time does not read keeps itself and every later batch of every table.
 
 **Tests:** `compliance/table-rows-retention.test.ts › removes the batches older than row_log_retention_days at the next table-row-cleanup run, and keeps the newer`, `› keeps a batch whose stored time does not read and every batch after it, and removes the older batches before it`.
 
@@ -1417,6 +1445,26 @@ When the server purges an item, the server MUST remove its rows through the `tab
 **Reason:** removing a large table in one statement would hold every other write behind it.
 
 **Tests:** `compliance/table-rows-lifecycle.test.ts › removes a purged item's rows in pages, answering other requests meanwhile`.
+
+### `tables/orphan-rows`
+
+While a type is unregistered, the server MUST answer `GET /items/{id}/tables` for an item of it with an empty `data`, and each door under `/items/{id}/tables/{table}` with `404 table_not_found`.
+
+**Reason:** a forced delete keeps the items (`types/delete-force`), and the rows of an item with no type to declare its tables answer to no table.
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › keeps the rows of an item whose type a forced delete removed, answering no table until the type is registered again`.
+
+### `tables/orphan-rows-kept`
+
+While a type is unregistered, the server MUST keep the rows of its items, and answer them again once the type declares their table.
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › keeps the rows of an item whose type a forced delete removed, answering no table until the type is registered again`.
+
+### `tables/orphan-rows-archive`
+
+When `GET /export?format=archive` carries an item whose type is unregistered, the server MUST carry each row the item holds in `rows.ndjson.gz`.
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › keeps the rows of an item whose type a forced delete removed, answering no table until the type is registered again`.
 
 ### `tables/move-refused`
 
@@ -1439,6 +1487,28 @@ If `PUT /types/{id}` without `force=true` would remove a table that holds rows, 
 When `PUT /types/{id}` names `force=true`, the server MUST keep every row and value it would refuse to remove under `tables/change-in-use` or `tables/own-change-in-use`, as it is.
 
 **Tests:** `compliance/table-rows-lifecycle.test.ts › refuses to remove a table or a column that holds rows unless forced, and keeps the rows when forced`, `compliance/table-rows-own.test.ts › refuses a replacement that takes a type away from core.table while its items hold rows in the table they keep, unless forced`.
+
+### `tables/change-tightened`
+
+When `PUT /types/{id}` without `force=true` tightens a column that holds values, by making it `required`, narrowing its `enum_values`, lowering its `max_length` or `maximum`, raising its `minimum` or adding a `format`, the server MUST take the replacement and keep each value the rows hold as it is.
+
+**Reason:** only a removed table, a removed column and a changed column `type` take rows' data away (`tables/change-in-use`). A row keeps what it holds, and the next write judges it (`tables/tightened-patch`, `tables/tightened-put`).
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › takes a replacement that tightens a column without force, keeps the values rows hold, and judges a later patch by the columns it names and a later put by the whole row`.
+
+### `tables/tightened-patch`
+
+When a `patch` names a row that holds a value its column no longer admits, or that lacks a value its column now requires, the server MUST judge only the columns the `patch` names.
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › takes a replacement that tightens a column without force, keeps the values rows hold, and judges a later patch by the columns it names and a later put by the whole row`.
+
+### `tables/tightened-put`
+
+When a `put` names a row that holds a value its column no longer admits, or that lacks a value its column now requires, the server MUST judge every column of the row as it judges a `put` of any row, and answer `400 validation_error` naming `operations.<index>.values.<column>` while a value breaks its column.
+
+**Reason:** a `put` is the whole row, so the values it sends again are the row's values, and a value its column no longer admits stays until the `put` sends one that it does.
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › takes a replacement that tightens a column without force, keeps the values rows hold, and judges a later patch by the columns it names and a later put by the whole row`.
 
 ### `tables/save-type-change-in-use`
 

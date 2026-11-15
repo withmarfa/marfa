@@ -795,6 +795,33 @@ describe("who may read and write rows", () => {
     expect(nobody.error?.error.code).toBe("item_not_found");
   });
 
+  it("answers item_not_found, and not table_not_found, to a key that may not read the item", async () => {
+    const type = await ledgerType();
+    const item = await itemOf(type);
+    const batch = rowId();
+
+    // The witness: a key that reads the item learns the table is undeclared.
+    const reader = await narrowClient({ [type]: "read" });
+    const known = await reader.listRows(item, "other");
+    expect(known.status).toBe(404);
+    expect(known.error?.error.code).toBe("table_not_found");
+
+    const stranger = await narrowClient({ "core.note": "write" });
+    for (const res of [
+      await stranger.listRows(item, "other"),
+      await stranger.getRow(item, "other", rowId()),
+      await stranger.rowTotals(item, "other"),
+      await stranger.listBatches(item, "other"),
+      await stranger.undoBatch(item, "other", batch),
+      await stranger.writeRows(item, "other", {
+        operations: [{ op: "put", values: { amount: 1 } }],
+      }),
+    ]) {
+      expect(res.status).toBe(404);
+      expect(res.error?.error.code).toBe("item_not_found");
+    }
+  });
+
   it("refuses to read or write the rows of an item in the bin", async () => {
     const item = await itemOf(await ledgerType());
     const id = rowId();

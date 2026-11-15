@@ -11559,7 +11559,7 @@
           },
           "last_activity_at": {
             "type": "string",
-            "description": "The item's `last_activity_at` after the batch, in UTC.",
+            "description": "The time of the batch, in UTC, which each row it changed took as its `updated_at`, or the item's own `last_activity_at` when the batch changed no row. An item that held a later `last_activity_at` keeps it.",
             "example": "2026-10-03T09:30:00.000Z"
           },
           "results": {
@@ -11677,7 +11677,7 @@
           },
           "last_activity_at": {
             "type": "string",
-            "description": "The item's `last_activity_at` after the batch, in UTC."
+            "description": "The time of the batch, in UTC. An item that held a later `last_activity_at` keeps it."
           },
           "values_included": {
             "type": "boolean",
@@ -23990,7 +23990,7 @@
           "Tables"
         ],
         "summary": "Write table rows",
-        "description": "Applies a batch of up to 1000 row operations to one table of an item, all of them or none. A batch that changes rows moves the item's `last_activity_at` and sends one `rows.changed` event.",
+        "description": "Applies a batch of up to 1000 row operations to one table of an item, all of them or none. A batch that changes rows moves the item's `last_activity_at` to the batch's time, unless the item holds a later one, and sends one `rows.changed` event.",
         "security": [
           {
             "bearerAuth": []

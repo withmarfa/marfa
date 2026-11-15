@@ -643,7 +643,7 @@ export interface paths {
         put?: never;
         /**
          * Write table rows
-         * @description Applies a batch of up to 1000 row operations to one table of an item, all of them or none. A batch that changes rows moves the item's `last_activity_at` and sends one `rows.changed` event.
+         * @description Applies a batch of up to 1000 row operations to one table of an item, all of them or none. A batch that changes rows moves the item's `last_activity_at` to the batch's time, unless the item holds a later one, and sends one `rows.changed` event.
          */
         post: operations["writeTableRows"];
         delete?: never;
@@ -7130,7 +7130,7 @@ export interface components {
              */
             batch: string | null;
             /**
-             * @description The item's `last_activity_at` after the batch, in UTC.
+             * @description The time of the batch, in UTC, which each row it changed took as its `updated_at`, or the item's own `last_activity_at` when the batch changed no row. An item that held a later `last_activity_at` keeps it.
              * @example 2026-10-03T09:30:00.000Z
              */
             last_activity_at: string;
@@ -7178,7 +7178,7 @@ export interface components {
             batch: string;
             /** @description Present when the batch is an undo: the ID of the batch it undid. */
             undoes?: string;
-            /** @description The item's `last_activity_at` after the batch, in UTC. */
+            /** @description The time of the batch, in UTC. An item that held a later `last_activity_at` keeps it. */
             last_activity_at: string;
             /**
              * @description Present, as `false`, when the batch's values were too large to carry: each entry of `rows` then holds only its `id`, and `deleted` for a removed row.
