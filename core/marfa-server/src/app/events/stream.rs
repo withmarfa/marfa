@@ -417,7 +417,7 @@ impl Run {
         let too_old = bounds
             .oldest
             .filter(|oldest| *oldest > cursor.saturating_add(1));
-        if self.copy.is_some() && (cursor > bounds.head || too_old.is_some()) {
+        if cursor > bounds.head || too_old.is_some() {
             self.announce("stream_cursor", bounds.head).await?;
         }
         if cursor > bounds.head {
