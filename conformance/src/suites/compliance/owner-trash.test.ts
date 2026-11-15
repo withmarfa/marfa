@@ -280,19 +280,33 @@ it.each(["/trash", "/items/summaries"])(
 
 it("answers a move to the bin, a restore and a purge with the item's summary", async () => {
   const item = await note("Owner action answers");
-  for (const [action, path] of [
-    ["trash", "/items/summaries/{id}/trash"],
-    ["restore", "/items/summaries/{id}/restore"],
-    ["trash", "/items/summaries/{id}/trash"],
-    ["purge", "/items/summaries/{id}/purge"],
-  ] as const) {
+  const answered = async (action: string) => {
     const done = await act(item.id, action);
     expect(done.status, action).toBe(200);
     const body = (await done.json()) as Record<string, unknown>;
-    await expectMatchesSchema("POST", path, 200, body);
     expect(Object.keys(body).sort(), action).toEqual(SUMMARY_FIELDS);
-    expect(body.id).toBe(item.id);
-  }
+    expect(body.id, action).toBe(item.id);
+    return body;
+  };
+  await expectMatchesSchema(
+    "POST",
+    "/items/summaries/{id}/trash",
+    200,
+    await answered("trash"),
+  );
+  await expectMatchesSchema(
+    "POST",
+    "/items/summaries/{id}/restore",
+    200,
+    await answered("restore"),
+  );
+  await answered("trash");
+  await expectMatchesSchema(
+    "POST",
+    "/items/summaries/{id}/purge",
+    200,
+    await answered("purge"),
+  );
 });
 
 it("moves an item to the bin with the children it takes, and leaves a key unable to read either", async () => {
@@ -688,11 +702,13 @@ it("announces the owner's trash, restore, purge and emptying of the bin as the i
 async function emptyBin() {
   const emptied = await owner("/trash/empty", { method: "POST" });
   expect(emptied.status).toBe(200);
-  return (await emptied.json()) as {
+  const body = (await emptied.json()) as {
     purged: number;
     failures: { id: string; code: string }[];
     next_cursor: string | null;
   };
+  await expectMatchesSchema("POST", "/trash/empty", 200, body);
+  return body;
 }
 
 async function status(id: string) {
