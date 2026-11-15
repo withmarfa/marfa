@@ -77,13 +77,21 @@ async function note(label: string): Promise<string> {
   return r.data.item.id;
 }
 
-/** A key reading tasks and notes, and its id. */
+/** A key reading this file's tasks and notes, and its id. Its source filter
+ *  leaves out what other files write to the shared server, so the last frame
+ *  a stream sent is one of this file's. */
 async function viewer(label: string): Promise<{ id: string; key: string }> {
   const r = await client.createKey({
     label,
     source: `${ctx.source}-${label}`,
     permissions: [],
     type_permissions: { "core.task": "read", "core.note": "read" },
+    enforcement_override: {
+      source_filter: {
+        types: ["core.task", "core.note"],
+        sources: [ctx.source],
+      },
+    },
   });
   expect(r.ok, JSON.stringify(r.error)).toBe(true);
   trackKey(ctx, r.data.id);
@@ -230,9 +238,22 @@ describe("a quiet stream", () => {
   it(
     "sends a :ping comment on a quiet stream every 30 seconds",
     async ({ signal }) => {
-      const { key } = await viewer("stream-ping");
+      // The server of its own: a stream that carries another file's writes
+      // is not quiet, and a ping comes only on one that is.
+      const server = own!;
+      const admin = new MarfaClient({
+        baseUrl: server.apiUrl,
+        apiKey: server.workingKey,
+      });
+      const minted = await admin.createKey({
+        label: "stream-ping",
+        source: "stream-ping",
+        permissions: [],
+        type_permissions: { "core.note": "read" },
+      });
+      expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
       const opened = Date.now();
-      await withStream(apiUrl, key, {}, async (stream) => {
+      await withStream(server.apiUrl, minted.data.key, {}, async (stream) => {
         const reader = stream.response.body!.getReader();
         const onAbort = () => void reader.cancel().catch(() => undefined);
         signal.addEventListener("abort", onAbort, { once: true });

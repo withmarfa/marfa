@@ -221,21 +221,55 @@ describe("edge events", () => {
   });
 
   it("delivers edge.created and edge.deleted to a webhook with a valid signature", async () => {
-    const subscription = await client.createWebhook({
+    // A subscription carries no source filter, and the shared server takes
+    // other files' edges. The subscriber reads only an edge type of this
+    // run's own, so the log it keeps is this test's edge and nothing else.
+    const edgeType = `mock.edge-events.${ctx.runId}`;
+    const registered = await client.registerEdgeType({
+      label: "Test edge type",
+      id: edgeType,
+      cardinality: "many-to-many",
+    });
+    expect(registered.ok, JSON.stringify(registered.error)).toBe(true);
+    trackEdgeType(ctx, edgeType);
+    const owner = await client.createKey({
+      label: "edge-events-hook-owner",
+      source: `${ctx.source}-hook-owner`,
+      permissions: ["webhooks.manage"],
+      type_permissions: { "core.note": "read" },
+      edge_permissions: { [edgeType]: "read" },
+    });
+    expect(owner.ok, JSON.stringify(owner.error)).toBe(true);
+    trackKey(ctx, owner.data.id);
+    const subscriber = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: owner.data.key,
+    });
+    const subscription = await subscriber.createWebhook({
       url: receiver.hookUrl("edges"),
       events: ["edge.created", "edge.deleted"],
     });
     expect(subscription.status).toBe(201);
-    trackWebhook(ctx, subscription.data.id, client);
+    trackWebhook(ctx, subscription.data.id, subscriber);
 
     const src = await makeItem("hook-src");
     const tgt = await makeItem("hook-tgt");
-    const edge = await client.createEdge({
+    // The witness that the subscriber's reach is what keeps other edges out:
+    // an edge of another type, written and deleted first, is one a subscriber
+    // reading every edge type would be sent twice.
+    const other = await client.createEdge({
       source_id: src,
       target_id: tgt,
       edge_type: "about",
     });
-    expect(edge.ok).toBe(true);
+    expect(other.ok).toBe(true);
+    expect((await client.deleteEdge(other.data.edge.id)).ok).toBe(true);
+    const edge = await client.createEdge({
+      source_id: src,
+      target_id: tgt,
+      edge_type: edgeType,
+    });
+    expect(edge.ok, JSON.stringify(edge.error)).toBe(true);
     const edgeId = edge.data.edge.id;
     expect((await client.deleteEdge(edgeId)).ok).toBe(true);
 
@@ -254,13 +288,21 @@ describe("edge events", () => {
     };
     expect(payload.event_type).toBe("edge.created");
     expect(payload.edge.id).toBe(edgeId);
-    expect(payload.edge.edge_type).toBe("about");
+    expect(payload.edge.edge_type).toBe(edgeType);
+    expect(
+      receiver.received.filter(
+        (r) => r.path === "/hook/edges" && r.body.includes(other.data.edge.id),
+      ),
+      "an edge outside the subscriber's reach was sent to it",
+    ).toEqual([]);
 
     // The receiver answers before the server records the outcome, so a row
     // stays `pending` until then.
     const rows = await vi.waitFor(
       async () => {
-        const listed = await client.listWebhookDeliveries(subscription.data.id);
+        const listed = await subscriber.listWebhookDeliveries(
+          subscription.data.id,
+        );
         expect(listed.ok).toBe(true);
         expect(listed.data.data.map((d) => d.status)).toEqual([
           "success",
