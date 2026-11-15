@@ -148,8 +148,7 @@ pub(crate) fn list_where(
     )
 }
 
-pub(crate) const NO_LAST_ACTIVITY: &str =
-    "A device does not hold when an item's rows last changed, so it does not sort by last_activity_at.";
+pub(crate) const NO_LAST_ACTIVITY: &str = "A device does not hold when an item's rows last changed, so it does not sort by last_activity_at.";
 
 pub(crate) fn list_where_with(
     conn: &Connection,

@@ -153,9 +153,8 @@ pub(crate) fn events(
 pub(crate) fn parents(read: &Reader<'_, '_>, targets: &[&str]) -> Result<Vec<(String, String)>> {
     let mut found: Vec<(i64, String, String)> = Vec::new();
     for batch in targets.chunks(EDGE_BATCH) {
-        let mut sql = Sql::new(
-            "SELECT e.seq, e.source_id, e.target_id FROM edges e WHERE e.edge_type = ",
-        );
+        let mut sql =
+            Sql::new("SELECT e.seq, e.source_id, e.target_id FROM edges e WHERE e.edge_type = ");
         sql.bind(PARENT_OF.to_string());
         sql.push(" AND e.target_id IN (");
         sql.list(batch);
@@ -276,7 +275,10 @@ mod tests {
             plan.contains("SEARCH items USING INDEX items_event_slot"),
             "{plan}"
         );
-        assert!(!plan.contains("SCAN items\n") && !plan.ends_with("SCAN items"), "{plan}");
+        assert!(
+            !plan.contains("SCAN items\n") && !plan.ends_with("SCAN items"),
+            "{plan}"
+        );
 
         let near = read(&db, day(0), day(1));
         assert!(
@@ -320,11 +322,26 @@ mod tests {
         let windows = [
             (day(60), day(61)),
             (day(60) + Duration::hours(1), day(60) + Duration::hours(2)),
-            (instant("2028-03-01T00:00:00Z"), instant("2028-03-02T00:00:00Z")),
-            (instant("2028-03-01T01:00:00Z"), instant("2028-03-01T02:00:00Z")),
-            (instant("2028-03-02T00:00:00Z"), instant("2028-03-03T00:00:00Z")),
-            (instant("2028-03-01T00:00:00Z"), instant("2028-03-01T00:00:00.001Z")),
-            (instant("2028-02-01T00:00:00Z"), instant("2028-05-01T00:00:00Z")),
+            (
+                instant("2028-03-01T00:00:00Z"),
+                instant("2028-03-02T00:00:00Z"),
+            ),
+            (
+                instant("2028-03-01T01:00:00Z"),
+                instant("2028-03-01T02:00:00Z"),
+            ),
+            (
+                instant("2028-03-02T00:00:00Z"),
+                instant("2028-03-03T00:00:00Z"),
+            ),
+            (
+                instant("2028-03-01T00:00:00Z"),
+                instant("2028-03-01T00:00:00.001Z"),
+            ),
+            (
+                instant("2028-02-01T00:00:00Z"),
+                instant("2028-05-01T00:00:00Z"),
+            ),
         ];
         for (from, to) in windows {
             let read = read(&db, from, to);
@@ -365,7 +382,21 @@ mod tests {
             &json!({"starts_at": "2020-01-02T12:00:00Z", "original_starts_at": "2028-05-02T10:00:00Z"}),
         );
         put(&db, 3, &json!({"starts_at": "2019-01-01T00:00:00Z"}));
-        assert_eq!(read(&db, instant("2028-05-01T00:00:00Z"), instant("2028-05-04T00:00:00Z")), vec![1, 2]);
-        assert_eq!(read(&db, instant("2028-06-01T00:00:00Z"), instant("2028-06-04T00:00:00Z")), vec![1]);
+        assert_eq!(
+            read(
+                &db,
+                instant("2028-05-01T00:00:00Z"),
+                instant("2028-05-04T00:00:00Z")
+            ),
+            vec![1, 2]
+        );
+        assert_eq!(
+            read(
+                &db,
+                instant("2028-06-01T00:00:00Z"),
+                instant("2028-06-04T00:00:00Z")
+            ),
+            vec![1]
+        );
     }
 }

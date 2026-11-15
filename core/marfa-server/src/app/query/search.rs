@@ -223,7 +223,9 @@ impl Seek {
         let position = Position::from_payload(&json!([keys, id]), width)?;
         let named = match (hit.as_i64(), table.as_str(), row.as_str()) {
             (Some(0), None, None) => (0, None, None),
-            (Some(1), Some(table), Some(row)) => (1, Some(table.to_string()), Some(row.to_string())),
+            (Some(1), Some(table), Some(row)) => {
+                (1, Some(table.to_string()), Some(row.to_string()))
+            }
             _ => return Err(refused()),
         };
         let taken = taken
@@ -479,10 +481,7 @@ fn page(read: &Reader<'_, '_>, secret: &Secret, search: &Search) -> Result<Strin
         let taken = seek.as_ref().map_or(0, |seek| seek.taken);
         (seek, taken)
     } else {
-        (
-            None,
-            offset_of(secret, &scope, search.cursor.as_deref())?,
-        )
+        (None, offset_of(secret, &scope, search.cursor.as_deref())?)
     };
     let Some(phrases) = fts_phrases(&search.q) else {
         return Ok("{\"data\":[],\"next_cursor\":null}".to_string());

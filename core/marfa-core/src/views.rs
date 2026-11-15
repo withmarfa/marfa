@@ -711,7 +711,10 @@ mod tests {
     fn a_view_sorted_by_last_activity_at_is_refused_by_name() {
         let core = copy();
         put(&core, "a", json!({}), &[]);
-        view(&core, json!({"sort":[{"by":"created_at","direction":"asc"}]}));
+        view(
+            &core,
+            json!({"sort":[{"by":"created_at","direction":"asc"}]}),
+        );
         // The witness: the same view with another timestamp answers.
         assert_eq!(ids(&core), ["a"]);
         view(
@@ -719,7 +722,10 @@ mod tests {
             json!({"sort":[{"by":"last_activity_at","direction":"asc"}]}),
         );
         let refused = core.list_in_view("view", None, None).unwrap_err();
-        assert!(refused.to_string().contains("last_activity_at"), "{refused}");
+        assert!(
+            refused.to_string().contains("last_activity_at"),
+            "{refused}"
+        );
     }
 
     #[test]

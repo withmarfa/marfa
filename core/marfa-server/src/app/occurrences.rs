@@ -187,10 +187,8 @@ pub async fn read(app: &App, caller: &Caller, window: Window) -> Result<String> 
             if !is_series(&rows[series]) || rows[exception].original_starts_at.is_none() {
                 continue;
             }
-            // The edge says which series the slot belongs to, so it empties the slot for any reader; only a reader of the edge is told the series and the slot.
-            if !bound.contains_key(&exception) {
-                bound.insert(exception, series);
-            }
+            // Any reader loses the slot; only a reader of the edge is told the series.
+            bound.entry(exception).or_insert(series);
             if !disclosed.contains(&exception)
                 && read.caller.may_read_edge("parent-of", &rows[series].type_id)
             {

@@ -263,7 +263,11 @@ describe("a sorted search whose hits include rows, walked while rows change", ()
     expect(rows).not.toContain(rowIds[5]);
     const found = hits.map((hit) => `${hit.item.id} ${hit.row?.id ?? ""}`);
     expect(new Set(found).size).toBe(found.length);
-    once(hits, owner, other);
+    once(hits, other);
+    // The item's own hit comes once beside its row hits.
+    expect(
+      hits.filter((hit) => hit.item.id === owner.id && !hit.row),
+    ).toHaveLength(1);
   });
 });
 

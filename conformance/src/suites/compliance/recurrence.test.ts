@@ -720,28 +720,28 @@ describe("the window", () => {
     const ids = async (from: string, to: string) =>
       (await window(from, to)).map((o) => o.item.id);
     const year = await event({
-      starts_at: "2047-01-01T00:00:00.000Z",
-      ends_at: "2048-01-01T00:00:00.000Z",
+      starts_at: "2071-01-01T00:00:00.000Z",
+      ends_at: "2072-01-01T00:00:00.000Z",
     });
     const decades = await event({
-      starts_at: "2001-01-01T00:00:00.000Z",
+      starts_at: "2061-01-01T00:00:00.000Z",
       ends_at: "2090-01-01T00:00:00.000Z",
     });
     const lasting = await event({
-      starts_at: "2047-02-10T00:00:00.000Z",
+      starts_at: "2071-02-10T00:00:00.000Z",
       duration: 86400 * 200,
     });
     const starting = await event({
-      starts_at: "2047-06-02T00:00:00.000Z",
-      ends_at: "2047-06-02T01:00:00.000Z",
+      starts_at: "2071-06-02T00:00:00.000Z",
+      ends_at: "2071-06-02T01:00:00.000Z",
     });
     const before = await event({
-      starts_at: "2047-05-31T23:00:00.000Z",
-      ends_at: "2047-06-01T00:00:00.000Z",
+      starts_at: "2071-05-31T23:00:00.000Z",
+      ends_at: "2071-06-01T00:00:00.000Z",
     });
     const june = await ids(
-      "2047-06-01T00:00:00.000Z",
-      "2047-06-02T00:00:00.000Z",
+      "2071-06-01T00:00:00.000Z",
+      "2071-06-02T00:00:00.000Z",
     );
     expect(june).toContain(year);
     expect(june).toContain(decades);
@@ -750,10 +750,10 @@ describe("the window", () => {
     expect(june).not.toContain(before);
     // The witnesses: a millisecond either way brings each edge event in.
     expect(
-      await ids("2047-06-01T00:00:00.000Z", "2047-06-02T00:00:00.001Z"),
+      await ids("2071-06-01T00:00:00.000Z", "2071-06-02T00:00:00.001Z"),
     ).toContain(starting);
     expect(
-      await ids("2047-05-31T23:59:59.999Z", "2047-06-02T00:00:00.000Z"),
+      await ids("2071-05-31T23:59:59.999Z", "2071-06-02T00:00:00.000Z"),
     ).toContain(before);
   });
 
@@ -763,62 +763,62 @@ describe("the window", () => {
     // it runs from 11:00Z on 1 March to 11:00Z on 2 March.
     const ahead = await event({
       all_day: true,
-      starts_at: "2047-03-01",
+      starts_at: "2071-03-01",
       timezone: "Pacific/Kiritimati",
     });
     const behind = await event({
       all_day: true,
-      starts_at: "2047-03-01",
+      starts_at: "2071-03-01",
       timezone: "Pacific/Pago_Pago",
     });
     const ids = async (from: string, to: string) =>
       (await window(from, to)).map((o) => o.item.id);
-    const early = await ids("2047-02-28T09:00:00Z", "2047-02-28T10:00:00Z");
+    const early = await ids("2071-02-28T09:00:00Z", "2071-02-28T10:00:00Z");
     expect(early).not.toContain(ahead);
     expect(
-      await ids("2047-02-28T09:00:00Z", "2047-02-28T10:00:00.001Z"),
+      await ids("2071-02-28T09:00:00Z", "2071-02-28T10:00:00.001Z"),
     ).toContain(ahead);
-    expect(await ids("2047-03-01T09:30:00Z", "2047-03-01T10:00:00Z")).toContain(
+    expect(await ids("2071-03-01T09:30:00Z", "2071-03-01T10:00:00Z")).toContain(
       ahead,
     );
     expect(
-      await ids("2047-03-01T10:00:00Z", "2047-03-01T11:00:00Z"),
+      await ids("2071-03-01T10:00:00Z", "2071-03-01T11:00:00Z"),
     ).not.toContain(ahead);
     expect(
-      await ids("2047-03-01T10:00:00Z", "2047-03-01T11:00:00Z"),
+      await ids("2071-03-01T10:00:00Z", "2071-03-01T11:00:00Z"),
     ).not.toContain(behind);
-    expect(await ids("2047-03-02T10:59:59Z", "2047-03-02T12:00:00Z")).toContain(
+    expect(await ids("2071-03-02T10:59:59Z", "2071-03-02T12:00:00Z")).toContain(
       behind,
     );
     expect(
-      await ids("2047-03-02T11:00:00Z", "2047-03-02T12:00:00Z"),
+      await ids("2071-03-02T11:00:00Z", "2071-03-02T12:00:00Z"),
     ).not.toContain(behind);
     expect(
-      await ids("2047-03-01T10:00:00Z", "2047-03-01T11:00:00.001Z"),
+      await ids("2071-03-01T10:00:00Z", "2071-03-01T11:00:00.001Z"),
     ).toContain(behind);
   });
 
   it("includes a repeating event across the window whether the series began long before it or inside it", async () => {
     const old = await event({
-      starts_at: "2005-05-30T09:00:00.000Z",
-      ends_at: "2005-05-30T10:00:00.000Z",
+      starts_at: "2065-06-01T09:00:00.000Z",
+      ends_at: "2065-06-01T10:00:00.000Z",
       recurrence: ["RRULE:FREQ=WEEKLY;BYDAY=MO"],
     });
     const fresh = await event({
-      starts_at: "2047-09-02T09:00:00.000Z",
-      ends_at: "2047-09-02T10:00:00.000Z",
+      starts_at: "2071-09-02T09:00:00.000Z",
+      ends_at: "2071-09-02T10:00:00.000Z",
       recurrence: ["RRULE:FREQ=DAILY;COUNT=3"],
     });
-    const rows = await window("2047-09-01T00:00:00Z", "2047-09-08T00:00:00Z");
+    const rows = await window("2071-09-01T00:00:00Z", "2071-09-08T00:00:00Z");
     expect(
       rows.filter((o) => o.item.id === old).map((o) => o.starts_at),
-    ).toEqual(["2047-09-02T09:00:00.000Z"]);
+    ).toEqual(["2071-09-07T09:00:00.000Z"]);
     expect(
       rows.filter((o) => o.item.id === fresh).map((o) => o.starts_at),
     ).toEqual([
-      "2047-09-02T09:00:00.000Z",
-      "2047-09-03T09:00:00.000Z",
-      "2047-09-04T09:00:00.000Z",
+      "2071-09-02T09:00:00.000Z",
+      "2071-09-03T09:00:00.000Z",
+      "2071-09-04T09:00:00.000Z",
     ]);
   });
 
@@ -1785,21 +1785,25 @@ describe("a series that takes too long to unfold", () => {
 });
 
 describe("a moved occurrence whose series the credential may not read", () => {
+  let seeded = 0;
   async function seedMovedOccurrence(): Promise<{
     series: string;
     moved: string;
+    seriesSource: string;
+    movedSource: string;
     originalConfig: Record<string, unknown>;
     read: () => Promise<Row[]>;
     own: (rows: Row[]) => Row[];
   }> {
+    seeded += 1;
     const current = await client.getConfig();
     expect(current.status, JSON.stringify(current.error)).toBe(200);
     const originalConfig = current.data as Record<string, unknown>;
 
     const writer = async (label: string): Promise<MarfaClient> => {
       const minted = await client.createKey({
-        label,
-        source: `${ctx.source}-${label}`,
+        label: `${label}-${String(seeded)}`,
+        source: `${ctx.source}-${label}-${String(seeded)}`,
         permissions: [],
         type_permissions: { "*": "write" },
       });
@@ -1844,11 +1848,20 @@ describe("a moved occurrence whose series the credential may not read", () => {
     const own = (rows: Row[]) =>
       rows.filter((o) => o.item.id === moved || o.item.id === series);
 
-    return { series, moved, originalConfig, read, own };
+    return {
+      series,
+      moved,
+      seriesSource: `${ctx.source}-hidden-series-${String(seeded)}`,
+      movedSource: `${ctx.source}-moved-occurrence-${String(seeded)}`,
+      originalConfig,
+      read,
+      own,
+    };
   }
 
   it("names no series a moved occurrence belongs to when the series is not readable", async () => {
-    const { series, moved, originalConfig, read, own } = await seedMovedOccurrence();
+    const { series, moved, movedSource, originalConfig, read, own } =
+      await seedMovedOccurrence();
 
     try {
       // The witness: with no filter the exception carries its series and the
@@ -1865,7 +1878,7 @@ describe("a moved occurrence whose series the credential may not read", () => {
         enforcement: {
           source_filter: {
             types: ["core.event"],
-            sources: [`${ctx.source}-moved-occurrence`],
+            sources: [movedSource],
           },
         },
       });
@@ -1883,13 +1896,14 @@ describe("a moved occurrence whose series the credential may not read", () => {
   });
 
   it("leaves the slot a moved occurrence left empty only while the exception is readable", async () => {
-    const { series, moved, originalConfig, read, own } = await seedMovedOccurrence();
+    const { series, moved, seriesSource, originalConfig, read, own } =
+      await seedMovedOccurrence();
     try {
       const set = await client.updateConfig({
         enforcement: {
           source_filter: {
             types: ["core.event"],
-            sources: [`${ctx.source}-hidden-series`],
+            sources: [seriesSource],
           },
         },
       });

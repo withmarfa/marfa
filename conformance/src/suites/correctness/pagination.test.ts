@@ -215,7 +215,7 @@ describe("the order of the listing", () => {
             id: newer!,
             created_at: at(3),
             updated_at: at(1),
-            last_activity_at: at(12),
+            last_activity_at: at(8),
           },
           ...tied.map((id, i) => ({
             id,
@@ -240,8 +240,8 @@ describe("the order of the listing", () => {
     expect(restored.ok, JSON.stringify(restored.error)).toBe(true);
     expect(restored.data.imported).toBe(5);
     newestFirst = [newer!, ...[...tied].reverse(), older!];
-    // `last_activity_at` ties on four of the five.
-    activeFirst = [...[newer!, ...tied].sort().reverse(), older!];
+    // `last_activity_at` ties on three of the five.
+    activeFirst = [...[...tied].reverse(), older!, newer!];
     for (const id of newestFirst) trackItem(ctx, id);
     for (const id of tied) {
       const row = await ordered.getItem(id);
@@ -306,8 +306,8 @@ describe("the order of the listing", () => {
   });
 
   it("orders a search by last_activity_at, a tie by id ascending in both directions, and pages through the tie", async () => {
-    const tied = activeFirst.slice(0, 4).sort();
-    const older = activeFirst[4]!;
+    const tied = activeFirst.slice(0, 3).sort();
+    const [older, newer] = activeFirst.slice(3) as [string, string];
     const hits = async (direction: string, extra = "") => {
       const page = await ordered.rawRequest<{
         data: { item: { id: string } }[];
@@ -321,8 +321,10 @@ describe("the order of the listing", () => {
     expect((await hits("desc")).data.map((hit) => hit.item.id)).toEqual([
       ...tied,
       older,
+      newer,
     ]);
     expect((await hits("asc")).data.map((hit) => hit.item.id)).toEqual([
+      newer,
       older,
       ...tied,
     ]);
@@ -338,7 +340,9 @@ describe("the order of the listing", () => {
         cursor = page.next_cursor;
       } while (cursor);
       expect(walked, direction).toEqual(
-        direction === "desc" ? [...tied, older] : [older, ...tied],
+        direction === "desc"
+          ? [...tied, older, newer]
+          : [newer, older, ...tied],
       );
     }
   });
