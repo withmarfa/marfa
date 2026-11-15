@@ -1700,6 +1700,31 @@ describe("what a job reads reaches it", () => {
     }
   });
 
+  it("the cached device binary and module are keyed on every file they embed from outside core", () => {
+    const steps = workflow("ci.yml").jobs["rust-contract-shards"]?.steps ?? [];
+    for (const [id, root] of [
+      ["device-key", "marfa-cli"],
+      ["module-key", "bindings/node"],
+    ] as const) {
+      const globs = hashedGlobs(steps.find((s) => s.id === id));
+      const crates = crateClosure(root);
+      const embedded = embeddedOutsideCore((path) =>
+        crates.some((crate) => path.startsWith(`core/${crate}/`)),
+      );
+      // The witness: the rules crate embeds the icon sets, which the
+      // program is not built without, and the key has no way to see them in
+      // `core/`.
+      expect(embedded, id).toContain(
+        "packages/types/generated/icon-set-lucide.json",
+      );
+      expect(
+        embedded.filter((path) => !hashes(globs, path)),
+        `${id} leaves out a file the program embeds`,
+      ).toEqual([]);
+      expect(hashes(globs, "core/marfa-core/src/lib.rs"), id).toBe(true);
+    }
+  });
+
   it("the cached device module is keyed on every source it is built from, and the shards that drive it run when they change", () => {
     const steps = workflow("ci.yml").jobs["rust-contract-shards"]?.steps ?? [];
     const run = steps.find((s) => s.id === "module-key")?.run ?? "";

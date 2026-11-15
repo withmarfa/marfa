@@ -110,6 +110,7 @@ describe("the job that reports a failed scheduled run", () => {
   it("covers every scheduled workflow but CodeQL's, and finds them rather than passing over none", () => {
     expect(scheduled.map(({ file }) => file).sort()).toEqual([
       "benchmarks.yml",
+      "cache-upkeep.yml",
       "ci.yml",
       "core.yml",
       "pdfium-upkeep.yml",
