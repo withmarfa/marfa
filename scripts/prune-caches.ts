@@ -143,7 +143,14 @@ function gh(...args: string[]): string {
   return execFileSync("gh", args, {
     encoding: "utf8",
     maxBuffer: 64 * 1024 * 1024,
+    stdio: ["ignore", "pipe", "pipe"],
   });
+}
+
+/** `gh` reports an HTTP error as `gh: <message> (HTTP <status>)` on stderr. */
+export function isNotFound(error: unknown): boolean {
+  const stderr = (error as { stderr?: unknown }).stderr;
+  return typeof stderr === "string" && /\(HTTP 404\)/.test(stderr);
 }
 
 function megabytes(bytes: number): string {
@@ -188,6 +195,12 @@ function main(): void {
       console.log(`deleted ${label}`);
       freed += cache.size_in_bytes;
     } catch (error) {
+      // GitHub evicted it first, which is what this run wanted.
+      if (isNotFound(error)) {
+        console.log(`already gone ${label}`);
+        freed += cache.size_in_bytes;
+        continue;
+      }
       failed += 1;
       console.error(`could not delete ${label}: ${String(error)}`);
     }

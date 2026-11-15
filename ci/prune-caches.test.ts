@@ -187,7 +187,7 @@ describe("scripts/prune-caches.ts", () => {
   ];
 
   /** Runs the script with a `gh` that serves the listing and records what it is asked to delete. */
-  function run(args: string[], failDelete?: number) {
+  function run(args: string[], failDelete?: { id: number; error: string }) {
     const bin = mkdtempSync(join(scratch, "bin-"));
     const calls = join(bin, "calls.txt");
     writeFileSync(
@@ -200,7 +200,7 @@ describe("scripts/prune-caches.ts", () => {
         "#!/bin/sh",
         `echo "$*" >> "${calls}"`,
         'case "$*" in',
-        `  *"--method DELETE"*${failDelete === undefined ? "NEVER" : `"caches/${String(failDelete)}"`}) echo "HTTP 500" >&2; exit 1 ;;`,
+        `  *"--method DELETE"*${failDelete === undefined ? "NEVER" : `"caches/${String(failDelete.id)}"`}) echo "${failDelete?.error ?? ""}" >&2; exit 1 ;;`,
         '  *"--method DELETE"*) exit 0 ;;',
         `  api*"--paginate"*) cat "${join(bin, "listing.jsonl")}" ;;`,
         '  *) echo "unexpected: $*" >&2; exit 97 ;;',
@@ -256,9 +256,23 @@ describe("scripts/prune-caches.ts", () => {
   });
 
   it("fails the run when a cache cannot be deleted, after trying the others", () => {
-    const { status, calls } = run([], 104);
+    const { status, calls } = run([], {
+      id: 104,
+      error: "gh: Internal Server Error (HTTP 500)",
+    });
     expect(status).toBe(1);
     expect(calls.filter((call) => call.includes("DELETE"))).toHaveLength(3);
+  });
+
+  it("counts a cache GitHub already evicted as deleted, says so, and goes on", () => {
+    const { status, calls, output } = run([], {
+      id: 104,
+      error: "gh: Not Found (HTTP 404)",
+    });
+    expect(status).toBe(0);
+    expect(calls.filter((call) => call.includes("DELETE"))).toHaveLength(3);
+    expect(output).toMatch(/already gone .*marfa-rust-contract-Linux/);
+    expect(output).toContain("freed 63 MB of 111 MB");
   });
 });
 
