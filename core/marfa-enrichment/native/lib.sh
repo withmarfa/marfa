@@ -211,6 +211,22 @@ recipe_hash() {
   } | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c1-16
 }
 
+# tree_hash <folder>: one hash for every file under <folder>, named by its path
+# from there. The archive PDFium is kept in is not reproducible byte for byte (its
+# gzip header and tar entries carry times), so the hash is of what it holds.
+tree_hash() {
+  local folder=$1
+  [ -d "$folder" ] || die "$folder is not a folder"
+  local odd
+  odd=$(find "$folder" ! -type f ! -type d)
+  [ -z "$odd" ] || die "$folder holds something that is neither a file nor a folder"
+  local listing
+  listing=$(cd "$folder" && find . -type f | LC_ALL=C sort | while IFS= read -r file; do
+    printf '%s  %s\n' "$(sha256_of "$file")" "$file"
+  done)
+  printf '%s\n' "$listing" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -d' ' -f1
+}
+
 # licence_into <name> <file>: the licence text pinned as `licence <name>`, verified.
 licence_into() {
   local name=$1 out=$2

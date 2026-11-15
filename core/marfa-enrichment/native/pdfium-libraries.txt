@@ -1,0 +1,11 @@
+# The PDFium library each target links, by hash, one line each:
+#
+#   <target> <hash>
+#
+# <hash> is the one `tree_hash` in lib.sh makes of every file of the saved library
+# (`pdfium.sh <target>` prints the line when it stops on a library this file does
+# not name). pdfium.sh installs a library only when its hash is the one named for
+# the target, so a library from a cache that someone else filled is never trusted.
+# A move of PDFium's pins or patches changes the library: replace the line with the
+# one a build from them prints (the move-pdfium skill says how). A change to a
+# script that leaves the library as it was needs no edit.

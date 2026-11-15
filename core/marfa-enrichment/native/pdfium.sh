@@ -4,12 +4,19 @@
 # and licenses into the target's prefix.
 #
 #   MARFA_NATIVE_ROOT=<folder> native/pdfium.sh <target>
+#   native/pdfium.sh <target> --recipe     prints the recipe's hash and stops
 #
 # A build needs about 6 GB for the checkout, which is deleted once the archive is
 # saved (set MARFA_KEEP_WORK=1 to keep it). The archive is named for the recipe: the
 # pins and patches that decide what the library holds. A later run with the same
 # recipe installs from the archive and builds nothing, and a run with another recipe
 # builds again.
+#
+# What is installed, built here or kept in an archive, must be the library that
+# pdfium-libraries.txt names for the target: a cache is not the repository. The run
+# stops on a library with another hash and on one the file does not name.
+# MARFA_PDFIUM_UNPINNED=1 installs anyway and prints the line to commit, for a
+# developer who changed what PDFium is built from.
 #
 # Needs git, curl, python3, patch and tar. For Linux it also needs a g++ for the
 # tools PDFium builds for itself, and pkg-config, and it must run on x86_64 Linux:
@@ -18,10 +25,6 @@
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
 select_target "${1:-}"
-select_root
-need git curl python3 patch tar
-
-COMMIT=$(manifest_line git pdfium | awk '{ print $5 }')
 
 recipe_items=(
   "line:git:pdfium" "line:git:depot_tools" "line:archive:pdfium-binaries"
@@ -34,13 +37,51 @@ if [ -n "$MUSL_TOOLCHAIN" ]; then
   recipe_items+=("line:tool:$MUSL_TOOLCHAIN" "line:image:build" "line:apt-snapshot:ubuntu")
 fi
 RECIPE=$(recipe_hash "${recipe_items[@]}")
-ARCHIVE="$ARCHIVES/pdfium-$TARGET-$RECIPE.tgz"
+if [ "${2:-}" = --recipe ]; then
+  echo "$RECIPE"
+  exit 0
+fi
 
+select_root
+need git curl python3 patch tar
+
+COMMIT=$(manifest_line git pdfium | awk '{ print $5 }')
+ARCHIVE="$ARCHIVES/pdfium-$TARGET-$RECIPE.tgz"
+LIBRARIES="$NATIVE_DIR/pdfium-libraries.txt"
+
+# check_library <folder>: stops unless the library unpacked in <folder> is the one
+# the repository names for this target.
+check_library() {
+  local got want
+  got=$(tree_hash "$1")
+  [ -n "$got" ] || die "could not hash the library in $1"
+  want=$(awk -v target="$TARGET" '$1 == target { print $2 }' "$LIBRARIES")
+  if [ "$got" = "$want" ]; then
+    echo "pdfium: the library is the one $(basename "$LIBRARIES") names ($got)"
+    return 0
+  fi
+  if [ -n "${MARFA_PDFIUM_UNPINNED:-}" ]; then
+    echo "pdfium: not checked against the repository (MARFA_PDFIUM_UNPINNED); the line for $(basename "$LIBRARIES") is: $TARGET $got" >&2
+    return 0
+  fi
+  if [ -z "$want" ]; then
+    die "$(basename "$LIBRARIES") names no library for $TARGET. This one has hash $got. If it was built from the pins in manifest.txt, commit the line '$TARGET $got' to $LIBRARIES."
+  fi
+  die "refusing the PDFium library for $TARGET: its hash is $got and $(basename "$LIBRARIES") names $want. If the pins or the patches moved, build it from them and commit the line '$TARGET $got'. If not, delete $ARCHIVE (and the cache entry that holds it) so that it is built again."
+}
+
+# The archive is unpacked and checked before anything of it reaches the prefix.
 install_from_archive() {
+  local stage="$WORK/pdfium-unpacked"
+  rm -rf "$stage"
+  mkdir -p "$stage"
+  tar -xzf "$ARCHIVE" -C "$stage"
+  [ -f "$stage/lib/libpdfium.a" ] || die "$ARCHIVE holds no lib/libpdfium.a"
+  check_library "$stage"
   rm -rf "$PREFIX/include/pdfium" "$PREFIX/licenses/pdfium"
   mkdir -p "$PREFIX/lib"
-  tar -xzf "$ARCHIVE" -C "$PREFIX"
-  [ -f "$PREFIX/lib/libpdfium.a" ] || die "$ARCHIVE holds no lib/libpdfium.a"
+  cp -Rp "$stage/." "$PREFIX/"
+  rm -rf "$stage"
   echo "pdfium: installed $(wc -c <"$PREFIX/lib/libpdfium.a") bytes from $ARCHIVE"
 }
 

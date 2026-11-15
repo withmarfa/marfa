@@ -12,6 +12,8 @@ File reading pins PDFium, which reads untrusted files, in `core/marfa-enrichment
 
 It opens no pull request, because GitHub Actions may not open one in this repository and one opened with the workflow's token would start no CI. A session opens it, and the `Core native (x86_64 Linux)` job decides whether the move holds.
 
+A build installs a PDFium library only when its hash is the one `core/marfa-enrichment/native/pdfium-libraries.txt` names for its target, so that a library from a cache is never trusted on its own word. A move changes the library of all three targets, so the pull request must replace the file's lines too. The branch the script pushes cannot carry them: nothing but a build makes the hash.
+
 ## Steps
 
 1. Read the issue, then fetch the branch and check that it changes only the manifest:
@@ -29,26 +31,35 @@ It opens no pull request, because GitHub Actions may not open one in this reposi
    gh pr ready <number>
    ```
 
-3. Wait for the run. A change under `core/marfa-enrichment/native/` runs `Core native (x86_64 Linux)`, `Server image` and `Rust server (release build)`. The native job builds PDFium, Leptonica and Tesseract from the pins with `native/release.sh x86_64-unknown-linux-musl --full`, runs the file matrix, checks the sandbox and fuzzes the reader. Its cache is keyed by the pins, so the first build of a new pin starts cold.
-4. If the native job fails, read why before changing anything:
-   - **`pdfium-render` has no API for this PDFium:** the static link fails. `pdfium-render` in `core/marfa-enrichment/Cargo.toml` names the newest PDFium API its bindings carry as a feature, `pdfium_<API>`, and the comment above the `pdfium-binaries` line in the manifest says which. Move `pdfium-render` to a release that carries a feature for this PDFium, or the newest one at or below it, change the feature, update the lockfile from `core/` (`cargo update -p pdfium-render`), and correct the manifest comment.
-   - **`could not apply` a patch:** bblanchon's build steps changed under `native/patches/pdfium-steps.patch`. Make the patch apply to the new steps and keep what it does.
-   - **A case of the matrix or the fuzzer fails:** find the cause in the new PDFium and fix it. Never change a case's expectation to accept a new reading of a file.
-
-   Make these changes on a branch of your own (`git worktree add .claude/worktrees/pdfium-<N> -b core/pdfium-chromium-<N> origin/main`, then `git cherry-pick` the branch's commit). Never push to the automation branch: the next weekly run force-pushes it. Open the pull request from your branch, link the issue, and close the first pull request.
-
-5. Prove the other platforms. No pull request job builds PDFium for macOS or aarch64 Linux; only `release.yml` does. Run a dry run of the release on the pull request's branch once its CI has passed, naming the next release version:
+3. Get the hashes of the new libraries. The old lines no longer match, so each build that installs a library stops on it and prints the hash it found and the line to commit: `<target> <hash>`. The pull request's `Core native (x86_64 Linux)` job prints the one for `x86_64-unknown-linux-musl`. The other two come from the release's dry run on the branch, which builds PDFium for all three targets:
 
    ```bash
    gh workflow run release.yml --ref <branch> -f version=<next version>
    ```
 
-   The dry run's `Read the version` refuses a branch that does not come after the latest release's commit. If it does, rebase the branch on `origin/main`, wait for its CI, and run the dry run again.
+   Replace the three lines of `core/marfa-enrichment/native/pdfium-libraries.txt` with the lines the builds print, and push. The dry run's `Read the version` refuses a branch that does not come after the latest release's commit; if it does, rebase the branch on `origin/main` first.
 
-6. Merge with a squash once `Full CI` is green and the dry run passed, and check that the issue closed. The next weekly run then finds the pin current and does nothing.
+   The hash is of what the library holds, not of its archive, so every build from the same pins makes the same one. Compare the line the dry run prints for `x86_64-unknown-linux-musl` with the one `Core native (x86_64 Linux)` prints: a mismatch means the build is not reproducible, and no line is to be committed until the cause is known. Never commit a line from a library nobody built from the pins.
+
+4. Wait for the run. A change under `core/marfa-enrichment/native/` runs `Core native (x86_64 Linux)`, `Server image` and `Rust server (release build)`. The native job builds PDFium, Leptonica and Tesseract from the pins with `native/release.sh x86_64-unknown-linux-musl --full`, checks the new library against its line, runs the file matrix, checks the sandbox and fuzzes the reader. Its cache is keyed by the pins, so the first build of a new pin starts cold.
+5. If the native job fails, read why before changing anything:
+   - **`pdfium-libraries.txt` names a different hash:** the library built here is not the one committed. Do not edit the line to match until you know why: a build that is not reproducible, or a cache that holds another library, is the finding.
+   - **`pdfium-render` has no API for this PDFium:** the static link fails. `pdfium-render` in `core/marfa-enrichment/Cargo.toml` names the newest PDFium API its bindings carry as a feature, `pdfium_<API>`, and the comment above the `pdfium-binaries` line in the manifest says which. Move `pdfium-render` to a release that carries a feature for this PDFium, or the newest one at or below it, change the feature, update the lockfile from `core/` (`cargo update -p pdfium-render`), and correct the manifest comment.
+   - **`could not apply` a patch:** bblanchon's build steps changed under `native/patches/pdfium-steps.patch`. Make the patch apply to the new steps and keep what it does. A changed patch changes the library, so the three lines move again.
+   - **A case of the matrix or the fuzzer fails:** find the cause in the new PDFium and fix it. Never change a case's expectation to accept a new reading of a file.
+
+   Make these changes on a branch of your own (`git worktree add .claude/worktrees/pdfium-<N> -b core/pdfium-chromium-<N> origin/main`, then `git cherry-pick` the branch's commit). Never push to the automation branch: the next weekly run force-pushes it. Open the pull request from your branch, link the issue, and close the first pull request.
+
+6. Prove the other platforms. No pull request job builds PDFium for macOS or aarch64 Linux; only `release.yml` does. Run a dry run of the release on the pull request's branch once its CI has passed, with the lines committed. Each target's library must now match its line:
+
+   ```bash
+   gh workflow run release.yml --ref <branch> -f version=<next version>
+   ```
+
+7. Merge with a squash once `Full CI` is green and the dry run passed, and check that the issue closed. The next weekly run then finds the pin current and does nothing.
 
 ## Rules
 
 - Move Tesseract, Leptonica and the Rust toolchain in pull requests of their own, not in this one.
-- Never weaken the native job, the matrix or the fuzzing to let a move pass.
+- Never weaken the native job, the matrix or the fuzzing to let a move pass, and never bypass the check of a library against `pdfium-libraries.txt`.
 - If no `pdfium-render` release carries an API that links with this PDFium, leave the pin, say so on the issue, and leave the issue open: the weekly run edits it again when a newer build appears.
