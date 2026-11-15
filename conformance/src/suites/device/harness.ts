@@ -93,7 +93,7 @@ export function requireBinary(): string {
   refuseIfStale({
     artifact: binary,
     name: "MARFA_DEVICE_BIN",
-    crates: ["marfa-core", "marfa-cli"],
+    crates: ["marfa-rules", "marfa-core", "marfa-cli"],
     rebuild: "`cargo build -p marfa-cli` under core/",
   });
   return binary;
@@ -116,7 +116,7 @@ export function requireModule(): string {
     name: "MARFA_DEVICE_MODULE",
     // The module is compiled from the binding's crate and the engine, and
     // not from the command's.
-    crates: ["marfa-core", "bindings/node"],
+    crates: ["marfa-rules", "marfa-core", "bindings/node"],
     rebuild:
       "`pnpm --ignore-workspace run build:debug` under core/bindings/node/",
   });
