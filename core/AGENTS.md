@@ -22,6 +22,7 @@ These rules add to the root `AGENTS.md` for work under `core/`. Under `core/marf
 
   Then `cargo fmt --check`, `cargo clippy --locked --all-targets -- -D warnings` and `cargo nextest run --locked` in `bindings/swift`.
 
+- `rust-toolchain.toml` pins the compiler, and rustup installs it with `rustup toolchain install` from `core/`. It equals the manifest's `toolchain rust` line, which the release builds with.
 - Run tests with `cargo nextest run`, not `cargo test`. Tests that set a process-wide fault depend on nextest's one process per test.
 - Run `cargo build -p marfa-cli` before the device fixtures: they refuse a `marfa` binary older than its source.
 - Test `marfa-enrichment` with `--features fault-injection` too; its `README.md` says how to build and check the native readers.

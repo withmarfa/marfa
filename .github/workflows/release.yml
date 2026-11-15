@@ -59,7 +59,7 @@ jobs:
       contents: read
       actions: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: scripts/release/require-core-run.sh
@@ -81,7 +81,7 @@ jobs:
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # Read through the environment: a ref name or input may carry shell characters.
       - name: Read the version off the tag
@@ -201,7 +201,7 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install cmake and ninja if the runner lacks them
         run: |
@@ -224,10 +224,10 @@ jobs:
           rustup default "$rust"
           rustc --version
 
-      - uses: pnpm/action-setup@v6
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
 
@@ -238,7 +238,7 @@ jobs:
         run: echo "key=marfa-native-$RUNNER_OS-${{ hashFiles('core/marfa-enrichment/native/manifest.txt', 'core/marfa-enrichment/native/patches/**', 'core/marfa-enrichment/native/build.sh', 'core/marfa-enrichment/native/pdfium.sh', 'core/marfa-enrichment/native/tesseract.sh', 'core/marfa-enrichment/native/models.sh', 'core/marfa-enrichment/native/lib.sh', 'core/marfa-enrichment/native/linux/**') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the downloads and the PDFium library
         id: cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ${{ runner.temp }}/marfa-native/downloads
@@ -288,7 +288,7 @@ jobs:
             NOTICES.txt marfa marfa-server \
             "withmarfa-client-$VERSION.tgz"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: build-${{ needs.version.outputs.version }}
           path: ${{ runner.temp }}/artifacts/
@@ -310,9 +310,9 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: build-${{ needs.version.outputs.version }}
           path: ${{ runner.temp }}/build
@@ -360,7 +360,7 @@ jobs:
             "marfa-$VERSION-darwin-arm64.tar.gz" \
             "withmarfa-client-$VERSION.tgz"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: signed-${{ needs.version.outputs.version }}
           path: ${{ runner.temp }}/artifacts/
@@ -389,7 +389,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       TARGET: ${{ matrix.target }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       # The first build of a target needs 40 GB of free disk.
       - name: Free disk space
@@ -408,7 +408,7 @@ jobs:
           rustup default "$rust"
           rustc --version
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
 
@@ -426,7 +426,7 @@ jobs:
         run: echo "key=${{ matrix.cache }}-$RUNNER_OS-${{ hashFiles('core/marfa-enrichment/native/manifest.txt', 'core/marfa-enrichment/native/patches/**', 'core/marfa-enrichment/native/build.sh', 'core/marfa-enrichment/native/pdfium.sh', 'core/marfa-enrichment/native/tesseract.sh', 'core/marfa-enrichment/native/models.sh', 'core/marfa-enrichment/native/lib.sh', 'core/marfa-enrichment/native/linux/**') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the downloads and the PDFium library
         id: cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ${{ runner.temp }}/marfa-native/downloads
@@ -460,7 +460,7 @@ jobs:
           bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
             "marfa-$VERSION-linux-${{ matrix.arch }}.tar.gz"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: linux-${{ needs.version.outputs.version }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/artifacts/
@@ -487,9 +487,9 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: linux-${{ needs.version.outputs.version }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/archive
@@ -511,14 +511,14 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: signed-${{ needs.version.outputs.version }}
           path: ${{ runner.temp }}/artifacts
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: linux-${{ needs.version.outputs.version }}-*
           merge-multiple: true
@@ -551,13 +551,13 @@ jobs:
         working-directory: ${{ runner.temp }}/formula
         run: bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" marfa.rb
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-${{ needs.version.outputs.version }}
           path: ${{ runner.temp }}/artifacts/
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: formula-${{ needs.version.outputs.version }}
           path: ${{ runner.temp }}/formula/marfa.rb
@@ -587,9 +587,9 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       IMAGE: ghcr.io/withmarfa/marfa-server
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: linux-${{ needs.version.outputs.version }}-*
           merge-multiple: true
@@ -676,7 +676,7 @@ jobs:
 
       - name: Upload the digest
         if: github.event_name == 'push'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: image-digest-${{ needs.version.outputs.version }}-${{ matrix.arch }}
           path: ${{ runner.temp }}/digests/${{ matrix.arch }}
@@ -711,9 +711,9 @@ jobs:
       MODES: ${{ matrix.modes }}
       MARFA_PROOF_ROOT: ${{ matrix.root }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-${{ needs.version.outputs.version }}
           path: ${{ runner.temp }}/release
@@ -747,7 +747,7 @@ jobs:
       IMAGE: ghcr.io/withmarfa/marfa-server
     steps:
       # 11.5.1 is the first npm that publishes by trusted publishing.
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
       - name: Require an npm that publishes by OIDC
@@ -843,8 +843,8 @@ jobs:
             esac
           done
 
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-${{ needs.version.outputs.version }}
           path: artifacts
@@ -903,7 +903,7 @@ jobs:
           subject-path: ${{ runner.temp }}/held/marfa-*
           create-storage-record: false
 
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: image-digest-${{ needs.version.outputs.version }}-*
           merge-multiple: true
@@ -1052,7 +1052,7 @@ jobs:
     env:
       VERSION: ${{ needs.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Say whether the formula is pushed
         id: gate
         env:
@@ -1083,7 +1083,7 @@ jobs:
             echo "::error::The secret HOMEBREW_TAP_TOKEN is not set. Add a fine-grained token with Contents read and write on withmarfa/homebrew-tap as a secret of the release environment, then run this job again."
             exit 1
           fi
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         if: steps.gate.outputs.push == 'true'
         with:
           repository: withmarfa/homebrew-tap

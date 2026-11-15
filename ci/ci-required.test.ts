@@ -276,6 +276,11 @@ describe("what a change runs", () => {
       [...RUST, ...ENRICHMENT, "image", "quick-checks", "version-fields"],
     ],
     [
+      "the core's compiler version, since a new compiler can break any build of the core",
+      ["core/rust-toolchain.toml"],
+      [...RUST, ...ENRICHMENT, "image", "quick-checks", "version-fields"],
+    ],
+    [
       "the native readers' scripts, pins and patches, which the native build, the image's programs and the Rust server's build run, and MCP conformance and the restore drill boot the same program",
       [
         "core/marfa-enrichment/native/release.sh",
@@ -1309,12 +1314,14 @@ describe("each job reads its own answer", () => {
       expect(job?.needs, name).toBe("changes");
       expect(job?.if, name).toBe(gate("workspace"));
       expect(
-        (job?.steps ?? []).map((step) => step.run ?? step.uses),
+        (job?.steps ?? []).map(
+          (step) => step.run ?? step.uses?.replace(/@[0-9a-f]{40}$/, ""),
+        ),
         name,
       ).toEqual([
-        "actions/checkout@v7",
-        "pnpm/action-setup@v6",
-        "actions/setup-node@v7",
+        "actions/checkout",
+        "pnpm/action-setup",
+        "actions/setup-node",
         "pnpm install --frozen-lockfile",
         ...commands,
       ]);
@@ -1331,15 +1338,19 @@ describe("each job reads its own answer", () => {
       "${{ needs.changes.outputs.swift-package != 'false' }}",
     );
     // The Apple targets and the Xcode are the ones `core-live.yml` builds with.
-    const toolchain = steps.find((step) =>
-      step.uses?.startsWith("dtolnay/rust-toolchain"),
+    expect(
+      steps.some((step) => step.uses === "./.github/actions/rust-toolchain"),
+    ).toBe(true);
+    const toolchainFile = readFileSync(
+      join(ROOT, "core", "rust-toolchain.toml"),
+      "utf8",
     );
     for (const target of [
       "aarch64-apple-darwin",
       "aarch64-apple-ios",
       "aarch64-apple-ios-sim",
     ]) {
-      expect(String(toolchain?.with?.targets)).toContain(target);
+      expect(toolchainFile).toContain(`"${target}"`);
     }
     expect(build?.env?.DEVELOPER_DIR).toBe(
       workflow("core-live.yml").jobs.live?.env?.DEVELOPER_DIR,

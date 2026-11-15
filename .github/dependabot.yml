@@ -73,15 +73,23 @@ updates:
       - dependency-name: "typescript"
         update-types:
           - "version-update:semver-major"
+  # Every action is pinned by commit, with its version in the comment after it
+  # (`ci/actions-pinned.test.ts`), and Dependabot moves the commit and the
+  # comment together. `/` covers the workflows only: a composite action under
+  # `.github/actions/` is read through the glob. Each directory gets a pull
+  # request of its own, so the limit is one per directory
+  # (`ci/dependabot.test.ts`).
   - package-ecosystem: "github-actions"
-    directory: "/"
+    directories:
+      - "/"
+      - "/.github/actions/*"
     schedule:
       interval: "monthly"
     groups:
       all-actions:
         patterns:
           - "*"
-    open-pull-requests-limit: 1
+    open-pull-requests-limit: 3
     labels:
       - "dependencies"
   # The Node binding is outside the pnpm workspace on purpose, so the root

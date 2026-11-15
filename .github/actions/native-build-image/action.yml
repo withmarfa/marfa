@@ -16,7 +16,7 @@ runs:
         echo "key=marfa-native-image-$RUNNER_OS-$("$GITHUB_WORKSPACE/core/marfa-enrichment/native/image.sh" key)" >> "$GITHUB_OUTPUT"
     - name: Restore the build image
       id: cache
-      uses: actions/cache/restore@v6
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/marfa-native-image/image.tar.zst
         key: ${{ steps.key.outputs.key }}
@@ -40,7 +40,7 @@ runs:
         ls -l "$RUNNER_TEMP/marfa-native-image/image.tar.zst"
     - name: Save the build image
       if: ${{ github.ref == 'refs/heads/main' && steps.cache.outputs.cache-hit != 'true' }}
-      uses: actions/cache/save@v6
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/marfa-native-image/image.tar.zst
         key: ${{ steps.key.outputs.key }}

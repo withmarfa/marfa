@@ -413,7 +413,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     [...RUST_LINUX, "core", "clients-freshness", "workspace"],
   ],
   [/^core\/Cargo\.toml$/, [...RUST, ...ENRICHMENT, "image", "workspace"]],
-  [/^core\/Cargo\.lock$/, [...RUST, ...ENRICHMENT, "image"]],
+  // The lockfile and the compiler version: a new dependency or a new compiler
+  // can break an Apple build. `version-fields` installs the compiler too.
+  [
+    /^core\/(Cargo\.lock|rust-toolchain\.toml)$/,
+    [...RUST, ...ENRICHMENT, "image", "version-fields"],
+  ],
   [/^core\/\.cargo\//, [...RUST, ...ENRICHMENT, "image", "workspace"]],
   [
     /^core\/\.config\//,

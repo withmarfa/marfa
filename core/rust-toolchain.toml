@@ -1,0 +1,8 @@
+# The compiler every check and every release program is built with. It equals
+# the `toolchain rust` line of marfa-enrichment/native/manifest.txt
+# (ci/rust-toolchain.test.ts). CI installs it with .github/actions/rust-toolchain.
+[toolchain]
+channel = "1.98.1"
+profile = "minimal"
+components = ["rustfmt", "clippy"]
+targets = ["aarch64-apple-darwin", "aarch64-apple-ios", "aarch64-apple-ios-sim"]
