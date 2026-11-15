@@ -1,4 +1,5 @@
-//! Four components, each probed on its own; the overall answer is the worst of them.
+//! Four components, each probed on its own; the overall answer is the worst of them, and no
+//! better than degraded while backups fail or clean-up is held.
 
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
@@ -10,6 +11,7 @@ use tokio::sync::watch;
 use super::App;
 use super::backups::BackupHealth;
 use super::blobs::MARKER;
+use super::clock::Standing;
 use super::faults::{FAIL_HEALTH_WRITE, HOLD_DISK_PROBE, REFUSE_BLOB_STORE, Volume};
 use super::refusal::{Code, Refusal};
 use super::restore_running;
@@ -95,6 +97,7 @@ pub struct Report {
     disk: Component,
     blob_storage: Component,
     backup: BackupHealth,
+    clock: Standing,
 }
 
 /// Fields of the `backups` object given only to a caller who may read the reasons.
@@ -121,6 +124,7 @@ impl Report {
         .iter()
         .map(|component| component.status)
         .chain((self.backup.report["status"] == "failing").then_some(Status::Degraded))
+        .chain(matches!(self.clock, Standing::Ahead { .. }).then_some(Status::Degraded))
         .max()
         .unwrap_or(Status::Ok)
     }
@@ -335,6 +339,7 @@ pub async fn check(app: &Arc<App>) -> Report {
         disk,
         blob_storage,
         backup,
+        clock: app.clock.standing(),
     }
 }
 

@@ -8,23 +8,23 @@ The server registers the following jobs when their settings and required stores 
 
 <!-- housekeeping-table:start -->
 
-| Job                        | Runs every                | What it does                                                                                                                                                                                                                                                                         |
-| -------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `event-log-cleanup`        | hour                      | Removes expired event log entries and idempotency records.                                                                                                                                                                                                                           |
-| `audit-cleanup`            | day                       | Removes expired audit entries and outbound webhook delivery history.                                                                                                                                                                                                                 |
-| `inbound-delivery-cleanup` | minute                    | Removes inbound deliveries after their handled or pending retention window.                                                                                                                                                                                                          |
-| `heartbeat`                | minute                    | Pings the configured liveness receiver.                                                                                                                                                                                                                                              |
-| `version-thinning`         | hour                      | Thins item versions according to the configured retention policy.                                                                                                                                                                                                                    |
-| `feed-expiry`              | hour                      | Moves expired feed items to the trash.                                                                                                                                                                                                                                               |
-| `trash-purge`              | day                       | Permanently removes items whose trash retention has elapsed.                                                                                                                                                                                                                         |
-| `credential-cleanup`       | hour                      | Removes expired sign-in sessions, codes and tokens, retires application grants not used within the inactivity window, removes revoked grants and unused registered clients after their retention windows, and removes revoked or expired keys after their retention window.          |
-| `blob-replicate`           | minute                    | Copies each blob into every attached store that lacks it.                                                                                                                                                                                                                            |
-| `blob-integrity`           | hour                      | Checks blob copies and removes copies whose bytes are missing or altered.                                                                                                                                                                                                            |
-| `blob-orphans`             | day                       | Reports unreferenced blobs and purges them after the grace period.                                                                                                                                                                                                                   |
-| `enrichment-sweep`         | 30 seconds                | Extracts searchable text and image dimensions from uploaded files.                                                                                                                                                                                                                   |
-| `bulk-action-gc`           | hour                      | Removes finished bulk action jobs after 7 days.                                                                                                                                                                                                                                      |
-| `table-row-cleanup`        | hour                      | Removes the rows and change logs of purged items, the batches of a table's change log older than `row_log_retention_days`, and rewrites the order a table keeps after its `order` changed and the search index of its rows after what it marks searchable changed, a page at a time. |
-| `backup`                   | `backup_interval_seconds` | Puts a backup of the instance in the object store when anything it holds has changed, and thins this instance's backups.                                                                                                                                                             |
+| Job                        | Runs every                | What it does                                                                                                                                                                                                                                                                         | Held while the clock is ahead |
+| -------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- |
+| `event-log-cleanup`        | hour                      | Removes expired event log entries and idempotency records.                                                                                                                                                                                                                           | yes                           |
+| `audit-cleanup`            | day                       | Removes expired audit entries and outbound webhook delivery history.                                                                                                                                                                                                                 | yes                           |
+| `inbound-delivery-cleanup` | minute                    | Removes inbound deliveries after their handled or pending retention window.                                                                                                                                                                                                          | yes                           |
+| `heartbeat`                | minute                    | Pings the configured liveness receiver.                                                                                                                                                                                                                                              | no                            |
+| `version-thinning`         | hour                      | Thins item versions according to the configured retention policy.                                                                                                                                                                                                                    | yes                           |
+| `feed-expiry`              | hour                      | Moves expired feed items to the trash.                                                                                                                                                                                                                                               | yes                           |
+| `trash-purge`              | day                       | Permanently removes items whose trash retention has elapsed.                                                                                                                                                                                                                         | yes                           |
+| `credential-cleanup`       | hour                      | Removes expired sign-in sessions, codes and tokens, retires application grants not used within the inactivity window, removes revoked grants and unused registered clients after their retention windows, and removes revoked or expired keys after their retention window.          | yes                           |
+| `blob-replicate`           | minute                    | Copies each blob into every attached store that lacks it.                                                                                                                                                                                                                            | no                            |
+| `blob-integrity`           | hour                      | Checks blob copies and removes copies whose bytes are missing or altered.                                                                                                                                                                                                            | no                            |
+| `blob-orphans`             | day                       | Reports unreferenced blobs and purges them after the grace period.                                                                                                                                                                                                                   | yes                           |
+| `enrichment-sweep`         | 30 seconds                | Extracts searchable text and image dimensions from uploaded files.                                                                                                                                                                                                                   | no                            |
+| `bulk-action-gc`           | hour                      | Removes finished bulk action jobs after 7 days.                                                                                                                                                                                                                                      | yes                           |
+| `table-row-cleanup`        | hour                      | Removes the rows and change logs of purged items, the batches of a table's change log older than `row_log_retention_days`, and rewrites the order a table keeps after its `order` changed and the search index of its rows after what it marks searchable changed, a page at a time. | yes                           |
+| `backup`                   | `backup_interval_seconds` | Puts a backup of the instance in the object store when anything it holds has changed, and thins this instance's backups.                                                                                                                                                             | no                            |
 
 <!-- housekeeping-table:end -->
 
@@ -60,9 +60,9 @@ Where a machine-only setting switches a housekeeping job off, the server MUST le
 
 ### `housekeeping/last-outcome`
 
-The server MUST answer a job's `last_outcome` as `null` until a run of it has finished, and as `ok` or `error` after.
+The server MUST answer a job's `last_outcome` as `null` until a run of it has finished, and as `ok`, `error` or `held` after.
 
-**Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the management key`.
+**Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the management key`, `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`.
 
 ### `housekeeping/running-since-set`
 
@@ -595,3 +595,103 @@ If a run outlives its deadline, then the server MUST run that job again when ask
 If a run that outlived its deadline later finishes, then the server MUST NOT record what it finished with.
 
 **Tests:** `compliance/housekeeping-restart.test.ts › does not record what the run finishes with if it later finishes`.
+
+## While a restore runs
+
+### `housekeeping/restore-heartbeat`
+
+Where `MARFA_HEARTBEAT_URL` is set, while a restore runs, the server MUST send the heartbeat at its interval.
+
+**Reason:** a receiver that hears nothing reports the instance down, and a restore of a large archive can hold every write for minutes. The heartbeat writes nothing, so the restore gives it no reason to stop.
+
+**Tests:** `compliance/restore-faults.test.ts › keeps sending the heartbeat while the restore runs`.
+
+## A clock far from the trusted time
+
+The server's time is the time it stamps writes with and judges age by. The trusted time is the time last confirmed (`housekeeping/clock-confirm`, `housekeeping/clock-steady-day`) or, if later, the latest time the server's clock has read since while clean-up was not held. The fixtures here set the server's clock without time passing, through the test hook `POST /_control/test/clock` with `jump_ms` (`conformance/TARGET-INTERFACE.md`, "The clock"), and pass time with the adapter's `clock advance`.
+
+### `housekeeping/clock-ahead-held`
+
+While the server's clock is more than 7 days later than the trusted time, the server MUST NOT delete, purge, thin, retire or move to the bin anything in a run of a job that the table of registered jobs marks as held while the clock is ahead.
+
+**Reason:** a clock set wrong would otherwise make one run judge everything old enough to remove, and nothing removed comes back when the clock is set right.
+
+**Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`.
+
+### `housekeeping/clock-ahead-recorded`
+
+While the server's clock is more than 7 days later than the trusted time, when a job that the table of registered jobs marks as held while the clock is ahead runs, the server MUST record the run with `outcome` and `last_outcome` `held` and a `result` of `{"held": "clock_ahead"}`.
+
+**Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`.
+
+### `housekeeping/clock-ahead-others-run`
+
+While the server's clock is more than 7 days later than the trusted time, the server MUST run the jobs that the table of registered jobs marks as not held while the clock is ahead.
+
+**Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`.
+
+### `housekeeping/clock-ahead-health`
+
+While the server's clock is more than 7 days later than the trusted time, the server MUST answer `GET /health` with an overall `status` no better than `degraded`.
+
+**Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`.
+
+### `housekeeping/clock-ahead-health-held`
+
+While the server's clock is more than 7 days later than the trusted time, when a credential holding `instance.read` sends `GET /health`, the server MUST answer `housekeeping.held` with `reason` `clock_ahead`, the clock's time as `clock_at`, the trusted time as `trusted_at`, and as `ends_at` the time the hold ends if the clock runs on without a jump.
+
+**Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`.
+
+### `housekeeping/clock-confirm`
+
+When the private local command sends `POST /_control/clock/confirm` (`marfa housekeeping confirm-clock`), the server MUST take the clock's time as the trusted time, and answer it as `confirmed_at`.
+
+**Reason:** an instance that was off for months looks the same as a clock set wrong, and only the owner can say which it is.
+
+**Tests:** `compliance/clock-hold.test.ts › deletes nothing at 2, 31, 61, 91 and 400 days ahead, and cleans up by its rules once the owner confirms the clock`, `› stamps by the clock when it is set back, and keeps the trusted time through a crash`.
+
+### `housekeeping/clock-steady-day`
+
+When the server's clock has run for 24 hours without a jump while it is more than 7 days later than the trusted time, the server MUST take the clock's time as the trusted time.
+
+**Reason:** a host that starts again after months away holds its clean-up for a day and then cleans up by its rules, with no owner at hand.
+
+**Tests:** `compliance/clock-hold.test.ts › holds an instance whose trusted time is six months old for a day after it starts, then cleans up by its rules`, `› counts the day it holds clean-up across a restart, and ends the hold a day after it began`.
+
+### `housekeeping/clock-steady-day-restart`
+
+If the server restarts while its clock is more than 7 days later than the trusted time, then the server MUST count toward the 24 hours of `housekeeping/clock-steady-day` only the time that passed while it ran.
+
+**Reason:** a supervisor, an upgrade or a crash restarts a server, and a day that began again at each restart might never end: a server restarted every day still adds up a day of running. A clock set forward while the server was stopped cannot be told from the time it was stopped, so the time stopped never counts, and a restart never ends a hold by itself. The server keeps the count with every write it commits, and each held job records a run at least once an hour, so a restart loses at most the time since the last of them.
+
+**Tests:** `compliance/clock-hold.test.ts › counts the day it holds clean-up across a restart, and ends the hold a day after it began`, `› keeps clean-up held after a restart with the clock moved further ahead while it was stopped`.
+
+### `housekeeping/clock-followed`
+
+The server MUST take its clock's time as the server's time, whether the clock is earlier or later than the trusted time.
+
+**Reason:** a server time kept from going back would run ahead of the clock by every step back, and a receiver refuses a webhook signature whose time is minutes off. A write stamped after the clock steps back can be earlier than writes before it, so a client that catches up by `updated_after` can miss it. Marfa's devices catch up by the event cursor, which the clock does not move.
+
+**Tests:** `compliance/clock-hold.test.ts › stamps by the clock when it is set back, and keeps the trusted time through a crash`, `› stamps by the clock again once a clock set far ahead is set right`.
+
+### `housekeeping/clock-kept-through-crash`
+
+If the server stops without warning after it has answered a write it made while clean-up was not held, then the server MUST start again with a trusted time no earlier than the time it stamped that write with.
+
+**Tests:** `compliance/clock-hold.test.ts › stamps by the clock when it is set back, and keeps the trusted time through a crash`.
+
+### `housekeeping/clock-behind-waits`
+
+When the server's clock steps back, the server MUST run each housekeeping job and end each rate-limit window no later than its interval or window after the step.
+
+**Reason:** a wait measured to a time the clock reached before the step would otherwise last as long as the step as well, and a day's step back would stop the heartbeat and refuse a client for a day.
+
+**Tests:** `compliance/clock-hold.test.ts › runs its jobs on schedule while the clock is a day behind`, `› ends a rate-limit window while the clock is a day behind`.
+
+### `housekeeping/clock-behind-runs`
+
+While the server's clock is earlier than the trusted time, the server MUST run every job by its rules.
+
+**Reason:** a clock behind only moves every cutoff earlier, so it removes less, never more.
+
+**Tests:** `compliance/clock-hold.test.ts › stamps by the clock when it is set back, and keeps the trusted time through a crash`, `› runs its jobs on schedule while the clock is a day behind`.

@@ -63,6 +63,7 @@ pub fn retry_seconds(wait_ms: i64) -> i64 {
 #[derive(Clone, Copy, Debug)]
 struct Window {
     count: u64,
+    opened_ms: i64,
     ends_ms: i64,
 }
 
@@ -80,7 +81,7 @@ impl Family {
             .get(key)
             .or_else(|| self.keys.get(key))
             .copied()
-            .filter(|window| window.ends_ms > now_ms)
+            .filter(|window| (window.opened_ms..window.ends_ms).contains(&now_ms))
     }
 
     fn unhold(&mut self, key: &str) -> Option<Arc<str>> {
@@ -156,7 +157,7 @@ impl Windows {
     }
 
     fn prune(&mut self, now_ms: i64) {
-        if now_ms.saturating_sub(self.pruned_ms) < PRUNE_EVERY_MS {
+        if now_ms.abs_diff(self.pruned_ms) < PRUNE_EVERY_MS.unsigned_abs() {
             return;
         }
         for family in self.families.values_mut() {
@@ -183,12 +184,15 @@ impl Limiter {
             let (count, ends_ms) = if refused {
                 held.map_or((0, now_ms), |window| (window.count, window.ends_ms))
             } else {
-                let (count, ends_ms) = held
-                    .map_or((0, now_ms.saturating_add(lane.window_ms)), |window| {
-                        (window.count, window.ends_ms)
-                    });
-                let count = count.saturating_add(1);
-                windows.record(lane, Window { count, ends_ms });
+                let opened = Window {
+                    count: 0,
+                    opened_ms: now_ms,
+                    ends_ms: now_ms.saturating_add(lane.window_ms),
+                };
+                let window = held.unwrap_or(opened);
+                let count = window.count.saturating_add(1);
+                let ends_ms = window.ends_ms;
+                windows.record(lane, Window { count, ..window });
                 refused = count > lane.limit;
                 (count, ends_ms)
             };
@@ -211,7 +215,7 @@ impl Limiter {
             let Some(window) = windows.live(lane, now_ms) else {
                 continue;
             };
-            if window.ends_ms.saturating_sub(lane.window_ms) > admitted_ms {
+            if window.opened_ms > admitted_ms {
                 continue;
             }
             let count = window.count.saturating_sub(1);
@@ -283,13 +287,20 @@ mod tests {
     }
 
     #[test]
-    fn a_clock_moved_back_never_asks_for_more_than_a_day() {
+    fn a_clock_moved_back_past_a_window_s_start_ends_the_window() {
         let limiter = Limiter::default();
         let one = [lane("a", "x", 1)];
         let later = 30 * 24 * 60 * MINUTE;
         assert_eq!(limiter.admit(later, &one), None);
-        let wait = limiter.admit(0, &one).unwrap();
-        assert_eq!(retry_seconds(wait), 86_400);
+        assert!(limiter.admit(later, &one).is_some(), "the witness");
+        assert_eq!(limiter.admit(later - 1, &one), None);
+        assert_eq!(limiter.admit(later, &one), Some(MINUTE - 1));
+    }
+
+    #[test]
+    fn a_wait_is_whole_seconds_from_one_to_a_day() {
+        assert_eq!(retry_seconds(1), 1);
+        assert_eq!(retry_seconds(1_001), 2);
         assert_eq!(retry_seconds(i64::MAX), 86_400);
         assert_eq!(retry_seconds(-5_000), 1);
     }

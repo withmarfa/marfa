@@ -1692,11 +1692,46 @@
                   "type": "string"
                 },
                 "description": "The keys of stored settings that no longer read, which Marfa runs on their defaults."
+              },
+              "held": {
+                "type": [
+                  "object",
+                  "null"
+                ],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "enum": [
+                      "clock_ahead"
+                    ],
+                    "description": "Why the jobs that delete are held. `clock_ahead`: the server's clock is more than 7 days later than the trusted time."
+                  },
+                  "clock_at": {
+                    "type": "string",
+                    "description": "What the server's clock reads, in UTC."
+                  },
+                  "trusted_at": {
+                    "type": "string",
+                    "description": "The trusted time, in UTC: the time last confirmed or, if later, the latest time the server's clock read since while clean-up was not held."
+                  },
+                  "ends_at": {
+                    "type": "string",
+                    "description": "When the hold ends if the clock runs without jumping until then, in UTC. `marfa housekeeping confirm-clock` on the server ends it at once."
+                  }
+                },
+                "required": [
+                  "reason",
+                  "clock_at",
+                  "trusted_at",
+                  "ends_at"
+                ],
+                "description": "Why the jobs that delete old records do nothing, or `null` if they run."
               }
             },
             "required": [
               "failed",
-              "unreadable_settings"
+              "unreadable_settings",
+              "held"
             ],
             "description": "What needs attention in the background work. Present only for a caller that holds `instance.read`."
           }
@@ -6769,9 +6804,10 @@
         "type": "string",
         "enum": [
           "ok",
-          "error"
+          "error",
+          "held"
         ],
-        "description": "How a run ended: `ok` if it finished, `error` if it failed."
+        "description": "How a run ended: `ok` if it finished, `error` if it failed, `held` if it did nothing because the clock is far ahead or a restore holds writes."
       },
       "HousekeepingReport": {
         "type": "object",
@@ -7635,13 +7671,14 @@
               "folder",
               "key",
               "backup",
+              "clock",
               "unavailable"
             ],
-            "description": "health: component degraded or down; job: last run failed; connector: failed, has problems, or quiet over a day; folder: sync problems; key: expires soon; backup: none kept, off, store failing, or run failed; unavailable: check could not answer."
+            "description": "health: component degraded or down; job: last run failed; connector: failed, has problems, or quiet a day; folder: sync problems; key: expires soon; backup: none kept, off, store failing, or run failed; clock: ahead or behind; unavailable: no answer."
           },
           "reference": {
             "type": "string",
-            "description": "The component, job, connector, folder, or key ID, the name of the check that could not answer, or for a backup concern `no_backup_destination`, `turned_off`, `store` or `run`."
+            "description": "The component, job, connector, folder, or key ID, the name of the check that could not answer, for a backup concern `no_backup_destination`, `turned_off`, `store` or `run`, or for a clock concern `clock_ahead` or `clock_behind`."
           },
           "title": {
             "type": "string",

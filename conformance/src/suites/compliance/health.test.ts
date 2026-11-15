@@ -537,6 +537,7 @@ describe("the housekeeping object of GET /health", () => {
   interface Housekeeping {
     failed: { name: string; at: string; error: string }[] | null;
     unreadable_settings: string[];
+    held: unknown;
   }
 
   async function read(credential?: string): Promise<{
@@ -574,6 +575,7 @@ describe("the housekeeping object of GET /health", () => {
     expect(before.body.housekeeping).toEqual({
       failed: [],
       unreadable_settings: [],
+      held: null,
     });
 
     await own!.setFault("fail:housekeeping:audit-cleanup");

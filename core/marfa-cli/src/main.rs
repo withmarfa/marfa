@@ -618,6 +618,8 @@ fn run(cli: Cli) -> Result<Exit, CliError> {
                 command: owner::SetupCommand::Status
                     | owner::SetupCommand::Code
                     | owner::SetupCommand::Open { .. }
+            } | Command::Housekeeping {
+                command: housekeeping::HousekeepingCommand::ConfirmClock
             }
         )
     {

@@ -12,11 +12,16 @@ use super::answer::{Answer, json_answer};
 use super::body::JsonBody;
 use crate::app::App;
 use crate::app::refusal::Refusal;
+use crate::db::Write;
 
 fn clock_answer(app: &App) -> Response {
     json_answer(
         StatusCode::OK,
-        &json!({ "offset_ms": app.clock.offset_ms(), "now": app.clock.stamp() }),
+        &json!({
+            "offset_ms": app.clock.offset_ms(),
+            "jump_ms": app.clock.jump_ms(),
+            "now": app.clock.stamp(),
+        }),
     )
 }
 
@@ -28,17 +33,31 @@ pub async fn read_clock(State(app): State<Arc<App>>) -> Response {
     clock_answer(&app)
 }
 
+/// `advance_ms` is time passing; `jump_ms` is the host's clock being set, with no time passing.
 pub async fn move_clock(State(app): State<Arc<App>>, body: JsonBody) -> Answer {
-    let body = body.object(&["advance_ms", "paused"]).await?;
-    let one_of = || Refusal::validation("Send advance_ms, a whole number, or paused, a boolean.");
-    match (body.len(), body.get("advance_ms"), body.get("paused")) {
-        (1, Some(advance), None) => {
+    let body = body.object(&["advance_ms", "jump_ms", "paused"]).await?;
+    let one_of = || {
+        Refusal::validation(
+            "Send advance_ms, a whole number, jump_ms, an integer, or paused, a boolean.",
+        )
+    };
+    let refused = |refused: crate::app::clock::Refused| Refusal::validation(refused.to_string());
+    let only = body.len() == 1;
+    match (
+        body.get("advance_ms"),
+        body.get("jump_ms"),
+        body.get("paused"),
+    ) {
+        (Some(advance), None, None) if only => {
             let ms = advance.as_u64().ok_or_else(one_of)?;
-            app.clock
-                .advance(ms)
-                .map_err(|refused| Refusal::validation(refused.to_string()))?;
+            app.clock.advance(ms).map_err(refused)?;
+            app.db.write(Write::own(), |_| Ok(())).await?;
         }
-        (1, None, Some(Value::Bool(paused))) => app.clock.pause(*paused),
+        (None, Some(jump), None) if only => {
+            let ms = jump.as_i64().ok_or_else(one_of)?;
+            app.clock.jump(ms).map_err(refused)?;
+        }
+        (None, None, Some(Value::Bool(paused))) if only => app.clock.pause(*paused),
         _ => return Err(one_of().into()),
     }
     Ok(clock_answer(&app))

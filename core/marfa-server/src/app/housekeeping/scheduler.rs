@@ -7,10 +7,12 @@ use std::task::Poll;
 use std::time::Duration;
 
 use futures_util::FutureExt;
+use serde_json::json;
 use tokio::sync::watch;
 
-use super::super::App;
+use super::super::clock::Stamp;
 use super::super::refusal::{Code, Refusal, Result};
+use super::super::{App, restore_running};
 use super::jobs::JOBS;
 use super::schedule::{self, Finish, Wanted};
 use super::{Active, Ended, Job, Report, Run};
@@ -22,6 +24,10 @@ use crate::telemetry::{Fault, Finished};
 const RETRY: Duration = Duration::from_secs(1);
 const RECORD_RETRY_FIRST: Duration = Duration::from_millis(100);
 const RECORD_RETRY_MOST: Duration = Duration::from_secs(5);
+/// The longest a held job waits before it looks at the clock again.
+const HELD_LOOKS_AGAIN_MS: u64 = 3_600_000;
+const HELD: &str = "held";
+const CLOCK_AHEAD: &str = "clock_ahead";
 
 pub fn wanted(app: &App) -> Vec<Wanted> {
     JOBS.iter()
@@ -115,6 +121,15 @@ pub fn start(app: Arc<App>) {
         watch_schedule(&app).await;
         let longest = app.settings.start.tuning.housekeeping_poll;
         while !*stopping.borrow() {
+            if app.db.writes_held().is_some() {
+                tracing::info!("Housekeeping waits until the restore ends");
+                tokio::select! {
+                    () = while_restoring(&app) => {}
+                    () = app.db.writes_released() => {}
+                    _ = stopping.wait_for(|stopping| *stopping) => {}
+                }
+                continue;
+            }
             // A wake that is already here is answered by the read this pass makes.
             let _ = app.housekeeping.wake.notified().now_or_never();
             moves.borrow_and_update();
@@ -122,7 +137,9 @@ pub fn start(app: Arc<App>) {
                 Ok(Ok(Some(left))) => left,
                 Ok(Ok(None)) => continue,
                 Ok(Err(refused)) => {
-                    tracing::warn!(error = %refused, "A housekeeping pass did not finish");
+                    if app.db.writes_held().is_none() {
+                        tracing::warn!(error = %refused, "A housekeeping pass did not finish");
+                    }
                     RETRY.min(longest)
                 }
                 Err(fault) => {
@@ -133,6 +150,70 @@ pub fn start(app: Arc<App>) {
             rest(&app, &mut stopping, &mut moves, left).await;
         }
     });
+}
+
+/// Runs the jobs that write nothing while a restore holds writes, recording no run.
+async fn while_restoring(app: &Arc<App>) {
+    let rows = app.db.read(schedule::rows).await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "The housekeeping schedule could not be read during a restore");
+        Vec::new()
+    });
+    let now = app.clock.now_ms();
+    let mut due: Vec<(&'static Job, i64)> = JOBS
+        .iter()
+        .filter(|job| !job.statements && job.runs_here(app))
+        .map(|job| {
+            let at = rows
+                .iter()
+                .find(|row| row.name == job.name)
+                .and_then(|row| Stamp::parsed(&row.next_run_at))
+                .map_or(now, Stamp::ms);
+            (job, at)
+        })
+        .collect();
+    loop {
+        let now = app.clock.now_ms();
+        for (job, at) in &mut due {
+            if *at > now {
+                continue;
+            }
+            let run = Run {
+                job: job.name,
+                given_up: Arc::new(AtomicBool::new(false)),
+                stopping: app.housekeeping.stopping.subscribe(),
+                kept_unread: Arc::new(AtomicI64::new(0)),
+            };
+            let given_up = run.given_up.clone();
+            let deadline = app.faults.deadline(job.name).unwrap_or(job.deadline);
+            let body = tokio::spawn(perform(app.clone(), job, run));
+            match tokio::time::timeout(deadline, body).await {
+                Ok(Ok(Ok(_))) => {}
+                Ok(Ok(Err(failed))) => {
+                    tracing::warn!(job = job.name, error = %failed.message, "A housekeeping run during a restore failed");
+                }
+                Ok(Err(_)) => {
+                    tracing::warn!(
+                        job = job.name,
+                        "A housekeeping run's task during a restore ended early"
+                    );
+                }
+                Err(_) => {
+                    given_up.store(true, Ordering::Release);
+                    tracing::warn!(
+                        job = job.name,
+                        "A housekeeping run during a restore did not finish in time"
+                    );
+                }
+            }
+            let interval = i64::try_from(job.interval.ms(job.name, app)).unwrap_or(i64::MAX);
+            *at = app.clock.now_ms().saturating_add(interval);
+        }
+        let Some(next) = due.iter().map(|(_, at)| *at).min() else {
+            return std::future::pending().await;
+        };
+        let left = u64::try_from(next.saturating_sub(app.clock.now_ms())).unwrap_or(0);
+        tokio::time::sleep(Duration::from_millis(left)).await;
+    }
 }
 
 /// Polls `future` so that a panic in it is caught on the thread the panic hook
@@ -154,6 +235,8 @@ async fn caught<F: Future>(future: F) -> std::result::Result<F::Output, Arc<Faul
 struct Failed {
     message: String,
     fault: Option<Arc<Fault>>,
+    /// The database was busy, which a restore makes it for as long as it runs.
+    busy: bool,
 }
 
 impl From<Refusal> for Failed {
@@ -164,6 +247,7 @@ impl From<Refusal> for Failed {
                 .as_ref()
                 .map_or_else(|| refused.to_string(), |fault| fault.message.clone()),
             fault,
+            busy: refused.code == Code::WriteContention,
         }
     }
 }
@@ -173,6 +257,7 @@ impl From<Arc<Fault>> for Failed {
         Failed {
             message: fault.message.clone(),
             fault: Some(fault),
+            busy: false,
         }
     }
 }
@@ -227,6 +312,7 @@ fn report(app: &App, name: &str, fault: &Arc<Fault>) {
 /// trying until a stop gives up on it, which leaves the next start to clear it.
 async fn record(app: &Arc<App>, job: &Job, ended: &Ended, again: bool) {
     let mut cut = app.housekeeping.cut.subscribe();
+    let held = ended.outcome == HELD;
     let mut wait = RECORD_RETRY_FIRST;
     let result = ended.result.as_ref().map(ToString::to_string);
     loop {
@@ -241,7 +327,10 @@ async fn record(app: &Arc<App>, job: &Job, ended: &Ended, again: bool) {
         let written = app
             .db
             .write(Write::own(), move |tx| {
-                let interval_ms = interval.ms(name, &live);
+                let mut interval_ms = interval.ms(name, &live);
+                if held {
+                    interval_ms = interval_ms.min(HELD_LOOKS_AGAIN_MS);
+                }
                 schedule::finish(
                     tx,
                     &Finish {
@@ -260,6 +349,12 @@ async fn record(app: &Arc<App>, job: &Job, ended: &Ended, again: bool) {
         let Err(refused) = written else {
             return;
         };
+        if app.db.writes_held().is_some() {
+            tokio::select! {
+                () = app.db.writes_released() => continue,
+                _ = cut.wait_for(|cut| *cut) => return,
+            }
+        }
         tracing::warn!(job = job.name, error = %refused, "A housekeeping run is not yet recorded");
         tokio::select! {
             () = tokio::time::sleep(wait) => {}
@@ -283,6 +378,20 @@ pub async fn supervise(
     active: Active,
 ) -> Result<Ended> {
     let _active = active;
+    if job.deletes && app.clock.judging().is_none() {
+        let held = Ended {
+            name: job.name,
+            started_at,
+            finished_at: app.clock.stamp(),
+            outcome: HELD,
+            result: Some(json!({ "held": CLOCK_AHEAD })),
+            error: None,
+            kept_unread: 0,
+        };
+        record(&app, job, &held, false).await;
+        app.housekeeping.wake.notify_one();
+        return Ok(held);
+    }
     let given_up = Arc::new(AtomicBool::new(false));
     let kept_unread = Arc::new(AtomicI64::new(0));
     let deadline = app.faults.deadline(job.name).unwrap_or(job.deadline);
@@ -308,6 +417,7 @@ pub async fn supervise(
             report.failure.map(|message| Failed {
                 message,
                 fault: None,
+                busy: false,
             }),
             report.again,
         ),
@@ -322,6 +432,7 @@ pub async fn supervise(
                 fault: Some(Arc::new(Fault::internal(
                     "a housekeeping run did not finish in time",
                 ))),
+                busy: false,
             };
             (None, Some(failed), false)
         }
@@ -335,17 +446,36 @@ pub async fn supervise(
             ));
         }
     };
-    let ended = Ended {
-        name: job.name,
-        started_at,
-        finished_at: app.clock.stamp(),
-        outcome: if failure.is_some() { "error" } else { "ok" },
-        result,
-        error: failure.as_ref().map(|failed| failed.message.clone()),
-        kept_unread: kept_unread.load(Ordering::Relaxed),
+    // A restore holding the writer is the restore at work, not a fault in the job.
+    let restoring =
+        failure.as_ref().is_some_and(|failed| failed.busy) && app.db.writes_held().is_some();
+    let ended = if restoring {
+        tracing::info!(
+            job = job.name,
+            "A housekeeping run met a restore and runs again once it ends"
+        );
+        Ended {
+            name: job.name,
+            started_at,
+            finished_at: app.clock.stamp(),
+            outcome: HELD,
+            result: Some(json!({ "held": restore_running::REASON })),
+            error: None,
+            kept_unread: kept_unread.load(Ordering::Relaxed),
+        }
+    } else {
+        Ended {
+            name: job.name,
+            started_at,
+            finished_at: app.clock.stamp(),
+            outcome: if failure.is_some() { "error" } else { "ok" },
+            result,
+            error: failure.as_ref().map(|failed| failed.message.clone()),
+            kept_unread: kept_unread.load(Ordering::Relaxed),
+        }
     };
-    record(&app, job, &ended, again).await;
-    if let Some(failed) = &failure {
+    record(&app, job, &ended, again || restoring).await;
+    if let Some(failed) = failure.as_ref().filter(|_| !restoring) {
         tracing::error!(error = %failed.message, "Housekeeping {} error", job.name);
         if let Some(fault) = &failed.fault {
             report(&app, job.name, fault);

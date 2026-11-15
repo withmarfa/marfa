@@ -16,10 +16,10 @@ use std::time::Duration;
 use serde_json::{Value, json};
 use tokio::sync::{Notify, watch};
 
-use super::clock::Stamp;
+use super::clock::{Clock, Confirmation, Stamp, Standing};
 use super::refusal::{Code, Refusal, Result};
 use super::{App, config, provenance, stored};
-use crate::db::Write;
+use crate::db::{Db, Write};
 use crate::settings::registry::Setting;
 
 pub use cleanups::{drain, report_kept};
@@ -65,6 +65,8 @@ pub struct Job {
     switch: Option<fn(&App) -> bool>,
     /// Whether a run reaches the database, which `fail:housekeeping:<job>` needs.
     statements: bool,
+    /// Whether a run deletes by age, so that a clock far ahead of the trusted time holds it.
+    deletes: bool,
     run: Body,
 }
 
@@ -115,12 +117,18 @@ impl Job {
             deadline,
             switch: None,
             statements: true,
+            deletes: false,
             run,
         }
     }
 
     const fn switched_by(mut self, switch: fn(&App) -> bool) -> Job {
         self.switch = Some(switch);
+        self
+    }
+
+    const fn deleting(mut self) -> Job {
+        self.deletes = true;
         self
     }
 
@@ -248,7 +256,7 @@ pub fn runs_statements(name: &str) -> bool {
     JOBS.iter().any(|job| job.name == name && job.statements)
 }
 
-/// The instant a retention keeps records from, or `None` while it is zero and keeps everything.
+/// The instant a retention keeps records from, or `None`, keeping everything, while it is zero or clean-up holds.
 /// Read from `tx`, since the live settings lag a change the writer has committed.
 pub fn cutoff(
     tx: &rusqlite::Transaction<'_>,
@@ -263,10 +271,10 @@ pub fn cutoff(
     Ok(ago(app, i64::try_from(kept).unwrap_or(i64::MAX), unit_ms))
 }
 
-/// `None` once no stored time can be that early.
+/// `None` once no stored time can be that early, or while the clock holds clean-up.
 pub fn ago(app: &App, amount: i64, unit_ms: i64) -> Option<String> {
     app.clock
-        .instant()
+        .judging()?
         .earlier_by(amount.saturating_mul(unit_ms))
         .map(Stamp::text)
 }
@@ -460,5 +468,145 @@ pub async fn attention(app: &App) -> Value {
     json!({
         "failed": failed,
         "unreadable_settings": unreadable,
+        "held": held(app.clock.standing()),
     })
+}
+
+/// Why the jobs that delete are held, or `null` while they are not.
+pub fn held(standing: Standing) -> Value {
+    match standing {
+        Standing::Ahead {
+            trusted,
+            wall,
+            ends,
+        } => json!({
+            "reason": "clock_ahead",
+            "clock_at": wall,
+            "trusted_at": trusted,
+            "ends_at": ends,
+        }),
+        Standing::Agrees | Standing::Behind { .. } => Value::Null,
+    }
+}
+
+/// Takes the server's clock as right and lets the jobs a clock ahead held run now.
+pub async fn confirm_clock(app: &App) -> Result<Stamp> {
+    let confirmed = confirm_on(&app.db, &app.clock).await?;
+    tracing::info!(at = %confirmed, "The owner confirmed the server's clock");
+    Ok(confirmed)
+}
+
+/// A deleting job reads the guard inside its own write, so the confirmation reaches the guard only
+/// once its write has committed.
+async fn confirm_on(db: &Db, clock: &Arc<Clock>) -> Result<Stamp> {
+    let inside = clock.clone();
+    let written = db
+        .write(Write::own(), move |tx| confirming(tx, &inside))
+        .await;
+    let confirmation = match written {
+        Ok(confirmation) => confirmation,
+        Err(error) => {
+            clock.unstage();
+            Err(error)?
+        }
+    };
+    clock.confirmed(confirmation);
+    Ok(confirmation.at())
+}
+
+fn confirming(tx: &rusqlite::Transaction<'_>, clock: &Clock) -> Result<Confirmation> {
+    let confirmation = clock.confirmation();
+    for job in JOBS.iter().filter(|job| job.deletes) {
+        schedule::bring_forward_held(tx, job.name, &confirmation.at().text())?;
+    }
+    clock.stage(confirmation);
+    Ok(confirmation)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::db::Options;
+    use crate::db::migrate::Migration;
+    use crate::settings::DatabasePath;
+
+    /// No `clock_trust` table, so every write fails as it commits.
+    const NO_CLOCK_TABLE: &[Migration] = &[Migration {
+        version: 1,
+        sql: "CREATE TABLE housekeeping_jobs (name TEXT PRIMARY KEY, next_run_at TEXT, last_outcome TEXT) STRICT;",
+    }];
+
+    #[tokio::test]
+    async fn a_confirmation_whose_write_fails_leaves_the_clock_as_it_was() {
+        let options = Options {
+            path: DatabasePath::Memory,
+            write_wait: Duration::from_secs(5),
+            readers: 1,
+            migrations: NO_CLOCK_TABLE,
+            reserve: 0,
+        };
+        let lock = crate::db::Lock::take(&options.path)
+            .map_err(|failure| failure.message)
+            .unwrap();
+        let db = Db::open(&options, lock, Arc::default())
+            .map_err(|failure| failure.message)
+            .unwrap();
+        let clock = Arc::new(Clock::new(0));
+        clock.pause(true);
+        let now = clock.instant().ms();
+        clock.resume_from(Some(crate::app::clock::Kept {
+            trusted_at: Stamp::from_ms(now - 180 * DAY_MS).unwrap(),
+            held_ms: None,
+        }));
+        assert_eq!(
+            clock.judging(),
+            None,
+            "the witness: a clock this far ahead holds"
+        );
+        db.keep_clock(clock.clone());
+
+        assert!(confirm_on(&db, &clock).await.is_err());
+        assert_eq!(clock.judging(), None);
+        assert!(matches!(clock.standing(), Standing::Ahead { .. }));
+    }
+
+    #[tokio::test]
+    async fn a_confirmation_changes_nothing_a_clean_up_reads_until_its_write_commits() {
+        let options = Options {
+            path: DatabasePath::Memory,
+            write_wait: Duration::from_secs(5),
+            readers: 1,
+            migrations: crate::db::migrate::MIGRATIONS,
+            reserve: 0,
+        };
+        let lock = crate::db::Lock::take(&options.path)
+            .map_err(|failure| failure.message)
+            .unwrap();
+        let db = Db::open(&options, lock, Arc::default())
+            .map_err(|failure| failure.message)
+            .unwrap();
+        let clock = Arc::new(Clock::new(0));
+        clock.pause(true);
+        clock.now_ms();
+        clock.jump(180 * DAY_MS).unwrap();
+        db.keep_clock(clock.clone());
+        assert_eq!(clock.judging(), None, "the witness: the clock holds");
+
+        let inside = clock.clone();
+        let seen = db
+            .write(Write::own(), move |tx| {
+                confirming(tx, &inside)?;
+                Ok(inside.judging())
+            })
+            .await
+            .unwrap();
+        assert_eq!(seen, None, "read inside the confirming write");
+
+        let confirmed = confirm_on(&db, &clock).await.unwrap();
+        assert_eq!(clock.judging(), Some(confirmed));
+        let kept = db.read(crate::app::clock::kept).await.unwrap().unwrap();
+        assert_eq!(kept.trusted_at, confirmed);
+    }
 }

@@ -676,8 +676,10 @@ fn grace_cutoff(tx: &rusqlite::Transaction<'_>, app: &App) -> Result<Option<Stri
     let grace = stored::deciding(tx, &seeds, BLOB_CLEANUP_GRACE_SECONDS)?;
     Ok(app
         .clock
-        .instant()
-        .earlier_by(i64::try_from(grace.saturating_mul(1_000)).unwrap_or(i64::MAX))
+        .judging()
+        .and_then(|now| {
+            now.earlier_by(i64::try_from(grace.saturating_mul(1_000)).unwrap_or(i64::MAX))
+        })
         .map(Stamp::text))
 }
 

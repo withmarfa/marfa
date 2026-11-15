@@ -13,7 +13,7 @@ mod writer;
 
 use std::fs::File;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::Duration;
 
 use rusqlite::Transaction;
@@ -23,6 +23,7 @@ pub use hold::{Holding, Permit};
 pub use open::{Lock, Options};
 pub use writer::{Pulse, Watcher};
 
+use crate::app::clock::Clock;
 use crate::app::faults::{
     FAIL_LOCK, Faults, HOLD_WRITE, REFUSE_READ, REFUSE_WRITE, REFUSE_WRITE_LOCK,
 };
@@ -93,6 +94,8 @@ pub struct Db {
     damaged: AtomicBool,
     /// Keeps a second server off the file until `close`, or until the process ends.
     lock: Mutex<Option<File>>,
+    /// Whose mark every write keeps, from the moment the clock is made.
+    clock: OnceLock<Arc<Clock>>,
 }
 
 impl Db {
@@ -113,7 +116,13 @@ impl Db {
             budget: options.write_wait,
             damaged: AtomicBool::new(false),
             lock: Mutex::new(opened.lock),
+            clock: OnceLock::new(),
         })
+    }
+
+    /// From now on every write keeps what `clock` keeps in its own transaction.
+    pub fn keep_clock(&self, clock: Arc<Clock>) {
+        let _ = self.clock.set(clock);
     }
 
     /// The permit admits the holder's writes; dropping the guard admits other requests again.
@@ -124,6 +133,11 @@ impl Db {
     /// The armed hold's refusal, whoever asks.
     pub fn writes_held(&self) -> Option<Refusal> {
         self.held.armed()
+    }
+
+    /// Answers once no hold is armed.
+    pub async fn writes_released(&self) {
+        self.held.lifted().await;
     }
 
     /// Answers once a write from this task would be refused, for a wait a hold's holder may own.
@@ -234,6 +248,14 @@ impl Db {
                 budget,
             ));
         }
+        let clock = self.clock.get().cloned();
+        let job = move |tx: &Transaction<'_>| {
+            let done = job(tx)?;
+            if let Some(clock) = &clock {
+                clock.keep(tx)?;
+            }
+            Ok(done)
+        };
         self.writer
             .submit(write, budget, cap, held, job)
             .await

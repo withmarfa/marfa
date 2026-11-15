@@ -155,7 +155,11 @@ pub async fn audit(app: Arc<App>, run: Run) -> Result<Report> {
 }
 
 async fn reap_batch(app: &Arc<App>) -> Result<i64> {
-    let Some(before) = app.clock.instant().earlier_by(reap::KEPT_DAYS * DAY_MS) else {
+    let Some(before) = app
+        .clock
+        .judging()
+        .and_then(|now| now.earlier_by(reap::KEPT_DAYS * DAY_MS))
+    else {
         return Ok(0);
     };
     let before = before.text();
@@ -178,8 +182,8 @@ async fn revoked_keys(app: &Arc<App>, run: &Run) -> Result<(i64, bool)> {
     if done
         && app
             .clock
-            .instant()
-            .earlier_by(reap::KEPT_DAYS * DAY_MS)
+            .judging()
+            .and_then(|now| now.earlier_by(reap::KEPT_DAYS * DAY_MS))
             .is_some()
     {
         let job = run.job;
