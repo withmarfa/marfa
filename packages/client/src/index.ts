@@ -75,12 +75,12 @@ function checkCredential(credential: string): void {
 /**
  * A typed client for one instance. Every request names the contract version
  * this client was generated for, so a server on another one refuses it
- * before acting. Every answer is checked for that version, and one that names another, or a
- * success that names none, is refused with {@link ContractMismatchError}
- * rather than read. An error answer with no header is handed on as it
- * came, since a proxy in front of the server answers without one and its
- * status is still the truth. The credential is sent only under the
- * configured `baseUrl`, and never after a redirect.
+ * before acting. Every answer is checked for that version, and one that
+ * names another, or a success that names none, is refused with
+ * {@link ContractMismatchError} rather than read. An error answer with no
+ * header is handed on as it came, since a proxy in front of the server
+ * answers without one and its status is still the truth. The credential is
+ * sent only under the configured `baseUrl`, and never after a redirect.
  *
  * Both are done where the request leaves and the answer arrives, inside the
  * client's own `fetch`, so middleware a caller adds with `use` sees a request
