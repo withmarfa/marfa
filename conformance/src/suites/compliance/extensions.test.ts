@@ -105,6 +105,40 @@ describe("metadata extensions", () => {
     expect(r.data.extensions["app-b"]).toEqual({ b: 2 });
   });
 
+  it("takes extension data of 102400 Unicode characters of compact JSON and refuses one more with 400 validation_error, leaving the namespace as it stood", async () => {
+    // The compact JSON of {"v":"..."} is the text plus 8 characters.
+    const overhead = 8;
+    const limit = 102_400;
+    for (const [unit, label] of [
+      ["x", "one-byte"],
+      ["\u20ac", "three-byte"],
+      ["\u{1F600}", "astral"],
+    ] as const) {
+      const namespace = `limit-${label}`;
+      const kept = await client.setItemExtension(itemId, namespace, {
+        v: "kept",
+      });
+      expect(kept.ok, label).toBe(true);
+
+      const over = await client.setItemExtension(itemId, namespace, {
+        v: unit.repeat(limit - overhead + 1),
+      });
+      expect(over.status, label).toBe(400);
+      expect(over.error?.error.code, label).toBe("validation_error");
+      const unchanged = await client.getItemExtension(itemId, namespace);
+      expect(unchanged.data.data, label).toEqual({ v: "kept" });
+
+      const at = await client.setItemExtension(itemId, namespace, {
+        v: unit.repeat(limit - overhead),
+      });
+      expect(at.status, label).toBe(200);
+      const read = await client.getItemExtension(itemId, namespace);
+      expect([...(read.data.data as { v: string }).v], label).toHaveLength(
+        limit - overhead,
+      );
+    }
+  });
+
   it("deletes a namespace, after which its read answers 200 with null data", async () => {
     const put = await client.setItemExtension(itemId, "to-delete", {
       temp: true,

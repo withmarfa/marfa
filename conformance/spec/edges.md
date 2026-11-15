@@ -232,6 +232,20 @@ When `GET /items/{id}/edges` answers, or `GET /edges` names no `updated_after`, 
 
 **Tests:** `compliance/edge-listings.test.ts › lists edges newest created first, and an update does not move one`.
 
+### `edges/list-order-changed`
+
+When `GET /edges` names `updated_after`, the server MUST list edges oldest change first, by `updated_at` ascending.
+
+**Reason:** a client that catches up from a time reads what changed in the order it changed, and an update moves an edge to the end.
+
+**Tests:** `compliance/edge-listings.test.ts › lists edges oldest change first by updated_at, so an update moves an edge to the end, and pages in that order`.
+
+### `edges/list-order-changed-ties`
+
+When `GET /edges` names `updated_after` and edges share an `updated_at`, the server MUST list them by `id` ascending.
+
+**Tests:** `compliance/edge-listings.test.ts › lists edges that changed at the same time by ascending id`.
+
 ### `edges/list-paginate`
 
 When a key pages `GET /edges`, `GET /items/{id}/edges` or `GET /items/{id}/backrefs` by `next_cursor`, the server MUST deliver every edge once.
@@ -753,6 +767,14 @@ When a `POST /edges/bulk` entry under `mode: upsert` merges into an edge, the se
 If a `POST /edges/bulk` entry under `mode: upsert` names a triple an edge holds and a `version` other than that edge's current one, then the server MUST refuse the entry `version_conflict`, as `errored` on the entry under `atomic: false` and as `details.code` of a `409` rollback under `atomic: true`.
 
 **Tests:** `compliance/edges-bulk-version.test.ts › reports a stale version as errored with version_conflict under atomic false`, `› rolls the page back with a 409 whose details.code is version_conflict under atomic true`, `› updates an entry that names the current version`.
+
+### `edges/bulk-version-created`
+
+When a `POST /edges/bulk` entry names a `version` and a triple that no edge holds, the server MUST create the edge at version 1 and report the entry `created`.
+
+**Reason:** a `version` is the version of a held edge the entry is based on, so where no edge is held it asks nothing.
+
+**Tests:** `compliance/edges-bulk-version.test.ts › creates an entry that names a version and a triple no edge holds, at version 1, under upsert and create_only`.
 
 ### `edges/bulk-match-unregistered`
 

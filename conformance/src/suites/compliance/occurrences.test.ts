@@ -137,6 +137,46 @@ describe("occurrences", () => {
     ]);
   });
 
+  it("answers the occurrences of active events only, one-off or recurring, until an archived or trashed event is active again", async () => {
+    const from = "2032-05-10T00:00:00.000Z";
+    const to = "2032-05-13T00:00:00.000Z";
+    const single = (title: string) =>
+      seedEvent(title, "2032-05-10T10:00:00.000Z", "2032-05-10T11:00:00.000Z");
+    const active = await single(`occ-active-${ctx.runId}`);
+    const archived = await single(`occ-archived-${ctx.runId}`);
+    const trashed = await single(`occ-trashed-${ctx.runId}`);
+    const series = await event({
+      starts_at: "2032-05-10T12:00:00Z",
+      recurrence: ["RRULE:FREQ=DAILY;COUNT=3"],
+    });
+
+    // The witness: every event answers while it is active.
+    const before = (await window(from, to)).map((o) => o.item.id);
+    for (const id of [active, archived, trashed, series]) {
+      expect(before).toContain(id);
+    }
+
+    expect((await client.transitionItem(archived, "archived")).status).toBe(
+      200,
+    );
+    expect((await client.transitionItem(trashed, "trashed")).status).toBe(200);
+    expect((await client.transitionItem(series, "archived")).status).toBe(200);
+    const after = (await window(from, to)).map((o) => o.item.id);
+    expect(after).toContain(active);
+    for (const id of [archived, trashed, series]) {
+      expect(after).not.toContain(id);
+    }
+
+    expect((await client.transitionItem(archived, "active")).status).toBe(200);
+    expect((await client.transitionItem(series, "active")).status).toBe(200);
+    expect(await startsOf(series, from, to)).toEqual([
+      "2032-05-10T12:00:00.000Z",
+      "2032-05-11T12:00:00.000Z",
+      "2032-05-12T12:00:00.000Z",
+    ]);
+    expect((await window(from, to)).map((o) => o.item.id)).toContain(archived);
+  });
+
   it("expands events inside the window and excludes those outside it", async () => {
     const inside = await seedEvent(
       `occ-in-${ctx.runId}`,

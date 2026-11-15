@@ -2272,6 +2272,14 @@ When a key sends `PUT /items/{id}/extensions/{namespace}`, the server MUST repla
 
 **Tests:** `compliance/extensions.test.ts › writes extension data to a namespace`, `› overwrites extension on second PUT`, `› writes multiple namespaces independently`.
 
+### `items/extension-limit`
+
+If the data of `PUT /items/{id}/extensions/{namespace}`, written as compact JSON, is longer than 102400 Unicode characters, then the server MUST answer `400 validation_error`.
+
+**Reason:** a client measures the limit by counting characters of the text it sends with no spaces, not bytes, so a character outside ASCII counts once. The namespace's data stays as it stood.
+
+**Tests:** `compliance/extensions.test.ts › takes extension data of 102400 Unicode characters of compact JSON and refuses one more with 400 validation_error, leaving the namespace as it stood`.
+
 ### `items/extension-answer`
 
 When the server answers a write or delete of an extension namespace, the server MUST answer every namespace on the item the key may read, and no other.
