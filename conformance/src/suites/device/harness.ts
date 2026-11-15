@@ -1153,6 +1153,9 @@ export function hashOf(bytes: Buffer): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
+/** The hashes each scripted server already answers a link for. */
+const scriptedBlobs = new WeakMap<ScriptedServer, Set<string>>();
+
 /**
  * A blob the server holds: its link door answers a link on this server, and
  * the link serves `served`, which is the blob's own bytes unless a fixture
@@ -1165,6 +1168,12 @@ export function scriptBlob(
 ): string {
   const hash = hashOf(bytes);
   const hex = hash.slice("sha256:".length);
+  let known = scriptedBlobs.get(server);
+  if (known === undefined) {
+    known = new Set();
+    scriptedBlobs.set(server, known);
+  }
+  known.add(hash);
   server.copyAnswer(
     "GET",
     `/blobs/${hash}/url`,
@@ -1188,15 +1197,22 @@ export function fileOf(name: string, contents: string | Buffer): string {
   return path;
 }
 
-/** `POST /blobs` answered as the server answers it, naming what it was sent. */
+/**
+ * `POST /blobs` answered as the server answers it, naming what it was sent.
+ * The server then holds those bytes, so a read of their link is answered as
+ * well (`scriptBlob`) unless the fixture scripted that blob itself; the link
+ * of bytes nobody uploaded stays unscripted.
+ */
 export function acceptUploads(server: ScriptedServer): void {
-  server.answer("POST", "/blobs", (request) =>
-    writeAnswers.uploaded(
-      hashOf(request.raw),
+  server.answer("POST", "/blobs", (request) => {
+    const hash = hashOf(request.raw);
+    if (!scriptedBlobs.get(server)?.has(hash)) scriptBlob(server, request.raw);
+    return writeAnswers.uploaded(
+      hash,
       request.headers["content-type"] ?? "",
       request.raw.length,
-    ),
-  );
+    );
+  });
 }
 
 /**

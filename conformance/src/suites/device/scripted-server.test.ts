@@ -6,6 +6,7 @@ import {
   connected,
   copyStreamCursor,
 } from "../../device/marfa-answers.js";
+import { acceptUploads, hashOf, scriptBlob } from "./harness.js";
 
 /**
  * The stimuli, before any device is asked to answer them.
@@ -262,6 +263,52 @@ describe("the script is the whole of what the server does", () => {
       server.unmatchedRequests,
       "a door nobody scripted was not recorded, so a device calling somewhere the fixture never thought about would go unnoticed",
     ).toEqual(["GET /items"]);
+  });
+
+  it("answers a link for bytes a fixture's folder uploaded, and for no others", async () => {
+    server = await ScriptedServer.start();
+    acceptUploads(server);
+    const uploaded = Buffer.from("bytes the folder sent\n");
+    const known = Buffer.from("bytes the fixture scripted\n");
+    const lied = Buffer.from("bytes behind a link that lies\n");
+    scriptBlob(server, known);
+    scriptBlob(server, lied, Buffer.from("something else\n"));
+
+    const upload = (bytes: Buffer) =>
+      read(`${server!.url}/blobs`, {
+        method: "POST",
+        headers: { "content-type": "application/octet-stream" },
+        body: new Uint8Array(bytes),
+      });
+    // The witness: before the upload the server has no link to give.
+    const before = await read(`${server.url}/blobs/${hashOf(uploaded)}/url`);
+    expect(before.status, "the link was there before the upload").toBe(501);
+
+    expect((await upload(uploaded)).status).toBeLessThan(300);
+    expect((await upload(known)).status).toBeLessThan(300);
+    expect((await upload(lied)).status).toBeLessThan(300);
+    const link = await read(`${server.url}/blobs/${hashOf(uploaded)}/url`);
+    expect(link.status, "an uploaded blob had no link").toBe(200);
+    const { url } = (await link.json()) as { url: string };
+    expect(Buffer.from(await (await read(url)).arrayBuffer())).toEqual(
+      uploaded,
+    );
+    const served = await read(
+      (
+        (await (
+          await read(`${server.url}/blobs/${hashOf(lied)}/url`)
+        ).json()) as { url: string }
+      ).url,
+    );
+    expect(
+      Buffer.from(await served.arrayBuffer()).toString(),
+      "an upload replaced what a fixture scripted its link to serve",
+    ).toBe("something else\n");
+
+    const nobody = await read(
+      `${server.url}/blobs/${hashOf(Buffer.from("never sent"))}/url`,
+    );
+    expect(nobody.status, "bytes nobody uploaded had a link").toBe(501);
   });
 
   it("records every request in the order it arrived", async () => {
