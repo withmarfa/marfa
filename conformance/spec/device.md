@@ -5650,11 +5650,11 @@ A device MUST answer `core.table` as `GET /types/core.table` answers it, from it
 
 ### `device/number-exact`
 
-If a write to an item, or to an edge or an item's extension, names a value, at any depth, that is a whole number written with digits other than the shortest decimal that reads back as the same IEEE 754 double, then a device MUST refuse `validation` the write with the field and the message `items/property-number-exact` gives, and queue nothing.
+If a write to an item, or to an edge, an item's extension or a row of an item's table, names a value, at any depth, that is a whole number written with digits other than the shortest decimal that reads back as the same IEEE 754 double, then a device MUST refuse `validation` the write with the field and the message `items/property-number-exact` gives, and queue nothing.
 
 **Reason:** the server refuses the number, so a write kept would come back refused, or be stored changed.
 
-**Tests:** `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`, `› keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`, `› keeps a number a float keeps in the properties of an edge and the data of an extension on both paths`, `device/property-validation-edges.test.ts › refuses %s in the properties of an edge and the data of an extension on both paths with one message`.
+**Tests:** `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`, `› keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`, `› keeps a number a float keeps in the properties of an edge and the data of an extension on both paths`, `device/property-validation-edges.test.ts › refuses %s in the properties of an edge and the data of an extension on both paths with one message`, `device/table-writes-live.test.ts › refuses %s in a row's value, naming the operation and the column, as the server does, queueing nothing`.
 
 ### `device/number-exact-folder-flagged`
 

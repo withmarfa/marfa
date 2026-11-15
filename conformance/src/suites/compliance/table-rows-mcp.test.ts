@@ -825,3 +825,65 @@ describe("marfa_get with tables", () => {
     expect(got.hint).toEqual(expect.stringContaining("columns"));
   });
 });
+
+describe("a whole number in a row that a 64-bit float would change, through marfa_write_rows", () => {
+  /** A tool call sent as text, because the client's `JSON.stringify` rounds the digits before they leave. */
+  async function callAsText(item: string, operations: string) {
+    const res = await fetch(new URL("/mcp", apiUrl), {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+      },
+      body: `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"marfa_write_rows","arguments":{"id":"${item}","table":"lines","operations":${operations}}}}`,
+    });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    const json = text.startsWith("{")
+      ? text
+      : (text.split("\n").find((line) => line.startsWith("data:")) ?? "")
+          .slice(5)
+          .trim();
+    const answer = JSON.parse(json) as {
+      result: { isError?: boolean; content: { text: string }[] };
+    };
+    return {
+      isError: answer.result.isError === true,
+      body: JSON.parse(answer.result.content[0]!.text) as {
+        error?: { code: string; message: string; details?: unknown };
+      },
+    };
+  }
+
+  it.each([
+    "1500000000000000001",
+    "9223372036854775807",
+    "-9007199254740993",
+    "1152921504606846976",
+    "1000000000000000000000",
+    "-0",
+  ])(
+    "refuses %s in a row as the write door does and writes none of the batch",
+    async (digits) => {
+      const { item } = await ledger();
+      const operations = `[{"op":"put","values":{"amount":2}},{"op":"put","values":{"amount":${digits}}}]`;
+      const door = await client.rawRequest<unknown>(
+        `/items/${item}/tables/lines/rows`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: `{"operations":${operations}}`,
+        },
+      );
+      expect(door.status).toBe(400);
+      const refused = await callAsText(item, operations);
+      expect(refused.isError).toBe(true);
+      expect(refused.body.error?.code).toBe(door.error?.error.code);
+      expect(refused.body.error?.message).toBe(door.error?.error.message);
+      expect(refused.body.error?.details).toEqual(door.error?.error.details);
+      const rows = await client.listRows(item, "lines");
+      expect(rows.data.data).toEqual([]);
+    },
+  );
+});

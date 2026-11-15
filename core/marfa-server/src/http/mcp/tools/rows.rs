@@ -128,11 +128,18 @@ pub fn write_definition() -> Definition {
     }
 }
 
-pub async fn write(app: &Arc<App>, caller: &Caller, arguments: Map<String, Value>) -> Outcome {
+/// `exact` judges the digits of the row values as sent, which the parsed arguments no longer hold.
+pub async fn write(
+    app: &Arc<App>,
+    caller: &Caller,
+    arguments: Map<String, Value>,
+    exact: Result<(), Refusal>,
+) -> Outcome {
     let id = text(&arguments, "id").unwrap_or_default();
     item_id(&id)?;
     let table = text(&arguments, "table").unwrap_or_default();
     let operations = tables::operations(arguments.get("operations"), MAX_OPERATIONS)?;
+    exact?;
     parsed(
         &tables::write(app, caller, None, id, table, operations)
             .await?

@@ -318,6 +318,22 @@ export class CliDevice implements DeviceUnderTest {
     ]);
   }
 
+  /** As `writeRows`, from the text of the operations, which keeps the digits a number was written with. */
+  async writeRowsText(
+    item: string,
+    table: string,
+    operations: string,
+  ): Promise<Outcome<QueuedWrite>> {
+    return this.json<QueuedWrite>([
+      "rows",
+      "write",
+      item,
+      table,
+      "--body",
+      `{"operations":${operations}}`,
+    ]);
+  }
+
   /** `marfa device rows undo`: queued, and never laid over the copy. */
   async undoRows(
     item: string,
