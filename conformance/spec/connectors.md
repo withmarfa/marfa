@@ -966,6 +966,18 @@ When the server records a `connector_state.delete` audit entry, the server MUST 
 
 **Tests:** `compliance/connector-state.test.ts › clears the state and the agreements for the own key or the manager, and audits it`, `› goes with a purged item`.
 
+## A vendor entry a purge left a tombstone for
+
+A connector treats a vendor entry as new only if the vendor changed it after the `settled_at` of the tombstone that records its link or natural key (`items/tombstone`), and it moves `settled_at` with `POST /items/tombstones` when its own write changed the vendor's copy (`items/tombstone-settle`).
+
+### `connectors/tombstone-write-accepted`
+
+When a key creates an item that holds a link or natural key a tombstone records, the server MUST create a new item, whatever the tombstone's `settled_at`.
+
+**Reason:** the decision to write a vendor entry belongs to the connector, which reads the tombstone at `POST /items/lookup`. The server compares no time and refuses nothing a tombstone names, and the new item takes the place of the tombstone (`items/tombstone-cleared`).
+
+**Tests:** `compliance/connector-tombstones.test.ts › is written as a new item, whether the tombstone's settled_at is the purge time or moved past it`.
+
 ## Writing agreements
 
 An agreement is a connector's record of what it and its vendor last agreed about one item, one for each item and source. Writing one announces nothing and leaves the item alone.
