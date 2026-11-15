@@ -1035,15 +1035,17 @@ it("restores an archived item in the bin that records no time or sign-in with bo
   const restored = await owner("/restore", {
     method: "POST",
     headers: { "content-type": "application/x-tar" },
-    body: itemsArchive([
-      {
-        id: unrecorded,
-        type: "core.note",
-        source: "owner-trash-archive",
-        state: "trashed",
-        properties: { title: `${tag} unrecorded` },
-      },
-    ]),
+    body: new Uint8Array(
+      itemsArchive([
+        {
+          id: unrecorded,
+          type: "core.note",
+          source: "owner-trash-archive",
+          state: "trashed",
+          properties: { title: `${tag} unrecorded` },
+        },
+      ]),
+    ),
   });
   expect(restored.status).toBe(200);
   const rows = (await bin(`?q=${tag}`)).data;
