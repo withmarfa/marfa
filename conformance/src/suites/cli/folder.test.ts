@@ -1,7 +1,9 @@
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   renameSync,
@@ -71,6 +73,7 @@ interface PushReport {
     updated: number;
     renamed: number;
     unchanged: number;
+    trashed: string[];
   };
   drain: {
     answered: number;
@@ -81,7 +84,13 @@ interface PushReport {
       verdict: string | null;
     }>;
   };
-  pull: { written: number; rewritten: number; unchanged: number };
+  pull: {
+    written: number;
+    rewritten: number;
+    unchanged: number;
+    unmatched: number;
+    taken: number;
+  };
 }
 
 interface StatusReport {
@@ -1637,18 +1646,25 @@ describe("a folder round trip", () => {
     expect(await placedIn(id)).toEqual({ [bin.id]: `${title}.md` });
   });
 
-  it("ends a folder's placement of an item whose file another folder took in, and no sooner", async () => {
-    // The registry of a Mac of its own: the folders other scenarios made have
-    // no directory left, and a folder it cannot read holds a missing file as
-    // possibly moved there (`folders/uncertain-move-deferred`).
+  /**
+   * Runs a scenario on the registry of a Mac of its own: the folders other
+   * scenarios made have no directory left, and a folder it cannot read holds
+   * a missing file as possibly moved there
+   * (`folders/uncertain-move-deferred`).
+   */
+  async function onOwnRegistry(scenario: () => Promise<void>): Promise<void> {
     const shared = process.env.MARFA_FOLDER_REGISTRY;
     process.env.MARFA_FOLDER_REGISTRY = join(dir, "registry", "folders.json");
     try {
-      await takenIn();
+      await scenario();
     } finally {
       if (shared === undefined) delete process.env.MARFA_FOLDER_REGISTRY;
       else process.env.MARFA_FOLDER_REGISTRY = shared;
     }
+  }
+
+  it("ends a folder's placement of an item whose file another folder took in, and no sooner", async () => {
+    await onOwnRegistry(takenIn);
   });
 
   async function takenIn(): Promise<void> {
@@ -1704,4 +1720,195 @@ describe("a folder round trip", () => {
     const item = await c.cli.json<ItemEnvelope>(["items", "get", id]);
     expect(item.item.state).toBe("active");
   }
+
+  /** What the grace for a missing file is, with a second to spare. */
+  const pastTheGrace = () => new Promise((done) => setTimeout(done, 7_000));
+
+  /** The notes the server holds in any state, newest first. */
+  async function notesWith(word: string): Promise<ItemEnvelope["item"][]> {
+    const page = await c.cli.json<{ data: ItemEnvelope["item"][] }>([
+      "items",
+      "list",
+      "--type",
+      "core.note",
+      "--state",
+      "any",
+      "--limit",
+      "100",
+    ]);
+    const found = page.data.filter((item) =>
+      String(item.properties.body).includes(word),
+    );
+    for (const item of found) trackItem(c.ctx, item.id);
+    return found;
+  }
+
+  /**
+   * The text of each Markdown file in a folder that holds a word, by the ID
+   * its line holds. A folder also holds every other note the server has.
+   */
+  function filesHolding(folder: string, word: string): Record<string, string> {
+    return Object.fromEntries(
+      readdirSync(folder)
+        .filter((name) => name.endsWith(".md"))
+        .map(
+          (name) => [name, readFileSync(join(folder, name), "utf8")] as const,
+        )
+        .filter(([, text]) => text.includes(word))
+        .map(([name, text]) => {
+          return [
+            /^marfa_id: (.+)$/m.exec(text)?.[1]?.trim() ?? name,
+            text.slice(text.indexOf("\n---\n", 4) + 5),
+          ];
+        }),
+    );
+  }
+
+  /**
+   * A new note sent from one folder and moved to another before the folder
+   * wrote its ID line into it, with a line added after the move, and both
+   * folders pushed in turn past the grace.
+   */
+  async function movedBeforeItsId(created: string, word: string) {
+    const left = await follow("moved-from", { types: ["core.note"] });
+    const reached = await follow("moved-to", { types: ["core.note"] });
+    writeFileSync(join(left.folder, "Fresh.md"), created);
+    const sent = await c.cli.json<PushReport>([
+      "folders",
+      "push",
+      "--send-only",
+      left.folder,
+    ]);
+    expect(sent.scan.created, "the new note was not sent").toBe(1);
+    expect(
+      readFileSync(join(left.folder, "Fresh.md"), "utf8"),
+      "the folder wrote its lines into the file before the move",
+    ).toBe(created);
+    renameSync(join(left.folder, "Fresh.md"), join(reached.folder, "Fresh.md"));
+    appendFileSync(join(reached.folder, "Fresh.md"), "Added after the move\n");
+
+    await sync(reached.folder);
+    const passes = [await sync(left.folder)];
+    await pastTheGrace();
+    await sync(reached.folder);
+    passes.push(await sync(left.folder));
+    await sync(reached.folder);
+    await sync(left.folder);
+
+    const items = await notesWith(word);
+    const fresh = items.filter((item) =>
+      String(item.properties.body).includes("Added after the move"),
+    );
+    const original = items.filter((item) => !fresh.includes(item));
+    expect(fresh, "the moved file was not made one new item").toHaveLength(1);
+    expect(original, "the sent note is not one item").toHaveLength(1);
+    expect(String(fresh[0]!.properties.body)).toContain(word);
+    return {
+      left: left.folder,
+      reached: reached.folder,
+      original: original[0]!,
+      fresh: fresh[0]!,
+      trashed: passes.flatMap((pass) => pass.scan.trashed),
+    };
+  }
+
+  it("trashes the original item of a new note moved to another folder before its ID line, where the file showed what the item holds", async () => {
+    await onOwnRegistry(async () => {
+      const word = unique("moved-header");
+      const made = await movedBeforeItsId(
+        `---\ntitle: Fresh\n---\n${word}\n`,
+        word,
+      );
+      expect(made.trashed).toEqual(["Fresh.md"]);
+      expect(made.original.state).toBe("trashed");
+      expect(made.fresh.state).toBe("active");
+      for (const folder of [made.left, made.reached]) {
+        expect(
+          Object.keys(filesHolding(folder, word)),
+          "a folder went on holding the file of the trashed item",
+        ).toEqual([made.fresh.id]);
+      }
+      expect(filesHolding(made.reached, word)[made.fresh.id]).toBe(
+        `${word}\nAdded after the move\n`,
+      );
+    });
+  });
+
+  it.each(["a heading", "no header"])(
+    "writes back the original item of a new note moved to another folder before its ID line, where the file showed less than the item holds (%s)",
+    async (shape) => {
+      await onOwnRegistry(async () => {
+        const word = unique("moved-bare");
+        const made = await movedBeforeItsId(
+          shape === "a heading" ? `# Fresh\n${word}\n` : `${word}\n`,
+          word,
+        );
+        expect(made.trashed).toEqual([]);
+        expect(made.original.state).toBe("active");
+        expect(made.fresh.state).toBe("active");
+        expect(String(made.original.properties.body)).not.toContain("Added");
+        for (const folder of [made.left, made.reached]) {
+          const held = filesHolding(folder, word);
+          expect(
+            Object.keys(held).sort(),
+            "a folder did not hold the files of both items",
+          ).toEqual([made.original.id, made.fresh.id].sort());
+          expect(held[made.original.id]).not.toContain("Added after the move");
+          expect(held[made.fresh.id]).toContain("Added after the move");
+        }
+      });
+    },
+  );
+
+  it("takes a note's file back into the folder it left, and says so, when the folder it was moved into does not hold the note", async () => {
+    await onOwnRegistry(async () => {
+      const left = await follow("held-by", { types: ["core.note"] });
+      const reached = await follow("not-held", {
+        types: ["core.note"],
+        filter: `tags contains "${unique("elsewhere")}"`,
+      });
+      const word = unique("wanders");
+      writeFileSync(
+        join(left.folder, "Wander.md"),
+        `---\ntitle: Wander\n---\n${word}\n`,
+      );
+      await sync(left.folder);
+      const id = /^marfa_id: (.+)$/m
+        .exec(readFileSync(join(left.folder, "Wander.md"), "utf8"))![1]!
+        .trim();
+      trackItem(c.ctx, id);
+      const before = await c.cli.json<ItemEnvelope>(["items", "get", id]);
+
+      renameSync(
+        join(left.folder, "Wander.md"),
+        join(reached.folder, "Wander.md"),
+      );
+      const kept = await sync(reached.folder);
+      expect(
+        [kept.pull.unmatched, existsSync(join(reached.folder, "Wander.md"))],
+        "the folder that does not hold the note did not keep its file as unmatched",
+      ).toEqual([1, true]);
+      await sync(left.folder);
+      await pastTheGrace();
+      await sync(reached.folder);
+      const taken = await sync(left.folder);
+
+      expect(taken.pull).toMatchObject({ taken: 1 });
+      expect(existsSync(join(left.folder, "Wander.md"))).toBe(true);
+      expect(
+        existsSync(join(reached.folder, "Wander.md")),
+        "the file stayed in the folder that does not hold the note",
+      ).toBe(false);
+      await sync(reached.folder);
+      await pastTheGrace();
+      await sync(reached.folder);
+      expect(await placedIn(id)).toEqual({ [left.id]: "Wander.md" });
+      const after = await c.cli.json<ItemEnvelope>(["items", "get", id]);
+      expect([after.item.state, after.item.version]).toEqual([
+        "active",
+        before.item.version,
+      ]);
+      expect(await notesWith(word)).toHaveLength(1);
+    });
+  });
 });
