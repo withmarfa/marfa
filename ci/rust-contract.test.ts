@@ -281,7 +281,7 @@ describe("the Rust contract shards", () => {
     expect(step(shards, "Stop the server").if).toBe("always()");
   });
 
-  it("hold every status the server answered to its declaration, before the stop clears the log, on the shards whose server draws none undeclared", () => {
+  it("hold every status the server answered to its declaration, before the stop clears the log, on the server group's shards and the command line's", () => {
     const names = shards?.steps.map((s) => s.name) ?? [];
     const held = names.indexOf("Hold every status observed to its declaration");
     expect(held).toBeGreaterThan(names.indexOf("Run the shard"));

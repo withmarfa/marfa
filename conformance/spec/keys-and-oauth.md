@@ -2075,7 +2075,7 @@ If a request to `POST /auth/oauth2/token` names a grant type the server does not
 
 ### `keys-and-oauth/token-client-grant`
 
-If a request to `POST /auth/oauth2/token` names a grant type the client's registration does not name, then the server MUST answer `400 unauthorized_client`.
+If a request to `POST /auth/oauth2/token` names a grant type the client's registration does not allow, where a registration naming `authorization_code` allows `refresh_token`, then the server MUST answer `400 unauthorized_client`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › answers a token request for a grant the app is not registered for 400 unauthorized_client`.
 
@@ -2837,11 +2837,11 @@ When a password sign-in that carries no known device cookie names an email that 
 
 ### `keys-and-oauth/sign-in-decoy-queue`
 
-If eight password sign-ins that carry no known device cookie are already waiting for their password check, then the server MUST answer the next such sign-in `429` with `Retry-After`, whatever email it names.
+If the queue of password sign-ins that carry no known device cookie, waiting for their password check, is full, then the server MUST answer the next such sign-in `429` with `Retry-After`, whatever email it names.
 
-**Reason:** A sign-in at an email with no account still does the work of a password check, so it cannot be told from a wrong password by its time or by this queue. The owner's own checks, from a known device or a browser session, wait in a queue of their own, so these can never hold them up.
+**Reason:** A sign-in at an email with no account still does the work of a password check, so it cannot be told from a wrong password by its time or by this queue. The owner's own checks, from a known device or a browser session, wait in a queue of their own, so these can never hold them up. A client relies on the queue being bounded and on the refusal, not on its size.
 
-**Tests:** `compliance/sign-in-queue.test.ts › answers a sign-in 429 with Retry-After once eight are waiting, at any email, and answers one alone 401`.
+**Tests:** `compliance/sign-in-queue.test.ts › answers a sign-in 429 with Retry-After once the queue of waiting checks is full, at any email, and answers one alone 401`.
 
 ### `keys-and-oauth/register-address-limit`
 
@@ -3517,9 +3517,17 @@ If a request to `POST /auth/sign-out` carries no live browser session, then the 
 
 ### `keys-and-oauth/sign-out-origin`
 
-If a request to `POST /auth/sign-out` carries a live browser session and names no origin or one other than the instance's, then the server MUST answer `403 forbidden` and keep the session.
+If a request to `POST /auth/sign-out` carries a live browser session and names no origin or one other than the instance's, then the server MUST answer `403 forbidden`.
 
 **Reason:** A page on another site could otherwise end the owner's session by sending the browser to this door.
+
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a sign-out 403 from another origin or none and 401 from no live session, and keeps the session until the instance's own origin ends it`.
+
+### `keys-and-oauth/sign-out-origin-keeps-session`
+
+If the server refuses a request to `POST /auth/sign-out` `403 forbidden` for its origin, then the server MUST keep the browser session the request carries.
+
+**Reason:** A refused sign-out that still ended the session would let a page on another site end it all the same.
 
 **Tests:** `compliance/sign-in-surface.test.ts › refuses a sign-out 403 from another origin or none and 401 from no live session, and keeps the session until the instance's own origin ends it`.
 

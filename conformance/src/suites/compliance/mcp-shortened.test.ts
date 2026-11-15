@@ -18,7 +18,8 @@ import {
  * (`mcp/health-error-withheld`, `mcp/health-housekeeping-withheld`, `mcp/sources-left-out`). Each needs a server of
  * the fixture's own: a fault that makes a component not well, and a list of
  * sources long enough to outgrow one answer, are not for the run's shared
- * server.
+ * server. The sources case boots its own inside the test, so a retry meets
+ * a list that is short again.
  */
 let server: FreshServer;
 let owner: MarfaClient;
@@ -106,45 +107,55 @@ describe("marfa_sources", () => {
   const code = (n: number): string =>
     `${String(n).padStart(4, "0")}-`.padEnd(200, "s");
 
-  it("names how many sources it left out when the list outgrows one answer, and none when it does not", async () => {
-    const schema = await connectMcp(
-      server.apiUrl,
-      server.managementKey,
-      "2026-07-28",
-      "/mcp/schema",
-    );
-    try {
-      const few = toolResult(await callTool(schema, "marfa_sources", {}));
-      expect(few).not.toHaveProperty("left_out");
+  it(
+    "names how many sources it left out when the list outgrows one answer, and none when it does not",
+    async () => {
+      const own = await bootFreshServer("mcp-sources");
+      const owner = new MarfaClient({
+        baseUrl: own.apiUrl,
+        apiKey: own.managementKey,
+      });
+      const schema = await connectMcp(
+        own.apiUrl,
+        own.managementKey,
+        "2026-07-28",
+        "/mcp/schema",
+      );
+      try {
+        const few = toolResult(await callTool(schema, "marfa_sources", {}));
+        expect(few).not.toHaveProperty("left_out");
 
-      const total = 200;
-      for (let n = 0; n < total; n++) {
-        toolResult(
-          await callTool(schema, "marfa_name_source", {
-            source: code(n),
-            name: `Source ${String(n)}`,
-          }),
-        );
+        const total = 200;
+        for (let n = 0; n < total; n++) {
+          toolResult(
+            await callTool(schema, "marfa_name_source", {
+              source: code(n),
+              name: `Source ${String(n)}`,
+            }),
+          );
+        }
+        const all = await owner.rawRequest<{ data: unknown[] }>("/sources");
+        expect(all.status).toBe(200);
+        const held = all.ok ? all.data.data.length : 0;
+        expect(held).toBeGreaterThanOrEqual(total);
+
+        const answer = toolResult(
+          await callTool(schema, "marfa_sources", {}),
+        ) as { sources: unknown[]; left_out: number };
+        expect(answer.left_out).toBeGreaterThan(0);
+        expect(answer.sources.length + answer.left_out).toBe(held);
+        // A source left out is still read by naming it.
+        const one = toolResult(
+          await callTool(schema, "marfa_sources", { source: code(total - 1) }),
+        ) as { sources: { source: string }[] };
+        expect(one.sources.map((entry) => entry.source)).toEqual([
+          code(total - 1),
+        ]);
+      } finally {
+        await schema.close();
+        await own.stop();
       }
-      const all = await owner.rawRequest<{ data: unknown[] }>("/sources");
-      expect(all.status).toBe(200);
-      const held = all.ok ? all.data.data.length : 0;
-      expect(held).toBeGreaterThanOrEqual(total);
-
-      const answer = toolResult(
-        await callTool(schema, "marfa_sources", {}),
-      ) as { sources: unknown[]; left_out: number };
-      expect(answer.left_out).toBeGreaterThan(0);
-      expect(answer.sources.length + answer.left_out).toBe(held);
-      // A source left out is still read by naming it.
-      const one = toolResult(
-        await callTool(schema, "marfa_sources", { source: code(total - 1) }),
-      ) as { sources: { source: string }[] };
-      expect(one.sources.map((entry) => entry.source)).toEqual([
-        code(total - 1),
-      ]);
-    } finally {
-      await schema.close();
-    }
-  }, 120_000);
+    },
+    FRESH_SERVER_TIMEOUT_MS + 120_000,
+  );
 });

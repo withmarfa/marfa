@@ -539,7 +539,9 @@ describe("marfa_find when more items match than it returns", () => {
     ) as { items: { id: string }[]; next_cursor: string | null; hint?: string };
     expect(first.items).toHaveLength(2);
     expect(first.next_cursor).toEqual(expect.any(String));
-    expect(first.hint).toEqual(expect.any(String));
+    expect(first.hint).toMatch(/more items match/i);
+    expect(first.hint).toMatch(/narrow/i);
+    expect(first.hint).toContain("next_cursor");
 
     const rest = toolResult(
       await callTool(mcp, "marfa_find", {

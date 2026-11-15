@@ -466,6 +466,26 @@ describe("the request an app sends", () => {
     });
     expect(registered.status).toBe(400);
     expect(registered.body.error).toBe("invalid_grant");
+
+    // A refresh token needs the refresh grant or the authorization code grant,
+    // which allows it.
+    const device = await registerApp(server, NOTES, {
+      grant_types: ["urn:ietf:params:oauth:grant-type:device_code"],
+    });
+    const refresh = (clientId: string) =>
+      token(server, {
+        grant_type: "refresh_token",
+        refresh_token: "not-a-token",
+        client_id: clientId,
+      });
+    const deviceOnly = await refresh(device.clientId);
+    expect(deviceOnly.status).toBe(400);
+    expect(deviceOnly.body.error).toBe("unauthorized_client");
+    // The witness: an app registered for the authorization code grant alone
+    // gets as far as judging the token.
+    const allowed = await refresh(app.clientId);
+    expect(allowed.status).toBe(400);
+    expect(allowed.body.error).toBe("invalid_grant");
   });
 
   it("is sent to the error page, never to a redirect URI the app did not register", async () => {

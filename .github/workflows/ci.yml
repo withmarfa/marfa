@@ -960,8 +960,8 @@ jobs:
       # Reads the log of the server the shard just drove, so it runs before
       # the stop, which clears the state directory the log is in, and holds
       # every status observed to its declaration in the document. Only the
-      # shards whose server draws no undeclared status run it until the
-      # document declares the rest.
+      # shards that `SHARDS` marks with `statuses` run it: the server group
+      # and the command line. The device shards do not yet.
       - name: Hold every status observed to its declaration
         if: ${{ !cancelled() && matrix.statuses }}
         working-directory: conformance
