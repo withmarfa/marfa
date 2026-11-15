@@ -2531,6 +2531,14 @@ If a client asks `POST /auth/device/code` for a scope the instance does not publ
 
 **Tests:** `compliance/device-grant.test.ts › is refused 400 invalid_scope for a scope the instance does not publish`.
 
+### `keys-and-oauth/device-permission-scope-closed`
+
+If a client asks `POST /auth/device/code` for a scope under one of the ten permission roots that is not one of the twelve permission names, `<root>.*:read` and `<root>.*:write` included, then the server MUST answer `400 invalid_scope`.
+
+**Reason:** The roots are reserved for the permissions, so a scope under one that no permission names asks for a power that does not exist, and cannot name a type.
+
+**Tests:** `compliance/device-grant.test.ts › is refused 400 invalid_scope for a scope under a permission root that is not one of the twelve permissions, and issued for each of the twelve`.
+
 ### `keys-and-oauth/device-offline-no-refresh`
 
 If a client whose `grant_types` name neither `refresh_token` nor `authorization_code` asks `POST /auth/device/code` for `offline_access`, then the server MUST answer `400 invalid_scope`.

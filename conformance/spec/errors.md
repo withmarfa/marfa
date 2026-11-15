@@ -462,6 +462,14 @@ When the server answers `403 type_not_permitted` because a key holds no grant, o
 
 **Tests:** `compliance/write-refusal-details.test.ts › names the type, edge type or extension namespace and the level the key lacks`, `› names the level read where the key may not read the type, on a list, its counts and an export`.
 
+### `errors/grant-type-unregistered`
+
+When a credential holding no grant on an identifier sends `POST /items` naming it as the type, the server MUST answer `403 type_not_permitted` with the same message and `details` whether or not a type registers the identifier, apart from the identifier itself.
+
+**Reason:** The refusal says the credential may not reach the type, never that the type exists, so a credential cannot use a write to learn which types an instance registers.
+
+**Tests:** `compliance/write-refusal-details.test.ts › answers a type nothing registers as it answers a registered type the key holds no grant on, on a write`.
+
 ### `errors/grant-edge-type`
 
 When the server answers `403 edge_permission_denied`, the server MUST carry `details.grant` with a `kind` of `edge_type` and a `name` that is the edge type's identifier.
