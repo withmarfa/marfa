@@ -157,7 +157,7 @@ describe("the release signs the programs in a job of its own", () => {
     expect(JSON.stringify(jobs())).not.toContain("marfa-enrichment-read");
   });
 
-  it("gives the signing step every secret it reads, from the release environment's secrets", () => {
+  it("gives the signing step every secret it reads, from the secrets context", () => {
     const step = sign.steps.find((candidate) =>
       (candidate.run ?? "").includes("sign-binary.sh"),
     );

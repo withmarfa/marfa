@@ -92,6 +92,7 @@ describe("the release workflow runs on a tag or a dispatch, and the dispatch rea
   ).on;
 
   it("starts on a v tag push and a dispatch", () => {
+    expect(Object.keys(on).sort()).toEqual(["push", "workflow_dispatch"]);
     expect(on.push?.tags).toEqual(["v*"]);
     expect(on.workflow_dispatch).toBeDefined();
   });
