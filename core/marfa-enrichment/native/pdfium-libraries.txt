@@ -9,6 +9,6 @@
 # A move of PDFium's pins or patches changes the library: replace the line with the
 # one a build from them prints (the move-pdfium skill says how). A change to a
 # script that leaves the library as it was needs no edit.
-aarch64-apple-darwin 0000000000000000000000000000000000000000000000000000000000000000
-aarch64-unknown-linux-musl 0000000000000000000000000000000000000000000000000000000000000000
+aarch64-apple-darwin 91af9f68ed8a3f54085cc90c0de0ee054281cd1c282a48d773082b569b08e36a
+aarch64-unknown-linux-musl e6f090b0024eb9cb9ee3ecfcda3e6fa673ef49e0c6c1d81f983c67ab771c679d
 x86_64-unknown-linux-musl 27c4783f45c186ab81940b1fe01d1dbc8d3551a0683a28398bdf39c7012ff299
