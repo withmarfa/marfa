@@ -1447,4 +1447,33 @@ describe("which event each write announces", () => {
       before,
     );
   });
+
+  it("announces nothing for a PATCH that carries only edges the item already holds", async ({
+    signal,
+  }) => {
+    const target = await seed("edges-held-target");
+    const id = await seed("edges-held-item");
+    const before = (await client.getItem(id)).data.item.version;
+    // The witness: the first write adds the edge, and is announced.
+    const added = await announced(async () => {
+      const patched = await client.updateItem(id, {
+        edges: { about: [target] },
+        version: before,
+      });
+      expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+      expect(patched.data.acknowledged).toBeUndefined();
+    }, signal);
+    expect(eventsOf(added, id)).toEqual(["item.updated"]);
+
+    const repeated = await announced(async () => {
+      const patched = await client.updateItem(id, {
+        edges: { about: [target] },
+        version: before,
+      });
+      expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+      expect(patched.data.acknowledged).toBe(true);
+      expect(patched.data.item.version).toBe(before);
+    }, signal);
+    expect(eventsOf(repeated, id)).toEqual([]);
+  });
 });

@@ -600,9 +600,11 @@ When `PATCH /items/{id}`, a `POST /items` that lands on an item by its natural k
 
 ### `events/update-edges-only-announced`
 
-When `PATCH /items/{id}` carries only `edges`, the server MUST announce `item.updated` for the item, carrying the version the item held before the write (`versions/update-edges-only`).
+When `PATCH /items/{id}` carries only `edges` that add an edge to the item or remove one it holds, the server MUST announce `item.updated` for the item, carrying the version the item held before the write (`versions/update-edges-only`).
 
-**Tests:** `compliance/events-contract.test.ts › announces item.updated at the version it held for a PATCH that carries only edges`.
+**Reason:** an edges-only write whose edges the item already holds changes nothing, so it announces nothing (`versions/unchanged-silent`).
+
+**Tests:** `compliance/events-contract.test.ts › announces item.updated at the version it held for a PATCH that carries only edges`, `› announces nothing for a PATCH that carries only edges the item already holds`.
 
 ### `events/delete-no-state-change`
 

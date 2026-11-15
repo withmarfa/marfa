@@ -1206,6 +1206,29 @@ describe("the order an item write asks its inline edges in", () => {
     expect(current.status).toBe(400);
     expect(current.error?.error.code).toBe("edge_cycle");
   });
+
+  it("answers a cardinality an item write breaks only after it asks the version", async () => {
+    const edgeType = await edgeTypeOf("stale-cardinality", {
+      cardinality: "one-to-one",
+    });
+    const item = await note();
+    const moved = await client.updateItem(item, {
+      version: 1,
+      properties: { body: "moved on" },
+    });
+    expect(moved.status).toBe(200);
+    const edges = { [edgeType]: [await note(), await note()] };
+
+    const stale = await client.updateItem(item, { version: 1, edges });
+    expect(stale.status).toBe(409);
+    expect(stale.error?.error.code).toBe("version_conflict");
+
+    // The witness: at the version the item holds, the same write is the cardinality's refusal.
+    const current = await client.updateItem(item, { version: 2, edges });
+    expect(current.status).toBe(400);
+    expect(current.error?.error.code).toBe("edge_constraint_violation");
+    expect(current.error?.error.details?.constraint).toBe("cardinality");
+  });
 });
 
 describe("the order POST /edges/bulk asks its gates and its ends in", () => {

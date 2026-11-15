@@ -1774,6 +1774,61 @@ describe("item versioning", () => {
     }
   });
 
+  it("answers an update that carries only edges the item holds, or only the item's own type, as unchanged at the version held", async () => {
+    const r = await client.createItem(
+      createNote({
+        source: ctx.source,
+        properties: { title: "Held", body: "Original" },
+      }),
+    );
+    const target = await client.createItem(
+      createNote({ source: ctx.source, properties: { title: "Target" } }),
+    );
+    expect(r.ok && target.ok).toBe(true);
+    trackItem(ctx, r.data.item.id);
+    trackItem(ctx, target.data.item.id);
+    const patch = (body: Record<string, unknown>) =>
+      client.rawRequest<{ item: MarfaItem; acknowledged?: boolean }>(
+        `/items/${r.data.item.id}`,
+        { method: "PATCH", body },
+      );
+
+    // The witness: the same edges-only write, while the item does not hold
+    // the edge, is applied and is not an acknowledgement.
+    const added = await patch({
+      version: 1,
+      edges: { about: [target.data.item.id] },
+    });
+    expect(added.status, JSON.stringify(added.error)).toBe(200);
+    expect(added.data.acknowledged).toBeUndefined();
+    const held = await client.getItem(r.data.item.id);
+
+    const edgesOnly = await patch({
+      version: 1,
+      edges: { about: [target.data.item.id] },
+    });
+    expect(edgesOnly.status, JSON.stringify(edgesOnly.error)).toBe(200);
+    expect(edgesOnly.data.acknowledged).toBe(true);
+    expect(edgesOnly.data.item.version).toBe(1);
+    expect(edgesOnly.data.item.updated_at).toBe(held.data.item.updated_at);
+
+    const ownType = await patch({
+      version: 1,
+      type: "core.note",
+      retype: true,
+    });
+    expect(ownType.status, JSON.stringify(ownType.error)).toBe(200);
+    expect(ownType.data.acknowledged).toBe(true);
+    expect(ownType.data.item.version).toBe(1);
+    expect(ownType.data.item.updated_at).toBe(held.data.item.updated_at);
+
+    const read = await client.getItem(r.data.item.id);
+    expect(read.data.item.version).toBe(1);
+    expect(read.data.item.updated_at).toBe(held.data.item.updated_at);
+    const history = await client.getVersions(r.data.item.id);
+    expect(history.data.data).toEqual([]);
+  });
+
   it("judges an update unchanged on the item it would store, not on the body it was sent", async () => {
     const r = await client.createItem(
       createNote({

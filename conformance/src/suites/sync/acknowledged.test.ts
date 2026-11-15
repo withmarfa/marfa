@@ -9,6 +9,7 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
+import { announces, tapStream } from "../../utils/stream-tap.js";
 import type { SseEvent } from "../../utils/sse.js";
 
 /**
@@ -550,7 +551,7 @@ describe("a repeated create is acknowledged", () => {
 });
 
 describe("a write that changes nothing is acknowledged", () => {
-  it("answers an update, an upsert and a bulk entry that change nothing without announcing an event, and announces the same writes once they change something", async (context) => {
+  it("answers an update, an upsert and a bulk entry that change nothing without announcing an event, and announces the same writes once they change something", async () => {
     const sourceId = `unchanged-stream-${ctx.runId}`;
     const sentinelBody = `unchanged-sentinel-${ctx.runId}`;
     const created = await client.createItem({
@@ -569,8 +570,12 @@ describe("a write that changes nothing is acknowledged", () => {
       properties: { body: "unchanged-first" },
     };
 
-    const outcome = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
+    const tap = await tapStream(apiUrl, apiKey);
+    const outcome = await (async () => {
+      await tap.until(
+        (seen) => seen.some((e) => e.event === "stream_cursor"),
+        "the frame announcing the stream's position",
+      );
 
       const patched = await client.updateItem(id, {
         properties: { body: "unchanged-first" },
@@ -594,19 +599,12 @@ describe("a write that changes nothing is acknowledged", () => {
       expect(sentinel.ok).toBe(true);
       trackItem(ctx, sentinel.data.item.id);
 
-      const seen = await collectUntil(
-        stream,
-        (events) =>
-          events.some(
-            (e) =>
-              (e.data as { item?: { id?: string } })?.item?.id ===
-              sentinel.data.item.id,
-          ),
+      const events = await tap.until(
+        (seen) => seen.some(announces(sentinel.data.item.id)),
         `item.created for the sentinel written after the unchanged writes (${sentinel.data.item.id})`,
-        context.signal,
       );
-      return { patched, upserted, paged, changed, events: seen.events };
-    });
+      return { patched, upserted, paged, changed, events };
+    })().finally(() => tap.close());
 
     expect(outcome.patched.data.acknowledged).toBe(true);
     expect(outcome.patched.data.item.version).toBe(1);

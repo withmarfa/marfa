@@ -40,11 +40,11 @@ If `POST /items` names `conflict`, then the server MUST answer `400 validation_e
 
 ### `versions/update-unchanged`
 
-When `PATCH /items/{id}` carries `properties`, `tier`, `occurred_at` or `source_id` and the item as the write would store it is the item as it stands, the server MUST answer `200` with the item at the version it holds and `acknowledged: true`.
+When `PATCH /items/{id}` carries `properties`, `tier`, `occurred_at`, `source_id`, `edges` or `retype: true` with the item's own type, and the item as the write would store it, with its edges, is the item as it stands, the server MUST answer `200` with the item at the version it holds and `acknowledged: true`.
 
 **Reason:** a write that changes nothing gives the item nothing a later writer could be stale against, so a repeated or retried save does not move its version.
 
-**Tests:** `correctness/item-versioning.test.ts › answers an update whose properties are empty or equal to the item's as unchanged at the version held, and writes no version`.
+**Tests:** `correctness/item-versioning.test.ts › answers an update whose properties are empty or equal to the item's as unchanged at the version held, and writes no version`, `› answers an update that carries only edges the item holds, or only the item's own type, as unchanged at the version held`.
 
 ### `versions/unchanged-stores-nothing`
 
