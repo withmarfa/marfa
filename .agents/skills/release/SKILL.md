@@ -26,7 +26,7 @@ A release is a git tag `v<version>` on a commit of `main`. Pushing the tag runs 
    gh run list --workflow ci.yml --commit <sha> --event push --json conclusion,headBranch
    ```
 
-3. Check that `core.yml` passed for the commit. `Require green Core` refuses a tag without it. The live checks on macOS (the command line, the folder watch, the Swift package) run in `core.yml` on a push to `main` that touches the core, and its `paths` filter skips other pushes. A commit with no run of its own is vouched for by the nearest earlier run on `main`, when no commit since changed a path the filter lists. A run that failed, was cancelled or timed out, or is still running, refuses the release; for a run still going, wait for it and re-run the job:
+3. Check that `core.yml` passed for the commit. `Require green Core` refuses a tag without it. The live checks on macOS (the command line, the folder watch, the Swift package) run in `core.yml` on a push to `main` that touches the core, and its `paths` filter skips other pushes. A commit with no run of its own is vouched for by the nearest earlier run on `main`, when no commit since changed a path the filter lists. A run that failed, was cancelled or timed out, or is still running, refuses the release, and so does a comparison that fails for any reason but a 404 (re-run the job); for a run still going, wait for it and re-run the job:
 
    ```bash
    gh run list --workflow core.yml --branch main --json headSha,status,conclusion,createdAt --limit 10

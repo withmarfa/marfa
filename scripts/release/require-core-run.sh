@@ -33,21 +33,28 @@ affects_core() {
 
 # The runs on `main` and any run on this very commit (a dry run on a branch),
 # newest first. A run for a commit that is not an ancestor is passed over below.
-runs=$(
-  {
-    gh api "$workflow?branch=main&per_page=100"
-    gh api "$workflow?head_sha=$sha&per_page=100"
-  } | jq -s '[.[].workflow_runs[]] | unique_by(.id) | sort_by(.created_at) | reverse'
-)
+# Each list is read on its own, so that a failed read stops the job.
+on_main=$(gh api "$workflow?branch=main&per_page=100")
+on_commit=$(gh api "$workflow?head_sha=$sha&per_page=100")
+runs=$(jq -s '[.[].workflow_runs[]] | unique_by(.id) | sort_by(.created_at) | reverse' <<< "$on_main$on_commit")
+
+errors=$(mktemp)
+trap 'rm -f "$errors"' EXIT
 
 nearest=""
 changed=""
 truncated=false
 while read -r candidate; do
   [ -n "$candidate" ] || continue
-  # A commit the API cannot compare, such as one on a branch since deleted, is
-  # passed over like a run for a later commit.
-  comparison=$(gh api "repos/$repo/compare/$candidate...$sha?per_page=100") || continue
+  # A commit the API does not know, such as one on a branch since deleted, is
+  # passed over like a run for a later commit. Any other failure stops the job:
+  # an older run must not vouch for a commit because a comparison was missed.
+  if ! comparison=$(gh api "repos/$repo/compare/$candidate...$sha?per_page=100" 2> "$errors"); then
+    if grep -q 'HTTP 404' "$errors"; then
+      continue
+    fi
+    fail "Could not compare $candidate with $sha: $(cat "$errors")"
+  fi
   case "$(jq -r .status <<< "$comparison")" in
     identical | ahead)
       nearest="$candidate"

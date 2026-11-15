@@ -47,6 +47,8 @@ interface World {
   main: Run[];
   /** What the list of runs for the release commit answers. */
   own?: Run[];
+  /** Runs' commits whose comparison fails with a server error, not a 404. */
+  broken?: string[];
   /** How the release commit stands to a run's commit, and what changed since. */
   compare: Record<
     string,
@@ -72,6 +74,9 @@ function require(world: World) {
         ),
       });
     }
+    for (const base of world.broken ?? []) {
+      writeFileSync(join(directory, `broken-${base}`), "");
+    }
     const bin = join(directory, "bin");
     writeFileSync(join(directory, "setup.sh"), `mkdir -p "${bin}"`);
     spawnSync("sh", [join(directory, "setup.sh")]);
@@ -86,7 +91,11 @@ case "$url" in
   */compare/*)
     base="\${url#*compare/}"
     base="\${base%%...*}"
-    cat "${directory}/compare-$base.json" || { echo "Not Found" >&2; exit 1; }
+    if [ -e "${directory}/broken-$base" ]; then
+      echo "gh: Bad Gateway (HTTP 502)" >&2
+      exit 1
+    fi
+    cat "${directory}/compare-$base.json" 2> /dev/null || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
     ;;
   *) echo "unexpected $url" >&2; exit 1 ;;
 esac
@@ -248,6 +257,21 @@ describe("a release waits for the core's live checks", () => {
     });
     expect(result.status, result.said).toBe(0);
     expect(result.said).toContain(`green for ${sha("a")}`);
+  });
+
+  it("fails the job, and lets no older run vouch, when a comparison fails for a reason other than a 404", () => {
+    const result = require({
+      main: [
+        run(9, sha("c"), "completed", "success"),
+        run(5, sha("a"), "completed", "success"),
+      ],
+      broken: [sha("c")],
+      compare: { [sha("a")]: { status: "ahead", files: ["README.md"] } },
+    });
+    expect(result.status).toBe(1);
+    expect(result.said).toContain(`Could not compare ${sha("c")}`);
+    expect(result.said).toContain("HTTP 502");
+    expect(result.said).not.toContain("core.yml is green");
   });
 
   it("refuses when no run's commit can be compared", () => {
