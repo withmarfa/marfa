@@ -138,4 +138,60 @@ describe("numeric property filters", () => {
       );
     }
   });
+  it("bounds a property by a number only on a number, on the listing and the search", async () => {
+    const seeded: Record<string, string> = {};
+    for (const [label, value] of [
+      ["number", 5],
+      ["numeric-text", "10"],
+      ["word", "abc"],
+      ["true", true],
+      ["false", false],
+      ["null", null],
+      ["array", [7]],
+      ["object", { n: 7 }],
+      ["missing", undefined],
+    ] as const) {
+      const made = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: {
+          body: ctx.runId,
+          ...(value === undefined ? {} : { range_probe: value }),
+        },
+      });
+      expect(made.ok, JSON.stringify(made.error)).toBe(true);
+      trackItem(ctx, made.data.item.id);
+      seeded[label] = made.data.item.id;
+    }
+    const number = [seeded.number];
+    for (const door of ["items", "search"] as const) {
+      for (const filter of [
+        "gt 4",
+        "gte 0",
+        "gte 5",
+        "lt 100",
+        "lte 5",
+        "gt -1",
+      ]) {
+        expect(
+          await ids(door, `properties.range_probe ${filter}`),
+          `${door}: ${filter}`,
+        ).toEqual(number);
+      }
+      for (const filter of ["gt 5", "lt 5", "lt 0", "gte 6", "lte 4"]) {
+        expect(
+          await ids(door, `properties.range_probe ${filter}`),
+          `${door}: ${filter}`,
+        ).toEqual([]);
+      }
+      expect(
+        await ids(door, 'properties.range_probe gt "a"'),
+        `${door}: text bound`,
+      ).toEqual([seeded.word]);
+      expect(
+        await ids(door, 'properties.range_probe lt "b"'),
+        `${door}: text bound below`,
+      ).toEqual([seeded["numeric-text"], seeded.word].sort());
+    }
+  });
 });

@@ -7622,6 +7622,35 @@ pub(crate) mod testing {
         }
     }
 
+    /// A copy holding the shared parity corpus's types and the items of `items`.
+    pub fn corpus_copy(corpus: &Value, items: &Value) -> Connection {
+        let conn = conn();
+        let catalog = marfa_rules::wire::WireCatalog {
+            types: serde_json::from_value(corpus["types"].clone()).unwrap(),
+            edge_types: Vec::new(),
+        };
+        replace_catalog(&conn, &catalog).unwrap();
+        for item in items.as_array().unwrap() {
+            let wire = wire_item(
+                item["id"].as_str().unwrap(),
+                item["type"].as_str().unwrap(),
+                item["state"].as_str().unwrap_or("active"),
+                item["occurred_at"]
+                    .as_str()
+                    .unwrap_or("2026-01-01T00:00:00Z"),
+                item["properties"].clone(),
+            );
+            let tags: Vec<String> = item["tags"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|tag| tag.as_str().unwrap().to_string())
+                .collect();
+            upsert_item(&conn, &wire, Some(&tags), &Indexing::default()).unwrap();
+        }
+        conn
+    }
+
     pub fn wire_edge(id: &str, source: &str, target: &str, edge_type: &str) -> WireEdge {
         WireEdge {
             id: id.into(),

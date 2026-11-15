@@ -261,7 +261,7 @@ mod tests {
         let mut statement = conn
             .prepare(&format!(
                 "SELECT id FROM items WHERE type = 'core.note' \
-                 ORDER BY ({expression}) IS NULL, ({expression}) {direction}, id ASC"
+                 ORDER BY ({expression}) {direction} NULLS LAST, id ASC"
             ))
             .unwrap();
         statement
@@ -362,6 +362,104 @@ mod tests {
             )
             .unwrap();
         assert_eq!(keys, items);
+    }
+
+    const WHEN: [&str; 9] = [
+        r#"{"p":"2026-01-01T09:00+09:00"}"#,
+        r#"{"p":"2026-01-01T05:00Z"}"#,
+        r#"{"p":"2026-01-01T03:00:00.000Z"}"#,
+        r#"{"p":"2026-01-01"}"#,
+        r#"{"p":"2026-01-01T00:00:00.5Z"}"#,
+        r#"{"p":"2026-01-01T05:00:00.000+00:00"}"#,
+        r#"{"p":"banana"}"#,
+        r#"{"p":3}"#,
+        r#"{}"#,
+    ];
+
+    #[test]
+    fn datetimes_are_keyed_by_their_instant_whether_a_write_or_the_walk_made_the_key() {
+        let ascending = [
+            "007", "000", "003", "004", "002", "001", "005", "006", "008",
+        ];
+        let descending = [
+            "006", "001", "005", "002", "004", "000", "003", "007", "008",
+        ];
+        let wanted =
+            |ids: &[&str]| -> Vec<String> { ids.iter().map(|id| format!("id-{id}")).collect() };
+        for indexed_first in [true, false] {
+            let conn = db();
+            let index = || {
+                conn.execute(
+                    "INSERT INTO sort_indexes (type, name) VALUES ('core.note', 'p')",
+                    [],
+                )
+                .unwrap();
+            };
+            if indexed_first {
+                index();
+            }
+            for (n, properties) in WHEN.iter().enumerate() {
+                put(&conn, n, "core.note", properties);
+            }
+            if !indexed_first {
+                index();
+                fill(&conn);
+            }
+            assert_eq!(scan(&conn, false), wanted(&ascending), "scan");
+            assert_eq!(scan(&conn, true), wanted(&descending), "scan down");
+            for limit in [1, 4, 50] {
+                assert_eq!(
+                    walked(&conn, false, limit),
+                    wanted(&ascending),
+                    "keys, indexed first {indexed_first}, pages of {limit}"
+                );
+                assert_eq!(
+                    walked(&conn, true, limit),
+                    wanted(&descending),
+                    "keys down, indexed first {indexed_first}, pages of {limit}"
+                );
+            }
+            conn.execute(
+                "UPDATE items SET properties = jsonb('{\"p\":\"2026-01-01T01:00Z\"}') WHERE id = 'id-006'",
+                [],
+            )
+            .unwrap();
+            conn.execute("DELETE FROM items WHERE id = 'id-001'", [])
+                .unwrap();
+            let after = ["007", "000", "003", "004", "006", "002", "005", "008"];
+            assert_eq!(
+                walked(&conn, false, 3),
+                wanted(&after),
+                "keys after changes"
+            );
+            assert_eq!(scan(&conn, false), wanted(&after), "scan after changes");
+        }
+    }
+
+    #[test]
+    fn instants_beyond_the_years_a_date_holds_still_sort_in_order_and_a_millisecond_is_the_finest_key()
+     {
+        let written = [
+            "0000-01-01T00:00:00+05:00",
+            "0000-01-01T00:00:00Z",
+            "2026-01-01T05:00:00.0004Z",
+            "2026-01-01T05:00:00.000Z",
+            "9999-12-31T23:59:59Z",
+            "9999-12-31T23:59:59.999Z",
+            "9999-12-31T23:00:00-05:00",
+            "9999-12-31T23:59:59.999-23:59",
+        ];
+        let conn = db();
+        for (n, when) in written.iter().enumerate() {
+            put(&conn, n, "core.note", &format!(r#"{{"p":"{when}"}}"#));
+        }
+        let up: Vec<String> = (0..written.len()).map(|n| format!("id-{n:03}")).collect();
+        assert_eq!(scan(&conn, false), up);
+        let mut down = up.clone();
+        down.reverse();
+        let tie = down.len() - 4;
+        down.swap(tie, tie + 1);
+        assert_eq!(scan(&conn, true), down);
     }
 
     #[test]

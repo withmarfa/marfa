@@ -3024,8 +3024,9 @@ describe("a local read answers the listing grammar as the server does", () => {
       ["garden"],
       { "parent-of": [child] },
     );
-    // Text a numeric bound casts, text a REAL matches by affinity (source_id)
-    // or never (`t`), and floats in a container printed in full.
+    // Text a numeric range bound never selects, text a REAL matches by
+    // affinity (source_id) or never (`t`), and floats in a container printed
+    // in full.
     // A part of root, for the `part` term.
     const five = await seed(
       { title: "five", s: "5", note: "webby back\\slash" },
@@ -3097,6 +3098,7 @@ describe("a local read answers the listing grammar as the server does", () => {
       "edge[references] exists",
       "edge[parent-of] not_exists",
       "properties.s gt 4",
+      "properties.t gt 4",
       "source_id eq true",
       "properties.t eq 5",
       "properties.t eq true",
@@ -3169,7 +3171,8 @@ describe("a local read answers the listing grammar as the server does", () => {
     ).toBeGreaterThanOrEqual(expressions.length - 3);
     // And the items that tell a cast, a REAL and a number's text apart.
     for (const [filter, rows] of [
-      ["properties.s gt 4", ["five", "ten"]],
+      ["properties.s gt 4", []],
+      ["properties.t gt 4", ["grandchild"]],
       ["source_id eq true", ["five"]],
       ["properties.t eq 5", ["grandchild"]],
       ["properties.t eq true", ["root"]],

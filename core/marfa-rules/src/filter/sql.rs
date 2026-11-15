@@ -6,6 +6,7 @@ use super::{Compare, Condition, Expression, Literal, Op, Term, parse_rows, syste
 use crate::catalog::{Catalog, StatusField, api_name};
 use crate::error::{Result, RuleError};
 use crate::query::escape_like;
+use crate::schema::{TEXT_KEY_CLOSE, text_key_open};
 
 /// A value a compiled statement binds to a `?`.
 #[derive(Clone, Debug, PartialEq)]
@@ -91,6 +92,18 @@ pub fn list<S: Sink>(out: &mut S, entries: &[impl AsRef<str>]) {
     }
 }
 
+fn operator(compare: Compare) -> &'static str {
+    match compare {
+        Compare::Eq => " = ",
+        Compare::Neq => " != ",
+        Compare::Gt => " > ",
+        Compare::Gte => " >= ",
+        Compare::Lt => " < ",
+        Compare::Lte => " <= ",
+        Compare::Contains | Compare::StartsWith => " LIKE ",
+    }
+}
+
 /// `held` compared with `value`.
 pub fn compared<S: Sink>(
     out: &mut S,
@@ -99,15 +112,7 @@ pub fn compared<S: Sink>(
     value: &Literal,
 ) {
     held(out);
-    out.push(match compare {
-        Compare::Eq => " = ",
-        Compare::Neq => " != ",
-        Compare::Gt => " > ",
-        Compare::Gte => " >= ",
-        Compare::Lt => " < ",
-        Compare::Lte => " <= ",
-        Compare::Contains | Compare::StartsWith => " LIKE ",
-    });
+    out.push(operator(compare));
     match compare {
         Compare::Contains => out.bind(Bind::Text(format!("%{}%", escape_like(&value.text())))),
         Compare::StartsWith => out.bind(Bind::Text(format!("{}%", escape_like(&value.text())))),
@@ -116,38 +121,84 @@ pub fn compared<S: Sink>(
     out.push(" ESCAPE '\\'");
 }
 
-/// A condition on the value `held`, whose JSON type is `kind`.
+/// How a text compares with a text literal in [`held_property`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Texts {
+    /// Byte by byte, for a column whose type the table declares.
+    Bytes,
+    /// A text that reads as a datetime is its UTC instant, as a sort by the property orders it.
+    Instants,
+}
+
+/// A condition on the value `held`, whose JSON type is `kind`. A range comparison with a number holds only for a JSON number.
 pub fn held_property<S: Sink>(
     out: &mut S,
     held: impl Fn(&mut S),
     kind: impl Fn(&mut S),
     op: Op,
     value: &Literal,
+    texts: Texts,
 ) {
+    let numeric = |out: &mut S, otherwise: Option<&dyn Fn(&mut S)>| {
+        out.push("CASE WHEN ");
+        kind(out);
+        out.push(" IN ('integer', 'real') THEN CAST(");
+        held(out);
+        out.push(" AS REAL)");
+        if let Some(otherwise) = otherwise {
+            out.push(" ELSE ");
+            otherwise(out);
+        }
+        out.push(" END");
+    };
     match op {
         Op::Compare(compare @ (Compare::Eq | Compare::Neq))
             if matches!(value, Literal::Number(_)) =>
         {
-            let number = |out: &mut S| {
-                out.push("CASE WHEN ");
-                kind(out);
-                out.push(" IN ('integer', 'real') THEN CAST(");
-                held(out);
-                out.push(" AS REAL) ELSE ");
-                held(out);
-                out.push(" END");
-            };
-            compared(out, number, compare, value);
+            compared(out, |out| numeric(out, Some(&held)), compare, value);
         }
         Op::Compare(compare @ (Compare::Gt | Compare::Gte | Compare::Lt | Compare::Lte))
             if matches!(value, Literal::Number(_)) =>
         {
-            let number = |out: &mut S| {
-                out.push("CAST(");
+            compared(out, |out| numeric(out, None), compare, value);
+        }
+        Op::Compare(
+            compare @ (Compare::Eq
+            | Compare::Neq
+            | Compare::Gt
+            | Compare::Gte
+            | Compare::Lt
+            | Compare::Lte),
+        ) if matches!(value, Literal::Text(_)) => {
+            let ranged = !matches!(compare, Compare::Eq | Compare::Neq);
+            let instants = texts == Texts::Instants;
+            if !ranged && !instants {
+                compared(out, held, compare, value);
+                return;
+            }
+            out.push("CASE WHEN ");
+            kind(out);
+            out.push(" = 'text' THEN ");
+            if instants {
+                out.push(&text_key_open());
                 held(out);
-                out.push(" AS REAL)");
-            };
-            compared(out, number, compare, value);
+                out.push(TEXT_KEY_CLOSE);
+            } else {
+                held(out);
+            }
+            if !ranged {
+                out.push(" ELSE ");
+                held(out);
+            }
+            out.push(" END");
+            out.push(operator(compare));
+            if instants {
+                out.push(&text_key_open());
+                out.bind(bound(value));
+                out.push(TEXT_KEY_CLOSE);
+            } else {
+                out.bind(bound(value));
+            }
         }
         Op::Compare(compare) => compared(out, held, compare, value),
         Op::Exists => {
@@ -179,7 +230,7 @@ fn property<S: Sink>(out: &mut S, items: &Items, name: &str, op: Op, value: &Lit
             json_path(out, name);
             out.push(")");
         };
-        held_property(out, held, kind, op, value);
+        held_property(out, held, kind, op, value, Texts::Instants);
     });
 }
 
@@ -359,6 +410,7 @@ pub fn row_filter<S: Sink>(
                 |out| kind(out, name),
                 *op,
                 &condition.value,
+                Texts::Bytes,
             ),
             Term::System { column, compare } => {
                 let literal = system_literal(column, *compare, &condition.value)?;
@@ -415,36 +467,32 @@ pub fn adding(columns: &Map<String, Value>) -> Vec<Adding> {
         .collect()
 }
 
-/// `number` excludes nonnumeric values; datetime extrema compare instants and return UTC.
+/// `count` counts the rows that hold any value. `number` and `typed` give the value only where it is of the column's own type: `number` for a number, and `typed` for a date as itself or a datetime as UTC milliseconds (`order_value_key_sql`). A datetime extremum is answered as UTC text.
 pub fn total<S: Sink>(
     out: &mut S,
     adding: &Adding,
     held: impl Fn(&mut S),
     number: impl Fn(&mut S),
+    typed: impl Fn(&mut S),
 ) {
     let wrapped = |out: &mut S, open: &str, inner: &dyn Fn(&mut S), close: &str| {
         out.push(open);
         inner(out);
         out.push(close);
     };
+    let instant = |out: &mut S, extremum: &str| {
+        out.push(&format!("strftime('%Y-%m-%dT%H:%M:%fZ', {extremum}("));
+        typed(out);
+        out.push(") / 1000.0, 'unixepoch')");
+    };
     match (adding.way.as_str(), adding.kind.as_str()) {
         ("count", _) => wrapped(out, "COUNT(", &held, ")"),
         ("sum", _) => wrapped(out, "TOTAL(", &number, ")"),
         ("average", _) => wrapped(out, "AVG(", &number, ")"),
-        ("min", "date") => wrapped(out, "MIN(", &held, ")"),
-        ("max", "date") => wrapped(out, "MAX(", &held, ")"),
-        ("min", "datetime") => wrapped(
-            out,
-            "strftime('%Y-%m-%dT%H:%M:%fZ', MIN(julianday(",
-            &held,
-            ")))",
-        ),
-        ("max", "datetime") => wrapped(
-            out,
-            "strftime('%Y-%m-%dT%H:%M:%fZ', MAX(julianday(",
-            &held,
-            ")))",
-        ),
+        ("min", "date") => wrapped(out, "MIN(", &typed, ")"),
+        ("max", "date") => wrapped(out, "MAX(", &typed, ")"),
+        ("min", "datetime") => instant(out, "MIN"),
+        ("max", "datetime") => instant(out, "MAX"),
         ("min", _) => wrapped(out, "MIN(", &number, ")"),
         _ => wrapped(out, "MAX(", &number, ")"),
     }

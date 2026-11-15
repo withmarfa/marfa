@@ -188,7 +188,7 @@ impl Order {
         self.order_by_named(sql, "i.id");
     }
 
-    /// Orders the aliases emitted by [`Order::columns`].
+    /// Orders the aliases emitted by [`Order::columns`], a nullable key's nulls last.
     pub fn order_by_named(&self, sql: &mut Sql, id: &str) {
         sql.push(" ORDER BY ");
         for (at, key) in self.keys.iter().enumerate() {
@@ -197,11 +197,9 @@ impl Order {
             } else {
                 alias(at)
             };
-            if key.nullable {
-                sql.push(&format!("{name} IS NULL, "));
-            }
             sql.push(&name);
-            sql.push(if key.descending { " DESC, " } else { " ASC, " });
+            sql.push(if key.descending { " DESC" } else { " ASC" });
+            sql.push(if key.nullable { " NULLS LAST, " } else { ", " });
         }
         sql.push(id);
         sql.push(if self.id_descending { " DESC" } else { " ASC" });

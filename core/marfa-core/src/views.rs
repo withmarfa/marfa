@@ -381,7 +381,8 @@ fn property_sql(name: &str, json: bool) -> String {
         )
     } else {
         format!(
-            "CASE WHEN json_type(items.properties,{path}) IN ('integer','real') THEN CAST({extract} AS REAL) ELSE {extract} END"
+            "CASE json_type(items.properties,{path}) WHEN 'integer' THEN CAST({extract} AS REAL) WHEN 'real' THEN CAST({extract} AS REAL) WHEN 'text' THEN {} ELSE {extract} END",
+            marfa_rules::schema::text_key_sql(&extract)
         )
     };
     format!(
@@ -457,8 +458,7 @@ fn sort_sql(settings: &Map<String, Value>, catalog: &Catalog) -> Result<String> 
             _ => return Err(invalid("a sort direction is asc or desc")),
         };
         let expression = field_sql(by, catalog, false)?;
-        order.push(format!("({expression}) IS NULL ASC"));
-        order.push(format!("{expression} {direction}"));
+        order.push(format!("{expression} {direction} NULLS LAST"));
         if keys.len() == 1 && matches!(by, "occurred_at" | "created_at" | "updated_at") {
             timestamp_tie = Some(direction);
         }

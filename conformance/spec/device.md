@@ -1956,7 +1956,7 @@ When a local search names `occurred_after` or `occurred_before`, a device MUST a
 
 ### `device/sort-property`
 
-When a local list names the sort `properties.<field>`, a device MUST order the items as the server does for the same sort (`search-and-filters/sort-property`): numbers and booleans first, strings after, items whose property is missing, null, an object or an array last in either direction, and equal values by id ascending in both directions.
+When a local list names the sort `properties.<field>`, a device MUST order the items as the server does for the same sort (`search-and-filters/sort-property`): numbers and booleans first, strings after with a string that reads as a datetime placed by its instant (`search-and-filters/sort-property-datetime`), items whose property is missing, null, an object or an array last in either direction, and equal values by id ascending in both directions.
 
 **Tests:** `device/item-fields-live.test.ts › sorts by a property in the server's order, missing, numeric, text, boolean and tied`.
 
@@ -2040,9 +2040,15 @@ When the value of a filter's `contains` or `starts_with` condition holds `%`, `_
 
 ### `device/filter-numeric-bound`
 
-When a filter bounds a property by a number, a device MUST compare the property as a number, so text holding `10` is above `4` and text holding `abc` is not.
+When a filter bounds a property by a number with `gt`, `gte`, `lt` or `lte`, a device MUST select only the items whose property is a number, as `search-and-filters/filter-range-numbers` says, so text holding `10` is not above `4`.
 
 **Tests:** `device/fidelity.test.ts › answers each filter expression with the ids the server answers`.
+
+### `device/filter-property-instant`
+
+When a filter compares a property that reads as a datetime with a literal that reads as one, a device MUST compare the instants they name, as `search-and-filters/filter-property-instant` says.
+
+**Tests:** `device/item-fields-live.test.ts › sorts and bounds a property written as a time by its instant, as the server does`.
 
 ### `device/filter-system-number`
 
@@ -6738,7 +6744,7 @@ When a device answers a read of a table's rows, a row or a table's totals from t
 
 ### `device/table-read-rules`
 
-When a device answers a read of a table from the copy, a device MUST select, order, page and total the rows as `tables/rows-filter`, `tables/rows-sort`, `tables/rows-page`, `tables/rows-default-order`, `tables/totals-meaning` and `tables/totals-empty` say.
+When a device answers a read of a table from the copy, a device MUST select, order, page and total the rows as `tables/rows-filter`, `tables/rows-sort`, `tables/rows-page`, `tables/rows-default-order`, `tables/totals-meaning`, `tables/totals-own-type` and `tables/totals-empty` say.
 
 **Tests:** `device/tables-live.test.ts › pages, filters, sorts and totals from the copy as the server does`, `› reads a table in its declared order from the copy as the server does`.
 

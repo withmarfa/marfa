@@ -488,7 +488,7 @@ When `GET /items` names a `type` in the `system.` namespace, the server MUST lis
 
 ## Filter grammar
 
-`GET /items`, `GET /items/stats` and `GET /search` take a `filter` expression, `POST /items/bulk-actions` takes one inside its filter, and a view and a folder take one as `query.filter`. An expression is one or more conditions, `<field> <operator> <value>`, with no value after `exists` and `not_exists` (`search-and-filters/filter-malformed`). Numbers on properties are `search-and-filters/filter-numeric`, times are `search-and-filters/filter-time-instant`, and the escapes in a string are `search-and-filters/filter-string-escapes`. An edge term is also `edges.md`'s (`edges/filter-edge-full`, `edges/filter-term-hidden`).
+`GET /items`, `GET /items/stats` and `GET /search` take a `filter` expression, `POST /items/bulk-actions` takes one inside its filter, and a view and a folder take one as `query.filter`. An expression is one or more conditions, `<field> <operator> <value>`, with no value after `exists` and `not_exists` (`search-and-filters/filter-malformed`). Numbers on properties are `search-and-filters/filter-numeric`, times on properties are `search-and-filters/filter-property-instant`, times are `search-and-filters/filter-time-instant`, and the escapes in a string are `search-and-filters/filter-string-escapes`. An edge term is also `edges.md`'s (`edges/filter-edge-full`, `edges/filter-term-hidden`).
 
 ### `search-and-filters/filter-doors`
 
@@ -552,7 +552,7 @@ When `GET /items`, `GET /items/stats` or `GET /search` names a `filter` joined w
 
 ### `search-and-filters/filter-text-compare`
 
-When a `filter` compares a property holding text, `id`, `type`, `state`, `source` or `source_id` with a double-quoted string using `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, the server MUST compare the whole value by code point, with regard to case.
+When a `filter` compares a property holding text, `id`, `type`, `state`, `source` or `source_id` with a double-quoted string using `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, the server MUST compare the whole value by code point, with regard to case, except that a property text and a literal that both read as a datetime are compared as `search-and-filters/filter-property-instant` says.
 
 **Reason:** `type eq "core.entity"` therefore selects that identifier alone, where the `type` key takes the types under it too (`types/listing-subtree`).
 
@@ -820,6 +820,28 @@ The server MUST NOT turn text, an array, an object, a missing property or `null`
 
 **Tests:** `compliance/numeric-property-filters.test.ts › does not turn text, arrays, objects, missing or null properties into numeric equality matches`.
 
+### `search-and-filters/filter-range-numbers`
+
+When a `filter` on `GET /items` or `GET /search` bounds a property with a number using `gt`, `gte`, `lt` or `lte`, the server MUST select only the items whose property is a JSON number, and never one whose property is text, a boolean, an array, an object, missing or `null`.
+
+**Reason:** text that reads as a number, and a boolean read as `0` or `1`, would otherwise sit among the numbers a range selects.
+
+**Tests:** `compliance/numeric-property-filters.test.ts › bounds a property by a number only on a number, on the listing and the search`.
+
+### `search-and-filters/filter-range-text`
+
+When a `filter` on `GET /items` or `GET /search` bounds a property with a text literal using `gt`, `gte`, `lt` or `lte`, the server MUST select only the items whose property is text.
+
+**Tests:** `compliance/numeric-property-filters.test.ts › bounds a property by a number only on a number, on the listing and the search`.
+
+### `search-and-filters/filter-property-instant`
+
+When a `filter` on `GET /items` or `GET /search` compares a text property that reads as a datetime (`types/datetime-value`) with a text literal that reads as one, using `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, the server MUST compare the instants they name, to the millisecond, a date alone as its midnight in UTC, whichever type declares the property, with the order of `search-and-filters/sort-property-datetime` and `search-and-filters/sort-property-datetime-range`.
+
+**Reason:** one instant written two ways is one moment, and the order of the moments is not the order of the characters. A difference below a millisecond is not kept, so `2026-01-01T05:00:00.0004Z` equals `2026-01-01T05:00:00.000Z`.
+
+**Tests:** `compliance/datetime-property-compare.test.ts › filters by instant, so one instant written two ways is equal and an earlier time is lower`, `› filters a search by instant and sorts what it keeps by instant`, `› filters an instant before the year 0000 below and one after the year 9999 above every other`.
+
 ### `search-and-filters/filter-null-refused`
 
 If a `filter` compares a field with a `null` literal after an operator that takes a value, then the server MUST answer `400 validation_error`.
@@ -1000,9 +1022,25 @@ When `GET /items` names `sort=properties.<field>`, the server MUST order the ite
 
 ### `search-and-filters/sort-property-ascending`
 
-When `GET /items` sorts by a property ascending, the server MUST put numbers and booleans first in numeric order, with `false` equal to `0` and `true` equal to `1`, followed by strings in binary lexical order of their UTF-8 bytes, an empty string being a value and numeric text remaining text.
+When `GET /items` sorts by a property ascending, the server MUST put numbers and booleans first in numeric order, with `false` equal to `0` and `true` equal to `1`, followed by strings in binary lexical order of their UTF-8 bytes, an empty string being a value and numeric text remaining text, except that a string that reads as a datetime is placed as `search-and-filters/sort-property-datetime` says.
 
-**Tests:** `correctness/property-sort-pagination.test.ts › walks mixed scalar kinds across types, with ascending ID ties and nulls last`.
+**Tests:** `correctness/property-sort-pagination.test.ts › walks mixed scalar kinds across types, with ascending ID ties and nulls last`, `compliance/datetime-property-compare.test.ts › sorts a text that only looks like a date or a datetime by its bytes, in both directions`.
+
+### `search-and-filters/sort-property-datetime`
+
+When `GET /items` sorts by a property, the server MUST order a string that reads as a datetime (`types/datetime-value`) by the instant it names, to the millisecond, a date alone as its midnight in UTC, whichever type declares the property.
+
+**Reason:** the value stays as it was written and only its place in the order changes, so one instant written with different offsets or precision sorts as one moment, and a list that holds items of two types sorts the same whether a type declares the property a `datetime` or a `string`. A difference below a millisecond is not kept: values that differ only by less than one, such as `2026-01-01T05:00:00.0004Z` and `2026-01-01T05:00:00.000Z`, tie and then order by id (`search-and-filters/sort-property-ties`).
+
+**Tests:** `compliance/datetime-property-compare.test.ts › sorts by instant however its time is written, across a datetime and a text declaration`, `› keys an instant to the millisecond, so a smaller difference ties by id and the next millisecond follows`.
+
+### `search-and-filters/sort-property-datetime-range`
+
+When `GET /items` sorts by a property whose string reads as a datetime naming an instant before `0000-01-01T00:00:00Z` or after `9999-12-31T23:59:59.999Z`, the server MUST place the earlier instant before every other datetime and the later instant after every other datetime, each in the order of the instants.
+
+**Reason:** the offset `+05:00` puts `0000-01-01T00:00:00+05:00` in the year before 0000, and `-05:00` puts `9999-12-31T23:00:00-05:00` in the year after 9999, so neither fits the four-digit years the sort otherwise keys.
+
+**Tests:** `compliance/datetime-property-compare.test.ts › puts an instant before the year 0000 first and one after the year 9999 last, among the instants`.
 
 ### `search-and-filters/sort-property-descending`
 
@@ -1262,7 +1300,7 @@ When a `GET /search` request sends a `cursor` issued under the default `sort` an
 
 When a client sends back the `next_cursor` of each page of a `GET /search` that names a `sort`, the server MUST continue that ordering, so that walking to `null` delivers every hit once.
 
-**Tests:** `compliance/search-ordering.test.ts › walks a sorted search to the end, delivering every hit once`.
+**Tests:** `compliance/search-ordering.test.ts › walks a sorted search to the end, delivering every hit once`, `compliance/datetime-property-compare.test.ts › orders a search by instant, and pages through it with a cursor`.
 
 ### `search-and-filters/search-depth`
 
@@ -1294,9 +1332,9 @@ When `GET /search` names `sort=created_at`, `sort=updated_at` or `sort=occurred_
 
 ### `search-and-filters/search-sort-property`
 
-When `GET /search` names `sort=properties.<field>`, the server MUST order the hits by the scalar value each stores in that property, in the order `search-and-filters/sort-property-ascending` and `search-and-filters/sort-property-descending` give a listing, and put the hits whose property is missing, null, an object or an array after every scalar in either direction.
+When `GET /search` names `sort=properties.<field>`, the server MUST order the hits by the scalar value each stores in that property, a time by its instant, in the order `search-and-filters/sort-property-ascending` and `search-and-filters/sort-property-descending` give a listing, and put the hits whose property is missing, null, an object or an array after every scalar in either direction.
 
-**Tests:** `compliance/search-ordering.test.ts › orders a search by a property with the items that lack one last in both directions`.
+**Tests:** `compliance/search-ordering.test.ts › orders a search by a property with the items that lack one last in both directions`, `compliance/datetime-property-compare.test.ts › orders a search by instant, and pages through it with a cursor`.
 
 ### `search-and-filters/search-sort-ties`
 

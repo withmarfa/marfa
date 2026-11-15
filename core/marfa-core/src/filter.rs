@@ -574,6 +574,20 @@ mod tests {
         }
     }
 
+    #[test]
+    fn the_ordered_items_are_filtered_the_way_the_server_filters_them() {
+        let corpus: Value = serde_json::from_str(CORPUS).unwrap();
+        let conn = corpus_copy(&corpus, &corpus["ordered"]["items"]);
+        for case in corpus["ordered"]["filters"].as_array().unwrap() {
+            let filter = case["filter"].as_str().unwrap();
+            assert_eq!(
+                json!(ids(&conn, Some(filter), None)),
+                case["ids"],
+                "{filter}"
+            );
+        }
+    }
+
     fn ids(conn: &Connection, filter: Option<&str>, beneath: Option<&str>) -> Vec<String> {
         ids_whole(conn, filter, beneath, &[])
     }
@@ -640,9 +654,7 @@ mod tests {
         let conn = family();
         let filtered = |filter: &str| ids(&conn, Some(filter), None);
         assert_eq!(filtered("properties.rating lte 5"), ["child", "root"]);
-        // A number against text: the server casts the property to a number
-        // for a numeric bound but preserves text for numeric equality.
-        assert_eq!(filtered("properties.rating gt 4"), ["root", "stranger"]);
+        assert_eq!(filtered("properties.rating gt 4"), ["root"]);
         assert_eq!(filtered("properties.rating eq 9"), Vec::<String>::new());
         assert_eq!(filtered("properties.flag eq true"), ["root"]);
         assert_eq!(filtered("properties.note contains \"_\""), ["child"]);

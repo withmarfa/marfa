@@ -180,7 +180,7 @@ pub(crate) fn list_where_with(
         // real, as the server compares it, and SQLite puts numbers before
         // text, a boolean being 0 or 1.
         SortField::Property(name) => format!(
-            "ORDER BY {expression} IS NULL, {expression} {}, id ASC",
+            "ORDER BY {expression} {} NULLS LAST, id ASC",
             direction_sql(sort.direction),
             expression =
                 rules::property_sort_expression("items.properties", &format!("'$.{name}'")),
@@ -681,6 +681,30 @@ mod tests {
             .into_iter()
             .map(|item| item.id)
             .collect())
+    }
+
+    #[test]
+    fn a_property_sorts_in_the_order_the_server_gives_it() {
+        let corpus: serde_json::Value =
+            serde_json::from_str(include_str!("../../marfa-rules/src/filter/parity.json")).unwrap();
+        let conn = corpus_copy(&corpus, &corpus["ordered"]["items"]);
+        for case in corpus["ordered"]["sorts"].as_array().unwrap() {
+            let name = case["by"].as_str().unwrap();
+            for (direction, ids) in [
+                (SortDirection::Ascending, &case["ascending"]),
+                (SortDirection::Descending, &case["descending"]),
+            ] {
+                let sort = Sort {
+                    field: SortField::Property(name.into()),
+                    direction,
+                };
+                assert_eq!(
+                    json!(listed(&conn, ListFilters::default(), Some(sort)).unwrap()),
+                    *ids,
+                    "{name} {direction:?}"
+                );
+            }
+        }
     }
 
     #[test]

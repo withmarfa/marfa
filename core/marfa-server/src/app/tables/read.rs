@@ -2,7 +2,7 @@
 
 use marfa_rules::filter::Expression;
 use marfa_rules::filter::sql::{self, Adding};
-use marfa_rules::query::property_sort_expression;
+use marfa_rules::query::column_sort_expression;
 use rusqlite::Transaction;
 use rusqlite::types::Value as Bound;
 use serde_json::{Map, Value, json};
@@ -132,15 +132,23 @@ impl Withholding {
         self.masked(column, &Self::on_body("json_type", column))
     }
 
-    fn sort_key(&self, column: &str, kind: &str) -> Sql {
-        if marfa_rules::schema::ORDER_KINDS.contains(&kind) {
-            let order = Order {
-                column: column.to_string(),
-                kind: kind.to_string(),
-            };
-            return self.masked(column, &Sql::new(&order.value_key_sql("r.body")));
+    /// The value of a column of a kind in `KEYED_KINDS` as its sort key, and nothing for a value of another kind or a column whose name cannot be written into the SQL.
+    fn typed(&self, column: &str, kind: &str) -> Sql {
+        if !marfa_rules::schema::order_column_inlinable(column) {
+            return Sql::new("NULL");
         }
-        let text = property_sort_expression("r.body", "?");
+        let order = Order {
+            column: column.to_string(),
+            kind: kind.to_string(),
+        };
+        self.masked(column, &Sql::new(&order.value_key_sql("r.body")))
+    }
+
+    fn sort_key(&self, column: &str, kind: &str) -> Sql {
+        if marfa_rules::schema::KEYED_KINDS.contains(&kind) {
+            return self.typed(column, kind);
+        }
+        let text = column_sort_expression("r.body", "?");
         let mut shown = Sql::new(&text);
         shown.values = vec![Bound::Text(format!("$.{column}")); text.matches('?').count()];
         self.masked(column, &shown)
@@ -346,7 +354,7 @@ fn order_by(sql: &mut Sql, key: &Key, descending: bool) {
         Key::Id => sql.push(&format!(" ORDER BY r.id {direction}")),
         Key::Updated => sql.push(&format!(" ORDER BY k {direction}, r.id ASC")),
         Key::Column { .. } | Key::Order(_) => {
-            sql.push(&format!(" ORDER BY k IS NULL, k {direction}, r.id ASC"));
+            sql.push(&format!(" ORDER BY k {direction} NULLS LAST, r.id ASC"));
         }
     }
 }
@@ -638,6 +646,7 @@ fn aggregate(withholding: &Withholding, adding: &Adding) -> Sql {
         adding,
         |sql| sql.append(&withholding.held(column)),
         |sql| sql.append(&withholding.number(column)),
+        |sql| sql.append(&withholding.typed(column, &adding.kind)),
     );
     out
 }
@@ -830,6 +839,32 @@ mod parity {
             }
             let answer = json!({ "row_count": row_count, "totals": totals });
             assert_eq!(answer, case["answer"], "{}", case["filter"]);
+        }
+    }
+
+    #[test]
+    fn the_rows_are_sorted_by_each_column_as_the_working_copy_sorts_them() {
+        let corpus: Value = serde_json::from_str(CORPUS).unwrap();
+        let db = held(&corpus);
+        for case in corpus["table"]["sorts"].as_array().unwrap() {
+            let column = case["by"].as_str().unwrap();
+            let kind = corpus["table"]["columns"][column]["type"].as_str().unwrap();
+            let key = readable().sort_key(column, kind);
+            for (direction, ids) in [("ASC", &case["ascending"]), ("DESC", &case["descending"])] {
+                let mut statement = db
+                    .prepare(&format!(
+                        "SELECT r.id FROM table_rows r WHERE r.table_seq = 1 \
+                         ORDER BY ({0}) {direction} NULLS LAST, r.id ASC",
+                        key.text
+                    ))
+                    .unwrap();
+                let found: Vec<String> = statement
+                    .query_map(params_from_iter(key.values.iter()), |row| row.get(0))
+                    .unwrap()
+                    .collect::<std::result::Result<_, _>>()
+                    .unwrap();
+                assert_eq!(json!(found), *ids, "{column} {direction}");
+            }
         }
     }
 }

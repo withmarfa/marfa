@@ -260,6 +260,15 @@ mod tests {
     }
 
     #[test]
+    fn the_triggers_key_a_value_as_the_walk_does() {
+        let baseline = include_str!("../../db/migrations/0001_baseline.sql");
+        for source in ["NEW", "OLD"] {
+            let key = property_sort_expression(&format!("{source}.properties"), "'$.' || s.name");
+            assert_eq!(baseline.matches(&key).count(), 2, "{source}");
+        }
+    }
+
+    #[test]
     fn an_undeclared_name_never_adds_a_pair() {
         let conn = db();
         items(&conn, "core.note", MIN_ITEMS);
