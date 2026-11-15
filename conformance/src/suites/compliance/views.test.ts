@@ -577,8 +577,16 @@ describe("the view door", () => {
     const changed = await client.updateView(id, { version: 1, ...longest });
     expect(changed.status, JSON.stringify(changed.error)).toBe(200);
 
+    // The limit counts characters, not bytes or UTF-16 units: 500 characters
+    // of four bytes each are taken, and 501 are not.
+    const wide = "😀".repeat(500);
+    const worded = await client.updateView(id, { version: 2, title: wide });
+    expect(worded.status, JSON.stringify(worded.error)).toBe(200);
+    expect((await client.getItem(id)).data.item.properties.title).toBe(wide);
+
     for (const [name, settings] of [
       ["title", { title: "t".repeat(501) }],
+      ["title", { title: "😀".repeat(501) }],
       ["title", { title: "" }],
       ["query.types", { query: { types: types(101) } }],
       ["group.order", { group: { by: "state", order: values(1001) } }],
@@ -589,7 +597,7 @@ describe("the view door", () => {
         ...settings,
       });
       const changing = await client.updateView(id, {
-        version: 2,
+        version: 3,
         ...settings,
       });
       for (const r of [created, changing]) {
@@ -599,50 +607,7 @@ describe("the view door", () => {
         expect(refusal.error.details?.errors?.[0]?.path, name).toBe(name);
       }
     }
-    expect((await client.getItem(id)).data.item.version).toBe(2);
-  });
-
-  it("refuses a write of a view through the tag, extension, trash and restore doors, from a key the view door admits", async () => {
-    const minted = await client.createKey({
-      label: "view-item-doors",
-      source: `${ctx.source}-view-item-doors`,
-      type_permissions: { "system.view": "write", "core.note": "write" },
-      extension_permissions: { demo: "write" },
-    });
-    expect(minted.status, JSON.stringify(minted.error)).toBe(201);
-    trackKey(ctx, minted.data.id);
-    const wide = new MarfaClient({ baseUrl: apiUrl, apiKey: minted.data.key });
-
-    // The witness: this key writes a view through its own door, and the
-    // same tag and extension doors take an item of another type it may write.
-    const { id } = await view({}, wide);
-    const plain = await wide.createItem({
-      type: "core.note",
-      properties: { body: "a note" },
-    });
-    expect(plain.status, JSON.stringify(plain.error)).toBe(201);
-    trackItem(ctx, plain.data.item.id);
-    expect((await wide.addTags(plain.data.item.id, ["a"])).status).toBe(200);
-    expect(
-      (await wide.setItemExtension(plain.data.item.id, "demo", { a: 1 }))
-        .status,
-    ).toBe(200);
-
-    const answers = [
-      await wide.addTags(id, ["a"]),
-      await wide.removeTag(id, "a"),
-      await wide.setItemExtension(id, "demo", { a: 1 }),
-      await wide.deleteItemExtension(id, "demo"),
-      await wide.trashItems([id]),
-      await wide.restoreItem(id),
-    ];
-    for (const [door, r] of answers.entries()) {
-      expect(r.status, String(door)).toBe(403);
-      expect(r.error?.error.code, String(door)).toBe("type_not_permitted");
-    }
-    const unchanged = (await client.getItem(id)).data.item;
-    expect(unchanged.state).toBe("active");
-    expect(unchanged.version).toBe(1);
+    expect((await client.getItem(id)).data.item.version).toBe(3);
   });
 
   it("refuses a create missing its title with missing_required_field naming title", async () => {

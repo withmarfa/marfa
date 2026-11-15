@@ -1290,7 +1290,7 @@ When a caller sends `POST /items/{id}/tables/{table}/batches/{batch}/undo` and e
 
 ### `tables/undo-answer`
 
-When an undo changes at least one row, the server MUST answer `200` with the undo's own UUIDv7 in `batch`, the batch it undid in `undoes`, the item's `last_activity_at`, and in `results` each row the undone batch changed, by `id` ascending, with its `outcome`.
+When an undo changes at least one row, the server MUST answer `200` with the undo's own UUIDv7 in `batch`, the batch it undid in `undoes`, the undo's time in `last_activity_at`, and in `results` each row the undone batch changed, by `id` ascending, with its `outcome`.
 
 **Tests:** `compliance/table-rows-undo.test.ts › answers each row of the undone batch in id order with its outcome, and moves last_activity_at`.
 
@@ -1448,15 +1448,27 @@ When the server purges an item, the server MUST remove its rows through the `tab
 
 ### `tables/orphan-rows`
 
-While a type is unregistered, the server MUST answer `GET /items/{id}/tables` for an item of it with an empty `data`, and each door under `/items/{id}/tables/{table}` with `404 table_not_found`.
+While a type is unregistered, the server MUST answer `GET /items/{id}/tables` for an item of it with an empty `data`.
 
 **Reason:** a forced delete keeps the items (`types/delete-force`), and the rows of an item with no type to declare its tables answer to no table.
 
 **Tests:** `compliance/table-rows-lifecycle.test.ts › keeps the rows of an item whose type a forced delete removed, answering no table until the type is registered again`.
 
+### `tables/orphan-rows-doors`
+
+While a type is unregistered, the server MUST answer each door under `/items/{id}/tables/{table}` for an item of it with `404 table_not_found`.
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › keeps the rows of an item whose type a forced delete removed, answering no table until the type is registered again`.
+
 ### `tables/orphan-rows-kept`
 
-While a type is unregistered, the server MUST keep the rows of its items, and answer them again once the type declares their table.
+While a type is unregistered, the server MUST keep the rows of its items.
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › keeps the rows of an item whose type a forced delete removed, answering no table until the type is registered again`.
+
+### `tables/orphan-rows-returned`
+
+When a type that was unregistered is registered again and declares a table, the server MUST answer the rows its items kept in that table.
 
 **Tests:** `compliance/table-rows-lifecycle.test.ts › keeps the rows of an item whose type a forced delete removed, answering no table until the type is registered again`.
 
@@ -1490,9 +1502,17 @@ When `PUT /types/{id}` names `force=true`, the server MUST keep every row and va
 
 ### `tables/change-tightened`
 
-When `PUT /types/{id}` without `force=true` tightens a column that holds values, by making it `required`, narrowing its `enum_values`, lowering its `max_length` or `maximum`, raising its `minimum` or adding a `format`, the server MUST take the replacement and keep each value the rows hold as it is.
+When `PUT /types/{id}` without `force=true` tightens a column that holds values, by making it `required`, narrowing its `enum_values`, lowering its `max_length` or `maximum`, raising its `minimum` or adding a `format`, the server MUST take the replacement.
 
-**Reason:** only a removed table, a removed column and a changed column `type` take rows' data away (`tables/change-in-use`). A row keeps what it holds, and the next write judges it (`tables/tightened-patch`, `tables/tightened-put`).
+**Reason:** only a removed table, a removed column and a changed column `type` take rows' data away (`tables/change-in-use`).
+
+**Tests:** `compliance/table-rows-lifecycle.test.ts › takes a replacement that tightens a column without force, keeps the values rows hold, and judges a later patch by the columns it names and a later put by the whole row`.
+
+### `tables/change-tightened-kept`
+
+When `PUT /types/{id}` tightens a column that holds values, as `tables/change-tightened` lists, the server MUST keep each value the rows hold as it is.
+
+**Reason:** a row keeps what it holds, and the next write judges it (`tables/tightened-patch`, `tables/tightened-put`).
 
 **Tests:** `compliance/table-rows-lifecycle.test.ts › takes a replacement that tightens a column without force, keeps the values rows hold, and judges a later patch by the columns it names and a later put by the whole row`.
 

@@ -690,13 +690,21 @@ describe("rows and the life of an item", () => {
           size: { type: "enum", enum_values: ["s", "m", "l"] },
           mail: { type: "string" },
           floor: { type: "integer" },
+          price: { type: "string" },
         },
       },
     });
     const item = await itemOf(id);
     const [full, bare] = (
       await put(item.id, [
-        { amount: 150, memo: "long memo", size: "l", mail: "xyz", floor: 1 },
+        {
+          amount: 150,
+          memo: "long memo",
+          size: "l",
+          mail: "xyz",
+          floor: 1,
+          price: "lots",
+        },
         { amount: 2 },
       ])
     ).results.map((result) => result.id);
@@ -706,6 +714,7 @@ describe("rows and the life of an item", () => {
       size: "l",
       mail: "xyz",
       floor: 1,
+      price: "lots",
     };
 
     const tightened = {
@@ -719,6 +728,7 @@ describe("rows and the life of an item", () => {
             size: { type: "enum", enum_values: ["s", "m"] },
             mail: { type: "string", max_length: 2 },
             floor: { type: "integer", minimum: 5 },
+            price: { type: "string", format: "currency" },
           },
         },
       },
@@ -753,6 +763,25 @@ describe("rows and the life of an item", () => {
     expect(refused.error?.error.code).toBe("validation_error");
     expect(refused.error?.error.details).toMatchObject({
       errors: [{ path: "operations.0.values.memo" }],
+    });
+
+    // A format added to a column is a tightening like the others: the held
+    // value stays, and a patch that names the column is judged by it.
+    const priced = await client.writeRows(item.id, "lines", {
+      operations: [{ op: "patch", id: full!, values: { price: "plenty" } }],
+    });
+    expect(priced.status).toBe(400);
+    expect(priced.error?.error.details).toMatchObject({
+      errors: [{ path: "operations.0.values.price" }],
+    });
+    const coded = await client.writeRows(item.id, "lines", {
+      operations: [{ op: "patch", id: full!, values: { price: "GBP" } }],
+    });
+    expect(coded.status, JSON.stringify(coded.error)).toBe(200);
+    expect((await client.getRow(item.id, "lines", full!)).data.values).toEqual({
+      ...held,
+      memo: "ok",
+      price: "GBP",
     });
 
     // A put is the whole row: the values it sends again are judged too.

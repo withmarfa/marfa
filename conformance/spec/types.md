@@ -962,9 +962,17 @@ When a replacement removes a field, the server MUST NOT refuse a later write of 
 
 ### `types/field-tightened`
 
-When a replacement tightens a field, by making it `required`, narrowing its `enum_values`, lowering its `max_length` or `maximum`, raising its `minimum` or adding a `format`, the server MUST take it without `force=true` and leave the value each item holds under its name as it is.
+When a replacement tightens a field, by making it `required`, narrowing its `enum_values`, lowering its `max_length` or `maximum`, raising its `minimum` or adding a `format`, the server MUST take it without `force=true`.
 
-**Reason:** only a removed field's name reaching a held value, and a changed `type`, take what items hold away (`types/field-removed`). The value stays and a later write judges it (`types/field-tightened-held`).
+**Reason:** only a removed field's name reaching a held value, and a changed `type`, take what items hold away (`types/field-removed`).
+
+**Tests:** `compliance/type-evolution.test.ts › takes a replacement that tightens a field without force, leaves the values items hold, and judges a write by the properties it changes`.
+
+### `types/field-tightened-kept`
+
+When a replacement tightens a field, as `types/field-tightened` lists, the server MUST leave the value each item holds under its name as it is.
+
+**Reason:** the value stays and a later write judges it (`types/field-tightened-held`).
 
 **Tests:** `compliance/type-evolution.test.ts › takes a replacement that tightens a field without force, leaves the values items hold, and judges a write by the properties it changes`.
 
@@ -972,9 +980,17 @@ When a replacement tightens a field, by making it `required`, narrowing its `enu
 
 If an item holds a value in a field that its type does not admit, then the server MUST NOT refuse an update of the item for that value unless the update changes the property's value or moves the item to another type.
 
-**Reason:** an edit to an item's title is not the write that has to bring another property within a rule its type holds. A whole-properties write sends every property back, so naming a property unchanged is not a change. A property the item lacks is held to a required field (`items/property-invalid`).
+**Reason:** an edit to an item's title is not the write that has to bring another property within a rule its type holds. A whole-properties write sends every property back, so naming a property unchanged is not a change, and a number written another way, `50.0` for `50`, is the same value (`items/property-number-kept`). A move to another type judges every property the item holds, as a write of each. A property the item lacks is held to a required field (`items/property-invalid`).
 
 **Tests:** `compliance/type-evolution.test.ts › takes a replacement that tightens a field without force, leaves the values items hold, and judges a write by the properties it changes`.
+
+### `types/field-tightened-copy`
+
+If a stale update makes a conflicted copy of an item that holds a value its field does not admit, and the update leaves that property alone, then the server MUST make the copy holding the value.
+
+**Reason:** a conflicted copy is a new item, so a value the stale write changed is judged as a create's is (`items/property-invalid`), and a held value the write leaves alone is kept in the copy, as it is for a status word (`types/status-word-held`).
+
+**Tests:** `compliance/type-evolution.test.ts › makes the conflicted copy of a stale write that leaves a value its field refuses alone, holding that value`.
 
 ### `types/subtype-members`
 

@@ -4097,18 +4097,6 @@ fn refuse_unmakeable_create(catalog: &marfa_rules::catalog::Catalog, draft: &Dra
     Ok(())
 }
 
-/// The properties of `written` whose values `held` does not already hold.
-fn changed_properties(
-    written: &serde_json::Map<String, Value>,
-    held: &serde_json::Map<String, Value>,
-) -> serde_json::Map<String, Value> {
-    written
-        .iter()
-        .filter(|(key, value)| held.get(*key) != Some(*value))
-        .map(|(key, value)| (key.clone(), value.clone()))
-        .collect()
-}
-
 /// An id is minted here, where the draft names none, so a queued row is
 /// readable locally before the server answers.
 fn queue_create(
@@ -4151,7 +4139,7 @@ fn queue_create(
     // sends back unchanged is not judged (`types/field-tightened-held`),
     // whether or not the copy can judge its merged result.
     let written = match target.as_ref().filter(|held| held.r#type == draft.r#type) {
-        Some(held) => changed_properties(&draft.properties, &held.properties),
+        Some(held) => marfa_rules::conflict::changed(&draft.properties, &held.properties),
         None => draft.properties.clone(),
     };
     // A natural key may name a row outside this slice. Its required fields
@@ -4547,7 +4535,7 @@ fn queue_update(
     // a synced file sends every property back, and a value its field no
     // longer admits stands through that. A move changes them all.
     let written = if next.r#type == held.r#type {
-        changed_properties(&edit.properties, &held.properties)
+        marfa_rules::conflict::changed(&edit.properties, &held.properties)
     } else {
         next.properties.clone()
     };

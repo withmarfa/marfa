@@ -265,6 +265,111 @@ describe("a working copy checks the fields its catalog holds", () => {
       );
   });
 
+  it("judges a held value its field does not admit only where the edit changes it", async () => {
+    harness = await startHarness("property-validation-held");
+    const held = "01a00000-0000-7000-8000-0000000000b1";
+    const unmet = "01a00000-0000-7000-8000-0000000000b2";
+    const note = { type: "string", max_length: 3 };
+    scriptHydration(harness.server, {
+      head: "10",
+      catalog: typeCatalog([
+        {
+          id: "fixture.tight",
+          fields: {
+            title: { type: "string", required: true },
+            note,
+            count: { type: "integer", maximum: 10 },
+            extra: { type: "string", required: true },
+          },
+        },
+        { id: "fixture.narrow", fields: { note } },
+      ]),
+      items: {
+        "fixture.tight": [
+          {
+            // The type has since tightened `note`, `count` and `extra`.
+            item: {
+              id: held,
+              type: "fixture.tight",
+              version: 1,
+              source: "fixture",
+              properties: {
+                title: "T",
+                note: "too long",
+                count: 50,
+                extra: "x",
+              },
+            },
+          },
+          {
+            item: {
+              id: unmet,
+              type: "fixture.tight",
+              version: 1,
+              source: "fixture",
+              properties: { title: "T", note: "ok" },
+            },
+          },
+        ],
+      },
+    });
+    expect(
+      (await harness.device.hydrate(["fixture.tight"], "library")).ok,
+    ).toBe(true);
+    const { device, server } = harness;
+    const queued = await device.queue();
+    const calls = server.requests.length;
+    invalid(
+      await device.update(held, { version: 1, properties: { note: "longer" } }),
+      "note",
+    );
+    invalid(
+      await device.update(held, {
+        version: 1,
+        properties: { count: 51 },
+        replace: true,
+      }),
+      "count",
+    );
+    invalid(
+      await device.update(held, {
+        version: 1,
+        type: "fixture.narrow",
+        properties: {},
+      }),
+      "note",
+    );
+    // A required field the item lacks is judged on the whole item.
+    invalid(
+      await device.update(unmet, { version: 1, properties: { title: "U" } }),
+      "extra",
+    );
+    expect(await device.queue(), "a refused write was queued").toEqual(queued);
+    expect(server.requests.length).toBe(calls);
+    // The witnesses: an edit that leaves the held values alone, merged or
+    // sent whole with every value back unchanged, is taken.
+    expect(
+      (await device.update(held, { version: 1, properties: { title: "U" } }))
+        .ok,
+      "an edit that left a held value alone was refused",
+    ).toBe(true);
+    expect(
+      (
+        await device.update(held, {
+          version: 1,
+          replace: true,
+          properties: {
+            title: "V",
+            note: "too long",
+            count: 50,
+            extra: "x",
+          },
+        })
+      ).ok,
+      "a whole write that sent the held values back unchanged was refused",
+    ).toBe(true);
+  });
+
   it("judges a known upsert by the item it leaves, and a stale or other-type one by what it supplies", async () => {
     harness = await startHarness("property-validation-known-upsert");
     scriptHydration(harness.server, {

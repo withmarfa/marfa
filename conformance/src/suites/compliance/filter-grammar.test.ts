@@ -233,6 +233,11 @@ describe("every door that takes a filter", () => {
       ['tier eq "feed" OR tier eq "library"', both],
     ] as const) {
       expect(await among(filter, both), filter).toEqual(sorted(...selected));
+      // Search takes the same term, as every door that takes an expression does.
+      expect(
+        (await searched(filter)).filter((id) => both.includes(id)),
+        `search: ${filter}`,
+      ).toEqual(sorted(...selected));
     }
     const exists = await client.rawRequest("/items?filter=tier%20exists");
     expect(exists.status).toBe(400);

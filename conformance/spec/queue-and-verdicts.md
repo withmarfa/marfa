@@ -2706,7 +2706,7 @@ A device checks an item write against the type catalog the copy holds before it 
 
 ### `queue-and-verdicts/check-refuses-invalid`
 
-If a caller queues an item create or update that leaves out a property its type requires, or carries a value a field of its type refuses, as the held catalog declares the type, then a device MUST refuse it in the `validation` class with the server's code `invalid_properties` and a message naming the property, changing neither the copy nor the queue and sending nothing.
+If a caller queues an item create or update that leaves out a property its type requires, or changes a property to a value a field of its type refuses, as the held catalog declares the type, then a device MUST refuse it in the `validation` class with the server's code `invalid_properties` and a message naming the property, changing neither the copy nor the queue and sending nothing.
 
 **Tests:** `device/property-validation.test.ts › refuses missing and invalid fields atomically and accepts their boundary neighbours`, `device/property-validation-live.test.ts › matches a real server's field decisions and keeps queued writes across a catalog change`, `device/property-validation.test.ts › judges current merge, replace, retype and version zero while leaving stale results to the server`.
 
@@ -2740,6 +2740,14 @@ If an item in the copy holds a value in its status field that its type, as the h
 
 **Tests:** `device/status-groups.test.ts › refuses a write that changes a status word to one the type does not declare, and not one that leaves a stored word alone`.
 
+### `queue-and-verdicts/check-value-held`
+
+If an item in the copy holds a value in a field that its type, as the held catalog declares it, does not admit, then a device MUST NOT refuse an update of the item for that value unless the update changes the property's value or moves the item to another type.
+
+**Reason:** the server takes the same update (`types/field-tightened-held`), and a synced file sends every property back on any edit. A value is unchanged where it names the same number or the same text, list or object as the held one, however its number is written, so `50` and `50.0` are one value (`items/property-number-kept`). A field the item lacks and its type requires is judged on the whole item, whatever the update changes.
+
+**Tests:** `device/property-validation.test.ts › judges a held value its field does not admit only where the edit changes it`.
+
 ### `queue-and-verdicts/check-inherited-nearest`
 
 When a device judges a property its type inherits, a device MUST judge it as the nearest type in the chain that declares it declares it, and a status field with every word its chain declares (`types/status-inherit`).
@@ -2758,7 +2766,7 @@ When a device judges an item write against the held catalog, a device MUST accep
 
 ### `queue-and-verdicts/check-current-result`
 
-When an update names the version the copy holds, of an item other than this device's own unanswered create carrying a natural key, a device MUST judge the properties its merge, replace or retype leaves on the item against the type it leaves the item at.
+When an update names the version the copy holds, of an item other than this device's own unanswered create carrying a natural key, a device MUST judge the properties its merge, replace or retype leaves on the item against the type it leaves the item at, a value only where the update changes it (`queue-and-verdicts/check-value-held`).
 
 **Tests:** `device/property-validation.test.ts › judges current merge, replace, retype and version zero while leaving stale results to the server`.
 
@@ -2778,7 +2786,7 @@ When a caller queues a create carrying no natural key, a device MUST judge every
 
 ### `queue-and-verdicts/check-known-upsert`
 
-When a caller queues a create whose natural key names an item the copy holds from the server, of the same type, with no version or the version the copy holds, a device MUST judge that item's properties with the create's laid over them.
+When a caller queues a create whose natural key names an item the copy holds from the server, of the same type, with no version or the version the copy holds, a device MUST judge that item's properties with the create's laid over them, a value only where the create changes it (`queue-and-verdicts/check-value-held`).
 
 **Tests:** `device/property-validation.test.ts › checks known upserts and supplied values on unresolved or stale targets`, `› judges a known upsert by the item it leaves, and a stale or other-type one by what it supplies`.
 

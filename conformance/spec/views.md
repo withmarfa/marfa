@@ -352,14 +352,6 @@ If a key whose type map does not grant write on `system.view` creates, changes o
 
 **Tests:** `compliance/views.test.ts › admits a key minted with write on system.view alone, and refuses one whose map does not grant it`.
 
-### `views/item-doors`
-
-If any key the API can mint writes a view through an item, tag, extension, trash or restore operation, then the server MUST answer `403 type_not_permitted`, whatever the key's type map grants.
-
-**Reason:** a view is written only through `/views`, where its settings are checked (`views/setting-checked`). `items/system-types` states the rule for every `system.*` item.
-
-**Tests:** `compliance/views.test.ts › refuses a write of a view through the tag, extension, trash and restore doors, from a key the view door admits`.
-
 ### `views/read`
 
 The server MUST answer a view through `GET /items/{id}` and a listing naming `system.view` to a key with read on `system.view`.

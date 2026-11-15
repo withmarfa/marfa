@@ -166,6 +166,10 @@ describe("undoing a batch", () => {
       { id: r3, outcome: "created" },
       { id: r4, outcome: "deleted" },
     ]);
+    const restored = (await client.getRow(item, "lines", r1)).data;
+    expect(answer.last_activity_at, "not the undo's own time").toBe(
+      restored.updated_at,
+    );
     const after = (await client.getItem(item)).data.item;
     expect(after.last_activity_at).toBe(answer.last_activity_at);
     expect(after.last_activity_at! > read.last_activity_at!).toBe(true);
