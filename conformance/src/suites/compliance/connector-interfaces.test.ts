@@ -398,151 +398,156 @@ describe("connector interfaces", () => {
       {},
     );
   });
-  it("refuses a write whose key is revoked or expires while the write waits for the database", async () => {
-    let number = 0;
-    for (const ending of ["revoked", "expired"] as const) {
-      for (const door of ["state", "agreements"] as const) {
-        number++;
-        const label = `${ending} ${door}`;
-        const source = `fence-${String(number)}`;
-        const minted = await call(
-          "/keys",
-          "POST",
-          {
-            label,
-            source,
-            ...(ending === "expired"
-              ? {
-                  expires_at: new Date(
-                    Date.now() + server.clockOffsetMs + 60 * 60_000,
-                  ).toISOString(),
-                }
-              : {}),
-          },
-          server.workingKey,
-        );
-        expect(minted.status, label).toBe(201);
-        const owner = (await minted.json()) as { key: string; id: string };
-        const registered = await call(
-          "/connectors",
-          "POST",
-          { name: label },
-          owner.key,
-        );
-        expect(registered.status, label).toBe(201);
-        const connector = ((await registered.json()) as { id: string }).id;
-        expect(
-          (
-            await call(
-              `/connectors/${connector}/hold`,
-              "POST",
-              { process: "p" },
-              owner.key,
-            )
-          ).status,
-          label,
-        ).toBe(200);
-        const item = await call(
-          "/items",
-          "POST",
-          {
-            type: "core.note",
-            properties: { body: label },
-          },
-          server.workingKey,
-        );
-        expect(item.status, label).toBe(201);
-        const itemId = ((await item.json()) as { item: { id: string } }).item
-          .id;
-        const write = (marker: string) =>
-          door === "state"
-            ? call(
-                `/connectors/${connector}/state`,
-                "PUT",
-                {
-                  process: "p",
-                  state: { marker },
-                  problems: { fence: marker },
-                },
+  // A failed try can leave a hold set and the clock moved, which the retry would start from.
+  it(
+    "refuses a write whose key is revoked or expires while the write waits for the database",
+    { retry: 0 },
+    async () => {
+      let number = 0;
+      for (const ending of ["revoked", "expired"] as const) {
+        for (const door of ["state", "agreements"] as const) {
+          number++;
+          const label = `${ending} ${door}`;
+          const source = `fence-${String(number)}`;
+          const minted = await call(
+            "/keys",
+            "POST",
+            {
+              label,
+              source,
+              ...(ending === "expired"
+                ? {
+                    expires_at: new Date(
+                      Date.now() + server.clockOffsetMs + 60 * 60_000,
+                    ).toISOString(),
+                  }
+                : {}),
+            },
+            server.workingKey,
+          );
+          expect(minted.status, label).toBe(201);
+          const owner = (await minted.json()) as { key: string; id: string };
+          const registered = await call(
+            "/connectors",
+            "POST",
+            { name: label },
+            owner.key,
+          );
+          expect(registered.status, label).toBe(201);
+          const connector = ((await registered.json()) as { id: string }).id;
+          expect(
+            (
+              await call(
+                `/connectors/${connector}/hold`,
+                "POST",
+                { process: "p" },
                 owner.key,
               )
-            : call(
-                `/connectors/${connector}/agreements`,
-                "POST",
-                {
-                  process: "p",
-                  set: [
-                    { item_id: itemId, waiting: false, record: { marker } },
-                  ],
-                },
-                owner.key,
-              );
-
-        // The witness: the key's own write is taken while it stands.
-        expect((await write("before")).status, label).toBe(200);
-
-        await server.setFault("hold:connector-write");
-        let pending: Promise<Response>;
-        try {
-          pending = write("in flight");
-          await server.waitForHold("hold:connector-write");
-          if (ending === "revoked") {
-            const revoked = await call(
-              `/keys/${owner.id}`,
-              "DELETE",
-              undefined,
-              server.workingKey,
-            );
-            expect(revoked.status, label).toBe(200);
-          } else await server.advanceClock(2 * 60 * 60_000);
-        } finally {
-          await server.clearFault();
-        }
-        expect((await pending).status, label).toBe(401);
-
-        // What the source holds is what the key wrote before it ended. A
-        // successor under the source reads it through its own registration.
-        const minting = await controlRequest(server.controlSocket, "/keys", {
-          method: "POST",
-          body: { label, source },
-        });
-        expect(minting.status, label).toBe(201);
-        const successor = minting.body as { key: string; id: string };
-        const successorRegistration = await call(
-          "/connectors",
-          "POST",
-          { name: `${label} successor` },
-          successor.key,
-        );
-        expect(successorRegistration.status, label).toBe(201);
-        const next = ((await successorRegistration.json()) as { id: string })
-          .id;
-        if (door === "state") {
-          const held = await call(
-            `/connectors/${next}/state`,
-            "GET",
-            undefined,
-            successor.key,
-          );
-          expect(await held.json(), label).toMatchObject({
-            state: { marker: "before" },
-            problems: { fence: "before" },
-          });
-        } else {
-          const held = await call(
-            `/connectors/${next}/agreements/lookup`,
-            "POST",
-            { item_ids: [itemId] },
-            successor.key,
-          );
-          expect(
-            ((await held.json()) as { data: { record: unknown }[] }).data.map(
-              (row) => row.record,
-            ),
+            ).status,
             label,
-          ).toEqual([{ marker: "before" }]);
+          ).toBe(200);
+          const item = await call(
+            "/items",
+            "POST",
+            {
+              type: "core.note",
+              properties: { body: label },
+            },
+            server.workingKey,
+          );
+          expect(item.status, label).toBe(201);
+          const itemId = ((await item.json()) as { item: { id: string } }).item
+            .id;
+          const write = (marker: string) =>
+            door === "state"
+              ? call(
+                  `/connectors/${connector}/state`,
+                  "PUT",
+                  {
+                    process: "p",
+                    state: { marker },
+                    problems: { fence: marker },
+                  },
+                  owner.key,
+                )
+              : call(
+                  `/connectors/${connector}/agreements`,
+                  "POST",
+                  {
+                    process: "p",
+                    set: [
+                      { item_id: itemId, waiting: false, record: { marker } },
+                    ],
+                  },
+                  owner.key,
+                );
+
+          // The witness: the key's own write is taken while it stands.
+          expect((await write("before")).status, label).toBe(200);
+
+          await server.setFault("hold:connector-write");
+          let pending: Promise<Response>;
+          try {
+            pending = write("in flight");
+            await server.waitForHold("hold:connector-write");
+            if (ending === "revoked") {
+              const revoked = await call(
+                `/keys/${owner.id}`,
+                "DELETE",
+                undefined,
+                server.workingKey,
+              );
+              expect(revoked.status, label).toBe(200);
+            } else await server.advanceClock(2 * 60 * 60_000);
+          } finally {
+            await server.clearFault();
+          }
+          expect((await pending).status, label).toBe(401);
+
+          // What the source holds is what the key wrote before it ended. A
+          // successor under the source reads it through its own registration.
+          const minting = await controlRequest(server.controlSocket, "/keys", {
+            method: "POST",
+            body: { label, source },
+          });
+          expect(minting.status, label).toBe(201);
+          const successor = minting.body as { key: string; id: string };
+          const successorRegistration = await call(
+            "/connectors",
+            "POST",
+            { name: `${label} successor` },
+            successor.key,
+          );
+          expect(successorRegistration.status, label).toBe(201);
+          const next = ((await successorRegistration.json()) as { id: string })
+            .id;
+          if (door === "state") {
+            const held = await call(
+              `/connectors/${next}/state`,
+              "GET",
+              undefined,
+              successor.key,
+            );
+            expect(await held.json(), label).toMatchObject({
+              state: { marker: "before" },
+              problems: { fence: "before" },
+            });
+          } else {
+            const held = await call(
+              `/connectors/${next}/agreements/lookup`,
+              "POST",
+              { item_ids: [itemId] },
+              successor.key,
+            );
+            expect(
+              ((await held.json()) as { data: { record: unknown }[] }).data.map(
+                (row) => row.record,
+              ),
+              label,
+            ).toEqual([{ marker: "before" }]);
+          }
         }
       }
-    }
-  });
+    },
+  );
 });

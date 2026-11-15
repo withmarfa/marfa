@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { FieldDefinition, TestContext } from "../../client/types.js";
@@ -604,7 +605,7 @@ describe("a url is stored without the whitespace around it at every door", () =>
   });
 
   it("stores them trimmed on an upsert onto an existing item and on a bulk update", async () => {
-    const key = `url-${ctx.runId}`;
+    const key = `url-${ctx.runId}-${randomUUID()}`;
     const item = await made({ note: "n" }, `${key}-a`);
     const upserted = await client.createItem({
       type: typeId,

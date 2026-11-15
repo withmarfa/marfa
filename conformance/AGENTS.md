@@ -23,7 +23,8 @@ These hold for every fixture that asserts an absence or waits on a stream, in an
 - **Wait on the stream's own signal, never on a fixed time.** A stream opens with a `stream_cursor` frame naming the log head, and a write made after it is sent (`events/stream-sends-after-cursor`). Open a stream with `withStreamAtCursor` (or `awaitStreamCursor` on one you opened) from `src/utils/stream.ts`, write, drain what follows, then assert. Never sleep to "let the subscription settle": response headers arriving is not the signal. Waiting on a frame that may never arrive ends in the runner's `Test timed out` and says nothing else, so pass `context.signal`.
 - **Settle an absence with a later frame.** A quiet window cannot tell "nothing more is coming" from "not yet". Write a sentinel after the thing under test and wait for the sentinel's own event.
 - **No hand-rolled deadline.** A `while (cond && Date.now() < deadline)` loop followed by an assertion on `cond` turns the runner's timeout into a logic failure. Use the runner's budget, and pass `context.signal` to the stream helpers so an abort names what it waited for.
-- **No other skips.** CI runs every shard with `--retry=0`, and the score counts every skip and todo as not passing except a test marked `ON_MACOS` (`src/utils/platform.ts`) off a Mac and a skip that sets `meta.unobservable` to its reason.
+- **A retry is the shard's, not the fixture's.** CI runs every shard with `--retry=1`: a test that fails is run once more, so write each test to pass on a second run against the same server. One that passes on the retry counts as passing and is listed in the score's summary and as a warning annotation; a test listed twice gets an issue and a fix. Give every key a server dedupes (an `Idempotency-Key`, a natural key a test then expects to be new) a fresh part per run of the test body, such as `randomUUID()`, so the retry's first request is not already a replay. A test that cannot run twice, because its claim is an elapsed-time bound or a failed try leaves a held fault, a moved clock or its rows behind, sets `{ retry: 0 }` with a one-line reason. Set no other `retry` on a test.
+- **No other skips.** The score counts every skip and todo as not passing except a test marked `ON_MACOS` (`src/utils/platform.ts`) off a Mac and a skip that sets `meta.unobservable` to its reason.
 
 ## What the score judges
 
@@ -42,7 +43,7 @@ These hold for every fixture that asserts an absence or waits on a stream, in an
 
 ## Code Review Rules
 
-- A test or fixture weakened, skipped, retried or removed so that something passes is a finding.
+- A test or fixture weakened, skipped, retried or removed so that something passes is a finding. The shard's own `--retry=1`, which the score lists, is not; a `retry` above 0 set on a test is.
 - A fixture file of the five server projects that does not pass whole on the Rust server is a finding.
 - A stand-in in server code that exists only to make a fixture pass is a finding.
 - A fixture that reaches past the target interface without its entry and reason in `TARGET-INTERFACE.md` is a finding.

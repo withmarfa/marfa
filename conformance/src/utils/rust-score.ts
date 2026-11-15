@@ -21,11 +21,41 @@ export interface VitestReport {
   }[];
 }
 
-/** A test as Vitest's JSON report lists it, with the metadata `platform.ts` sets. */
+/**
+ * A test as Vitest's JSON report lists it, with the metadata `platform.ts` sets.
+ * The report has no retry count: a test that failed and then passed on a retry
+ * is `passed` with the failure of the first try still in `failureMessages`.
+ */
 export interface ReportedTest {
   status: string;
   fullName?: string;
+  failureMessages?: string[];
   meta?: { onlyOn?: unknown; unobservable?: unknown };
+}
+
+/** A test that failed and then passed on its retry. */
+export interface RetriedTest {
+  /** By path from `conformance/`. */
+  file: string;
+  title: string;
+  /** The first line of the failure of the first try. */
+  failure: string;
+}
+
+/**
+ * The first line of what a test that passed on its retry failed with, or
+ * `undefined` when it passed on its first try. The JSON report names each
+ * failed try in `failureMessages`, so the score reads the retry from it and
+ * from the reports of every job at once, where Vitest's `diagnostic().flaky`
+ * is only in the process that ran the test.
+ */
+export function retryFailure(test: ReportedTest): string | undefined {
+  if (test.status !== "passed") return undefined;
+  const first: unknown = test.failureMessages?.[0];
+  if (first === undefined) return undefined;
+  if (typeof first !== "string") return "no message";
+  const line = first.split("\n")[0]?.trim() ?? "";
+  return line === "" ? "no message" : line.slice(0, 200);
 }
 
 /**
@@ -58,6 +88,8 @@ export interface FileScore {
   total: number;
   /** The tests skipped for the machine alone, by name, with the reason. */
   excused: string[];
+  /** The tests that passed only on a retry. They count as passing. */
+  retried: RetriedTest[];
   /** Whether a report names the file. */
   reported: boolean;
   /** Whether the file failed to load or a hook failed around its tests. */
@@ -82,6 +114,8 @@ export interface Score {
   filesPassing: number;
   /** The files that did not pass whole, with the reason. */
   failures: string[];
+  /** Every test that passed only on a retry, by file and title. */
+  retried: RetriedTest[];
   /** The platform whose tests the reports hold. */
   platform: string;
 }
@@ -172,7 +206,9 @@ const whole = (file: FileScore): boolean =>
  * and every test in it passed, so a file no shard reported fails, and a file
  * that did not load fails. A report lists every test of a file that loaded,
  * skipped ones included, so a file never lists fewer tests than it holds. A
- * report of a file outside the five projects is ignored.
+ * report of a file outside the five projects is ignored. A test that passed
+ * on a retry counts as passing and is listed in `retried`; one that failed on
+ * both tries is `failed` and does not pass.
  */
 export function scoreRun(
   reports: readonly VitestReport[],
@@ -189,6 +225,7 @@ export function scoreRun(
     reported: false,
     broken: false,
     excused: [],
+    retried: [],
     judged: judgedSet.has(file),
   });
   for (const file of files) byFile.set(file, blank(file));
@@ -206,6 +243,12 @@ export function scoreRun(
         return why === undefined
           ? []
           : [`${test.fullName ?? "a test"}: ${why}`];
+      });
+      score.retried = result.assertionResults.flatMap((test) => {
+        const failure = retryFailure(test);
+        return failure === undefined
+          ? []
+          : [{ file, title: test.fullName ?? "a test", failure }];
       });
       score.total = result.assertionResults.length - score.excused.length;
       score.passed = result.assertionResults.filter(
@@ -249,6 +292,7 @@ export function scoreRun(
     total: scores.reduce((sum, score) => sum + score.total, 0),
     filesPassing: scores.filter(whole).length,
     failures,
+    retried: scores.flatMap((score) => score.retried),
     platform,
   };
 }
@@ -271,6 +315,17 @@ export function renderScore(score: Score): string {
       "Files that do not pass:",
       "",
       ...score.failures.map((failure) => `- ${failure}`),
+      "",
+    );
+  }
+  if (score.retried.length > 0) {
+    lines.push(
+      "Passed only on a retry, counted as passing. A test listed here twice gets an issue and a fix:",
+      "",
+      ...score.retried.map(
+        (test) =>
+          `- ${test.file} › ${test.title}: first try failed with ${test.failure}`,
+      ),
       "",
     );
   }
@@ -302,4 +357,19 @@ export function renderScore(score: Score): string {
     "",
   );
   return lines.join("\n");
+}
+
+/** Escapes a value for a workflow command, so a newline or `%` cannot end it. */
+const annotate = (value: string): string =>
+  value.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+
+/**
+ * One GitHub warning annotation for each test that passed only on a retry,
+ * anchored to its file from the repository root.
+ */
+export function retryAnnotations(score: Score): string[] {
+  return score.retried.map(
+    (test) =>
+      `::warning file=conformance/${test.file}::${annotate(`flaky test, failed and then passed on retry: ${test.title}: ${test.failure}`)}`,
+  );
 }

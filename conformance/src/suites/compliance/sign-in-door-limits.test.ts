@@ -295,108 +295,119 @@ describe("what every address together leaves in the audit log", () => {
     expect(held[1]?.details?.unrecorded_after).toBe(60);
   });
 
-  it("measures the fifteen minutes from when a registration's record is written", async () => {
-    await windowed.pauseClock(true);
-    try {
-      await windowed.setFault("hold:write=auth.client.created");
-      const first = register(windowed, "192.0.2.1");
-      await windowed.waitForHold("hold:write");
-      await windowed.advanceClock(1_000);
-      await windowed.clearFault("hold:write");
-      expect((await first).status).toBe(201);
-      for (let n = 2; n <= 10; n++) {
-        expect((await register(windowed, `192.0.2.${String(n)}`)).status).toBe(
-          201,
-        );
+  // A failed try can leave a hold set and the clock moved, which the retry would start from.
+  it(
+    "measures the fifteen minutes from when a registration's record is written",
+    { retry: 0 },
+    async () => {
+      await windowed.pauseClock(true);
+      try {
+        await windowed.setFault("hold:write=auth.client.created");
+        const first = register(windowed, "192.0.2.1");
+        await windowed.waitForHold("hold:write");
+        await windowed.advanceClock(1_000);
+        await windowed.clearFault("hold:write");
+        expect((await first).status).toBe(201);
+        for (let n = 2; n <= 10; n++) {
+          expect(
+            (await register(windowed, `192.0.2.${String(n)}`)).status,
+          ).toBe(201);
+        }
+        await windowed.advanceClock(15 * 60 * 1000 - 1);
+        expect((await register(windowed, "192.0.2.11")).status).toBe(201);
+        const inside = await audited(windowed, "auth.client.created");
+        expect(inside).toHaveLength(10);
+        expect(inside[0]?.details?.unrecorded_after).toBe(1);
+        await windowed.advanceClock(1);
+        expect((await register(windowed, "192.0.2.12")).status).toBe(201);
+        expect(await audited(windowed, "auth.client.created")).toHaveLength(11);
+      } finally {
+        await windowed.pauseClock(false);
       }
-      await windowed.advanceClock(15 * 60 * 1000 - 1);
-      expect((await register(windowed, "192.0.2.11")).status).toBe(201);
-      const inside = await audited(windowed, "auth.client.created");
-      expect(inside).toHaveLength(10);
-      expect(inside[0]?.details?.unrecorded_after).toBe(1);
-      await windowed.advanceClock(1);
-      expect((await register(windowed, "192.0.2.12")).status).toBe(201);
-      expect(await audited(windowed, "auth.client.created")).toHaveLength(11);
-    } finally {
-      await windowed.pauseClock(false);
-    }
-  });
+    },
+  );
 
-  it("writes no more than ten registration records when the callers leave before their writes", async () => {
-    // Hold the writer until the registration callers disconnect.
-    await abandoned.setFault("hold:bulk-page=1");
-    const page = fetch(`${abandoned.apiUrl}/items/bulk`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${abandoned.workingKey}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        mode: "upsert",
-        items: [
-          {
-            type: "core.note",
-            source_id: "held-page",
-            properties: { title: "held page" },
-          },
-        ],
-      }),
-    });
-    await abandoned.waitForHold("hold:bulk-page");
-    // The eleventh caller write to reach the writer's queue fails there, so its
-    // firing says the ten before it are queued.
-    await abandoned.setFault("fail:lock=11");
-    const left = await Promise.all(
-      Array.from({ length: 11 }, (_, n) => {
-        const request = http.request(
-          `${abandoned.apiUrl}/auth/oauth2/register`,
-          {
-            method: "POST",
-            agent: false,
-            headers: {
-              "content-type": "application/json",
-              [CLIENT_HEADER]: `198.51.100.${String(n + 1)}`,
+  // A failed try can leave a hold set and the clock moved, which the retry would start from.
+  it(
+    "writes no more than ten registration records when the callers leave before their writes",
+    { retry: 0 },
+    async () => {
+      // Hold the writer until the registration callers disconnect.
+      await abandoned.setFault("hold:bulk-page=1");
+      const page = fetch(`${abandoned.apiUrl}/items/bulk`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${abandoned.workingKey}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          mode: "upsert",
+          items: [
+            {
+              type: "core.note",
+              source_id: "held-page",
+              properties: { title: "held page" },
             },
-          },
-          (response) => response.resume(),
-        );
-        request.on("error", () => undefined);
-        return new Promise<http.ClientRequest>((sent) => {
-          request.end(METADATA, () => {
-            sent(request);
+          ],
+        }),
+      });
+      await abandoned.waitForHold("hold:bulk-page");
+      // The eleventh caller write to reach the writer's queue fails there, so its
+      // firing says the ten before it are queued.
+      await abandoned.setFault("fail:lock=11");
+      const left = await Promise.all(
+        Array.from({ length: 11 }, (_, n) => {
+          const request = http.request(
+            `${abandoned.apiUrl}/auth/oauth2/register`,
+            {
+              method: "POST",
+              agent: false,
+              headers: {
+                "content-type": "application/json",
+                [CLIENT_HEADER]: `198.51.100.${String(n + 1)}`,
+              },
+            },
+            (response) => response.resume(),
+          );
+          request.on("error", () => undefined);
+          return new Promise<http.ClientRequest>((sent) => {
+            request.end(METADATA, () => {
+              sent(request);
+            });
           });
-        });
-      }),
-    );
-    await expect
-      .poll(
-        async () =>
-          (await abandoned.faults()).find((fault) => fault.name === "fail:lock")
-            ?.fired,
-        { timeout: 60_000 },
-      )
-      .toBe(1);
-    for (const request of left) request.destroy();
-    await abandoned.clearFault("fail:lock");
-    await abandoned.clearFault("hold:bulk-page");
-    expect((await page).status).toBe(200);
-
-    // A registration that answers was queued behind every one that left.
-    expect((await register(abandoned, "203.0.113.1")).status).toBe(201);
-    const first = await audited(abandoned, "auth.client.created");
-    expect(first).toHaveLength(10);
-    expect(first[0]?.details?.unrecorded_after).toBe(1);
-
-    await abandoned.advanceClock(60_001);
-    for (let n = 2; n <= 11; n++) {
-      expect((await register(abandoned, `203.0.113.${String(n)}`)).status).toBe(
-        201,
+        }),
       );
-    }
-    const held = await audited(abandoned, "auth.client.created");
-    expect(held).toHaveLength(10);
-    expect(held[0]?.details?.unrecorded_after).toBe(11);
-  });
+      await expect
+        .poll(
+          async () =>
+            (await abandoned.faults()).find(
+              (fault) => fault.name === "fail:lock",
+            )?.fired,
+          { timeout: 60_000 },
+        )
+        .toBe(1);
+      for (const request of left) request.destroy();
+      await abandoned.clearFault("fail:lock");
+      await abandoned.clearFault("hold:bulk-page");
+      expect((await page).status).toBe(200);
+
+      // A registration that answers was queued behind every one that left.
+      expect((await register(abandoned, "203.0.113.1")).status).toBe(201);
+      const first = await audited(abandoned, "auth.client.created");
+      expect(first).toHaveLength(10);
+      expect(first[0]?.details?.unrecorded_after).toBe(1);
+
+      await abandoned.advanceClock(60_001);
+      for (let n = 2; n <= 11; n++) {
+        expect(
+          (await register(abandoned, `203.0.113.${String(n)}`)).status,
+        ).toBe(201);
+      }
+      const held = await audited(abandoned, "auth.client.created");
+      expect(held).toHaveLength(10);
+      expect(held[0]?.details?.unrecorded_after).toBe(11);
+    },
+  );
 
   it("issues every device code from every address, records ten in fifteen minutes, and counts the rest on the newest record", async () => {
     const app = await registerApp(codes, "core.note:read", {

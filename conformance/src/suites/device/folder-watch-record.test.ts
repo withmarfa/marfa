@@ -540,38 +540,43 @@ describe("the record of folder watches", () => {
     expect(pids.sort()).toEqual([2_000_002, watch.pid()].sort());
   });
 
-  it("goes on syncing and ends on an interrupt while another process holds the record's lock", async () => {
-    const { a } = await twoFolders("record-locked");
-    const first = await lockHeld(a);
-    const second: ChildProcess[] = [];
-    try {
-      put(a, "Locked.md", "---\ntitle: Locked\n---\nsynced under the lock\n");
-      const watch = hold(a.folder.watchEvery());
-      await vi.waitFor(
-        () => expect(sentTitles(a), watch.stdout).toEqual(["Locked"]),
-        WAIT,
-      );
-      expect(existsSync(recordPath(a)), "written under a held lock").toBe(
-        false,
-      );
-      // The witness that the record is kept when the lock is free: the same
-      // watch writes it once the lock is let go.
-      first.kill("SIGKILL");
-      await vi.waitFor(
-        () => expect(processOf(a, watch.pid()), watch.stdout).toBeDefined(),
-        WAIT,
-      );
-      second.push(await lockHeld(a));
-      const interrupted = Date.now();
-      watch.interrupt();
-      await watch.exited();
-      expect(Date.now() - interrupted).toBeLessThan(3_000);
-      expect(watch.exitCode(), watch.stderr).toBe(130);
-    } finally {
-      first.kill("SIGKILL");
-      for (const holder of second) holder.kill("SIGKILL");
-    }
-  });
+  // The claim is a latency bound: a pass on the second try would pass a slow stop.
+  it(
+    "goes on syncing and ends on an interrupt while another process holds the record's lock",
+    { retry: 0 },
+    async () => {
+      const { a } = await twoFolders("record-locked");
+      const first = await lockHeld(a);
+      const second: ChildProcess[] = [];
+      try {
+        put(a, "Locked.md", "---\ntitle: Locked\n---\nsynced under the lock\n");
+        const watch = hold(a.folder.watchEvery());
+        await vi.waitFor(
+          () => expect(sentTitles(a), watch.stdout).toEqual(["Locked"]),
+          WAIT,
+        );
+        expect(existsSync(recordPath(a)), "written under a held lock").toBe(
+          false,
+        );
+        // The witness that the record is kept when the lock is free: the same
+        // watch writes it once the lock is let go.
+        first.kill("SIGKILL");
+        await vi.waitFor(
+          () => expect(processOf(a, watch.pid()), watch.stdout).toBeDefined(),
+          WAIT,
+        );
+        second.push(await lockHeld(a));
+        const interrupted = Date.now();
+        watch.interrupt();
+        await watch.exited();
+        expect(Date.now() - interrupted).toBeLessThan(3_000);
+        expect(watch.exitCode(), watch.stderr).toBe(130);
+      } finally {
+        first.kill("SIGKILL");
+        for (const holder of second) holder.kill("SIGKILL");
+      }
+    },
+  );
 
   it("says once that another process has held the record's lock for long", async () => {
     const { a } = await twoFolders("record-locked-long");

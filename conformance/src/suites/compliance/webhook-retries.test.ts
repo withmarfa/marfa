@@ -302,62 +302,67 @@ describe("webhook retry waits", () => {
     },
   );
 
-  it("queues each event once for each subscription entitled to it when the server stops while it schedules", async () => {
-    plans.set("queued-a", () => ({ status: 200 }));
-    plans.set("queued-b", () => ({ status: 200 }));
-    plans.set("queued-c", () => ({ status: 200 }));
-    const subscribe = async (label: string, events: string[]) => {
-      const created = await owner().createWebhook({
-        url: receiver.hookUrl(label),
-        events,
-      });
-      expect(created.status, JSON.stringify(created.error)).toBe(201);
-      return created.data.id;
-    };
-    const a = await subscribe("queued-a", ["item.created"]);
-    const b = await subscribe("queued-b", ["item.created"]);
-    // Entitled to none of what is written.
-    const c = await subscribe("queued-c", ["item.deleted"]);
-    try {
-      // Stop with delivery creation and position advancement still uncommitted.
-      await server.setFault("hold:webhook-schedule");
-      for (const body of ["queued-1", "queued-2", "queued-3"]) {
-        await write(body);
-      }
-      await server.setFault("hold:webhook-schedule:queued");
-      await server.clearFault("hold:webhook-schedule");
-      await server.waitForHold("hold:webhook-schedule:queued");
+  // A failed try can leave a hold set and the clock moved, which the retry would start from.
+  it(
+    "queues each event once for each subscription entitled to it when the server stops while it schedules",
+    { retry: 0 },
+    async () => {
+      plans.set("queued-a", () => ({ status: 200 }));
+      plans.set("queued-b", () => ({ status: 200 }));
+      plans.set("queued-c", () => ({ status: 200 }));
+      const subscribe = async (label: string, events: string[]) => {
+        const created = await owner().createWebhook({
+          url: receiver.hookUrl(label),
+          events,
+        });
+        expect(created.status, JSON.stringify(created.error)).toBe(201);
+        return created.data.id;
+      };
+      const a = await subscribe("queued-a", ["item.created"]);
+      const b = await subscribe("queued-b", ["item.created"]);
+      // Entitled to none of what is written.
+      const c = await subscribe("queued-c", ["item.deleted"]);
+      try {
+        // Stop with delivery creation and position advancement still uncommitted.
+        await server.setFault("hold:webhook-schedule");
+        for (const body of ["queued-1", "queued-2", "queued-3"]) {
+          await write(body);
+        }
+        await server.setFault("hold:webhook-schedule:queued");
+        await server.clearFault("hold:webhook-schedule");
+        await server.waitForHold("hold:webhook-schedule:queued");
 
-      await server.restart({ signal: "SIGKILL" });
+        await server.restart({ signal: "SIGKILL" });
 
-      const sent = (label: string) =>
-        arrivals(label).map(
-          (r) => (JSON.parse(r.body) as { event_id: string }).event_id,
+        const sent = (label: string) =>
+          arrivals(label).map(
+            (r) => (JSON.parse(r.body) as { event_id: string }).event_id,
+          );
+        await waitFor(
+          "three deliveries to each entitled subscription",
+          async () =>
+            sent("queued-a").length >= 3 && sent("queued-b").length >= 3
+              ? true
+              : undefined,
+          60_000,
         );
-      await waitFor(
-        "three deliveries to each entitled subscription",
-        async () =>
-          sent("queued-a").length >= 3 && sent("queued-b").length >= 3
-            ? true
-            : undefined,
-        60_000,
-      );
-      // Time for a second scheduling of the same events to show.
-      await settle();
+        // Time for a second scheduling of the same events to show.
+        await settle();
 
-      for (const [label, webhook] of [
-        ["queued-a", a],
-        ["queued-b", b],
-      ] as const) {
-        const events = sent(label);
-        expect(new Set(events).size, `${label}: ${events.join(",")}`).toBe(3);
-        expect(events, label).toHaveLength(3);
-        expect(await deliveries(webhook), label).toHaveLength(3);
+        for (const [label, webhook] of [
+          ["queued-a", a],
+          ["queued-b", b],
+        ] as const) {
+          const events = sent(label);
+          expect(new Set(events).size, `${label}: ${events.join(",")}`).toBe(3);
+          expect(events, label).toHaveLength(3);
+          expect(await deliveries(webhook), label).toHaveLength(3);
+        }
+        expect(arrivals("queued-c")).toHaveLength(0);
+        expect(await deliveries(c)).toHaveLength(0);
+      } finally {
+        for (const id of [a, b, c]) await end(id);
       }
-      expect(arrivals("queued-c")).toHaveLength(0);
-      expect(await deliveries(c)).toHaveLength(0);
-    } finally {
-      for (const id of [a, b, c]) await end(id);
-    }
-  });
+    },
+  );
 });

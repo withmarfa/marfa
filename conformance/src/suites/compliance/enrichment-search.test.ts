@@ -153,29 +153,34 @@ describe("search over extracted file text", () => {
     }
   }, 120_000);
 
-  it("keeps the text before a limit a page passes, and reads it within a bound of time", async () => {
-    const ordinary = await webPage(
-      "ordinary page",
-      "<p>pelicanwick</p><p>pastthelimitword</p>",
-      "text/html",
-    );
-    // The ordinary page is the witness: its last word is found when nothing
-    // stops the read. This page nests without end and closes what was never
-    // opened before the same word.
-    const hostile = await webPage(
-      "hostile page",
-      `<p>fennelwick</p>${"<div>".repeat(200_000)}${"</x>".repeat(200_000)}<p>pastthelimitword</p>`,
-      "text/html",
-    );
+  // The claim is a latency bound: a pass on the second try would pass a slow read.
+  it(
+    "keeps the text before a limit a page passes, and reads it within a bound of time",
+    { retry: 0, timeout: 120_000 },
+    async () => {
+      const ordinary = await webPage(
+        "ordinary page",
+        "<p>pelicanwick</p><p>pastthelimitword</p>",
+        "text/html",
+      );
+      // The ordinary page is the witness: its last word is found when nothing
+      // stops the read. This page nests without end and closes what was never
+      // opened before the same word.
+      const hostile = await webPage(
+        "hostile page",
+        `<p>fennelwick</p>${"<div>".repeat(200_000)}${"</x>".repeat(200_000)}<p>pastthelimitword</p>`,
+        "text/html",
+      );
 
-    const started = performance.now();
-    await sweep();
-    expect(performance.now() - started).toBeLessThan(15_000);
+      const started = performance.now();
+      await sweep();
+      expect(performance.now() - started).toBeLessThan(15_000);
 
-    expect(await found("pelicanwick")).toEqual([ordinary]);
-    expect(await found("fennelwick")).toEqual([hostile]);
-    expect(await found("pastthelimitword")).toEqual([ordinary]);
-  }, 120_000);
+      expect(await found("pelicanwick")).toEqual([ordinary]);
+      expect(await found("fennelwick")).toEqual([hostile]);
+      expect(await found("pastthelimitword")).toEqual([ordinary]);
+    },
+  );
 
   it("leaves a file in the bin unmatched, and matches it again once restored", async () => {
     const id = await textFile("binned scan", "the glimmerwick manifest");

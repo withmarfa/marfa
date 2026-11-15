@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type {
@@ -555,7 +556,9 @@ describe("moving an edge's end", () => {
     const from = await makeItem("replay-from");
     const to = await makeItem("replay-to");
     const held = await makeEdge(message, from, "in-thread");
-    const headers = { "Idempotency-Key": `edge-move-${ctx.runId}` };
+    const headers = {
+      "Idempotency-Key": `edge-move-${ctx.runId}-${randomUUID()}`,
+    };
     const body = {
       target_id: to,
       properties: { via: "replay" },

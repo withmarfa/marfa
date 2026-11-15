@@ -209,34 +209,42 @@ describe("a reader that stops reading", () => {
     }
   }, 180_000);
 
-  it("does not hold back a stop: the server stops within its budget with a status of 0", async () => {
-    const fresh = await bootFreshServer("stream-stalled-reader-stop");
-    const writer = new MarfaClient({
-      baseUrl: fresh.apiUrl,
-      apiKey: fresh.workingKey,
-    });
-    const { socket } = await stalledSubscriber(fresh.apiUrl, fresh.workingKey);
-    try {
-      await new Promise((r) => setTimeout(r, 300));
-      for (let written = 0; written < WRITTEN; written += 10 * BODY.length) {
-        const r = await writer.bulkItems(
-          Array.from({ length: 10 }, (_, i) =>
-            createNote({
-              source: "stream-stalled-reader-stop",
-              properties: { body: `${String(written)}-${String(i)}${BODY}` },
-            }),
-          ),
-        );
-        expect(r.ok, JSON.stringify(r.error)).toBe(true);
+  // The claim is a latency bound: a pass on the second try would pass a slow stop.
+  it(
+    "does not hold back a stop: the server stops within its budget with a status of 0",
+    { retry: 0, timeout: 180_000 },
+    async () => {
+      const fresh = await bootFreshServer("stream-stalled-reader-stop");
+      const writer = new MarfaClient({
+        baseUrl: fresh.apiUrl,
+        apiKey: fresh.workingKey,
+      });
+      const { socket } = await stalledSubscriber(
+        fresh.apiUrl,
+        fresh.workingKey,
+      );
+      try {
+        await new Promise((r) => setTimeout(r, 300));
+        for (let written = 0; written < WRITTEN; written += 10 * BODY.length) {
+          const r = await writer.bulkItems(
+            Array.from({ length: 10 }, (_, i) =>
+              createNote({
+                source: "stream-stalled-reader-stop",
+                properties: { body: `${String(written)}-${String(i)}${BODY}` },
+              }),
+            ),
+          );
+          expect(r.ok, JSON.stringify(r.error)).toBe(true);
+        }
+        // The reader holds a frame the server cannot hand over, and is still
+        // inside the ping interval, so only the stop can end the stream.
+        const stoppedAt = Date.now();
+        fresh.signal("SIGTERM");
+        expect(await fresh.exit()).toMatchObject({ code: 0, signal: null });
+        expect(Date.now() - stoppedAt).toBeLessThan(STOP_BUDGET_MS);
+      } finally {
+        socket.destroy();
       }
-      // The reader holds a frame the server cannot hand over, and is still
-      // inside the ping interval, so only the stop can end the stream.
-      const stoppedAt = Date.now();
-      fresh.signal("SIGTERM");
-      expect(await fresh.exit()).toMatchObject({ code: 0, signal: null });
-      expect(Date.now() - stoppedAt).toBeLessThan(STOP_BUDGET_MS);
-    } finally {
-      socket.destroy();
-    }
-  }, 180_000);
+    },
+  );
 });

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
@@ -165,7 +166,7 @@ describe("X-Error-Code", () => {
       (JSON.parse(big.body) as { error: { code: string } }).error.code,
     ).toBe("request_too_large");
 
-    const key = `error-header-${ctx.runId}`;
+    const key = `error-header-${ctx.runId}-${randomUUID()}`;
     const send = (text: string) =>
       fetch(`${apiUrl}/items`, {
         method: "POST",
@@ -426,7 +427,7 @@ describe("X-Request-ID", () => {
   });
 
   it("is the retry's own on an answer replayed for an Idempotency-Key", async () => {
-    const key = `request-id-replay-${ctx.runId}`;
+    const key = `request-id-replay-${ctx.runId}-${randomUUID()}`;
     const send = (requestId: string) =>
       fetch(`${apiUrl}/items`, {
         method: "POST",

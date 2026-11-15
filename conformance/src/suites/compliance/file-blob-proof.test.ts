@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { BulkActionJob, TestContext } from "../../client/types.js";
@@ -158,7 +159,9 @@ describe("a file whose bytes its writer never proved", () => {
     const uploader = await keyHolding({ "core.file": "write" });
     const writer = await keyHolding({ "core.file": "write" });
     const { hash, bytes } = await uploadAs(uploader.client, "bytes C sent");
-    const headers = { "Idempotency-Key": `file-proof-${ctx.runId}` };
+    const headers = {
+      "Idempotency-Key": `file-proof-${ctx.runId}-${randomUUID()}`,
+    };
     const create = () =>
       writer.client.rawRequest<{ item: { id: string } }>("/items", {
         method: "POST",

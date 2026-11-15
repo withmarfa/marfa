@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { rmSync } from "node:fs";
 import { dirname } from "node:path";
@@ -193,7 +194,7 @@ it("creates offline at each tier in a slice of both, and the server holds each w
 });
 
 it("re-saves a feed item by its natural key in a slice of both without moving it", async () => {
-  const key = `slice-tiers-${ctx.runId}`;
+  const key = `slice-tiers-${ctx.runId}-${randomUUID()}`;
   const created = await client.createItem({
     type: "core.note",
     source: ctx.source,
@@ -235,7 +236,7 @@ it("re-saves a feed item by its natural key in a slice of both without moving it
 });
 
 it("re-saves an item moved to the feed by its natural key from a copy of the library without moving it", async () => {
-  const key = `slice-tiers-moved-${ctx.runId}`;
+  const key = `slice-tiers-moved-${ctx.runId}-${randomUUID()}`;
   const copy = device("slice-tiers-library-keyed");
   value(await copy.hydrate(["core.note"], "library"));
   const keyed = (body: string) => ({

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -217,7 +218,7 @@ describe("a request no door serves", () => {
       200,
     );
 
-    const key = `unmatched-metadata-${ctx.runId}`;
+    const key = `unmatched-metadata-${ctx.runId}-${randomUUID()}`;
     const send = (method: string, path: string) =>
       fetch(`${apiUrl}${path}`, {
         method,

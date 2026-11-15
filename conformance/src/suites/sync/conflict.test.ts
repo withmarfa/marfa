@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
@@ -1445,7 +1446,7 @@ describe("a conflicted copy names its original", () => {
     });
     expect(drawn.status).toBe(403);
 
-    const key = `copy-link-${ctx.runId}`;
+    const key = `copy-link-${ctx.runId}-${randomUUID()}`;
     const send = () =>
       writer.rawRequest<{
         conflict_resolution?: { conflicted_copy_id?: string };

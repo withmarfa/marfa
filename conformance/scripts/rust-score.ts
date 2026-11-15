@@ -12,7 +12,8 @@
  * only on another is left out. `--projects` scores only those contract
  * projects, for a run of some of them. Exits non-zero when a fixture file of
  * those projects did not pass whole or no report names it, and when there is
- * no report at all.
+ * no report at all. A test that passed only on a retry passes, and is listed in
+ * the Markdown and as a warning annotation.
  * `conformance/TARGET-INTERFACE.md` says how the score is counted.
  */
 import { appendFileSync, readdirSync, readFileSync } from "node:fs";
@@ -23,6 +24,7 @@ import {
   type ContractProject,
   contractFiles,
   renderScore,
+  retryAnnotations,
   scopeToProjects,
   scoreRun,
   type VitestReport,
@@ -93,6 +95,7 @@ const score = scoreRun(
 );
 const markdown = renderScore(score);
 console.log(markdown);
+for (const annotation of retryAnnotations(score)) console.log(annotation);
 if (args.markdown !== undefined) appendFileSync(args.markdown, markdown);
 if (score.failures.length > 0) {
   console.error(

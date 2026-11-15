@@ -1563,37 +1563,43 @@ describe("folder syncing from login", () => {
 });
 
 describe("the watch run by a service manager", () => {
-  it("ends on SIGTERM within three seconds with exit status 0, and marks its folders not watched", async () => {
-    const harness = await folderHarness("autostart-term");
-    made.push(harness);
-    const watch = harness.folder.watchEvery();
-    held.push(watch);
-    const recordPath = join(dirname(harness.registry), "folder-watch.json");
-    const entry = () =>
-      existsSync(recordPath)
-        ? (
-            JSON.parse(readFileSync(recordPath, "utf8")) as {
-              processes: Array<{
-                pid: number;
-                ended_at: string | null;
-                folders: Array<{ dir: string; watching: boolean }>;
-              }>;
-            }
-          ).processes.find((process) => process.pid === watch.pid())
-        : undefined;
-    await vi.waitFor(() => {
-      expect(
-        entry()?.folders.find((folder) => folder.dir === harness.dir)?.watching,
-      ).toBe(true);
-    }, WAIT);
-    const sent = Date.now();
-    process.kill(watch.pid(), "SIGTERM");
-    await watch.exited();
-    expect(Date.now() - sent).toBeLessThan(3_000);
-    expect(watch.exitCode(), watch.stderr).toBe(0);
-    expect(entry()?.ended_at).not.toBeNull();
-    expect(entry()?.folders.every((folder) => !folder.watching)).toBe(true);
-  });
+  // The claim is a latency bound: a pass on the second try would pass a slow stop.
+  it(
+    "ends on SIGTERM within three seconds with exit status 0, and marks its folders not watched",
+    { retry: 0 },
+    async () => {
+      const harness = await folderHarness("autostart-term");
+      made.push(harness);
+      const watch = harness.folder.watchEvery();
+      held.push(watch);
+      const recordPath = join(dirname(harness.registry), "folder-watch.json");
+      const entry = () =>
+        existsSync(recordPath)
+          ? (
+              JSON.parse(readFileSync(recordPath, "utf8")) as {
+                processes: Array<{
+                  pid: number;
+                  ended_at: string | null;
+                  folders: Array<{ dir: string; watching: boolean }>;
+                }>;
+              }
+            ).processes.find((process) => process.pid === watch.pid())
+          : undefined;
+      await vi.waitFor(() => {
+        expect(
+          entry()?.folders.find((folder) => folder.dir === harness.dir)
+            ?.watching,
+        ).toBe(true);
+      }, WAIT);
+      const sent = Date.now();
+      process.kill(watch.pid(), "SIGTERM");
+      await watch.exited();
+      expect(Date.now() - sent).toBeLessThan(3_000);
+      expect(watch.exitCode(), watch.stderr).toBe(0);
+      expect(entry()?.ended_at).not.toBeNull();
+      expect(entry()?.folders.every((folder) => !folder.watching)).toBe(true);
+    },
+  );
 
   // The scheduler gives utility quality of service a priority of 20 and the
   // default class 31, which `ps -M` lists for each thread. The command's own
@@ -1655,26 +1661,31 @@ describe("the watch run by a service manager", () => {
     },
   );
 
-  it("ends on SIGTERM with exit status 0 while it sends telemetry, too", async () => {
-    const harness = await folderHarness("autostart-term-telemetry");
-    made.push(harness);
-    // A collector nothing answers at: the trace is tried and given up.
-    const watch = harness.folder.watchEvery({
-      OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
-      OTEL_SDK_DISABLED: "false",
-    });
-    held.push(watch);
-    await vi.waitFor(
-      () => expect(watch.stderr).toContain("watching every folder"),
-      WAIT,
-    );
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const sent = Date.now();
-    process.kill(watch.pid(), "SIGTERM");
-    await watch.exited();
-    expect(Date.now() - sent).toBeLessThan(5_000);
-    expect(watch.exitCode(), watch.stderr).toBe(0);
-  });
+  // The claim is a latency bound: a pass on the second try would pass a slow stop.
+  it(
+    "ends on SIGTERM with exit status 0 while it sends telemetry, too",
+    { retry: 0 },
+    async () => {
+      const harness = await folderHarness("autostart-term-telemetry");
+      made.push(harness);
+      // A collector nothing answers at: the trace is tried and given up.
+      const watch = harness.folder.watchEvery({
+        OTEL_EXPORTER_OTLP_ENDPOINT: "http://127.0.0.1:9",
+        OTEL_SDK_DISABLED: "false",
+      });
+      held.push(watch);
+      await vi.waitFor(
+        () => expect(watch.stderr).toContain("watching every folder"),
+        WAIT,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      const sent = Date.now();
+      process.kill(watch.pid(), "SIGTERM");
+      await watch.exited();
+      expect(Date.now() - sent).toBeLessThan(5_000);
+      expect(watch.exitCode(), watch.stderr).toBe(0);
+    },
+  );
 
   describe.each([
     { signal: "SIGTERM", status: 0 },
@@ -1740,43 +1751,48 @@ describe("the watch run by a service manager", () => {
     expect(readLog(`${log}.1`)).not.toContain("stopped by");
   });
 
-  it("writes the stop line, and ends within three seconds with exit status 0, when SIGTERM comes during a pass that waits on the server", async () => {
-    const harness = await folderHarness("autostart-stop-in-pass");
-    made.push(harness);
-    // The server takes the create and never answers, so the pass stays under way.
-    scriptFolderWrites(harness, { creating: () => ({ kind: "stall" }) });
-    const log = logIn("stop-in-pass");
-    const watch = harness.folder
-      .device()
-      .hold(["folders", "watch", harness.dir, "--log", log], "root");
-    held.push(watch);
-    await vi.waitFor(() => {
-      expect(readLog(log)).toContain("watching");
-    }, WAIT);
-    put(
-      harness,
-      "Waiting.md",
-      "---\ntitle: Waiting\n---\nsent, never answered\n",
-    );
-    await vi.waitFor(() => {
-      expect(
-        harness.server.requests.filter(
-          (request) =>
-            request.method === "POST" && request.pathname === "/items",
+  // The claim is a latency bound: a pass on the second try would pass a slow stop.
+  it(
+    "writes the stop line, and ends within three seconds with exit status 0, when SIGTERM comes during a pass that waits on the server",
+    { retry: 0 },
+    async () => {
+      const harness = await folderHarness("autostart-stop-in-pass");
+      made.push(harness);
+      // The server takes the create and never answers, so the pass stays under way.
+      scriptFolderWrites(harness, { creating: () => ({ kind: "stall" }) });
+      const log = logIn("stop-in-pass");
+      const watch = harness.folder
+        .device()
+        .hold(["folders", "watch", harness.dir, "--log", log], "root");
+      held.push(watch);
+      await vi.waitFor(() => {
+        expect(readLog(log)).toContain("watching");
+      }, WAIT);
+      put(
+        harness,
+        "Waiting.md",
+        "---\ntitle: Waiting\n---\nsent, never answered\n",
+      );
+      await vi.waitFor(() => {
+        expect(
+          harness.server.requests.filter(
+            (request) =>
+              request.method === "POST" && request.pathname === "/items",
+          ),
+        ).not.toHaveLength(0);
+      }, WAIT);
+      const sent = Date.now();
+      process.kill(watch.pid(), "SIGTERM");
+      await watch.exited();
+      expect(Date.now() - sent).toBeLessThan(3_000);
+      expect(watch.exitCode(), readLog(log)).toBe(0);
+      expect(lastLine(readLog(log))).toMatch(
+        new RegExp(
+          `folders watch stopped by SIGTERM, sent by process ${process.pid}$`,
         ),
-      ).not.toHaveLength(0);
-    }, WAIT);
-    const sent = Date.now();
-    process.kill(watch.pid(), "SIGTERM");
-    await watch.exited();
-    expect(Date.now() - sent).toBeLessThan(3_000);
-    expect(watch.exitCode(), readLog(log)).toBe(0);
-    expect(lastLine(readLog(log))).toMatch(
-      new RegExp(
-        `folders watch stopped by SIGTERM, sent by process ${process.pid}$`,
-      ),
-    );
-  });
+      );
+    },
+  );
 
   it("moves the file launchd gave the watch aside as the watch starts when it holds 1 MiB or more", async () => {
     const harness = await folderHarness("autostart-launchd-full");

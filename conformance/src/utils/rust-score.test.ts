@@ -7,6 +7,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import { afterAll, describe, expect, it } from "vitest";
 import {
   CONTRACT_PROJECTS,
@@ -14,6 +16,8 @@ import {
   excuse,
   fixturePath,
   renderScore,
+  retryAnnotations,
+  retryFailure,
   scopeToProjects,
   scoreRun,
   type ReportedTest,
@@ -448,4 +452,151 @@ describe("a run of some of the projects", () => {
     ]);
     expect(run.failures).toEqual([]);
   });
+});
+
+describe("a test that passed only on a retry", () => {
+  const retried = (title: string, ...messages: string[]): ReportedTest => ({
+    status: "passed",
+    fullName: title,
+    failureMessages: messages,
+  });
+  const file = (status: string, ...tests: ReportedTest[]) => ({
+    name: `/checkout/conformance/${A}`,
+    status,
+    assertionResults: tests,
+  });
+  const score = (...tests: ReportedTest[]) =>
+    scoreRun([{ testResults: [file("passed", ...tests)] }], [A], LINUX);
+
+  it("counts as passing, so its file passes whole, and is listed by file and title", () => {
+    const run = score(
+      { status: "passed", fullName: "steady", failureMessages: [] },
+      retried("a chapter wobbles", "Error: expected 1 to be 2\n    at x.ts:1"),
+    );
+    expect(run.failures).toEqual([]);
+    expect([run.passed, run.total, run.filesPassing]).toEqual([2, 2, 1]);
+    expect(run.retried).toEqual([
+      {
+        file: A,
+        title: "a chapter wobbles",
+        failure: "Error: expected 1 to be 2",
+      },
+    ]);
+    expect(renderScore(run)).toContain(
+      `- ${A} › a chapter wobbles: first try failed with Error: expected 1 to be 2`,
+    );
+  });
+
+  it("is named in a warning annotation that a message cannot break out of", () => {
+    const run = score(retried("a|b 100%", "Error: one\ntwo %0A"));
+    expect(retryAnnotations(run)).toEqual([
+      `::warning file=conformance/${A}::flaky test, failed and then passed on retry: a|b 100%25: Error: one`,
+    ]);
+    expect(
+      retryAnnotations(score(retried("t", "line\r\nrest\n%"))).join(""),
+    ).not.toMatch(/[\r\n]/);
+  });
+
+  it("is not listed for a test that passed on its first try, and the summary says nothing then", () => {
+    const run = score(
+      { status: "passed", failureMessages: [] },
+      {
+        status: "passed",
+      },
+    );
+    expect(run.retried).toEqual([]);
+    expect(retryAnnotations(run)).toEqual([]);
+    expect(renderScore(run)).not.toContain("retry");
+  });
+
+  it("does not pass when it failed on both tries, and is not listed", () => {
+    const run = scoreRun(
+      [
+        {
+          testResults: [
+            file("failed", retried("a", "e"), {
+              status: "failed",
+              fullName: "twice",
+              failureMessages: ["Error: first", "Error: second"],
+            }),
+          ],
+        },
+      ],
+      [A],
+      LINUX,
+    );
+    expect(run.failures).toEqual([`${A}: 1 of 2 tests passed`]);
+    expect(run.retried.map((test) => test.title)).toEqual(["a"]);
+  });
+
+  it("leaves a skip as it was", () => {
+    const run = score(retried("a", "e"), { status: "skipped" });
+    expect(run.failures).toEqual([`${A}: 1 of 2 tests passed`]);
+    expect(retryFailure({ status: "skipped", failureMessages: ["e"] })).toBe(
+      undefined,
+    );
+  });
+
+  it("lists a retry whose first failure carries no text, rather than crashing", () => {
+    const odd = (failureMessages: unknown[]): ReportedTest =>
+      ({ status: "passed", failureMessages }) as unknown as ReportedTest;
+    expect(retryFailure(odd([undefined]))).toBe(undefined);
+    expect(retryFailure(odd([null]))).toBe("no message");
+    expect(retryFailure(odd([{ message: "e" }]))).toBe("no message");
+    expect(retryFailure(odd([""]))).toBe("no message");
+  });
+
+  it("is read from what Vitest writes: a test failed once, passed on retry, and one failed twice", () => {
+    const directory = mkdtempSync(join(tmpdir(), "marfa-retry-report-"));
+    try {
+      writeFileSync(
+        join(directory, "retry.test.ts"),
+        [
+          "let tries = 0;",
+          'it("passes on the retry", () => { tries += 1; expect(tries).toBe(2); });',
+          'it("fails on both tries", () => { throw new Error("always"); });',
+          'it("passes at once", () => {});',
+          'it.skip("is skipped", () => {});',
+        ].join("\n"),
+      );
+      const output = join(directory, "vitest.json");
+      const vitest = join(
+        createRequire(import.meta.url).resolve("vitest/package.json"),
+        "..",
+        "vitest.mjs",
+      );
+      spawnSync(
+        process.execPath,
+        [
+          vitest,
+          "run",
+          "--root",
+          directory,
+          "--globals",
+          "--retry=1",
+          "--reporter=json",
+          `--outputFile.json=${output}`,
+        ],
+        { env: { ...process.env, CI: "" }, encoding: "utf8" },
+      );
+      const report = JSON.parse(readFileSync(output, "utf8")) as {
+        testResults: { name: string; assertionResults: ReportedTest[] }[];
+      };
+      const [only] = report.testResults;
+      const at = `/checkout/conformance/${A}`;
+      const run = scoreRun(
+        [{ testResults: [{ ...only, name: at } as never] }],
+        [A],
+        LINUX,
+      );
+      expect(run.retried.map((test) => test.title)).toEqual([
+        "passes on the retry",
+      ]);
+      expect(run.retried[0]?.failure).toMatch(/expected 1 to be 2/);
+      expect([run.passed, run.total]).toEqual([2, 4]);
+      expect(run.failures).toEqual([`${A}: 2 of 4 tests passed`]);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
