@@ -247,6 +247,16 @@ pub fn properties(
     properties: &Map<String, Value>,
     complete: bool,
 ) -> Result<(), RuleError> {
+    changed_properties(fields, properties, complete, properties)
+}
+
+/// As `properties`, judging a value only where `written` names it: a value the write leaves as it was stands, even where its field has since tightened.
+pub fn changed_properties(
+    fields: &BTreeMap<&str, &Value>,
+    properties: &Map<String, Value>,
+    complete: bool,
+    written: &Map<String, Value>,
+) -> Result<(), RuleError> {
     let mut faults: Vec<_> = properties
         .iter()
         .filter(|(name, value)| {
@@ -267,7 +277,7 @@ pub fn properties(
             }
             continue;
         };
-        if value.is_null() && !required {
+        if (value.is_null() && !required) || (!value.is_null() && !written.contains_key(*name)) {
             continue;
         }
         let kind = definition
@@ -823,6 +833,29 @@ mod tests {
         let refused = properties(&declared, sent.as_object().unwrap(), false).unwrap_err();
         let paths: Vec<&str> = refused.fields.iter().map(|f| f.path.as_str()).collect();
         assert_eq!(paths, ["to.0", "to.2"]);
+    }
+
+    #[test]
+    fn a_held_value_its_field_no_longer_admits_is_judged_only_where_written() {
+        let note = serde_json::json!({ "type": "string", "max_length": 3 });
+        let title = serde_json::json!({ "type": "string", "required": true });
+        let declared = BTreeMap::from([("note", &note), ("title", &title)]);
+        let held = serde_json::json!({ "note": "too long", "title": "T" });
+        let held = held.as_object().unwrap();
+        let renamed = serde_json::json!({ "title": "U" });
+        assert!(changed_properties(&declared, held, true, renamed.as_object().unwrap()).is_ok());
+        assert!(changed_properties(&declared, held, true, held).is_err());
+        let cleared = serde_json::json!({ "note": "too long", "title": null });
+        let written = serde_json::json!({ "title": null });
+        assert!(
+            changed_properties(
+                &declared,
+                cleared.as_object().unwrap(),
+                true,
+                written.as_object().unwrap()
+            )
+            .is_err()
+        );
     }
 
     #[test]

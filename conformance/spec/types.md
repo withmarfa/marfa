@@ -960,6 +960,22 @@ When a replacement removes a field, the server MUST NOT refuse a later write of 
 
 **Tests:** `compliance/type-evolution.test.ts › leaves a removed field's values readable and the item writable`.
 
+### `types/field-tightened`
+
+When a replacement tightens a field, by making it `required`, narrowing its `enum_values`, lowering its `max_length` or `maximum`, raising its `minimum` or adding a `format`, the server MUST take it without `force=true` and leave the value each item holds under its name as it is.
+
+**Reason:** only a removed field's name reaching a held value, and a changed `type`, take what items hold away (`types/field-removed`). The value stays and a later write judges it (`types/field-tightened-held`).
+
+**Tests:** `compliance/type-evolution.test.ts › takes a replacement that tightens a field without force, leaves the values items hold, and judges a write by the properties it changes`.
+
+### `types/field-tightened-held`
+
+If an item holds a value in a field that its type no longer admits, then the server MUST NOT refuse an update of the item for that value unless the update changes the property's value or moves the item to another type.
+
+**Reason:** an edit to an item's title is not the write that has to bring another property within a rule its type added later. A whole-properties write sends every property back, so naming a property unchanged is not a change. A property the item lacks is held to a required field as before (`items/property-invalid`).
+
+**Tests:** `compliance/type-evolution.test.ts › takes a replacement that tightens a field without force, leaves the values items hold, and judges a write by the properties it changes`.
+
 ### `types/subtype-members`
 
 If a replacement would leave a type inheriting from it with a `display_hints` or `merge_policy` entry naming a field neither it nor an ancestor declares, then the server MUST answer `400 invalid_schema` naming the subtype and the member.
@@ -1676,7 +1692,7 @@ When `PUT /types/{id}/icon` or `DELETE /types/{id}/icon` succeeds, the server MU
 
 ## Item names
 
-In these statements, whitespace is a character with the Unicode property `White_Space`, a line ends at CR LF, LF, CR, U+2028 or U+2029, and a control character is one in the Unicode general category `Cc`. So U+0085 is whitespace and a control character but not a line end, and U+FEFF is none of the three. The cases both implementations are held to are in `conformance/fixtures/item-display.json`.
+In these statements, whitespace is a character with the Unicode property `White_Space`, a line ends at CR LF, LF, CR, U+2028 or U+2029, and a control character is one in the Unicode general category `Cc`. So U+0085 is whitespace and a control character but not a line end, and U+FEFF is none of the three. The server and a device's working copy are held to the cases in `conformance/fixtures/item-display.json`.
 
 ### `types/item-name-fields`
 
