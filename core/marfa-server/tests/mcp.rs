@@ -3508,6 +3508,7 @@ async fn the_row_tool_refuses_the_numbers_the_row_door_refuses_and_writes_nothin
         .await;
     assert!(!kept.failed, "{}", kept.value);
     assert_eq!(instance.row_count(&token, &item).await, 1);
+}
 
 #[tokio::test]
 async fn an_edit_that_changes_nothing_through_the_tool_stores_nothing_and_names_the_version_held() {
