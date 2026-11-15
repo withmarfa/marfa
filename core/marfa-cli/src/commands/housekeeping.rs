@@ -18,9 +18,9 @@ pub enum HousekeepingCommand {
     },
     /// Take the server's clock as right (private socket required). While the
     /// clock reads more than 7 days later than the server's trusted time, the
-    /// jobs that delete old records do nothing; this lets them run now. While
-    /// the clock is behind that time, the server keeps its own time; this makes
-    /// it use the clock again.
+    /// jobs that delete old records do nothing; this lets them run now. A
+    /// clock more than an hour behind that time is named on the attention
+    /// list until this runs or the clock catches up.
     ConfirmClock,
 }
 
