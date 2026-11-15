@@ -263,6 +263,30 @@ fn done_ok() -> Done {
     }
 }
 
+/// Purges an item from the bin as the owner. The ids are every row this purge removed, the
+/// asked one first, or none when the item had changed and was kept.
+pub async fn purge_owned(
+    app: &App,
+    caller: &Caller,
+    id: String,
+    version: i64,
+) -> Result<(Done, Vec<String>)> {
+    let cache = app.catalog_handle();
+    app.write(caller, "item.purge", move |unit| {
+        unit.fanning(true, |unit| {
+            let job = Job {
+                unit,
+                catalog: catalog::current(&cache, unit.tx(), Reading::Pending)?,
+                read_only: unit.read_only()?,
+                claim: None,
+                server_own: false,
+            };
+            job.owner(OwnerAct::Purge, id, version)
+        })
+    })
+    .await
+}
+
 /// With a `claim`, the answer is recorded under it in the same transaction.
 pub async fn run(app: &App, caller: &Caller, claim: Option<Claim>, change: Change) -> Result<Done> {
     let cache = app.catalog_handle();
@@ -765,7 +789,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             Change::Trash { ids, digest } => self.trash(ids, digest.as_deref()),
             Change::Restore { id, version } => self.restore(&id, version),
             Change::Purge { id, version } => self.purge(id, version),
-            Change::Owner { act, id, version } => self.owner(act, id, version),
+            Change::Owner { act, id, version } => {
+                self.owner(act, id, version).map(|(done, _)| done)
+            }
             Change::Settle {
                 type_id,
                 keys,
@@ -2377,7 +2403,8 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     }
 
     /// Answers with the summary alone, so nothing of the item's content leaves through this door.
-    fn owner(&self, act: OwnerAct, id: String, version: i64) -> Result<Done> {
+    /// A purge also returns the ids it removed, the asked one first.
+    fn owner(&self, act: OwnerAct, id: String, version: i64) -> Result<(Done, Vec<String>)> {
         self.caller().require_local()?;
         let levers = self.caller().levers()?;
         let row = rows::by_id(self.unit.tx(), &id)?
@@ -2386,7 +2413,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             .ok_or_else(not_found)?;
         let summary = summary_of(self.unit.tx(), &self.catalog, &row)?;
         if row.version != version {
-            return Ok(Done {
+            let conflict = Done {
                 status: 409,
                 body: json!({
                     "error": {
@@ -2396,17 +2423,28 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                     "current": summary,
                 })
                 .to_string(),
-            });
+            };
+            return Ok((conflict, Vec::new()));
         }
+        let mut removed = Vec::new();
         match act {
-            OwnerAct::Trash => self.delete(id, None)?,
-            OwnerAct::Restore => self.restore(&id, None)?,
-            OwnerAct::Purge => self.purge(id, None)?,
+            OwnerAct::Trash => {
+                self.delete(id, None)?;
+            }
+            OwnerAct::Restore => {
+                self.restore(&id, None)?;
+            }
+            OwnerAct::Purge => {
+                let done = self.purged(id.clone(), None)?;
+                removed.push(id);
+                removed.extend(done.carried);
+            }
         };
-        Ok(Done {
+        let done = Done {
             status: 200,
             body: summary.to_string(),
-        })
+        };
+        Ok((done, removed))
     }
 
     fn settle(&self, type_id: &str, keys: &Keys, settled_at: &str) -> Result<Done> {

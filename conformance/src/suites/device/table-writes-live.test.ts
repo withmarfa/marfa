@@ -611,6 +611,48 @@ describe("a write the copy shows at once", () => {
     await unchanged(device, item);
   });
 
+  // Reaches the refusal in the device CLI's JSON text reader. The core check for values a caller
+  // passes already parsed (`judge_values`) is covered by its unit tests in `row_writes.rs` alone.
+  it.each([
+    ["1500000000000000001", "1500000000000000000"],
+    ["-9007199254740993", "-9007199254740992"],
+    ["1152921504606846976", "1152921504606847000"],
+  ])(
+    "refuses %s in a row's value written as JSON text, naming the operation and the column, as the server does, queueing nothing",
+    async (digits, served) => {
+      const { device, item, row } = await judging("exact");
+      const message = `Must be a whole number that Marfa serves back with the same digits, not ${digits}, which it serves as ${served}. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string.`;
+      for (const [operation, path] of [
+        [
+          `{"op":"put","values":{"count":${digits}}}`,
+          "operations.1.values.count",
+        ],
+        [
+          `{"op":"patch","id":"${row}","values":{"note":{"a":[1,${digits}]}}}`,
+          "operations.1.values.note.a.1",
+        ],
+      ] as const) {
+        const operations = `[{"op":"put","values":{"count":1}},${operation}]`;
+        const sent = await working.rawRequest<unknown>(
+          `/items/${item}/tables/steps/rows`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: `{"operations":${operations}}`,
+          },
+        );
+        expect(sent.status, operation).toBe(400);
+        const judged = refused(
+          await device.writeRowsText(item, "steps", operations),
+        );
+        expect(judged.code, operation).toBe("validation");
+        expect(judged.raw, operation).toContain(path);
+        expect(judged.raw, operation).toContain(message);
+      }
+      await unchanged(device, item);
+    },
+  );
+
   it("refuses a row over the size limit and a put without a required column, as the server does, queueing nothing", async () => {
     const { item, row, device } = await sized("sized");
     const big = (length: number): string => "x".repeat(length);

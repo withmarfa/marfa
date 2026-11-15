@@ -10,6 +10,7 @@ use serde_json::{Map, Value, json};
 
 use crate::app::items::write::ruled;
 use crate::app::refusal::Refusal;
+use crate::app::tables;
 
 pub const MODERN: &str = "2026-07-28";
 pub const LEGACY: [&str; 4] = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
@@ -329,7 +330,7 @@ pub fn classify(headers: &HeaderMap, body: &[u8]) -> Entry {
     })
 }
 
-/// Judges the properties by the digits as written, since parsing has already rounded them.
+/// Judges the properties and the row values by the digits as written, since parsing has already rounded them.
 fn exact_numbers(body: &[u8]) -> Result<(), Refusal> {
     let Ok(text) = std::str::from_utf8(body) else {
         return Ok(());
@@ -338,7 +339,7 @@ fn exact_numbers(body: &[u8]) -> Result<(), Refusal> {
         integers::refuse_inexact_integers_under(text, &["params", "arguments", bag])
             .map_err(ruled)?;
     }
-    Ok(())
+    tables::refuse_inexact_text(text, &["params", "arguments"])
 }
 
 fn unsupported(id: Value, requested: Option<&str>) -> Reply {

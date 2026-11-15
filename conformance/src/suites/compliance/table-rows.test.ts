@@ -17,9 +17,10 @@ import { expectMatchesSchema } from "../../utils/openapi.js";
 let client: MarfaClient;
 let ctx: TestContext;
 let apiUrl: string;
+let apiKey: string;
 
 beforeAll(async () => {
-  ({ ctx, client, apiUrl } = await createTestContext(
+  ({ ctx, client, apiUrl, apiKey } = await createTestContext(
     "compliance",
     "table-rows",
   ));
@@ -994,5 +995,120 @@ describe("who may read and write rows", () => {
     const gone = await client.getRow(item, "lines", row);
     expect(gone.status).toBe(404);
     expect(gone.error?.error.code).toBe("row_not_found");
+  });
+});
+
+/** The digits a float is served as, for each whole number a row's value is refused for. */
+const KEPT_AS: Record<string, string> = {
+  "1500000000000000001": "1500000000000000000",
+  "9223372036854775807": "9223372036854776000",
+  "-9007199254740993": "-9007199254740992",
+  "1152921504606846976": "1152921504606847000",
+  "1000000000000000000000": "1e+21",
+  "-0": "0",
+};
+
+const REFUSED = Object.keys(KEPT_AS);
+
+const inexactMessage = (digits: string) =>
+  `Must be a whole number that Marfa serves back with the same digits, not ${digits}, which it serves as ${KEPT_AS[digits]}. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string.`;
+
+/** The batch as its text, because `JSON.stringify` rounds the digits before they leave. */
+function sendRows(item: string, operations: string) {
+  return client.rawRequest<{ results: { id: string; outcome: string }[] }>(
+    `/items/${item}/tables/lines/rows`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: `{"operations":${operations}}`,
+    },
+  );
+}
+
+describe("a whole number in a row that a 64-bit float would change", () => {
+  it.each(REFUSED)(
+    "refuses %s in a put, a patch and a nested value, naming the operation and the value, and writes none of the batch",
+    async (digits) => {
+      const item = await itemOf(await ledgerType());
+      const kept = rowId();
+      await client.writeRows(item, "lines", {
+        operations: [{ op: "put", id: kept, values: { amount: 1 } }],
+      });
+      for (const [operation, path] of [
+        [
+          `{"op":"put","values":{"amount":${digits}}}`,
+          "operations.1.values.amount",
+        ],
+        [
+          `{"op":"patch","id":"${kept}","values":{"amount":${digits}}}`,
+          "operations.1.values.amount",
+        ],
+        [
+          `{"op":"put","values":{"amount":1,"memo":{"a":[1,${digits}]}}}`,
+          "operations.1.values.memo.a.1",
+        ],
+      ] as const) {
+        const res = await sendRows(
+          item,
+          `[{"op":"put","values":{"amount":2}},${operation}]`,
+        );
+        expect(res.status, operation).toBe(400);
+        expect(res.error?.error.code, operation).toBe("validation_error");
+        const details = res.error?.error.details as {
+          operation: number;
+          errors: { path: string; message: string }[];
+        };
+        expect(details.operation, operation).toBe(1);
+        expect(details.errors, operation).toEqual([
+          { path, message: inexactMessage(digits) },
+        ]);
+      }
+      expect(await rowsOf(item)).toHaveLength(1);
+      expect((await client.getRow(item, "lines", kept)).data.values).toEqual({
+        amount: 1,
+      });
+    },
+  );
+
+  it("refuses a whole number of 400 digits, which no float holds, naming the value", async () => {
+    const item = await itemOf(await ledgerType());
+    const digits = "9".repeat(400);
+    const res = await sendRows(
+      item,
+      `[{"op":"put","values":{"amount":${digits}}}]`,
+    );
+    expect(res.status).toBe(400);
+    expect(res.error?.error.code).toBe("validation_error");
+    expect(refusedAt(res)).toEqual({
+      code: "validation_error",
+      operation: 0,
+      paths: ["operations.0.values.amount"],
+    });
+    expect(await rowsOf(item)).toEqual([]);
+  });
+
+  it("keeps a whole number a float holds, and serves it in the digits it is served as, where a string keeps the digits sent", async () => {
+    const item = await itemOf(await ledgerType({ big: { type: "integer" } }));
+    const res = await sendRows(
+      item,
+      '[{"op":"put","values":{"amount":9007199254740992,"big":9007199254740991}},{"op":"put","values":{"amount":1152921504606847000}},{"op":"put","values":{"amount":-9007199254740991,"memo":"9007199254740993"}},{"op":"put","values":{"amount":1.5}}]',
+    );
+    expect(res.status, JSON.stringify(res.error)).toBe(200);
+    const served = await fetch(
+      `${apiUrl}/items/${item}/tables/lines/rows?limit=100`,
+      { headers: { Authorization: `Bearer ${apiKey}` } },
+    );
+    const text = await served.text();
+    for (const digits of [
+      "9007199254740992",
+      "9007199254740991",
+      "1152921504606847000",
+      "-9007199254740991",
+      "1.5",
+    ]) {
+      expect(text, digits).toContain(`:${digits}`);
+    }
+    expect(text).toContain('"9007199254740993"');
+    expect(await rowsOf(item)).toHaveLength(4);
   });
 });

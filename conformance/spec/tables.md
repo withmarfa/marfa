@@ -628,6 +628,20 @@ If a value breaks a rule its column states, in its `type`, `enum_values`, `forma
 
 **Tests:** `compliance/table-rows.test.ts › refuses a value of the wrong kind, a missing required column and an unknown column, naming each`.
 
+### `tables/rows-number-exact`
+
+If an operation of `POST /items/{id}/tables/{table}/rows` names in its `values`, at any depth, a whole number written with digits other than the shortest decimal that reads back as the same IEEE 754 double (`items/property-number-kept`), then the server MUST answer `400 validation_error` with `details.operation` naming the operation and `details.errors` naming the first such value in `path`, as `operations.<index>.values.<column>` and the path inside the value, and no other, with the message `items/property-number-exact` gives.
+
+**Reason:** a row holds a number as the double a JSON client holds, so `1152921504606846976` would be stored and served back as `1152921504606847000` with nothing said. A column that takes text takes the digits as a string, and an integer column holds only whole numbers up to 2^53 - 1. The batch is refused whole (`tables/rows-all-or-none`).
+
+**Tests:** `compliance/table-rows.test.ts › refuses %s in a put, a patch and a nested value, naming the operation and the value, and writes none of the batch`, `› refuses a whole number of 400 digits, which no float holds, naming the value`.
+
+### `tables/rows-number-kept`
+
+When a row write names a whole number written with the shortest decimal that reads back as the same IEEE 754 double, the server MUST store the double it names and serve it in those digits, and a string in a text column in the digits sent.
+
+**Tests:** `compliance/table-rows.test.ts › keeps a whole number a float holds, and serves it in the digits it is served as, where a string keeps the digits sent`.
+
 ### `tables/rows-required`
 
 If a `put` leaves out a column the table declares `required` that `tables/rows-withheld-put-kept` does not keep, or a `patch` sends `null` for one, then the server MUST answer `400 validation_error` naming `operations.<index>.values.<column>`.
@@ -1120,13 +1134,13 @@ If a `marfa_write_rows` call names a batch that `POST /items/{id}/tables/{table}
 
 **Reason:** the checks are the door's, including a column whose value the key may not read, which the door refuses `403 forbidden`.
 
-**Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch as the write door does and writes none of it`, `› refuses a batch that is not a list as the write door does`.
+**Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch as the write door does and writes none of it`, `› refuses a batch that is not a list as the write door does`, `› refuses %s in a row as the write door does and writes none of the batch`.
 
 ### `tables/mcp-write-refused-nothing`
 
 If a `marfa_write_rows` call names a batch that `POST /items/{id}/tables/{table}/rows` refuses, then the server MUST NOT write any operation of the batch.
 
-**Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch as the write door does and writes none of it`, `› refuses a batch that is not a list as the write door does`, `› refuses a column whose value the key may not read, as the write door does`.
+**Tests:** `compliance/table-rows-mcp.test.ts › refuses a batch as the write door does and writes none of it`, `› refuses a batch that is not a list as the write door does`, `› refuses a column whose value the key may not read, as the write door does`, `› refuses %s in a row as the write door does and writes none of the batch`.
 
 ### `tables/mcp-write-limit`
 

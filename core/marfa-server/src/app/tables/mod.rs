@@ -65,6 +65,11 @@ fn refuse_wide(index: usize, values: &Map<String, Value>) -> Result<()> {
     rows::refuse_wide(index, values).map_err(refused)
 }
 
+/// The `values` of a batch read as written in `text`, where the batch sits at `root`.
+pub fn refuse_inexact_text(text: &str, root: &[&str]) -> Result<()> {
+    rows::refuse_inexact_text(text, root).map_err(refused)
+}
+
 /// `most` operations at most: the row door and the MCP tool differ in it.
 pub fn operations(sent: Option<&Value>, most: usize) -> Result<Vec<Op>> {
     rows::operations(sent, most).map_err(refused)

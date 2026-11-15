@@ -2694,6 +2694,20 @@ When the private local command posts to `/trash/empty`, the server MUST attempt 
 
 **Tests:** `compliance/owner-trash.test.ts › lists and changes trash as summaries, with exact versions and cascade restore`.
 
+### `items/owner-empty-trash-count`
+
+When the private local command posts to `/trash/empty`, the server MUST count in `purged` every item the batch removed, each part that went with its host (`edges/parts-purge`) as well as each item it selected.
+
+**Tests:** `compliance/owner-trash.test.ts › counts every item emptying the bin removes, parts included, and reports no failure for a part that went with its host`.
+
+### `items/owner-empty-trash-gone`
+
+If an item the batch selected was already removed, whether with its host earlier in the same batch or by another request, then the server MUST NOT list it in `failures`.
+
+**Reason:** the bin is listed newest first, so a part older than its host is selected after the host that purges it. A removal that has happened is what emptying the bin wants.
+
+**Tests:** `compliance/owner-trash.test.ts › counts every item emptying the bin removes, parts included, and reports no failure for a part that went with its host`.
+
 ### `items/owner-trash-cli`
 
 When a caller runs `marfa --socket PATH items bin list`, `move`, `restore`, `purge` or `empty`, the CLI MUST use the corresponding owner summary operation through private local authority.

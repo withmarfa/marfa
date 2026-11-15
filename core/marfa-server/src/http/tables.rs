@@ -6,6 +6,7 @@ use axum::extract::State;
 use axum::http::{StatusCode, Uri};
 
 use super::answer::{Answer, text_answer};
+use super::body::Bag;
 use super::items::{Named, Sent, check_item_id, invalid_field, keyed};
 use super::query;
 use crate::app::App;
@@ -41,9 +42,10 @@ pub async fn write(
     let (door, who) = (app.clone(), caller.clone());
     keyed(&app, &caller, sent, |claim, uri, body| async move {
         query::only(&uri, &[])?;
-        let sent = body.declared_object(&BATCH_FIELDS)?;
+        let sent = body.declared_object(&BATCH_FIELDS, Bag::Rows)?;
         check_item_id(&id)?;
         let ops = tables::operations(sent.get("operations"), tables::MAX_OPERATIONS)?;
+        body.refuse_inexact_numbers(Bag::Rows)?;
         tables::write(&door, &who, claim, id, table, ops).await
     })
     .await

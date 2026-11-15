@@ -13776,7 +13776,7 @@ export interface operations {
                  *     }
                  */
                 "application/json": {
-                    /** @description The operations, applied in order. A later operation on a row sees what an earlier one left. */
+                    /** @description The operations, applied in order. A later operation on a row sees what an earlier one left. A whole number in `values` whose digits a 64-bit float doesn't keep is refused: send it as a string. */
                     operations: components["schemas"]["RowOperation"][];
                 };
             };
@@ -13816,7 +13816,7 @@ export interface operations {
             };
             /**
              * @description - `invalid_id`: the ID is not a valid item ID.
-             *     - `validation_error`: an operation is malformed, names a column the table doesn't declare, breaks a column's rule or names an item you can't read, or the batch holds no operations or more than 1000. `details.operation` names the operation.
+             *     - `validation_error`: an operation is malformed, names a column the table doesn't declare, breaks a column's rule, holds a whole number a 64-bit float can't keep or names an item you can't read, or the batch holds no operations or more than 1000. `details.operation` names the operation.
              */
             400: {
                 headers: {

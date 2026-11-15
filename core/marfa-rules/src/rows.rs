@@ -2,6 +2,9 @@
 
 use serde_json::{Map, Value};
 
+use crate::error::RuleError;
+use crate::integers;
+
 /// The most operations a batch holds.
 pub const MAX_OPERATIONS: usize = 1000;
 /// The most bytes a row's values hold, written as JSON.
@@ -141,6 +144,26 @@ pub fn batch(sent: &[Value], most: usize) -> Result<Vec<Op>, Refused> {
         .collect()
 }
 
+/// The first whole number a float would change in an operation's `values`, read as written in `text`, with the batch at `root`.
+pub fn refuse_inexact_text(text: &str, root: &[&str]) -> Result<(), Refused> {
+    match integers::inexact_entry_under(text, root, "operations", "values") {
+        Some((index, error)) => Err(inexact(index, error)),
+        None => Ok(()),
+    }
+}
+
+/// As [`refuse_inexact_text`], for the `values` of operation `index` already parsed.
+pub fn refuse_inexact_values(index: usize, values: &Map<String, Value>) -> Result<(), Refused> {
+    integers::refuse_in_value(values).map_err(|error| inexact(index, error))
+}
+
+fn inexact(index: usize, error: RuleError) -> Refused {
+    match error.fields.into_iter().next() {
+        Some(field) => Refused::at(index, &format!("values.{}", field.path), field.message),
+        None => Refused::at(index, "values", error.message),
+    }
+}
+
 /// A row's size: its values written as compact JSON.
 pub fn printed_len(values: &Map<String, Value>) -> usize {
     serde_json::to_string(values).map_or(0, |text| text.len())
@@ -218,5 +241,30 @@ mod tests {
         let refused = refuse_wide(3, &values).unwrap_err();
         assert_eq!(refused.path, "operations.3.values");
         assert!(refused.message.contains("leaves 65537"), "{refused:?}");
+    }
+
+    #[test]
+    fn the_written_digits_of_a_batch_are_judged_in_the_values_of_each_operation_where_it_sits() {
+        let batch = r#"{"operations":[{"op":"put","id":9007199254740993,"values":{"a":1}},{"op":"patch","values":{"a":{"b":[0,1500000000000000001]}}}]}"#;
+        let refused = refuse_inexact_text(batch, &[]).unwrap_err();
+        assert_eq!(refused.operation, Some(1));
+        assert_eq!(refused.path, "operations.1.values.a.b.1");
+
+        let nested = format!(r#"{{"params":{{"arguments":{batch}}}}}"#);
+        let refused = refuse_inexact_text(&nested, &["params", "arguments"]).unwrap_err();
+        assert_eq!(refused.path, "operations.1.values.a.b.1");
+        assert!(refuse_inexact_text(&nested, &[]).is_ok());
+
+        let kept = r#"{"operations":[{"op":"put","values":{"a":9007199254740992,"b":1.5,"c":"1500000000000000001"}}]}"#;
+        assert!(refuse_inexact_text(kept, &[]).is_ok());
+    }
+
+    #[test]
+    fn the_values_of_an_operation_already_parsed_are_judged_with_the_same_message() {
+        let mut values = Map::new();
+        values.insert("a".into(), json!([1_500_000_000_000_000_001_i64]));
+        let refused = refuse_inexact_values(2, &values).unwrap_err();
+        assert_eq!(refused.operation, Some(2));
+        assert_eq!(refused.path, "operations.2.values.a.0");
     }
 }

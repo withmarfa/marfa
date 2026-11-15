@@ -109,16 +109,32 @@ pub fn refuse_inexact_integers_under(text: &str, bag: &[&str]) -> Result<(), Rul
 
 /// A path is named from inside the bag.
 pub fn inexact_entry(text: &str, list: &str, bag: &str) -> Option<(usize, RuleError)> {
+    inexact_entry_under(text, &[], list, bag)
+}
+
+/// As [`inexact_entry`], for a list nested at `root`, a path of member names from the root of the text.
+pub fn inexact_entry_under(
+    text: &str,
+    root: &[&str],
+    list: &str,
+    bag: &str,
+) -> Option<(usize, RuleError)> {
     inexact_integers(text, None, false)
         .into_iter()
-        .find_map(|(path, source)| match path.as_slice() {
-            [named, index, member, inside @ ..]
-                if named == list && member == bag && !inside.is_empty() =>
+        .find_map(|(path, source)| {
+            if path.len() <= root.len() || !root.iter().zip(&path).all(|(want, name)| name == want)
             {
-                let index = index.parse().ok()?;
-                Some((index, inexact_refusal(&[(inside.to_vec(), source)])))
+                return None;
             }
-            _ => None,
+            match &path[root.len()..] {
+                [named, index, member, inside @ ..]
+                    if named == list && member == bag && !inside.is_empty() =>
+                {
+                    let index = index.parse().ok()?;
+                    Some((index, inexact_refusal(&[(inside.to_vec(), source)])))
+                }
+                _ => None,
+            }
         })
 }
 

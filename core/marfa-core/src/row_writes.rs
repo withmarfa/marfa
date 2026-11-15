@@ -105,6 +105,7 @@ fn judge_values(
     complete: bool,
     kept: &[String],
 ) -> Result<()> {
+    rows::refuse_inexact_values(index, values).map_err(refused)?;
     marfa_rules::validation::row_values(columns, values, complete, kept).map_err(
         |error| match error.fields.first() {
             Some(field) => refused_at(index, &format!("values.{}", field.path), &field.message),
@@ -1205,6 +1206,61 @@ mod tests {
             "{refused}"
         );
     }
+    #[test]
+    fn a_whole_number_a_float_would_change_is_refused_naming_the_operation_and_the_column() {
+        let columns = values(json!({
+            "amount": { "type": "number" },
+            "count": { "type": "integer" },
+            "memo": { "type": "string" },
+        }));
+        for (sent, named, digits) in [
+            (
+                json!({ "amount": 9_007_199_254_740_993_i64 }),
+                "operations.4.values.amount",
+                "9007199254740993",
+            ),
+            (
+                json!({ "amount": -9_007_199_254_740_993_i64 }),
+                "operations.4.values.amount",
+                "-9007199254740993",
+            ),
+            (
+                json!({ "count": 18_446_744_073_709_551_615_u64 }),
+                "operations.4.values.count",
+                "18446744073709551615",
+            ),
+            (
+                json!({ "memo": { "deep": [1, 1_152_921_504_606_846_976_i64] } }),
+                "operations.4.values.memo.deep.1",
+                "1152921504606846976",
+            ),
+        ] {
+            let refused = judge_values(4, &columns, &values(sent), false, &[]).unwrap_err();
+            assert!(
+                matches!(&refused, CoreError::Validation { code, server: None, .. }
+                    if code == "validation_error"),
+                "{refused:?}"
+            );
+            let text = refused.to_string();
+            assert!(text.contains(named), "{text}");
+            assert!(
+                text.contains(&format!("Must be a whole number that Marfa serves back with the same digits, not {digits}")),
+                "{text}"
+            );
+        }
+        // The witness: a whole number a float holds, a fraction and a large float are taken.
+        for sent in [
+            json!({ "amount": 9_007_199_254_740_992_i64 }),
+            json!({ "amount": 1_152_921_504_606_847_000_u64 }),
+            json!({ "amount": 1.5, "count": 9_007_199_254_740_991_i64 }),
+            json!({ "amount": 1.234_567_890_123_456_8e29 }),
+        ] {
+            judge_values(0, &columns, &values(sent.clone()), false, &[]).unwrap_or_else(|error| {
+                panic!("{sent}: {error}");
+            });
+        }
+    }
+
     #[test]
     fn a_batch_the_server_would_refuse_is_a_validation_naming_the_operation() {
         let id = "01a1b75e-2d9d-775a-930a-6b3d1207edae";

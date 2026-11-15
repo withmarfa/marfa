@@ -3230,3 +3230,282 @@ async fn marfa_read_rows_sorted_by_a_table_s_order_reads_the_order_the_server_ke
         .unwrap();
     assert_eq!(read_messages(&instance, &token, &id, "desc").await, latest);
 }
+
+const EXACT: &str = "Must be a whole number that Marfa serves back with the same digits, not ";
+const TAKES_TEXT: &str = "An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string.";
+
+impl Instance {
+    /// An item whose type holds a table of `amount` (number), `count` (integer) and `memo` (text).
+    async fn ledger(&self, token: &str) -> String {
+        let declared = json!({
+            "id": "user.ledger",
+            "fields": { "title": { "type": "string" } },
+            "tables": { "lines": { "columns": {
+                "amount": { "type": "number" },
+                "count": { "type": "integer" },
+                "memo": { "type": "string" },
+            } } },
+        });
+        let made = self.local(Method::POST, "/types", Some(declared)).await;
+        assert_eq!(made.status, StatusCode::CREATED, "{}", made.body);
+        let item = self
+            .call(
+                token,
+                Method::POST,
+                "/items",
+                Some(json!({ "type": "user.ledger", "properties": { "title": "Ledger" } })),
+            )
+            .await;
+        assert_eq!(item.status, StatusCode::CREATED, "{}", item.body);
+        item.body["item"]["id"].as_str().unwrap().to_string()
+    }
+
+    /// Posts `operations` as written, so a number keeps the digits the client sent.
+    async fn write_rows_raw(&self, token: &str, item: &str, operations: &str) -> (Reply, String) {
+        let request = Request::builder()
+            .method(Method::POST)
+            .uri(format!("/items/{item}/tables/lines/rows"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::from(format!(r#"{{"operations":{operations}}}"#)))
+            .unwrap();
+        let response = self
+            .public
+            .clone()
+            .oneshot(from(CALLER, request))
+            .await
+            .unwrap();
+        let status = response.status();
+        let headers = response.headers().clone();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let text = String::from_utf8(bytes.to_vec()).unwrap();
+        let body = serde_json::from_str(&text).unwrap_or(Value::Null);
+        (
+            Reply {
+                status,
+                body,
+                headers,
+            },
+            text,
+        )
+    }
+
+    /// The rows the table holds, as the text the server serves, so a number keeps its digits.
+    async fn rows_text(&self, token: &str, item: &str) -> String {
+        let request = request(
+            Method::GET,
+            &format!("/items/{item}/tables/lines/rows"),
+            Some(token),
+            None,
+        );
+        let response = self.public.clone().oneshot(request).await.unwrap();
+        let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    async fn row_count(&self, token: &str, item: &str) -> usize {
+        let text = self.rows_text(token, item).await;
+        let page: Value = serde_json::from_str(&text).unwrap();
+        page["data"].as_array().unwrap().len()
+    }
+}
+
+/// What a refusal of a row write names: the operation, the path and the message.
+fn named(reply: &Reply) -> (Option<u64>, String, String) {
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{}", reply.body);
+    assert_eq!(reply.code(), "validation_error", "{}", reply.body);
+    let details = &reply.body["error"]["details"];
+    let entry = &details["errors"][0];
+    (
+        details["operation"].as_u64(),
+        entry["path"].as_str().unwrap_or_default().to_string(),
+        entry["message"].as_str().unwrap_or_default().to_string(),
+    )
+}
+
+fn inexact(digits: &str, served: Option<&str>) -> String {
+    let served = served.map_or_else(String::new, |served| {
+        format!(", which it serves as {served}")
+    });
+    format!("{EXACT}{digits}{served}. {TAKES_TEXT}")
+}
+
+#[tokio::test]
+async fn a_row_write_refuses_a_whole_number_a_float_would_change_and_writes_nothing() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.writer().await;
+    let item = instance.ledger(&token).await;
+    let kept = uuid::Uuid::now_v7();
+    let (made, _) = instance
+        .write_rows_raw(
+            &token,
+            &item,
+            &format!(r#"[{{"op":"put","id":"{kept}","values":{{"amount":1}}}}]"#),
+        )
+        .await;
+    assert_eq!(made.status, StatusCode::OK, "{}", made.body);
+    let before = instance.rows_text(&token, &item).await;
+
+    let thirty = "123456789012345678901234567890";
+    let huge = "9".repeat(400);
+    let cases = [
+        (
+            r#"{"op":"put","values":{"amount":9007199254740993}}"#.to_string(),
+            "operations.0.values.amount",
+            inexact("9007199254740993", Some("9007199254740992")),
+        ),
+        (
+            format!(r#"{{"op":"put","id":"{kept}","values":{{"amount":9007199254740993}}}}"#),
+            "operations.0.values.amount",
+            inexact("9007199254740993", Some("9007199254740992")),
+        ),
+        (
+            format!(r#"{{"op":"patch","id":"{kept}","values":{{"amount":-9007199254740993}}}}"#),
+            "operations.0.values.amount",
+            inexact("-9007199254740993", Some("-9007199254740992")),
+        ),
+        (
+            format!(r#"{{"op":"put","values":{{"amount":{thirty}}}}}"#),
+            "operations.0.values.amount",
+            inexact(thirty, Some("1.2345678901234568e+29")),
+        ),
+        (
+            format!(r#"{{"op":"patch","id":"{kept}","values":{{"amount":{huge}}}}}"#),
+            "operations.0.values.amount",
+            inexact(&huge, None),
+        ),
+        (
+            r#"{"op":"put","values":{"memo":{"deep":[1,{"n":9007199254740993}]}}}"#.to_string(),
+            "operations.0.values.memo.deep.1.n",
+            inexact("9007199254740993", Some("9007199254740992")),
+        ),
+        (
+            r#"{"op":"put","values":{"amount":-0}}"#.to_string(),
+            "operations.0.values.amount",
+            inexact("-0", Some("0")),
+        ),
+    ];
+    for (operation, path, message) in cases {
+        let (refused, text) = instance
+            .write_rows_raw(&token, &item, &format!("[{operation}]"))
+            .await;
+        assert_eq!(
+            named(&refused),
+            (Some(0), path.to_string(), message),
+            "{operation}: {text}"
+        );
+        assert_eq!(
+            instance.rows_text(&token, &item).await,
+            before,
+            "{operation}"
+        );
+    }
+
+    // A batch with one refused operation is refused whole, and names that operation.
+    let (refused, text) = instance
+        .write_rows_raw(
+            &token,
+            &item,
+            r#"[{"op":"put","values":{"amount":2}},{"op":"put","values":{"amount":3}},{"op":"put","values":{"count":9007199254740993}}]"#,
+        )
+        .await;
+    assert_eq!(
+        named(&refused),
+        (
+            Some(2),
+            "operations.2.values.count".to_string(),
+            inexact("9007199254740993", Some("9007199254740992"))
+        ),
+        "{text}"
+    );
+    assert_eq!(instance.row_count(&token, &item).await, 1);
+    assert_eq!(instance.rows_text(&token, &item).await, before);
+
+    // A number past the float range is refused at the parse, as it is in a property.
+    let (refused, text) = instance
+        .write_rows_raw(&token, &item, r#"[{"op":"put","values":{"amount":1e400}}]"#)
+        .await;
+    assert_eq!(refused.status, StatusCode::BAD_REQUEST, "{text}");
+    assert_eq!(instance.rows_text(&token, &item).await, before);
+}
+
+#[tokio::test]
+async fn a_row_write_keeps_a_whole_number_a_float_holds_in_the_digits_it_is_served_as() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.writer().await;
+    let item = instance.ledger(&token).await;
+    let (written, text) = instance
+        .write_rows_raw(
+            &token,
+            &item,
+            r#"[{"op":"put","values":{"amount":9007199254740992}},{"op":"put","values":{"amount":1152921504606847000}},{"op":"put","values":{"amount":-9007199254740991,"count":9007199254740991,"memo":"9007199254740993"}},{"op":"put","values":{"amount":1.5,"memo":"123456789012345678901234567890"}}]"#,
+        )
+        .await;
+    assert_eq!(written.status, StatusCode::OK, "{text}");
+    let served = instance.rows_text(&token, &item).await;
+    for digits in [
+        "9007199254740992",
+        "1152921504606847000",
+        "-9007199254740991",
+        "9007199254740991",
+        "1.5",
+    ] {
+        assert!(served.contains(&format!(":{digits}")), "{digits}: {served}");
+    }
+    for text in ["9007199254740993", "123456789012345678901234567890"] {
+        assert!(served.contains(&format!("\"{text}\"")), "{text}: {served}");
+    }
+    assert_eq!(instance.row_count(&token, &item).await, 4);
+}
+
+#[tokio::test]
+async fn the_row_tool_refuses_the_numbers_the_row_door_refuses_and_writes_nothing() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.writer().await;
+    let item = instance.ledger(&token).await;
+    let arguments = |operations: &str| {
+        format!(r#"{{"id":"{item}","table":"lines","operations":{operations}}}"#)
+    };
+    let thirty = "123456789012345678901234567890";
+    for (operations, path, message) in [
+        (
+            r#"[{"op":"put","values":{"amount":9007199254740993}}]"#.to_string(),
+            "operations.0.values.amount",
+            inexact("9007199254740993", Some("9007199254740992")),
+        ),
+        (
+            format!(
+                r#"[{{"op":"put","values":{{"amount":1}}}},{{"op":"patch","id":"{}","values":{{"amount":{thirty}}}}}]"#,
+                uuid::Uuid::now_v7()
+            ),
+            "operations.1.values.amount",
+            inexact(thirty, Some("1.2345678901234568e+29")),
+        ),
+        (
+            r#"[{"op":"put","values":{"memo":{"deep":[9007199254740993]}}}]"#.to_string(),
+            "operations.0.values.memo.deep.0",
+            inexact("9007199254740993", Some("9007199254740992")),
+        ),
+    ] {
+        let refused = instance
+            .raw_tool(&token, "marfa_write_rows", &arguments(&operations))
+            .await;
+        assert!(refused.failed, "{operations}: {}", refused.value);
+        assert_eq!(refused.code(), "validation_error", "{}", refused.value);
+        let entry = &refused.value["error"]["details"]["errors"][0];
+        assert_eq!(entry["path"], path, "{}", refused.value);
+        assert_eq!(entry["message"], message.as_str(), "{}", refused.value);
+        assert_eq!(instance.row_count(&token, &item).await, 0, "{operations}");
+    }
+
+    // The witness: digits a float keeps are written.
+    let kept = instance
+        .raw_tool(
+            &token,
+            "marfa_write_rows",
+            &arguments(r#"[{"op":"put","values":{"amount":9007199254740992}}]"#),
+        )
+        .await;
+    assert!(!kept.failed, "{}", kept.value);
+    assert_eq!(instance.row_count(&token, &item).await, 1);
+}

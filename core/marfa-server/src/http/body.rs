@@ -452,6 +452,8 @@ pub enum Bag {
     /// A bulk action's `patch`, which it lays over each item's properties.
     Patch,
     Entries(&'static str),
+    /// A row batch's operations, whose `values` the table's columns then judge.
+    Rows,
     Whole,
 }
 
@@ -461,6 +463,7 @@ impl Bag {
             Bag::Properties => Some("properties"),
             Bag::Patch => Some("patch"),
             Bag::Whole => None,
+            Bag::Rows => return crate::app::tables::refuse_inexact_text(text, &[]),
             Bag::Entries(list) => {
                 return match integers::inexact_entry(text, list, "properties") {
                     Some((index, error)) => Err(ruled(error).with_detail("index", index)),
@@ -495,11 +498,15 @@ impl ReadBody {
     }
 
     /// As [`JsonBody::object`] reads it.
-    pub fn declared_object(&self, allowed: &[&str]) -> Result<Map<String, Value>, Refusal> {
+    pub fn declared_object(
+        &self,
+        allowed: &[&str],
+        bag: Bag,
+    ) -> Result<Map<String, Value>, Refusal> {
         if !self.declared {
             return Err(not_json());
         }
-        only_declared(parsed_object(&self.bytes, None)?, allowed)
+        only_declared(parsed_object(&self.bytes, Some(bag))?, allowed)
     }
 
     pub fn refuse_inexact_numbers(&self, bag: Bag) -> Result<(), Refusal> {
