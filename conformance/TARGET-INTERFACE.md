@@ -132,6 +132,11 @@ stays because that thing is what it checks.
   setting's bounds. `PUT /config` and the start-up settings refuse such a
   value, and no fault damages a stored setting, so only a hand edit, or a
   release that narrows a bound, leaves one.
+- `compliance/housekeeping-thinning-rules.test.ts`, "keeps a snapshot whose
+  stored time does not read, and counts it against no cap", rewrites the `created_at` of
+  snapshots in `item_versions` to text that is not a time. Every door and the
+  clock stamp a snapshot with a time that reads, so only a hand edit leaves one
+  the `version-thinning` job cannot age.
 - `compliance/health.test.ts`, "names a stored setting that no longer reads",
   writes one such `settings` row before a restart, for the same reason.
 - `compliance/restore-says.test.ts`, "refuses an export while the enforcement

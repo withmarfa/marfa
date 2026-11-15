@@ -4,7 +4,7 @@ The periodic jobs the server runs on itself, such as the trash purge, version th
 
 ## Registered jobs
 
-The server registers the following jobs when their settings and required stores admit them, each run at the interval in the table. An owner changes the interval of `backup` alone. Settings are listed in [Settings](instance.md#settings).
+The server registers the following jobs, each run at the interval in the table. An owner changes the interval of `backup` alone. Three jobs are listed only where something switches them on (`housekeeping/switched-jobs`); the others are listed on every instance. Settings are listed in [Settings](instance.md#settings).
 
 <!-- housekeeping-table:start -->
 
@@ -13,7 +13,7 @@ The server registers the following jobs when their settings and required stores 
 | `event-log-cleanup`        | hour                      | Removes expired event log entries and idempotency records.                                                                                                                                                                                                                           | yes                           |
 | `audit-cleanup`            | day                       | Removes expired audit entries and outbound webhook delivery history.                                                                                                                                                                                                                 | yes                           |
 | `inbound-delivery-cleanup` | minute                    | Removes inbound deliveries after their handled or pending retention window.                                                                                                                                                                                                          | yes                           |
-| `heartbeat`                | minute                    | Pings the configured liveness receiver.                                                                                                                                                                                                                                              | no                            |
+| `heartbeat`                | minute                    | Pings the liveness receiver `MARFA_HEARTBEAT_URL` names.                                                                                                                                                                                                                             | no                            |
 | `version-thinning`         | hour                      | Thins item versions according to the configured retention policy.                                                                                                                                                                                                                    | yes                           |
 | `feed-expiry`              | hour                      | Moves expired feed items to the trash.                                                                                                                                                                                                                                               | yes                           |
 | `trash-purge`              | day                       | Permanently removes items whose trash retention has elapsed.                                                                                                                                                                                                                         | yes                           |
@@ -24,7 +24,7 @@ The server registers the following jobs when their settings and required stores 
 | `enrichment-sweep`         | 30 seconds                | Extracts searchable text and image dimensions from uploaded files.                                                                                                                                                                                                                   | no                            |
 | `bulk-action-gc`           | hour                      | Removes finished bulk action jobs after 7 days.                                                                                                                                                                                                                                      | yes                           |
 | `table-row-cleanup`        | hour                      | Removes the rows and change logs of purged items, the batches of a table's change log older than `row_log_retention_days`, and rewrites the order a table keeps after its `order` changed and the search index of its rows after what it marks searchable changed, a page at a time. | yes                           |
-| `backup`                   | `backup_interval_seconds` | Puts a backup of the instance in the object store when anything it holds has changed, and thins this instance's backups.                                                                                                                                                             | no                            |
+| `backup`                   | `backup_interval_seconds` | Puts a backup of the instance in the backup folder or the object store when anything it holds has changed, and thins this instance's backups.                                                                                                                                        | no                            |
 
 <!-- housekeeping-table:end -->
 
@@ -46,17 +46,25 @@ When a key or app token lacking `instance.read` sends `GET /housekeeping`, the s
 
 ### `housekeeping/always-listed`
 
-The server MUST list `trash-purge`, `version-thinning`, `feed-expiry`, `event-log-cleanup`, `audit-cleanup`, `inbound-delivery-cleanup`, `credential-cleanup`, `blob-replicate`, `blob-integrity` and `enrichment-sweep` on every instance, whatever its settings and its `/config`.
+The server MUST list `trash-purge`, `version-thinning`, `feed-expiry`, `event-log-cleanup`, `audit-cleanup`, `inbound-delivery-cleanup`, `credential-cleanup`, `bulk-action-gc`, `table-row-cleanup`, `blob-replicate`, `blob-integrity` and `enrichment-sweep` on every instance, whatever its settings and its `/config`.
 
 **Reason:** jobs controlled by `/config` stay registered so that a later choice can start work without a restart. A disabled job skips work; a zero retention keeps everything.
 
-**Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the management key`, `compliance/credential-cleanup.test.ts › lists every job the server runs, and runs the credential clean-up on demand`.
+**Tests:** `compliance/housekeeping-listing.test.ts › lists the twelve jobs every instance runs, and no job that something switches on, on an instance with none of them`, `compliance/credential-cleanup.test.ts › lists every job the server runs, and runs the credential clean-up on demand`.
+
+### `housekeeping/switched-jobs`
+
+The server MUST list `heartbeat` where `MARFA_HEARTBEAT_URL` is set, `blob-orphans` where the stored setting `blob_cleanup_enabled` is `true`, and `backup` where the instance has a backup folder or an object store and the stored setting `backup_interval_seconds` is above 0.
+
+**Reason:** the listing says what the instance runs. A stored setting takes effect without a restart (`instance/live-work`), so the listing follows it.
+
+**Tests:** `compliance/housekeeping-listing.test.ts › lists each job that something switches on, where it is switched on, and leaves it out where it is not`.
 
 ### `housekeeping/switched-off-not-listed`
 
-Where a machine-only setting switches a housekeeping job off, the server MUST leave that job out of the listing.
+Where the condition `housekeeping/switched-jobs` gives for a job does not hold, the server MUST leave that job out of the listing.
 
-**Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`.
+**Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`, `compliance/backups.test.ts › takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing`, `compliance/housekeeping-listing.test.ts › lists each job that something switches on, where it is switched on, and leaves it out where it is not`.
 
 ### `housekeeping/last-outcome`
 
@@ -108,9 +116,9 @@ When a caller authorized by `instance.maintain` or local authority asks to run a
 
 ### `housekeeping/switched-off-not-run`
 
-Where a machine-only setting switches a housekeeping job off, when a caller authorized by `instance.maintain` or local authority asks to run it, the server MUST answer `404 housekeeping_job_not_found`.
+Where the condition `housekeeping/switched-jobs` gives for a job does not hold, when a caller authorized by `instance.maintain` or local authority asks to run it, the server MUST answer `404 housekeeping_job_not_found`.
 
-**Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`.
+**Tests:** `compliance/blob-store-bounds.test.ts › leaves blob-orphans out of the listing and answers 404 for it when the sweep is switched off`, `compliance/backups.test.ts › takes no scheduled backup while backup_interval_seconds is 0, and leaves backup out of the housekeeping listing`, `compliance/housekeeping-listing.test.ts › lists each job that something switches on, where it is switched on, and leaves it out where it is not`.
 
 ### `housekeeping/run-malformed-name`
 
@@ -272,7 +280,7 @@ Where enrichment is on, the server MUST write `width` and `height` for a well-fo
 
 ## Retention
 
-`PUT /config` sets how long the server keeps some records, and settings give the defaults. Settings alone set how long it keeps others, such as revoked grants.
+How long the server keeps a kind of record is a stored setting, so `PUT /config` and `PATCH /config` set it, and a default stands where none is stored (`instance/settings-seed`). The settings are listed in [Settings](instance.md#stored-settings).
 
 ### `housekeeping/retention-days-range`
 
@@ -336,13 +344,17 @@ Where a retention setting is at the largest value it accepts, the server MUST fi
 
 ### `housekeeping/retention-setting-days-range`
 
-If `MARFA_AUDIT_RETENTION_DAYS`, `MARFA_TRASH_RETENTION_DAYS`, `MARFA_INBOUND_HANDLED_RETENTION_DAYS`, `MARFA_INBOUND_PENDING_RETENTION_DAYS`, `MARFA_REVOKED_GRANT_RETENTION_DAYS` or `MARFA_GRANT_INACTIVITY_DAYS` holds a value that is neither empty nor an integer from 0 through 36500 when the server starts, then the server MUST refuse to start and name the setting.
+While `MARFA_TEST_HOOKS` is true, if `MARFA_AUDIT_RETENTION_DAYS`, `MARFA_TRASH_RETENTION_DAYS`, `MARFA_INBOUND_HANDLED_RETENTION_DAYS`, `MARFA_INBOUND_PENDING_RETENTION_DAYS`, `MARFA_REVOKED_GRANT_RETENTION_DAYS` or `MARFA_GRANT_INACTIVITY_DAYS` holds a value that is neither empty nor an integer from 0 through 36500 when the server starts, then the server MUST refuse to start and name the setting.
+
+**Reason:** the variables seed the stored settings of a server with test hooks (`instance/settings-seed`). A server without test hooks ignores them and logs a warning that names the stored setting (`instance/unknown-setting-no-ignored-name`), so it neither refuses nor applies a value.
 
 **Tests:** `compliance/housekeeping-settings.test.ts › refuses a value of the day settings that is not a whole number from 0 through 36500, and names the setting`, `› starts with each setting empty, and with each at its smallest`.
 
 ### `housekeeping/retention-setting-hours-range`
 
-If `MARFA_EVENT_LOG_RETENTION_HOURS` or `MARFA_DCR_CLIENT_RETENTION_HOURS` holds a value that is neither empty nor an integer from 0 through 876000 when the server starts, then the server MUST refuse to start and name the setting.
+While `MARFA_TEST_HOOKS` is true, if `MARFA_EVENT_LOG_RETENTION_HOURS` or `MARFA_DCR_CLIENT_RETENTION_HOURS` holds a value that is neither empty nor an integer from 0 through 876000 when the server starts, then the server MUST refuse to start and name the setting.
+
+**Reason:** as for `housekeeping/retention-setting-days-range`.
 
 **Tests:** `compliance/housekeeping-settings.test.ts › refuses a value of the hour settings that is not a whole number from 0 through 876000, and names the setting`, `› starts with each setting empty, and with each at its smallest`.
 
@@ -354,13 +366,21 @@ If the stored value of a setting that decides what a housekeeping job deletes is
 
 **Tests:** `compliance/unreadable-deletion-settings.test.ts › ends a trash-purge run in error and purges nothing, and purges on the seeded retention once the row is gone`, `› ends a version-thinning run in error and thins nothing, and thins on the seeded maximum once the row is gone`, `compliance/blob-store-settings.test.ts › ends a blob-orphans run in error and purges nothing while blob_cleanup_grace_seconds does not read, and purges on the seeded grace once the row is gone`.
 
+### `housekeeping/connector-state-kept`
+
+The server MUST NOT remove a connector's state document, or the agreement of an item that stands, in any housekeeping job.
+
+**Reason:** a connector's state is how it knows where it stopped, so a job that aged it out would send the connector over everything again. It stays until the connector or an owner clears it (`connectors/clear-state`). An agreement goes with its item when `trash-purge` purges it (`connectors/agreements-purge-removes`), which is how the fixture shows that the jobs ran and delete what they are set to.
+
+**Tests:** `compliance/housekeeping-connector-data.test.ts › keeps a source's state document and the agreements of its items through every job, and removes an agreement with its purged item`.
+
 ## Version thinning
 
-The `version-thinning` job removes an item's older snapshots by its type's `version_policy` (`types/version-policy-values`).
+The `version-thinning` job removes an item's older snapshots by its type's `version_policy` (`types/version-policy-values`). A snapshot is the state an item held at a version a write replaced (`versions/snapshot-written`), and its `created_at` is the time of that write, so an item's current version is no snapshot. A snapshot's age is the time from its `created_at` to the time the run judges, which is the server's trusted time. A day is a UTC calendar day and a week an ISO week, which starts on a Monday. The statements below hold for an item whose history holds more than two snapshots (`housekeeping/thinning-minimum`).
 
 ### `housekeeping/thinning-policy`
 
-When the `version-thinning` job thins an item's history, the server MUST keep the snapshots the effective `version_policy` of the item's type keeps, as `GET /types/{id}` answers it.
+When the `version-thinning` job thins an item's history, the server MUST thin it by the effective `version_policy` of the item's type, as `GET /types/{id}` answers it, by the rules below.
 
 **Reason:** a policy read from the type alone would delete history the policy advertised for the type keeps.
 
@@ -371,6 +391,64 @@ When the `version-thinning` job thins an item's history, the server MUST keep th
 When no type in an item's type chain declares a field of `version_policy`, the server MUST take that field from the instance defaults when it thins the item.
 
 **Tests:** `compliance/housekeeping-thinning.test.ts › takes recent_days from the instance default when no type in the chain declares it`, `› takes daily_snapshot_days from the instance default when no type in the chain declares it`, `› takes weekly_snapshot_days from the instance default when no type in the chain declares it`, `› takes max_versions from the instance default when no type in the chain declares it`.
+
+### `housekeeping/thinning-recent`
+
+The server MUST keep every snapshot of an item that is no older than `recent_days` of the item's effective `version_policy`.
+
+**Tests:** `compliance/housekeeping-thinning-rules.test.ts › keeps every snapshot no older than recent_days, and removes those older than weekly_snapshot_days`.
+
+### `housekeeping/thinning-daily`
+
+The server MUST keep, of an item's snapshots older than `recent_days` and no older than `daily_snapshot_days`, only the latest of each UTC calendar day, and remove the others.
+
+**Reason:** two snapshots an hour apart on either side of a UTC midnight are on two days, so each is the latest of its own, and a day is not the 24 hours before the run.
+
+**Tests:** `compliance/housekeeping-thinning-rules.test.ts › keeps the latest snapshot of each UTC calendar day past recent_days, up to daily_snapshot_days`.
+
+### `housekeeping/thinning-weekly`
+
+The server MUST keep, of an item's snapshots older than `daily_snapshot_days` and no older than `weekly_snapshot_days`, only the latest of each ISO week, and remove the others.
+
+**Reason:** an ISO week starts on a Monday, so two snapshots an hour apart on either side of a Sunday midnight are in two weeks, and a week is not the seven days before the run.
+
+**Tests:** `compliance/housekeeping-thinning-rules.test.ts › keeps the latest snapshot of each ISO week past daily_snapshot_days, up to weekly_snapshot_days`.
+
+### `housekeeping/thinning-expired`
+
+Where `weekly_snapshot_days` of an item's effective `version_policy` is above 0, the server MUST remove every snapshot of the item older than `weekly_snapshot_days`, except its newest version.
+
+**Tests:** `compliance/housekeeping-thinning-rules.test.ts › keeps every snapshot no older than recent_days, and removes those older than weekly_snapshot_days`, `› keeps the latest snapshot of each ISO week past daily_snapshot_days, up to weekly_snapshot_days`.
+
+### `housekeeping/thinning-zero`
+
+Where `weekly_snapshot_days` of an item's effective `version_policy` is 0, the server MUST NOT remove a snapshot of the item for its age.
+
+**Reason:** the windows run in order, with `recent_days` no larger than `daily_snapshot_days` and that no larger than `weekly_snapshot_days` (`types/version-policy-values`), so a weekly window of 0 leaves no window that thins and means that age keeps every snapshot, as a retention of 0 does (`housekeeping/retention-zero-keeps`). A `recent_days` or `daily_snapshot_days` of 0 is an empty window, so no snapshot is kept for being within it.
+
+**Tests:** `compliance/housekeeping-thinning-rules.test.ts › removes no snapshot by age where weekly_snapshot_days is 0, and keeps nothing by recent_days or daily_snapshot_days where they are 0`.
+
+### `housekeeping/thinning-newest`
+
+The server MUST NOT remove the snapshot with the highest version of an item.
+
+**Reason:** the item's current state is that snapshot, and an offline edit based on a removed one is refused with `409 ancestor_unavailable` (`versions/ancestor-thinned`).
+
+**Tests:** `compliance/housekeeping-thinning-rules.test.ts › keeps the newest version whatever its age`, `› drops the oldest of the snapshots the windows keep past max_versions, and never the newest`.
+
+### `housekeeping/thinning-max-versions`
+
+Where more snapshots of an item remain after its windows than `max_versions` of its effective `version_policy`, the server MUST remove the oldest of them until `max_versions` remain, and the newest version stays whatever `max_versions` is (`housekeeping/thinning-newest`).
+
+**Tests:** `compliance/housekeeping-thinning-rules.test.ts › drops the oldest of the snapshots the windows keep past max_versions, and never the newest`, `compliance/housekeeping-thinning.test.ts › takes max_versions from the instance default when no type in the chain declares it`.
+
+### `housekeeping/thinning-unread-time`
+
+The server MUST NOT remove a snapshot whose stored time is not RFC 3339 UTC text with milliseconds, whatever the item's policy says, and it leaves such a snapshot out of the count `max_versions` limits.
+
+**Reason:** the age of such a snapshot cannot be told, and a removal is for good.
+
+**Tests:** `compliance/housekeeping-thinning-rules.test.ts › keeps a snapshot whose stored time does not read, and counts it against no cap`.
 
 ### `housekeeping/thinning-minimum`
 

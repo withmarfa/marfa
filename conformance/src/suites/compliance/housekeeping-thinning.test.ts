@@ -14,6 +14,13 @@ import {
   runJob,
   writerOf,
 } from "../../utils/moved-clock.js";
+import {
+  history,
+  item,
+  register,
+  thin,
+  update,
+} from "../../utils/version-history.js";
 
 /**
  * How the `version-thinning` job takes the policy: from the instance
@@ -39,59 +46,6 @@ const DEFAULTS = {
   MARFA_VERSION_DAILY_SNAPSHOT_DAYS: "2",
   MARFA_VERSION_WEEKLY_SNAPSHOT_DAYS: "20",
 };
-
-let sequence = 0;
-
-async function register(
-  client: MarfaClient,
-  version_policy?: object,
-): Promise<string> {
-  sequence += 1;
-  const id = `user.thinning-${String(Date.now())}-${String(sequence)}`;
-  const registered = await client.registerType({
-    id,
-    fields: { title: { type: "string" } },
-    ...(version_policy !== undefined && { version_policy }),
-  } as Parameters<MarfaClient["registerType"]>[0]);
-  expect(registered.status, JSON.stringify(registered.error)).toBe(201);
-  return id;
-}
-
-async function item(client: MarfaClient, type: string): Promise<string> {
-  const created = await client.createItem({
-    type,
-    properties: { title: "v1" },
-  });
-  expect(created.status, JSON.stringify(created.error)).toBe(201);
-  return created.data.item.id;
-}
-
-/** Writes `count` updates at the server's time now, each leaving a snapshot. */
-async function update(
-  client: MarfaClient,
-  id: string,
-  count: number,
-): Promise<void> {
-  for (let n = 0; n < count; n += 1) {
-    const current = await client.getItem(id);
-    const updated = await client.updateItem(id, {
-      properties: { title: `v${String(current.data.item.version + 1)}` },
-      version: current.data.item.version,
-    });
-    expect(updated.status, JSON.stringify(updated.error)).toBe(200);
-  }
-}
-
-async function history(client: MarfaClient, id: string): Promise<number[]> {
-  const versions = await client.getVersions(id);
-  expect(versions.status, JSON.stringify(versions.error)).toBe(200);
-  return versions.data.data.map((v) => v.version);
-}
-
-async function thin(server: FreshServer): Promise<void> {
-  const run = await runJob(server, "version-thinning");
-  expect(run.outcome, String(run.error)).toBe("ok");
-}
 
 /** Moves the clock out of the minute before a UTC midnight, so the writes of
  *  a case that wants one date all carry it. */
