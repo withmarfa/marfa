@@ -55,6 +55,10 @@ fn check_keys(catalog: &Catalog, type_id: &str, keys: Option<&Keys>) -> Result<(
                 .with_detail("type", type_id),
         );
     }
+    check_links(catalog, type_id, keys)
+}
+
+fn check_links(catalog: &Catalog, type_id: &str, keys: Option<&Keys>) -> Result<()> {
     if matches!(keys, Some(Keys::Links(_))) && catalog.link_field(type_id).is_none() {
         return Err(Refusal::validation(format!(
             "Type \"{type_id}\" names no link_field, so its rows hold no links"

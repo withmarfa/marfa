@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::plan::{self, Act, Asked, Gate};
 use super::{
-    Door, Item, Keys, check_keys, extensions_text, metadata_for, name_of, not_found, rows,
+    Door, Item, Keys, check_links, extensions_text, metadata_for, name_of, not_found, rows,
     summary_of, with_blocks,
 };
 use crate::app::App;
@@ -860,7 +860,7 @@ pub async fn lookup(
             Selector::Ids(_) => None,
         };
         judge_type(read, &type_id)?;
-        check_keys(&read.catalog, &type_id, keys)?;
+        check_links(&read.catalog, &type_id, keys)?;
         let readable = read.caller.may_read_type(&type_id);
         let found = read.found_by(&type_id, &selector)?;
         read.hydrating();
