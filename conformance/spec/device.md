@@ -6156,6 +6156,14 @@ When a caller reads a view sorted by an own field, a device MUST order the items
 
 **Tests:** `device/views.test.ts › sorts the own field %s`, `device/views-items-live.test.ts › lists a view's items in the order the server does, for each sort and query`.
 
+### `device/view-sort-last-activity`
+
+If a view sorts by `last_activity_at`, then a device MUST refuse its item list and search `invalid`, naming `last_activity_at`.
+
+**Reason:** a device does not hold when an item's rows last changed, so an order it made would differ from the server's with no signal.
+
+**Tests:** `device/views.test.ts › refuses a view sorted by last_activity_at, which the copy does not hold`.
+
 ### `device/view-sort-keys`
 
 When a view names several sort keys, a device MUST compare the keys in their declared order with ascending item IDs breaking ties, except for a single timestamp key whose ties follow its direction.

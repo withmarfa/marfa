@@ -419,6 +419,25 @@ it.each(unanswerableCases)(
   },
 );
 
+it("refuses a view sorted by last_activity_at, which the copy does not hold", async () => {
+  // The witness: the same view sorted by another timestamp answers.
+  await copy([{ item: { id: id(1) } }], {
+    sort: [{ by: "created_at", direction: "desc" }],
+  });
+  expect(await listed()).toEqual([id(1)]);
+  const device = await copy([{ item: { id: id(1) } }], {
+    sort: [{ by: "last_activity_at", direction: "desc" }],
+  });
+  for (const args of [
+    ["items", "list", "--view", VIEW],
+    ["search", "body", "--view", VIEW],
+  ]) {
+    const refused = await device.attempt(args);
+    expect(refused.ok, JSON.stringify(refused)).toBe(false);
+    if (!refused.ok) expect(refused.refusal.raw).toContain("last_activity_at");
+  }
+});
+
 /** A whole copy whose cursor then ages out, so it answers but is stale. */
 async function agedOut() {
   let aged = false;

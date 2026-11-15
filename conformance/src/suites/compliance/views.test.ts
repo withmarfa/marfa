@@ -494,6 +494,7 @@ describe("the view door", () => {
       "sort",
     ],
     [{ group: { by: "owner" } }, "validation_error", "group.by"],
+    [{ group: { by: "last_activity_at" } }, "validation_error", "group.by"],
     [{ group: { by: "edge[no-such-edge]" } }, "validation_error", "group.by"],
     [
       { group: { by: "title", bucket: "month" } },
@@ -548,6 +549,7 @@ describe("the view door", () => {
     for (const settings of [
       { sort: [{ by: "properties.amount", direction: "desc" }] },
       { sort: [{ by: "tags", direction: "asc" }] },
+      { sort: [{ by: "last_activity_at", direction: "desc" }] },
       { group: { by: "created_at", bucket: "week" } },
       { group: { by: "edge[about]" } },
       { group: { by: "backref[about]" } },
