@@ -244,8 +244,8 @@ describe("a backup in the object store", () => {
     ];
     // What a sign-in is found by: the digest the instance keeps of its token.
     const signIns = withInstanceDatabase(origin.sqlitePath, (db) =>
-      db.prepare("SELECT token FROM sign_ins").all(),
-    ).map((row) => String(row.token));
+      db.prepare("SELECT digest FROM sign_ins").all(),
+    ).map((row) => String(row.digest));
     expect(signIns.length, "the owner's sign-in is stored").toBeGreaterThan(0);
     secrets.push(...signIns);
     // What `marfa.secrets` holds, where the environment did not give it.

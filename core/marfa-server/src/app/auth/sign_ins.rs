@@ -24,7 +24,7 @@ pub struct SignIn {
     created_at: String,
     last_used_at: Option<String>,
     expires_at: Option<String>,
-    ip_address: Option<String>,
+    client_ip: Option<String>,
     user_agent: Option<String>,
     minted_by: Option<String>,
 }
@@ -38,23 +38,23 @@ impl SignIn {
             "created_at": self.created_at,
             "last_used_at": self.last_used_at,
             "expires_at": self.expires_at,
-            "ip_address": self.ip_address,
+            "client_ip": self.client_ip,
             "user_agent": self.user_agent,
             "minted_by": self.minted_by,
         })
     }
 }
 
-fn browser(session: &Session, ip_address: Option<String>) -> SignIn {
+fn browser(session: &Session, client_ip: Option<String>) -> SignIn {
     SignIn {
         id: session.id.clone(),
         kind: "browser",
         name: session.name(),
         created: session.created_at,
         created_at: session.created_at.text(),
-        last_used_at: Some(session.updated_at.text()),
+        last_used_at: Some(session.last_used_at.text()),
         expires_at: Some(session.expires_at.text()),
-        ip_address,
+        client_ip,
         user_agent: session.user_agent.clone(),
         minted_by: None,
     }
@@ -69,7 +69,7 @@ fn app_of(tx: &Transaction<'_>, consent: &Consent, inactivity_days: u64) -> Resu
         created_at: grants::granted_at(consent),
         last_used_at: consent.last_used_at.map(Stamp::text),
         expires_at: grants::boundary(consent, inactivity_days)?,
-        ip_address: None,
+        client_ip: None,
         user_agent: None,
         minted_by: None,
     })
@@ -89,7 +89,7 @@ fn key_of(key: &Key, apps: &[Consent]) -> Result<SignIn> {
         created_at: key.created_at.clone(),
         last_used_at: key.last_used_at.clone(),
         expires_at: key.expires_at.clone(),
-        ip_address: None,
+        client_ip: None,
         user_agent: None,
         minted_by,
     })
@@ -107,8 +107,8 @@ pub async fn list(app: &App, caller: &Caller) -> Result<Vec<SignIn>> {
         .read(move |tx| {
             caller.current(tx, &at)?;
             let mut found = Vec::new();
-            for (session, ip_address) in session::all_live(tx, Stamp::read(&at)?)? {
-                found.push(browser(&session, ip_address));
+            for (session, client_ip) in session::all_live(tx, Stamp::read(&at)?)? {
+                found.push(browser(&session, client_ip));
             }
             let apps = grants::all_of_owner(tx)?;
             for consent in &apps {

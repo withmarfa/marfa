@@ -9170,12 +9170,12 @@
             "description": "When the sign-in ends unless used again, in UTC. For an app, the inactivity boundary. `null` for disabled app inactivity retirement or a key without an expiry.",
             "example": "2026-10-12T14:13:08.000Z"
           },
-          "ip_address": {
+          "client_ip": {
             "type": [
               "string",
               "null"
             ],
-            "description": "The address a browser signed in from, or `null` for an app, a key, or a browser whose address Marfa could not tell.",
+            "description": "The IP address a browser signed in from, or `null` for an app, a key, or a browser whose address Marfa could not tell.",
             "example": "203.0.113.24"
           },
           "user_agent": {
@@ -9200,7 +9200,7 @@
           "created_at",
           "last_used_at",
           "expires_at",
-          "ip_address",
+          "client_ip",
           "user_agent",
           "minted_by"
         ],

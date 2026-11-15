@@ -61,6 +61,45 @@ pub fn declared(migrations: &[Migration]) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
+/// Every object as `compare` reads it, and every row outside a virtual table's own tables.
+#[cfg(test)]
+pub fn held(conn: &Connection) -> rusqlite::Result<String> {
+    let mut objects = objects(conn)?;
+    objects.sort_by(|a, b| (&a.kind, &a.name).cmp(&(&b.kind, &b.name)));
+    let mut held = String::new();
+    for object in &objects {
+        let Object {
+            kind,
+            name,
+            table,
+            sql,
+        } = object;
+        held.push_str(&format!("{kind} {name} on {table}: {sql}\n"));
+    }
+    for object in objects.iter().filter(|object| object.kind == "table") {
+        if is_shadow(conn, &object.name)? {
+            continue;
+        }
+        let quoted = object.name.replace('"', "\"\"");
+        let mut statement = conn.prepare(&format!("SELECT * FROM \"{quoted}\""))?;
+        let width = statement.column_count();
+        let mut rows: Vec<String> = statement
+            .query_map([], |row| {
+                (0..width)
+                    .map(|at| {
+                        row.get::<_, rusqlite::types::Value>(at)
+                            .map(|v| format!("{v:?}"))
+                    })
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map(|values| format!("row of {}: {}\n", object.name, values.join(", ")))
+            })?
+            .collect::<rusqlite::Result<_>>()?;
+        rows.sort();
+        held.extend(rows);
+    }
+    Ok(held)
+}
+
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct Differences {
     pub missing_tables: Vec<String>,

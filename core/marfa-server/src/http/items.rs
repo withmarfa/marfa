@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::extract::rejection::PathRejection;
 use axum::extract::{FromRequest, FromRequestParts, Path, Request, State};
 use axum::http::request::Parts;
-use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri, header};
+use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
 use marfa_rules::error::{RuleError, field_code};
 use marfa_rules::{names, time, validation};
@@ -184,12 +184,8 @@ fn replayed(kept: Kept) -> Response {
                 .map(str::to_string)
         })
         .and_then(|code| HeaderValue::from_str(&code).ok());
-    let status = StatusCode::from_u16(kept.status).unwrap_or(StatusCode::OK);
-    let content_type = HeaderValue::from_str(&kept.content_type)
-        .unwrap_or(HeaderValue::from_static("application/json"));
-    let mut response = text_answer(status, kept.body);
+    let mut response = text_answer(kept.status, kept.body);
     let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, content_type);
     headers.insert(REPLAYED_HEADER, HeaderValue::from_static("true"));
     if let Some(code) = code {
         headers.insert("x-error-code", code);

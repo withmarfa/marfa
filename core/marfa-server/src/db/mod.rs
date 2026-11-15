@@ -3,6 +3,8 @@
 mod hold;
 pub mod migrate;
 mod open;
+#[cfg(test)]
+mod pinned;
 pub mod rank;
 mod reader;
 mod schema;

@@ -376,6 +376,46 @@ async fn an_end_purged_while_an_edge_is_made_leaves_no_edge_behind() {
 }
 
 #[tokio::test]
+async fn a_purged_item_and_its_edge_leave_their_numbers_unused() {
+    let instance = Instance::start().await;
+    let seq = |table: &str, id: &str| -> i64 {
+        instance
+            .db()
+            .query_row(
+                &format!("SELECT seq FROM {table} WHERE id = ?1"),
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    let source = instance.note().await;
+    let gone = instance.note().await;
+    let edge = instance.edge(&source, &gone, "parent-of").await;
+    let edge = edge["id"].as_str().unwrap().to_string();
+    let (gone_seq, edge_seq) = (seq("items", &gone), seq("edges", &edge));
+    let path = format!("/items/{gone}");
+    instance
+        .local(Method::DELETE, &path, None)
+        .await
+        .landed(StatusCode::OK);
+    let purge = format!("/items/{gone}/purge");
+    instance
+        .local(Method::POST, &purge, None)
+        .await
+        .landed(StatusCode::OK);
+    assert_eq!(instance.edges_of("parent-of"), 0, "the purge took the edge");
+
+    let next = instance.note().await;
+    let next_edge = instance.edge(&source, &next, "parent-of").await;
+    let next_edge = next_edge["id"].as_str().unwrap().to_string();
+    let (item_seq, next_edge_seq) = (seq("items", &next), seq("edges", &next_edge));
+    assert!(
+        item_seq > gone_seq && next_edge_seq > edge_seq,
+        "item {item_seq} after {gone_seq}, edge {next_edge_seq} after {edge_seq}"
+    );
+}
+
+#[tokio::test]
 async fn a_restore_after_one_end_was_purged_brings_back_the_rest() {
     let instance = Instance::start().await;
     let (parent, kept, gone) = (

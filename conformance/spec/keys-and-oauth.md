@@ -3139,7 +3139,7 @@ When the private local command asks `GET /owner/sign-ins`, the server MUST answe
 
 ### `keys-and-oauth/sign-ins-fields`
 
-When `GET /owner/sign-ins` answers, the server MUST give each sign-in its `id`, `kind`, `name`, `created_at`, `last_used_at`, `expires_at`, `ip_address`, `user_agent` and `minted_by`, and no other field.
+When `GET /owner/sign-ins` answers, the server MUST give each sign-in its `id`, `kind`, `name`, `created_at`, `last_used_at`, `expires_at`, `client_ip`, `user_agent` and `minted_by`, and no other field.
 
 **Tests:** `compliance/owner-sign-ins.test.ts › lists every live browser session of the owner`, `› lists every app and key beside the browsers, each with a name, a kind and its last use`.
 

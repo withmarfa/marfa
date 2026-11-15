@@ -687,7 +687,7 @@ async fn the_table_keeps_a_digest_and_never_the_token() {
     let held: String = instance
         .app
         .db
-        .read(|tx| Ok(tx.query_row("SELECT token FROM sign_ins", [], |row| row.get(0))?))
+        .read(|tx| Ok(tx.query_row("SELECT digest FROM sign_ins", [], |row| row.get(0))?))
         .await
         .unwrap();
     assert_ne!(held, token);

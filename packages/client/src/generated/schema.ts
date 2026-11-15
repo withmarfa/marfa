@@ -6118,10 +6118,10 @@ export interface components {
              */
             expires_at: string | null;
             /**
-             * @description The address a browser signed in from, or `null` for an app, a key, or a browser whose address Marfa could not tell.
+             * @description The IP address a browser signed in from, or `null` for an app, a key, or a browser whose address Marfa could not tell.
              * @example 203.0.113.24
              */
-            ip_address: string | null;
+            client_ip: string | null;
             /** @description The `User-Agent` a browser sent when it signed in, or `null` for an app, a key, or a browser that sent none. */
             user_agent: string | null;
             /** @description For a key an app minted, the ID of that app's sign-in while the app is signed in. `null` for a browser, an app, any other key, and a key whose app has ended. */

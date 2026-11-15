@@ -31,7 +31,7 @@ pub struct Session {
     pub id: String,
     pub owner_id: String,
     pub created_at: Stamp,
-    pub updated_at: Stamp,
+    pub last_used_at: Stamp,
     pub expires_at: Stamp,
     pub user_agent: Option<String>,
     /// What the instance's levers hold it to, once a transaction has read them.
@@ -61,14 +61,14 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Session> {
         id: row.get("id")?,
         owner_id: row.get("owner_id")?,
         created_at: row.get("created_at")?,
-        updated_at: row.get("updated_at")?,
+        last_used_at: row.get("last_used_at")?,
         expires_at: row.get("expires_at")?,
         user_agent: row.get("user_agent")?,
         standing: Standing::default(),
     })
 }
 
-const COLUMNS: &str = "id, owner_id, created_at, updated_at, expires_at, user_agent";
+const COLUMNS: &str = "id, owner_id, created_at, last_used_at, expires_at, user_agent";
 
 /// Only the owner's session counts, and only while it lasts.
 fn live(tx: &Transaction<'_>, found: Option<Session>, now: Stamp) -> Result<Option<Session>> {
@@ -96,9 +96,9 @@ pub(super) fn all_live(tx: &Transaction<'_>, now: Stamp) -> Result<Vec<(Session,
     };
     Ok(tx
         .prepare(&format!(
-            "SELECT {COLUMNS}, ip_address FROM sign_ins WHERE owner_id = ?1"
+            "SELECT {COLUMNS}, client_ip FROM sign_ins WHERE owner_id = ?1"
         ))?
-        .query_map([owner], |row| Ok((from_row(row)?, row.get("ip_address")?)))?
+        .query_map([owner], |row| Ok((from_row(row)?, row.get("client_ip")?)))?
         .collect::<rusqlite::Result<Vec<_>>>()?
         .into_iter()
         .filter(|(session, _): &(Session, Option<String>)| session.expires_at > now)
@@ -108,7 +108,7 @@ pub(super) fn all_live(tx: &Transaction<'_>, now: Stamp) -> Result<Vec<(Session,
 fn live_by_digest(tx: &Transaction<'_>, digest: &str, now: Stamp) -> Result<Option<Session>> {
     let found = tx
         .query_row(
-            &format!("SELECT {COLUMNS} FROM sign_ins WHERE token = ?1"),
+            &format!("SELECT {COLUMNS} FROM sign_ins WHERE digest = ?1"),
             [digest],
             from_row,
         )
@@ -150,14 +150,14 @@ pub(super) fn open(tx: &Transaction<'_>, now: Stamp, new: New<'_>) -> Result<Ope
         id: uuid::Uuid::now_v7().to_string(),
         owner_id: new.owner_id.to_string(),
         created_at: now,
-        updated_at: now,
+        last_used_at: now,
         expires_at: now.plus_ms(IDLE_MS)?,
         user_agent: new.visit.user_agent.clone(),
         standing: Standing::default(),
     };
     tx.execute(
-        "INSERT INTO sign_ins (id, token, owner_id, created_at, updated_at, expires_at, \
-         user_agent, ip_address) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7)",
+        "INSERT INTO sign_ins (id, digest, owner_id, created_at, last_used_at, expires_at, \
+         user_agent, client_ip) VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7)",
         params![
             session.id,
             digest_of(new.salt, &token)?,
@@ -190,11 +190,11 @@ fn record_use(tx: &Transaction<'_>, id: &str, now: Stamp) -> Result<Option<Seen>
             recorded: false,
         }));
     }
-    session.updated_at = now;
+    session.last_used_at = now;
     session.expires_at = now.plus_ms(IDLE_MS)?;
     tx.execute(
-        "UPDATE sign_ins SET updated_at = ?2, expires_at = ?3 WHERE id = ?1",
-        params![id, session.updated_at, session.expires_at],
+        "UPDATE sign_ins SET last_used_at = ?2, expires_at = ?3 WHERE id = ?1",
+        params![id, session.last_used_at, session.expires_at],
     )?;
     Ok(Some(Seen {
         session,
@@ -203,7 +203,7 @@ fn record_use(tx: &Transaction<'_>, id: &str, now: Stamp) -> Result<Option<Seen>
 }
 
 fn use_due(session: &Session, now: Stamp) -> bool {
-    now.ms() - session.updated_at.ms() >= USE_EVERY_MS
+    now.ms() - session.last_used_at.ms() >= USE_EVERY_MS
 }
 
 /// Storage that is full, read-only or held by another writer costs a session
@@ -424,7 +424,7 @@ mod tests {
 
     fn ending(tx: &Transaction<'_>, id: &str, expires_at: &str) {
         tx.execute(
-            "INSERT INTO sign_ins (id, token, owner_id, created_at, updated_at, expires_at) \
+            "INSERT INTO sign_ins (id, digest, owner_id, created_at, last_used_at, expires_at) \
              VALUES (?1, ?1, 'owner', ?2, ?2, ?3)",
             params![id, at(NOW - 60_000), expires_at],
         )

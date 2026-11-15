@@ -4,6 +4,7 @@ mod expiry;
 
 use std::sync::{Arc, Mutex, PoisonError};
 
+use axum::http::StatusCode;
 use rusqlite::{OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -24,7 +25,6 @@ pub use expiry::{UNREAD, expire};
 pub const MAX_KEY_CHARACTERS: usize = 255;
 const LEASE_MS: i64 = 60_000;
 const MAX_KEPT_BYTES: usize = 1_048_576;
-const CONTENT_TYPE: &str = "application/json";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "need", rename_all = "snake_case")]
@@ -114,8 +114,7 @@ impl Claim {
 
 #[derive(Debug)]
 pub struct Kept {
-    pub status: u16,
-    pub content_type: String,
+    pub status: StatusCode,
     pub body: Vec<u8>,
 }
 
@@ -143,8 +142,7 @@ struct Held {
     contract: u32,
     state: String,
     created_at: String,
-    status: Option<u16>,
-    content_type: Option<String>,
+    status: Option<i64>,
     body: Option<Vec<u8>>,
     requirements: String,
 }
@@ -153,7 +151,7 @@ fn held(tx: &Transaction<'_>, credential: &str, key: &str) -> Result<Option<Held
     Ok(tx
         .query_row(
             "SELECT fingerprint, contract, state, created_at, response_status, \
-             response_content_type, response_body, requirements FROM idempotency_records \
+             response_body, requirements FROM idempotency_records \
              WHERE credential = ?1 AND idempotency_key = ?2",
             [credential, key],
             |row| {
@@ -163,9 +161,8 @@ fn held(tx: &Transaction<'_>, credential: &str, key: &str) -> Result<Option<Held
                     state: row.get(2)?,
                     created_at: row.get(3)?,
                     status: row.get(4)?,
-                    content_type: row.get(5)?,
-                    body: row.get(6)?,
-                    requirements: row.get(7)?,
+                    body: row.get(5)?,
+                    requirements: row.get(6)?,
                 })
             },
         )
@@ -230,12 +227,20 @@ pub async fn enter(app: &App, caller: &Caller, key: &str, fingerprint: String) -
     }
 }
 
+/// The status a kept answer was stored with, which the table keeps between 100 and 599.
+fn kept_status(stored: Option<i64>) -> Result<StatusCode> {
+    let stored = stored.ok_or_else(|| Refusal::internal("a kept answer has no status"))?;
+    u16::try_from(stored)
+        .ok()
+        .filter(|status| (100..=599).contains(status))
+        .and_then(|status| StatusCode::from_u16(status).ok())
+        .ok_or_else(|| Refusal::internal("a kept answer's status is not an HTTP status"))
+}
+
 async fn replay(app: &App, caller: &Caller, key: &str, record: Held) -> Result<Kept> {
     let needs: Vec<Need> = serde_json::from_str(&record.requirements)
         .map_err(|_| Refusal::internal("a kept answer's requirements do not read"))?;
-    let status = record
-        .status
-        .ok_or_else(|| Refusal::internal("a kept answer has no status"))?;
+    let status = kept_status(record.status)?;
     let key = key.to_string();
     let caller = caller.clone();
     let clock = app.clock.clone();
@@ -256,7 +261,7 @@ async fn replay(app: &App, caller: &Caller, key: &str, record: Held) -> Result<K
                         record.contract
                     ),
                 )
-                .with_detail("original_status", status));
+                .with_detail("original_status", status.as_u16()));
             }
             let Some(body) = record.body else {
                 return Err(Refusal::new(
@@ -266,16 +271,13 @@ async fn replay(app: &App, caller: &Caller, key: &str, record: Held) -> Result<K
                          it cannot be replayed. The original request was not repeated."
                     ),
                 )
-                .with_detail("original_status", status));
+                .with_detail("original_status", status.as_u16()));
             };
             Ok(Kept {
                 status,
-                content_type: record
-                    .content_type
-                    .unwrap_or_else(|| CONTENT_TYPE.to_string()),
                 body: with_current_read_only(
                     &read_only::current(&marked, tx, &at, Snapshot::Committed)?,
-                    status,
+                    status.as_u16(),
                     body,
                 )?,
             })
@@ -512,7 +514,7 @@ fn record(
     let kept = (body.len() <= MAX_KEPT_BYTES).then_some(body);
     Ok(tx.execute(
         "UPDATE idempotency_records SET state = 'complete', completed_at = ?4, \
-         response_status = ?5, response_content_type = ?6, response_body = ?7, requirements = ?8 \
+         response_status = ?5, response_body = ?6, requirements = ?7 \
          WHERE credential = ?1 AND idempotency_key = ?2 AND created_at = ?3 \
          AND state = 'in_flight'",
         params![
@@ -521,7 +523,6 @@ fn record(
             claim.created_at,
             at,
             status,
-            CONTENT_TYPE,
             kept,
             claim.requirements()?
         ],
@@ -597,5 +598,16 @@ mod tests {
             br#"{"item":{"id":"a","read_only":true,"properties":{"read_only":false}}}"#
         );
         assert_eq!(read_only_set(changed.clone(), true), changed);
+    }
+
+    #[test]
+    fn a_kept_status_that_is_not_an_http_status_is_refused() {
+        for stored in [None, Some(-1), Some(0), Some(99), Some(600), Some(70_000)] {
+            let refusal = kept_status(stored).expect_err(&format!("{stored:?} is not a status"));
+            assert_eq!(refusal.code, Code::InternalError, "{stored:?}");
+        }
+        for stored in [100, 200, 404, 599] {
+            assert_eq!(kept_status(Some(stored)).unwrap().as_u16(), stored as u16);
+        }
     }
 }
