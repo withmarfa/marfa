@@ -293,6 +293,7 @@ describe("a working copy checks the fields its catalog holds", () => {
               type: "fixture.tight",
               version: 1,
               source: "fixture",
+              source_id: "held",
               properties: {
                 title: "T",
                 note: "too long",
@@ -344,6 +345,16 @@ describe("a working copy checks the fields its catalog holds", () => {
       await device.update(unmet, { version: 1, properties: { title: "U" } }),
       "extra",
     );
+    // A keyed create is an edit of the held item and is judged the same way.
+    invalid(
+      await device.create({
+        type: "fixture.tight",
+        source: "fixture",
+        sourceId: "held",
+        properties: { note: "longer" },
+      }),
+      "note",
+    );
     expect(await device.queue(), "a refused write was queued").toEqual(queued);
     expect(server.requests.length).toBe(calls);
     // The witnesses: an edit that leaves the held values alone, merged or
@@ -367,6 +378,17 @@ describe("a working copy checks the fields its catalog holds", () => {
         })
       ).ok,
       "a whole write that sent the held values back unchanged was refused",
+    ).toBe(true);
+    expect(
+      (
+        await device.create({
+          type: "fixture.tight",
+          source: "fixture",
+          sourceId: "held",
+          properties: { title: "W" },
+        })
+      ).ok,
+      "a keyed create that left a held value alone was refused",
     ).toBe(true);
   });
 

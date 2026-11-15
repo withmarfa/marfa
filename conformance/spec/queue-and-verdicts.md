@@ -2744,7 +2744,7 @@ If an item in the copy holds a value in its status field that its type, as the h
 
 If an item in the copy holds a value in a field that its type, as the held catalog declares it, does not admit, then a device MUST NOT refuse an update of the item for that value unless the update changes the property's value or moves the item to another type.
 
-**Reason:** the server takes the same update (`types/field-tightened-held`), and a synced file sends every property back on any edit. A value is unchanged where it names the same number or the same text, list or object as the held one, however its number is written, so `50` and `50.0` are one value (`items/property-number-kept`). A field the item lacks and its type requires is judged on the whole item, whatever the update changes.
+**Reason:** the server takes the same update (`types/field-tightened-held`), and a synced file sends every property back on any edit. A value is unchanged where it names the same number or the same text, list or object as the held one. A field the item lacks and its type requires is judged on the whole item, whatever the update changes.
 
 **Tests:** `device/property-validation.test.ts › judges a held value its field does not admit only where the edit changes it`.
 
@@ -2772,7 +2772,7 @@ When an update names the version the copy holds, of an item other than this devi
 
 ### `queue-and-verdicts/check-stale-supplied`
 
-When an update names an earlier version than the copy holds, or names version 0 of this device's own unanswered create carrying a natural key, a device MUST judge only the values it carries, requiring no field.
+When an update names an earlier version than the copy holds, or names version 0 of this device's own unanswered create carrying a natural key, a device MUST judge only the values it carries, a value only where it changes the one the copy holds (`queue-and-verdicts/check-value-held`), requiring no field.
 
 **Reason:** only the server holds the version a stale edit was made against and the item an unseen natural key resolves, so only the server can judge what the write leaves.
 
@@ -2792,7 +2792,7 @@ When a caller queues a create whose natural key names an item the copy holds fro
 
 ### `queue-and-verdicts/check-unknown-target`
 
-When a caller queues a create carrying a natural key that does not name an item of the same type the copy holds from the server, at the version the create carries if it carries one, a device MUST judge only the values it carries, requiring no field.
+When a caller queues a create carrying a natural key that does not name an item of the same type the copy holds from the server, at the version the create carries if it carries one, a device MUST judge only the values it carries, a value only where it changes the one the copy holds (`queue-and-verdicts/check-value-held`), requiring no field.
 
 **Reason:** an item the copy has not seen may hold every field the create leaves out.
 

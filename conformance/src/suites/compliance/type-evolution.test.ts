@@ -747,7 +747,7 @@ describe("a key whose type map reaches a type evolves it", () => {
     const curated = await curator(ns);
     const fields = {
       title: { type: "string" },
-      body: { type: "string" },
+      body: { type: "string", max_length: 14 },
       note: { type: "string" },
     };
     const merge_policy = { fields: { body: "keep_both_copies" } };
@@ -785,13 +785,11 @@ describe("a key whose type map reaches a type evolves it", () => {
       { title: "a", body: "second writer", note: "long note" },
     );
 
-    // The witness: a stale write that changes the value is judged as a create is.
+    // The witness: a copy takes a `keep_both_copies` field from the sent
+    // values, so an over-long one is judged as a create's is.
     const changed = await client.rawRequest(`/items/${item}?conflict=auto`, {
       method: "PATCH",
-      body: {
-        properties: { body: "third writer", note: "another long" },
-        version,
-      },
+      body: { properties: { body: "a body of fifteen" }, version },
     });
     expect(changed.status, JSON.stringify(changed.data)).toBe(400);
   });
