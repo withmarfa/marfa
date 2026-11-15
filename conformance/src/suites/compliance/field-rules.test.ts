@@ -296,7 +296,7 @@ describe("a value in a field with a range, a currency or entries", () => {
     }
   });
 
-  it("checks the range on an update and a bulk entry, and on a value stored before the type had one", async () => {
+  it("checks the range on an update and a bulk entry, and judges a value stored before the type had one only where a write changes it", async () => {
     const made = await create({ score: 3 });
     expect(made.status, JSON.stringify(made.error)).toBe(201);
     const refused = await client.updateItem(made.data.item.id, {
@@ -330,30 +330,65 @@ describe("a value in a field with a range, a currency or entries", () => {
       )?.errors?.map((e) => e.field),
     ).toContain("score");
 
-    // A type that gains a range leaves the values stored before it, and the
-    // next write of properties meets it, as it meets a new max_length.
+    // A type that gains a range or a format leaves the values stored before
+    // it, and a write meets them only where it changes them.
     const id = nextId();
     expect(
-      (await client.registerType({ id, fields: { n: { type: "integer" } } }))
-        .ok,
+      (
+        await client.registerType({
+          id,
+          fields: { n: { type: "integer" }, code: { type: "string" } },
+        })
+      ).ok,
     ).toBe(true);
-    const old = await create({ n: 9 }, id);
+    const old = await create({ n: 9, code: "gbp" }, id);
     expect(old.status, JSON.stringify(old.error)).toBe(201);
     const replaced = await client.replaceType(id, {
       id,
       version: 1,
       fields: {
         n: { type: "integer", maximum: 5 },
+        code: { type: "string", format: "currency" },
         other: { type: "string" },
       },
     });
     expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
-    const stale = await client.updateItem(old.data.item.id, {
+
+    // The witness: a create holding the same values is refused.
+    const fresh = await create({ n: 9, code: "gbp" }, id);
+    expect(fresh.status).toBe(400);
+    expect(fieldsOf(fresh)?.sort()).toEqual(["code", "n"]);
+
+    // An edit that leaves the values, or sends them back unchanged, is taken.
+    const left = await client.updateItem(old.data.item.id, {
       version: old.data.item.version,
       properties: { other: "x" },
     });
-    expect(stale.status).toBe(400);
-    expect(fieldsOf(stale)).toContain("n");
+    expect(left.status, JSON.stringify(left.error)).toBe(200);
+    const sentBack = await client.updateItem(old.data.item.id, {
+      version: left.data.item.version,
+      properties: { n: 9, code: "gbp", other: "y" },
+    });
+    expect(sentBack.status, JSON.stringify(sentBack.error)).toBe(200);
+
+    // The same write changing a held value to another the field refuses is refused.
+    const changed = await client.updateItem(old.data.item.id, {
+      version: sentBack.data.item.version,
+      properties: { n: 8, code: "usd", other: "z" },
+    });
+    expect(changed.status).toBe(400);
+    expect(fieldsOf(changed)?.sort()).toEqual(["code", "n"]);
+    const onlyRange = await client.updateItem(old.data.item.id, {
+      version: sentBack.data.item.version,
+      properties: { n: 8 },
+    });
+    expect(onlyRange.status).toBe(400);
+    expect(fieldsOf(onlyRange)).toEqual(["n"]);
+    const fixed = await client.updateItem(old.data.item.id, {
+      version: sentBack.data.item.version,
+      properties: { n: 5, code: "GBP" },
+    });
+    expect(fixed.status, JSON.stringify(fixed.error)).toBe(200);
   });
 
   it.each([["GBP"], ["ZZZ"]])("takes the currency %s", async (code) => {
@@ -445,7 +480,7 @@ describe("a value in a field with a range, a currency or entries", () => {
     trackItem(ctx, taken.data.item.id);
   });
 
-  it("checks the entries on an update and a bulk entry, naming the member, and on entries stored before the field declared its members", async () => {
+  it("checks the entries on an update and a bulk entry, naming the member, and judges entries stored before the field declared its members only where a write changes them", async () => {
     const made = await create({
       contacts: [{ value: "a@example.test" }],
     });
@@ -502,12 +537,36 @@ describe("a value in a field with a range, a currency or entries", () => {
       },
     });
     expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
-    const stale = await client.updateItem(old.data.item.id, {
+
+    // The witness: a create holding the same entry is refused.
+    const fresh = await create({ list: [{ anything: 1 }] }, id);
+    expect(fresh.status).toBe(400);
+    expect(fieldsOf(fresh)).toContain("list.0.anything");
+
+    // An edit that leaves the entries, or sends them back unchanged, is taken.
+    const left = await client.updateItem(old.data.item.id, {
       version: old.data.item.version,
       properties: { other: "x" },
     });
-    expect(stale.status).toBe(400);
-    expect(fieldsOf(stale)).toContain("list.0.anything");
+    expect(left.status, JSON.stringify(left.error)).toBe(200);
+    const sentBack = await client.updateItem(old.data.item.id, {
+      version: left.data.item.version,
+      properties: { list: [{ anything: 1 }], other: "y" },
+    });
+    expect(sentBack.status, JSON.stringify(sentBack.error)).toBe(200);
+
+    // The same write changing the list, entry still undeclared, is refused.
+    const changed = await client.updateItem(old.data.item.id, {
+      version: sentBack.data.item.version,
+      properties: { list: [{ anything: 2 }], other: "z" },
+    });
+    expect(changed.status).toBe(400);
+    expect(fieldsOf(changed)).toContain("list.0.anything");
+    const fixed = await client.updateItem(old.data.item.id, {
+      version: sentBack.data.item.version,
+      properties: { list: [{ value: "a" }] },
+    });
+    expect(fixed.status, JSON.stringify(fixed.error)).toBe(200);
   });
 });
 

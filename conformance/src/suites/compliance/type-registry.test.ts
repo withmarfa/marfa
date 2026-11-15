@@ -531,22 +531,42 @@ describe("type registry", () => {
     expect(listed.data.data[0]!.properties).toEqual(before.properties);
     expect(listed.data.data[0]!.version).toBe(before.version);
 
+    const fieldsOf = (r: {
+      error?: { error: { details?: Record<string, unknown> } };
+    }): string[] =>
+      (r.error?.error.details?.errors as { field: string }[]).map(
+        (e) => e.field,
+      );
+
+    // A write is judged on the properties it changes and on the fields the
+    // item must hold, so the stored value of the new field stands through a
+    // write that leaves it, and the field it lacks is met at the next write.
     const unrelated = await client.updateItem(before.id, {
       properties: { name: "renamed" },
       version: before.version,
     });
-    // A write is judged on the properties the item would hold after it, so
-    // the stored values meet the new fields at the item's next write.
     expect(unrelated.status).toBe(400);
     expect(unrelated.error?.error.code).toBe("invalid_properties");
-    const fields = (
-      unrelated.error?.error.details?.errors as { field: string }[]
-    ).map((e) => e.field);
-    expect(fields.sort()).toEqual(["count", "rank"]);
+    expect(fieldsOf(unrelated)).toEqual(["rank"]);
+
+    // The same write changing the stored value of the new field is refused.
+    const changed = await client.updateItem(before.id, {
+      properties: { name: "renamed", count: "still not a number", rank: 1 },
+      version: before.version,
+    });
+    expect(changed.status).toBe(400);
+    expect(fieldsOf(changed)).toEqual(["count"]);
+
+    const kept = await client.updateItem(before.id, {
+      properties: { name: "renamed", rank: 1 },
+      version: before.version,
+    });
+    expect(kept.status, JSON.stringify(kept.error)).toBe(200);
+    expect(kept.data.item.properties.count).toBe("not a number");
 
     const mended = await client.updateItem(before.id, {
-      properties: { name: "renamed", count: 3, rank: 1 },
-      version: before.version,
+      properties: { count: 3 },
+      version: kept.data.item.version,
     });
     expect(mended.status).toBe(200);
   });

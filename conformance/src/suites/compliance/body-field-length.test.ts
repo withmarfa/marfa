@@ -25,7 +25,6 @@ const RENAMES = `user.bodylength-${RUN}-renames`;
 const UNNAMED = `user.bodylength-${RUN}-unnamed`;
 const LOWER = `user.bodylength-${RUN}-lower`;
 const HIGHER = `user.bodylength-${RUN}-higher`;
-const CHANGING = `user.bodylength-${RUN}-changing`;
 const EVENT_RENAMES = `user.bodylength-${RUN}-event-renames`;
 
 const text = { type: "string" } as const;
@@ -274,7 +273,8 @@ describe("the length a text field allows", () => {
     expect(fits.status, JSON.stringify(fits.error)).toBe(200);
   });
 
-  it("keeps a long value when the type names another body, and refuses an edit until it is shortened", async () => {
+  it("keeps a long value when the type names another body, takes an edit that leaves it, and refuses an edit that changes it", async () => {
+    const CHANGING = `user.bodylength-${RUN}-${randomUUID().replaceAll("-", "").slice(0, 8)}-changing`;
     const fields = { title: text, description: text, body: text };
     await register({
       id: CHANGING,
@@ -310,17 +310,31 @@ describe("the length a text field allows", () => {
     expect(read.data.item.properties.description).toBe(long);
     expect(read.data.item.version).toBe(before.data.item.version);
 
+    // An edit that leaves the long value, or sends it back unchanged, is taken.
     const edited = await client.updateItem(id, {
       version: read.data.item.version,
       properties: { title: "Edited again" },
     });
-    expect(edited.status).toBe(400);
-    expect(edited.error?.error.code).toBe("invalid_properties");
-    expect(refusedFields(edited.error)).toEqual(["description"]);
+    expect(edited.status, JSON.stringify(edited.error)).toBe(200);
+    const sentBack = await client.updateItem(id, {
+      version: edited.data.item.version,
+      properties: { title: "Edited a third time", description: long },
+    });
+    expect(sentBack.status, JSON.stringify(sentBack.error)).toBe(200);
+    expect(sentBack.data.item.properties.description).toBe(long);
+
+    // The same write changing the long value to another one as long is refused.
+    const changed = await client.updateItem(id, {
+      version: sentBack.data.item.version,
+      properties: { description: "y".repeat(500_000) },
+    });
+    expect(changed.status).toBe(400);
+    expect(changed.error?.error.code).toBe("invalid_properties");
+    expect(refusedFields(changed.error)).toEqual(["description"]);
 
     const shortened = await client.updateItem(id, {
-      version: read.data.item.version,
-      properties: { title: "Edited again", description: "x".repeat(OTHER) },
+      version: sentBack.data.item.version,
+      properties: { description: "x".repeat(OTHER) },
     });
     expect(shortened.status, JSON.stringify(shortened.error)).toBe(200);
   });
