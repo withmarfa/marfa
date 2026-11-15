@@ -18,11 +18,14 @@ function refusedAt(version_policy: unknown): string[] {
 }
 
 describe("a type's version policy", () => {
-  it("takes whole positive numbers, windows in order, and any part left out", () => {
+  it("takes whole numbers in range, windows in order, and any part left out", () => {
     for (const policy of [
       { max_versions: 1 },
+      { max_versions: 1_000_000 },
       { recent_days: 7, daily_snapshot_days: 30, weekly_snapshot_days: 365 },
       { recent_days: 30, daily_snapshot_days: 30, weekly_snapshot_days: 30 },
+      { recent_days: 0, daily_snapshot_days: 0, weekly_snapshot_days: 0 },
+      { recent_days: 0, daily_snapshot_days: 36_500 },
       { daily_snapshot_days: 30 },
       {},
     ]) {
@@ -30,17 +33,25 @@ describe("a type's version policy", () => {
     }
   });
 
-  it.each([0, -1, 1.5, "7", null])(
-    "refuses %j for max_versions and every window, naming the field",
+  it.each([-1, 1.5, "7", null, 36_501])(
+    "refuses %j for every window, naming the field",
     (value) => {
       for (const key of [
-        "max_versions",
         "recent_days",
         "daily_snapshot_days",
         "weekly_snapshot_days",
       ]) {
         expect(refusedAt({ [key]: value })).toContain(`version_policy.${key}`);
       }
+    },
+  );
+
+  it.each([0, -1, 1.5, "7", null, 1_000_001])(
+    "refuses %j for max_versions, naming the field",
+    (value) => {
+      expect(refusedAt({ max_versions: value })).toContain(
+        "version_policy.max_versions",
+      );
     },
   );
 
@@ -53,6 +64,9 @@ describe("a type's version policy", () => {
     ).toEqual(["version_policy.weekly_snapshot_days"]);
     expect(refusedAt({ recent_days: 400, weekly_snapshot_days: 365 })).toEqual([
       "version_policy.weekly_snapshot_days",
+    ]);
+    expect(refusedAt({ recent_days: 1, daily_snapshot_days: 0 })).toEqual([
+      "version_policy.daily_snapshot_days",
     ]);
   });
 

@@ -922,19 +922,27 @@
         "type": "object",
         "properties": {
           "recent_days": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 36500,
             "description": "How many days back Marfa keeps every version of an item. Counts from now."
           },
           "daily_snapshot_days": {
-            "type": "number",
-            "description": "How many days back Marfa keeps one version per day, after the recent window."
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 36500,
+            "description": "How many days back Marfa keeps one version per day, after the recent window. A day is a UTC calendar day."
           },
           "weekly_snapshot_days": {
-            "type": "number",
-            "description": "How many days back Marfa keeps one version per week, after the daily window. Marfa deletes older versions, but always keeps the latest."
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 36500,
+            "description": "How many days back Marfa keeps one version per week, after the daily window. A week is an ISO week. Marfa deletes older versions, but always keeps the latest. 0 keeps every version."
           },
           "max_versions": {
-            "type": "number",
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 1000000,
             "description": "The most versions Marfa keeps for an item. Past it, Marfa drops the oldest first."
           }
         },

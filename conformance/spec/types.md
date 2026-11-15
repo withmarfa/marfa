@@ -1278,15 +1278,17 @@ When an item write races `DELETE /types/{id}`, the server MUST either count the 
 
 ### `types/version-policy-values`
 
-If a type's `version_policy` names a `recent_days`, `daily_snapshot_days`, `weekly_snapshot_days` or `max_versions` that is not a whole number of at least 1, then the server MUST answer `400 invalid_schema` naming it.
+If a type's `version_policy` names a `recent_days`, `daily_snapshot_days` or `weekly_snapshot_days` that is not a whole number from 0 to 36500, or a `max_versions` that is not a whole number from 1 to 1000000, then the server MUST answer `400 invalid_schema` naming it.
 
-**Tests:** `compliance/version-policy.test.ts › refuses a number that is not a whole positive one, naming the field: %s`, `compliance/version-policy.test.ts › names the field on a replacement that breaks the version policy, and registers nothing on a create`.
+**Reason:** these are the ranges of the instance settings `version_recent_days`, `version_daily_snapshot_days`, `version_weekly_snapshot_days` and `version_max_versions`, so one range holds for a policy wherever it is declared. What a window of 0 means is `housekeeping/thinning-zero`.
+
+**Tests:** `compliance/version-policy.test.ts › refuses a number outside the range of its field, naming the field: %s`, `compliance/version-policy.test.ts › names the field on a replacement that breaks the version policy, and registers nothing on a create`.
 
 ### `types/version-policy-order`
 
 If a type's `version_policy` names a window that ends sooner than an earlier one it names, in the order `recent_days`, `daily_snapshot_days`, `weekly_snapshot_days`, then the server MUST answer `400 invalid_schema` naming the window that ends too soon.
 
-**Tests:** `compliance/version-policy.test.ts › refuses windows out of order, naming the one that ends too soon`, `› registers a policy of whole positive numbers in order`, `› refuses the same on a replacement and keeps the type as it was`, `compliance/version-policy.test.ts › names the field on a replacement that breaks the version policy, and registers nothing on a create`.
+**Tests:** `compliance/version-policy.test.ts › refuses windows out of order, naming the one that ends too soon`, `› registers a policy of whole numbers in range and in order`, `› refuses the same on a replacement and keeps the type as it was`, `compliance/version-policy.test.ts › names the field on a replacement that breaks the version policy, and registers nothing on a create`.
 
 ## Retention policy
 
