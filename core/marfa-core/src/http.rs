@@ -3680,7 +3680,12 @@ mod tests {
                     // answer is not cut off by unread bytes when it closes.
                     let mut seen = Vec::new();
                     let mut chunk = [0u8; 4096];
-                    while !seen.ends_with(b"0\r\n\r\n") {
+                    let sent = |seen: &[u8]| {
+                        seen.windows(4)
+                            .position(|window| window == b"\r\n\r\n")
+                            .is_some_and(|head| seen[head + 4..].ends_with(b"0\r\n\r\n"))
+                    };
+                    while !sent(&seen) {
                         match Read::read(&mut socket, &mut chunk) {
                             Ok(0) | Err(_) => break,
                             Ok(n) => seen.extend_from_slice(&chunk[..n]),
