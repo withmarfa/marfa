@@ -11,6 +11,7 @@ import {
   baselineEventId,
   collectUntil,
   withStream,
+  withStreamAtCursor,
 } from "../../utils/stream.js";
 import { openEventStream } from "../../utils/sse.js";
 
@@ -74,13 +75,7 @@ async function makeNote(body: string): Promise<string> {
 
 describe("replay", () => {
   it("resolves a type filter through the same subtree the live stream does", async (context) => {
-    const { eventId, markerId } = await baselineEventId(
-      apiUrl,
-      apiKey,
-      () => makeNote("replay-subtype-marker"),
-      context.signal,
-    );
-    trackItem(ctx, markerId);
+    const eventId = await baselineEventId(apiUrl, apiKey, context.signal);
 
     // A descendant of the filtered type, and a control that is not one.
     const child = await client.createItem({
@@ -139,13 +134,8 @@ describe("replay", () => {
   });
 
   it("carries a bulk write, so a catch-up after an import is complete", async (context) => {
-    const { eventId, markerId } = await baselineEventId(
-      apiUrl,
-      apiKey,
-      () => makeNote("replay-bulk-marker"),
-      context.signal,
-    );
-    trackItem(ctx, markerId);
+    await makeNote("replay-bulk-marker");
+    const eventId = await baselineEventId(apiUrl, apiKey, context.signal);
 
     // `enable_fanout: false` is the point of the case, not a detail. The flag
     // governs outbound work — webhook delivery and reactive runs — and never
@@ -206,12 +196,17 @@ describe("replay", () => {
     const replayedIds = itemIds(events);
 
     // The control. A replay that ignored `Last-Event-ID` and dumped the whole
-    // log would contain the bulk items for the wrong reason, so the marker
-    // written immediately before the resume point must not be in the backlog.
+    // log would contain the bulk items for the wrong reason, so no replayed
+    // frame may carry an id at or below the cursor the stream resumed from.
+    const cursor = BigInt(eventId);
+    const atOrBefore = events
+      .map((e) => e.id)
+      .filter((id): id is string => typeof id === "string" && id !== "")
+      .filter((id) => BigInt(id) <= cursor);
     expect(
-      replayedIds.has(markerId),
-      "the replay carried an event at or before the resume point, so it is not honoring Last-Event-ID",
-    ).toBe(false);
+      atOrBefore,
+      `the replay carried events at or before the resume point ${eventId}, so it is not honoring Last-Event-ID`,
+    ).toEqual([]);
 
     for (const id of bulkIds) {
       expect(
@@ -222,12 +217,11 @@ describe("replay", () => {
   });
 
   it("delivers a subtype's events live to a stream filtered by its parent type, and withholds an unrelated type", async (context) => {
-    await withStream(
+    await withStreamAtCursor(
       apiUrl,
       apiKey,
-      { query: [["type", "core.note"]] },
+      { query: [["type", "core.note"]], signal: context.signal },
       async (stream) => {
-        await new Promise((r) => setTimeout(r, 250));
         const child = await client.createItem({
           type: childType,
           source: ctx.source,
@@ -264,12 +258,11 @@ describe("replay", () => {
   });
 
   it("takes a list of types as their union, up to ten entries and not eleven", async (context) => {
-    await withStream(
+    await withStreamAtCursor(
       apiUrl,
       apiKey,
-      { query: [["type", `core.task, ${childType}`]] },
+      { query: [["type", `core.task, ${childType}`]], signal: context.signal },
       async (stream) => {
-        await new Promise((r) => setTimeout(r, 250));
         const task = await client.createItem({
           type: "core.task",
           source: ctx.source,
@@ -345,13 +338,7 @@ describe("replay", () => {
       trackItem(ctx, created.data.item.id);
       rows.push(created.data.item.id);
     }
-    const { eventId, markerId } = await baselineEventId(
-      apiUrl,
-      apiKey,
-      () => makeNote("replay-job-marker"),
-      context.signal,
-    );
-    trackItem(ctx, markerId);
+    const eventId = await baselineEventId(apiUrl, apiKey, context.signal);
     const changed = (events: { event: string; data: unknown }[]) =>
       events
         .filter((e) => e.event === "item.state_changed")
@@ -359,28 +346,32 @@ describe("replay", () => {
         .filter((id): id is string => id !== undefined && rows.includes(id))
         .sort();
 
-    const live = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
-      const queued = await client.bulkAction({
-        action: "transition",
-        state: "archived",
-        filter: { tags: [tag] },
-      });
-      expect(queued.status).toBe(202);
-      const job = await client.pollBulkActionToTerminal(
-        (queued.data as { id: string }).id,
-      );
-      expect(job.status).toBe("completed");
-      expect(job.succeeded).toBe(3);
-      const sentinel = await makeNote("replay-job-sentinel");
-      const { events } = await collectUntil(
-        stream,
-        (evts) => itemIds(evts).has(sentinel),
-        `the sentinel ${sentinel} after the job finished`,
-        context.signal,
-      );
-      return { events, sentinel };
-    });
+    const live = await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal: context.signal },
+      async (stream) => {
+        const queued = await client.bulkAction({
+          action: "transition",
+          state: "archived",
+          filter: { tags: [tag] },
+        });
+        expect(queued.status).toBe(202);
+        const job = await client.pollBulkActionToTerminal(
+          (queued.data as { id: string }).id,
+        );
+        expect(job.status).toBe("completed");
+        expect(job.succeeded).toBe(3);
+        const sentinel = await makeNote("replay-job-sentinel");
+        const { events } = await collectUntil(
+          stream,
+          (evts) => itemIds(evts).has(sentinel),
+          `the sentinel ${sentinel} after the job finished`,
+          context.signal,
+        );
+        return { events, sentinel };
+      },
+    );
     expect(changed(live.events)).toEqual([...rows].sort());
 
     const replayed = await withStream(

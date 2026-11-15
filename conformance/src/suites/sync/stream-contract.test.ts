@@ -16,8 +16,9 @@ import {
 import {
   baselineEventId,
   collectUntil,
-  withStream,
   MUTATION_EVENT_NAMES,
+  withStream,
+  withStreamAtCursor,
 } from "../../utils/stream.js";
 import { detectSyncCapabilities, requireRule } from "./capabilities.js";
 import type { SyncCapabilities } from "./capabilities.js";
@@ -213,12 +214,7 @@ describe("the stream announces where it starts", () => {
 
 describe("the stream says when it is live", () => {
   it("marks the end of the replay with a cursor a filtered reader can resume from", async (context) => {
-    const { eventId } = await baselineEventId(
-      apiUrl,
-      apiKey,
-      () => makeNote("live-marker"),
-      context.signal,
-    );
+    const eventId = await baselineEventId(apiUrl, apiKey, context.signal);
     const note = await makeNote("live-note");
     // The log's head is an item the filtered stream is never sent, so no
     // frame with an id can show the reader that the replay reached it.
@@ -312,15 +308,11 @@ describe("a filtered stream carries the graph", () => {
   it("delivers edge events to a stream filtered by item type", async (context) => {
     requireRule(caps, "edgeEventsUnderFilter");
 
-    const outcome = await withStream(
+    const outcome = await withStreamAtCursor(
       apiUrl,
       apiKey,
-      { query: [["type", "core.note"]] },
+      { query: [["type", "core.note"]], signal: context.signal },
       async (stream) => {
-        // Let the subscription settle, or the writes below are published to
-        // nobody and every absence in this test is about timing.
-        await new Promise((r) => setTimeout(r, 250));
-
         const source = await client.createItem({
           type: "core.note",
           source: ctx.source,

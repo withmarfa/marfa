@@ -33,7 +33,7 @@ import {
   generateId,
 } from "../../generators/items.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -890,45 +890,49 @@ describe("bulk", () => {
     // the stream's sentinel, and its item is the witness that this page writes.
     const phantom = `bulk-edge-phantom-${ctx.runId}`;
     const sentinel = `bulk-edge-sentinel-${ctx.runId}`;
-    await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
-      const res = await client.bulkItems({
-        atomic: false,
-        items: [
-          {
-            type: "core.note",
-            properties: { body: phantom },
-            source: ctx.source,
-            source_id: phantom,
-            edges: { "parent-of": [generateId()] },
-          },
-          {
-            type: "core.note",
-            properties: { body: sentinel },
-            source: ctx.source,
-            source_id: sentinel,
-          },
-        ],
-      });
-      expect(res.status, JSON.stringify(res.error)).toBe(200);
-      expect(res.data.results[0]?.outcome).toBe("errored");
-      expect(res.data.results[0]?.id).toBeUndefined();
-      expect(res.data.results[1]?.outcome).toBe("created");
-      const sentinelId = res.data.results[1]!.id!;
-      trackItem(ctx, sentinelId);
-      const { raw } = await collectUntil(
-        stream,
-        (events) =>
-          events.some(
-            (e) =>
-              (e.data as { item?: { id?: string } } | undefined)?.item?.id ===
-              sentinelId,
-          ),
-        "the sentinel entry to reach the stream",
-        context.signal,
-      );
-      expect(raw).not.toContain(phantom);
-    });
+    await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal: context.signal },
+      async (stream) => {
+        const res = await client.bulkItems({
+          atomic: false,
+          items: [
+            {
+              type: "core.note",
+              properties: { body: phantom },
+              source: ctx.source,
+              source_id: phantom,
+              edges: { "parent-of": [generateId()] },
+            },
+            {
+              type: "core.note",
+              properties: { body: sentinel },
+              source: ctx.source,
+              source_id: sentinel,
+            },
+          ],
+        });
+        expect(res.status, JSON.stringify(res.error)).toBe(200);
+        expect(res.data.results[0]?.outcome).toBe("errored");
+        expect(res.data.results[0]?.id).toBeUndefined();
+        expect(res.data.results[1]?.outcome).toBe("created");
+        const sentinelId = res.data.results[1]!.id!;
+        trackItem(ctx, sentinelId);
+        const { raw } = await collectUntil(
+          stream,
+          (events) =>
+            events.some(
+              (e) =>
+                (e.data as { item?: { id?: string } } | undefined)?.item?.id ===
+                sentinelId,
+            ),
+          "the sentinel entry to reach the stream",
+          context.signal,
+        );
+        expect(raw).not.toContain(phantom);
+      },
+    );
     const found = await client.lookupItems({
       type: "core.note",
       source: ctx.source,

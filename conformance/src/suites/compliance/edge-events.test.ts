@@ -16,6 +16,7 @@ import {
   baselineEventId,
   collectUntil,
   withStream,
+  withStreamAtCursor,
 } from "../../utils/stream.js";
 import {
   expectSignedBy,
@@ -54,9 +55,7 @@ async function makeItem(label: string): Promise<string> {
 
 describe("edge events", () => {
   it("SSE delivers edge.created and edge.deleted", async ({ signal }) => {
-    await withStream(apiUrl, apiKey, {}, async (stream) => {
-      // Let the subscription settle before the writes it is meant to observe.
-      await new Promise((r) => setTimeout(r, 200));
+    await withStreamAtCursor(apiUrl, apiKey, { signal }, async (stream) => {
       const src = await makeItem("sse-src");
       const tgt = await makeItem("sse-tgt");
       const edge = await client.createEdge({
@@ -88,8 +87,7 @@ describe("edge events", () => {
   it("answers deletes of one edge after the first 404, and announces it once", async ({
     signal,
   }) => {
-    await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 200));
+    await withStreamAtCursor(apiUrl, apiKey, { signal }, async (stream) => {
       const src = await makeItem("double-delete-src");
       const tgt = await makeItem("double-delete-tgt");
       const edge = await client.createEdge({
@@ -146,8 +144,7 @@ describe("edge events", () => {
   it("carries the source item's type on every edge frame", async ({
     signal,
   }) => {
-    await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 200));
+    await withStreamAtCursor(apiUrl, apiKey, { signal }, async (stream) => {
       const src = await makeItem("source-type-src");
       const tgt = await makeItem("source-type-tgt");
       const edge = await client.createEdge({
@@ -458,49 +455,56 @@ describe("the stream answers only the edges a subscriber may read", () => {
     const seenKind = `mock.stream.live.seen.${ctx.runId}`;
     const narrow = await narrowKey("stream-live-narrow", seenKind);
 
-    await withStream(apiUrl, narrow, {}, async (narrowStream) => {
-      await withStream(apiUrl, apiKey, {}, async (wideStream) => {
-        // Let both subscriptions settle before the writes they are meant
-        // to observe.
-        await new Promise((r) => setTimeout(r, 300));
-        const rows = await writeTheThree("live");
-        expect(rows.seenKind).toBe(seenKind);
+    await withStreamAtCursor(
+      apiUrl,
+      narrow,
+      { signal },
+      async (narrowStream) => {
+        await withStreamAtCursor(
+          apiUrl,
+          apiKey,
+          { signal },
+          async (wideStream) => {
+            const rows = await writeTheThree("live");
+            expect(rows.seenKind).toBe(seenKind);
 
-        const wide = await collectUntil(
-          wideStream,
-          (evts) => edgeIdsOf(evts).includes(rows.readable),
-          `the readable edge ${rows.readable} on an unnarrowed stream`,
-          signal,
-        );
-        const wideIds = edgeIdsOf(wide.events);
-        expect(
-          wideIds,
-          "the write never reached the stream at all, so this case is not about permissions",
-        ).toEqual(
-          expect.arrayContaining([
-            rows.hiddenSource,
-            rows.hiddenKind,
-            rows.readable,
-          ]),
-        );
+            const wide = await collectUntil(
+              wideStream,
+              (evts) => edgeIdsOf(evts).includes(rows.readable),
+              `the readable edge ${rows.readable} on an unnarrowed stream`,
+              signal,
+            );
+            const wideIds = edgeIdsOf(wide.events);
+            expect(
+              wideIds,
+              "the write never reached the stream at all, so this case is not about permissions",
+            ).toEqual(
+              expect.arrayContaining([
+                rows.hiddenSource,
+                rows.hiddenKind,
+                rows.readable,
+              ]),
+            );
 
-        const seen = await collectUntil(
-          narrowStream,
-          (evts) => edgeIdsOf(evts).includes(rows.readable),
-          `the readable edge ${rows.readable} on the narrowed stream`,
-          signal,
+            const seen = await collectUntil(
+              narrowStream,
+              (evts) => edgeIdsOf(evts).includes(rows.readable),
+              `the readable edge ${rows.readable} on the narrowed stream`,
+              signal,
+            );
+            const narrowIds = edgeIdsOf(seen.events);
+            expect(
+              narrowIds,
+              "the subscriber was told about a relationship whose source is a type it may not read",
+            ).not.toContain(rows.hiddenSource);
+            expect(
+              narrowIds,
+              "the subscriber was told about a kind of relationship it may not read",
+            ).not.toContain(rows.hiddenKind);
+          },
         );
-        const narrowIds = edgeIdsOf(seen.events);
-        expect(
-          narrowIds,
-          "the subscriber was told about a relationship whose source is a type it may not read",
-        ).not.toContain(rows.hiddenSource);
-        expect(
-          narrowIds,
-          "the subscriber was told about a kind of relationship it may not read",
-        ).not.toContain(rows.hiddenKind);
-      });
-    });
+      },
+    );
   });
 
   it("withholds the same frames on a replay from a cursor", async ({
@@ -512,13 +516,7 @@ describe("the stream answers only the edges a subscriber may read", () => {
     // A point in the log before the writes. The marker is an ordinary
     // item, so the cursor is one the server minted rather than one this
     // file invented.
-    const { eventId, markerId } = await baselineEventId(
-      apiUrl,
-      apiKey,
-      () => makeItem("replay-marker"),
-      signal,
-    );
-    trackItem(ctx, markerId);
+    const eventId = await baselineEventId(apiUrl, apiKey, signal);
 
     const rows = await writeTheThree("replay");
     expect(rows.seenKind).toBe(seenKind);
@@ -609,45 +607,49 @@ describe("the stream answers only the edges a subscriber may read", () => {
     signal,
   }) => {
     const narrow = await notesOnlyKey("stream-purged-narrow");
-    const { eventId } = await baselineEventId(
-      apiUrl,
-      apiKey,
-      () => makeItem("purged-marker"),
-      signal,
-    );
+    const eventId = await baselineEventId(apiUrl, apiKey, signal);
 
     let rows: { edgeId: string; sentinel: string } | undefined;
-    await withStream(apiUrl, narrow, {}, async (narrowStream) => {
-      await withStream(apiUrl, apiKey, {}, async (wideStream) => {
-        await new Promise((r) => setTimeout(r, 300));
-        rows = await purgeABookmarkWithAnEdge("live");
-        const { edgeId, sentinel } = rows;
+    await withStreamAtCursor(
+      apiUrl,
+      narrow,
+      { signal },
+      async (narrowStream) => {
+        await withStreamAtCursor(
+          apiUrl,
+          apiKey,
+          { signal },
+          async (wideStream) => {
+            rows = await purgeABookmarkWithAnEdge("live");
+            const { edgeId, sentinel } = rows;
 
-        const wide = await collectUntil(
-          wideStream,
-          (evts) => itemArrived(evts, sentinel),
-          `the sentinel ${sentinel} on an unnarrowed stream`,
-          signal,
-        );
-        // The witness: the purge announced the edge, naming its source.
-        const frame = purgedEdgeFrame(wide.events, edgeId);
-        expect(frame, "the purge never announced the edge").toBeDefined();
-        expect((frame?.data as { source_type?: string }).source_type).toBe(
-          "core.bookmark",
-        );
+            const wide = await collectUntil(
+              wideStream,
+              (evts) => itemArrived(evts, sentinel),
+              `the sentinel ${sentinel} on an unnarrowed stream`,
+              signal,
+            );
+            // The witness: the purge announced the edge, naming its source.
+            const frame = purgedEdgeFrame(wide.events, edgeId);
+            expect(frame, "the purge never announced the edge").toBeDefined();
+            expect((frame?.data as { source_type?: string }).source_type).toBe(
+              "core.bookmark",
+            );
 
-        const seen = await collectUntil(
-          narrowStream,
-          (evts) => itemArrived(evts, sentinel),
-          `the sentinel ${sentinel} on the narrowed stream`,
-          signal,
+            const seen = await collectUntil(
+              narrowStream,
+              (evts) => itemArrived(evts, sentinel),
+              `the sentinel ${sentinel} on the narrowed stream`,
+              signal,
+            );
+            expect(
+              purgedEdgeFrame(seen.events, edgeId),
+              "a subscriber that may not read bookmarks was told about a purged bookmark's edge",
+            ).toBeUndefined();
+          },
         );
-        expect(
-          purgedEdgeFrame(seen.events, edgeId),
-          "a subscriber that may not read bookmarks was told about a purged bookmark's edge",
-        ).toBeUndefined();
-      });
-    });
+      },
+    );
 
     const { edgeId, sentinel } = rows!;
     for (const [key, shown] of [

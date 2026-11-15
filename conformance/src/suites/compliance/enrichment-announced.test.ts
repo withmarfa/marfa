@@ -11,7 +11,7 @@ import {
 } from "../../utils/fresh-server.js";
 import { QUIET_SCHEDULE } from "../../utils/moved-clock.js";
 import { createNote } from "../../generators/items.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 
 let server: FreshServer;
 let client: MarfaClient;
@@ -57,12 +57,11 @@ describe("the enrichment sweep", () => {
     const id = created.data.item.id;
     const before = created.data.item.version;
 
-    const frames = await withStream(
+    const frames = await withStreamAtCursor(
       server.apiUrl,
       server.workingKey,
-      {},
+      { signal },
       async (stream) => {
-        await new Promise((r) => setTimeout(r, 250));
         const run = await operator.runHousekeeping("enrichment-sweep");
         expect(run.status).toBe(200);
         expect(run.data.outcome).toBe("ok");

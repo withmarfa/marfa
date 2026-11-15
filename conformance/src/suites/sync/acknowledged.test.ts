@@ -8,7 +8,7 @@ import {
   trackEdge,
   cleanup,
 } from "../../utils/setup.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 import type { SseEvent } from "../../utils/sse.js";
 
 /**
@@ -75,58 +75,61 @@ describe("a repeated create is acknowledged", () => {
     const id = uuidv7();
     const sentinelBody = `acknowledged-item-sentinel-${ctx.runId}`;
 
-    const outcome = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
+    const outcome = await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal: context.signal },
+      async (stream) => {
+        const first = await client.createItem({
+          id,
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "acknowledged-item-first" },
+        });
+        expect(
+          first.ok,
+          `a client-minted id was refused: ${JSON.stringify(first.error)}`,
+        ).toBe(true);
+        trackItem(ctx, id);
+        expect(first.status).toBe(201);
+        expect(first.data.acknowledged).toBeUndefined();
 
-      const first = await client.createItem({
-        id,
-        type: "core.note",
-        source: ctx.source,
-        properties: { body: "acknowledged-item-first" },
-      });
-      expect(
-        first.ok,
-        `a client-minted id was refused: ${JSON.stringify(first.error)}`,
-      ).toBe(true);
-      trackItem(ctx, id);
-      expect(first.status).toBe(201);
-      expect(first.data.acknowledged).toBeUndefined();
+        // The queue resending a create whose response it never saw. The body
+        // differs deliberately: a server that answered the repeat by performing
+        // the write again would return this one and step the version, which no
+        // assertion about the id alone could tell from a correct acknowledgment.
+        const repeat = await client.createItem({
+          id,
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: "acknowledged-item-second" },
+        });
 
-      // The queue resending a create whose response it never saw. The body
-      // differs deliberately: a server that answered the repeat by performing
-      // the write again would return this one and step the version, which no
-      // assertion about the id alone could tell from a correct acknowledgment.
-      const repeat = await client.createItem({
-        id,
-        type: "core.note",
-        source: ctx.source,
-        properties: { body: "acknowledged-item-second" },
-      });
+        // Written after the repeat, and the reason the silence below is a
+        // finding. The stream delivers in publish order, so once this arrives
+        // any event the repeat published has already arrived.
+        const sentinel = await client.createItem({
+          type: "core.note",
+          source: ctx.source,
+          properties: { body: sentinelBody },
+        });
+        expect(sentinel.ok).toBe(true);
+        trackItem(ctx, sentinel.data.item.id);
 
-      // Written after the repeat, and the reason the silence below is a
-      // finding. The stream delivers in publish order, so once this arrives
-      // any event the repeat published has already arrived.
-      const sentinel = await client.createItem({
-        type: "core.note",
-        source: ctx.source,
-        properties: { body: sentinelBody },
-      });
-      expect(sentinel.ok).toBe(true);
-      trackItem(ctx, sentinel.data.item.id);
-
-      const seen = await collectUntil(
-        stream,
-        (events) =>
-          events.some(
-            (e) =>
-              (e.data as { item?: { id?: string } })?.item?.id ===
-              sentinel.data.item.id,
-          ),
-        `item.created for the sentinel written after the repeat (${sentinel.data.item.id})`,
-        context.signal,
-      );
-      return { repeat, events: seen.events };
-    });
+        const seen = await collectUntil(
+          stream,
+          (events) =>
+            events.some(
+              (e) =>
+                (e.data as { item?: { id?: string } })?.item?.id ===
+                sentinel.data.item.id,
+            ),
+          `item.created for the sentinel written after the repeat (${sentinel.data.item.id})`,
+          context.signal,
+        );
+        return { repeat, events: seen.events };
+      },
+    );
 
     expect(
       outcome.repeat.status,
@@ -349,43 +352,46 @@ describe("a repeated create is acknowledged", () => {
       edge_type: "about",
     };
 
-    const outcome = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
+    const outcome = await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal: context.signal },
+      async (stream) => {
+        const first = await client.createEdge(body);
+        expect(
+          first.ok,
+          `a client-minted edge id was refused: ${JSON.stringify(first.error)}`,
+        ).toBe(true);
+        trackEdge(ctx, id);
+        expect(first.data.acknowledged).toBeUndefined();
 
-      const first = await client.createEdge(body);
-      expect(
-        first.ok,
-        `a client-minted edge id was refused: ${JSON.stringify(first.error)}`,
-      ).toBe(true);
-      trackEdge(ctx, id);
-      expect(first.data.acknowledged).toBeUndefined();
+        const repeat = await client.createEdge(body);
 
-      const repeat = await client.createEdge(body);
+        // The sentinel, as above, an edge here: the stream delivers both
+        // kinds in id order, so an item would order against the repeat's
+        // edge too, and an edge keeps the case to one kind of frame.
+        const sentinel = await client.createEdge({
+          source_id: source.data.item.id,
+          target_id: spare.data.item.id,
+          edge_type: "about",
+        });
+        expect(sentinel.ok).toBe(true);
+        trackEdge(ctx, sentinel.data.edge.id);
 
-      // The sentinel, as above, an edge here: the stream delivers both
-      // kinds in id order, so an item would order against the repeat's
-      // edge too, and an edge keeps the case to one kind of frame.
-      const sentinel = await client.createEdge({
-        source_id: source.data.item.id,
-        target_id: spare.data.item.id,
-        edge_type: "about",
-      });
-      expect(sentinel.ok).toBe(true);
-      trackEdge(ctx, sentinel.data.edge.id);
-
-      const seen = await collectUntil(
-        stream,
-        (events) =>
-          events.some(
-            (e) =>
-              (e.data as { edge?: { id?: string } })?.edge?.id ===
-              sentinel.data.edge.id,
-          ),
-        `edge.created for the sentinel written after the edge repeat (${sentinel.data.edge.id})`,
-        context.signal,
-      );
-      return { repeat, events: seen.events };
-    });
+        const seen = await collectUntil(
+          stream,
+          (events) =>
+            events.some(
+              (e) =>
+                (e.data as { edge?: { id?: string } })?.edge?.id ===
+                sentinel.data.edge.id,
+            ),
+          `edge.created for the sentinel written after the edge repeat (${sentinel.data.edge.id})`,
+          context.signal,
+        );
+        return { repeat, events: seen.events };
+      },
+    );
 
     expect(
       outcome.repeat.status,
@@ -428,43 +434,46 @@ describe("a repeated create is acknowledged", () => {
     ];
 
     const id = uuidv7();
-    const outcome = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
+    const outcome = await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal: context.signal },
+      async (stream) => {
+        const first = await client.createEdge({
+          id,
+          source_id: source,
+          target_id: target,
+          edge_type: "about",
+          properties: { note: "first" },
+        });
+        expect(first.status).toBe(201);
+        trackEdge(ctx, id);
 
-      const first = await client.createEdge({
-        id,
-        source_id: source,
-        target_id: target,
-        edge_type: "about",
-        properties: { note: "first" },
-      });
-      expect(first.status).toBe(201);
-      trackEdge(ctx, id);
+        const repeat = await client.createEdge({
+          id,
+          source_id: source,
+          target_id: target,
+          edge_type: "about",
+          properties: { note: "second" },
+        });
 
-      const repeat = await client.createEdge({
-        id,
-        source_id: source,
-        target_id: target,
-        edge_type: "about",
-        properties: { note: "second" },
-      });
+        const sentinel = await client.createEdge({
+          source_id: source,
+          target_id: spare,
+          edge_type: "about",
+        });
+        expect(sentinel.ok).toBe(true);
+        trackEdge(ctx, sentinel.data.edge.id);
 
-      const sentinel = await client.createEdge({
-        source_id: source,
-        target_id: spare,
-        edge_type: "about",
-      });
-      expect(sentinel.ok).toBe(true);
-      trackEdge(ctx, sentinel.data.edge.id);
-
-      const seen = await collectUntil(
-        stream,
-        (events) => framesForEdge(events, sentinel.data.edge.id).length > 0,
-        `edge.created for the sentinel written after the edge repeat (${sentinel.data.edge.id})`,
-        context.signal,
-      );
-      return { first, repeat, events: seen.events };
-    });
+        const seen = await collectUntil(
+          stream,
+          (events) => framesForEdge(events, sentinel.data.edge.id).length > 0,
+          `edge.created for the sentinel written after the edge repeat (${sentinel.data.edge.id})`,
+          context.signal,
+        );
+        return { first, repeat, events: seen.events };
+      },
+    );
 
     expect(outcome.repeat.status).toBe(200);
     expect(outcome.repeat.data.acknowledged).toBe(true);

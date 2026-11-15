@@ -7,7 +7,7 @@ import {
   trackItem,
   cleanup,
 } from "../../utils/setup.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 
 /**
  * A thumbnail is a field type of its own: a small image a writer supplies,
@@ -331,33 +331,35 @@ describe("a thumbnail field", () => {
     signal,
   }) => {
     const value = uri(padded(200));
-    const created = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      // Let the subscription settle before the write, or its event is
-      // published to nobody.
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      const made = await create({ title: "Holiday", thumbnail: value });
-      expect(made.ok, JSON.stringify(made.error)).toBe(true);
-      const id = made.data.item.id;
-      const { events } = await collectUntil(
-        stream,
-        (seen) =>
-          seen.some(
-            (event) =>
-              (event.data as { item?: { id?: string } }).item?.id === id,
-          ),
-        `the create of ${id} to reach the stream`,
-        signal,
-      );
-      const frame = events.find(
-        (event) => (event.data as { item?: { id?: string } }).item?.id === id,
-      );
-      expect(
-        (frame?.data as { item: { properties: Record<string, unknown> } }).item
-          .properties.thumbnail,
-        "the event frame did not carry the thumbnail, so a device following the stream holds the item without it",
-      ).toBe(value);
-      return made.data.item;
-    });
+    const created = await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal },
+      async (stream) => {
+        const made = await create({ title: "Holiday", thumbnail: value });
+        expect(made.ok, JSON.stringify(made.error)).toBe(true);
+        const id = made.data.item.id;
+        const { events } = await collectUntil(
+          stream,
+          (seen) =>
+            seen.some(
+              (event) =>
+                (event.data as { item?: { id?: string } }).item?.id === id,
+            ),
+          `the create of ${id} to reach the stream`,
+          signal,
+        );
+        const frame = events.find(
+          (event) => (event.data as { item?: { id?: string } }).item?.id === id,
+        );
+        expect(
+          (frame?.data as { item: { properties: Record<string, unknown> } })
+            .item.properties.thumbnail,
+          "the event frame did not carry the thumbnail, so a device following the stream holds the item without it",
+        ).toBe(value);
+        return made.data.item;
+      },
+    );
     expect(created.properties.thumbnail).toBe(value);
 
     const got = await client.getItem(created.id);

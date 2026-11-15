@@ -74,27 +74,21 @@ async function announced(head: string): Promise<Map<string, number>> {
 }
 
 describe("a bulk-action job the server was killed on", () => {
-  it.each([
+  it.for([
     ["before it wrote an item", HOLD.claimed],
     ["with a chunk's items written and not committed", HOLD.inChunk],
     ["between two chunks", HOLD.betweenChunks],
-  ] as const)(
+  ])(
     "is finished on the server's return without writing or announcing an item twice, killed %s",
-    async (_where, point) => {
+    { timeout: 5 * 60_000 },
+    async ([, point], { signal }) => {
       const tag = `killed-${String((counter += 1))}`;
       const rows = learned.rows;
       await seed(working(), tag, rows);
       const head = await baselineEventId(
         server.apiUrl,
         server.workingKey,
-        async () => {
-          const marker = await working().createItem({
-            type: "core.note",
-            properties: { body: `before ${tag}` },
-          });
-          expect(marker.status).toBe(201);
-          return marker.data.item.id;
-        },
+        signal,
       );
 
       await server.setFault(point);
@@ -138,10 +132,9 @@ describe("a bulk-action job the server was killed on", () => {
       } while (cursor !== undefined);
       expect(seen).toBe(rows);
 
-      const counts = await announced(head.eventId);
+      const counts = await announced(head);
       for (const item of ids) expect(counts.get(item), item).toBe(1);
     },
-    5 * 60_000,
   );
 });
 

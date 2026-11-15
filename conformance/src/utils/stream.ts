@@ -39,6 +39,20 @@ export interface CollectResult {
 }
 
 /**
+ * Text read off a stream past where a wait stopped, with the decoder that
+ * read it.
+ *
+ * A read returns whatever the socket delivered, which can run past the frame
+ * a caller waited for and can end inside a frame, or inside a character. The
+ * next wait on the same stream starts from this text and decoder so that no
+ * frame is lost between two waits.
+ */
+const unread = new WeakMap<
+  EventStream,
+  { text: string; decoder: TextDecoder }
+>();
+
+/**
  * Read an open stream until `done` says enough has arrived.
  *
  * **An absence is settled by a later frame, never by a quiet window**, which
@@ -74,17 +88,34 @@ export async function collectUntil(
     );
   }
   const reader = body.getReader();
-  const decoder = new TextDecoder();
-  const chunks: string[] = [];
+  const left = unread.get(stream);
+  unread.delete(stream);
+  const decoder = left?.decoder ?? new TextDecoder();
+  const carried = left?.text ?? "";
+  const chunks: string[] = carried ? [carried] : [];
   // Parsed as frames complete rather than from the start on every chunk: a
   // replay can carry megabytes, and re-reading all of it per chunk makes a
   // long one slower than any budget.
   const events: SseEvent[] = [];
-  let pending = "";
+  let pending = carried;
+  const carriedEnd = pending.lastIndexOf("\n\n");
+  if (carriedEnd >= 0) {
+    events.push(...parseSse(pending.slice(0, carriedEnd + 2)));
+    pending = pending.slice(carriedEnd + 2);
+  }
   const onAbort = () => void reader.cancel().catch(() => undefined);
   signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) onAbort();
+
+  // What follows the last complete frame stays for the next wait, and the
+  // decoder with it, which can hold the first bytes of a character.
+  const finish = (): CollectResult => {
+    unread.set(stream, { text: pending, decoder });
+    return { events, raw: chunks.join("") };
+  };
 
   try {
+    if (carried && done(events)) return finish();
     for (;;) {
       const { done: finished, value } = await reader.read();
       if (value) {
@@ -97,7 +128,7 @@ export async function collectUntil(
           pending = pending.slice(end + 2);
         }
       }
-      if (done(events)) return { events, raw: chunks.join("") };
+      if (done(events)) return finish();
       if (finished) {
         throw new Error(
           `event stream closed before ${waitingFor}; saw ${describe(events)}`,
@@ -136,6 +167,80 @@ function describe(events: SseEvent[]): string {
 }
 
 /**
+ * Read an open stream until its `stream_cursor` frame has arrived, and return
+ * the cursor it names.
+ *
+ * The server sends that frame once it has read the log's head and is following
+ * the log from there (`events/stream-cursor-first`), so a write made after it
+ * returns is a write the stream sends (`events/stream-sends-after-cursor`).
+ * Headers arriving says nothing of the kind: the response can start before the
+ * head is read, and a fixed pause is a guess that a loaded runner outruns.
+ *
+ * The frame is consumed. Anything read past it stays for the next
+ * `collectUntil` on the same stream.
+ */
+export async function awaitStreamCursor(
+  stream: EventStream,
+  signal?: AbortSignal,
+): Promise<string> {
+  const body = stream.response.body;
+  if (!body) {
+    throw new Error(
+      `event stream returned no body (status ${stream.response.status})`,
+    );
+  }
+  const reader = body.getReader();
+  const left = unread.get(stream);
+  unread.delete(stream);
+  const decoder = left?.decoder ?? new TextDecoder();
+  let text = left?.text ?? "";
+  const seen: SseEvent[] = [];
+  const onAbort = () => void reader.cancel().catch(() => undefined);
+  signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) onAbort();
+  try {
+    for (;;) {
+      for (
+        let end = text.indexOf("\n\n");
+        end >= 0;
+        end = text.indexOf("\n\n")
+      ) {
+        const frame = parseSse(text.slice(0, end + 2))[0];
+        text = text.slice(end + 2);
+        if (frame && frame.event !== "stream_cursor") seen.push(frame);
+        if (frame?.event === "stream_cursor") {
+          const cursor = (frame.data as { cursor?: unknown }).cursor;
+          if (typeof cursor !== "string") {
+            throw new Error(
+              `stream_cursor carried no cursor: ${JSON.stringify(frame.data)}`,
+            );
+          }
+          unread.set(stream, { text, decoder });
+          return cursor;
+        }
+      }
+      const { done, value } = await reader.read();
+      if (value) text += decoder.decode(value, { stream: true });
+      if (done) {
+        throw new Error(
+          `event stream closed before its stream_cursor; saw ${describe([...seen, ...parseSse(text)])}`,
+        );
+      }
+    }
+  } catch (err) {
+    if (signal?.aborted) {
+      throw new Error("timed out waiting for the stream's stream_cursor", {
+        cause: err,
+      });
+    }
+    throw err;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+    reader.releaseLock();
+  }
+}
+
+/**
  * Open a stream, run `body` with it, and close it however `body` ends.
  *
  * Every subscription in this suite goes through here. An abandoned stream is
@@ -160,43 +265,43 @@ export async function withStream<T>(
   }
 }
 
+export interface StreamAtCursorOptions extends OpenEventStreamOptions {
+  /** The test's `signal`, so an abort names the frame that never came. */
+  signal?: AbortSignal;
+}
+
 /**
- * The id of the newest event on the stream, established by writing one.
+ * Open a stream, wait for its `stream_cursor`, and run `body` with the stream
+ * and that cursor. Whatever `body` writes goes to a stream that is already
+ * following the log.
+ */
+export async function withStreamAtCursor<T>(
+  apiUrl: string,
+  apiKey: string,
+  { signal, ...options }: StreamAtCursorOptions,
+  body: (stream: EventStream, cursor: string) => Promise<T>,
+): Promise<T> {
+  return withStream(apiUrl, apiKey, options, async (stream) =>
+    body(stream, await awaitStreamCursor(stream, signal)),
+  );
+}
+
+/**
+ * The id of the newest event in the log, which is the cursor a stream
+ * announces when it opens (`events/stream-cursor-head`).
  *
- * A replay test needs a point to resume from, and the server offers no route
- * that reports its current cursor, so the only way to learn an id is to cause
- * an event and read the id the server gave it.
- *
- * The marker write is a real item, so the caller tracks it for teardown.
+ * A replay test resumes from it to see exactly what is written afterwards. On
+ * a log that holds no event it is `"0"`.
  */
 export async function baselineEventId(
   apiUrl: string,
   apiKey: string,
-  makeMarker: () => Promise<string>,
   signal?: AbortSignal,
-): Promise<{ eventId: string; markerId: string }> {
-  return withStream(apiUrl, apiKey, {}, async (stream) => {
-    // Let the subscription settle before the write, or the event it is meant
-    // to observe is published to nobody.
-    await new Promise((r) => setTimeout(r, 250));
-    const markerId = await makeMarker();
-    const { events } = await collectUntil(
-      stream,
-      (evts) =>
-        evts.some(
-          (e) => (e.data as { item?: { id?: string } })?.item?.id === markerId,
-        ),
-      `the marker item ${markerId} to reach the stream`,
-      signal,
-    );
-    const marker = events.find(
-      (e) => (e.data as { item?: { id?: string } })?.item?.id === markerId,
-    );
-    if (!marker?.id) {
-      throw new Error(
-        `marker event for ${markerId} carried no SSE id, so no replay point can be taken`,
-      );
-    }
-    return { eventId: marker.id, markerId };
-  });
+): Promise<string> {
+  return withStreamAtCursor(
+    apiUrl,
+    apiKey,
+    { signal },
+    async (_stream, cursor) => cursor,
+  );
 }

@@ -13,6 +13,7 @@ import {
   baselineEventId,
   collectUntil,
   withStream,
+  withStreamAtCursor,
 } from "../../utils/stream.js";
 
 let client: MarfaClient;
@@ -170,12 +171,7 @@ describe("event frame metadata", () => {
   it("carries the same metadata on an event a stream replays", async ({
     signal,
   }) => {
-    const { eventId } = await baselineEventId(
-      apiUrl,
-      apiKey,
-      () => seed("replay-marker"),
-      signal,
-    );
+    const eventId = await baselineEventId(apiUrl, apiKey, signal);
     const id = await lifecycle();
     const witness = await seed("replay-witness");
     for (const [key, namespaces] of [
@@ -194,10 +190,8 @@ describe("event frame metadata", () => {
 });
 
 async function liveFrames(signal: AbortSignal) {
-  return withStream(apiUrl, apiKey, {}, (full) =>
-    withStream(apiUrl, narrowKey, {}, async (narrow) => {
-      // Allow both subscriptions to join before the first write.
-      await new Promise((resolve) => setTimeout(resolve, 250));
+  return withStreamAtCursor(apiUrl, apiKey, { signal }, (full) =>
+    withStreamAtCursor(apiUrl, narrowKey, { signal }, async (narrow) => {
       const id = await lifecycle();
       const witness = await seed("live-witness");
       const [fullEvents, narrowEvents] = await Promise.all([

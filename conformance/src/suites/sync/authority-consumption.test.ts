@@ -61,12 +61,7 @@ describe("replay authority consumption", () => {
     });
     expect(minted.ok).toBe(true);
     trackKey(ctx, minted.data.id);
-    const { eventId } = await baselineEventId(
-      apiUrl,
-      apiKey,
-      () => item("core.note", "authority-seed"),
-      context.signal,
-    );
+    const eventId = await baselineEventId(apiUrl, apiKey, context.signal);
     const withheld = await item("core.task", "authority-withheld");
     const higher = await item("core.note", "authority-higher");
     // The same backlog under a wider key is the witness that the task

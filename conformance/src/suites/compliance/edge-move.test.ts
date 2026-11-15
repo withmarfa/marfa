@@ -15,7 +15,7 @@ import {
 } from "../../utils/setup.js";
 import { createBookmark, createNote } from "../../generators/items.js";
 import type { SseEvent } from "../../utils/sse.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 
 /**
  * Moving an edge's end (`edges/move-announced` and `items/idempotency-operations`) is judged as the create of the edge it
@@ -99,8 +99,7 @@ describe("moving an edge's end", () => {
   it("announces a move as one edge.updated, with nothing between", async ({
     signal,
   }) => {
-    await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 200));
+    await withStreamAtCursor(apiUrl, apiKey, { signal }, async (stream) => {
       const first = await makeItem("stream-first");
       const second = await makeItem("stream-second");
       const child = await makeItem("stream-child");

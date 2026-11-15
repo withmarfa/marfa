@@ -15,7 +15,11 @@ import {
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { createNote, createTask } from "../../generators/items.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import {
+  collectUntil,
+  withStream,
+  withStreamAtCursor,
+} from "../../utils/stream.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -1376,54 +1380,55 @@ describe("what a connector keeps on the instance", () => {
             row.version + 1,
       );
 
-    const cursor = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await sleep(250);
-      for (const input of [
-        { set: [{ item_id: row.id, waiting: true, record: { etag: "1" } }] },
-        { set: [{ item_id: row.id, waiting: false, record: { etag: "2" } }] },
-        { clear: [row.id] },
-        { set: [{ item_id: row.id, waiting: true, record: { etag: "3" } }] },
-      ]) {
-        const res = await mine.client.writeConnectorAgreements(mine.id, {
-          process,
-          ...input,
+    const cursor = await withStreamAtCursor(
+      apiUrl,
+      apiKey,
+      { signal },
+      async (stream, announced) => {
+        for (const input of [
+          { set: [{ item_id: row.id, waiting: true, record: { etag: "1" } }] },
+          { set: [{ item_id: row.id, waiting: false, record: { etag: "2" } }] },
+          { clear: [row.id] },
+          { set: [{ item_id: row.id, waiting: true, record: { etag: "3" } }] },
+        ]) {
+          const res = await mine.client.writeConnectorAgreements(mine.id, {
+            process,
+            ...input,
+          });
+          expect(res.status).toBe(200);
+        }
+        const untouched = await client.getItem(row.id);
+        expect(untouched.data.item.updated_at).toBe(row.updated_at);
+        expect(untouched.data.item.version).toBe(row.version);
+
+        // The witness: an ordinary update to the same item moves both and is
+        // announced.
+        const updated = await client.updateItem(row.id, {
+          version: row.version,
+          properties: { title: "quiet", body: "changed" },
         });
-        expect(res.status).toBe(200);
-      }
-      const untouched = await client.getItem(row.id);
-      expect(untouched.data.item.updated_at).toBe(row.updated_at);
-      expect(untouched.data.item.version).toBe(row.version);
+        expect(updated.ok).toBe(true);
+        expect(updated.data.item.version).toBe(row.version + 1);
+        expect(Date.parse(updated.data.item.updated_at ?? "")).toBeGreaterThan(
+          Date.parse(row.updated_at ?? ""),
+        );
+        const { events } = await collectUntil(
+          stream,
+          updateSeen,
+          "the update to the item",
+          signal,
+        );
+        expect(
+          events.filter((e) => aboutRow(e.data)).map((e) => e.event),
+        ).toEqual(["item.updated"]);
+        return announced;
+      },
+    );
 
-      // The witness: an ordinary update to the same item moves both and is
-      // announced.
-      const updated = await client.updateItem(row.id, {
-        version: row.version,
-        properties: { title: "quiet", body: "changed" },
-      });
-      expect(updated.ok).toBe(true);
-      expect(updated.data.item.version).toBe(row.version + 1);
-      expect(Date.parse(updated.data.item.updated_at ?? "")).toBeGreaterThan(
-        Date.parse(row.updated_at ?? ""),
-      );
-      const { events } = await collectUntil(
-        stream,
-        updateSeen,
-        "the update to the item",
-        signal,
-      );
-      expect(
-        events.filter((e) => aboutRow(e.data)).map((e) => e.event),
-      ).toEqual(["item.updated"]);
-      const announced = events.find((e) => e.event === "stream_cursor");
-      return (announced?.data as { cursor?: unknown } | undefined)?.cursor;
-    });
-
-    // The live stream announced this cursor before the writes.
-    expect(typeof cursor).toBe("string");
     await withStream(
       apiUrl,
       apiKey,
-      { lastEventId: String(cursor) },
+      { lastEventId: cursor },
       async (replay) => {
         const { events } = await collectUntil(
           replay,

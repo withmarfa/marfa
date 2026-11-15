@@ -8,7 +8,11 @@ import {
 } from "../../utils/fresh-server.js";
 import { codeOf, idOf, send } from "../../utils/inbound-sender.js";
 import type { SseEvent } from "../../utils/sse.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import {
+  collectUntil,
+  withStream,
+  withStreamAtCursor,
+} from "../../utils/stream.js";
 import { controlRequest } from "../../utils/control-request.js";
 
 /**
@@ -370,12 +374,11 @@ describe("contention on the write lock", () => {
         ?.properties?.title;
     const titles = (events: SseEvent[]): unknown[] => events.map(titleOf);
 
-    const written = await withStream(
+    const written = await withStreamAtCursor(
       impatient!.apiUrl,
       impatient!.workingKey,
-      {},
+      { signal },
       async (stream) => {
-        await new Promise((r) => setTimeout(r, 250));
         // The witness that the stream is live for this write: a write that
         // lands is announced, so a refused one that was not is not for want
         // of a subscriber.

@@ -41,6 +41,10 @@ export interface OpenEventStreamOptions {
 /**
  * Open the server's SSE event stream on a connection pool of its own.
  *
+ * This returns when the response headers arrive, which is before the server
+ * has read the log's head. A caller that writes next waits for `stream_cursor`
+ * first (`awaitStreamCursor`, or `withStreamAtCursor`, in `stream.ts`).
+ *
  * The dedicated pool is the whole point. Route a subscription through the
  * default pool instead and every test that writes while subscribed hangs.
  *

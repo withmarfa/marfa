@@ -17,7 +17,7 @@ import {
 } from "../../utils/setup.js";
 import { expectMatchesSchema } from "../../utils/openapi.js";
 import { createNote } from "../../generators/items.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 import {
   bootFreshServer,
   FRESH_SERVER_TIMEOUT_MS,
@@ -630,8 +630,7 @@ describe("the receiving door", () => {
   it("announces nothing on the event stream", async ({ signal }) => {
     const owner = await connector("door-quiet");
     const made = await endpoint(owner);
-    await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
+    await withStreamAtCursor(apiUrl, apiKey, { signal }, async (stream) => {
       idOf(await send(apiUrl, made.path, "quiet"));
       const sentinel = await client.createItem(
         createNote({ source: ctx.source, properties: { body: "sentinel" } }),

@@ -112,6 +112,14 @@ When a client resumes from the `cursor` of `stream_cursor`, the server MUST send
 
 **Tests:** `sync/stream-contract.test.ts › announces a cursor a client can resume from`.
 
+### `events/stream-sends-after-cursor`
+
+While a stream stays open after it has sent `stream_cursor`, the server MUST send on it every event written after the head the frame names, within the stream's filter and the caller's reach.
+
+**Reason:** a client that waits for `stream_cursor` before it writes has no other way to know its write will be seen, and a server that read the head before it began to follow the log would drop the first events silently.
+
+**Tests:** `compliance/events-contract.test.ts › sends an event written the moment stream_cursor arrives`.
+
 ### `events/stream-live-after-replay`
 
 When a stream has sent the replay, the server MUST send `stream_live` before any frame after it.

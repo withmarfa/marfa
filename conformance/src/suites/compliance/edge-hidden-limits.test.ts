@@ -272,17 +272,7 @@ describe("what a key is told of an item it cannot read through a readable one", 
     const blind = await keyOf("blind");
     const sighted = await keyOf("sighted", "read");
 
-    const { eventId, markerId } = await baselineEventId(
-      apiUrl,
-      apiKey,
-      async () => {
-        const r = await client.createItem(createNote({ source: ctx.source }));
-        expect(r.status).toBe(201);
-        return r.data.item.id;
-      },
-      signal,
-    );
-    trackItem(ctx, markerId);
+    const eventId = await baselineEventId(apiUrl, apiKey, signal);
 
     const n = await client.createItem(createNote({ source: ctx.source }));
     expect(n.status).toBe(201);

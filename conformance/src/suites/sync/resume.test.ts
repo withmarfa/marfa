@@ -12,6 +12,7 @@ import {
   baselineEventId,
   collectUntil,
   withStream,
+  withStreamAtCursor,
 } from "../../utils/stream.js";
 
 /**
@@ -119,12 +120,8 @@ function announcedHead(events: SseEvent[]): bigint | undefined {
 
 describe("resuming from the head", () => {
   it("a reader that closes at the head and resumes from its last id misses nothing and repeats nothing", async (context) => {
-    const { eventId, markerId } = await baselineEventId(
-      apiUrl,
-      apiKey,
-      () => makeNote("resume-marker"),
-      context.signal,
-    );
+    await makeNote("resume-marker");
+    const eventId = await baselineEventId(apiUrl, apiKey, context.signal);
 
     // Written before the first read, so they sit between the cursor and
     // the head that read will be announced.
@@ -236,12 +233,13 @@ describe("resuming from the head", () => {
       `the first read received no id past the announced head ${String(head!)}, so it never left the replay`,
     ).toBe(true);
     expectAscending(firstIds, "first");
-    // The control: a resume that honors `Last-Event-ID` does not carry the
-    // event at the cursor itself.
+    // The control: a resume that honors `Last-Event-ID` carries no event at or
+    // below the cursor it resumed from.
+    const atOrBefore = firstIds.filter((id) => id <= BigInt(eventId));
     expect(
-      itemIds(first).has(markerId),
-      "the first read carried the event at the cursor, so it is not resuming from it",
-    ).toBe(false);
+      atOrBefore.map(String),
+      `the first read carried events at or before its cursor ${eventId}, so it is not resuming from it`,
+    ).toEqual([]);
     const lastReceived = firstIds[firstIds.length - 1]!;
 
     // Written after the first read closed, so they are what the resume
@@ -349,24 +347,23 @@ describe("the order across item and edge frames", () => {
           (e.data as { item?: { id?: string } })?.item?.id === doomedId,
       );
 
-    const { eventId } = await baselineEventId(
+    const eventId = await baselineEventId(apiUrl, apiKey, context.signal);
+    const live = await withStreamAtCursor(
       apiUrl,
       apiKey,
-      () => makeNote("purge-order-marker"),
-      context.signal,
+      { signal: context.signal },
+      async (stream) => {
+        expect((await client.deleteItem(doomedId)).ok).toBe(true);
+        expect((await client.purgeItem(doomedId)).ok).toBe(true);
+        const { events } = await collectUntil(
+          stream,
+          sentinelOf,
+          "the purge of the item to reach the stream",
+          context.signal,
+        );
+        return events;
+      },
     );
-    const live = await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((r) => setTimeout(r, 250));
-      expect((await client.deleteItem(doomedId)).ok).toBe(true);
-      expect((await client.purgeItem(doomedId)).ok).toBe(true);
-      const { events } = await collectUntil(
-        stream,
-        sentinelOf,
-        "the purge of the item to reach the stream",
-        context.signal,
-      );
-      return events;
-    });
     // Written after the baseline marker, so the replay starts below the
     // purge's own frames and carries them.
     const replayed = await withStream(
