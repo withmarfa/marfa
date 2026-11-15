@@ -752,7 +752,7 @@ const split = (
   project: string,
   count: number,
   lane: Shard["lane"],
-  rest: Pick<Shard, "binary" | "module">,
+  rest: Pick<Shard, "binary" | "module"> & Partial<Pick<Shard, "statuses">>,
 ): Shard[] =>
   Array.from({ length: count }, (_, i) => ({
     name: `${project} ${String(i + 1)}/${String(count)}`,
@@ -776,6 +776,7 @@ export const SHARDS: readonly Shard[] = [
   ...split("compliance", 10, "rust-contract-server", {
     binary: false,
     module: false,
+    statuses: true,
   }),
   {
     name: "cli",

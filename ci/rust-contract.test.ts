@@ -291,7 +291,11 @@ describe("the Rust contract shards", () => {
     expect(check.if).toBe("${{ !cancelled() && matrix.statuses }}");
     expect(
       matrix.filter((entry) => entry.statuses).map((entry) => entry.slug),
-    ).toEqual(["correctness-sync", "cli"]);
+    ).toEqual([
+      "correctness-sync",
+      ...Array.from({ length: 10 }, (_, i) => `compliance-${String(i + 1)}`),
+      "cli",
+    ]);
   });
 
   it("put an object store beside the server for the stores chapter, and always stop it", () => {

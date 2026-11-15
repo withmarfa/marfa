@@ -3507,6 +3507,22 @@ When the server restarts with the same secret and address, the server MUST keep 
 
 **Tests:** `compliance/browser-sessions.test.ts › leaves every app connected across a restart of the server`.
 
+### `keys-and-oauth/sign-out-no-session`
+
+If a request to `POST /auth/sign-out` carries no live browser session, then the server MUST answer `401 unauthorized`.
+
+**Reason:** A session already ended, or never made, has nothing to sign out of, and the answer is the one every door gives a request with no credential.
+
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a sign-out 403 from another origin or none and 401 from no live session, and keeps the session until the instance's own origin ends it`.
+
+### `keys-and-oauth/sign-out-origin`
+
+If a request to `POST /auth/sign-out` carries a live browser session and names no origin or one other than the instance's, then the server MUST answer `403 forbidden` and keep the session.
+
+**Reason:** A page on another site could otherwise end the owner's session by sending the browser to this door.
+
+**Tests:** `compliance/sign-in-surface.test.ts › refuses a sign-out 403 from another origin or none and 401 from no live session, and keeps the session until the instance's own origin ends it`.
+
 ### `keys-and-oauth/sign-out-lookup-fault`
 
 If `POST /auth/sign-out` cannot look its session up, then the server MUST answer `500`.

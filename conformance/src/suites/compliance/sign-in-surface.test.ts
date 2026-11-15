@@ -173,6 +173,43 @@ describe("the sign-in surface", () => {
     expect(after.status).toBe(401);
   });
 
+  it("refuses a sign-out 403 from another origin or none and 401 from no live session, and keeps the session until the instance's own origin ends it", async () => {
+    const signedIn = await signIn(OWNER.password, "192.0.2.7");
+    const cookie = (signedIn.headers.get("set-cookie") ?? "").split(";")[0]!;
+    const signOut = (headers: Record<string, string>): Promise<Response> =>
+      fetch(`${server!.apiUrl}/auth/sign-out`, {
+        method: "POST",
+        headers: { "content-type": "application/json", ...headers },
+        body: "{}",
+      });
+    const lives = async (): Promise<number> =>
+      (await fetch(`${server!.apiUrl}/owner/passkeys`, { headers: { cookie } }))
+        .status;
+
+    // The witness: the session is live.
+    expect(await lives()).toBe(200);
+    for (const headers of [{ cookie }, { cookie, origin: FOREIGN }]) {
+      const refused = await signOut(headers);
+      expect(refused.status).toBe(403);
+      const body = (await refused.json()) as ErrorResponse;
+      expect(body.error.code).toBe("forbidden");
+      expect(refused.headers.get("set-cookie")).toBeNull();
+      expect(await lives()).toBe(200);
+    }
+    const bare = await signOut({ origin });
+    expect(bare.status).toBe(401);
+    expect(((await bare.json()) as ErrorResponse).error.code).toBe(
+      "unauthorized",
+    );
+
+    expect((await signOut({ cookie, origin })).status).toBe(200);
+    const ended = await signOut({ cookie, origin });
+    expect(ended.status).toBe(401);
+    expect(((await ended.json()) as ErrorResponse).error.code).toBe(
+      "unauthorized",
+    );
+  });
+
   it("sends a signed-in browser only to a path on the instance", async () => {
     // Each of these is `//foreign.example` by the time a browser navigates:
     // it strips the tab, and resolving collapses the dot segments.
