@@ -1090,9 +1090,9 @@ When a device hydrates a slice of every type after an interrupted hydration of t
 
 ### `device/hydrate-surrogate-pair`
 
-When a hydration or a catch-up reads an item whose text holds a surrogate pair, in a property value, a property name or a list, a device MUST hold the text unchanged.
+When a hydration or a catch-up reads an item whose text holds a character outside the Basic Multilingual Plane, in a property value, a property name or a list, a device MUST hold the text unchanged.
 
-**Reason:** the server holds a character outside the Basic Multilingual Plane only as a surrogate pair (`items/json-text-well-formed`).
+**Reason:** the server holds that text as UTF-8, and a surrogate pair exists only in the JSON escape a client sends or reads (`items/json-text-well-formed`); a device that held the escape's halves apart would hold text the server never stored.
 
 **Tests:** `device/well-formed-text-live.test.ts › refuses a surrogate escape with no partner and leaves a device able to hydrate and catch up over the item that is`.
 
@@ -1488,15 +1488,17 @@ Each rule here holds because the silent alternative is a working copy that disag
 
 ### `device/edit-sends-named`
 
-When a device sends an edit, a device MUST send each property the caller named with the value the caller gave it, and no property the caller did not name.
+When a device sends an edit, a device MUST send each property the caller named with the value the caller gave it, and no property the caller did not name, but where `queue-and-verdicts/edit-drops-unchanged` or `queue-and-verdicts/whole-moved-onto-answer` says otherwise.
 
-**Reason:** two values for one field are the server's to reconcile; a device that combined them would have to be believed by every other device.
+**Reason:** two values for one field are the server's to reconcile; a device that combined them would have to be believed by every other device. An edit a drain moves onto another version is the one case that sends other properties than the caller named: it drops those the caller left as they were read, and an edit that sends its properties whole sends the answer's properties with the caller's changes laid over them.
 
 **Tests:** `device/local-refusals.test.ts › refuses to merge two values for one field`.
 
 ### `device/edit-takes-answer`
 
-When the server answers an edit, a device MUST hold the item the server answers it with.
+When the server answers an edit, a device MUST hold the item that a read of it after the answer returns, and not the item the answer carried (`queue-and-verdicts/success-read-again`).
+
+**Reason:** the answer settles the write, not what the credential may read of the item, and a device that took the answer's item would show a value the server does not hold.
 
 **Tests:** `device/local-refusals.test.ts › refuses to merge two values for one field`.
 
@@ -1516,7 +1518,9 @@ While an edit of an item waits, a device MUST show the item at the version it he
 
 ### `device/version-from-answer`
 
-When the server answers a write, a device MUST hold the item at the version the server answers.
+When the server answers a write to an item, a device MUST hold the item at the version a read of it after the answer returns, and not the version the answer named, unless the copy already holds a later version (`queue-and-verdicts/later-item-kept`).
+
+**Reason:** a version a device holds comes from the server's own read of the item, never from the device, because the next edit of the item is based on it.
 
 **Tests:** `device/local-refusals.test.ts › refuses to advance a version of its own accord`.
 
@@ -5342,7 +5346,7 @@ When computing a preview, a device MUST remove each run of two or more `*`, `_` 
 
 If inline markup is not closed on its line, then a device MUST keep it in the preview as text.
 
-**Reason:** A rule that names each removal, and keeps everything else, lets two implementations agree byte for byte.
+**Reason:** A rule that names each removal, and keeps everything else, gives every app the same preview of the same text.
 
 **Tests:** `device/binding-item-display.test.ts › names and previews every shared case from the copy's catalog, without asking the server`.
 
@@ -8194,7 +8198,15 @@ The CLI MUST print, for `marfa types scaffold`, a definition that `marfa types r
 
 ## Search, matched as the server matches
 
-Local search covers items only. The rules below correspond to the `search-and-filters` rules of the same names. Table-row hits come from the server's search (`tables/search-row-hit`).
+The rules below correspond to the `search-and-filters` rules of the same names. A hit for a table row is the server's search's alone (`tables/search-row-hit`).
+
+### `device/search-no-rows`
+
+A device MUST NOT answer a local search with a hit for a row of a table, whether or not the copy holds the table's rows.
+
+**Reason:** a copy holds the rows of only the tables it was asked to hold whole, and only up to a cap, so a hit for a row would depend on what the copy holds where the server's answer does not.
+
+**Tests:** `device/tables-live.test.ts › answers a local search with the items alone, though the copy holds the rows the server's search answers`.
 
 ### `device/search-stem`
 

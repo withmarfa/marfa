@@ -910,13 +910,18 @@ describe("a device refuses to decide what the server decides", () => {
     });
     expect(edit.ok).toBe(true);
 
+    // The read after the answer finds the item one version on, with a line
+    // another device wrote, so the answer and the read tell apart.
     scriptWrites(harness.server, {
       read: [
         answers.updated(
           wireItem({
             id: HELD.id,
-            version: HELD.version + 1,
-            properties: { title: "held", body: "the server's line" },
+            version: HELD.version + 2,
+            properties: {
+              title: "held",
+              body: "the server's line, then another device's",
+            },
           }),
         ),
       ],
@@ -954,8 +959,8 @@ describe("a device refuses to decide what the server decides", () => {
     if (!read.ok) return;
     expect(
       read.value.properties.body,
-      "the copy holds a value that is part the caller's and part the server's, which is a value neither of them wrote and no other device will ever agree with",
-    ).toBe("the server's line");
+      "the copy holds the item the answer carried, or a value that is part the caller's and part the server's, rather than the item the read after the answer returned",
+    ).toBe("the server's line, then another device's");
   });
 
   it("refuses to advance a version of its own accord", async () => {
@@ -1004,7 +1009,9 @@ describe("a device refuses to decide what the server decides", () => {
         answers.updated(
           wireItem({ id: created.value.item_id ?? "a", version: 1 }),
         ),
-        answers.updated(wireItem({ id: HELD.id, version: HELD.version + 1 })),
+        // The read after the update's answer finds the item a version on from
+        // the one the answer names.
+        answers.updated(wireItem({ id: HELD.id, version: HELD.version + 2 })),
       ],
       create: [
         answers.created(
@@ -1021,8 +1028,8 @@ describe("a device refuses to decide what the server decides", () => {
     if (!answered.ok) return;
     expect(
       answered.value.version,
-      "the copy did not take the version the server answered with, so a version only ever comes from nowhere",
-    ).toBe(HELD.version + 1);
+      "the copy did not take the version the read after the answer returned, so a version comes from the answer and not from the server's own read",
+    ).toBe(HELD.version + 2);
   });
 
   it("refuses to resolve a conflict it was refused", async () => {

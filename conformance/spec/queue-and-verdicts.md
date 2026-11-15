@@ -100,9 +100,9 @@ When the server answers a write with the success its own operation gives, whethe
 
 ### `queue-and-verdicts/whole-values-sent`
 
-When a drain sends an update, a device MUST send each property the update names with the whole value its caller gave.
+When a drain sends an update, a device MUST send each property the update names with the whole value its caller gave, but where `queue-and-verdicts/edit-drops-unchanged` or `queue-and-verdicts/whole-moved-onto-answer` says otherwise.
 
-**Reason:** a device does not merge inside a property, and it does not assume the server will: whether a body is ever merged line by line is not settled.
+**Reason:** a device does not merge inside a property, and it does not assume the server will: whether a body is ever merged line by line is not settled. A property is never sent in part. A moved edit sends a property it names whole or leaves it out, and one that sends its properties whole sends the properties of the answer it is moved onto with the caller's changes laid over them.
 
 **Tests:** `device/verdicts.test.ts › answers about whole fields, never about part of one`.
 
@@ -1164,7 +1164,7 @@ When a drain refuses a write without sending it, a device MUST report the refusa
 
 ### `queue-and-verdicts/blocked-reasons-five`
 
-A device MUST give a `blocked` write exactly one of the reasons `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `awaiting_dependency`, `failing_alone`, `instance_changed` and `record_unread`, and no other.
+A device MUST give a `blocked` write exactly one of the eight reasons `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `awaiting_dependency`, `failing_alone`, `instance_changed` and `record_unread`, and no other.
 
 **Reason:** `failing_alone` names a write that keeps meeting an environmental failure while others are taken (`queue-and-verdicts/stuck-write-set-aside`). `instance_changed` names a write made against an instance other than the one the copy is now built from (`device/queue-other-instance-held`). `record_unread` names a write carried from a damaged store without a record that decides how it is sent (`device/set-aside-record-unread`). `awaiting_dependency` is kept so the queue says why a drain held a write (`queue-and-verdicts/held-reason`), though nothing outside the queue stops such a write: a binding shows it as waiting (`queue-and-verdicts/binding-shows-waiting`), and no caller releases it (`queue-and-verdicts/release-reason-held`, `queue-and-verdicts/release-held-by-id`).
 
@@ -1930,11 +1930,11 @@ When a caller clears the answered writes, a device MUST take out of the queue ea
 
 ### `queue-and-verdicts/clear-keeps-content`
 
-When a caller clears the answered writes, a device MUST keep every `refused` write that carried content: an item's create or edit, a metadata write, an extension written, and an edge's create or edit, other than one a folder clears (`folders/clears-satisfied-edge-refusal`, `folders/clears-repeated-edge-refusal`).
+When a caller clears the answered writes, a device MUST keep every `refused` write that carried content: an item's create or edit, a metadata write, an extension written, a table rows write, and an edge's create or edit, other than one a folder clears (`folders/clears-satisfied-edge-refusal`, `folders/clears-repeated-edge-refusal`).
 
-**Reason:** cleared with the answered writes, the words of an edit the server refused because another device deleted the item would be gone with nothing saying so.
+**Reason:** cleared with the answered writes, the words of an edit, or the rows of a table write, that the server refused because another device deleted the item would be gone with nothing saying so.
 
-**Tests:** `device/queue.test.ts › keeps a refused write's body through a clearing, until it is discarded by id`, `device/versioned-deletes-live.test.ts › keeps the text and binned-item reason of an edit refused after another delete`, `device/classification.test.ts › clears with the answered writes those only a withdrawn write was keeping, but for one carrying content`.
+**Tests:** `device/queue.test.ts › keeps a refused write's body through a clearing, until it is discarded by id`, `device/versioned-deletes-live.test.ts › keeps the text and binned-item reason of an edit refused after another delete`, `device/classification.test.ts › clears with the answered writes those only a withdrawn write was keeping, but for one carrying content`, `device/table-writes-live.test.ts › keeps a refused row write through a clearing, and takes it out only when a caller discards it`.
 
 ### `queue-and-verdicts/clear-keeps-releasable`
 
