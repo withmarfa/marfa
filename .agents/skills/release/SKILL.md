@@ -5,7 +5,7 @@ description: Cut, check or repair a Marfa release. Tags the next version on a gr
 
 # Cut a Marfa release
 
-A release is a git tag `v<version>` on a commit of `main`. Pushing the tag runs `.github/workflows/release.yml`, and nothing else publishes. A `workflow_dispatch` run of the same workflow with a `version` input is a dry run: it builds, signs and proves everything and publishes nothing.
+A release is a git tag `v<version>` on a commit of `main`. Pushing the tag runs `.github/workflows/release.yml`, and nothing else publishes. A `workflow_dispatch` run of the same workflow with a `version` input is a dry run: it builds, signs ad hoc, and proves everything, and publishes nothing. The Developer ID, the tap token and npm's trust belong to the `release` environment, which only a `v*` tag can use, so a dry run neither signs with the Developer ID nor notarizes.
 
 ## The version
 
@@ -53,10 +53,10 @@ gh run watch <run id> --exit-status
 
 Each job is named as GitHub shows it.
 
-1. **Require green CI** and **Require green Core:** for a tag, a successful `ci.yml` run for the commit, from a push to `main` or a dispatch, and a successful `core.yml` run for it or for the nearest run before it with no core change since (`scripts/release/require-core-run.sh`).
+1. **Require green CI** and **Require green Core:** for a tag, a successful `ci.yml` run for the commit on `main`, from a push or a dispatch (a dry run accepts a green run of any event), and a successful `core.yml` run for it or for the nearest run before it with no core change since (`scripts/release/require-core-run.sh`).
 2. **Read the version:** the gate in [The version](#the-version). It also refuses a version when a higher one is released, and a commit that is not after the previous release's.
 3. **Build the programs (macOS),** on `macos-26`: stamps the version, packs `@withmarfa/core` (the Apple silicon `.node` module) and `@withmarfa/client`, and builds `marfa` and `marfa-server` for `aarch64-apple-darwin` with `scripts/release/build-programs.sh`. Each program must report `<program> <version>`.
-4. **Sign the programs:** signs both with the Developer ID under the hardened runtime and has Apple notarize them (`scripts/release/sign-binary.sh`, six `APPLE_*` secrets; a dry run signs too), packs `marfa-<version>-darwin-arm64.tar.gz`, boots it and reads a PDF and a picture with it (`check-archive.sh`, `prove-reading.sh`).
+4. **Sign the programs:** signs both with the Developer ID under the hardened runtime and has Apple notarize them (`scripts/release/sign-binary.sh`, six `APPLE_*` secrets of the `release` environment; a dry run signs ad hoc, with no identity and no notarization), packs `marfa-<version>-darwin-arm64.tar.gz`, boots it and reads a PDF and a picture with it (`check-archive.sh`, `prove-reading.sh`).
 5. **Build the programs (x86_64 Linux)** and **(aarch64 Linux):** static musl builds in the pinned build image, packed as `marfa-<version>-linux-x86_64.tar.gz` and `marfa-<version>-linux-aarch64.tar.gz`. These programs are not signed.
 6. **Run the programs (x86_64 Linux)** and **(aarch64 Linux):** each archive booted and reading files on a runner of its own architecture.
 7. **Collect the release:** writes the three archives' checksums to `marfa-<version>-checksums.txt`, writes the Homebrew formula from them, and holds the release to six files: the three archives, the checksums and the two npm tarballs.
@@ -92,13 +92,13 @@ Each job is named as GitHub shows it.
 
 ## Finish a failed or partial run
 
-- **Before `Publish`,** nothing is public under the version: the image job pushes untagged digests only. Fix what failed outside the code (a runner, a secret, a network fault) and re-run the failed jobs with `gh run rerun <run id> --failed`. The build and signing artifacts are kept for one day; after that, re-run the whole run with `gh run rerun <run id>`.
+- **Before `Publish`,** nothing is public under the version: the image job pushes untagged digests only. Fix what failed outside the code (a runner, a secret of the `release` environment, a network fault) and re-run the failed jobs with `gh run rerun <run id> --failed`. The build and signing artifacts are kept for one day; after that, re-run the whole run with `gh run rerun <run id>`.
 - **In `Publish`,** each step skips what is already there: a draft is given only the files it lacks, an image version that exists is kept, and an npm version that exists is skipped. A draft and an image are kept only when they were built from this run's commit: the draft's `targetCommitish` and the image's `org.opencontainers.image.revision` label are compared with it, before anything is uploaded, tagged or published to npm. Re-run the job after fixing what its error names:
   - A draft made for another commit (or by an earlier workflow, which recorded none) is refused. Delete it with `gh release delete v<version>`, which keeps the tag, and re-run the whole run so the files are built again.
   - An image tag built from another commit is refused. Delete that version of the `marfa-server` package in its settings on GitHub, then re-run the job.
   - A new package on ghcr.io is private until a maintainer makes it public in its package settings.
-  - A package npm has never published stops the job before anything is published. Its first version is published by hand from the run's artifacts, with a trusted publisher set to this repository and `release.yml`: that is a maintainer's step, so stop and say so; never publish it yourself.
-- **`Update the Homebrew tap`** fails when `HOMEBREW_TAP` is `publish` and the secret `HOMEBREW_TAP_TOKEN` is missing. Set it to a fine-grained token with Contents read and write on `withmarfa/homebrew-tap`, then re-run the job. If several releases' tap jobs failed, re-run them oldest first: the job does not refuse to move the formula back to an older version.
+  - A package npm has never published stops the job before anything is published. Its first version is published by hand from the run's artifacts, with a trusted publisher set to this repository, `release.yml` and the environment `release`: that is a maintainer's step, so stop and say so; never publish it yourself.
+- **`Update the Homebrew tap`** fails when `HOMEBREW_TAP` is `publish` and the secret `HOMEBREW_TAP_TOKEN` is missing. Set it, as a secret of the `release` environment and not of the repository, to a fine-grained token with Contents read and write on `withmarfa/homebrew-tap`, then re-run the job. If several releases' tap jobs failed, re-run them oldest first: the job does not refuse to move the formula back to an older version.
 - **A fix that needs a code change** cannot reach a tag that already ran. `Read the version` refuses the next version while this one is tagged and not released, so stop and bring it to a maintainer.
 
 ## Never

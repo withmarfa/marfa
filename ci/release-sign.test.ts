@@ -105,18 +105,25 @@ describe("the release signs the programs in a job of its own", () => {
     }
   });
 
-  it("signs before it packs, and no condition can skip the signing", () => {
+  it("signs before it packs, and a tag run cannot skip the signing", () => {
     const signing = index(
       sign.steps,
       /sign-binary\.sh "\$RUNNER_TEMP\/build\/\$program"/,
     );
+    const adHoc = index(sign.steps, /codesign --force --sign - /);
     const pack = index(sign.steps, /pack-programs\.sh/);
     expect(signing).toBeGreaterThanOrEqual(0);
+    expect(adHoc).toBeGreaterThanOrEqual(0);
     expect(pack).toBeGreaterThan(signing);
+    expect(pack).toBeGreaterThan(adHoc);
     expect(sign.if).toBeUndefined();
     const step = sign.steps[signing];
-    expect(step?.if).toBeUndefined();
+    expect(step?.if).toBe("github.event_name == 'push'");
     expect(step?.["continue-on-error"]).toBeUndefined();
+    // Exactly one of the two runs: a run that signed neither would pack unsigned programs.
+    expect(sign.steps[adHoc]?.if).toBe("github.event_name != 'push'");
+    expect(sign.steps[adHoc]?.["continue-on-error"]).toBeUndefined();
+    expect(JSON.stringify(sign.steps[adHoc])).not.toContain("secrets.");
   });
 
   it("signs both programs, packs only them, and builds nothing for Intel Macs", () => {
@@ -150,7 +157,7 @@ describe("the release signs the programs in a job of its own", () => {
     expect(JSON.stringify(jobs())).not.toContain("marfa-enrichment-read");
   });
 
-  it("gives the signing step every secret it reads, from the repository's secrets", () => {
+  it("gives the signing step every secret it reads, from the release environment's secrets", () => {
     const step = sign.steps.find((candidate) =>
       (candidate.run ?? "").includes("sign-binary.sh"),
     );
