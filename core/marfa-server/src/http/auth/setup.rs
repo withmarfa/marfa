@@ -18,6 +18,7 @@ use crate::http::body::{JsonBody, only_declared};
 
 const EXCHANGE_FIELDS: [&str; 2] = ["ticket", "code"];
 const CLAIM_FIELDS: [&str; 4] = ["email", "password", "name", "code"];
+const RECOVER_FIELDS: [&str; 2] = ["password", "code"];
 const AFTER_CLAIM: &str = "/auth/sign-in";
 
 pub async fn exchange(
@@ -152,4 +153,48 @@ pub async fn claim(
         answer = with_cookie(answer, cookie);
     }
     Ok(answer)
+}
+
+/// Sets the owner's password with a recovery code, or the session one opened.
+pub async fn recover(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    visit: Visit,
+    body: JsonBody,
+) -> Answer {
+    require_safe_caller(&app, &visit)?;
+    let said = origin::said(&headers, &own_origins(&app));
+    match said {
+        Source::Own => {}
+        Source::Unsaid if is_script(&headers) => {}
+        _ => return Err(not_our_page().into()),
+    }
+    let form = body.declares_form();
+    let fields = if form {
+        only_declared(body.form().await?, &RECOVER_FIELDS)?
+    } else {
+        body.object(&RECOVER_FIELDS).await?
+    };
+    let browser = form && said == Source::Own;
+    let text = |name: &str| fields.get(name).and_then(Value::as_str);
+    let proof = match text("code") {
+        Some(code) => Proof::Code(code.to_string()),
+        None => Proof::Session(cookies::setup_token(&headers).unwrap_or("").to_string()),
+    };
+    let password = text("password").unwrap_or("").to_string();
+    match claim::recover(&app, proof, password, visit).await {
+        Err(refusal) if browser && pages::wants_page(&headers) => {
+            return Ok(pages::recover_refused(&app, &refusal).await?);
+        }
+        recovered => recovered?,
+    }
+    let answer = if browser {
+        redirect(StatusCode::SEE_OTHER, AFTER_CLAIM)?
+    } else {
+        json_answer(StatusCode::OK, &json!({ "recovered": true }))
+    };
+    Ok(with_cookie(
+        answer,
+        cookies::setup_ended(&app.addresses().sign_in())?,
+    ))
 }

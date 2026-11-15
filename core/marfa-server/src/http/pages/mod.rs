@@ -23,7 +23,8 @@ pub use device::{DeviceEntry, DeviceProblem, device_entry};
 pub use notice::{AuthError, AuthErrorCode, Link, Notice, auth_error, notice};
 pub use passkeys::{OwnerPasskey, OwnerPasskeys, owner_passkeys};
 pub use setup::{
-    SetupCode, SetupCodeProblem, SetupDetails, SetupFieldErrors, setup_code, setup_details,
+    RecoverPassword, SetupCode, SetupCodeProblem, SetupDetails, SetupFieldErrors, recover_password,
+    setup_code, setup_details,
 };
 pub use sign_in::{Running, SignIn, SignInProblem, SignedIn, running, sign_in, signed_in};
 pub use wait::Wait;

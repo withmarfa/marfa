@@ -537,6 +537,57 @@ pub async fn update(app: &Arc<App>, caller: &Caller, request: Request) -> Result
     .await
 }
 
+/// What a start did with the sign-in address `MARFA_CLAIM_ADDRESS` declares.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Adopted {
+    Stored,
+    AlreadyStored,
+    /// An owner decides the address, so the setting is ignored.
+    Owned,
+}
+
+/// Stores `address` as the sign-in address while the instance has no owner,
+/// as `PATCH /config` on the private socket would.
+pub async fn adopt_sign_in_address(
+    app: &Arc<App>,
+    address: &addresses::Address,
+) -> Result<Adopted> {
+    let key = SIGN_IN_ADDRESS.entry.key;
+    let mut body = Map::new();
+    body.insert(key.into(), address.origin().into());
+    let request = Request::from_body(Mode::Patch, &body, &fields())?;
+    let row = SIGN_IN_ADDRESS
+        .entry
+        .row_text(address.origin())
+        .map_err(|rule| Refusal::internal(&format!("{key} {rule}")))?;
+    let writing = app.clone();
+    let working = app.clone();
+    stored::committing(app, async move {
+        working
+            .write(&Caller::Server, "config.update", move |unit| {
+                let tx = unit.tx();
+                let before = rows_of(stored::rows(tx)?);
+                if before.get(key) == Some(&row) {
+                    return Ok((Adopted::AlreadyStored, None));
+                }
+                if instance::is_claimed(tx)? {
+                    return Ok((Adopted::Owned, None));
+                }
+                let plan = Plan::of(&request, before);
+                plan.judge(&writing)?;
+                let moved = plan.addresses_at(&writing, tx)?;
+                stored::write_rows(tx, &plan.ops)?;
+                if moved.sign_in_moves {
+                    session::end_every(tx, &unit.at, &unit.caller)?;
+                }
+                unit.audit_set("config", Some(json!({ "fields": request.field_names() })))?;
+                Ok((Adopted::Stored, Some(stored::stage(tx, &writing)?)))
+            })
+            .await
+    })
+    .await
+}
+
 /// What a change of address would do, written to nowhere.
 pub async fn check(app: &Arc<App>, request: Request) -> Result<Value> {
     let checking = app.clone();

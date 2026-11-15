@@ -99,6 +99,14 @@ pub const DECLARED: &[Declared] = &[
         "MARFA_CONTROL_ONLY",
         "Starts the private socket alone, for recovery.",
     ),
+    plain(
+        "MARFA_CLAIM_ADDRESS",
+        "The sign-in address an instance with no owner stores as it starts.",
+    ),
+    plain(
+        "MARFA_OWNER_RECOVERY",
+        "Prints a one-time owner recovery code at each start of an instance with an owner.",
+    ),
     secret("MARFA_KEY_SALT", "Secret that keys are stored under."),
     secret("MARFA_AUTH_SECRET", "Secret that sign-in is signed with."),
     secret(

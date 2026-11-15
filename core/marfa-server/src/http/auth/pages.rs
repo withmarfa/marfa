@@ -18,7 +18,7 @@ use crate::app::{App, instance};
 use crate::http::answer::{Answer, Page as RefusalMark, asks_for_html, refusal_answer};
 use crate::http::caller::browser_owner;
 use crate::http::pages::{
-    self, AuthError, AuthErrorCode, DeviceEntry, DeviceProblem, Notice, SetupCode,
+    self, AuthError, AuthErrorCode, DeviceEntry, DeviceProblem, Notice, RecoverPassword, SetupCode,
     SetupCodeProblem, SetupDetails, SetupFieldErrors, SignIn, SignInProblem, SignedIn, Wait,
 };
 use crate::http::query;
@@ -99,7 +99,7 @@ pub async fn setup(State(app): State<Arc<App>>, headers: HeaderMap) -> Answer {
     require_safe_transport(&app)?;
     let name = instance::name(&app).await?;
     if claim::is_claimed(&app).await? {
-        return Ok(pages::notice(&Notice::already_claimed(&name))?.into_response());
+        return Ok(recovery_page(&app, &headers, name).await?.into_response());
     }
     let live = match cookies::setup_token(&headers) {
         Some(token) => claim::session_stands(&app, token).await?,
@@ -117,9 +117,33 @@ pub async fn setup(State(app): State<Arc<App>>, headers: HeaderMap) -> Answer {
         pages::setup_code(&SetupCode {
             instance_name: name,
             problem: None,
+            recovering: false,
         })?
     };
     Ok(page.into_response())
+}
+
+/// A claimed instance's setup page, which recovers the owner while a recovery code is offered.
+async fn recovery_page(app: &App, headers: &HeaderMap, name: String) -> Result<pages::Page> {
+    let live = match cookies::setup_token(headers) {
+        Some(token) => claim::recovery_session_stands(app, token).await?,
+        None => false,
+    };
+    if live {
+        return pages::recover_password(&RecoverPassword {
+            instance_name: name,
+            error: None,
+            notice: None,
+        });
+    }
+    if claim::recovery_offered(app).await? {
+        return pages::setup_code(&SetupCode {
+            instance_name: name,
+            problem: None,
+            recovering: true,
+        });
+    }
+    pages::notice(&Notice::already_claimed(&name))
 }
 
 pub async fn error(State(app): State<Arc<App>>, uri: Uri) -> Answer {
@@ -156,6 +180,7 @@ fn wait_of(refusal: &Refusal) -> Option<Wait> {
 
 async fn exchange_page(app: &App, refusal: &Refusal) -> Result<Option<pages::Page>> {
     let name = instance::name(app).await?;
+    let recovering = claim::is_claimed(app).await?;
     let problem = match refusal.code {
         Code::OwnerExists => {
             return Ok(Some(pages::notice(&Notice::already_claimed(&name))?));
@@ -169,6 +194,7 @@ async fn exchange_page(app: &App, refusal: &Refusal) -> Result<Option<pages::Pag
     let view = SetupCode {
         instance_name: name,
         problem: Some(problem),
+        recovering,
     };
     Ok(Some(pages::setup_code(&view)?))
 }
@@ -222,6 +248,7 @@ async fn details_page(app: &App, refusal: &Refusal, typed: Typed) -> Result<Opti
             let view = SetupCode {
                 instance_name: name,
                 problem: Some(SetupCodeProblem::SessionEnded),
+                recovering: false,
             };
             return Ok(Some(pages::setup_code(&view)?));
         }
@@ -247,6 +274,43 @@ async fn details_page(app: &App, refusal: &Refusal, typed: Typed) -> Result<Opti
 
 pub async fn claim_refused(app: &App, refusal: &Refusal, typed: Typed) -> Result<Response> {
     Ok(match details_page(app, refusal, typed).await? {
+        Some(page) => refused_with(refusal, page),
+        None => refusal_answer(refusal),
+    })
+}
+
+async fn recover_page(app: &App, refusal: &Refusal) -> Result<Option<pages::Page>> {
+    let name = instance::name(app).await?;
+    let (error, notice) = match refusal.code {
+        Code::SetupProofInvalid | Code::RateLimited => {
+            let problem = match refusal.code {
+                Code::RateLimited => SetupCodeProblem::TooManyAttempts(wait_of(refusal)),
+                _ => SetupCodeProblem::SessionEnded,
+            };
+            let view = SetupCode {
+                instance_name: name,
+                problem: Some(problem),
+                recovering: true,
+            };
+            return Ok(Some(pages::setup_code(&view)?));
+        }
+        Code::ValidationError => match field_errors(refusal).and_then(|found| found.password) {
+            Some(message) => (Some(message), None),
+            None => return Ok(None),
+        },
+        Code::OwnerNotFound | Code::Forbidden => return Ok(None),
+        _ => (None, Some("Something went wrong. Try again.".to_owned())),
+    };
+    let view = RecoverPassword {
+        instance_name: name,
+        error,
+        notice,
+    };
+    Ok(Some(pages::recover_password(&view)?))
+}
+
+pub async fn recover_refused(app: &App, refusal: &Refusal) -> Result<Response> {
+    Ok(match recover_page(app, refusal).await? {
         Some(page) => refused_with(refusal, page),
         None => refusal_answer(refusal),
     })

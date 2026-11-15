@@ -6,6 +6,8 @@ use super::Environment;
 use super::rule;
 use super::secrets::Given;
 use super::tuning::Tuning;
+use crate::app::addresses::Address;
+use crate::app::auth::carries_sessions;
 #[cfg(feature = "test-hooks")]
 use crate::app::clock::MAX_OFFSET_MS as MAX_CLOCK_OFFSET_MS;
 use crate::control_socket;
@@ -107,6 +109,15 @@ fn uri_decoded(part: &str) -> Vec<u8> {
     decoded
 }
 
+/// Judged as a stored sign-in address is, and only where it can carry the owner's password.
+fn claim_address(text: &str) -> Result<Address, String> {
+    let address = Address::parse(text)?;
+    if !carries_sessions(&address) {
+        return Err("must start with https://, or name localhost, 127.0.0.1 or [::1]".into());
+    }
+    Ok(address)
+}
+
 pub struct Fixed {
     pub port: u16,
     pub listen_host: Option<String>,
@@ -136,6 +147,9 @@ pub struct Fixed {
     pub object_store: Option<ObjectStoreSettings>,
     /// The folder backups go to, which the server never creates.
     pub backup_path: Option<PathBuf>,
+    /// Stored at start only while the instance has no owner.
+    pub claim_address: Option<Address>,
+    pub owner_recovery: bool,
 }
 
 /// Never logged: the endpoint and the secret can hold credentials.
@@ -374,6 +388,8 @@ impl Fixed {
         let control_only = reader.flag("MARFA_CONTROL_ONLY");
         let test_hooks = reader.flag("MARFA_TEST_HOOKS");
         let webhook_private_addresses = reader.flag("MARFA_WEBHOOK_ALLOW_PRIVATE_ADDRESSES");
+        let claim_address = reader.take("MARFA_CLAIM_ADDRESS", claim_address);
+        let owner_recovery = reader.flag("MARFA_OWNER_RECOVERY");
         #[cfg(feature = "test-hooks")]
         let clock_offset_ms = reader
             .whole("MARFA_TEST_CLOCK_OFFSET_MS", 0, MAX_CLOCK_OFFSET_MS)
@@ -450,6 +466,8 @@ impl Fixed {
             webhook_private_addresses,
             object_store,
             backup_path,
+            claim_address,
+            owner_recovery,
         };
         (!failed).then_some((fixed, given))
     }

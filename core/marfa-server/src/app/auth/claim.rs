@@ -1,7 +1,9 @@
 //! A setup code, a handoff link or a setup session proves the caller may claim the instance,
-//! and the claim spends them all.
+//! and the claim spends them all. A recovery code, or the session it opens, proves the caller
+//! may choose a claimed instance's owner password.
 
 use std::net::IpAddr;
+use std::sync::Arc;
 
 use rusqlite::{OptionalExtension, Transaction, params};
 use subtle::ConstantTimeEq;
@@ -11,11 +13,13 @@ use super::owner::{self, Details, Owner};
 use super::{Note, Visit, note, password};
 use crate::app::access::Caller;
 use crate::app::clock::{Stamp, readable};
+use crate::app::config::{self, Adopted};
 use crate::app::keys::digest_of;
 use crate::app::refusal::{Code, Refusal, Result};
 use crate::app::{App, instance};
 use crate::db::Write;
 use crate::log;
+use crate::settings::registry::{SIGN_IN_ADDRESS, Value};
 
 const CODE: &str = "code";
 const TICKET: &str = "ticket";
@@ -27,11 +31,22 @@ const BASE32: &[u8; 32] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
 const TICKET_MS: i64 = 5 * 60_000;
 const SESSION_MS: i64 = 15 * 60_000;
 const CLAIMED: &str = "owner.claimed";
+/// The generation of a recovery code and its session, which no claim accepts.
+const RECOVERY: &str = "recovery";
+const RECOVERY_MINUTES: i64 = 60;
+const RECOVERY_MS: i64 = RECOVERY_MINUTES * 60_000;
 
 fn invalid_proof() -> Refusal {
     Refusal::new(
         Code::SetupProofInvalid,
         "Setup proof is invalid, expired, or replaced. Obtain a new setup code or link.",
+    )
+}
+
+fn invalid_recovery() -> Refusal {
+    Refusal::new(
+        Code::SetupProofInvalid,
+        "Recovery code is invalid, expired, used, or replaced. Restart the server for a new one.",
     )
 }
 
@@ -83,8 +98,8 @@ pub struct Status {
 fn generation(tx: &Transaction<'_>) -> Result<Option<String>> {
     Ok(tx
         .query_row(
-            "SELECT generation FROM setup_proof WHERE kind = ?1",
-            [CODE],
+            "SELECT generation FROM setup_proof WHERE kind = ?1 AND generation <> ?2",
+            [CODE, RECOVERY],
             |row| row.get(0),
         )
         .optional()?)
@@ -110,9 +125,25 @@ fn require_unclaimed(tx: &Transaction<'_>) -> Result<()> {
 }
 
 fn holds(tx: &Transaction<'_>, kind: &str, digest: &str, now: Stamp) -> Result<bool> {
-    let mut statement = tx.prepare("SELECT digest, expires_at FROM setup_proof WHERE kind = ?1")?;
+    held(tx, kind, false, digest, now)
+}
+
+fn recovery_holds(tx: &Transaction<'_>, kind: &str, digest: &str, now: Stamp) -> Result<bool> {
+    held(tx, kind, true, digest, now)
+}
+
+fn held(
+    tx: &Transaction<'_>,
+    kind: &str,
+    recovery: bool,
+    digest: &str,
+    now: Stamp,
+) -> Result<bool> {
+    let mut statement = tx.prepare(
+        "SELECT digest, expires_at FROM setup_proof WHERE kind = ?1 AND (generation = ?2) = ?3",
+    )?;
     let held = statement
-        .query_map(params![kind], |row| {
+        .query_map(params![kind, RECOVERY, recovery], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, Option<Stamp>>(1)?))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -168,14 +199,210 @@ pub async fn issue_code(app: &App, caller: &Caller) -> Result<(String, String)> 
     Ok((code, generation))
 }
 
-pub async fn announce_at_start(app: &App) -> Result<()> {
-    if status(app).await?.claimed {
-        return Ok(());
+/// Where the setup page is, in full once a sign-in address is stored.
+fn setup_page(app: &App) -> String {
+    match app.settings.live().stored(SIGN_IN_ADDRESS.entry) {
+        Some(Value::Address(Some(address))) => format!("{}/setup", address.origin()),
+        _ => "/setup".to_string(),
     }
-    let (code, _) = issue_code(app, &Caller::Server).await?;
-    log::local_only(&format!(
-        "Claim this Marfa at /setup with setup code: {code}"
-    ));
+}
+
+pub async fn announce_at_start(app: &Arc<App>) -> Result<()> {
+    if let Some(address) = &app.settings.start.claim_address
+        && config::adopt_sign_in_address(app, address).await? == Adopted::Owned
+    {
+        tracing::warn!(
+            setting = "MARFA_CLAIM_ADDRESS",
+            "MARFA_CLAIM_ADDRESS is ignored: this instance has an owner, so its sign-in address \
+             changes only through PATCH /config on the private socket"
+        );
+    }
+    if !status(app).await?.claimed {
+        let (code, _) = issue_code(app, &Caller::Server).await?;
+        log::local_only(&format!(
+            "Claim this Marfa at {} with setup code: {code}",
+            setup_page(app)
+        ));
+    }
+    if let Some(code) = offer_recovery(app).await? {
+        log::local_only(&format!(
+            "Recover this Marfa's owner at {} with recovery code: {code}. It works once, for \
+             {RECOVERY_MINUTES} minutes.",
+            setup_page(app)
+        ));
+    }
+    Ok(())
+}
+
+fn drop_recovery(tx: &Transaction<'_>) -> Result<()> {
+    tx.execute("DELETE FROM setup_proof WHERE generation = ?1", [RECOVERY])?;
+    Ok(())
+}
+
+/// Each start ends the recovery the last one offered, and offers a new one
+/// only where the setting is on and there is an owner to recover.
+async fn offer_recovery(app: &App) -> Result<Option<String>> {
+    let offered = app.settings.start.owner_recovery;
+    let code = new_code()?;
+    let digest = digest_of(&app.settings.start.key_salt, &normalized(&code))?;
+    let clock = app.clock.clone();
+    let issued = app
+        .db
+        .write(Write::server("owner.recovery_code.issued"), move |tx| {
+            drop_recovery(tx)?;
+            let Some(owner_id) = instance::owner_id(tx)?.filter(|_| offered) else {
+                return Ok(false);
+            };
+            let now = clock.instant();
+            add(tx, &digest, CODE, RECOVERY, Some(now.plus_ms(RECOVERY_MS)?))?;
+            note(
+                tx,
+                &now.text(),
+                Some(&Caller::Server),
+                &Visit::default(),
+                Note {
+                    action: "owner.recovery_code.issued",
+                    resource_type: "owner",
+                    resource_id: &owner_id,
+                    details: None,
+                },
+            )?;
+            Ok(true)
+        })
+        .await?;
+    Ok(issued.then_some(code))
+}
+
+fn recovery_outstanding(tx: &Transaction<'_>, now: Stamp) -> Result<bool> {
+    let mut statement =
+        tx.prepare("SELECT expires_at FROM setup_proof WHERE kind = ?1 AND generation = ?2")?;
+    let held = statement
+        .query_map(params![CODE, RECOVERY], |row| {
+            row.get::<_, Option<Stamp>>(0)
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(held
+        .iter()
+        .any(|expires_at| expires_at.is_none_or(|at| at > now)))
+}
+
+/// Whether a claimed instance holds a recovery code that has not ended.
+pub async fn recovery_offered(app: &App) -> Result<bool> {
+    let clock = app.clock.clone();
+    app.db
+        .read(move |tx| Ok(instance::is_claimed(tx)? && recovery_outstanding(tx, clock.instant())?))
+        .await
+}
+
+pub async fn recovery_session_stands(app: &App, token: &str) -> Result<bool> {
+    let digest = digest_of(&app.settings.start.key_salt, token)?;
+    let clock = app.clock.clone();
+    app.db
+        .read(move |tx| {
+            Ok(instance::is_claimed(tx)? && recovery_holds(tx, SESSION, &digest, clock.instant())?)
+        })
+        .await
+}
+
+/// Spends the recovery code for a session in which the owner chooses a password.
+async fn exchange_recovery(app: &App, digest: String, visit: Visit) -> Result<SetupSession> {
+    let token = hex::encode(random::<TOKEN_BYTES>()?);
+    let session_digest = digest_of(&app.settings.start.key_salt, &token)?;
+    let clock = app.clock.clone();
+    let action = "owner.recovery_code.exchanged";
+    let expires_at = app
+        .db
+        .write(Write::caller(action), move |tx| {
+            let owner_id = instance::owner_id(tx)?.ok_or_else(owner::not_found)?;
+            let now = clock.instant();
+            if !recovery_holds(tx, CODE, &digest, now)? {
+                return Err(invalid_recovery());
+            }
+            drop_recovery(tx)?;
+            let expires_at = now.plus_ms(SESSION_MS)?;
+            add(tx, &session_digest, SESSION, RECOVERY, Some(expires_at))?;
+            note(
+                tx,
+                &now.text(),
+                None,
+                &visit,
+                Note {
+                    action,
+                    resource_type: "owner",
+                    resource_id: &owner_id,
+                    details: None,
+                },
+            )?;
+            Ok(expires_at)
+        })
+        .await?;
+    Ok(SetupSession { token, expires_at })
+}
+
+fn recovery_sought(app: &App, proof: &Proof) -> Result<(&'static str, String)> {
+    let salt = &app.settings.start.key_salt;
+    match proof {
+        Proof::Local => Err(invalid_recovery()),
+        Proof::Code(code) => Ok((CODE, digest_of(salt, &normalized(code))?)),
+        Proof::Session(token) => Ok((SESSION, digest_of(salt, token)?)),
+    }
+}
+
+fn recovery_stands(
+    tx: &Transaction<'_>,
+    sought: &(&'static str, String),
+    now: Stamp,
+) -> Result<()> {
+    if !instance::is_claimed(tx)? {
+        return Err(owner::not_found());
+    }
+    let (kind, digest) = sought;
+    if !recovery_holds(tx, kind, digest, now)? {
+        return Err(invalid_recovery());
+    }
+    Ok(())
+}
+
+/// What `owner recover` on the private socket does, proved by a recovery code
+/// or its session instead. The proof is judged before the hash is paid for and
+/// again in the transaction, which spends every recovery proof.
+pub async fn recover(app: &App, proof: Proof, new_password: String, visit: Visit) -> Result<()> {
+    if !is_claimed(app).await? {
+        return Err(owner::not_found());
+    }
+    if let Proof::Code(_) = proof {
+        count_code(app, visit.address)?;
+    }
+    let sought = recovery_sought(app, &proof)?;
+    let clock = app.clock.clone();
+    let judged = sought.clone();
+    app.db
+        .read(move |tx| recovery_stands(tx, &judged, clock.instant()))
+        .await?;
+    password::check_new(&new_password, "password")?;
+    let hash = app.passwords.hash(new_password).await?;
+    let clock = app.clock.clone();
+    app.db
+        .write(Write::caller(owner::RECOVERED), move |tx| {
+            let at = clock.stamp();
+            recovery_stands(tx, &sought, clock.instant())?;
+            drop_recovery(tx)?;
+            let owner = owner::recover_in(tx, &at, &Caller::Server, &visit, &hash)?;
+            note(
+                tx,
+                &at,
+                None,
+                &visit,
+                Note {
+                    action: owner::RECOVERED,
+                    resource_type: "owner",
+                    resource_id: &owner.id,
+                    details: None,
+                },
+            )
+        })
+        .await?;
+    limits::clear_for_recovery(&app.limiter);
     Ok(())
 }
 
@@ -276,12 +503,17 @@ pub async fn exchange_ticket(app: &App, ticket: &str, visit: Visit) -> Result<Se
     .await
 }
 
+/// On a claimed instance, the code is a recovery code, where recovery is on.
 pub async fn exchange_code(app: &App, code: &str, visit: Visit) -> Result<SetupSession> {
-    if is_claimed(app).await? {
+    let recovering = is_claimed(app).await?;
+    if recovering && !app.settings.start.owner_recovery {
         return Err(already_claimed());
     }
     count_code(app, visit.address)?;
     let digest = digest_of(&app.settings.start.key_salt, &normalized(code))?;
+    if recovering {
+        return exchange_recovery(app, digest, visit).await;
+    }
     exchange(app, "instance.setup_code.exchanged", CODE, digest, visit).await
 }
 

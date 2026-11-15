@@ -362,24 +362,31 @@ pub async fn update_profile(
     .await
 }
 
+pub const RECOVERED: &str = "owner.password.recovered";
+
+/// What recovery does, by the private socket or by a recovery code: a new
+/// password, and every browser session ended. Keys and apps keep working.
+pub(super) fn recover_in(
+    tx: &Transaction<'_>,
+    at: &str,
+    actor: &Caller,
+    visit: &Visit,
+    hash: &str,
+) -> Result<Owner> {
+    let owner = read(tx)?.ok_or_else(not_found)?;
+    set_password(tx, &owner.id, hash, Stamp::read(at)?)?;
+    session::end_all(tx, at, actor, visit, &owner.id, None)?;
+    Ok(owner)
+}
+
 pub async fn recover(app: &App, new_password: String) -> Result<()> {
     password::check_new(&new_password, "password")?;
     if find(app).await?.is_none() {
         return Err(not_found());
     }
     let hash = app.passwords.hash(new_password).await?;
-    app.write(&Caller::local(), "owner.password.recovered", move |unit| {
-        let tx = unit.tx();
-        let owner = read(tx)?.ok_or_else(not_found)?;
-        set_password(tx, &owner.id, &hash, unit.instant)?;
-        session::end_all(
-            tx,
-            &unit.at,
-            &unit.caller,
-            &Visit::default(),
-            &owner.id,
-            None,
-        )?;
+    app.write(&Caller::local(), RECOVERED, move |unit| {
+        let owner = recover_in(unit.tx(), &unit.at, &unit.caller, &Visit::default(), &hash)?;
         unit.audit("owner", &owner.id, None)
     })
     .await?;
