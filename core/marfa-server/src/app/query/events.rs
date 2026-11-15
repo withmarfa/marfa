@@ -19,7 +19,7 @@ const SHORT_DAYS: f64 = 31.0;
 /// A whole-day event is placed by its zone's midnights, which lie up to this many days from the instants its text names.
 const ZONE_DAYS: f64 = 5.0;
 
-/// Held by the partial indexes of `items` that `INDEXED BY` names; each expression and condition is the index's own, so that the planner may use it.
+/// Each expression and condition here is the one its partial index holds, or the planner cannot use the index.
 const STARTS: &str = "json_extract(properties, '$.starts_at')";
 const ENDS: &str = "json_extract(properties, '$.ends_at')";
 const SLOT: &str = "json_extract(properties, '$.original_starts_at')";
@@ -38,7 +38,7 @@ fn always() -> String {
     )
 }
 
-/// The events a window can hold, read through the partial indexes of `items` that bound an event by its start: those starting near the window, series, events that run long or that SQL cannot date, and the exceptions that left a slot inside it.
+/// The events a window can hold: those starting near it, and every series, long or undatable event.
 fn candidates(from_ms: i64, to_ms: i64) -> Sql {
     let day = |ms: i64| ms as f64 / DAY_MS + UNIX_EPOCH_DAY;
     let (from, to) = (day(from_ms), day(to_ms));

@@ -473,7 +473,7 @@ fn page(read: &Reader<'_, '_>, secret: &Secret, search: &Search) -> Result<Strin
         search.include,
     ])
     .to_string();
-    // A sorted search continues from the last hit it delivered, so a change between two pages moves no hit. Relevance has no such place: every write moves the scores, so it continues from a count.
+    // Relevance scores move with every write, so it can only continue from a count.
     let keyed = search.sort.field.is_some();
     let width = order.keys.iter().filter(|key| !key.relevance).count();
     let (seek, offset) = if keyed {
