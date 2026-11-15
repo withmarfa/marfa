@@ -1592,12 +1592,6 @@ When `POST /types/normalize` succeeds or is refused, the server MUST create no a
 
 **Tests:** `compliance/connector-interfaces.test.ts › normalizes equivalent declarations without write authority and retains inherited refinements`.
 
-### `types/normalize-cli`
-
-When a caller runs `marfa types normalize` with a definition supplied by `--body`, `--file PATH` or `--file -`, the CLI MUST send the declared input to `POST /types/normalize` and return its answer.
-
-**Tests:** `cli/doors.test.ts › normalizes an inline or stdin declaration with a read-only key and compares the registered definition`.
-
 ## The owner's icon for a type
 
 The owner can choose the icon any type is shown by, a core or connector type among them, without replacing its definition. The choice sits beside the definition, so the author's icon stays the default and a replacement of the definition leaves the choice alone. It is made at `PUT /types/{id}/icon` and cleared at `DELETE /types/{id}/icon`.

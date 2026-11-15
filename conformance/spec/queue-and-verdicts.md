@@ -770,46 +770,6 @@ When a write a queued write depends on is answered, a device MUST keep it in the
 
 **Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
 
-### `queue-and-verdicts/command-queued-holds`
-
-When the CLI queues a write that depends on others and prints it as text, the CLI MUST print how many writes it depends on after `waiting on`.
-
-**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`, `› says in words what the writes of an attached or added file wait on, counting writes queued before them`.
-
-### `queue-and-verdicts/command-queued-after`
-
-When the CLI queues a write that follows another and prints it as text, the CLI MUST print the write it follows after `after`.
-
-**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
-
-### `queue-and-verdicts/command-queue-waiting`
-
-When the CLI prints the queue as text and exactly one of the writes a write depends on has no verdict, is `blocked`, or is a create refused onto an item its natural key names that no read has found yet, the CLI MUST name that write after `waiting on`.
-
-**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`, `› holds a write made to a refused create's item until a read finds the item its natural key names`, `› says in words what the writes of an attached or added file wait on, counting writes queued before them`.
-
-### `queue-and-verdicts/command-queue-not-waiting`
-
-When the CLI prints the queue as text and every write a write depends on is answered `accepted`, `merged`, `conflicted` or `refused`, is `dead`, or is no longer in the queue, and none is a create refused onto an item that no read has found yet, the CLI MUST NOT print `waiting on` for it.
-
-**Reason:** a dependency with such a verdict, or one withdrawn or discarded, no longer holds the write, though `depends_on` still names it.
-
-**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`, `› discards a refused create no read can land, refusing unsent the writes waiting on it`.
-
-### `queue-and-verdicts/command-queue-unlanded`
-
-When the CLI prints the queue as text, the CLI MUST print on the line of each create refused onto an item its natural key names that no read has found yet `its natural key names <id>, which no read has found; discard it to refuse the writes waiting on it`, with that item's id for `<id>`.
-
-**Reason:** nothing but a read that finds the item or a discard (`queue-and-verdicts/discard-unlanded-takes-out`) takes such a create, or the writes waiting on it, out of the queue.
-
-**Tests:** `device/queue.test.ts › discards a refused create no read can land, refusing unsent the writes waiting on it`.
-
-### `queue-and-verdicts/command-queue-after`
-
-When the CLI prints the queue as text, the CLI MUST name after `after` the write each write follows.
-
-**Tests:** `device/queue.test.ts › says in words which writes hold a queued write`.
-
 ### `queue-and-verdicts/upload-sent-as-writer`
 
 Where the copy still holds an upload's bytes, when a device drains with a credential other than the one it sent that upload with, a renewed access token counting as the credential it replaced, and a write that waits on the upload has no verdict or is `blocked` for `credential_refused` or `awaiting_dependency`, a device MUST send the upload again with its current credential before it sends that write.
@@ -915,40 +875,6 @@ When the server answers a write in a drain with `Retry-After`, or answers a read
 **Reason:** a caller draining in a loop would otherwise ask again at once, and a wait without a bound would let one answer park a client for good.
 
 **Tests:** `device/classification.test.ts › retries a 5xx and a 429 without counting them`, `› passes on the wait a read reconciling a refusal was asked for (contract %s)`, `device/queue.test.ts › reads the item a create landed on again after a failure that clears on its own`, `device/classification.test.ts › passes on at most 300 seconds of the wait a write was asked for`.
-
-## The CLI's drain
-
-What the CLI prints and exits with for a drain.
-
-### `queue-and-verdicts/command-drain-report`
-
-When a drain ends with a report and the CLI prints JSON, the CLI MUST print the whole report on standard output and nothing on standard error but the warning of `device/command-cleartext-warning` and the line of `device/command-write-line`.
-
-**Tests:** `device/cli-outcomes.test.ts › keeps the complete $label drain report with exit $exit`, `› preserves answered writes before an interrupted later write`.
-
-### `queue-and-verdicts/command-exit-stopped`
-
-When a drain stops because a refused credential parked the queue, the CLI MUST exit 5.
-
-**Tests:** `device/cli-outcomes.test.ts › keeps the complete $label drain report with exit $exit`.
-
-### `queue-and-verdicts/command-exit-undelivered`
-
-When a drain that a refused credential did not stop reports `unavailable` or a write `undelivered`, the CLI MUST exit 3.
-
-**Tests:** `device/cli-outcomes.test.ts › keeps the complete $label drain report with exit $exit`, `› preserves answered writes before an interrupted later write`, `› exits 3 for a pass the server could not finish that left nothing undelivered`, `› exits 3 for a write left undelivered by a pass the server finished`.
-
-### `queue-and-verdicts/command-exit-done`
-
-When a drain reports neither `stopped`, nor `unavailable`, nor a write `undelivered`, the CLI MUST exit 0, whatever verdicts the drain reached.
-
-**Tests:** `device/cli-outcomes.test.ts › reports completed refusals separately and keeps exit zero`.
-
-### `queue-and-verdicts/command-refused-count`
-
-When a drain refuses writes and the CLI prints its report as text, the CLI MUST print how many it refused as `refused <n> write(s)`.
-
-**Tests:** `device/cli-outcomes.test.ts › reports completed refusals separately and keeps exit zero`.
 
 ## The six verdicts
 
@@ -1693,20 +1619,6 @@ When a failed renewal ends a drain, a device MUST keep the verdict of every writ
 When a failed renewal ends a drain, a device MUST leave the write whose `401` started the renewal with no verdict, no refusal counted, and the body and idempotency key it had.
 
 **Reason:** the server refused the credential, not the write, so nothing is known of the write that a verdict could say.
-
-**Tests:** `device/cli-outcomes.test.ts › ends the drain on a renewal that ends locally, keeping the answers before it and the write it met`.
-
-### `queue-and-verdicts/command-renewal-error`
-
-When a failed renewal ends a drain, the CLI MUST print the failure as its error on standard error and nothing on standard output.
-
-**Tests:** `device/cli-outcomes.test.ts › ends the drain on a renewal that ends locally, keeping the answers before it and the write it met`.
-
-### `queue-and-verdicts/command-renewal-signed-out`
-
-When a drain ends because renewing the credential finds the person signed out, the CLI MUST report `signed_out` with `server` null and exit 5.
-
-**Reason:** the error says the sign-in on this machine has ended, which is not a server's answer to the write.
 
 **Tests:** `device/cli-outcomes.test.ts › ends the drain on a renewal that ends locally, keeping the answers before it and the write it met`.
 

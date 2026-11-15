@@ -13,7 +13,7 @@ import { ON_MACOS } from "../../utils/platform.js";
 
 /**
  * The exit codes `marfa --help` documents but Ctrl-C's 130, which
- * `device/command-changes-interrupted` holds, each reached once against
+ * `cli/command-changes-interrupted` holds, each reached once against
  * the real server, so an agent reading the code alone classifies the
  * outcome the way the binary meant it: done, refused, wrong command line,
  * environment, the device rules, the credential.

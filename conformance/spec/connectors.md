@@ -1451,9 +1451,3 @@ When a process writes state, problems or agreements, the server MUST accept the 
 When a registration is returned, the server MUST omit its source's private state document.
 
 **Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`.
-
-### `connectors/problems-cli`
-
-When `marfa connectors list` returns a registration, the CLI MUST include its current problems.
-
-**Tests:** `cli/connectors.test.ts › registers, heartbeats, reports a run, and is removed by the operator`.

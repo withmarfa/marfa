@@ -2892,44 +2892,6 @@ If an item the batch selected was already removed, whether with its host earlier
 
 **Tests:** `compliance/owner-trash.test.ts › counts every item emptying the bin removes, parts included, and reports no failure for a part that went with its host`.
 
-### `items/owner-trash-cli`
-
-When a caller runs `marfa --socket PATH items bin list`, `move`, `restore`, `purge` or `empty`, the CLI MUST use the corresponding owner summary operation through private local authority.
-
-**Tests:** `cli/item-summaries.test.ts › manages trash through local authority with summary responses`, `device/contract.test.ts › holds every bin command to the contract through its private socket`.
-
-### `items/owner-empty-bin-cli`
-
-When a caller runs `marfa --socket PATH items bin empty --confirm PURGE`, the CLI MUST send each batch's `next_cursor` back to `POST /trash/empty` until the server names none.
-
-**Reason:** the server deletes at most 200 items at a time, so a person with a bigger bin would otherwise copy a cursor between runs.
-
-**Tests:** `cli/item-summaries.test.ts › sends each batch's cursor back until the server names none, so a bin of more than 200 empties in one command`.
-
-### `items/owner-empty-bin-progress`
-
-When a caller runs `marfa --socket PATH items bin empty --confirm PURGE` without `--json`, the CLI MUST print how many items have been deleted so far after each batch that has a `next_cursor`, and the total at the end.
-
-**Tests:** `cli/item-summaries.test.ts › prints how many items have been deleted so far after each batch that has another to follow, and the total at the end`.
-
-### `items/owner-empty-bin-json`
-
-When a caller runs `marfa --socket PATH items bin empty --confirm PURGE --json`, the CLI MUST print one JSON object holding `purged`, `stayed` and `failures`.
-
-**Tests:** `cli/item-summaries.test.ts › prints one JSON object of purged, stayed and failures under --json, with no line for a batch`.
-
-### `items/owner-empty-bin-exit`
-
-When a caller runs `marfa --socket PATH items bin empty --confirm PURGE` and no deletion was left unconfirmed, the CLI MUST exit `0`.
-
-**Tests:** `cli/item-summaries.test.ts › exits 0 when no deletion was left unconfirmed`.
-
-### `items/owner-empty-bin-unconfirmed`
-
-If a batch of `marfa --socket PATH items bin empty --confirm PURGE` lists a deletion that could not be confirmed, then the CLI MUST exit with a code other than `0`.
-
-**Tests:** `cli/item-summaries.test.ts › stops an uncertain bin emptying and exposes its outcome through the real socket CLI`.
-
 ### `items/owner-trash-eligibility`
 
 When retention is positive, the server MUST return a trash summary's `eligible_for_deletion_at` as `trashed_at` plus that many days.

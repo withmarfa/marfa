@@ -37,10 +37,11 @@ The contract has two halves.
 - `errors.md`: the error envelope and every code the server sends.
 - `coverage.md`: every published operation, with its fixture and status.
 
-**The device's half** says what a device does: a client with a local working copy and a queue. No server is the source for it, so these chapters are. An implementation that disagrees with them is wrong.
+**The device's half** says what a device and the CLI do: a client with a local working copy and a queue, and the program that drives it. No server is the source for it, so these chapters are. An implementation that disagrees with them is wrong.
 
 - `device.md`: the working copy, the slice, hydration, catch-up, and what a device never does locally.
 - `queue-and-verdicts.md`: the queue, the version on every write, the six verdicts, and which failures retry.
+- `cli.md`: the `marfa` program: its profiles, the server it talks to and the contract it names, its keys, stores, drain, output and telemetry, the docs site, and the commands for the bin, summaries, connector problems, export and restore. A folder command's rules are in the `folder-` chapters.
 - `folder-setup.md`: setting a folder up: binding and settings, the first sync, the machine's registry, the record of watches, handing a folder to a command and syncing from login.
 - `folder-documents.md`: what a document is to a folder: which files it admits, a document's fields, name, title, versions, edge lines and links, and the files it cannot read.
 - `folder-files.md`: files on disk: identity and placement, writes and recovery, deletion, paths and links, and another folder's file.

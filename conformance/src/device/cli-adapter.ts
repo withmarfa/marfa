@@ -114,12 +114,12 @@ function classify(stderr: string, exitCode: number | null): Refusal {
     : { code: "unclassified", local: null, server: null, raw };
 }
 
-/** The last line of stderr, where `--json` puts a refusal (`device/command-json-refusal-last`). */
+/** The last line of stderr, where `--json` puts a refusal (`cli/command-json-refusal-last`). */
 export function refusalLine(stderr: string): string {
   return stderr.trim().split("\n").at(-1) ?? "";
 }
 
-/** Stderr without the line that names the server a write goes to (`device/command-write-line`). */
+/** Stderr without the line that names the server a write goes to (`cli/command-write-line`). */
 export function withoutWriteLine(stderr: string): string {
   return stderr
     .split("\n")
@@ -703,7 +703,7 @@ export class CliDevice implements DeviceUnderTest {
    * A command that prints its whole report on standard output and ends with
    * the environment's exit 3 where it left work undone, or the credential's
    * exit 5 where a refused credential stopped it, a drain's report among
-   * them (`queue-and-verdicts/command-exit-undelivered`). The report is the
+   * them (`cli/command-exit-undelivered`). The report is the
    * outcome either way, and its `exit` says which; any other failure is a
    * refusal, read from standard error as ever.
    */

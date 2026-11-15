@@ -2536,30 +2536,6 @@ When `POST /restore` succeeds with an archive whose manifest names this instance
 
 **Tests:** `compliance/restore-says.test.ts › names the old instance's folders in the backup folder after a restore into another instance, never as safe to delete, and nothing after a restore into the same one`.
 
-### `search-and-filters/cli-restore-refused`
-
-When `POST /restore` refuses an archive that `marfa restore` sends, whether before the body or while it arrives, the CLI MUST report that refusal's status and code.
-
-**Reason:** a person restoring a large archive learns why it was refused, not that a connection broke.
-
-**Tests:** `cli/archive-blobs.test.ts › reports the refusal of a large archive the server refuses before or while it arrives`.
-
-### `search-and-filters/cli-restore-not-restored`
-
-When `POST /restore` answers `marfa restore` with `not_restored`, the CLI MUST print the `message` of each entry on its own line on standard error.
-
-**Reason:** the person running the command learns there and then each thing that is not restored, and what to do about it.
-
-**Tests:** `cli/restore-says.test.ts › prints one line on standard error for each kind a restore left out, and what it did with the settings`.
-
-### `search-and-filters/cli-restore-previous-instance`
-
-When `POST /restore` answers `marfa restore` with `previous_instance`, the CLI MUST print its `message` on standard error.
-
-**Reason:** the person running the command learns where the old instance's backups stay, and that they may be deleted only once that instance no longer runs and nothing else restores from them.
-
-**Tests:** `cli/restore-says.test.ts › prints one line on standard error for each kind a restore left out, and what it did with the settings`.
-
 ### `search-and-filters/restore-blobs-missing`
 
 When `POST /restore` succeeds, the server MUST answer in `blobs_missing` the hash of each file that the archive's `files.ndjson.gz` names, that no entry of the archive carries bytes hashing to, that no attached store of the instance holds a recorded copy of at its recorded size, and that the object store does not hold under its name (`search-and-filters/restore-blob-from-store`).
@@ -2597,130 +2573,6 @@ While a write or a deletion of a blob's bytes that the server stopped waiting fo
 When `POST /restore` answers `503 blob_store_unavailable`, the server MUST NOT write any item, type registration or blob of the archive.
 
 **Tests:** `compliance/export-missing-blob.test.ts › answers 503 blob_store_unavailable to an export and a restore when the disk cannot be read for a blob`.
-
-### `search-and-filters/cli-export-default`
-
-When `marfa export` is given no `--format` and no `--state`, the CLI MUST export the whole archive, as `--format archive` does, the bin included.
-
-**Reason:** a person who exports to keep their data and does not read the help gets every item, the bin included, the tables, the settings and the files, not the items alone. The server's own default leaves the bin out, and the CLI asks for it.
-
-**Tests:** `cli/instance-archive.test.ts › exports the whole archive when no format is given, and the items as text only when asked`.
-
-### `search-and-filters/cli-export-ndjson`
-
-When `marfa export --format ndjson` is run, the CLI MUST export the items as NDJSON.
-
-**Tests:** `cli/instance-archive.test.ts › exports the whole archive when no format is given, and the items as text only when asked`, `› exports as NDJSON to stdout and as an archive to a file`.
-
-### `search-and-filters/cli-export-lacking`
-
-When `marfa export --format archive` has received an archive whose `files.ndjson.gz` names files as `not_carried` or `lost`, the CLI MUST exit 1 with `blobs_missing`, naming up to ten of the blobs and counting the rest.
-
-**Reason:** the exit says the archive is not a whole backup.
-
-**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps the archive where it is, and still names the blobs, when the incomplete name cannot be taken`.
-
-### `search-and-filters/cli-export-lacking-kept`
-
-When `marfa export --format archive --output <path>` has received an archive whose `files.ndjson.gz` names files as `not_carried` or `lost`, if `<path>.incomplete` can be replaced, then the CLI MUST keep the whole archive at `<path>.incomplete`, replacing only an earlier file of that name.
-
-**Reason:** the archive holds everything else, and may hold the only copy of a file the server has since lost, so it is kept where the person can get it back and is named as incomplete.
-
-**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps an archive that lacks a blob beside a path where nothing was, and says so`.
-
-### `search-and-filters/cli-export-lacking-refused`
-
-When `marfa export --format archive --output <path>` has received an archive whose `files.ndjson.gz` names files as `not_carried` or `lost`, if `<path>.incomplete` cannot be replaced, then the CLI MUST keep the whole archive in a hidden partial file beside `<path>`.
-
-**Reason:** the bytes are kept where the person can get them back, and the exit, the `blobs_missing` code and the hashes of `search-and-filters/cli-export-lacking` still reach the person.
-
-**Tests:** `cli/archive-blobs.test.ts › keeps the archive where it is, and still names the blobs, when the incomplete name cannot be taken`.
-
-### `search-and-filters/cli-export-refused-named`
-
-When `marfa export --format archive --output <path>` has kept an archive that lacks blobs in a hidden partial file because `<path>.incomplete` cannot be replaced, the CLI MUST name that file and the reason in its message.
-
-**Reason:** the person learns from the message alone where the archive is and why it is not at the incomplete name.
-
-**Tests:** `cli/archive-blobs.test.ts › keeps the archive where it is, and still names the blobs, when the incomplete name cannot be taken`.
-
-### `search-and-filters/cli-export-lacking-path`
-
-When `marfa export --format archive --output <path>` has received an archive whose `files.ndjson.gz` names files as `not_carried` or `lost`, the CLI MUST NOT write to `<path>`.
-
-**Reason:** a file at the path is the last complete backup when the command is run on a schedule, and a script that reads the path must never get an archive that lacks files. An earlier file stays byte for byte, and where none was, none is made.
-
-**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps an archive that lacks a blob beside a path where nothing was, and says so`.
-
-### `search-and-filters/cli-export-lacking-named`
-
-When `marfa export --format archive --output <path>` has kept an archive that lacks blobs at `<path>.incomplete`, the CLI MUST name `<path>` and `<path>.incomplete` in its message.
-
-**Reason:** the person learns from the message alone where the incomplete archive is.
-
-**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps an archive that lacks a blob beside a path where nothing was, and says so`.
-
-### `search-and-filters/cli-export-lacking-path-state`
-
-When `marfa export --format archive --output <path>` has received an archive whose `files.ndjson.gz` names files as `not_carried` or `lost`, the CLI MUST say in its message whether `<path>` still holds an earlier file or was not written.
-
-**Reason:** the person learns that the path was left alone, and whether a backup is still there.
-
-**Tests:** `cli/archive-blobs.test.ts › keeps an archive that lacks a blob beside the path, exits 1 with blobs_missing, and leaves the earlier archive as it was`, `› keeps an archive that lacks a blob beside a path where nothing was, and says so`.
-
-### `search-and-filters/cli-export-whole`
-
-When `marfa export --output <path>` receives an export that ends whole and, for an archive, has a readable manifest followed by a readable `files.ndjson.gz` that names no file as `not_carried` or `lost`, the CLI MUST replace `<path>` with it.
-
-**Reason:** the earlier backup is replaced only by one that is at least as complete.
-
-**Tests:** `cli/archive-blobs.test.ts › replaces the path with a whole archive and leaves no other file`.
-
-### `search-and-filters/cli-export-whole-clean`
-
-When `marfa export --output <path>` replaces `<path>`, the CLI MUST leave no partial file beside it.
-
-**Reason:** a file left behind would be mistaken by a later run, or a person, for a backup. An older `<path>.incomplete` is not a partial file of this run, and is left as it was.
-
-**Tests:** `cli/archive-blobs.test.ts › replaces the path with a whole archive and leaves no other file`.
-
-### `search-and-filters/cli-export-archive-wait`
-
-When `marfa export --format archive` has sent its request, the CLI MUST wait up to 30 minutes for the server to begin its answer.
-
-**Reason:** the server checks the whole selection before it sends an archive (`search-and-filters/archive-restorable`), so its first byte comes after a time that grows with the instance: about 4 seconds for 250,000 items on a fast computer at rest, and many times that on a small server that is busy, which can pass the 90 seconds the CLI gives most commands for an answer to begin. A bound that is too short ends the export of the instances that most need a backup, and the server then drops the request.
-
-**Tests:** `cli/archive-wait.test.ts › waits for an archive whose first byte comes after the usual answer budget, says it is working, and writes the path once the archive ends whole`.
-
-### `search-and-filters/cli-export-archive-working`
-
-While `marfa export --format archive` waits for the server to begin its answer, the CLI MUST say on standard error, from the fifth second and every 15 seconds after, that it is still preparing the archive.
-
-**Reason:** an export that says nothing for minutes looks like a hung command, and a person or a scheduler would end it.
-
-**Tests:** `cli/archive-wait.test.ts › waits for an archive whose first byte comes after the usual answer budget, says it is working, and writes the path once the archive ends whole`.
-
-### `search-and-filters/cli-restore-lacking`
-
-When `POST /restore` answers `marfa restore` with hashes in `blobs_missing`, the CLI MUST print the answer and exit 1 with `blobs_missing`, naming up to ten of the blobs and counting the rest.
-
-**Tests:** `cli/archive-blobs.test.ts › prints the answer of a restore of it and exits 1 with blobs_missing`.
-
-### `search-and-filters/cli-export-cut`
-
-If the stream of `marfa export --output <path>` ends early, then the CLI MUST leave the path as it was before the command and exit 3.
-
-**Reason:** a file cut short at the path would pass for a backup until a restore needed it.
-
-**Tests:** `cli/archive-blobs.test.ts › leaves the path as it was when the export is cut short, and the next export names the struck blob`.
-
-### `search-and-filters/cli-export-cut-clean`
-
-If the stream of `marfa export --output <path>` ends early, then the CLI MUST leave no partial file beside the path.
-
-**Reason:** a file cut short, kept anywhere the person looks for backups, would pass for one. Only a process killed outright leaves its partial file, which no code can prevent.
-
-**Tests:** `cli/archive-blobs.test.ts › leaves the path as it was when the export is cut short, and the next export names the struck blob`.
 
 ### `search-and-filters/restore-edge-skips`
 
@@ -3499,9 +3351,3 @@ When the owner requests item summaries, the server MUST retain other content rou
 When `GET /items/summaries` refuses a request, the server MUST return only its error envelope without item content.
 
 **Tests:** `compliance/item-summaries.test.ts › pages name matches without leaking content or widening other owner reads`.
-
-### `search-and-filters/owner-summaries-cli`
-
-When a caller runs `marfa --socket PATH items summaries`, the CLI MUST send the optional `--type`, `--q`, `--limit` and `--cursor` filters to `GET /items/summaries` through private local authority and return its summary page.
-
-**Tests:** `cli/item-summaries.test.ts › lists and searches names through local authority without item content`.

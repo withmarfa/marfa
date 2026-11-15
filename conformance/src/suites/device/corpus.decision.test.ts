@@ -28,6 +28,7 @@ const specDir = resolve(here, "../../../spec");
 const CHAPTERS = [
   "device.md",
   "queue-and-verdicts.md",
+  "cli.md",
   "folder-setup.md",
   "folder-documents.md",
   "folder-files.md",
