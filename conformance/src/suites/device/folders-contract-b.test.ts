@@ -274,6 +274,47 @@ it("pauses a pass that removes more than 100 files whatever their share, judging
   expect(deletes(), "a removal past the ceiling was sent").toBe(200);
 });
 
+it("pauses nothing where two passes each remove files under the default thresholds, though together they pass them", async () => {
+  harness = await folderHarness("contract-b-passes-alone", {
+    items: { "core.note": Array.from({ length: 40 }, (_, n) => row(n)) },
+  });
+  scriptFolderWrites(harness);
+  expect((await harness.folder.pull()).ok).toBe(true);
+  const deletes = () =>
+    harness!.server.requests.filter(
+      (request) =>
+        request.method === "DELETE" &&
+        /^\/items\/[^/]+$/.test(request.pathname),
+    ).length;
+  const grace = () => new Promise((resolve) => setTimeout(resolve, 6_000));
+  const remove = (from: number, count: number) => {
+    for (let n = from; n < from + count; n += 1)
+      rmSync(join(harness!.dir, `Note ${String(n)}.md`));
+  };
+  // Ten files are not more than 10, so neither pass is held, and the second
+  // is not added to the first, whose deletions were sent: together they are
+  // 20 files and half the folder.
+  for (const from of [0, 10]) {
+    remove(from, 10);
+    const scanned = await harness.folder.scan();
+    expect(
+      scanned.ok && scanned.value.paused,
+      "a pass was held for the files an earlier pass removed",
+    ).toBe(0);
+    await grace();
+    expect((await harness.folder.push()).ok).toBe(true);
+    expect(deletes()).toBe(from + 10);
+  }
+  // The witness: a pass of 11 of the 20 files left is held, so the two
+  // passes above went unheld for being judged alone and not for want of a guard.
+  remove(20, 11);
+  const scanned = await harness.folder.scan();
+  expect(scanned.ok && scanned.value.paused).toBe(11);
+  await grace();
+  expect((await harness.folder.push()).ok).toBe(true);
+  expect(deletes(), "a removal past both thresholds was sent").toBe(20);
+});
+
 it("reads status from disk and the held copy without contacting the server", async () => {
   harness = await folderHarness("contract-b-status-local", {
     items: { "core.note": [row(0)] },
