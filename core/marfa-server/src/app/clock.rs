@@ -260,11 +260,17 @@ impl Clock {
     /// Takes a confirmation as the trusted time, once the write that kept it has committed.
     pub fn confirmed(&self, confirmation: Confirmation) {
         self.guard().confirm(confirmation.0);
+        *lock(&self.staged) = None;
+    }
+
+    /// Drops a staged confirmation whose write failed.
+    pub fn unstage(&self) {
+        *lock(&self.staged) = None;
     }
 
     /// Reads no clock, so a write that asked no time leaves the row as it is.
     pub fn keep(&self, tx: &rusqlite::Transaction<'_>) -> refusal::Result<()> {
-        let staged = lock(&self.staged).take();
+        let staged = *lock(&self.staged);
         let guard = *self.guard();
         let kept = match (staged, guard.trusted) {
             (Some(confirmation), _) => Kept {
@@ -757,8 +763,15 @@ mod tests {
         clock.keep(&tx).unwrap();
         assert_eq!(
             super::kept(&tx).unwrap(),
-            kept(now - 180 * DAY_MS, Some(0)),
-            "the next write keeps the guard"
+            kept(now, None),
+            "a write before it is applied keeps it too"
+        );
+        clock.confirmed(clock.confirmation());
+        clock.keep(&tx).unwrap();
+        assert_eq!(
+            super::kept(&tx).unwrap().unwrap().trusted_at.ms(),
+            now,
+            "applied"
         );
     }
 

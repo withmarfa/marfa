@@ -215,7 +215,7 @@ impl Limiter {
             let Some(window) = windows.live(lane, now_ms) else {
                 continue;
             };
-            if window.ends_ms.saturating_sub(lane.window_ms) > admitted_ms {
+            if window.opened_ms > admitted_ms {
                 continue;
             }
             let count = window.count.saturating_sub(1);

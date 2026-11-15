@@ -500,9 +500,16 @@ pub async fn confirm_clock(app: &App) -> Result<Stamp> {
 /// once its write has committed.
 async fn confirm_on(db: &Db, clock: &Arc<Clock>) -> Result<Stamp> {
     let inside = clock.clone();
-    let confirmation = db
+    let written = db
         .write(Write::own(), move |tx| confirming(tx, &inside))
-        .await?;
+        .await;
+    let confirmation = match written {
+        Ok(confirmation) => confirmation,
+        Err(error) => {
+            clock.unstage();
+            Err(error)?
+        }
+    };
     clock.confirmed(confirmation);
     Ok(confirmation.at())
 }
