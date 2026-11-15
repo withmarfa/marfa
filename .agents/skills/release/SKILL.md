@@ -57,7 +57,7 @@ Each job is named as GitHub shows it.
 7. **Collect the release:** writes the three archives' checksums to `marfa-<version>-checksums.txt`, writes the Homebrew formula from them, and holds the release to six files: the three archives, the checksums and the two npm tarballs.
 8. **Build the server image (linux/amd64)** and **(linux/arm64):** `deploy/Dockerfile` around the Linux archives' own programs, checked with `scripts/check-image.sh`. A tag run pushes each platform to `ghcr.io/withmarfa/marfa-server` by digest, untagged, and boots the pushed digest.
 9. **Prove the install (darwin-arm64)**, **(linux-x86_64)** and **(linux-aarch64):** `scripts/release/install-proof.sh` installs through `scripts/install.sh` from the run's own files, behind HTTPS, claims the server, and runs it to uninstall. The modes are a user service on the Mac and on aarch64 Linux, and a root install and Docker on x86_64 Linux.
-10. **Publish,** for a tag only: requires an npm that publishes by trusted publishing and npm's trust for this run; drafts the GitHub release with the six files and notes made of `scripts/release/upgrade-note.md` and the generated list of pull requests; checks the draft's archives against its checksums; tags the image `<version>` and `latest` and pulls it signed out; publishes `@withmarfa/core` and `@withmarfa/client` to npm with provenance; then makes the release public.
+10. **Publish,** for a tag only: requires an npm that publishes by trusted publishing and npm's trust for this run; drafts the GitHub release for this commit (`--target`) with the six files and notes made of `scripts/release/upgrade-note.md` and the generated list of pull requests; checks the draft's archives against its checksums; tags the image `<version>` and `latest` and pulls it signed out; publishes `@withmarfa/core` and `@withmarfa/client` to npm with provenance; then makes the release public.
 11. **Update the Homebrew tap,** for a tag only: writes `Formula/marfa.rb` for `withmarfa/homebrew-tap`, and pushes it only when the repository variable `HOMEBREW_TAP` is `publish`. Otherwise it writes the formula into the log, says it was not pushed, and passes.
 
 ## Check the release
@@ -88,7 +88,9 @@ Each job is named as GitHub shows it.
 ## Finish a failed or partial run
 
 - **Before `Publish`,** nothing is public under the version: the image job pushes untagged digests only. Fix what failed outside the code (a runner, a secret, a network fault) and re-run the failed jobs with `gh run rerun <run id> --failed`. The build and signing artifacts are kept for one day; after that, re-run the whole run with `gh run rerun <run id>`.
-- **In `Publish`,** each step skips what is already there: a draft is given only the files it lacks, an image version that exists is kept, and an npm version that exists is skipped. Re-run the job after fixing what its error names:
+- **In `Publish`,** each step skips what is already there: a draft is given only the files it lacks, an image version that exists is kept, and an npm version that exists is skipped. A draft and an image are kept only when they were built from this run's commit: the draft's `targetCommitish` and the image's `org.opencontainers.image.revision` label are compared with it, before anything is uploaded, tagged or published to npm. Re-run the job after fixing what its error names:
+  - A draft made for another commit (or by an earlier workflow, which recorded none) is refused. Delete it with `gh release delete v<version>`, which keeps the tag, and re-run the whole run so the files are built again.
+  - An image tag built from another commit is refused. Delete that version of the `marfa-server` package in its settings on GitHub, then re-run the job.
   - A new package on ghcr.io is private until a maintainer makes it public in its package settings.
   - A package npm has never published stops the job before anything is published. Its first version is published by hand from the run's artifacts, with a trusted publisher set to this repository and `release.yml`: that is a maintainer's step, so stop and say so; never publish it yourself.
 - **`Update the Homebrew tap`** fails when `HOMEBREW_TAP` is `publish` and the secret `HOMEBREW_TAP_TOKEN` is missing. Set it to a fine-grained token with Contents read and write on `withmarfa/homebrew-tap`, then re-run the job. If several releases' tap jobs failed, re-run them oldest first: the job does not refuse to move the formula back to an older version.
@@ -96,6 +98,6 @@ Each job is named as GitHub shows it.
 
 ## Never
 
-- Never move or delete a `v*` tag once it is pushed, and never tag the same version on another commit. Nothing compares a draft's files with the commit: a run after the tag moved keeps the draft's files and the image version built from the first commit, and can publish npm packages built from the second, so one version ships builds of two commits.
+- Never move or delete a `v*` tag once it is pushed, and never tag the same version on another commit. `Publish` refuses a draft, or a `<version>` image, built from another commit than the run's, but it cannot undo what npm already holds: a version published from the first commit stays, and the release then cannot publish that version again.
 - Never set a version in a manifest, a README or a commit to the tree.
 - Never unpublish an npm version. npm does not take a version back for reuse, and the release then cannot publish that version again.
