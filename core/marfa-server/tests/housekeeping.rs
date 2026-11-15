@@ -1060,6 +1060,32 @@ async fn thinning_leaves_the_head_and_the_snapshots_the_policy_keeps() {
 }
 
 #[tokio::test]
+async fn thinning_under_the_cap_keeps_a_snapshot_whose_stored_time_does_not_read_and_reports_it() {
+    let instance = Instance::start(&[("MARFA_VERSION_MAX_VERSIONS", "2")]).await;
+    let id = instance.note().await;
+    let path = format!("/items/{id}");
+    for (version, body) in [(1, "two"), (2, "three"), (3, "four")] {
+        let edit = json!({ "version": version, "properties": { "body": body } });
+        instance.ok(Method::PATCH, &path, edit).await;
+    }
+    let snapshots = "SELECT count(*) FROM item_versions";
+    assert_eq!(instance.count(snapshots), 3);
+    instance
+        .sql("UPDATE item_versions SET created_at = '' WHERE version = 1".to_string())
+        .await;
+
+    let ended = housekeeping::run_now(&instance.app, "version-thinning")
+        .await
+        .unwrap();
+    assert_eq!(ended.outcome, "ok", "{:?}", ended.error);
+    assert_eq!(ended.result, Some(json!({ "pruned": 1, "items": 1 })));
+    assert_eq!(ended.kept_unread, 1);
+    assert_eq!(instance.count(snapshots), 2);
+    let unread = "SELECT count(*) FROM item_versions WHERE created_at = ''";
+    assert_eq!(instance.count(unread), 1);
+}
+
+#[tokio::test]
 async fn a_second_run_of_a_running_job_is_refused_and_another_job_runs() {
     let instance = Instance::start(&[]).await;
     let held = "hold:housekeeping:audit-cleanup";
