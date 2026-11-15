@@ -420,7 +420,7 @@ fn add_session(tx: &Transaction<'_>, digest: &str, now: Stamp) -> Result<Stamp> 
 
 fn count_code(app: &App, address: Option<IpAddr>) -> Result<()> {
     match limits::admit(app, &limits::setup_code_lanes(address)) {
-        Some(wait) => Err(spent("Too many setup code attempts. Try again later.", wait)),
+        Some(wait) => Err(spent("Too many code attempts. Try again later.", wait)),
         None => Ok(()),
     }
 }
