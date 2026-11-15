@@ -12023,7 +12023,7 @@
           },
           "last_activity_at": {
             "type": "string",
-            "description": "The item's `last_activity_at` after the undo, in UTC.",
+            "description": "The time of the undo, in UTC, which each row it changed took as its `updated_at`, or the item's own `last_activity_at` when the undo changed no row. An item that held a later `last_activity_at` keeps it.",
             "example": "2026-10-03T09:31:00.000Z"
           },
           "results": {

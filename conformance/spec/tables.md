@@ -1428,7 +1428,7 @@ Where `row_log_retention_days` is positive, when the `table-row-cleanup` job run
 
 **Reason:** the log is for taking back recent writes, not a history, and an old batch could no longer be undone over what came after it anyway. The batches of every table are removed in the order they were made, so one whose time does not read keeps itself and every later batch of every table.
 
-**Tests:** `compliance/table-rows-retention.test.ts › removes the batches older than row_log_retention_days at the next table-row-cleanup run, and keeps the newer`, `› keeps a batch whose stored time does not read and every batch after it, and removes the older batches before it`.
+**Tests:** `compliance/table-rows-retention.test.ts › removes the batches older than row_log_retention_days at the next table-row-cleanup run, and keeps the newer`, `› keeps a batch whose stored time does not read and every batch after it, and removes the older batches before it`, `› keeps the later batches of every table behind a batch whose stored time does not read`.
 
 ### `tables/log-retention-zero`
 
@@ -1498,15 +1498,15 @@ When `PUT /types/{id}` without `force=true` tightens a column that holds values,
 
 ### `tables/tightened-patch`
 
-When a `patch` names a row that holds a value its column no longer admits, or that lacks a value its column now requires, the server MUST judge only the columns the `patch` names.
+When a `patch` names a row that holds a value its column does not admit, or that lacks a value its column requires, the server MUST judge only the columns the `patch` names.
 
 **Tests:** `compliance/table-rows-lifecycle.test.ts › takes a replacement that tightens a column without force, keeps the values rows hold, and judges a later patch by the columns it names and a later put by the whole row`.
 
 ### `tables/tightened-put`
 
-When a `put` names a row that holds a value its column no longer admits, or that lacks a value its column now requires, the server MUST judge every column of the row as it judges a `put` of any row, and answer `400 validation_error` naming `operations.<index>.values.<column>` while a value breaks its column.
+When a `put` names a row that holds a value its column does not admit, or that lacks a value its column requires, the server MUST judge every column of the row as it judges a `put` of any row, and answer `400 validation_error` naming `operations.<index>.values.<column>` while a value breaks its column.
 
-**Reason:** a `put` is the whole row, so the values it sends again are the row's values, and a value its column no longer admits stays until the `put` sends one that it does.
+**Reason:** a `put` is the whole row, so the values it sends again are the row's values, and a value its column does not admit stays until the `put` sends one that it does.
 
 **Tests:** `compliance/table-rows-lifecycle.test.ts › takes a replacement that tightens a column without force, keeps the values rows hold, and judges a later patch by the columns it names and a later put by the whole row`.
 

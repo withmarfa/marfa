@@ -864,7 +864,7 @@ impl Catalog {
         self.request_limit
     }
 
-    /// Refuses `properties` as an item of `type_id`, `complete` where they are the whole item. A status word is judged only where the write sets it; `validate_merged` judges the item a write leaves.
+    /// Refuses `properties` as an item of `type_id`, `complete` where they are the whole item, judging every value; `validate_merged` judges the item a write leaves.
     pub fn validate_properties(
         &self,
         type_id: &str,

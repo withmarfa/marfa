@@ -970,9 +970,9 @@ When a replacement tightens a field, by making it `required`, narrowing its `enu
 
 ### `types/field-tightened-held`
 
-If an item holds a value in a field that its type no longer admits, then the server MUST NOT refuse an update of the item for that value unless the update changes the property's value or moves the item to another type.
+If an item holds a value in a field that its type does not admit, then the server MUST NOT refuse an update of the item for that value unless the update changes the property's value or moves the item to another type.
 
-**Reason:** an edit to an item's title is not the write that has to bring another property within a rule its type added later. A whole-properties write sends every property back, so naming a property unchanged is not a change. A property the item lacks is held to a required field as before (`items/property-invalid`).
+**Reason:** an edit to an item's title is not the write that has to bring another property within a rule its type holds. A whole-properties write sends every property back, so naming a property unchanged is not a change. A property the item lacks is held to a required field (`items/property-invalid`).
 
 **Tests:** `compliance/type-evolution.test.ts › takes a replacement that tightens a field without force, leaves the values items hold, and judges a write by the properties it changes`.
 
