@@ -54,7 +54,7 @@ jobs:
   require-green-core:
     name: Require green Core
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
       contents: read
       actions: read
@@ -75,7 +75,7 @@ jobs:
     name: Read the version
     needs: [require-green-ci, require-green-core]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
       contents: read
     outputs:
@@ -195,7 +195,7 @@ jobs:
     name: Build the programs (macOS)
     needs: version
     runs-on: macos-26
-    timeout-minutes: 240
+    timeout-minutes: 90
     permissions:
       contents: read
     env:
@@ -303,8 +303,8 @@ jobs:
     name: Sign the programs
     needs: [version, programs-macos]
     runs-on: macos-26
-    timeout-minutes: 120
     environment: ${{ github.event_name == 'push' && 'release' || '' }}
+    timeout-minutes: 75
     permissions:
       contents: read
     env:
@@ -372,7 +372,7 @@ jobs:
     name: Build the programs (${{ matrix.arch }} Linux)
     needs: version
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: 70
     permissions:
       contents: read
     strategy:
@@ -473,7 +473,7 @@ jobs:
     name: Run the programs (${{ matrix.arch }} Linux)
     needs: [version, programs-linux]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 15
+    timeout-minutes: 5
     permissions:
       contents: read
     strategy:
@@ -505,7 +505,7 @@ jobs:
     name: Collect the release
     needs: [version, sign, programs-linux]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
       contents: read
     env:
@@ -569,7 +569,7 @@ jobs:
     name: Build the server image (${{ matrix.platform }})
     needs: [version, programs-linux]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 60
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
@@ -687,7 +687,7 @@ jobs:
     name: Prove the install (${{ matrix.platform }})
     needs: [version, collect]
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 10
     permissions:
       contents: read
     strategy:
@@ -736,7 +736,7 @@ jobs:
     if: github.event_name == 'push'
     environment: release
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     permissions:
       id-token: write
       attestations: write
@@ -1046,7 +1046,7 @@ jobs:
     if: github.event_name == 'push'
     environment: release
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
       contents: read
     env:
