@@ -144,7 +144,7 @@ A device MUST NOT change the body, the version or the idempotency key of a write
 
 When the server answers a write with `Idempotency-Replayed: true`, or with `acknowledged: true` in its body, a device MUST report the write's verdict as replayed.
 
-**Reason:** a caller can then tell a write that landed now from one that had already landed.
+**Reason:** a caller can then tell a write that landed now from one that had already landed or changed nothing.
 
 **Tests:** `device/queue.test.ts › retries under the key it was queued with, and is answered from the record rather than written twice`, `› sends an edit of its own create on the version that create made where the server answers a repeat of it`, `device/unchanged-write-live.test.ts › accepts a drained edit the server answers as unchanged, reports it replayed, and keeps the item at the version it held`.
 

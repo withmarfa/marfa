@@ -366,9 +366,7 @@ impl<'c> Writing<'_, '_, 'c> {
         })
     }
 
-    /// The refusals that read only the edge and its ends, in the order of `POST /edges`. Here an
-    /// edge that cascades asks for write on its target's type, so no way of making or moving an
-    /// edge can leave it out.
+    /// The refusals that read only the edge and its ends, in the order of `POST /edges`.
     fn judge_stated(
         &self,
         kind: &EdgeType,
@@ -386,6 +384,7 @@ impl<'c> Writing<'_, '_, 'c> {
         self.judge_ends(kind, source, &target)
     }
 
+    /// An edge that cascades asks for write on its target's type.
     fn judge_cascade(&self, kind: &EdgeType, target: &Item) -> Result<()> {
         if OnDelete::of(Some(&kind.cascade_on_delete)) == OnDelete::Cascade {
             self.note(Need::CascadeTarget {
@@ -1042,8 +1041,7 @@ fn once(targets: &[String]) -> Vec<&String> {
         .collect()
 }
 
-/// Asks across every inline edge in the order of `POST /edges`, up to the checks that read the
-/// edges the item holds, so no door answers differently and no answer waits on the item's version.
+/// Asks across every inline edge in the order of `POST /edges`, up to the checks on held edges.
 pub(crate) fn inline_gates(
     writing: &Writing<'_, '_, '_>,
     source: (&str, &str),

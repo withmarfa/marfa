@@ -1520,8 +1520,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         Ok((item, settled.resolution))
     }
 
-    /// Whether the write would store the item as it is, judged on what it would store and not on
-    /// what was sent.
+    /// Whether the write would store the item as it is, judged on what it would store.
     fn stands_as_stored(&self, row: &Item, writing: &Writing, prepared: &Prepared) -> Result<bool> {
         let Prepared {
             resulting, settled, ..
