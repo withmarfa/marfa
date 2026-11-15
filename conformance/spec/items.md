@@ -932,6 +932,14 @@ When `PATCH /items/{id}` names `edges`, the server MUST replace the item's outbo
 
 **Tests:** `correctness/edges/edges-crud.test.ts › PATCH /items with edges replaces edges of specified types only`, `› PATCH /items keeps the edge to a target it still lists, with its id, version and properties, and announces only what it changes`.
 
+### `items/update-inline-edges-all`
+
+When `PATCH /items/{id}`, or a `POST /items` that lands on an item by its natural key, names `edges` for an edge type, the server MUST remove each outbound edge of that type from the item to a target the list leaves out, whichever key added the edge.
+
+**Reason:** the list is the item's whole set of edges of that type, so an edge another key added is replaced as one the writer added.
+
+**Tests:** `compliance/edge-inline-replace.test.ts › removes an edge another key added, and keeps the edges it lists`.
+
 ### `items/update-inline-edges-keep`
 
 When `PATCH /items/{id}`, a `POST /items` that lands on an item by its natural key or a `POST /items/bulk` entry that lands on an item names `edges` and lists a target the item already has an outbound edge of that edge type to, the server MUST leave that edge with its id, version and properties.

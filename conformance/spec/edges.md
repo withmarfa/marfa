@@ -1400,6 +1400,14 @@ When `POST /items/{id}/purge`, a bulk purge or the `trash-purge` job purges an i
 
 **Tests:** `correctness/edges/edges-parts.test.ts › purges a part it leaves with no host, at every depth`, `› counts a part a bulk purge took with its host, and is not refused for it`, `compliance/housekeeping-retention.test.ts › purges a part with the host that took it, however recently, and leaves one trashed on its own`.
 
+### `edges/parts-purge-hidden`
+
+When a key purges an item, the server MUST also purge each part of it that `edges/parts-purge` names, whatever types the key may read or write.
+
+**Reason:** a limit accepted, as a delete takes children whatever their types (`edges/cascade-hidden-children`), so a purge never leaves in the bin a part with no host.
+
+**Tests:** `compliance/edge-hidden-limits.test.ts › purges a part of a type the key cannot write with the host it purges, naming it nowhere`.
+
 ### `edges/parts-purge-kept`
 
 When the server purges a host, the server MUST NOT purge a part that still holds a `with-hosts` edge, or a part that went to the bin on its own.
