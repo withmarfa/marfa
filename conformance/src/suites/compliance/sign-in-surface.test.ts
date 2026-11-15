@@ -188,7 +188,11 @@ describe("the sign-in surface", () => {
 
     // The witness: the session is live.
     expect(await lives()).toBe(200);
-    for (const headers of [{ cookie }, { cookie, origin: FOREIGN }]) {
+    const refusedHeaders: Record<string, string>[] = [
+      { cookie },
+      { cookie, origin: FOREIGN },
+    ];
+    for (const headers of refusedHeaders) {
       const refused = await signOut(headers);
       expect(refused.status).toBe(403);
       const body = (await refused.json()) as ErrorResponse;
