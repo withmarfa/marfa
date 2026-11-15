@@ -105,6 +105,7 @@ export async function collectUntil(
   }
   const onAbort = () => void reader.cancel().catch(() => undefined);
   signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) onAbort();
 
   // What follows the last complete frame stays for the next wait, and the
   // decoder with it, which can hold the first bytes of a character.
@@ -193,8 +194,10 @@ export async function awaitStreamCursor(
   unread.delete(stream);
   const decoder = left?.decoder ?? new TextDecoder();
   let text = left?.text ?? "";
+  const seen: SseEvent[] = [];
   const onAbort = () => void reader.cancel().catch(() => undefined);
   signal?.addEventListener("abort", onAbort, { once: true });
+  if (signal?.aborted) onAbort();
   try {
     for (;;) {
       for (
@@ -204,6 +207,7 @@ export async function awaitStreamCursor(
       ) {
         const frame = parseSse(text.slice(0, end + 2))[0];
         text = text.slice(end + 2);
+        if (frame && frame.event !== "stream_cursor") seen.push(frame);
         if (frame?.event === "stream_cursor") {
           const cursor = (frame.data as { cursor?: unknown }).cursor;
           if (typeof cursor !== "string") {
@@ -219,7 +223,7 @@ export async function awaitStreamCursor(
       if (value) text += decoder.decode(value, { stream: true });
       if (done) {
         throw new Error(
-          `event stream closed before its stream_cursor; saw ${describe(parseSse(text))}`,
+          `event stream closed before its stream_cursor; saw ${describe([...seen, ...parseSse(text)])}`,
         );
       }
     }

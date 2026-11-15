@@ -79,12 +79,15 @@ async function deliver(
   const stream: EventStream = await openEventStream(apiUrl, subscriber);
   expect(stream.response.status).toBe(200);
   try {
+    await awaitStreamCursor(
+      stream,
+      AbortSignal.any([signal, AbortSignal.timeout(FRAME_BUDGET_MS)]),
+    );
+    await act();
     const budget = AbortSignal.any([
       signal,
       AbortSignal.timeout(FRAME_BUDGET_MS),
     ]);
-    await awaitStreamCursor(stream, budget);
-    await act();
     try {
       const { events } = await collectUntil(
         stream,

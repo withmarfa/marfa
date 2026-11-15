@@ -114,7 +114,7 @@ When a client resumes from the `cursor` of `stream_cursor`, the server MUST send
 
 ### `events/stream-sends-after-cursor`
 
-When a stream has sent `stream_cursor`, the server MUST send on it every event written after the head the frame names, within the stream's filter and the caller's reach.
+While a stream stays open after it has sent `stream_cursor`, the server MUST send on it every event written after the head the frame names, within the stream's filter and the caller's reach.
 
 **Reason:** a client that waits for `stream_cursor` before it writes has no other way to know its write will be seen, and a server that read the head before it began to follow the log would drop the first events silently.
 
