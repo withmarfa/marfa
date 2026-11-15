@@ -14,7 +14,7 @@ let stampType = "";
 let labelType = "";
 let word = "";
 const named = new Map<string, string>();
-let plainSource = "";
+let plainType = "";
 const plainIds = new Map<string, string>();
 
 // Text that is shaped like a date or a datetime and is not one: no zone, a
@@ -90,20 +90,6 @@ beforeAll(async () => {
       trackItem(ctx, made.data.item.id);
       named.set(name, made.data.item.id);
     }
-  }
-});
-
-beforeAll(async () => {
-  plainSource = `${ctx.source}-plain`;
-  for (const when of plain) {
-    const made = await client.createItem({
-      type: labelType,
-      source: plainSource,
-      properties: { when },
-    });
-    expect(made.ok, `${when}: ${JSON.stringify(made.error)}`).toBe(true);
-    trackItem(ctx, made.data.item.id);
-    plainIds.set(when, made.data.item.id);
   }
 });
 
@@ -215,21 +201,39 @@ async function viewed(
   return delivered;
 }
 
-async function ids(
-  type: string,
-  filter: string,
-  source = ctx.source,
-): Promise<string[]> {
+async function ids(type: string, filter: string): Promise<string[]> {
   const query = new URLSearchParams({
     limit: "100",
     type,
-    filter: `source eq "${source}" AND ${filter}`,
+    filter: `source eq "${ctx.source}" AND ${filter}`,
   });
   const result = await client.rawRequest<{ data: { id: string }[] }>(
     `/items?${query.toString()}`,
   );
   expect(result.ok, JSON.stringify(result.error)).toBe(true);
   return result.data.data.map((row) => row.id).sort();
+}
+
+/** Made by the tests that need them: the others list every item of the source. */
+async function plainItems(): Promise<void> {
+  if (plainType) return;
+  const type = `user.plain-${ctx.runId}`;
+  const registered = await client.registerType({
+    id: type,
+    fields: { when: { type: "string" } },
+  });
+  expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+  for (const when of plain) {
+    const made = await client.createItem({
+      type,
+      source: ctx.source,
+      properties: { when },
+    });
+    expect(made.ok, `${when}: ${JSON.stringify(made.error)}`).toBe(true);
+    trackItem(ctx, made.data.item.id);
+    plainIds.set(when, made.data.item.id);
+  }
+  plainType = type;
 }
 
 const stampNames = stamps.map(([name]) => name);
@@ -363,6 +367,7 @@ describe("a datetime property", () => {
   });
 
   it("sorts a text that only looks like a date or a datetime by its bytes, in both directions", async () => {
+    await plainItems();
     const byBytes = [...plain].sort();
     const want = byBytes.map((when) => plainIds.get(when) as string);
     for (const [direction, expected] of [
@@ -374,7 +379,8 @@ describe("a datetime property", () => {
         let cursor: string | undefined;
         do {
           const page = await client.listItems({
-            source: plainSource,
+            source: ctx.source,
+            type: plainType,
             sort: "properties.when",
             direction,
             limit,
@@ -390,21 +396,21 @@ describe("a datetime property", () => {
   });
 
   it("matches a text that only looks like a date or a datetime only to itself", async () => {
+    await plainItems();
     for (const when of [
       "2026-13-45",
       "2026-01-01T05:00:00",
       "2026-01-01 05:00",
     ]) {
       expect(
-        await ids(labelType, `properties.when eq "${when}"`, plainSource),
+        await ids(plainType, `properties.when eq "${when}"`),
         when,
       ).toEqual([plainIds.get(when)]);
     }
     expect(
       await ids(
-        labelType,
+        plainType,
         'properties.when lt "2026-13-46" AND properties.when gt "2026-13-44"',
-        plainSource,
       ),
     ).toEqual([plainIds.get("2026-13-45")]);
   });
