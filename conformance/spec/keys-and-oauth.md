@@ -1701,7 +1701,7 @@ Where the redirect URI is on the loopback or in a private-use scheme, if an auth
 
 Where the redirect URI is a web address off the loopback, if an authorization request naming `prompt=none` comes from nobody signed in, then the server MUST send the browser to its own `/auth/error` page with `error=login_required`, never to the redirect URI.
 
-**Reason:** A web page that tries a silent sign-in this way stays on the server's page and never receives `login_required` at its own address, which an app that expects the standard answer must handle. `keys-and-oauth/prompt-none-login` is the answer for a loopback or private-use address.
+**Reason:** A web page that tries a silent sign-in this way ends on the server's page and never receives `login_required` at its own address, so an app that expects the standard answer there does not get it. `keys-and-oauth/prompt-none-login` is the answer for a loopback or private-use address.
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a refusal from nobody signed in to the error page for a web app the person approved, and to its redirect URI once they are signed in`.
 
@@ -3511,7 +3511,7 @@ When the server restarts with the same secret and address, the server MUST keep 
 
 If a request to `POST /auth/sign-out` carries no live browser session, then the server MUST answer `401 unauthorized`.
 
-**Reason:** A session already ended, or never made, has nothing to sign out of, and the answer is the one every door gives a request with no credential.
+**Reason:** A session already ended, or never made, has nothing to sign out of, and the answer is the one every door that needs a credential gives a request with none.
 
 **Tests:** `compliance/sign-in-surface.test.ts › refuses a sign-out 403 from another origin or none and 401 from no live session, and keeps the session until the instance's own origin ends it`.
 

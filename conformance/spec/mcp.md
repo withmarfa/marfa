@@ -108,7 +108,7 @@ When the server lists its tools, the server MUST annotate `marfa_create` and `ma
 
 When a tool call reads or writes, the server MUST apply the permissions, refusals and limits of the API operation that read or write is.
 
-**Reason:** a tool is another door to what the API guards, so a credential that the API refuses must be refused by the tool with the same `code`, and no tool may be a way round a rule the API holds.
+**Reason:** a tool is another door to what the API guards, so a credential the API refuses is refused by the tool with the same `code`, and no tool is a way round a rule the API holds.
 
 **Tests:** `compliance/mcp.test.ts › refuses marfa_create for a type the credential only reads, as POST /items does`, `› refuses a change that needs schema.write at /mcp/schema, as PUT /types/{id} does`, `› refuses marfa_revoke_key for a key beyond its credential's reach, as DELETE /keys/{id} does`.
 
