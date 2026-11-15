@@ -696,7 +696,7 @@ Where `MARFA_BACKUP_PATH` names a folder inside the data directory or the blob f
 
 Where `MARFA_BACKUP_PATH` is set and the file system that holds `<MARFA_BACKUP_PATH>/files/<instance id>/` takes no file locks, the server MUST NOT refuse to start because it cannot keep another server from that folder.
 
-**Reason:** the server runs without its backup folder, so it starts and tells the owner under `instance/attention-backup-unlocked`. A lock file there that belongs to another account, or has a second link, still refuses the start, since it is what a copy of the instance running as another account leaves.
+**Reason:** the server serves without its backup folder, so it starts and tells the owner under `instance/attention-backup-unlocked`. A lock file there that belongs to another account, or has a second link, still refuses the start, since a copy of the instance may be using the folder.
 
 **Tests:** waiting on #3116.
 
@@ -1848,7 +1848,7 @@ If the server's database file has more than one hard link, then the server MUST 
 
 ### `instance/open-lock-file-mode`
 
-When the server starts and its own account owns the file `<database file>.server-lock` beside its database or the file `.server-lock` in its blob folder, and that file has one hard link, the server MUST NOT refuse to start for the file's mode.
+When the server starts and its own account owns the file `<database file>.server-lock` beside its database or the file `.server-lock` in its blob folder, and that file has one hard link and a mode that lets its owner read and write it, the server MUST NOT refuse to start for the rest of the file's mode.
 
 **Reason:** a mount's group setting, such as Kubernetes `fsGroup`, a `chmod -R` or a restore under another mode opens the file to a group, and the server makes it private to its own account again. A lock file that belongs to another account or has a second link still refuses the start, since another server may hold it.
 
