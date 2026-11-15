@@ -239,8 +239,7 @@ fn drop_recovery(tx: &Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
-/// Each start ends the recovery the last one offered, and offers a new one
-/// only where the setting is on and there is an owner to recover.
+/// Ends the last start's recovery code, and offers a new one only with the setting on and an owner.
 async fn offer_recovery(app: &App) -> Result<Option<String>> {
     let offered = app.settings.start.owner_recovery;
     let code = new_code()?;
@@ -363,9 +362,7 @@ fn recovery_stands(
     Ok(())
 }
 
-/// What `owner recover` on the private socket does, proved by a recovery code
-/// or its session instead. The proof is judged before the hash is paid for and
-/// again in the transaction, which spends every recovery proof.
+/// What `owner recover` does, proved by a recovery code or its session.
 pub async fn recover(app: &App, proof: Proof, new_password: String, visit: Visit) -> Result<()> {
     if !is_claimed(app).await? {
         return Err(owner::not_found());

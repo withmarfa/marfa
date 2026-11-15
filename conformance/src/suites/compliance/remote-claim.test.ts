@@ -22,12 +22,7 @@ import {
 import { listened, settingLines } from "../../utils/refused-boot.js";
 import { TEST_OWNER } from "../../utils/target.js";
 
-/**
- * Claiming and recovering an instance from off the machine it runs on: the
- * sign-in address `MARFA_CLAIM_ADDRESS` stores at the first start, and the
- * one-time recovery code `MARFA_OWNER_RECOVERY` prints at each start. Every
- * case boots a server of its own, because the subject is what a start does.
- */
+/** Claiming from off the machine, and recovering the owner with a code a start prints. */
 
 const CLIENT = "x-real-ip";
 const ELSEWHERE = "203.0.113.7";

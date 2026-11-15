@@ -546,8 +546,7 @@ pub enum Adopted {
     Owned,
 }
 
-/// Stores `address` as the sign-in address while the instance has no owner,
-/// as `PATCH /config` on the private socket would.
+/// Stores `address` as the sign-in address while the instance has no owner.
 pub async fn adopt_sign_in_address(
     app: &Arc<App>,
     address: &addresses::Address,
