@@ -858,13 +858,14 @@ jobs:
           echo "MARFA_SERVER_BIN=$RUNNER_TEMP/rust-contract-server/marfa-server" >> "$GITHUB_ENV"
 
       # The CLI and device fixtures drive the `marfa` binary, and the device
-      # fixtures the Node module. The keys leave
-      # out `core/marfa-server/`, which neither is built from, so a change to
-      # the server alone reuses what `main` built.
+      # fixtures the Node module. The keys leave out `core/marfa-server/`,
+      # which neither is built from, so a change to the server alone reuses
+      # what `main` built. They add the icon sets, which the rules crate
+      # embeds from outside `core/`: a stale binary is a silent pass.
       - name: Key the device under test
         id: device-key
         if: ${{ matrix.binary }}
-        run: echo "key=marfa-rust-contract-$RUNNER_OS-${{ hashFiles('core/**', '!core/marfa-server/**', '!core/bindings/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=marfa-rust-contract-$RUNNER_OS-${{ hashFiles('core/**', '!core/marfa-server/**', '!core/bindings/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', 'packages/types/generated/icon-set-*.json', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the device under test
         id: device
         if: ${{ matrix.binary && github.event_name == 'pull_request' }}
@@ -879,7 +880,7 @@ jobs:
       - name: Key the Node module under test
         id: module-key
         if: ${{ matrix.module }}
-        run: echo "key=marfa-rust-contract-module-$RUNNER_OS-${{ hashFiles('core/**', '!core/marfa-server/**', '!core/bindings/swift/**', '!core/bindings/node/test/**', '!core/bindings/node/scripts/**', '!core/bindings/node/node_modules/**', '!core/bindings/node/*.node', '!core/bindings/node/index.js', '!core/bindings/node/index.d.ts', '!core/marfa-cli/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
+        run: echo "key=marfa-rust-contract-module-$RUNNER_OS-${{ hashFiles('core/**', '!core/marfa-server/**', '!core/bindings/swift/**', '!core/bindings/node/test/**', '!core/bindings/node/scripts/**', '!core/bindings/node/node_modules/**', '!core/bindings/node/*.node', '!core/bindings/node/index.js', '!core/bindings/node/index.d.ts', '!core/marfa-cli/**', '!core/scripts/**', '!core/.config/**', '!core/target/**', '!core/*/tests/**', '!core/**/*.md', 'packages/types/generated/icon-set-*.json', '.github/workflows/ci.yml') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the Node module under test
         id: module
         if: ${{ matrix.module && github.event_name == 'pull_request' }}

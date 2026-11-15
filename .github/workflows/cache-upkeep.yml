@@ -1,0 +1,76 @@
+name: Cache upkeep
+
+# The repository's Actions caches share 10 GB. A cache is named by a hash of
+# what it holds, so each change to its inputs saves another and leaves the
+# last beside it until nothing has read it for seven days. Each day this keeps
+# the newest few of each kind and deletes the rest (`scripts/prune-caches.ts`
+# says which and why), so that what a job restores is never pushed out by what
+# no job will. It leaves alone a cache of `main` whose key it does not
+# recognize.
+#
+# A failed scheduled run is reported like the other scheduled workflows.
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List what would be deleted; delete nothing.
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  prune:
+    name: Delete caches nothing will read
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/prune-caches.ts
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          args=()
+          if [[ "${DRY_RUN}" == "true" ]]; then args+=(--dry-run); fi
+          node scripts/prune-caches.ts "${args[@]}"
+
+  # A failed scheduled run opens an issue, or comments on the one that is open.
+  # Only a schedule reports, so no pull request run can open an issue.
+  # A job that reaches its timeout ends as cancelled, not failed, so a cancelled
+  # job reports too.
+  report-failure:
+    name: Report a failed scheduled run
+    needs: prune
+    if: ${{ github.event_name == 'schedule' && (failure() || contains(needs.*.result, 'cancelled')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/report-nightly-failure.sh
+          sparse-checkout-cone-mode: false
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/report-nightly-failure.sh

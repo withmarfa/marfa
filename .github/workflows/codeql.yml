@@ -54,6 +54,12 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    env:
+      # The default saves a database of about 335 MB from every push to `main`
+      # so that a pull request can analyze only what it changed. Nothing reads
+      # those but pull requests, and each push left one more beside the caches
+      # a build needs, past the repository's size limit.
+      CODEQL_OVERLAY_DATABASE_MODE: none
     strategy:
       fail-fast: false
       matrix:
