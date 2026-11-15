@@ -618,7 +618,8 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
 
   // The document's own tests (`ci/openapi/`), the Rust server's route test,
   // the server's contract fixtures, the clients and the offline lane all
-  // read the committed document.
+  // read the committed document, and the server embeds it, so every job that
+  // boots the server reads it too.
   [
     /^openapi\.json$/,
     [
@@ -626,6 +627,9 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "core-checks-linux",
       ...CONTRACT,
       RELEASE,
+      "mcp-conformance",
+      "restore-drill",
+      "image",
       "clients-freshness",
     ],
   ],
