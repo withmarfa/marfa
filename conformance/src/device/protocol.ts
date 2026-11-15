@@ -421,7 +421,7 @@ export interface Attached {
 /** One queued write, as the queue reports it.
  *
  *  A `verdict` of `null` is a write the server has not answered. It is not a
- *  seventh verdict (`queue-and-verdicts/verdicts-six`); it is the absence of one. */
+ *  seventh verdict (`queue-and-verdicts/verdicts-closed`); it is the absence of one. */
 export interface QueuedWrite {
   id: string;
   kind: string;

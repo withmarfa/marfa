@@ -862,7 +862,7 @@ When a file returns at its own path or a new name within the rename grace, a dev
 
 When another device changes a deleted item in content its file shows during the rename grace and no other registered folder holds the file's move, a device MUST restore the file from the changed item.
 
-**Reason:** A file another folder holds as this one moved is the item's file there, and written back here it would read there as a copy (`folder-files/moved-not-revived`, `folder-files/uncertain-move-no-replacement`). A file whose move cannot be told yet comes back once no folder holds it (`folder-files/missing-file-changed-revives`). A file whose folders both hold its item is not a move (`folder-files/two-folders-delete`), so it is written back.
+**Reason:** A file another folder holds as this one moved is the item's file there, and written back here it would read there as a copy (`folder-files/moved-not-revived`, `folder-files/uncertain-move-no-replacement`). A file whose move cannot be told yet comes back once no folder holds it (`folder-files/missing-file-changed-revives`). A file whose folders both hold its item is not a move (`folder-files/item-in-folders-delete`), so it is written back.
 
 **Tests:** `device/folders-identity.test.ts › writes a deleted file back when another device changes its item inside the grace, and sends no delete`, `device/folders-pass-writeback.test.ts › writes a remote change into a file in place, and brings back a file deleted after the scan once its delete is journaled`, `device/folders-one-mac.test.ts › still writes back a file deleted where both folders hold its item when another device changes it`, `device/folders-held-links.test.ts › writes back a deleted held file when another device changes its item inside the grace`.
 
@@ -1862,7 +1862,7 @@ While a scan keeps a missing folder file’s binding under `folder-files/moved-b
 
 While a missing folder file is found in another registered folder, by its identity, by the ID it carries or as the one file there with its bytes, a device MUST NOT write the missing file again from another device's change.
 
-**Reason:** written again, the file makes the moved file read as a copy in the folder it went to, which then admits it as a second item (`folder-files/cross-folder-copy`). The change still reaches the item, since the moved file merges it once that folder binds it. A file whose folders both hold its item, each with its own file, is not a move (`folder-files/two-folders-delete`), and is written back under `folder-files/delete-remote-revives`.
+**Reason:** written again, the file makes the moved file read as a copy in the folder it went to, which then admits it as a second item (`folder-files/cross-folder-copy`). The change still reaches the item, since the moved file merges it once that folder binds it. A file whose folders both hold its item, each with its own file, is not a move (`folder-files/item-in-folders-delete`), and is written back under `folder-files/delete-remote-revives`.
 
 **Tests:** `device/folders-one-mac.test.ts › makes no second item when another device changes a moved file's item inside the grace`.
 
@@ -2158,13 +2158,13 @@ When a bound unmatched file is missing from disk, a device MUST leave the missin
 
 **Tests:** `device/folders-contract-b.test.ts › does not count a missing unmatched file as put back when restoring a removal`.
 
-### `folder-files/two-folders-editable`
+### `folder-files/item-in-folders-editable`
 
 When two folder queries hold one item, a device MUST keep each folder’s bound file editable through that folder’s own queue.
 
 **Tests:** `device/folders-one-mac.test.ts › keeps two folders' files for one item editable`.
 
-### `folder-files/two-folders-delete`
+### `folder-files/item-in-folders-delete`
 
 When the person deletes either of two files whose folders both hold the item, a device MUST trash the item after the deletion grace rather than treat the other folder’s file as a move.
 

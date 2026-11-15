@@ -14,13 +14,13 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **icon**: The picture a type is shown by: an Iconify icon ID, `<set>:<name>`, such as `lucide:calendar-days` or `simple-icons:github`. A type's author sets it as `display_hints.icon`. The owner's icon for a type is a separate choice, kept beside the definition.
 - **state**: Where an item is in its lifecycle: `active`, `archived`, `trashed` or `revoked`. Not a tier and not a status word. A connector's **state document**, the JSON object it keeps on the instance under its source, is another thing; name it in full.
 - **bin**: Where a deleted item waits before a purge, in the CLI and in prose written for a person. The API's words are other words: the state is `trashed`, the operations say `trash`, and the permission is `items.purge`. Never write `bin` as a state, a path or a permission.
-- **tier**: The layer an item sits in. `feed` holds what arrives in volume and as it came, from connectors and capture, under the source's own type, until a person or an app moves it to the library or archives it. `library` holds what a person chose to keep, modeled in a core type or a child of one. An item **moves to the library** or **moves to the feed** by a change of its `tier`: it is the same item, not a copy, and a connector's type must be readable as a core type, by `parent` or `compatible_with`, for the moved item to be read as one. Not a permission, not a lifecycle and not a namespace.
+- **tier**: The layer an item sits in. `feed` holds what arrives in volume and as it came, from connectors and capture, under the source's own type, until a person or an app moves it to the library or archives it. `library` holds what a person chose to keep, modeled in a core type or a child of one. An item **moves to the library** or **moves to the feed** by a change of its `tier`: it is the same item, not a copy. A moved item is read as a core type through its type's `parent` or `compatible_with` (`types/parent`, `types/compatible-with`). Not a permission, not a lifecycle and not a namespace.
 - **link**: The value an item holds in the field its type names as `link_field`: the item's own ID at the vendor that writes the type, by which a connector finds the item. A type's own, never inherited. The word keeps its ordinary sense of a URL, a blob's link or a `[[name]]` in a Markdown body where the sentence says which.
-- **tombstone**: What a purge leaves of an item under its type: its link and its natural key, `(source, source_id)`, each with `purged_at` and `settled_at`. An entry from the vendor naming the key is a new item only if the vendor changed it after `settled_at`. Not a trashed item, which leaves none, and not a revoked grant.
+- **tombstone**: What a purge leaves of an item under its type: its link and its natural key, `(source, source_id)`, each with `purged_at` and `settled_at`. Not a trashed item, which leaves none, and not a revoked grant. What a write that names the key does is `connectors/tombstone-write-accepted`.
 - **natural key**: An item's `source` and `source_id` together. A write that names one that a live item of its type holds updates that item, whichever key sends it, so a connector's item stays one item. Not the item's `id`, which a natural key decides before, and not its link. A conflicted copy gets neither it nor a link, and a tombstone keeps it.
 - **conversation**: One item of `core.conversation`, whose messages are the rows of its `messages` table. A message is never an item, so it has no version, tags or edges. A message people view on its own, such as an email, is a `core.message` item.
 - **occurrence**: One time an event happens, computed from a series when `GET /occurrences` reads a window and never stored. A series is one `core.event` item that carries rule lines in `recurrence`. An event that takes the place of one occurrence is an item of its own, joined to the series by `parent-of`; it is a moved occurrence, not a second series. Not a task, which carries `recurrence` but is never unfolded.
-- **view**: A saved list of items, held as a `system.view` that every app shares: its query says which items it lists, and its sort and group say in what order and how they group. How an app shows them is the app's own. Written only through `/views`. Not a folder, which holds items as files on a machine, and not a collection.
+- **view**: A saved list of items, held as a `system.view` that every app shares: its query says which items it lists, and its sort and group say in what order and how they group. How an app shows them is the app's own. It is written through `/views` (`items/system-types`). Not a folder, which holds items as files on a machine, and not a collection.
 
 ### Properties, metadata and edges
 
@@ -32,7 +32,7 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **column**: A named, typed value a row of a table can hold: a `type` such as `string` or `number`, or `item` for the ID of an item.
 - **row**: One record of a table, its values keyed by column, with an `id` that is a UUIDv7. Never an item: it has no version, tags, edges or history.
 - **batch**: One write to the rows of one table of an item, made whole and named by a UUIDv7. The table's **change log** keeps each row as it stood before each batch, so a batch can be undone; an undo is a batch too.
-- **tag**: A free-form, flat label on an item, searched alongside the item's text. A git tag that names a release, such as `v0.0.1`, is a release tag, not this.
+- **tag**: A free-form, flat label on an item (`search-and-filters/search-tags-with-text`). A git tag that names a release, such as `v0.0.1`, is a release tag, not this.
 - **extension**: A namespaced JSON object of metadata attached to an item by something other than the key that wrote the item, read and written per namespace. Not a blob and not a property.
 - **edge**: A directed relationship between two items, named by its **edge type**. An edge has properties and a version of its own.
 - **reverse name**: The name an edge type may declare for its edges read from the target, such as `child-of` for `parent-of`, used as a frontmatter key. Never "inverse". Not a reverse label.
@@ -129,7 +129,7 @@ Access is read the same way wherever a person sees it: on the pages where they a
 - **server**: The software that answers HTTP for an instance: the source of truth every device copies.
 - **operation**: One thing the API does, named by its method and path, such as `GET /items/{id}`, and by its `operationId` in the API document. Never "door".
 - **contract version**: One integer, answered at `GET /` as `contract`, sent on every answer as `X-Marfa-Contract` and carried as the API document's `info.version`. Not the product version and not the build.
-- **housekeeping**: The periodic jobs the server runs on itself, from one table and one scheduler; `housekeeping.md` lists them. None bounds what a connector keeps: its agreements go with their items, and its state document stays until it is cleared. One is "a housekeeping job", never a job alone: a bare job is a queued bulk action.
+- **housekeeping**: The periodic jobs the server runs on itself, from one table and one scheduler; `housekeeping.md` lists them. What stays of a connector's data is `housekeeping/connector-state-kept`. One is "a housekeeping job", never a job alone: a bare job is a queued bulk action.
 - **archive**: The file `GET /export?format=archive` writes and `POST /restore` reads: a `manifest.json` with its own `version`, and the items and instance lines. Its version is the archive version, a number of its own, and not the contract version. A backup is an archive. Not the `archived` state of an item, which is `state` alone.
 - **backup**: An archive of the instance that the server puts in the object store (`S3_BUCKET`) or the backup folder (`MARFA_BACKUP_PATH`), on a schedule and when the owner asks with `POST /backups`. It holds every item and instance line, the trash included, and no file bytes and no credential. Not an export, which a credential reads of its own reach, and not a copy of the data directory.
 
@@ -206,7 +206,7 @@ A permission is named by what it permits, never by a noun for the whole. It open
 | `blobs.manage`      | Managing blob bytes and copies across the instance, without granting item content access.                                                                                                                                          |
 | `keys.manage`       | Listing and revoking keys across the instance, changing their metadata or narrowing access, and setting the name and mark of any source.                                                                                           |
 
-The twelve permissions use ten roots, `schema`, `keys`, `items`, `webhooks`, `config`, `audit`, `grants`, `instance`, `connectors` and `blobs`, which the type grammar reserves with the scope roots (`types/id-reserved-scope-root`). Registration checks the reserved set, while the scope parser checks the closed set of permission literals: anything else under a permission root is refused, including `<root>.*:read` as a type grant.
+The twelve permissions use ten roots, `schema`, `keys`, `items`, `webhooks`, `config`, `audit`, `grants`, `instance`, `connectors` and `blobs`, which the type grammar reserves with the scope roots (`types/id-reserved-scope-root`). The scope parser takes no other name under them (`keys-and-oauth/device-permission-scope-closed`).
 
 ## Time
 
@@ -219,7 +219,7 @@ One rule across the API, with one exception that is named rather than implied.
 
 ## Errors
 
-The meaning of every error code is in `conformance/spec/errors.md`. Two readings it does not state:
+The meaning of every error code is in `conformance/spec/errors.md`. Two codes that are easy to misread:
 
-- `type_not_permitted` consults no registry: it says the credential may not reach the type here, never that the type exists.
-- `table_not_found` is answered only for an item the credential may read; one it may not read answers `item_not_found` first, so the answer says nothing of the item's type.
+- `type_not_permitted` does not say whether a type exists (`errors/read-type-unregistered`, `errors/grant-type-unregistered`).
+- `table_not_found` is for an item the credential may read (`tables/table-not-found-hidden`).

@@ -190,7 +190,7 @@ The server MUST NOT refuse a top-level key of the body of `PUT /items/{id}/exten
 
 ## Registration, which the sign-in library answers
 
-### `errors/register-415`
+### `errors/register-wrong-content-type`
 
 When `POST /auth/oauth2/register` carries a body under a `Content-Type` other than `application/json`, in any case and with or without parameters, the server MUST answer `415` with a body of `message` and a `code` of `UNSUPPORTED_MEDIA_TYPE`, and no `error` member.
 
@@ -198,7 +198,7 @@ When `POST /auth/oauth2/register` carries a body under a `Content-Type` other th
 
 **Tests:** `compliance/json-body-doors.test.ts › leaves a registration that is not sent as JSON to the sign-in library, which answers 415 in its own shape`, `compliance/declared-refusals.test.ts › is refused 415 in the shape the document declares for a body that is not JSON`.
 
-### `errors/register-bearer-401`
+### `errors/register-bearer-refused`
 
 When `POST /auth/oauth2/register` sends, as JSON, a registration the server accepts from a caller with no credential, and carries an `Authorization` bearer the sign-in library does not accept, an API key included, the server MUST answer `401` with a body whose `error` is `invalid_token`.
 
@@ -206,7 +206,7 @@ When `POST /auth/oauth2/register` sends, as JSON, a registration the server acce
 
 **Tests:** `compliance/declared-refusals.test.ts › is refused 401 invalid_token in the RFC's shape, and registers with no credential`.
 
-### `errors/register-415-headers`
+### `errors/register-wrong-content-type-headers`
 
 When the server answers `POST /auth/oauth2/register` with `415`, the server MUST NOT carry `X-Error-Code` on the answer.
 

@@ -272,7 +272,7 @@ When a write repeats an `Idempotency-Key` and its body, naming the instance's ow
 
 **Tests:** `compliance/instance-header.test.ts › keeps no refusal under an Idempotency-Key, and replays the first answer whatever instance the repeat names`.
 
-### `instance/write-instance-every-door`
+### `instance/write-instance-every-operation`
 
 The server MUST judge `X-Marfa-Instance-Id` on every write.
 
@@ -404,7 +404,7 @@ The server MUST NOT refuse a request for naming no `X-Marfa-Contract`.
 
 **Tests:** `compliance/contract-request.test.ts › serves a request naming no contract, and one naming this contract, as it serves each other`.
 
-### `instance/contract-request-every-door`
+### `instance/contract-request-every-operation`
 
 The server MUST judge `X-Marfa-Contract` on every request, whatever its method, its path and its credential.
 
@@ -1228,7 +1228,7 @@ When `GET /health` is answered, the server MUST answer the overall `status` as `
 
 **Tests:** `compliance/instance.test.ts › answers /health without a credential and names its components`, `compliance/health.test.ts › answers 503 with the database down when the database refuses a read, and 200 once it answers`, `› answers 503 with the database write down when the database refuses a write, and 200 once it takes one`, `› answers 503 with blob storage down when the disk store refuses, and 200 once it answers`, `› answers 200 and degraded while the write is refused, and ok once the lock is released`.
 
-### `instance/health-down-503`
+### `instance/health-down-unavailable`
 
 When any component is `down`, the server MUST answer `GET /health` with `503`.
 
@@ -1236,7 +1236,7 @@ When any component is `down`, the server MUST answer `GET /health` with `503`.
 
 **Tests:** `compliance/health.test.ts › answers 503 with the database down when the database refuses a read, and 200 once it answers`, `› answers 503 with the database write down when the database refuses a write, and 200 once it takes one`, `› answers 503 with blob storage down when the disk store refuses, and 200 once it answers`.
 
-### `instance/health-not-down-200`
+### `instance/health-not-down-ok`
 
 When no component is `down`, the server MUST answer `GET /health` with `200`, whether the overall `status` is `ok` or `degraded`.
 
@@ -1472,7 +1472,7 @@ When the server refuses to start on a database under `instance/upgrade-refuses-s
 
 **Tests:** `compliance/database-file.test.ts › says in its refusal to export with the build that wrote the file, start on a fresh file and restore the archive there, and that the restore can refuse`.
 
-### `instance/upgrade-exit-78`
+### `instance/upgrade-exit-refusal`
 
 If the server refuses to start on a database under `instance/upgrade-refuses-schema`, `instance/upgrade-refuses-newer` or `instance/upgrade-keeps-references`, then the server MUST exit with status 78.
 
@@ -1480,7 +1480,7 @@ If the server refuses to start on a database under `instance/upgrade-refuses-sch
 
 **Tests:** `compliance/database-file.test.ts › exits with status 78, not 1, when it refuses a database this build did not write`, `› refuses a database that lacks a table and holds a row in one it creates, and changes nothing`, `› refuses a database that lacks a table and has a column it does not declare, though it holds no rows`, `› refuses to start on a database a newer build wrote, and leaves it as it was`.
 
-### `instance/upgrade-exit-1`
+### `instance/upgrade-exit-failure`
 
 If the server stops for a failure to start that is not a refusal under `instance/upgrade-refuses-schema`, `instance/upgrade-refuses-newer` or `instance/upgrade-keeps-references`, then the server MUST exit with status 1.
 
@@ -1556,7 +1556,7 @@ When the server is stopped, the server MUST let the bulk action, the housekeepin
 
 **Tests:** `compliance/stop-waits-for-work.test.ts › lets the bulk action and the housekeeping run finish before the storage closes, and exits 0`, `compliance/stop-webhook.test.ts › records a webhook delivery released by shutdown before closing storage`.
 
-### `instance/stop-exit-0`
+### `instance/stop-exit-clean`
 
 When the server is stopped on `SIGTERM` or `SIGINT` and the server and its storage have closed, the server MUST exit with status 0.
 
@@ -1564,7 +1564,7 @@ When the server is stopped on `SIGTERM` or `SIGINT` and the server and its stora
 
 **Tests:** `compliance/instance-lifecycle.test.ts › exits with status 0 within eight seconds when stopped on %s`, `› exits with status 0 within eight seconds when stopped with an event stream open`.
 
-### `instance/stop-within-eight`
+### `instance/stop-exits-in-time`
 
 When the server is stopped on `SIGTERM` or `SIGINT`, the server MUST exit within eight seconds of the signal.
 
@@ -1572,7 +1572,7 @@ When the server is stopped on `SIGTERM` or `SIGINT`, the server MUST exit within
 
 **Tests:** `compliance/instance-lifecycle.test.ts › exits with status 0 within eight seconds when stopped on %s`, `› exits with status 0 within eight seconds when stopped with an event stream open`, `compliance/stream-shutdown.test.ts › ends the stream with stream_incomplete and server_stopping, closes it, and stops within ten seconds`.
 
-### `instance/stop-exit-1-open-request`
+### `instance/stop-exit-failed-open-request`
 
 If a request that was open at the signal is still open when the server's wait for requests ends, then the server MUST exit with status 1.
 
@@ -1580,7 +1580,7 @@ If a request that was open at the signal is still open when the server's wait fo
 
 **Tests:** `compliance/instance-lifecycle.test.ts › exits with status 1, not 0, when a request in flight is still open at the end of the stop's wait`.
 
-### `instance/stop-slow-run-exit-0`
+### `instance/stop-slow-run-exit-clean`
 
 If a bulk action or a housekeeping run outlives the stop's wait for it while the server and its storage close within theirs, then the server MUST exit with status 0.
 
@@ -1650,7 +1650,7 @@ If the public listener reads a request body whole, other than one sent to `POST 
 
 **Tests:** `compliance/public-body.test.ts › is answered 408 request_timeout with the connection closed when it has not arrived by the deadline, and is taken when it arrives in time`, `› answers 401 unauthorized to a declared body before any of it is sent, when no credential comes with it`.
 
-### `instance/open-door-body-declared`
+### `instance/public-body-declared`
 
 If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/authorize/decision`, `POST /auth/oauth2/token`, `POST /auth/oauth2/revoke`, `POST /auth/device/code`, `POST /auth/device` or `POST /auth/device/consent` declares a body longer than 32768 bytes, then the server MUST answer `413 request_too_large` before it reads any of the body.
 
@@ -1658,7 +1658,7 @@ If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POS
 
 **Tests:** `compliance/public-body.test.ts › answers 413 to a body over 32768 bytes declared to it, before any of it is sent`.
 
-### `instance/open-door-body-streamed`
+### `instance/public-body-streamed`
 
 If a request to `POST /owner`, `POST /setup/exchange`, `POST /setup/claim`, `POST /auth/sign-in`, `POST /auth/passkeys/sign-in/options`, `POST /auth/passkeys/sign-in`, `POST /auth/authorize/decision`, `POST /auth/oauth2/token`, `POST /auth/oauth2/revoke`, `POST /auth/device/code`, `POST /auth/device` or `POST /auth/device/consent` sends more than 32768 bytes of body without declaring its length, then the server MUST answer `413 request_too_large`.
 

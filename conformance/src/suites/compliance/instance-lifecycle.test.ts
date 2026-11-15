@@ -33,7 +33,7 @@ import {
  * run's shared server answers none of that.
  */
 
-/** The longest a stop may take, by the contract (`instance/stop-within-eight`). */
+/** The longest a stop may take, by the contract (`instance/stop-exits-in-time`). */
 const STOP_WITHIN_MS = 8_000;
 
 const NOTE = "core.note";
@@ -448,7 +448,7 @@ async function refusedOverSettings(
   });
   try {
     // Exit status 1, as for any failure to start that is not a refused database
-    // (`instance/upgrade-exit-1`), before anything was opened or listened on.
+    // (`instance/upgrade-exit-failure`), before anything was opened or listened on.
     expect(refused).toMatchObject({ code: 1, signal: null });
     expect(refused.after).toEqual({
       db: "absent",

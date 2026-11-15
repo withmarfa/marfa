@@ -386,13 +386,13 @@ When `type` is a comma-separated list, the server MUST send the events of every 
 
 **Tests:** `sync/replay.test.ts › takes a list of types as their union, up to ten entries and not eleven`.
 
-### `events/type-list-ten`
+### `events/type-list-within-limit`
 
 When `type` holds at most ten entries, blank entries not counted, the server MUST NOT refuse it for the number of entries.
 
 **Tests:** `sync/replay.test.ts › takes a list of types as their union, up to ten entries and not eleven`.
 
-### `events/type-list-eleven`
+### `events/type-list-over-limit`
 
 If `type` holds more than ten entries, blank entries not counted, then the server MUST answer `400 validation_error`.
 
@@ -1406,19 +1406,19 @@ If a receiver that has accepted the connection has not answered an attempt 10 se
 
 **Tests:** `compliance/webhook-attempts.test.ts › ends an attempt the receiver has not answered 10 seconds after it started, and takes one answered within it`.
 
-### `events/retry-5xx`
+### `events/retry-server-error`
 
 When a receiver answers an attempt before the last of its cycle with a `5xx` status, the server MUST leave the delivery `pending` and attempt it again with the same `delivery_id` and `event_id`.
 
 **Tests:** `compliance/webhook-delivery.test.ts › leaves a delivery pending after a 500 and retries it with the same ids`, `› clears the error a failed attempt recorded when a later attempt succeeds`.
 
-### `events/retry-408-429`
+### `events/retry-timeout-or-rate-limit`
 
 When a receiver answers an attempt before the last of its cycle with `408` or `429`, the server MUST leave the delivery `pending` and attempt it again.
 
 **Tests:** `compliance/webhook-delivery.test.ts › retries a 408 and a 429, and gives up at once on any other 4xx answer`.
 
-### `events/retry-4xx-gives-up`
+### `events/client-error-gives-up`
 
 When a receiver answers a delivery with a `4xx` status other than `408` and `429`, the server MUST give up at once and record the delivery `dead_letter` at that attempt.
 

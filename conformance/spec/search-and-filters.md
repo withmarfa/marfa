@@ -14,7 +14,7 @@ When a request carries a query key that its operation does not declare, the serv
 
 **Tests:** `compliance/declared-refusals.test.ts › is refused 400 and named on every published door, the event stream included`, `› names a misspelled key on the event stream rather than opening it unfiltered`, `sync/time-filters.test.ts › honors the item listing's own-time bound and refuses a name it does not declare`, `correctness/edges/edges-list.test.ts › refuses an unknown query key and an unknown edge id`, `compliance/audit.test.ts › refuses an undeclared bound rather than answering the whole trail`, `compliance/connectors.test.ts › refuses a query key the runs listing does not declare`, `compliance/inbound-webhooks.test.ts › refuses a query key the listing does not declare, rather than answering unfiltered`, `compliance/item-stats.test.ts › refuses a query key it does not declare, naming it`, `compliance/envelope.test.ts › refuses an offset query key`.
 
-### `search-and-filters/undeclared-key-401`
+### `search-and-filters/undeclared-key-no-credential`
 
 If a request to an operation that takes a credential carries an undeclared query key and no credential, then the server MUST answer `401`.
 
@@ -22,7 +22,7 @@ If a request to an operation that takes a credential carries an undeclared query
 
 **Tests:** `compliance/declared-refusals.test.ts › is refused after the credential, so a bare request still answers 401`.
 
-### `search-and-filters/undeclared-key-403`
+### `search-and-filters/undeclared-key-turned-away`
 
 If a credential that the operation's standing rule turns away sends an undeclared query key, then the server MUST answer the `403` it answers without the key.
 
@@ -490,7 +490,7 @@ When `GET /items` names a `type` in the `system.` namespace, the server MUST lis
 
 `GET /items`, `GET /items/stats` and `GET /search` take a `filter` expression, `POST /items/bulk-actions` takes one inside its filter, and a view and a folder take one as `query.filter`. An expression is one or more conditions, `<field> <operator> <value>`, with no value after `exists` and `not_exists` (`search-and-filters/filter-malformed`). Numbers on properties are `search-and-filters/filter-numeric`, times on properties are `search-and-filters/filter-property-instant`, times are `search-and-filters/filter-time-instant`, and the escapes in a string are `search-and-filters/filter-string-escapes`. An edge term is also `edges.md`'s (`edges/filter-edge-full`, `edges/filter-term-hidden`).
 
-### `search-and-filters/filter-doors`
+### `search-and-filters/filter-one-grammar`
 
 The server MUST hold the `filter` of `GET /items`, `GET /items/stats` and `GET /search`, the `filter` inside the filter of `POST /items/bulk-actions`, and a view's and a folder's `query.filter` to one grammar, except that a folder's `query.filter` refuses every `backref` condition (`items/folder-setting-followable`).
 
@@ -778,7 +778,7 @@ When `GET /items` or `GET /items/stats` carries a `filter` and an `edge[<edge ty
 
 If a `filter` at a door that takes one joins conditions with both `AND` and `OR`, then the server MUST answer `400 validation_error`.
 
-**Reason:** the grammar has no parenthesis, so a mixed expression has no single meaning, at any of the doors `search-and-filters/filter-doors` names.
+**Reason:** the grammar has no parenthesis, so a mixed expression has no single meaning, at any of the doors `search-and-filters/filter-one-grammar` names.
 
 **Tests:** `compliance/validation.test.ts › refuses a filter that mixes AND with OR, on the listing and the search`, `compliance/filter-grammar.test.ts › refuses %s at each door with validation_error`.
 
@@ -1832,7 +1832,7 @@ When the items of a page fill it exactly and it holds the last item, the server 
 
 ## Export
 
-`GET /export` admits a credential and answers the items that caller may read and the edges between them, as NDJSON or as an archive that `POST /restore` reads. Management permissions alone grant no content access (`blobs/export-operator-refused`).
+`GET /export` admits a credential and answers the items that caller may read and the edges between them, as NDJSON or as an archive that `POST /restore` reads. Management permissions alone grant no content access (`blobs/export-blobs-manage-no-map-refused`).
 
 ### `search-and-filters/export-lines`
 

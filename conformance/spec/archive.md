@@ -584,7 +584,7 @@ When the server writes an archive export, the server MUST NOT include `marfa.sec
 
 `POST /restore` takes an archive that `GET /export?format=archive` wrote, with local authority, and answers counts of what it wrote and skipped.
 
-### `archive/restore-operator`
+### `archive/restore-working-key-refused`
 
 If a working key sends `POST /restore`, then the server MUST answer `403 forbidden`.
 

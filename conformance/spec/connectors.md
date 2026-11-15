@@ -44,7 +44,7 @@ If `POST /connectors` names a `description` of more than 2000 characters, then t
 
 **Tests:** `compliance/connectors.test.ts › refuses a name or a description outside the bounds`, `compliance/connector-codes.test.ts › leaves nothing behind when local authority, a name or a description is refused`.
 
-### `connectors/register-operator-refused`
+### `connectors/register-local-refused`
 
 If local authority sends `POST /connectors`, then the server MUST answer `403 forbidden`.
 
@@ -206,7 +206,7 @@ When an ordinary key lacking `connectors.manage` sends `GET /connectors`, the se
 
 **Tests:** `compliance/connectors.test.ts › keeps registrations and runs to the own key or manager`.
 
-### `connectors/list-operator`
+### `connectors/list-connectors-manage-or-local`
 
 When a caller authorized by `connectors.manage` or local authority sends `GET /connectors`, the server MUST list every registration.
 
@@ -564,7 +564,7 @@ When the server records a run, the server MUST NOT record an audit entry for it.
 
 **Tests:** `compliance/connectors.test.ts › audits every registration and a removal, not a heartbeat or a run`.
 
-### `connectors/runs-own-or-operator`
+### `connectors/runs-own-key-manage-or-local`
 
 When the connector's own key or a caller authorized by `connectors.manage` or local authority sends `GET /connectors/{id}/runs`, the server MUST list the runs of that registration.
 
@@ -602,7 +602,7 @@ If `GET /connectors/{id}/runs` names a query key the operation does not declare,
 
 **Tests:** `compliance/connectors.test.ts › refuses a query key the runs listing does not declare`.
 
-### `connectors/runs-keep-hundred`
+### `connectors/runs-capped-drop-earliest`
 
 When a registration has 100 runs and a run is reported, the server MUST drop the run reported earliest.
 
@@ -928,7 +928,7 @@ When the connector's own key or a caller authorized by `connectors.manage` or lo
 
 **Tests:** `compliance/connector-state.test.ts › clears the state and the agreements for the own key or the manager, and audits it`, `› hands the state and the agreements to the next key with the same source`.
 
-### `connectors/clear-operator-whole-source`
+### `connectors/clear-manage-or-local-whole-source`
 
 When a caller authorized by `connectors.manage` or local authority clears through any registration of a source, a registration whose key was revoked included, the server MUST remove the whole store of that source, a successor's live state among it.
 
@@ -1312,7 +1312,7 @@ If a request to an operation under `/connectors` carries no credential and a bod
 
 **Tests:** `compliance/connector-check-order.test.ts › answers a missing credential 401 before a body the door would refuse`, `› answers a declared body over the cap 413 before a missing credential's 401, and a missing credential 401 before a body nested too deep`, `compliance/unauthenticated.test.ts › answers 401 unauthorized on each of them`.
 
-### `connectors/order-operator-before-body`
+### `connectors/register-local-refused-before-body`
 
 If local authority sends `POST /connectors` with a body the operation would refuse, then the server MUST answer `403 forbidden`.
 

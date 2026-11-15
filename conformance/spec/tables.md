@@ -924,7 +924,7 @@ If a `cursor` follows a row whose sort value is a text of more than 128 bytes in
 
 ### `tables/rows-filter`
 
-When `GET /items/{id}/tables/{table}/rows` or `GET /items/{id}/tables/{table}/totals` names a `filter`, the server MUST select the rows it selects under the grammar of `search-and-filters/filter-doors`, reading `values.<column>` as a column and `id` and `updated_at` as the row's own, and bounding a value by a number only on a number as `search-and-filters/filter-range-numbers` says.
+When `GET /items/{id}/tables/{table}/rows` or `GET /items/{id}/tables/{table}/totals` names a `filter`, the server MUST select the rows it selects under the grammar of `search-and-filters/filter-one-grammar`, reading `values.<column>` as a column and `id` and `updated_at` as the row's own, and bounding a value by a number only on a number as `search-and-filters/filter-range-numbers` says.
 
 **Reason:** a client that filters items filters rows with the same expressions.
 
@@ -1454,7 +1454,7 @@ While a type is unregistered, the server MUST answer `GET /items/{id}/tables` fo
 
 **Tests:** `compliance/table-rows-lifecycle.test.ts › keeps the rows of an item whose type a forced delete removed, answering no table until the type is registered again`.
 
-### `tables/orphan-rows-doors`
+### `tables/orphan-table-operations`
 
 While a type is unregistered, the server MUST answer each door under `/items/{id}/tables/{table}` for an item of it with `404 table_not_found`.
 

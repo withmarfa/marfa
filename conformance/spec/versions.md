@@ -24,7 +24,7 @@ If the server refuses `PATCH /items/{id}`, then the server MUST NOT write a snap
 
 **Tests:** `compliance/version-order.test.ts › leaves it after an update refused invalid_properties at the item's version, and writes a snapshot for the same update once valid`, `› leaves it after a stale update refused version_conflict, and writes a snapshot for a stale update that merges`.
 
-### `versions/create-version-one`
+### `versions/create-first-version`
 
 When `POST /items` or an entry of `POST /items/bulk` creates an item, the server MUST give it `version` 1.
 
@@ -364,7 +364,7 @@ When `GET /export?format=archive` carries an item, the server MUST carry the `wr
 
 When `POST /restore` writes an archived item, the server MUST keep as writers the ones the archive names for each snapshot and for the current version, and `null` where it names none.
 
-**Reason:** a restore puts back a history that others wrote, so the sign-in that restores it wrote none of it. Only the local command restores (`archive/restore-operator`), and the server checks an archived writer's form, not that the sign-in it names wrote the version.
+**Reason:** a restore puts back a history that others wrote, so the sign-in that restores it wrote none of it. Only the local command restores (`archive/restore-working-key-refused`), and the server checks an archived writer's form, not that the sign-in it names wrote the version.
 
 **Tests:** `compliance/version-writers-archive.test.ts › carries each writer through an archive, the current version's too, and keeps them on restore`, `› restores an archive that names no writer with none`.
 

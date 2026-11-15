@@ -26,13 +26,13 @@ If a `GET` or `DELETE` request reaches an MCP endpoint, then the server MUST ans
 
 ## Protocol revisions
 
-### `mcp/revision-2026-07-28`
+### `mcp/stateless-revision-no-initialize`
 
 When a client of MCP revision 2026-07-28 calls `/mcp`, the server MUST serve its discovery and its tool calls without an `initialize` handshake.
 
 **Tests:** `compliance/mcp.test.ts › serves a client of revision 2026-07-28 without an initialize handshake`.
 
-### `mcp/revision-2025-11-25`
+### `mcp/initialize-revision-same-tools`
 
 When a client of MCP revision 2025-11-25 opens with `initialize`, the server MUST serve it the tools it serves a client of revision 2026-07-28 with the same credential.
 

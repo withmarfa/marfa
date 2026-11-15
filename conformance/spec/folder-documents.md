@@ -2130,13 +2130,13 @@ When an embed path leads outside the folder, a device MUST NOT read or write the
 
 **Tests:** `device/folders-frontmatter.test.ts › reports an embed pointing outside the folder`.
 
-### `folder-documents/embed-two-paths`
+### `folder-documents/embed-several-paths`
 
 When one attachment is embedded at different paths, a device MUST write it at the first path in path order.
 
 **Tests:** `device/folders-frontmatter.test.ts › writes an item embedded at two paths at the first, and reports the other`.
 
-### `folder-documents/embed-two-paths-report`
+### `folder-documents/embed-several-paths-report`
 
 When one attachment is embedded at different paths, a device MUST report each embed naming another path.
 

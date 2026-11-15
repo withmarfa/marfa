@@ -90,7 +90,7 @@ When a drain sends a create on its own door whose caller named tags, a device MU
 
 **Tests:** `device/queue.test.ts › queues an edge, a tag and an extension as writes of their own`.
 
-### `queue-and-verdicts/door-answer-read`
+### `queue-and-verdicts/own-operation-success-read`
 
 When the server answers a write with the success its own operation gives, whether an item, an edge, the tags or extensions it changed, `{"ok": true}` or the hash of the bytes an upload sent, a device MUST give the write a verdict without counting a refusal against it.
 
@@ -260,7 +260,7 @@ If the server refuses the read that writes a page created owe, other than by an 
 
 A `write_rows` write is one batch an app made for one table of one item (`device.md`, "Writing a table on a device"). A drain sends it on the table's row door under its key, together with the writes to the same table queued straight after it, so the edits a person made offline land in few requests. The server writes all of a batch or none of it (`tables/rows-all-or-none`), so a drain answers each write of a batch on its own. The fixtures run the device in `device/table-writes-live.test.ts`.
 
-### `queue-and-verdicts/rows-door`
+### `queue-and-verdicts/rows-write-sent`
 
 When a drain sends a `write_rows` write, a device MUST send its operations as `POST /items/{id}/tables/{table}/rows` under the idempotency key of the first write of the batch it goes in.
 
@@ -492,7 +492,7 @@ When the server answers a batch `409 instance_changed`, a device MUST take every
 
 **Tests:** `device/table-writes-live.test.ts › marks every write of a batch another instance answers unsent and out of the batch, and sends them together again`.
 
-### `queue-and-verdicts/undo-door`
+### `queue-and-verdicts/undo-write-sent`
 
 When a drain sends an `undo_rows` write, a device MUST send it as `POST /items/{id}/tables/{table}/batches/{batch}/undo` under its idempotency key, in no batch with another write.
 
@@ -880,7 +880,7 @@ When the server answers a write in a drain with `Retry-After`, or answers a read
 
 Every write the server answers, and every write a drain settles without sending, carries one verdict from a closed set. What a device does not do on meeting one is `device/conflict-blocked`.
 
-### `queue-and-verdicts/verdicts-six`
+### `queue-and-verdicts/verdicts-closed`
 
 A device MUST give every write it settles exactly one of the verdicts `accepted`, `merged`, `conflicted`, `refused`, `blocked` and `dead`, and no other.
 
@@ -1088,7 +1088,7 @@ When a drain refuses a write without sending it, a device MUST report the refusa
 
 **Tests:** `device/verdicts.test.ts › refuses the writes that were waiting on a create the server refused`.
 
-### `queue-and-verdicts/blocked-reasons-five`
+### `queue-and-verdicts/blocked-reasons-closed`
 
 A device MUST give a `blocked` write exactly one of the eight reasons `credential_refused`, `key_spent`, `ancestor_unavailable`, `conflict_unresolved`, `awaiting_dependency`, `failing_alone`, `instance_changed` and `record_unread`, and no other.
 
@@ -1126,7 +1126,7 @@ When a write is blocked, a device MUST keep it laid over the item or edge it nam
 
 **Tests:** `device/classification.test.ts › withdraws a write blocked ancestor_unavailable or conflict_unresolved, and puts the item back as the server holds it`.
 
-### `queue-and-verdicts/ceiling-five`
+### `queue-and-verdicts/refusal-ceiling-dead`
 
 When a fifth refusal is counted against a write, a device MUST give it the verdict `dead`.
 
@@ -1758,7 +1758,7 @@ When a caller releases writes, a device MUST lay each of them back over the copy
 
 **Tests:** `device/waiting-projections.test.ts › sends an unsent dependent edit after release in %s order`, `› keeps a %s edit visible after a newer server item arrives`.
 
-### `queue-and-verdicts/withdraw-two-reasons`
+### `queue-and-verdicts/withdraw-refused-reasons`
 
 When a caller withdraws a write that is not `dead` and not `blocked` `ancestor_unavailable`, `conflict_unresolved`, `failing_alone`, `instance_changed` or `record_unread`, a device MUST answer that it withdrew no write, changing nothing.
 
@@ -2114,7 +2114,7 @@ An edit is queued against the version the copy holds, and an edit waiting in the
 
 ### `queue-and-verdicts/own-create-edit-on-answer`
 
-When this device's create of an item or an edge is answered, a device MUST send each later unsent edit of it based on version 0 on the version the answer names, but where `queue-and-verdicts/create-merged-over`, `queue-and-verdicts/create-repeat-edit-on-one` or `queue-and-verdicts/page-create-edit-on-one` says otherwise.
+When this device's create of an item or an edge is answered, a device MUST send each later unsent edit of it based on version 0 on the version the answer names, but where `queue-and-verdicts/create-merged-over`, `queue-and-verdicts/create-repeat-edit-rebased` or `queue-and-verdicts/page-create-edit-rebased` says otherwise.
 
 **Reason:** an item or edge of this device's own unanswered create is at version 0, which the server never mints (`versions/create-claim-none`), so sent as it stands the edit names a snapshot no server holds and is blocked `ancestor_unavailable`.
 
@@ -2136,7 +2136,7 @@ When a create carrying a version above 0 is answered more than one version past 
 
 **Tests:** `device/queue.test.ts › sends an edit of its own create on the answer where the server applied it over another device's write that left what the edit changed alone`.
 
-### `queue-and-verdicts/create-repeat-edit-on-one`
+### `queue-and-verdicts/create-repeat-edit-rebased`
 
 When the server answers this device's create of an item or an edge as a repeat it had already taken, a device MUST send each later unsent edit of it based on version 0 on version 1.
 
@@ -2144,7 +2144,7 @@ When the server answers this device's create of an item or an edge as a repeat i
 
 **Tests:** `device/queue.test.ts › sends an edit of its own create on the version that create made where the server answers a repeat of it`.
 
-### `queue-and-verdicts/page-create-edit-on-one`
+### `queue-and-verdicts/page-create-edit-rebased`
 
 When a create a page made is settled on a read that finds the item or edge past version 1, a device MUST send each later unsent edit of it based on version 0 on version 1, unless the read finds an item holding, for every property the edit changed, what the copy held when the edit was made.
 
@@ -2440,7 +2440,7 @@ If the read of the item a create landed on meets an environmental failure, then 
 
 **Tests:** `device/queue.test.ts › reads the item a create landed on again after a failure that clears on its own`.
 
-### `queue-and-verdicts/landed-read-401-expires`
+### `queue-and-verdicts/landed-read-contract-expires`
 
 If the server answers the read of the item a create landed on `401` naming its contract, then a device MUST expire the copy, keeping the create's verdict and every other queued write as they were.
 

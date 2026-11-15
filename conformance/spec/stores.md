@@ -42,7 +42,7 @@ When a caller authorized by `instance.read` or local authority sends `GET /blobs
 
 **Tests:** `compliance/blob-stores.test.ts › lists each store with the time it was first attached`, `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
-### `stores/list-operator-only`
+### `stores/list-needs-instance-read`
 
 When a key or app token lacking `instance.read` sends `GET /blobs/stores`, the server MUST answer `403 forbidden`.
 
@@ -480,13 +480,13 @@ If a caller authorized by `blobs.manage` or local authority sends `DELETE /blobs
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `compliance/blob-store-folders.test.ts › keeps one store through a folder that holds its marker, and detaches it for a fresh folder`.
 
-### `stores/drop-operator-only`
+### `stores/drop-needs-blobs-manage`
 
 If a key or app token lacking `blobs.manage` sends `DELETE /blobs/{hash}/copies/{store}`, then the server MUST answer `403 forbidden`.
 
 **Tests:** `compliance/blob-rules.test.ts › drops a copy while the minimum holds and refuses the drop that would break it`, `› answers the drop door's refusals in their order`, `compliance/blob-store-settings.test.ts › is refused the management operations on the stores, the report and the jobs, and the copy stays`, `compliance/key-management.test.ts › refuses a key that may not use a door 403 before it reads the request`, `compliance/management-grants.test.ts › blobs.manage grants unreferenced bytes to keys and apps while preserving copy and restore boundaries`.
 
-### `stores/drop-operator-refused-keeps`
+### `stores/drop-refused-keeps-copy`
 
 When the server refuses a drop to a key or app token lacking `blobs.manage`, the server MUST keep the copy.
 
@@ -684,7 +684,7 @@ When a caller authorized by `instance.read` or local authority sends `GET /blobs
 
 **Tests:** `compliance/blob-store-settings.test.ts › lists the orphan report oldest first`.
 
-### `stores/orphan-operator-only`
+### `stores/orphans-need-instance-read`
 
 When a key or app token lacking `instance.read` sends `GET /blobs/orphans`, the server MUST answer `403 forbidden`.
 

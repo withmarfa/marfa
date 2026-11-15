@@ -2020,7 +2020,7 @@ When a local search names a type or tags, a device MUST narrow it as a local lis
 
 ### `device/filter-as-server`
 
-When a local list or a local search names a filter the server's listing grammar takes (`search-and-filters/filter-doors`), a device MUST answer the items the server answers from the same items, except that it refuses a `backref` condition on an edge type the copy does not hold whole (`device/filter-backref`).
+When a local list or a local search names a filter the server's listing grammar takes (`search-and-filters/filter-one-grammar`), a device MUST answer the items the server answers from the same items, except that it refuses a `backref` condition on an edge type the copy does not hold whole (`device/filter-backref`).
 
 **Reason:** a copy that answered one expression otherwise than the server would show one set of items offline and another online for the same question.
 
@@ -2562,7 +2562,7 @@ If the bytes of a queued upload are beside the store but cannot be opened when a
 
 **Tests:** `device/queue.test.ts › leaves an upload whose held bytes cannot be opened unanswered, and says why`.
 
-### `device/attach-three-writes`
+### `device/attach-upload-file-edge`
 
 When a device attaches a file to an item, a device MUST queue an upload, a file item naming the bytes, and an `attached-to` edge from the file item to the item.
 
@@ -4686,7 +4686,7 @@ If the read that follows a write's answer fails, then a device MUST keep the ver
 
 ## Saving before a first sync
 
-### `device/save-before-sync`
+### `device/save-before-hydration`
 
 While its copy has never hydrated, a device MUST take a write, checked against the types the copy holds.
 
@@ -4694,25 +4694,25 @@ While its copy has never hydrated, a device MUST take a write, checked against t
 
 **Tests:** `device/save-before-sync.test.ts › saves a note against the types Marfa ships, shows it to a read, and queues it`.
 
-### `device/save-before-sync-queued`
+### `device/save-before-hydration-queued`
 
 While its copy has never hydrated, a device MUST queue each write it takes.
 
 **Tests:** `device/save-before-sync.test.ts › saves a note against the types Marfa ships, shows it to a read, and queues it`.
 
-### `device/save-before-sync-shown`
+### `device/save-before-hydration-shown`
 
 While its copy has never hydrated, a device MUST show a write it takes to a local read at once.
 
 **Tests:** `device/save-before-sync.test.ts › saves a note against the types Marfa ships, shows it to a read, and queues it`, `device/working-copy.test.ts › answers a read before any hydration from what the copy holds`.
 
-### `device/save-before-sync-library`
+### `device/save-before-hydration-library`
 
 While its copy has never hydrated, a device MUST hold a create that names no tier at the tier `library`.
 
 **Tests:** `device/save-before-sync.test.ts › saves a note against the types Marfa ships, shows it to a read, and queues it`, `device/save-before-sync-live.test.ts › sends what it saved with no server once it has joined, after registering the type the key may`.
 
-### `device/save-before-sync-joins`
+### `device/save-before-hydration-joins`
 
 When a copy that has never hydrated hydrates against a server, a device MUST keep its queue so the first drain sends it.
 
@@ -6938,7 +6938,7 @@ When a device refuses a write to a `system.*` item `type_not_permitted`, a devic
 
 **Tests:** `device/local-refusals.test.ts › refuses an item write to a system item on every door, before it saves or queues anything`.
 
-### `device/system-folder-door`
+### `device/system-folder-refusal-message`
 
 When a device refuses a write to a `system.folder` item `type_not_permitted`, a device MUST name the folder operations in the refusal's message.
 

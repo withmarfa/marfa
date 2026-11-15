@@ -38,7 +38,7 @@ When a caller authorized by `instance.read` or local authority sends `GET /house
 
 **Tests:** `compliance/housekeeping.test.ts › lists the housekeeping jobs to the management key`, `compliance/management-grants.test.ts › instance.read grants reports to keys and apps without granting maintenance`.
 
-### `housekeeping/list-operator-only`
+### `housekeeping/list-needs-instance-read`
 
 When a key or app token lacking `instance.read` sends `GET /housekeeping`, the server MUST answer `403 forbidden`.
 
@@ -140,7 +140,7 @@ When a caller authorized by `instance.maintain` or local authority asks to run a
 
 **Tests:** `compliance/housekeeping.test.ts › refuses a malformed name and a working key`.
 
-### `housekeeping/run-operator-only`
+### `housekeeping/run-needs-instance-maintain`
 
 When a key or app token lacking `instance.maintain` asks to run a housekeeping job, the server MUST answer `403 forbidden`.
 
@@ -624,7 +624,7 @@ When the `feed-expiry` job moves items to the bin, the server MUST record an aud
 
 **Tests:** `compliance/housekeeping-feed-expiry.test.ts › records an audit entry naming the type and the items it moved`.
 
-### `housekeeping/feed-expiry-promoted`
+### `housekeeping/feed-expiry-keeps-library-item`
 
 When the `feed-expiry` job moves a feed item to the bin, the server MUST leave a library item linked to it by a `derived-from` edge active and unchanged.
 
