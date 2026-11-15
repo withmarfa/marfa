@@ -64,7 +64,7 @@ Each job is named as GitHub shows it.
 7. **Collect the release:** writes the three archives' checksums to `marfa-<version>-checksums.txt`, writes the Homebrew formula from them, and holds the release to six files: the three archives, the checksums and the two npm tarballs.
 8. **Build the server image (linux/amd64)** and **(linux/arm64):** `deploy/Dockerfile` around the Linux archives' own programs, checked with `scripts/check-image.sh`. A tag run pushes each platform to `ghcr.io/withmarfa/marfa-server` by digest, untagged, and boots the pushed digest.
 9. **Prove the install (darwin-arm64)**, **(linux-x86_64)** and **(linux-aarch64):** `scripts/release/install-proof.sh` installs through `scripts/install.sh` from the run's own files, behind HTTPS, claims the server, and runs it to uninstall. The modes are a user service on the Mac and on aarch64 Linux, and a root install and Docker on x86_64 Linux.
-10. **Publish,** for a tag only: requires an npm that publishes by trusted publishing and npm's trust for this run; drafts the GitHub release for this commit (`--target`) with the six files and notes made of `scripts/release/upgrade-note.md` and the generated list of pull requests; checks the draft's archives against its checksums; tags the image `<version>` and `latest` and pulls it signed out; publishes `@withmarfa/core` and `@withmarfa/client` to npm with provenance; then makes the release public.
+10. **Publish,** for a tag only: requires an npm that publishes by trusted publishing and npm's trust for this run; drafts the GitHub release for this commit (`--target`) with the six files and notes made of `scripts/release/upgrade-note.md` and the generated list of pull requests; checks the draft's archives against its checksums; tags the image `<version>` and `latest`, attests the archives, the checksum file and the image (the index and each platform) with GitHub build provenance, and pulls the image signed out; publishes `@withmarfa/core` and `@withmarfa/client` to npm with provenance; then makes the release public.
 11. **Update the Homebrew tap,** for a tag only: writes `Formula/marfa.rb` for `withmarfa/homebrew-tap`, and pushes it only when the repository variable `HOMEBREW_TAP` is `publish`. Otherwise it writes the formula into the log, says it was not pushed, and passes.
 
 ## Check the release
@@ -80,6 +80,16 @@ Each job is named as GitHub shows it.
    ```bash
    docker buildx imagetools inspect ghcr.io/withmarfa/marfa-server:<version>
    docker buildx imagetools inspect ghcr.io/withmarfa/marfa-server:latest
+   ```
+
+   Both are attested. Verify one archive, the checksum file and the image the way [deploy/README.md](../../../deploy/README.md#verify-a-download) tells a person to, with `--source-ref refs/tags/v<version>`:
+
+   ```bash
+   gh release download v<version> --pattern 'marfa-<version>-*' --dir <empty folder>
+   gh attestation verify <empty folder>/marfa-<version>-linux-x86_64.tar.gz --repo withmarfa/marfa \
+     --signer-workflow withmarfa/marfa/.github/workflows/release.yml --source-ref refs/tags/v<version>
+   gh attestation verify oci://ghcr.io/withmarfa/marfa-server:<version> --repo withmarfa/marfa \
+     --signer-workflow withmarfa/marfa/.github/workflows/release.yml --source-ref refs/tags/v<version>
    ```
 
 3. Both packages are on npm: `npm view @withmarfa/client@<version> version` and `npm view @withmarfa/core@<version> version`.
@@ -101,6 +111,7 @@ Each job is named as GitHub shows it.
   - A new package on ghcr.io is private until a maintainer makes it public in its package settings.
   - A package npm has never published stops the job before anything is published. Its first version is published by hand from the run's artifacts, with a trusted publisher set to this repository, `release.yml` and the environment `release`: that is a maintainer's step, so stop and say so; never publish it yourself.
 - **`Update the Homebrew tap`** fails when `HOMEBREW_TAP` is `publish` and the secret `HOMEBREW_TAP_TOKEN` is missing. Set it, as a secret of the `release` environment (until it is moved there, a repository secret also reaches other workflows), to a fine-grained token with Contents read and write on `withmarfa/homebrew-tap`, then re-run the job. If several releases' tap jobs failed, re-run them oldest first: the job does not refuse to move the formula back to an older version.
+- **A re-run of `Publish`** attests again, which adds attestations and removes none; a file or digest then has more than one, all from this repository's workflow.
 - **A fix that needs a code change** cannot reach a tag that already ran. `Read the version` refuses the next version while this one is tagged and not released, so stop and bring it to a maintainer.
 
 ## Never

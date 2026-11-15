@@ -16,6 +16,19 @@ curl -fsSL https://raw.githubusercontent.com/withmarfa/marfa/main/scripts/instal
 
 The two programs must be the same release. `marfa` finds `marfa-server` only beside itself.
 
+## Verify a download
+
+Each release has a build attestation for its three archives and its checksum file: a signed statement that the release workflow of this repository built the file from the release's commit. The checksum file comes from the same release as the archives, so it shows that a download is intact but not who built it. Verify the archive with the [GitHub CLI](https://cli.github.com/), in the folder that holds it:
+
+```bash
+gh attestation verify marfa-<version>-linux-x86_64.tar.gz \
+  --repo withmarfa/marfa \
+  --signer-workflow withmarfa/marfa/.github/workflows/release.yml \
+  --source-ref refs/tags/v<version>
+```
+
+The command prints the verified attestations, and fails if the file's digest has no attestation from that workflow at that tag. Verify the checksum file, `marfa-<version>-checksums.txt`, the same way. The macOS programs are also signed with a Developer ID and notarized by Apple, and the Linux programs carry no signature of their own.
+
 ## Install the server
 
 ```bash
@@ -142,6 +155,17 @@ docker run --name marfa -d -p 127.0.0.1:8600:8600 -v marfa-data:/data \
 - **Publish another host port, and leave `MARFA_PORT` alone.** The image's health check runs `marfa status` against port 8600 inside the container. For port 9000 on the host, use `-p 127.0.0.1:9000:8600`.
 - **A folder mounted at `/data` must be writable by user 65532 and readable by no other account** (`chown 65532 <folder>` and `chmod 700 <folder>`), or run the container as the folder's owner with `--user`. A named volume works as it is.
 - **Secrets:** on a first start without `MARFA_KEY_SALT` and `MARFA_AUTH_SECRET`, the server makes them and keeps them in `/data/marfa.secrets`, readable by its user alone. Keep that file with the data. A database without its salt is refused.
+
+Each image has a build attestation, stored in the registry beside it, for the version's image index and for the image of each platform. Verify the image before you run it, signed in to `ghcr.io` if the package asks for it:
+
+```bash
+gh attestation verify oci://ghcr.io/withmarfa/marfa-server:<version> \
+  --repo withmarfa/marfa \
+  --signer-workflow withmarfa/marfa/.github/workflows/release.yml \
+  --source-ref refs/tags/v<version>
+```
+
+The command resolves the tag to its digest and verifies that digest. A tag can move, so to run exactly what you verified, read the digest first with `docker buildx imagetools inspect ghcr.io/withmarfa/marfa-server:<version> --format '{{.Manifest.Digest}}'`, verify `oci://ghcr.io/withmarfa/marfa-server@<digest>`, and start the container from `ghcr.io/withmarfa/marfa-server@<digest>`.
 
 The image sets `MARFA_LISTEN_HOST`, `MARFA_PORT`, `MARFA_DATABASE_PATH`, `MARFA_BLOB_PATH` and `MARFA_CONTROL_SOCKET`; [Settings](#settings) gives the values. To pass more settings, use `-e` or `--env-file`.
 

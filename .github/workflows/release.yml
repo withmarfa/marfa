@@ -750,6 +750,7 @@ jobs:
     timeout-minutes: 30
     permissions:
       id-token: write
+      attestations: write
       contents: write
       packages: write
     env:
@@ -904,6 +905,15 @@ jobs:
           cd "$RUNNER_TEMP/held"
           sha256sum -c "marfa-$VERSION-checksums.txt"
 
+      # The files a person downloads, as the draft holds them, and the
+      # checksum file that vouches for the archives. Only a tag reaches this
+      # job, so a dry run attests nothing.
+      - name: Attest the archives and the checksum file
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ runner.temp }}/held/marfa-*
+          create-storage-record: false
+
       - uses: actions/download-artifact@v8
         with:
           pattern: image-digest-${{ needs.version.outputs.version }}-*
@@ -948,6 +958,50 @@ jobs:
             exit 1
           fi
           docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:$VERSION"
+
+      # What a person pulls is the version's index, and what a platform's
+      # machine runs is its image, so the attestation covers the index and each
+      # image the index names. The registry holds them beside the image, which
+      # is why this comes before the sign-out below.
+      - name: Read the digests the image attestations are for
+        id: image
+        run: |
+          index=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{.Manifest.Digest}}')
+          for digest in "$index" "$(cat digests/amd64)" "$(cat digests/arm64)"; do
+            if ! [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::Not an image digest: '$digest'."
+              exit 1
+            fi
+          done
+          {
+            echo "index=$index"
+            echo "amd64=$(cat digests/amd64)"
+            echo "arm64=$(cat digests/arm64)"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Attest the server image index
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.index }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest the linux/amd64 server image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.amd64 }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest the linux/arm64 server image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.image.outputs.arm64 }}
+          push-to-registry: true
+          create-storage-record: false
 
       # Signed out, as a person pulls it, so a private package fails here.
       - name: Check the published server image
