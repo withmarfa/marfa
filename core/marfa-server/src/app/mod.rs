@@ -76,7 +76,7 @@ const READERS: usize = 4;
 
 /// The contract version this build speaks, which `openapi.json` states.
 const BUILT_CONTRACT: u32 = {
-    assert!(marfa_rules::contract::CONTRACT_VERSION <= u32::MAX as u64);
+    assert!(marfa_rules::contract::CONTRACT_VERSION.leading_zeros() >= 32);
     marfa_rules::contract::CONTRACT_VERSION as u32
 };
 
