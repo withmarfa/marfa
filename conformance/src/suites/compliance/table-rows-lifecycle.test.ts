@@ -10,6 +10,8 @@ import {
   FRESH_SERVER_TIMEOUT_MS,
   stopFreshServers,
 } from "../../utils/fresh-server.js";
+import { v7 as uuidv7 } from "uuid";
+import { archiveLines, itemsArchive } from "../../utils/archive.js";
 import { callTool, connectMcp, toolError } from "../../utils/mcp.js";
 import {
   operatorOf,
@@ -20,6 +22,7 @@ import {
 import { everythingClient } from "../../utils/own-blob-server.js";
 import {
   createTestContext,
+  getOwnerClient,
   trackItem,
   trackKey,
   cleanup,
@@ -675,5 +678,252 @@ describe("rows and the life of an item", () => {
     const forced = await client.deleteType(target, true);
     expect(forced.status, JSON.stringify(forced.error)).toBe(200);
     expect((await client.getType(target)).status).toBe(404);
+  });
+
+  it("takes a replacement that tightens a column without force, keeps the values rows hold, and judges a later patch by the columns it names and a later put by the whole row", async () => {
+    const id = typeId("tighten");
+    await register(id, {
+      lines: {
+        columns: {
+          amount: { type: "number" },
+          memo: { type: "string" },
+          size: { type: "enum", enum_values: ["s", "m", "l"] },
+          mail: { type: "string" },
+          floor: { type: "integer" },
+          price: { type: "string" },
+        },
+      },
+    });
+    const item = await itemOf(id);
+    const [full, bare] = (
+      await put(item.id, [
+        {
+          amount: 150,
+          memo: "long memo",
+          size: "l",
+          mail: "xyz",
+          floor: 1,
+          price: "lots",
+        },
+        { amount: 2 },
+      ])
+    ).results.map((result) => result.id);
+    const held = {
+      amount: 150,
+      memo: "long memo",
+      size: "l",
+      mail: "xyz",
+      floor: 1,
+      price: "lots",
+    };
+
+    const tightened = {
+      id,
+      fields: { title: { type: "string" } },
+      tables: {
+        lines: {
+          columns: {
+            amount: { type: "number", maximum: 100 },
+            memo: { type: "string", max_length: 3, required: true },
+            size: { type: "enum", enum_values: ["s", "m"] },
+            mail: { type: "string", max_length: 2 },
+            floor: { type: "integer", minimum: 5 },
+            price: { type: "string", format: "currency" },
+          },
+        },
+      },
+    };
+    const replaced = await client.replaceType(id, tightened);
+    expect(replaced.status, JSON.stringify(replaced.error)).toBe(200);
+    expect((await client.getRow(item.id, "lines", full!)).data.values).toEqual(
+      held,
+    );
+
+    // A patch is judged on the columns it names: one that sends a column
+    // within its rule lands beside held values that break theirs.
+    const patched = await client.writeRows(item.id, "lines", {
+      operations: [{ op: "patch", id: full!, values: { memo: "ok" } }],
+    });
+    expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+    expect((await client.getRow(item.id, "lines", full!)).data.values).toEqual({
+      ...held,
+      memo: "ok",
+    });
+    const unrequired = await client.writeRows(item.id, "lines", {
+      operations: [{ op: "patch", id: bare!, values: { amount: 3 } }],
+    });
+    expect(unrequired.status, JSON.stringify(unrequired.error)).toBe(200);
+
+    // The witness: a patch that sends a value breaking its own column is
+    // refused, so the two patches above were judged and passed.
+    const refused = await client.writeRows(item.id, "lines", {
+      operations: [{ op: "patch", id: full!, values: { memo: "too long" } }],
+    });
+    expect(refused.status).toBe(400);
+    expect(refused.error?.error.code).toBe("validation_error");
+    expect(refused.error?.error.details).toMatchObject({
+      errors: [{ path: "operations.0.values.memo" }],
+    });
+
+    // A format added to a column is a tightening like the others: the held
+    // value stays, and a patch that names the column is judged by it.
+    const priced = await client.writeRows(item.id, "lines", {
+      operations: [{ op: "patch", id: full!, values: { price: "plenty" } }],
+    });
+    expect(priced.status).toBe(400);
+    expect(priced.error?.error.details).toMatchObject({
+      errors: [{ path: "operations.0.values.price" }],
+    });
+    const coded = await client.writeRows(item.id, "lines", {
+      operations: [{ op: "patch", id: full!, values: { price: "GBP" } }],
+    });
+    expect(coded.status, JSON.stringify(coded.error)).toBe(200);
+    expect((await client.getRow(item.id, "lines", full!)).data.values).toEqual({
+      ...held,
+      memo: "ok",
+      price: "GBP",
+    });
+
+    // A put is the whole row: the values it sends again are judged too.
+    const again = await client.writeRows(item.id, "lines", {
+      operations: [
+        { op: "put", id: full!, values: { memo: "ok", amount: 150 } },
+      ],
+    });
+    expect(again.status).toBe(400);
+    expect(again.error?.error.code).toBe("validation_error");
+    expect(again.error?.error.details).toMatchObject({
+      errors: [{ path: "operations.0.values.amount" }],
+    });
+    const missing = await client.writeRows(item.id, "lines", {
+      operations: [{ op: "put", id: bare!, values: { amount: 4 } }],
+    });
+    expect(missing.status).toBe(400);
+    expect(missing.error?.error.details).toMatchObject({
+      errors: [{ path: "operations.0.values.memo" }],
+    });
+    const whole = await client.writeRows(item.id, "lines", {
+      operations: [
+        {
+          op: "put",
+          id: full!,
+          values: { memo: "ok", amount: 50, size: "m", mail: "ab", floor: 1 },
+        },
+      ],
+    });
+    expect(whole.status).toBe(400);
+    expect(whole.error?.error.details).toMatchObject({
+      errors: [{ path: "operations.0.values.floor" }],
+    });
+    const fine = await client.writeRows(item.id, "lines", {
+      operations: [
+        {
+          op: "put",
+          id: full!,
+          values: {
+            memo: "ok",
+            amount: 50,
+            size: "m",
+            mail: "ab",
+            floor: 5,
+          },
+        },
+      ],
+    });
+    expect(fine.status, JSON.stringify(fine.error)).toBe(200);
+  });
+
+  it("answers the batch's time as last_activity_at, and the item's own where the batch changes no row", async () => {
+    const type = await register(typeId("batch-time"));
+    const later = "2099-01-01T00:00:00.000Z";
+    const id = uuidv7();
+    const restored = await getOwnerClient().restoreArchive(
+      itemsArchive([
+        {
+          id,
+          type,
+          source: ctx.source,
+          properties: { title: "Held ahead" },
+          updated_at: later,
+          last_activity_at: later,
+        },
+      ]),
+    );
+    expect(restored.status, JSON.stringify(restored.error)).toBe(200);
+    trackItem(ctx, id);
+    expect((await client.getItem(id)).data.item.last_activity_at).toBe(later);
+
+    const written = await put(id, [{ amount: 1 }]);
+    const row = (await client.getRow(id, "lines", written.results[0]!.id)).data;
+    expect(written.last_activity_at).toBe(row.updated_at);
+    expect(written.last_activity_at < later).toBe(true);
+    expect((await client.getItem(id)).data.item.last_activity_at).toBe(later);
+
+    const unchanged = await client.writeRows(id, "lines", {
+      operations: [
+        { op: "put", id: written.results[0]!.id, values: { amount: 1 } },
+      ],
+    });
+    expect(unchanged.status, JSON.stringify(unchanged.error)).toBe(200);
+    expect(unchanged.data.batch).toBeNull();
+    expect(unchanged.data.last_activity_at).toBe(later);
+  });
+
+  it("keeps the rows of an item whose type a forced delete removed, answering no table until the type is registered again", async () => {
+    const id = typeId("orphan");
+    await register(id);
+    const item = await itemOf(id);
+    const row = (await put(item.id, [{ amount: 1, memo: "kept" }])).results[0]!
+      .id;
+    // The witness: before the delete every door answers.
+    expect((await client.listTables(item.id)).data.data).toHaveLength(1);
+    expect((await client.listRows(item.id, "lines")).status).toBe(200);
+
+    const forced = await client.deleteType(id, true);
+    expect(forced.status, JSON.stringify(forced.error)).toBe(200);
+    const listed = await client.listTables(item.id);
+    expect(listed.status, JSON.stringify(listed.error)).toBe(200);
+    expect(listed.data.data).toEqual([]);
+    const doors = [
+      await client.listRows(item.id, "lines"),
+      await client.getRow(item.id, "lines", row),
+      await client.writeRows(item.id, "lines", {
+        operations: [{ op: "put", values: { amount: 2 } }],
+      }),
+      await client.rawRequest(`/items/${item.id}/tables/lines/totals`),
+      await client.listBatches(item.id, "lines"),
+    ];
+    for (const door of doors) {
+      expect(door.status, JSON.stringify(door.error)).toBe(404);
+      expect(door.error?.error.code).toBe("table_not_found");
+    }
+
+    const archive = (
+      await client.exportArchive({ source: ctx.source, state: "any" })
+    ).data;
+    expect(
+      archiveLines<{ item_id: string; id: string; values: unknown }>(
+        archive,
+        "rows",
+      ).filter((line) => line.item_id === item.id),
+    ).toEqual([
+      expect.objectContaining({
+        item_id: item.id,
+        id: row,
+        values: { amount: 1, memo: "kept" },
+      }),
+    ]);
+
+    const again = await client.registerType({
+      id,
+      fields: { title: { type: "string" } },
+      tables: LINES,
+    } as never);
+    expect(again.status, JSON.stringify(again.error)).toBe(201);
+    expect(
+      (await client.listRows(item.id, "lines")).data.data.map(
+        (held) => held.values,
+      ),
+    ).toEqual([{ amount: 1, memo: "kept" }]);
   });
 });

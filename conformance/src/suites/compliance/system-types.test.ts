@@ -45,6 +45,21 @@ async function narrowClient(label: string): Promise<MarfaClient> {
   return new MarfaClient({ baseUrl: apiUrl, apiKey: resp.data.key });
 }
 
+// The tag, extension, trash and restore doors, each aimed at a `system.*` item.
+async function refuseSideDoors(
+  c: MarfaClient,
+  id: string,
+): Promise<{ status: number; error?: { error: { code: string } } }[]> {
+  return [
+    await c.addTags(id, ["x"]),
+    await c.removeTag(id, "x"),
+    await c.setItemExtension(id, "x", { a: 1 }),
+    await c.deleteItemExtension(id, "x"),
+    await c.trashItems([id]),
+    await c.restoreItem(id),
+  ];
+}
+
 describe("system.* set", () => {
   it("rejects system.* writes from every key the API can mint", async () => {
     const np = await narrowClient("np-system-write");
@@ -88,6 +103,7 @@ describe("system.* set", () => {
         retype: true,
         properties: { title: "x" },
       }),
+      ...(await refuseSideDoors(np, folderId)),
     ];
     for (const r of answers) {
       expect(r.status).toBe(403);
@@ -135,6 +151,7 @@ describe("system.* set", () => {
         retype: true,
         properties: { title: "x" },
       }),
+      ...(await refuseSideDoors(np, viewId)),
     ];
     for (const r of answers) {
       expect(r.status).toBe(403);

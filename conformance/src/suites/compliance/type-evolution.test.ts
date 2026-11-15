@@ -595,6 +595,205 @@ describe("a key whose type map reaches a type evolves it", () => {
     expect(patched.data.item.properties).toEqual({ title: "u", rank: 5 });
   });
 
+  it("takes a replacement that tightens a field without force, leaves the values items hold, and judges a write by the properties it changes", async () => {
+    const ns = namespace("tighten");
+    const id = `${ns}.entry`;
+    const curated = await curator(ns);
+    await register(curated, {
+      id,
+      fields: {
+        title: { type: "string" },
+        owner: { type: "string" },
+        size: { type: "enum", enum_values: ["s", "m", "l"] },
+        note: { type: "string" },
+        qty: { type: "integer" },
+        floor: { type: "integer" },
+        price: { type: "string" },
+      },
+    });
+    const held = {
+      title: "a",
+      owner: "o",
+      size: "l",
+      note: "long note",
+      qty: 50,
+      floor: 1,
+      price: "lots",
+    };
+    const made = async (properties: Record<string, unknown>) => {
+      const res = await client.createItem({ type: id, properties });
+      expect(res.status, JSON.stringify(res.error)).toBe(201);
+      trackItem(ctx, res.data.item.id);
+      return res.data.item.id;
+    };
+    const item = await made(held);
+    const lacking = await made({ title: "b" });
+    for (const [name, note] of [
+      ["strict", { type: "string", max_length: 3 }],
+      ["loose", { type: "string" }],
+    ] as const) {
+      await register(curated, {
+        id: `${id}.${name}`,
+        fields: { title: { type: "string" }, note },
+      });
+    }
+    const write = async (target: string, properties: Record<string, unknown>) =>
+      client.updateItem(target, {
+        version: (await client.getItem(target)).data.item.version,
+        properties,
+      });
+
+    const tightened = await curated.replaceType(id, {
+      fields: {
+        title: { type: "string" },
+        owner: { type: "string", required: true },
+        size: { type: "enum", enum_values: ["s", "m"] },
+        note: { type: "string", max_length: 3 },
+        qty: { type: "integer", maximum: 10 },
+        floor: { type: "integer", minimum: 5 },
+        price: { type: "string", format: "currency" },
+      },
+    });
+    expect(tightened.status, JSON.stringify(tightened.error)).toBe(200);
+    expect((await client.getItem(item)).data.item.properties).toEqual(held);
+
+    // A write is judged on the properties it changes: a title edit lands
+    // beside every held value that breaks its field.
+    const retitled = await write(item, { title: "c" });
+    expect(retitled.status, JSON.stringify(retitled.error)).toBe(200);
+    expect(retitled.data.item.properties).toEqual({ ...held, title: "c" });
+
+    // A value the write names unchanged is not a change.
+    const unchanged = await write(item, { title: "d", note: "long note" });
+    expect(unchanged.status, JSON.stringify(unchanged.error)).toBe(200);
+
+    // A write that sends every property back sends the held ones unchanged,
+    // and a number written another way is the same number.
+    const whole = await write(item, {});
+    const current = whole.data.item;
+    const sentBack = await client.updateItem(item, {
+      version: current.version,
+      properties: { ...current.properties, title: "e" },
+      properties_mode: "replace",
+    });
+    expect(sentBack.status, JSON.stringify(sentBack.error)).toBe(200);
+    expect(sentBack.data.item.properties).toEqual({ ...held, title: "e" });
+    const rewritten = await client.rawRequest<{ item: { version: number } }>(
+      `/items/${item}`,
+      {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: `{"version":${sentBack.data.item.version},"properties":{"title":"f","qty":50.0}}`,
+      },
+    );
+    expect(rewritten.status, JSON.stringify(rewritten.data)).toBe(200);
+
+    // The witness: each field judges a value the write does change.
+    for (const [name, value] of [
+      ["size", "xl"],
+      ["note", "another long note"],
+      ["qty", 60],
+      ["floor", 2],
+      ["price", "plenty"],
+    ] as const) {
+      const refused = await write(item, { [name]: value });
+      expect(refused.status, name).toBe(400);
+      expect(refused.error?.error.code, name).toBe("invalid_properties");
+      expect(refused.error?.error.details, name).toMatchObject({
+        errors: [{ field: name }],
+      });
+    }
+    const brought = await write(item, { qty: 5, floor: 7 });
+    expect(brought.status, JSON.stringify(brought.error)).toBe(200);
+    expect(brought.data.item.properties).toMatchObject({
+      qty: 5,
+      floor: 7,
+      note: "long note",
+    });
+
+    // A move to another type judges every property the item holds.
+    const refusedMove = await client.updateItem(item, {
+      version: (await client.getItem(item)).data.item.version,
+      type: `${id}.strict`,
+      retype: true,
+    });
+    expect(refusedMove.status).toBe(400);
+    expect(refusedMove.error?.error.code).toBe("invalid_properties");
+    expect(refusedMove.error?.error.details).toMatchObject({
+      errors: [{ field: "note" }],
+    });
+    expect((await client.getItem(item)).data.item.type).toBe(id);
+    const moved = await client.updateItem(item, {
+      version: (await client.getItem(item)).data.item.version,
+      type: `${id}.loose`,
+      retype: true,
+    });
+    expect(moved.status, JSON.stringify(moved.error)).toBe(200);
+    expect(moved.data.item.type).toBe(`${id}.loose`);
+
+    // An item lacking a field that is now required is held to it.
+    const missing = await write(lacking, { title: "c" });
+    expect(missing.status).toBe(400);
+    expect(missing.error?.error.details).toMatchObject({
+      errors: [{ field: "owner" }],
+    });
+    const given = await write(lacking, { owner: "o" });
+    expect(given.status, JSON.stringify(given.error)).toBe(200);
+  });
+
+  it("makes the conflicted copy of a stale write that leaves a value its field refuses alone, holding that value", async () => {
+    const ns = namespace("tightencopy");
+    const id = `${ns}.entry`;
+    const curated = await curator(ns);
+    const fields = {
+      title: { type: "string" },
+      body: { type: "string", max_length: 14 },
+      note: { type: "string" },
+    };
+    const merge_policy = { fields: { body: "keep_both_copies" } };
+    await register(curated, { id, fields, merge_policy });
+    const created = await client.createItem({
+      type: id,
+      properties: { title: "a", body: "base", note: "long note" },
+    });
+    expect(created.status, JSON.stringify(created.error)).toBe(201);
+    const { id: item, version } = created.data.item;
+    trackItem(ctx, item);
+
+    const tightened = await curated.replaceType(id, {
+      fields: { ...fields, note: { type: "string", max_length: 3 } },
+      merge_policy,
+    });
+    expect(tightened.status, JSON.stringify(tightened.error)).toBe(200);
+    const first = await client.updateItem(item, {
+      properties: { body: "first writer" },
+      version,
+    });
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+
+    const stale = await client.rawRequest<{
+      conflict_resolution?: { conflicted_copy_id?: string };
+    }>(`/items/${item}?conflict=auto`, {
+      method: "PATCH",
+      body: { properties: { body: "second writer" }, version },
+    });
+    expect(stale.status, JSON.stringify(stale.data)).toBe(200);
+    const copyId = stale.data.conflict_resolution?.conflicted_copy_id;
+    expect(copyId, "no copy was written").toBeTruthy();
+    trackItem(ctx, String(copyId));
+    expect((await client.getItem(String(copyId))).data.item.properties).toEqual(
+      { title: "a", body: "second writer", note: "long note" },
+    );
+
+    // The witness: a copy takes a `keep_both_copies` field from the sent
+    // values, so an over-long one is judged as a create's is.
+    const changed = await client.rawRequest(`/items/${item}?conflict=auto`, {
+      method: "PATCH",
+      body: { properties: { body: "a body of fifteen" }, version },
+    });
+    expect(changed.status, JSON.stringify(changed.data)).toBe(400);
+  });
+
   it("refuses the delete to a key without schema.write, force included", async () => {
     const ns = namespace("delete");
     const id = `${ns}.issue`;

@@ -150,6 +150,17 @@ pub fn same(a: &Value, b: &Value) -> bool {
     }
 }
 
+/// The properties of `sent` whose values `held` does not already hold, by `same`.
+pub fn changed<'a>(
+    sent: impl IntoIterator<Item = (&'a String, &'a Value)>,
+    held: &Map<String, Value>,
+) -> Map<String, Value> {
+    sent.into_iter()
+        .filter(|(name, value)| !held.get(*name).is_some_and(|held| same(value, held)))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect()
+}
+
 fn same_at(a: &Map<String, Value>, b: &Map<String, Value>, name: &str) -> bool {
     match (a.get(name), b.get(name)) {
         (Some(a), Some(b)) => same(a, b),
@@ -346,6 +357,15 @@ mod tests {
 
     fn map(value: Value) -> Map<String, Value> {
         value.as_object().cloned().unwrap_or_default()
+    }
+
+    #[test]
+    fn a_number_sent_as_it_is_held_is_not_a_change_however_it_is_written() {
+        let held = map(json!({ "n": 50, "s": "a", "o": { "x": 1.0, "y": [2] } }));
+        let sent = map(json!({ "n": 50.0, "s": "a", "o": { "y": [2.0], "x": 1 }, "t": 5 }));
+        assert_eq!(changed(&sent, &held), map(json!({ "t": 5 })));
+        let sent = map(json!({ "n": 51, "s": "b", "o": { "x": 1, "y": [3] } }));
+        assert_eq!(changed(&sent, &held).len(), 3);
     }
 
     struct Case {

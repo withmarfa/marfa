@@ -167,6 +167,36 @@ describe("reading rows", () => {
     ).toHaveLength(25);
   });
 
+  it("answers 100 rows when no limit is named, and the rest on the next page", async () => {
+    const { item } = await spendingItem();
+    const ids = Array.from({ length: 101 }, () => uuidv7());
+    await put(
+      item,
+      ids.map((_, n) => ({ amount: n })),
+      ids,
+    );
+    const first = await client.listRows(item, "spend");
+    expect(first.status, JSON.stringify(first.error)).toBe(200);
+    expect(first.data.data).toHaveLength(100);
+    expect(first.data.next_cursor).toEqual(expect.any(String));
+
+    // The witness: a limit above the default reads all 101 at once, so the
+    // table held more than the default page answered.
+    const whole = await client.listRows(item, "spend", { limit: 200 });
+    expect(whole.data.data).toHaveLength(101);
+    expect(whole.data.next_cursor).toBeNull();
+
+    const rest = await client.listRows(item, "spend", {
+      cursor: first.data.next_cursor!,
+    });
+    expect(rest.status, JSON.stringify(rest.error)).toBe(200);
+    expect(rest.data.data).toHaveLength(1);
+    expect(rest.data.next_cursor).toBeNull();
+    expect(
+      [...first.data.data, ...rest.data.data].map((row) => row.id).sort(),
+    ).toEqual([...ids].sort());
+  });
+
   it("refuses a cursor answered for the other direction", async () => {
     const { item } = await spendingItem();
     await put(

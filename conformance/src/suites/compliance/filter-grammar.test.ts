@@ -38,6 +38,7 @@ async function seed(
     state?: "archived" | "trashed";
     source_id?: string;
     type?: string;
+    tier?: "library" | "feed";
   } = {},
 ): Promise<string> {
   const made = await client.createItem({
@@ -45,6 +46,7 @@ async function seed(
     source: ctx.source,
     properties: { body: marker, ...properties },
     ...(options.tags === undefined ? {} : { tags: options.tags }),
+    ...(options.tier === undefined ? {} : { tier: options.tier }),
     ...(options.source_id === undefined
       ? {}
       : { source_id: options.source_id }),
@@ -215,6 +217,33 @@ describe("every door that takes a filter", () => {
     ]);
   });
 
+  it("selects by tier with eq and neq, and refuses exists on it", async () => {
+    const rank = `tier-${crypto.randomUUID()}`;
+    const library = await seed({ rank }, { tier: "library" });
+    const feed = await seed({ rank }, { tier: "feed" });
+    const both = sorted(library, feed);
+
+    // The witness: the listing holds both tiers, so a term that selects one is what narrowed.
+    expect(await listed(`properties.rank eq "${rank}"`)).toEqual(both);
+    for (const [filter, selected] of [
+      ['tier eq "feed"', [feed]],
+      ['tier eq "library"', [library]],
+      ['tier neq "feed"', [library]],
+      ['tier neq "library"', [feed]],
+      ['tier eq "feed" OR tier eq "library"', both],
+    ] as const) {
+      expect(await among(filter, both), filter).toEqual(sorted(...selected));
+      // Search takes the same term, as every door that takes an expression does.
+      expect(
+        (await searched(filter)).filter((id) => both.includes(id)),
+        `search: ${filter}`,
+      ).toEqual(sorted(...selected));
+    }
+    const exists = await client.rawRequest("/items?filter=tier%20exists");
+    expect(exists.status).toBe(400);
+    expect(exists.error?.error.code).toBe("validation_error");
+  });
+
   const refused: [string, string][] = [
     ["a lower-case and", 'source eq "a" and source eq "b"'],
     ["a lower-case or", 'source eq "a" or source eq "b"'],
@@ -228,6 +257,7 @@ describe("every door that takes a filter", () => {
     ["exists on a system field", "source exists"],
     ["not_exists on a time field", "occurred_at not_exists"],
     ["exists on the version", "version exists"],
+    ["exists on the tier", "tier exists"],
     ["a field and nothing else", "source"],
     ["an operator with no value", "source eq"],
     ["an unquoted word as a value", "source eq a"],

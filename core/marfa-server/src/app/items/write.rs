@@ -1707,16 +1707,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         if let Some(field) = self.catalog.link_field(&row.type_id) {
             properties.shift_remove(field);
         }
-        let written: Map<String, Value> = properties
-            .iter()
-            .filter(|(name, value)| {
-                stale
-                    .current
-                    .get(*name)
-                    .is_none_or(|held| !conflict::same(value, held))
-            })
-            .map(|(name, value)| (name.clone(), value.clone()))
-            .collect();
+        let written = conflict::changed(&properties, stale.current);
         rules
             .validate_merged(&row.type_id, &properties, true, &written)
             .map_err(|error| self.invalid(error, None))?;
@@ -1814,15 +1805,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let written: Map<String, Value> = if moved {
             result.clone()
         } else {
-            result
-                .iter()
-                .filter(|(name, value)| {
-                    current
-                        .get(*name)
-                        .is_none_or(|held| !conflict::same(value, held))
-                })
-                .map(|(name, value)| (name.clone(), value.clone()))
-                .collect()
+            conflict::changed(&result, current)
         };
         rules
             .validate_merged(resulting, &result, true, &written)

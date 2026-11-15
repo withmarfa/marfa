@@ -52,9 +52,27 @@ If a view setting is malformed, other than by a key it does not declare or a par
 
 ### `views/setting-invalid`
 
-If a field a view's `sort` or `group` names is outside `views/field`, a `sort` holds more than 10 keys or a `direction` other than `asc` or `desc`, a `group.bucket` is not `day`, `week`, `month` or `year` or is set on a field that is not a date field, or the `query` names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` that is not an item id, a `tier` other than `library`, `feed` or `all`, or a `state` other than `active` or `archived`, then the server MUST answer `400 validation_error`.
+If a field a view's `sort` or `group` names is outside `views/field`, a `sort` holds more than 10 keys or a `direction` other than `asc` or `desc`, a `group.bucket` is not `day`, `week`, `month` or `year` or is set on a `group.by` other than `created_at`, `updated_at`, `occurred_at` or `properties.<name>`, or the `query` names a malformed or `system.*` type identifier, a `filter` the listing grammar refuses, a `beneath` that is not an item id, a `tier` other than `library`, `feed` or `all`, or a `state` other than `active` or `archived`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/views.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`.
+
+### `views/title-length`
+
+If a view's `title` is empty or holds more than 500 characters, then the server MUST answer `400 validation_error` naming `title` in `details.errors[0].path`.
+
+**Tests:** `compliance/views.test.ts › takes the longest title, types list and group lists, and refuses one more, on a create and on a change`.
+
+### `views/types-bound`
+
+If a view's `query.types` holds more than 100 entries, then the server MUST answer `400 validation_error` naming `query.types` in `details.errors[0].path`.
+
+**Tests:** `compliance/views.test.ts › takes the longest title, types list and group lists, and refuses one more, on a create and on a change`.
+
+### `views/group-lists-bound`
+
+If a view's `group.order` or `group.hidden` holds more than 1,000 values, then the server MUST answer `400 validation_error` naming that list in `details.errors[0].path`.
+
+**Tests:** `compliance/views.test.ts › takes the longest title, types list and group lists, and refuses one more, on a create and on a change`.
 
 ### `views/setting-unknown-type`
 

@@ -561,6 +561,55 @@ describe("the view door", () => {
     }
   });
 
+  it("takes the longest title, types list and group lists, and refuses one more, on a create and on a change", async () => {
+    const types = (n: number) => Array.from({ length: n }, () => "core.note");
+    const values = (n: number) => Array.from({ length: n }, (_, i) => `v${i}`);
+    const longest = {
+      title: "t".repeat(500),
+      query: { types: types(100) },
+      group: { by: "state", order: values(1000), hidden: values(1000) },
+    };
+
+    // The witness: the longest of each is taken, on a create and on a change.
+    const { id } = await view(longest);
+    const stored = (await client.getItem(id)).data.item.properties;
+    expect(stored.title).toBe(longest.title);
+    const changed = await client.updateView(id, { version: 1, ...longest });
+    expect(changed.status, JSON.stringify(changed.error)).toBe(200);
+
+    // The limit counts characters, not bytes or UTF-16 units: 500 characters
+    // of four bytes each are taken, and 501 are not.
+    const wide = "😀".repeat(500);
+    const worded = await client.updateView(id, { version: 2, title: wide });
+    expect(worded.status, JSON.stringify(worded.error)).toBe(200);
+    expect((await client.getItem(id)).data.item.properties.title).toBe(wide);
+
+    for (const [name, settings] of [
+      ["title", { title: "t".repeat(501) }],
+      ["title", { title: "😀".repeat(501) }],
+      ["title", { title: "" }],
+      ["query.types", { query: { types: types(101) } }],
+      ["group.order", { group: { by: "state", order: values(1001) } }],
+      ["group.hidden", { group: { by: "state", hidden: values(1001) } }],
+    ] as const) {
+      const created = await client.createView({
+        title: "refused",
+        ...settings,
+      });
+      const changing = await client.updateView(id, {
+        version: 3,
+        ...settings,
+      });
+      for (const r of [created, changing]) {
+        expect(r.status, name).toBe(400);
+        const refusal = r.error as unknown as Refusal;
+        expect(refusal.error.code, name).toBe("validation_error");
+        expect(refusal.error.details?.errors?.[0]?.path, name).toBe(name);
+      }
+    }
+    expect((await client.getItem(id)).data.item.version).toBe(3);
+  });
+
   it("refuses a create missing its title with missing_required_field naming title", async () => {
     const r = await client.createView({ sort: [] });
     expect(r.status).toBe(400);

@@ -45,7 +45,10 @@ async function ledger(server: FreshServer): Promise<{
   const type = await owner.registerType({
     id: TYPE,
     fields: { title: { type: "string" } },
-    tables: { lines: { columns: { amount: { type: "number" } } } },
+    tables: {
+      lines: { columns: { amount: { type: "number" } } },
+      notes: { columns: { text: { type: "string" } } },
+    },
   } as never);
   expect(type.status, JSON.stringify(type.error)).toBe(201);
   const writer = writerOf(server);
@@ -61,16 +64,23 @@ async function batchOf(
   writer: MarfaClient,
   item: string,
   amount: number,
+  table = "lines",
 ): Promise<string> {
-  const res = await writer.writeRows(item, "lines", {
-    operations: [{ op: "put", values: { amount } }],
+  const res = await writer.writeRows(item, table, {
+    operations: [
+      { op: "put", values: table === "lines" ? { amount } : { text: "note" } },
+    ],
   });
   expect(res.status, JSON.stringify(res.error)).toBe(200);
   return res.data.batch!;
 }
 
-async function held(writer: MarfaClient, item: string): Promise<string[]> {
-  const listed = await writer.listBatches(item, "lines");
+async function held(
+  writer: MarfaClient,
+  item: string,
+  table = "lines",
+): Promise<string[]> {
+  const listed = await writer.listBatches(item, table);
   expect(listed.status, JSON.stringify(listed.error)).toBe(200);
   return listed.data.data.map((batch) => batch.id);
 }
@@ -158,6 +168,46 @@ describe("the change log's retention", () => {
       const next = await runJob(server, "table-row-cleanup");
       expect(next.outcome, String(next.error)).toBe("ok");
       expect(await held(writer, item)).toEqual([]);
+    },
+    3 * FRESH_SERVER_TIMEOUT_MS,
+  );
+
+  it(
+    "keeps the later batches of every table behind a batch whose stored time does not read",
+    async () => {
+      const server = await bootFreshServer("rows-retention-tables", {
+        ...QUIET_CLEANUP,
+        MARFA_ROW_LOG_RETENTION_DAYS: "30",
+      });
+      await quiet(server, ["table-row-cleanup"]);
+      const clock = movedClock(server);
+      const { writer, item } = await ledger(server);
+      await batchOf(writer, item, 1);
+      const unread = await batchOf(writer, item, 2, "notes");
+      const after = await batchOf(writer, item, 3);
+      await clock.advance(31 * DAY_MS);
+      const storeAt = (at: string) =>
+        withInstanceDatabase(server.sqlitePath, (db) => {
+          db.prepare("UPDATE row_batches SET at = ? WHERE id = ?").run(
+            at,
+            unread,
+          );
+        });
+      // "0" sorts before any cutoff, so only reading the time keeps the batch.
+      storeAt("0");
+
+      const run = await runJob(server, "table-row-cleanup");
+      expect(run.outcome, String(run.error)).toBe("ok");
+      expect(await held(writer, item)).toEqual([after]);
+      expect(await held(writer, item, "notes")).toEqual([unread]);
+
+      // The witness: with a time that reads, the batch in the other table and the one
+      // after it go, so the later batch was kept by the unread one and not by its age.
+      storeAt("2000-01-01T00:00:00.000Z");
+      const next = await runJob(server, "table-row-cleanup");
+      expect(next.outcome, String(next.error)).toBe("ok");
+      expect(await held(writer, item)).toEqual([]);
+      expect(await held(writer, item, "notes")).toEqual([]);
     },
     3 * FRESH_SERVER_TIMEOUT_MS,
   );

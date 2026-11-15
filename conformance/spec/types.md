@@ -610,9 +610,9 @@ When an item names an `array` field whose `items_type` is a field type other tha
 
 ### `types/array-items-refused`
 
-If a write of an item's properties, by a create, an update, an upsert or an entry of a bulk write, leaves an `array` field holding an element that a field of its `items_type` refuses, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field and the element's position in `field`, as `names.1`.
+If a write of an item's properties, by a create, an update, an upsert or an entry of a bulk write, leaves an `array` field holding an element that a field of its `items_type` refuses, and the write is a create, changes the field's value or moves the item to another type, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field and the element's position in `field`, as `names.1`.
 
-**Reason:** this holds at every door and on the properties the item would stand with after the write, so the item is left as it was. An array already stored with a wrong element therefore also refuses a write that leaves it in place, because the whole resulting property set is judged, and the refusal names the element.
+**Reason:** this holds at every door and on the properties the item would stand with after the write, so the item is left as it was, and the refusal names the element. An array already stored with a wrong element stands through a write that leaves it as it is (`types/field-tightened-held`).
 
 **Tests:** `compliance/field-types.test.ts › refuses %s on a create, naming the field`, `› checks the elements on an update, and keeps the item as it was when it refuses`, `› checks the elements of a bulk entry, an upsert by natural key and a bulk upsert`.
 
@@ -626,11 +626,11 @@ Where an `array` field's `items_type` names no field type, the server MUST NOT c
 
 ### `types/range-value-refused`
 
-If a write of an item's properties, by a create, an update, an upsert or an entry of a bulk write, leaves a `number` or `integer` field, or a member of an entry of a list, holding a value below its `minimum` or above its `maximum`, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field in `field`, and for a member the field, the entry's position and the member, as `ratings.1.score`.
+If a write of an item's properties, by a create, an update, an upsert or an entry of a bulk write, leaves a `number` or `integer` field, or a member of an entry of a list, holding a value below its `minimum` or above its `maximum`, and the write is a create, changes the field's value or moves the item to another type, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field in `field`, and for a member the field, the entry's position and the member, as `ratings.1.score`.
 
-**Reason:** a bound includes the number it names, so a value equal to it is taken. The check holds at every door and on the properties the item would stand with after the write, as `types/array-items-refused` does, so a value stored before a type gained its range also refuses a write that leaves it in place. A device refuses the same writes (`device/range-checked`).
+**Reason:** a bound includes the number it names, so a value equal to it is taken. The check holds at every door and on the properties the item would stand with after the write, as `types/array-items-refused` does. A value stored before a type gained its range stands through a write that leaves it as it is (`types/field-tightened-held`), and a write that changes it is judged. A device refuses the same writes (`device/range-checked`).
 
-**Tests:** `compliance/field-rules.test.ts › takes a value at each bound and refuses one past it`, `› checks the range on an update and a bulk entry, and on a value stored before the type had one`.
+**Tests:** `compliance/field-rules.test.ts › takes a value at each bound and refuses one past it`, `› checks the range on an update and a bulk entry, and judges a value stored before the type had one only where a write changes it`.
 
 ### `types/currency-value`
 
@@ -650,7 +650,7 @@ When a write names a string value for a `string` field or member whose `format` 
 
 ### `types/currency-value-refused`
 
-If a write leaves a `string` field whose `format` is `currency` holding a value that `types/currency-value` does not take, then the server MUST answer `400 invalid_properties` naming the field.
+If a write leaves a `string` field whose `format` is `currency` holding a value that `types/currency-value` does not take, and the write is a create, changes the field's value or moves the item to another type, then the server MUST answer `400 invalid_properties` naming the field.
 
 **Tests:** `compliance/field-rules.test.ts › takes the currency %s`, `› refuses the currency %j, naming the field`.
 
@@ -664,11 +664,11 @@ When an item names an `array` field whose `items_fields` names members, the serv
 
 ### `types/array-entries-refused`
 
-If a write of an item's properties, by a create, an update, an upsert or an entry of a bulk write, leaves an `array` field holding an entry with a member its `items_fields` does not declare, without a member it requires, with a member value its definition refuses, or with no member at all, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field, the entry's position and, except for an entry with no member, the member in `field`, as `emails.1.value`.
+If a write of an item's properties, by a create, an update, an upsert or an entry of a bulk write, leaves an `array` field holding an entry with a member its `items_fields` does not declare, without a member it requires, with a member value its definition refuses, or with no member at all, and the write is a create, changes the field's value or moves the item to another type, then the server MUST answer `400 invalid_properties` with `details.errors` naming the field, the entry's position and, except for an entry with no member, the member in `field`, as `emails.1.value`.
 
-**Reason:** this holds at every door and on the properties the item would stand with after the write, as `types/array-items-refused` does, so an entry stored before the field declared its members refuses a write that leaves it in place. A device refuses the same writes (`device/entries-checked`).
+**Reason:** this holds at every door and on the properties the item would stand with after the write, as `types/array-items-refused` does, so an entry stored before the field declared its members stands through a write that leaves it as it is (`types/field-tightened-held`), and a write that changes the field is judged. A device refuses the same writes (`device/entries-checked`).
 
-**Tests:** `compliance/field-rules.test.ts › refuses %s, naming the field, the position and the member`, `› checks the entries on an update and a bulk entry, naming the member, and on entries stored before the field declared its members`.
+**Tests:** `compliance/field-rules.test.ts › refuses %s, naming the field, the position and the member`, `› checks the entries on an update and a bulk entry, naming the member, and judges entries stored before the field declared its members only where a write changes them`.
 
 ### `types/object-stored`
 
@@ -944,7 +944,7 @@ If a key whose type map does not grant write on a type registered at run time se
 
 When a replacement adds a field, required or not, the server MUST leave every stored item of the type as it is, at its version.
 
-**Reason:** the items meet the field at their next write of properties, under `items/property-invalid`.
+**Reason:** the items meet the field at their next write of properties: a required field an item lacks is judged on the whole item (`items/property-invalid`), and a value an item holds under the new field stands until a write changes it (`types/field-tightened-held`).
 
 **Tests:** `compliance/type-registry.test.ts › keeps the items a type already has as they are when it gains a field`.
 
@@ -959,6 +959,38 @@ When a replacement removes a field, the server MUST keep the value each item hol
 When a replacement removes a field, the server MUST NOT refuse a later write of an item of the type for the value it holds under that name.
 
 **Tests:** `compliance/type-evolution.test.ts › leaves a removed field's values readable and the item writable`.
+
+### `types/field-tightened`
+
+When a replacement tightens a field, by making it `required`, narrowing its `enum_values`, lowering its `max_length` or `maximum`, raising its `minimum` or adding a `format`, the server MUST take it without `force=true`.
+
+**Reason:** only a removed field's name reaching a held value, and a changed `type`, take what items hold away (`types/field-removed`).
+
+**Tests:** `compliance/type-evolution.test.ts › takes a replacement that tightens a field without force, leaves the values items hold, and judges a write by the properties it changes`.
+
+### `types/field-tightened-kept`
+
+When a replacement tightens a field, as `types/field-tightened` lists, the server MUST leave the value each item holds under its name as it is.
+
+**Reason:** the value stays and a later write judges it (`types/field-tightened-held`).
+
+**Tests:** `compliance/type-evolution.test.ts › takes a replacement that tightens a field without force, leaves the values items hold, and judges a write by the properties it changes`.
+
+### `types/field-tightened-held`
+
+If an item holds a value in a field that its type does not admit, then the server MUST NOT refuse an update of the item for that value unless the update changes the property's value or moves the item to another type.
+
+**Reason:** an edit to an item's title is not the write that has to bring another property within a rule its type holds. A whole-properties write sends every property back, so naming a property unchanged is not a change, and a number written another way, `50.0` for `50`, is the same value (`items/property-number-kept`). A move to another type judges every property the item holds, as a write of each. A property the item lacks is held to a required field (`items/property-invalid`).
+
+**Tests:** `compliance/type-evolution.test.ts › takes a replacement that tightens a field without force, leaves the values items hold, and judges a write by the properties it changes`.
+
+### `types/field-tightened-copy`
+
+If a stale update makes a conflicted copy of an item that holds a value its field does not admit, and the update leaves that property alone, then the server MUST make the copy holding the value.
+
+**Reason:** a conflicted copy is a new item, so a value the stale write changed is judged as a create's is (`items/property-invalid`), and a held value the write leaves alone is kept in the copy, as it is for a status word (`types/status-word-held`).
+
+**Tests:** `compliance/type-evolution.test.ts › makes the conflicted copy of a stale write that leaves a value its field refuses alone, holding that value`.
 
 ### `types/subtype-members`
 
@@ -1676,7 +1708,7 @@ When `PUT /types/{id}/icon` or `DELETE /types/{id}/icon` succeeds, the server MU
 
 ## Item names
 
-In these statements, whitespace is a character with the Unicode property `White_Space`, a line ends at CR LF, LF, CR, U+2028 or U+2029, and a control character is one in the Unicode general category `Cc`. So U+0085 is whitespace and a control character but not a line end, and U+FEFF is none of the three. The cases both implementations are held to are in `conformance/fixtures/item-display.json`.
+In these statements, whitespace is a character with the Unicode property `White_Space`, a line ends at CR LF, LF, CR, U+2028 or U+2029, and a control character is one in the Unicode general category `Cc`. So U+0085 is whitespace and a control character but not a line end, and U+FEFF is none of the three. The server and a device's working copy are held to the cases in `conformance/fixtures/item-display.json`.
 
 ### `types/item-name-fields`
 

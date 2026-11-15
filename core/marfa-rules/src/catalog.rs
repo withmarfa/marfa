@@ -864,7 +864,7 @@ impl Catalog {
         self.request_limit
     }
 
-    /// Refuses `properties` as an item of `type_id`, `complete` where they are the whole item. A status word is judged only where the write sets it; `validate_merged` judges the item a write leaves.
+    /// Refuses `properties` as an item of `type_id`, `complete` where they are the whole item, judging every value; `validate_merged` judges the item a write leaves.
     pub fn validate_properties(
         &self,
         type_id: &str,
@@ -874,7 +874,7 @@ impl Catalog {
         self.validate_merged(type_id, properties, complete, properties)
     }
 
-    /// A status word is judged only where `written`, the properties the write changes, sets it: a stored word the type does not declare does not refuse a write that leaves it alone or sends it back unchanged.
+    /// A value is judged only where `written`, the properties the write changes, sets it: a stored value its field no longer admits, a status word the type does not declare included, does not refuse a write that leaves it alone or sends it back unchanged. A required field is judged on the whole item.
     pub fn validate_merged(
         &self,
         type_id: &str,
@@ -910,7 +910,7 @@ impl Catalog {
         for (name, definition) in &resolved {
             fields.insert(name.as_str(), definition);
         }
-        crate::validation::properties(&fields, properties, complete)?;
+        crate::validation::changed_properties(&fields, properties, complete, written)?;
         self.judge_kept_columns(type_id, written, Naming::Registered)?;
         if complete {
             self.judge_schedule(type_id, properties)?;

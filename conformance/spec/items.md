@@ -450,9 +450,9 @@ If a write names a string property containing U+0000, then the server MUST answe
 
 ### `items/property-length-cap`
 
-If a write leaves an item with a string property longer than the length its field allows, then the server MUST answer `400 invalid_properties` naming the field.
+If a write leaves an item with a string property longer than the length its field allows, and the write is a create, changes that property's value or moves the item to another type, then the server MUST answer `400 invalid_properties` naming the field.
 
-**Reason:** a create, an update, a bulk write and a move are each judged by the type the item would hold the value under, so a move can be refused for a value that was allowed where it stood.
+**Reason:** a create, an update, a bulk write and a move are each judged by the type the item would hold the value under, so a move can be refused for a value that was allowed where it stood. A value the write leaves as it is stands (`items/property-length-held-over`).
 
 **Tests:** `compliance/validation.test.ts › refuses a string one unit over the default length cap, naming the field`, `compliance/adversarial.test.ts › refuses a body over the field's length cap with invalid_properties`, `compliance/body-field-length.test.ts › holds a create, an update and a bulk write to the body's length`, `compliance/body-field-length.test.ts › refuses a move that puts a long body under a shorter field, and keeps the item`.
 
@@ -484,15 +484,15 @@ Where a string field declares no `max_length` and its type does not name it as `
 
 When a replacement of a type changes its `display_hints.body_field`, the server MUST leave every value items of the type hold as it is.
 
-**Tests:** `compliance/body-field-length.test.ts › keeps a long value when the type names another body, and refuses an edit until it is shortened`.
+**Tests:** `compliance/body-field-length.test.ts › keeps a long value when the type names another body, takes an edit that leaves it, and refuses an edit that changes it`.
 
 ### `items/property-length-held-over`
 
-If an update leaves in place a value longer than its field now allows, then the server MUST answer `400 invalid_properties` naming the field.
+If an item holds a string value longer than its field allows, then the server MUST NOT refuse an update of the item for that value unless the update changes the property's value or moves the item to another type.
 
-**Reason:** the whole result of an update is judged, so a value a type no longer allows is shortened before the item takes another edit. It stays readable meanwhile, and the type can be changed back.
+**Reason:** an edit to an item's title is not the write that has to shorten another property, and a synced file sends every property back, so naming the value unchanged is not a change (`types/field-tightened-held`). A write that changes the value is judged as a create is (`items/property-length-cap`). The value stays readable meanwhile, and the type can be changed back.
 
-**Tests:** `compliance/body-field-length.test.ts › keeps a long value when the type names another body, and refuses an edit until it is shortened`.
+**Tests:** `compliance/body-field-length.test.ts › keeps a long value when the type names another body, takes an edit that leaves it, and refuses an edit that changes it`.
 
 ### `items/property-length-units`
 

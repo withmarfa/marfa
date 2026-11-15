@@ -558,6 +558,14 @@ When a `filter` compares a property holding text, `id`, `type`, `state`, `source
 
 **Tests:** `compliance/filter-grammar.test.ts › compares the whole value, with regard to case, in code point order`, `› compares a system field's whole value, with regard to case`, `› compares a type term with the identifier alone, not the types under it`.
 
+### `search-and-filters/filter-tier`
+
+When a `filter` compares `tier` with a double-quoted string using `eq` or `neq`, the server MUST select the items whose tier is, or is not, that string.
+
+**Reason:** the `tier` key of a listing narrows to one tier by name (`search-and-filters/tier-narrows`), and a `filter` term does the same inside an expression that also holds `OR`.
+
+**Tests:** `compliance/filter-grammar.test.ts › selects by tier with eq and neq, and refuses exists on it`.
+
 ### `search-and-filters/filter-version-compare`
 
 When a `filter` compares `version` with a number using `eq`, `neq`, `gt`, `gte`, `lt` or `lte`, the server MUST compare them as numbers.
@@ -610,7 +618,7 @@ If a `filter` names `properties.<name>` where `<name>` is empty, does not start 
 
 ### `search-and-filters/filter-system-presence`
 
-If a `filter` applies `exists` or `not_exists` to `id`, `type`, `state`, `source`, `source_id`, `version`, `created_at`, `updated_at` or `occurred_at`, then the server MUST answer `400 validation_error`.
+If a `filter` applies `exists` or `not_exists` to `id`, `type`, `state`, `tier`, `source`, `source_id`, `version`, `created_at`, `updated_at` or `occurred_at`, then the server MUST answer `400 validation_error`.
 
 **Tests:** `compliance/filter-grammar.test.ts › refuses %s at each door with validation_error`.
 
@@ -768,9 +776,11 @@ When `GET /items` or `GET /items/stats` carries a `filter` and an `edge[<edge ty
 
 ### `search-and-filters/filter-mixed-logic`
 
-If a `filter` on `GET /items` or `GET /search` joins conditions with both `AND` and `OR`, then the server MUST answer `400 validation_error`.
+If a `filter` at a door that takes one joins conditions with both `AND` and `OR`, then the server MUST answer `400 validation_error`.
 
-**Tests:** `compliance/validation.test.ts › refuses a filter that mixes AND with OR, on the listing and the search`.
+**Reason:** the grammar has no parenthesis, so a mixed expression has no single meaning, at any of the doors `search-and-filters/filter-doors` names.
+
+**Tests:** `compliance/validation.test.ts › refuses a filter that mixes AND with OR, on the listing and the search`, `compliance/filter-grammar.test.ts › refuses %s at each door with validation_error`.
 
 ### `search-and-filters/filter-or-shorthand`
 
@@ -1247,6 +1257,14 @@ The server MUST NOT match an item on its identifier alone.
 **Reason:** an identifier is not searchable content, so it matches only where it also appears in an indexed field or a tag.
 
 **Tests:** `compliance/fts-searchable.test.ts › matches searchable content and tags without matching an item identifier alone`.
+
+### `search-and-filters/search-tags-with-text`
+
+When `GET /search` carries a `q` of several words, one that an item's tag holds and the others its searchable text holds, the server MUST answer the item.
+
+**Reason:** an item's tags are searched with its text, so a query need not say which words are tags.
+
+**Tests:** `compliance/fts-searchable.test.ts › matches a query whose words are split between an item's tag and its text`.
 
 ### `search-and-filters/search-score`
 
@@ -2854,11 +2872,19 @@ When a restore reads an archive that lacks a field or a line kind added to the a
 
 ### `search-and-filters/restore-manifest`
 
-If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `connector_state_count` or `connector_agreement_count`, or mistypes them, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
+If the `manifest.json` of an archive is missing `version`, `written_by`, `file_count`, `item_count`, `version_count`, `edge_count`, `row_count`, `blob_count`, `type_count`, `edge_type_count`, `type_icon_count`, `source_count`, `setting_count`, `enforcement_count`, `connector_state_count` or `connector_agreement_count`, or mistypes them, `version` holding a whole number from 1, each count a non-negative integer and `written_by` a string, then the server MUST answer `400 validation_error` naming each field in the message and in `details.errors` as a `path`.
 
 **Reason:** a later version is free to lay out its fields differently, so a manifest naming one is refused for its version (`search-and-filters/restore-version`) and not its shape.
 
 **Tests:** `compliance/restore-archive.test.ts › refuses a manifest missing or mistyping a field the restore reads, naming the field, and writes nothing`.
+
+### `search-and-filters/restore-manifest-created`
+
+When `POST /restore` reads an archive whose `manifest.json` carries no `created_at`, the server MUST restore the archive as it restores one that carries one.
+
+**Reason:** the restore reads no time from the manifest, so an archive built by hand or by a writer that left the instant out holds the same items.
+
+**Tests:** `compliance/restore-archive.test.ts › restores an archive whose manifest carries no created_at`.
 
 ### `search-and-filters/restore-files`
 
@@ -3272,7 +3298,7 @@ If the `manifest.json`, or a line of any line file of an archive, is larger than
 
 **Reason:** the restore parses each of these whole, so this limit bounds the memory a restore takes. The line files are otherwise read a line at a time, so an archive of any number of items, versions, files or registrations restores. The writer holds every line it writes to the same limit (`search-and-filters/archive-line-cap`).
 
-**Tests:** `compliance/restore-archive.test.ts › refuses a line longer than 64 MiB, and writes nothing`.
+**Tests:** `compliance/restore-archive.test.ts › refuses a line longer than 64 MiB, and writes nothing`, `› refuses rows.ndjson.gz carried twice, and a row line longer than 64 MiB, and writes nothing`.
 
 ### `search-and-filters/restore-entry-twice`
 
@@ -3280,7 +3306,7 @@ If an archive carries `manifest.json`, `files.ndjson.gz`, `instance.ndjson.gz`, 
 
 **Reason:** a repeated entry has no single meaning, and reading both would let a later copy add lines that the first never listed.
 
-**Tests:** `compliance/restore-archive.test.ts › refuses an archive carrying an entry twice, and writes nothing`.
+**Tests:** `compliance/restore-archive.test.ts › refuses an archive carrying an entry twice, and writes nothing`, `› refuses rows.ndjson.gz carried twice, and a row line longer than 64 MiB, and writes nothing`.
 
 ### `search-and-filters/restore-entry-order`
 
