@@ -44,6 +44,8 @@ A release is a git tag `v<version>` on a commit of `main`. Pushing the tag runs 
 
 ## Tag
 
+A ruleset lets only a repository admin create a `v*` tag, so push the tag from an admin account. GitHub then reports the push as bypassing the ruleset's creation rule ("Bypassed rule violations"), which is expected. A second ruleset refuses moving or deleting a `v*` tag, for everyone.
+
 ```bash
 git tag v<version> <sha>
 git push origin v<version>
