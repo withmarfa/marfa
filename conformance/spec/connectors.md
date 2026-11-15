@@ -172,6 +172,30 @@ When a key minted under the source of a revoked key sends `POST /connectors`, th
 
 **Tests:** `compliance/connector-state.test.ts › hands the state and the agreements to the next key with the same source`.
 
+### `connectors/register-source-binding-atomic`
+
+When a key registers a connector, the server MUST make its registration, its own source's inbound binding and the corresponding registration audit entry visible as one all-or-nothing result.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › survives an interrupted successor registration and a discarded committed reply on the same database`.
+
+### `connectors/register-standing-rechecked`
+
+If a registration key is revoked or expired before its waiting registration operation can write, then the server MUST answer `401 unauthorized`.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › refuses registration when its key becomes %s while the writer is held`.
+
+### `connectors/register-standing-no-write`
+
+If a registration key is revoked or expired before its waiting registration operation can write, then the server MUST preserve the prior registrations, source inbound binding and registration audit history.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › refuses registration when its key becomes %s while the writer is held`.
+
+### `connectors/register-successor-fresh`
+
+When a successor key registers for a source, the server MUST give it a registration with its own ID, heartbeat, runs and hold.
+
+**Tests:** `compliance/inbound-source-continuity.test.ts › survives an interrupted successor registration and a discarded committed reply on the same database`.
+
 ## Reading registrations
 
 `GET /connectors/{id}/runs` is held to the same reach as `GET /connectors/{id}`.
@@ -942,6 +966,18 @@ When the server records a `connector_state.delete` audit entry, the server MUST 
 
 **Tests:** `compliance/connector-state.test.ts › clears the state and the agreements for the own key or the manager, and audits it`, `› goes with a purged item`.
 
+## A vendor entry a purge left a tombstone for
+
+A tombstone records the link and the natural key of a purged item, with the `settled_at` a connector reads at `POST /items/lookup` (`items/tombstone`). The statements here say what the server does with a write for a vendor entry that a tombstone records.
+
+### `connectors/tombstone-write-accepted`
+
+When a key sends `POST /items` for an item that holds a link or natural key a tombstone records, the server MUST answer `201` with a new item, whatever the tombstone's `settled_at`.
+
+**Reason:** the decision to write a vendor entry belongs to the connector, which reads the tombstone at `POST /items/lookup`. The server compares no time and refuses nothing a tombstone names, and the new item takes the place of the tombstone (`items/tombstone-cleared`).
+
+**Tests:** `compliance/connector-tombstones.test.ts › is written as a new item, whether the tombstone's settled_at is the purge time or moved past it`.
+
 ## Writing agreements
 
 An agreement is a connector's record of what it and its vendor last agreed about one item, one for each item and source. Writing one announces nothing and leaves the item alone.
@@ -1352,7 +1388,7 @@ When `GET /connectors`, `GET /connectors/{id}`, `POST /connectors` or `GET /conn
 
 ### `connectors/problems-state-write`
 
-When the connector's own key sends `PUT /connectors/{id}/state` with a valid `problems` map under its process's live hold, the server MUST replace the source's state document and current problems in the same transaction.
+When the connector's own key sends `PUT /connectors/{id}/state` with a valid `problems` map under its process's live hold, the server MUST replace the source's state document and current problems together, so that a reader sees both or neither.
 
 **Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`.
 
@@ -1406,7 +1442,7 @@ If `PUT /connectors/{id}/state` is refused, then the server MUST preserve the so
 
 ### `connectors/fence-current-key`
 
-When a process writes state, problems or agreements, the server MUST check the registration's owning key is still unrevoked and unexpired in the transaction that commits the write.
+When a process writes state, problems or agreements, the server MUST accept the write only if the registration's owning key is still unrevoked and unexpired at the moment the write takes effect.
 
 **Tests:** `compliance/connector-interfaces.test.ts › publishes source problems while keeping state private and preserves them across restart and key handover`, `› refuses a write whose key is revoked or expires while the write waits for the database`.
 
@@ -1421,27 +1457,3 @@ When a registration is returned, the server MUST omit its source's private state
 When `marfa connectors list` returns a registration, the CLI MUST include its current problems.
 
 **Tests:** `cli/connectors.test.ts › registers, heartbeats, reports a run, and is removed by the operator`.
-
-### `connectors/register-source-binding-atomic`
-
-When a key registers a connector, the server MUST make its registration, its own source's inbound binding and the corresponding registration audit entry visible as one all-or-nothing result.
-
-**Tests:** `compliance/inbound-source-continuity.test.ts › survives an interrupted successor registration and a discarded committed reply on the same database`.
-
-### `connectors/register-standing-rechecked`
-
-If a registration key is revoked or expired before its waiting registration operation can write, then the server MUST answer `401 unauthorized`.
-
-**Tests:** `compliance/inbound-source-continuity.test.ts › refuses registration when its key becomes %s while the writer is held`.
-
-### `connectors/register-standing-no-write`
-
-If a registration key is revoked or expired before its waiting registration operation can write, then the server MUST preserve the prior registrations, source inbound binding and registration audit history.
-
-**Tests:** `compliance/inbound-source-continuity.test.ts › refuses registration when its key becomes %s while the writer is held`.
-
-### `connectors/register-successor-fresh`
-
-When a successor key registers for a source, the server MUST give it a registration with its own ID, heartbeat, runs and hold.
-
-**Tests:** `compliance/inbound-source-continuity.test.ts › survives an interrupted successor registration and a discarded committed reply on the same database`.

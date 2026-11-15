@@ -5,9 +5,11 @@ import {
   createTestContext,
   trackEdge,
   trackEdgeType,
+  trackFolder,
   trackItem,
   trackKey,
   trackType,
+  trackView,
   trackWebhook,
   cleanup,
   getManagementClient,
@@ -142,6 +144,7 @@ describe("the names of the audit log's actions", () => {
       id: edgeType,
       label: "Audit actions",
       cardinality: "many-to-many",
+      source_type_constraints: ["core.note"],
     });
     expect(registered.status, JSON.stringify(registered.error)).toBe(201);
     trackEdgeType(ctx, edgeType);
@@ -184,11 +187,19 @@ describe("the names of the audit log's actions", () => {
     await expectSince("edges.bulk", bulking);
     await expectActions("a bulk edge", bulked, ["edge.delete"]);
 
+    const evolved = await client.registerEdgeType({
+      id: edgeType,
+      label: "Audit actions",
+      cardinality: "many-to-many",
+      source_type_constraints: ["core.note", "core.task"],
+      evolve_constraints: true,
+    } as Parameters<MarfaClient["registerEdgeType"]>[0]);
+    expect(evolved.status, JSON.stringify(evolved.error)).toBe(200);
     expect((await client.deleteEdgeType(edgeType)).ok).toBe(true);
     await expectActions(
       "an edge type",
       edgeType,
-      ["edge_type.register", "edge_type.delete"],
+      ["edge_type.register", "edge_type.update", "edge_type.delete"],
       "edge_type",
     );
   });
@@ -218,6 +229,40 @@ describe("the names of the audit log's actions", () => {
       ["type.register", "type.replace", "items.tombstones", "type.delete"],
       "type",
     );
+  });
+
+  it("names each write of a view and of a folder with the action the table gives it", async () => {
+    const view = await client.createView({ title: "Audited view" });
+    expect(view.status, JSON.stringify(view.error)).toBe(201);
+    const viewId = view.data.item.id;
+    trackView(ctx, viewId);
+    const retitled = await client.updateView(viewId, {
+      version: view.data.item.version,
+      title: "Audited view, renamed",
+    });
+    expect(retitled.status, JSON.stringify(retitled.error)).toBe(200);
+    expect((await client.deleteView(viewId)).ok).toBe(true);
+    await expectActions("a view", viewId, [
+      "view.create",
+      "view.update",
+      "view.delete",
+    ]);
+
+    const folder = await client.createFolder({ title: "Audited folder" });
+    expect(folder.status, JSON.stringify(folder.error)).toBe(201);
+    const folderId = folder.data.item.id;
+    trackFolder(ctx, folderId);
+    const renamed = await client.updateFolder(folderId, {
+      version: folder.data.item.version,
+      title: "Audited folder, renamed",
+    });
+    expect(renamed.status, JSON.stringify(renamed.error)).toBe(200);
+    expect((await client.revokeFolder(folderId)).ok).toBe(true);
+    await expectActions("a folder", folderId, [
+      "folder.create",
+      "folder.update",
+      "folder.revoke",
+    ]);
   });
 
   it("names the writes of a key and of a webhook with the action the table gives it", async () => {
@@ -291,6 +336,31 @@ describe("the names of the audit log's actions", () => {
     );
     expect(upload.ok, JSON.stringify(upload.error)).toBe(true);
     await expectActions("an upload", upload.data.hash, ["blob.upload"]);
+  });
+
+  it("names a batch of rows and its undo with the action the table gives it", async () => {
+    const type = `user.audit-actions-rows-${ctx.runId}`;
+    const registered = await client.registerType({
+      id: type,
+      fields: { title: { type: "string" } },
+      tables: { lines: { columns: { amount: { type: "number" } } } },
+    } as never);
+    expect(registered.status, JSON.stringify(registered.error)).toBe(201);
+    trackType(ctx, type, client);
+    const made = await client.createItem({
+      type,
+      properties: { title: "Ledger" },
+    } as never);
+    expect(made.status, JSON.stringify(made.error)).toBe(201);
+    const id = made.data.item.id;
+    trackItem(ctx, id);
+    const written = await client.writeRows(id, "lines", {
+      operations: [{ op: "put", values: { amount: 1 } }],
+    });
+    expect(written.status, JSON.stringify(written.error)).toBe(200);
+    const undone = await client.undoBatch(id, "lines", written.data.batch!);
+    expect(undone.status, JSON.stringify(undone.error)).toBe(200);
+    await expectActions("a table", id, ["rows.write", "rows.undo"]);
   });
 
   it("names an export with the action the table gives it", async () => {

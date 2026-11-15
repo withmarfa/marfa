@@ -2238,6 +2238,14 @@ The server MUST NOT carry a webhook subscription in an archive.
 
 **Tests:** `compliance/export.test.ts › holds nothing in an archive but its manifest, line files and blobs, and carries no webhook`, `compliance/export-instance-lines.test.ts › carries the instance's settings, connector state and agreements to a credential that manages them, and none to one that does not`.
 
+### `search-and-filters/archive-no-inbound`
+
+The server MUST NOT carry an inbound endpoint, an inbound address or an inbound delivery in an archive.
+
+**Reason:** an inbound address is a credential (`inbound-webhooks/endpoint-path-redacted`), and it belongs to the connector's registration, which stays out (`search-and-filters/archive-connector-state`). A restored address would let a sender post to an instance that holds no connector for it.
+
+**Tests:** `compliance/export-no-inbound.test.ts › carries the connector's state and none of its endpoint, address or deliveries`.
+
 ### `search-and-filters/archive-history`
 
 When `GET /export?format=archive` carries an item, the server MUST carry with it every stored snapshot below the item's current version that `search-and-filters/archive-history-reach` admits, however many pages of history they fill.

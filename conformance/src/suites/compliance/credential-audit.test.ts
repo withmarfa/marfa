@@ -9,6 +9,7 @@ import {
 } from "../../utils/fresh-server.js";
 import {
   DAY_MS,
+  HOUR_MS,
   movedClock,
   QUIET_SCHEDULE,
   runJob,
@@ -266,5 +267,69 @@ describe("a grant retired for inactivity", () => {
     expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
     expect(await logged("auth.grant.retired", app.clientId)).toBe(1);
     expect(await grantsOf()).not.toContain(app.clientId);
+  });
+});
+
+/**
+ * After the retirement above, which moved the clock a year and ended every
+ * owner session: each purge moves it on again from there, so a case signs in
+ * afresh and counts only what its own run added.
+ */
+describe("a credential the clean-up removes", () => {
+  it("is in the audit log as keys.purged when the clean-up removes a key revoked long ago", async () => {
+    const minted = await management.createKey({
+      label: "purged",
+      source: "audit-keys-purged",
+      permissions: ["audit.read"],
+    });
+    expect(minted.status).toBe(201);
+    expect((await management.revokeKey(minted.data.id)).status).toBe(200);
+    const before = await logged("keys.purged");
+
+    // Inside the thirty days a revoked key is kept: the witness that the run is not
+    // what writes the entry.
+    await movedClock(server).advance(2 * DAY_MS);
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect(await logged("keys.purged")).toBe(before);
+
+    await movedClock(server).advance(29 * DAY_MS);
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect(await logged("keys.purged")).toBe(before + 1);
+  });
+
+  it("is in the audit log as auth.clients.purged when the clean-up removes a client that holds no grant", async () => {
+    await registerApp(server, NOTES);
+    const before = await logged("auth.clients.purged");
+    await movedClock(server).advance(2 * HOUR_MS);
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect(await logged("auth.clients.purged")).toBeGreaterThan(before);
+  });
+
+  it("is in the audit log as auth.grants.purged when the clean-up removes a grant revoked long ago", async () => {
+    cookie = await signIn(server, origin);
+    const app = await registerApp(server, NOTES);
+    await connect(server, origin, cookie, app, NOTES);
+    const listed = await fetch(`${server.apiUrl}/auth/grants`, {
+      headers: { authorization: `Bearer ${server.managementKey}` },
+    });
+    const grant = (
+      (await listed.json()) as { data: { id: string; client_id: string }[] }
+    ).data.find((g) => g.client_id === app.clientId);
+    expect(grant).toBeDefined();
+    const revoked = await fetch(`${server.apiUrl}/auth/grants/${grant!.id}`, {
+      method: "DELETE",
+      headers: { authorization: `Bearer ${server.managementKey}` },
+    });
+    expect(revoked.status).toBe(200);
+    const before = await logged("auth.grants.purged");
+
+    // Inside the retention a revoked grant is kept.
+    await movedClock(server).advance(30 * DAY_MS);
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect(await logged("auth.grants.purged")).toBe(before);
+
+    await movedClock(server).advance(70 * DAY_MS);
+    expect((await runJob(server, "credential-cleanup")).outcome).toBe("ok");
+    expect(await logged("auth.grants.purged")).toBeGreaterThan(before);
   });
 });
