@@ -941,10 +941,11 @@ describe("a device refuses to decide what the server decides", () => {
       harness.server.requests.find((request) => request.method === "PATCH")
         ?.body ?? "{}",
     ) as { properties: Record<string, string> };
-    // Three values are in play: the one the copy held, the one the caller
-    // wrote, and the one the server answered with. A device that merged
-    // would produce a fourth, and nothing anywhere would show it: the copy
-    // would simply hold a value neither writer ever wrote.
+    // Four values are in play: the one the copy held, the one the caller
+    // wrote, the one the answer carried and the one the read after it
+    // returned. A device that merged would produce a fifth, and nothing
+    // anywhere would show it: the copy would simply hold a value neither
+    // writer ever wrote.
     expect(
       sent.properties.body,
       "the device sent something other than the value it was handed, so it combined its own field with the one the copy held",
