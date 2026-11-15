@@ -93,8 +93,9 @@ CREATE TABLE IF NOT EXISTS edge_types (
 CREATE UNIQUE INDEX IF NOT EXISTS edge_types_reverse_name
     ON edge_types (reverse_name) WHERE reverse_name IS NOT NULL;
 
+-- Never reuse a seq, so nothing kept by a purged item's seq passes to a new item.
 CREATE TABLE IF NOT EXISTS items (
-    seq INTEGER PRIMARY KEY,
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
     type TEXT NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('active', 'archived', 'trashed', 'revoked')),
@@ -268,8 +269,9 @@ CREATE TABLE IF NOT EXISTS table_rows_purging (
     table_seq INTEGER PRIMARY KEY
 ) STRICT;
 
+-- Never reuse a seq, so nothing kept by a removed edge's seq passes to a new edge.
 CREATE TABLE IF NOT EXISTS edges (
-    seq INTEGER PRIMARY KEY,
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
     id TEXT NOT NULL UNIQUE,
     source_id TEXT NOT NULL REFERENCES items (id),
     target_id TEXT NOT NULL REFERENCES items (id),
@@ -348,7 +350,6 @@ CREATE TABLE IF NOT EXISTS idempotency_records (
     created_at TEXT NOT NULL,
     completed_at TEXT,
     response_status INTEGER,
-    response_content_type TEXT,
     response_body BLOB,
     requirements TEXT NOT NULL DEFAULT '[]',
     PRIMARY KEY (credential, idempotency_key)

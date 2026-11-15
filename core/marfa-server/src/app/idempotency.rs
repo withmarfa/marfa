@@ -24,7 +24,6 @@ pub use expiry::{UNREAD, expire};
 pub const MAX_KEY_CHARACTERS: usize = 255;
 const LEASE_MS: i64 = 60_000;
 const MAX_KEPT_BYTES: usize = 1_048_576;
-const CONTENT_TYPE: &str = "application/json";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "need", rename_all = "snake_case")]
@@ -115,7 +114,6 @@ impl Claim {
 #[derive(Debug)]
 pub struct Kept {
     pub status: u16,
-    pub content_type: String,
     pub body: Vec<u8>,
 }
 
@@ -144,7 +142,6 @@ struct Held {
     state: String,
     created_at: String,
     status: Option<u16>,
-    content_type: Option<String>,
     body: Option<Vec<u8>>,
     requirements: String,
 }
@@ -153,7 +150,7 @@ fn held(tx: &Transaction<'_>, credential: &str, key: &str) -> Result<Option<Held
     Ok(tx
         .query_row(
             "SELECT fingerprint, contract, state, created_at, response_status, \
-             response_content_type, response_body, requirements FROM idempotency_records \
+             response_body, requirements FROM idempotency_records \
              WHERE credential = ?1 AND idempotency_key = ?2",
             [credential, key],
             |row| {
@@ -163,9 +160,8 @@ fn held(tx: &Transaction<'_>, credential: &str, key: &str) -> Result<Option<Held
                     state: row.get(2)?,
                     created_at: row.get(3)?,
                     status: row.get(4)?,
-                    content_type: row.get(5)?,
-                    body: row.get(6)?,
-                    requirements: row.get(7)?,
+                    body: row.get(5)?,
+                    requirements: row.get(6)?,
                 })
             },
         )
@@ -270,9 +266,6 @@ async fn replay(app: &App, caller: &Caller, key: &str, record: Held) -> Result<K
             };
             Ok(Kept {
                 status,
-                content_type: record
-                    .content_type
-                    .unwrap_or_else(|| CONTENT_TYPE.to_string()),
                 body: with_current_read_only(
                     &read_only::current(&marked, tx, &at, Snapshot::Committed)?,
                     status,
@@ -512,7 +505,7 @@ fn record(
     let kept = (body.len() <= MAX_KEPT_BYTES).then_some(body);
     Ok(tx.execute(
         "UPDATE idempotency_records SET state = 'complete', completed_at = ?4, \
-         response_status = ?5, response_content_type = ?6, response_body = ?7, requirements = ?8 \
+         response_status = ?5, response_body = ?6, requirements = ?7 \
          WHERE credential = ?1 AND idempotency_key = ?2 AND created_at = ?3 \
          AND state = 'in_flight'",
         params![
@@ -521,7 +514,6 @@ fn record(
             claim.created_at,
             at,
             status,
-            CONTENT_TYPE,
             kept,
             claim.requirements()?
         ],

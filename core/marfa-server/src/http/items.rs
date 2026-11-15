@@ -185,11 +185,8 @@ fn replayed(kept: Kept) -> Response {
         })
         .and_then(|code| HeaderValue::from_str(&code).ok());
     let status = StatusCode::from_u16(kept.status).unwrap_or(StatusCode::OK);
-    let content_type = HeaderValue::from_str(&kept.content_type)
-        .unwrap_or(HeaderValue::from_static("application/json"));
     let mut response = text_answer(status, kept.body);
     let headers = response.headers_mut();
-    headers.insert(header::CONTENT_TYPE, content_type);
     headers.insert(REPLAYED_HEADER, HeaderValue::from_static("true"));
     if let Some(code) = code {
         headers.insert("x-error-code", code);
