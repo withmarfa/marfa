@@ -6090,11 +6090,11 @@ When another registered folder no longer holds an item for a non-state reason an
 
 ### `folders/moved-unmatched-taken-back`
 
-When a file moves into a registered folder whose query does not hold its item, the file is unchanged since the folder it left wrote it, and the query of the folder it left holds the item, a device MUST take the file back into the folder it left once the rename grace has passed.
+When a file moves into a registered folder whose query does not hold its item for a reason other than the item's state, the file is unchanged since the folder it left wrote it, and the query of the folder it left holds the item, a device MUST take the file back into the folder it left once the rename grace has passed.
 
-**Reason:** the person moved a file, not the note, and the receiving folder keeps the file as `unmatched` (`folders/unmatched-file-kept`), so the item would show in no folder it belongs to. The folder it left holds the item without a file and takes the file as it takes one another folder let go (`folders/take-in-file`), so the item stays one item at one version, and trashes nothing (`folders/move-keeps-item`).
+**Reason:** the person moved a file, not the note, and the receiving folder keeps the file as `unmatched` (`folders/unmatched-file-kept`), so the item would show in no folder it belongs to. The folder it left holds the item without a file and takes the file as it takes one another folder let go (`folders/take-in-file`), so the item stays one item at one version, and trashes nothing (`folders/move-keeps-item`). A folder whose query leaves the item out by its state keeps the file, as it keeps a file of an item that left it by its state (`folders/take-in-file`).
 
-**Tests:** `cli/folder.test.ts › takes a note's file back into the folder it left, and says so, when the folder it was moved into does not hold the note`.
+**Tests:** `cli/folder.test.ts › takes a note's file back into the folder it left, and says so, when the folder it was moved into does not hold the note`, `cli/folder.test.ts › leaves a note's file in the folder it was moved into when that folder's query leaves the note out by its state`.
 
 ### `folders/moved-unmatched-taken-back-count`
 

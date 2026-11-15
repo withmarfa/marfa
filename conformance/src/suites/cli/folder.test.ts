@@ -1724,8 +1724,15 @@ describe("a folder round trip", () => {
   /** What the grace for a missing file is, with a second to spare. */
   const pastTheGrace = () => new Promise((done) => setTimeout(done, 7_000));
 
-  /** The notes the server holds in any state, newest first. */
-  async function notesWith(word: string): Promise<ItemEnvelope["item"][]> {
+  /**
+   * The notes whose body holds a word, in any state, among every note the
+   * server changed since a time. A state the bin holds is not searched, so
+   * the notes are read, every page, and the word picks out the test's own.
+   */
+  async function notesWith(
+    word: string,
+    since: string,
+  ): Promise<ItemEnvelope["item"][]> {
     const page = await c.cli.json<{ data: ItemEnvelope["item"][] }>([
       "items",
       "list",
@@ -1733,8 +1740,9 @@ describe("a folder round trip", () => {
       "core.note",
       "--state",
       "any",
-      "--limit",
-      "100",
+      "--updated-after",
+      since,
+      "--all",
     ]);
     const found = page.data.filter((item) =>
       String(item.properties.body).includes(word),
@@ -1770,6 +1778,7 @@ describe("a folder round trip", () => {
    * folders pushed in turn past the grace.
    */
   async function movedBeforeItsId(created: string, word: string) {
+    const since = new Date().toISOString();
     const left = await follow("moved-from", { types: ["core.note"] });
     const reached = await follow("moved-to", { types: ["core.note"] });
     writeFileSync(join(left.folder, "Fresh.md"), created);
@@ -1795,7 +1804,7 @@ describe("a folder round trip", () => {
     await sync(reached.folder);
     await sync(left.folder);
 
-    const items = await notesWith(word);
+    const items = await notesWith(word, since);
     const fresh = items.filter((item) =>
       String(item.properties.body).includes("Added after the move"),
     );
@@ -1862,6 +1871,7 @@ describe("a folder round trip", () => {
 
   it("takes a note's file back into the folder it left, and says so, when the folder it was moved into does not hold the note", async () => {
     await onOwnRegistry(async () => {
+      const since = new Date().toISOString();
       const left = await follow("held-by", { types: ["core.note"] });
       const reached = await follow("not-held", {
         types: ["core.note"],
@@ -1908,7 +1918,40 @@ describe("a folder round trip", () => {
         "active",
         before.item.version,
       ]);
-      expect(await notesWith(word)).toHaveLength(1);
+      expect(await notesWith(word, since)).toHaveLength(1);
+    });
+  });
+
+  it("leaves a note's file in the folder it was moved into when that folder's query leaves the note out by its state", async () => {
+    await onOwnRegistry(async () => {
+      const left = await follow("held-by-state", { types: ["core.note"] });
+      const reached = await follow("archived-only", {
+        types: ["core.note"],
+        state: ["archived"],
+      });
+      const word = unique("stays");
+      writeFileSync(
+        join(left.folder, "Stay.md"),
+        `---\ntitle: Stay\n---\n${word}\n`,
+      );
+      await sync(left.folder);
+      const id = /^marfa_id: (.+)$/m
+        .exec(readFileSync(join(left.folder, "Stay.md"), "utf8"))![1]!
+        .trim();
+      trackItem(c.ctx, id);
+
+      renameSync(join(left.folder, "Stay.md"), join(reached.folder, "Stay.md"));
+      await sync(reached.folder);
+      await sync(left.folder);
+      await pastTheGrace();
+      await sync(reached.folder);
+      const back = await sync(left.folder);
+
+      expect(back.pull).toMatchObject({ taken: 0 });
+      expect(
+        existsSync(join(reached.folder, "Stay.md")),
+        "the folder whose query leaves the note out by its state gave the file up",
+      ).toBe(true);
     });
   });
 });
