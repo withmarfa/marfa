@@ -144,7 +144,7 @@ stays because that thing is what it checks.
 - `compliance/table-rows-retention.test.ts` rewrites one row batch's stored
   time (`row_batches.at`) to a value that does not read, for the same reason
   as `stored-times`.
-- `compliance/backups.test.ts` reads `sign_ins.token`, the digest the instance
+- `compliance/backups.test.ts` reads `sign_ins.digest`, the digest the instance
   keeps of each sign-in, and the generated secrets in `marfa.secrets`, to show
   that no backup carries them. No door answers either.
 - `compliance/durability.test.ts` runs `PRAGMA integrity_check` on a copy of

@@ -588,17 +588,15 @@ CREATE TABLE IF NOT EXISTS owner (
     updated_at TEXT NOT NULL
 ) STRICT;
 
--- `token` holds a digest, never the cookie's value. `updated_at` is the last
--- recorded use.
 CREATE TABLE IF NOT EXISTS sign_ins (
     id TEXT PRIMARY KEY NOT NULL,
-    token TEXT NOT NULL UNIQUE,
+    digest TEXT NOT NULL UNIQUE,
     owner_id TEXT NOT NULL REFERENCES owner (id) ON DELETE CASCADE,
     created_at TEXT NOT NULL,
-    updated_at TEXT NOT NULL,
+    last_used_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     user_agent TEXT,
-    ip_address TEXT
+    client_ip TEXT
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS sign_ins_owner ON sign_ins (owner_id);

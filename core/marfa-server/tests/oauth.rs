@@ -2602,7 +2602,7 @@ async fn a_silent_code_reads_its_destination_inside_the_write() {
 async fn a_foreign_form_neither_uses_nor_renews_a_session() {
     let instance = Instance::signed_in().await;
     instance.app.clock.advance(120_000).unwrap();
-    let last_use = "SELECT updated_at FROM sign_ins";
+    let last_use = "SELECT last_used_at FROM sign_ins";
     let before = instance.text_of(last_use).await;
 
     for door in [

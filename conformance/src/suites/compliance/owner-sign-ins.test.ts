@@ -76,7 +76,7 @@ interface SignIn {
   created_at: string;
   last_used_at: string;
   expires_at: string;
-  ip_address: string | null;
+  client_ip: string | null;
   user_agent: string | null;
   minted_by: string | null;
 }
@@ -368,20 +368,20 @@ describe("the owner's sign-ins", () => {
     const other = rows.find((row) => row.id === secondId);
     expect(mine).toMatchObject({
       kind: "browser",
-      ip_address: first.address,
+      client_ip: first.address,
       user_agent: first.userAgent,
     });
     expect(other).toMatchObject({
       kind: "browser",
-      ip_address: second.address,
+      client_ip: second.address,
       user_agent: second.userAgent,
     });
     for (const row of [mine!, other!]) {
       expect(Object.keys(row).sort()).toEqual([
+        "client_ip",
         "created_at",
         "expires_at",
         "id",
-        "ip_address",
         "kind",
         "last_used_at",
         "minted_by",
@@ -528,12 +528,12 @@ describe("every sign-in", () => {
     expect(keyRow).toMatchObject({
       kind: "key",
       name: "listed key",
-      ip_address: null,
+      client_ip: null,
       user_agent: null,
       expires_at: null,
     });
     expect(appRow).toMatchObject({
-      ip_address: null,
+      client_ip: null,
       user_agent: null,
       expires_at: new Date(
         Date.parse(appRow!.last_used_at ?? appRow!.created_at) +

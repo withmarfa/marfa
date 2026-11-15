@@ -71,7 +71,7 @@ impl Instance {
                 let session = |id: String, expires_at: Stamp| {
                     tx.execute(
                         "INSERT INTO sign_ins \
-                         (id, token, owner_id, created_at, updated_at, expires_at) \
+                         (id, digest, owner_id, created_at, last_used_at, expires_at) \
                          VALUES (?1, ?1, 'owner', ?3, ?3, ?2)",
                         rusqlite::params![id, expires_at, old],
                     )
