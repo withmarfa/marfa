@@ -213,6 +213,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^\.github\/actions\/native-build-image\//,
     ["core-native", "image", ...RUST_SERVER],
   ],
+  // The action every Rust job uses to install the compiler, which runs for
+  // the jobs that read the compiler version.
+  [
+    /^\.github\/actions\/rust-toolchain\//,
+    [...RUST, ...ENRICHMENT, "image", "version-fields"],
+  ],
   // Read by GitHub alone. Anything else under `.github/`, such as an action
   // a workflow uses, runs everything until a rule names it.
   [/^\.github\/(ISSUE_TEMPLATE\/|dependabot\.yml$)/, []],
@@ -413,7 +419,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     [...RUST_LINUX, "core", "clients-freshness", "workspace"],
   ],
   [/^core\/Cargo\.toml$/, [...RUST, ...ENRICHMENT, "image", "workspace"]],
-  [/^core\/Cargo\.lock$/, [...RUST, ...ENRICHMENT, "image"]],
+  // The lockfile and the compiler version: a new dependency or a new compiler
+  // can break an Apple build. `version-fields` installs the compiler too.
+  [
+    /^core\/(Cargo\.lock|rust-toolchain\.toml)$/,
+    [...RUST, ...ENRICHMENT, "image", "version-fields"],
+  ],
   [/^core\/\.cargo\//, [...RUST, ...ENRICHMENT, "image", "workspace"]],
   [
     /^core\/\.config\//,

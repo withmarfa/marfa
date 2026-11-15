@@ -174,11 +174,13 @@ PDFium reads untrusted files, so the pin moves at least monthly. The pinned buil
 - Branch: [\`${branch}\`](${branch_url}).
 - Open the pull request: ${compare_url}
 - The branch changes \`${manifest_in_repo}\` only: the \`pdfium-binaries\` archive (commit \`${commit}\`, hash \`${archive_sha}\`) and the PDFium branch head (\`${pdfium_commit}\`).
+- The move changes the built libraries, so \`core/marfa-enrichment/native/pdfium-libraries.txt\` needs a new hash for each of the three targets. A build prints each line when it stops on a library the file does not name, and the \`move-pdfium\` skill says where to find them.
 
 ## Acceptance criteria
 
 - The pull request from the branch passes its \`Core native (x86_64 Linux)\` job: it builds PDFium from the new pins, verifies the sandbox and fuzzes the reader.
 - If that build fails because \`pdfium-render\` in \`core/marfa-enrichment/Cargo.toml\` has no API for this PDFium, the same pull request moves \`pdfium-render\`.
+- The pull request carries the three lines of \`pdfium-libraries.txt\`, and a release dry run on its branch passes for every target.
 - The pull request merges only after that job passes.
 
 ## Out of scope

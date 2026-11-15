@@ -150,9 +150,11 @@ describe("the workflow pushes the formula only after the release is public", () 
     const gated = steps.filter(
       (s) => s.if === "steps.gate.outputs.push == 'true'",
     );
-    expect(gated.map((s) => s.name ?? s.uses)).toEqual([
+    expect(
+      gated.map((s) => s.name ?? s.uses?.replace(/@[0-9a-f]{40}$/, "")),
+    ).toEqual([
       "Require the tap token",
-      "actions/checkout@v7",
+      "actions/checkout",
       "Commit and push the formula",
     ]);
     for (const step of steps) {

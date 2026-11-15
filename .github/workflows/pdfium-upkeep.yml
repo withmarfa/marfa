@@ -9,7 +9,8 @@ name: PDFium upkeep
 #
 # It opens no pull request: GitHub Actions may not create pull requests in this
 # repository, and one opened with the workflow's token would start no CI. A
-# person or agent opens it from the issue, and its `Core native` job decides.
+# person or agent opens it from the issue, adds the hashes of the new libraries
+# to `native/pdfium-libraries.txt`, and its `Core native` job decides.
 # A failed scheduled run is reported like the other scheduled workflows.
 on:
   schedule:
@@ -38,7 +39,7 @@ jobs:
       issues: write
     steps:
       # The token stays in the checkout: the script pushes the branch with it.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - env:
           GH_TOKEN: ${{ github.token }}
           DRY_RUN: ${{ inputs.dry_run }}
@@ -62,7 +63,7 @@ jobs:
       actions: read
       issues: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: scripts/report-nightly-failure.sh

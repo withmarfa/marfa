@@ -40,7 +40,7 @@ jobs:
     env:
       TARGET: x86_64-unknown-linux-musl
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
@@ -51,7 +51,7 @@ jobs:
         id: key
         run: echo "key=marfa-native-$RUNNER_OS-${{ hashFiles('core/marfa-enrichment/native/manifest.txt', 'core/marfa-enrichment/native/patches/**', 'core/marfa-enrichment/native/build.sh', 'core/marfa-enrichment/native/pdfium.sh', 'core/marfa-enrichment/native/tesseract.sh', 'core/marfa-enrichment/native/models.sh', 'core/marfa-enrichment/native/lib.sh', 'core/marfa-enrichment/native/linux/**') }}" >> "$GITHUB_OUTPUT"
       - name: Restore the downloads and the PDFium library
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ${{ runner.temp }}/marfa-native/downloads
@@ -63,7 +63,7 @@ jobs:
         run: core/marfa-enrichment/native/release.sh "$TARGET" --server
       # An input of the jobs below, so it is kept on success.
       - name: Keep the server
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: benchmark-server
           path: ${{ runner.temp }}/marfa-native/out/${{ env.TARGET }}/marfa-server
@@ -78,15 +78,15 @@ jobs:
     env:
       CONFORMANCE_SERVER_HOOK_FREE: "true"
     steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: benchmark-server
           path: ${{ runner.temp }}/benchmark-server
@@ -119,9 +119,9 @@ jobs:
       # build above: the binary is a release build, since a debug build would
       # measure the build, and a failed compile must not keep the server's
       # own benchmarks from reporting.
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./.github/actions/rust-toolchain
         if: ${{ !cancelled() }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         if: ${{ !cancelled() }}
         with:
           workspaces: core
@@ -145,7 +145,7 @@ jobs:
 
       - name: Keep the load reports
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: load-reports
           path: conformance/reports/load/
@@ -155,7 +155,7 @@ jobs:
       # the log is in it.
       - name: Keep the server log
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: marfa-server-log
           path: |
@@ -223,15 +223,15 @@ jobs:
       # in it: `upload-artifact` refuses such a path.
       - name: Name the state directory
         run: echo "MARFA_SCALE_STATE=$RUNNER_TEMP/marfa-scale" >> "$GITHUB_ENV"
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6.1.1
         with:
           dest: ${{ runner.temp }}/setup-pnpm
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 22
       - run: pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: benchmark-server
           path: ${{ runner.temp }}/benchmark-server
@@ -239,8 +239,8 @@ jobs:
         run: |
           chmod +x "$RUNNER_TEMP/benchmark-server/marfa-server"
           echo "MARFA_SERVER_BIN=$RUNNER_TEMP/benchmark-server/marfa-server" >> "$GITHUB_ENV"
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: ./.github/actions/rust-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: core
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -339,7 +339,7 @@ jobs:
       # Kept whatever the verdict: the next night reads it to show a change.
       - name: Keep the scale figures
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: scale-figures
           path: conformance/reports/scale/figures.json
@@ -355,7 +355,7 @@ jobs:
 
       - name: Keep the server log
         if: failure()
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: marfa-scale-server-log
           path: |
@@ -381,7 +381,7 @@ jobs:
       actions: read
       issues: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: scripts/report-nightly-failure.sh

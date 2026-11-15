@@ -1,0 +1,17 @@
+name: Rust toolchain
+description: >-
+  Installs the compiler `core/rust-toolchain.toml` names, with its components
+  and targets, and makes it the default compiler for every folder of the job,
+  so a step outside `core/` builds with the same one. Needs the repository
+  checked out. A new stable release cannot reach a job until the file moves.
+
+runs:
+  using: composite
+  steps:
+    - name: Install the pinned Rust toolchain
+      shell: bash
+      working-directory: core
+      run: |
+        rustup toolchain install
+        rustup default "$(awk -F'"' '$1 ~ /^channel *= *$/ { print $2 }' rust-toolchain.toml)"
+        rustc --version

@@ -105,6 +105,8 @@ Its options are `--type <mime>`, `--languages <a+b>`, `--data-dir <folder>`, `--
 
 The `native` feature is off by default, so `cargo check --workspace` needs no extra tool. A build with it needs PDFium, Tesseract, Leptonica, and the models, built once per target by the scripts in `native/`. `native/manifest.txt` pins every source by hash, commit, or digest, and the scripts stop on the first mismatch. `cargo build` downloads nothing. To move a pin, change its URL and hash together.
 
+`native/pdfium-libraries.txt` names the built PDFium library for each target by hash. A saved library, which a cache may hold, is installed only when its hash is the one named for its target, and the run stops otherwise. After a change to PDFium's pins, patches or scripts, a build stops on its new library and prints the line to commit; `MARFA_PDFIUM_UNPINNED=1` builds anyway on a developer's machine.
+
 ```sh
 MARFA_NATIVE_ROOT=/path/to/cache native/release.sh aarch64-apple-darwin
 MARFA_NATIVE_ROOT=/path/to/cache native/release.sh x86_64-unknown-linux-musl --full
