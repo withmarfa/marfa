@@ -15,7 +15,7 @@ import {
 
 /**
  * What an MCP tool leaves out of an answer, and says it left out
- * (`mcp/health-withheld`, `mcp/sources-left-out`). Each needs a server of
+ * (`mcp/health-error-withheld`, `mcp/health-housekeeping-withheld`, `mcp/sources-left-out`). Each needs a server of
  * the fixture's own: a fault that makes a component not well, and a list of
  * sources long enough to outgrow one answer, are not for the run's shared
  * server.
