@@ -635,26 +635,6 @@ pub async fn extension(
     .await
 }
 
-/// The rows a purge of `id` takes, `id` first, as a purge planned now would take them.
-pub async fn purge_reach(app: &App, caller: &Caller, id: String) -> Result<Vec<String>> {
-    reading(app, caller, move |read| {
-        let gate = Gate {
-            tx: read.tx,
-            caller: &read.caller,
-            catalog: &read.catalog,
-            claim: None,
-            server_own: false,
-        };
-        let plan = plan::plan(&gate, Act::Purge, &[Asked { id, version: None }])?;
-        Ok(plan
-            .purging
-            .into_iter()
-            .map(|purging| purging.item.id)
-            .collect())
-    })
-    .await
-}
-
 pub async fn trash_preview(app: &App, caller: &Caller, ids: Vec<String>) -> Result<String> {
     reading(app, caller, move |read| {
         let gate = Gate {

@@ -611,12 +611,14 @@ describe("a write the copy shows at once", () => {
     await unchanged(device, item);
   });
 
+  // Reaches the refusal in the device CLI's JSON text reader. The core check for values a caller
+  // passes already parsed (`judge_values`) is covered by its unit tests in `row_writes.rs` alone.
   it.each([
     ["1500000000000000001", "1500000000000000000"],
     ["-9007199254740993", "-9007199254740992"],
     ["1152921504606846976", "1152921504606847000"],
   ])(
-    "refuses %s in a row's value, naming the operation and the column, as the server does, queueing nothing",
+    "refuses %s in a row's value written as JSON text, naming the operation and the column, as the server does, queueing nothing",
     async (digits, served) => {
       const { device, item, row } = await judging("exact");
       const message = `Must be a whole number that Marfa serves back with the same digits, not ${digits}, which it serves as ${served}. An integer field takes a whole number from -9007199254740991 to 9007199254740991, and a property that takes text takes it as a string.`;

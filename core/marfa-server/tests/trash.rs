@@ -325,3 +325,34 @@ async fn an_item_another_request_removes_while_the_bin_empties_is_not_a_failure(
     assert_eq!(answer["purged"], json!(1), "{answer}");
     assert_eq!(instance.count("SELECT count(*) FROM items"), 0);
 }
+
+#[tokio::test]
+async fn a_part_detached_while_its_host_is_purged_is_purged_and_counted_in_its_own_right() {
+    let instance = Instance::start().await;
+    let part = instance.note(&[]).await;
+    let host = instance.note(&[]).await;
+    instance.edge(&part, &host, "comments-on").await;
+    instance.bin(&host).await;
+
+    let file = instance.dir.path().join("marfa.db");
+    let other_request = Connection::open(file).unwrap();
+    other_request.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let emptying = tokio::spawn(send(
+        instance.control.clone(),
+        None,
+        Method::POST,
+        "/trash/empty",
+        None,
+    ));
+    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    other_request
+        .execute_batch("DELETE FROM edges; COMMIT")
+        .unwrap();
+    drop(other_request);
+
+    let answer = emptying.await.unwrap();
+    let answer = answer.landed(StatusCode::OK);
+    assert_eq!(answer["failures"], json!([]), "{answer}");
+    assert_eq!(answer["purged"], json!(2), "{answer}");
+    assert_eq!(instance.count("SELECT count(*) FROM items"), 0);
+}

@@ -327,18 +327,10 @@ pub async fn empty(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Ans
         if taken.contains(&id) {
             continue;
         }
-        let reach = items::purge_reach(&app, &caller, id.clone())
-            .await
-            .unwrap_or_else(|_| vec![id.clone()]);
-        let change = Change::Owner {
-            act: OwnerAct::Purge,
-            id: id.clone(),
-            version,
-        };
-        match write::run(&app, &caller, None, change).await {
-            Ok(done) if done.status == 200 => {
-                purged += reach.len();
-                taken.extend(reach);
+        match write::purge_owned(&app, &caller, id.clone(), version).await {
+            Ok((done, removed)) if done.status == 200 => {
+                purged += removed.len();
+                taken.extend(removed);
             }
             Ok(_) => failures.push(json!({
                 "id": id,

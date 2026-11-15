@@ -5654,7 +5654,7 @@ If a write to an item, or to an edge, an item's extension or a row of an item's 
 
 **Reason:** the server refuses the number, so a write kept would come back refused, or be stored changed.
 
-**Tests:** `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`, `› keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`, `› keeps a number a float keeps in the properties of an edge and the data of an extension on both paths`, `device/property-validation-edges.test.ts › refuses %s in the properties of an edge and the data of an extension on both paths with one message`, `device/table-writes-live.test.ts › refuses %s in a row's value, naming the operation and the column, as the server does, queueing nothing`.
+**Tests:** `device/property-validation-live.test.ts › refuses %s in a declared number, an undeclared property, an array and a nested object on both paths with one message`, `› keeps %s on both paths as the same stored number`, `› keeps a large number in the digits a float is served as inside an array and a nested object on both paths`, `› keeps a number a float keeps in the properties of an edge and the data of an extension on both paths`, `device/property-validation-edges.test.ts › refuses %s in the properties of an edge and the data of an extension on both paths with one message`, `device/table-writes-live.test.ts › refuses %s in a row's value written as JSON text, naming the operation and the column, as the server does, queueing nothing`.
 
 ### `device/number-exact-folder-flagged`
 
