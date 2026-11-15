@@ -2814,7 +2814,7 @@ If an owner trash action names an item that no item holds, then the server MUST 
 
 ### `items/owner-trash-hidden`
 
-If an owner trash action names a system item, or an item the instance's source filter does not admit, then the server MUST answer `404 item_not_found` and leave the item.
+If an owner trash action names a system item, or an item the instance's source filter does not admit, then the server MUST answer `404 item_not_found`.
 
 **Tests:** `compliance/owner-trash.test.ts › answers an owner trash action on a system item, or one the source filter hides, with 404 item_not_found and leaves it`.
 
@@ -2914,7 +2914,7 @@ When a caller runs `marfa --socket PATH items bin empty --confirm PURGE` without
 
 ### `items/owner-empty-bin-json`
 
-When a caller runs `marfa --socket PATH items bin empty --confirm PURGE --json`, the CLI MUST print one JSON object holding `purged`, `stayed` and `failures`, and no line for a batch.
+When a caller runs `marfa --socket PATH items bin empty --confirm PURGE --json`, the CLI MUST print one JSON object holding `purged`, `stayed` and `failures`.
 
 **Tests:** `cli/item-summaries.test.ts › prints one JSON object of purged, stayed and failures under --json, with no line for a batch`.
 
@@ -2986,17 +2986,17 @@ If a volume with no room turns away the commit of a purge in an emptying batch, 
 
 ### `items/owner-empty-trash-stop`
 
-If the commit of a purge in an emptying batch cannot be confirmed, then the server MUST attempt no further item of that batch.
+If the commit of a purge in an emptying batch cannot be confirmed, or a full volume turns the purge away, then the server MUST attempt no further item of that batch.
 
-**Tests:** `compliance/owner-trash.test.ts › attempts no further item of a batch after one whose purge could not be confirmed`.
+**Tests:** `compliance/owner-trash.test.ts › attempts no further item of a batch after one whose purge could not be confirmed`, `› stops a batch at a purge that a full volume turns away, listing it as insufficient_storage with write_outcome unknown`.
 
 ### `items/owner-empty-trash-no-cursor`
 
-If the commit of a purge in an emptying batch cannot be confirmed, then the server MUST return a null `next_cursor`.
+If the commit of a purge in an emptying batch cannot be confirmed, or a full volume turns the purge away, then the server MUST return a null `next_cursor`.
 
 **Reason:** the caller reads current state before it empties the bin again.
 
-**Tests:** `compliance/owner-trash.test.ts › returns no cursor after a batch that stopped for a purge it could not confirm`.
+**Tests:** `compliance/owner-trash.test.ts › returns no cursor after a batch that stopped for a purge it could not confirm`, `› stops a batch at a purge that a full volume turns away, listing it as insufficient_storage with write_outcome unknown`.
 
 ## Private local authority
 
