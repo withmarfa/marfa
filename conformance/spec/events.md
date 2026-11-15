@@ -6,14 +6,12 @@ Every rule about a stream is about the plain stream unless it says otherwise. Th
 
 ## Event types
 
-Every event and stream frame the server sends is a row of the table below, which is written from the server's own event names and so cannot differ from them. An event is also the `event:` of its frame. A row names the statements that hold a write to its event. Writes that announce nothing include those of `events/settings-silent`, `connectors/agreements-silent-live` and `inbound-webhooks/receipt-no-event`.
-
-<!-- event-types-table:start -->
+Every event and stream frame the server sends is a row of the table below, and an event is also the `event:` of its frame. A row names the statements that hold each write to its event, and each of them has a fixture. A write that no row names announces nothing: those the contract states are the writes of `events/settings-silent`, `connectors/agreements-silent-live` and `inbound-webhooks/receipt-no-event`, and a write that changes nothing (`versions/unchanged-silent`).
 
 | Event                | Sent to              | When it is sent                                                                                                                                                                                                                                                                                                  |
 | -------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `item.created`       | Streams and webhooks | A write creates an item (`events/create-announced`).                                                                                                                                                                                                                                                             |
-| `item.updated`       | Streams and webhooks | A write to an item, however little it changes (`events/update-announced`, `events/update-edges-only-announced`, `housekeeping/enrichment-announced`, `types/move-announced`, `items/folder-announced`, `views/announced`).                                                                                       |
+| `item.updated`       | Streams and webhooks | A write changes an item (`events/update-announced`, `events/update-edges-only-announced`, `housekeeping/enrichment-announced`, `types/move-announced`, `items/folder-announced`, `views/announced`).                                                                                                             |
 | `item.deleted`       | Streams and webhooks | An item moves to the bin (`items/delete-announced`, `items/trash-cascade-announced`, `events/owner-trash-announced`, `housekeeping/feed-expiry-announced`), or a cascade revokes a `system.*` item (`events/cascade-revoke-announced`).                                                                          |
 | `item.restored`      | Streams and webhooks | An item in the bin is restored (`items/restore-announced`, `events/owner-trash-announced`).                                                                                                                                                                                                                      |
 | `item.purged`        | Streams and webhooks | An item is destroyed (`items/purge-announced`, `events/owner-trash-announced`, `events/sweep-purge-announced`, `views/delete-announced`).                                                                                                                                                                        |
@@ -29,8 +27,6 @@ Every event and stream frame the server sends is a row of the table below, which
 | `catchup_too_old`    | Streams              | Last, when the log no longer holds the events after the `Last-Event-ID` the client sent.                                                                                                                                                                                                                         |
 | `cursor_ahead`       | Streams              | Last, when the `Last-Event-ID` the client sent is past the latest event in the log.                                                                                                                                                                                                                              |
 | `reach_changed`      | Streams              | Last on a copy stream, when its reach changes.                                                                                                                                                                                                                                                                   |
-
-<!-- event-types-table:end -->
 
 ## Opening a stream
 
@@ -200,6 +196,14 @@ When `Last-Event-ID` names a cursor past the log's head, the server MUST answer 
 
 **Tests:** `compliance/events-contract.test.ts › refuses a cursor past the log's head with a terminal cursor_ahead frame`.
 
+### `events/cursor-ahead-cursor-first`
+
+When `Last-Event-ID` names a cursor past the log's head, the server MUST send `stream_cursor` carrying the log's head before it sends `cursor_ahead`, on a copy stream as on any other.
+
+**Reason:** a stream opens the same way whatever it ends with, so a client that reads the first frame for where the log stands finds it there. `reach/resume-ahead` says the same of a copy stream.
+
+**Tests:** `compliance/events-contract.test.ts › refuses a cursor past the log's head with a terminal cursor_ahead frame`, `compliance/reach.test.ts › ends a copy stream resumed past the head with cursor_ahead and no live marker`.
+
 ### `events/cursor-ahead-no-id`
 
 The server MUST send `cursor_ahead` without an `id:` line.
@@ -227,6 +231,14 @@ If the oldest event the log retains has an id greater than the cursor plus one, 
 **Reason:** the event after the cursor is gone, so a replay would leave a gap the client could not see. The client reads its state again from the API.
 
 **Tests:** `compliance/catchup-too-old.test.ts › answers 200 and a terminal catchup_too_old frame naming the oldest retained id and the cursor, and delivers a cursor still in the log`.
+
+### `events/catchup-too-old-cursor-first`
+
+If the log no longer holds the event after the `Last-Event-ID` when the stream opens, then the server MUST send `stream_cursor` carrying the log's head before it sends `catchup_too_old`, on a copy stream as on any other.
+
+**Reason:** the same as `events/cursor-ahead-cursor-first`. `reach/resume-too-old` says the same of a copy stream.
+
+**Tests:** `compliance/catchup-too-old.test.ts › answers 200 and a terminal catchup_too_old frame naming the oldest retained id and the cursor, and delivers a cursor still in the log`, `compliance/event-retention.test.ts › ends a copy stream resumed behind the retained log with stream_cursor and then catchup_too_old`.
 
 ### `events/catchup-too-old-no-id`
 
@@ -592,7 +604,7 @@ When a write creates an item, the server MUST announce `item.created` for it.
 
 ### `events/update-announced`
 
-When `PATCH /items/{id}`, a `POST /items` that lands on an item by its natural key, a `POST /items/bulk` entry that lands on an item, or a bulk `update_properties` or `update_occurred_at` action changes an item, the server MUST announce `item.updated` for it.
+When `PATCH /items/{id}`, a `POST /items` that lands on an item by its natural key, a `POST /items/bulk` entry that lands on an item, or a bulk `update_properties`, `update_occurred_at` or `update_tier` action changes an item, the server MUST announce `item.updated` for it.
 
 **Reason:** a write that changes nothing stores nothing and announces nothing (`versions/unchanged-silent`).
 
@@ -644,11 +656,11 @@ When the `edges` of `POST /items`, `POST /items/bulk` or `PATCH /items/{id}` cre
 
 ### `events/settings-silent`
 
-When a write changes a type, an edge type, a key, the instance's configuration or a webhook subscription, the server MUST NOT send an event for it.
+When a write changes a type, an edge type, a source, a key, the instance's configuration or a webhook subscription, or uploads a blob, the server MUST NOT send an event for it.
 
 **Reason:** every event names an item or an edge.
 
-**Tests:** `compliance/events-silent-writes.test.ts › sends nothing for a write to a type, an edge type, a key, the configuration or a webhook, and sends the item write after them`.
+**Tests:** `compliance/events-silent-writes.test.ts › sends nothing for a write to a type, an edge type, a source, a key, the configuration or a webhook, or for a blob upload, and sends the item write after them`.
 
 ## Edge events and who is told
 
@@ -836,7 +848,7 @@ If the server's read of the log fails when a stream opens or while it replays, o
 
 ## Registering a subscription
 
-An outbound webhook is a subscription: a `url`, the `events` it wants and, optionally, a `type_filter`. The events a subscription may name are `item.created`, `item.updated`, `item.deleted`, `item.restored`, `item.purged`, `item.state_changed`, `metadata.changed`, `edge.created`, `edge.updated` and `edge.deleted`.
+An outbound webhook is a subscription: a `url`, the `events` it wants and, optionally, a `type_filter`. The events a subscription may name are `item.created`, `item.updated`, `item.deleted`, `item.restored`, `item.purged`, `item.state_changed`, `metadata.changed`, `rows.changed`, `edge.created`, `edge.updated` and `edge.deleted`.
 
 ### `events/webhook-create`
 
@@ -1156,6 +1168,14 @@ The server MUST carry `event_id` in a delivery's body, as the id of the event in
 
 **Tests:** `compliance/webhooks.test.ts › delivers a matching event to the URL with a verifiable signature`.
 
+### `events/delivery-event-id-order`
+
+When the server writes one event after another, the server MUST give the later event's delivery an `event_id` greater than the earlier event's.
+
+**Reason:** a receiver is not promised its deliveries in event order (`events/retry-no-hold-back`), and `event_id` is what gives the order.
+
+**Tests:** `compliance/webhook-attempts.test.ts › sends a later event before the retry of an earlier one, whose event_id gives the order`.
+
 ### `events/delivery-id`
 
 The server MUST carry `delivery_id` in a delivery's body, equal to the `id` of the delivery's entry in `GET /webhooks/{id}/deliveries` and the same on every attempt.
@@ -1312,7 +1332,7 @@ When a receiver cannot be reached on an attempt before the last of its cycle, th
 
 ### `events/record-error-timeout`
 
-When a receiver does not answer in time on an attempt before the last of its cycle, the server MUST record `The receiver did not answer in time.` as the delivery's `error` and leave it `pending`.
+When an attempt ends as not answered in time (`events/attempt-answer-bound`) before the last of its cycle, the server MUST record `The receiver did not answer in time.` as the delivery's `error` and leave it `pending`.
 
 **Tests:** `compliance/webhook-delivery.test.ts › records an unreachable receiver and one that does not answer as pending, naming no address`.
 
@@ -1357,6 +1377,30 @@ If `GET /webhooks/{id}/deliveries` names a `limit` that is not a whole number of
 ## Retries
 
 A delivery is attempted again when its receiver does not take it. The server attempts a pending delivery when its wait ends, with no job to run.
+
+### `events/retry-no-hold-back`
+
+When a subscription has a delivery waiting for its next attempt and a later event's delivery due, the server MUST attempt the later delivery without waiting for the earlier one.
+
+**Reason:** a retry waits for its own time, so a receiver may take a later event before the retry of an earlier one. The server promises no event order, and a receiver that needs one orders by `event_id` (`events/delivery-event-id-order`).
+
+**Tests:** `compliance/webhook-attempts.test.ts › sends a later event before the retry of an earlier one, whose event_id gives the order`.
+
+### `events/attempt-one-in-flight`
+
+The server MUST NOT have more than one delivery attempt in flight for a subscription.
+
+**Reason:** a receiver takes one request of a subscription at a time, so it need not guard against two deliveries of one subscription being worked on at once. The limits of `events/receiver-isolation` hold across subscriptions.
+
+**Tests:** `compliance/webhook-attempts.test.ts › holds at most one attempt in flight for a subscription, and one for each of two`.
+
+### `events/attempt-answer-bound`
+
+If a receiver has not answered an attempt 10 seconds after the server started it, connecting included, then the server MUST end the attempt as not answered in time.
+
+**Reason:** the bound is on the whole attempt, so a receiver that accepts the connection and then says nothing holds a subscription's turn for 10 seconds and no longer. The record of the attempt is `events/record-error-timeout`.
+
+**Tests:** `compliance/webhook-attempts.test.ts › ends an attempt the receiver has not answered 10 seconds after it started, and takes one answered within it`.
 
 ### `events/retry-5xx`
 
@@ -1692,7 +1736,7 @@ When an ordinary write follows a bulk write of 50,000 items with fan-out disable
 
 While other subscriptions have receivers that do not answer, the server MUST start a healthy subscription's due delivery without waiting for those attempts to finish whenever the limits of `events/delivery-maker-share`, `events/delivery-maker-free`, `events/delivery-maker-headroom` and `events/delivery-maker-isolation` permit its attempt to start.
 
-**Reason:** one attempt per subscription allows each subscription a turn without sharing a slow receiver's wait. Those limits hold a delivery back only for its maker's share of the 64 attempts the server runs at once and for that total, so a healthy subscription whose maker is within its share waits only while 64 attempts are in flight.
+**Reason:** a subscription has one attempt in flight (`events/attempt-one-in-flight`), so a slow receiver holds only its own subscription's turn. Those limits hold a delivery back only for its maker's share of the attempts the server runs at once and for that total, so a healthy subscription whose maker is within its share waits only while the server is running its most attempts.
 
 **Tests:** `compliance/webhook-delivery.test.ts › delivers promptly while eight other subscriptions never answer`.
 
@@ -1780,7 +1824,7 @@ When a slot of the pool that deliveries share comes free and the deliveries of m
 
 `GET /audit` lists what the server recorded about the writes the events above announce, and about the exports it accepts.
 
-Each entry names what it records in `action`. The table gives the `action` of each write the audit log records for items, edges, types, sources, keys, settings, webhooks, connectors, exports and tables, and of each job the server runs on itself, with the `kind` that `events/audit-kind` sorts it under. The actions of a sign-in, of an OAuth client and of the owner's account (its profile, its passkeys and its setup code) are not in it, and `events/audit-kind` sorts them by their first part.
+Each entry names what it records in `action`. The first table gives the `action` of each write the audit log records for items, edges, views, folders, types, sources, keys, settings, webhooks, connectors, exports and tables, and of each job the server runs on itself. The second table gives the `action` of a sign-in, of an OAuth client, grant or token, and of the owner's setup code and password change. Each row gives the `kind` that `events/audit-kind` sorts the action under. The server records further entries for the owner's profile, passkeys and password recovery and for the other changes to a grant; their actions are not part of the contract, and `events/audit-kind` sorts them by the part before their first period.
 
 | Action                       | Written when                                                                    | Kind           |
 | ---------------------------- | ------------------------------------------------------------------------------- | -------------- |
@@ -1798,6 +1842,12 @@ Each entry names what it records in `action`. The table gives the `action` of ea
 | `item.purge`                 | A purge destroys an item.                                                       | `data`         |
 | `items.bulk`                 | A write of `POST /items/bulk` commits an entry or an atomic page.               | `data`         |
 | `items.tombstones`           | A request settles the tombstones of a source's items.                           | `data`         |
+| `view.create`                | A write creates a view.                                                         | `data`         |
+| `view.update`                | A write changes a view.                                                         | `data`         |
+| `view.delete`                | A write deletes a view.                                                         | `data`         |
+| `folder.create`              | A write creates a folder.                                                       | `access`       |
+| `folder.update`              | A write changes a folder.                                                       | `access`       |
+| `folder.revoke`              | A write revokes a folder.                                                       | `access`       |
 | `edge.create`                | A write creates an edge.                                                        | `data`         |
 | `edge.update`                | A write changes an edge.                                                        | `data`         |
 | `edge.delete`                | A write deletes an edge.                                                        | `data`         |
@@ -1847,13 +1897,41 @@ Each entry names what it records in `action`. The table gives the `action` of ea
 | `auth.grant.retired`         | The credential clean-up retires a grant left idle.                              | `housekeeping` |
 | `auth.clients.purged`        | The credential clean-up removes idle OAuth clients that registered themselves.  | `housekeeping` |
 
+The actions of a sign-in, an OAuth client, a grant, a token and the owner's account:
+
+| Action                          | Written when                                                    | Kind     |
+| ------------------------------- | --------------------------------------------------------------- | -------- |
+| `auth.sign_in.success`          | A sign-in succeeds.                                             | `access` |
+| `auth.sign_in.failed`           | A sign-in is refused.                                           | `access` |
+| `auth.sign_in.ended`            | A sign-in ends.                                                 | `access` |
+| `auth.client.created`           | An OAuth client registers.                                      | `access` |
+| `auth.device_code.issued`       | A device code is issued.                                        | `access` |
+| `auth.code.issued`              | An authorization answers with a code.                           | `access` |
+| `auth.scopes.narrowed`          | An authorization is narrowed to the scopes that can be granted. | `access` |
+| `auth.grant.created`            | An approval makes a grant.                                      | `access` |
+| `auth.grant.reused`             | A standing consent covers an authorization.                     | `access` |
+| `auth.grant.revoked`            | A grant is revoked.                                             | `access` |
+| `auth.token.issued`             | A token is issued.                                              | `access` |
+| `auth.refresh.replayed`         | A refresh token that was used is presented again.               | `access` |
+| `owner.password.changed`        | The owner changes the password.                                 | `access` |
+| `instance.setup_code.issued`    | A setup code is issued.                                         | `access` |
+| `instance.setup_code.exchanged` | A setup code is exchanged for a setup session.                  | `access` |
+
 ### `events/audit-action-names`
 
-When the server records an audit entry for a write or a job in the table above, the server MUST give the entry the `action` the table names for it.
+When the server records an audit entry for a write or a job in the first table, the server MUST give the entry the `action` the table names for it.
 
 **Reason:** a client filters `GET /audit` by `action` (`events/audit-filter`), and a second server that names an action otherwise answers a different log.
 
-**Tests:** `compliance/audit.test.ts › records a write with the acting key, the resource and the action`, `› filters by action and resource type with an excluded control`, `› records export.run before the export's stream begins, and none for an export it refuses`, `compliance/audit-actions.test.ts › names each write of an item with the action the table gives it`, `› names a transition and a bulk write with the action the table gives it`, `› names each write of an edge and of an edge type with the action the table gives it`, `› names each write of a type with the action the table gives it`, `› names the writes of a key and of a webhook with the action the table gives it`, `› names the writes of a connector and of an upload with the action the table gives it`, `› names an export with the action the table gives it`, `compliance/type-icons.test.ts › records the owner's icon change in the audit log`, `compliance/audit-jobs.test.ts › records the enqueue and each committed chunk of a job, and nothing for a dry run`, `› records the cancellation of a queued job, and none for a cancel that changes nothing`.
+**Tests:** `compliance/audit.test.ts › records a write with the acting key, the resource and the action`, `› filters by action and resource type with an excluded control`, `› records export.run before the export's stream begins, and none for an export it refuses`, `compliance/audit-actions.test.ts › names each write of an item with the action the table gives it`, `› names a transition and a bulk write with the action the table gives it`, `› names each write of an edge and of an edge type with the action the table gives it`, `› names each write of a type with the action the table gives it`, `› names the writes of a key and of a webhook with the action the table gives it`, `› names the writes of a connector and of an upload with the action the table gives it`, `› names an export with the action the table gives it`, `compliance/type-icons.test.ts › records the owner's icon change in the audit log`, `compliance/audit-jobs.test.ts › records the enqueue and each committed chunk of a job, and nothing for a dry run`, `› records the cancellation of a queued job, and none for a cancel that changes nothing`, `compliance/credential-audit.test.ts › is in the audit log when the inactivity retirement retires a grant`.
+
+### `events/audit-account-action-names`
+
+When the server records an audit entry for a sign-in, an OAuth client, grant or token, or the owner's setup code or password change, the server MUST give the entry the `action` the second table names for it.
+
+**Reason:** a client filters `GET /audit` by `action` (`events/audit-filter`) to find a sign-in or a grant, and the credential chapters cite these names.
+
+**Tests:** `compliance/credential-audit.test.ts › is in the audit log when a consent, a token and a grant's revocation answer`, `› is in the audit log when a client's registration answers`, `› is in the audit log when an authorization answers with a code`, `› is in the audit log when a password sign-in answers`, `› names the owner as the resource of a sign-in and its refusal, and the sign-in as the resource of its end`, `› is in the audit log when a request a standing consent covers answers with a code`, `› is in the audit log when the refusal of a replayed refresh token answers`, `› is in the audit log when an authorization narrowed to what can be granted answers`, `compliance/sign-in-door-limits.test.ts › issues every device code from every address, records ten in fifteen minutes, and counts the rest on the newest record`, `compliance/owner.test.ts › replaces unclaimed setup proof on restart`, `compliance/owner-pages.test.ts › records a change in the audit log`.
 
 ### `events/audit-records-write`
 
@@ -2001,7 +2079,7 @@ The server MUST filter `GET /audit` by `action`, `resource_type` and `resource_i
 
 ### `events/audit-kind`
 
-The server MUST filter `GET /audit` by `kind`, which sorts every entry into one of `access`, `data`, `settings` or `housekeeping` from its `action`, as the table of audit actions gives, and by the part of the `action` before its first period for an action the table does not list: `access` for `auth`, `owner`, `key`, `keys`, `instance`, `profile` and `folder`, `settings` for `config`, `webhook`, `connector`, `connector_state` and `inbound_endpoint`, and `data` for the rest, so that each entry is of exactly one kind.
+The server MUST filter `GET /audit` by `kind`, which sorts every entry into one of `access`, `data`, `settings` or `housekeeping` from its `action`, as the two tables of audit actions give, and by the part of the `action` before its first period for an action the tables do not list: `access` for `auth`, `owner`, `key`, `keys`, `instance`, `profile` and `folder`, `settings` for `config`, `webhook`, `connector`, `connector_state` and `inbound_endpoint`, and `data` for the rest, so that each entry is of exactly one kind.
 
 **Reason:** `kind` lets a reader ask for one area of activity at a time. `access` holds sign-ins, accounts, keys, folders and the owner's profile; `settings` holds configuration, webhooks and connectors; `housekeeping` holds what Marfa does on its own; `data` holds the rest.
 

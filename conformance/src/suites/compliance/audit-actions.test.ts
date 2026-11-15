@@ -5,9 +5,11 @@ import {
   createTestContext,
   trackEdge,
   trackEdgeType,
+  trackFolder,
   trackItem,
   trackKey,
   trackType,
+  trackView,
   trackWebhook,
   cleanup,
   getManagementClient,
@@ -218,6 +220,40 @@ describe("the names of the audit log's actions", () => {
       ["type.register", "type.replace", "items.tombstones", "type.delete"],
       "type",
     );
+  });
+
+  it("names each write of a view and of a folder with the action the table gives it", async () => {
+    const view = await client.createView({ title: "Audited view" });
+    expect(view.status, JSON.stringify(view.error)).toBe(201);
+    const viewId = view.data.item.id;
+    trackView(ctx, viewId);
+    const retitled = await client.updateView(viewId, {
+      version: view.data.item.version,
+      title: "Audited view, renamed",
+    });
+    expect(retitled.status, JSON.stringify(retitled.error)).toBe(200);
+    expect((await client.deleteView(viewId)).ok).toBe(true);
+    await expectActions("a view", viewId, [
+      "view.create",
+      "view.update",
+      "view.delete",
+    ]);
+
+    const folder = await client.createFolder({ title: "Audited folder" });
+    expect(folder.status, JSON.stringify(folder.error)).toBe(201);
+    const folderId = folder.data.item.id;
+    trackFolder(ctx, folderId);
+    const renamed = await client.updateFolder(folderId, {
+      version: folder.data.item.version,
+      title: "Audited folder, renamed",
+    });
+    expect(renamed.status, JSON.stringify(renamed.error)).toBe(200);
+    expect((await client.revokeFolder(folderId)).ok).toBe(true);
+    await expectActions("a folder", folderId, [
+      "folder.create",
+      "folder.update",
+      "folder.revoke",
+    ]);
   });
 
   it("names the writes of a key and of a webhook with the action the table gives it", async () => {

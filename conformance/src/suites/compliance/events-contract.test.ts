@@ -913,6 +913,12 @@ describe("event stream contract", () => {
         requested: string;
         head: string;
       };
+      // A stream opens with where the log stands, whatever it ends with.
+      expect(events.map((e) => e.event)).toEqual([
+        "stream_cursor",
+        "cursor_ahead",
+      ]);
+      expect((events[0]?.data as { cursor: string }).cursor).toBe(data.head);
       expect(data.event_type).toBe("cursor_ahead");
       expect(data.requested).toBe(ahead);
       expect(BigInt(data.head) >= BigInt(head)).toBe(true);
@@ -1233,8 +1239,13 @@ describe("which event each write announces", () => {
         occurred_at: "2026-01-02T00:00:00.000Z",
         filter: { tags: [tag] },
       });
+      await runAction({
+        action: "update_tier",
+        tier: "feed",
+        filter: { tags: [tag] },
+      });
     }, signal);
-    expect(eventsOf(frames, id)).toEqual(Array(5).fill("item.updated"));
+    expect(eventsOf(frames, id)).toEqual(Array(6).fill("item.updated"));
   });
 
   it("announces a delete only as item.deleted and a restore only as item.restored", async ({

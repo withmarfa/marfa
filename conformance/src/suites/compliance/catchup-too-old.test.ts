@@ -247,6 +247,13 @@ describe("a cursor behind the oldest event the log keeps", () => {
         requested: refusedCursor,
       });
       expect(frame?.id).toBeUndefined();
+      // The refusal comes after the stream_cursor every stream opens with.
+      expect(refused.events.map((e) => e.event)).toEqual([
+        "stream_cursor",
+        "catchup_too_old",
+      ]);
+      const opening = refused.events[0]?.data as { cursor?: string };
+      expect(BigInt(opening.cursor ?? "-1") >= ids[5]!).toBe(true);
       expect(
         refused.closed,
         "the stream stayed open after catchup_too_old",

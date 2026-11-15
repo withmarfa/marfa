@@ -34,7 +34,7 @@ afterAll(async () => {
   await server?.stop();
 }, 2 * FRESH_SERVER_TIMEOUT_MS);
 
-it("sends nothing for a write to a type, an edge type, a key, the configuration or a webhook, and sends the item write after them", async ({
+it("sends nothing for a write to a type, an edge type, a source, a key, the configuration or a webhook, or for a blob upload, and sends the item write after them", async ({
   signal,
 }) => {
   const ok = (r: { status: number; error?: unknown }, expected: number) => {
@@ -79,6 +79,13 @@ it("sends nothing for a write to a type, an edge type, a key, the configuration 
         await management.updateKey(key.data.id, { label: "silent again" }),
         200,
       );
+      ok(
+        await management.rawRequest("/source?source=silent-key", {
+          method: "PATCH",
+          body: { name: "Silent source" },
+        }),
+        200,
+      );
       ok(await management.revokeKey(key.data.id), 200);
 
       ok(
@@ -97,6 +104,11 @@ it("sends nothing for a write to a type, an edge type, a key, the configuration 
       ok(hook, 201);
       ok(await working.updateWebhook(hook.data.id, { active: false }), 200);
       ok(await working.deleteWebhook(hook.data.id), 200);
+
+      ok(
+        await working.uploadBlob(new Uint8Array([1, 2, 3]), "text/plain"),
+        201,
+      );
 
       const witness = await working.createItem(createNote());
       ok(witness, 201);
