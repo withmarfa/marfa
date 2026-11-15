@@ -34,11 +34,11 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# Log lines that name a setup code are left out, so no build can publish one.
+# Log lines that name a setup or recovery code are left out, so no build can publish one.
 fail() {
   echo "::error::$1"
   echo "--- the server's log"
-  grep -iv 'setup code' "$state/log" 2> /dev/null | tail -40 || true
+  grep -iv -e 'setup code' -e 'recovery code' "$state/log" 2> /dev/null | tail -40 || true
   exit 1
 }
 

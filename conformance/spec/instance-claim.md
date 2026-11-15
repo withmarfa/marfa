@@ -130,6 +130,66 @@ While an instance has a completed owner claim, the server MUST refuse another cl
 
 **Tests:** `compliance/owner.test.ts › creates exactly one owner and reads it through the local command`, `› recovers the existing owner and ends the old browser session`.
 
+### `instance-claim/claim-address-stored`
+
+Where `MARFA_CLAIM_ADDRESS` is set, when an instance with no owner starts, the server MUST store that address as its sign-in address.
+
+**Reason:** An instance on a remote host may offer no shell on its machine, so its operator cannot set the sign-in address through the private socket before a claim from off the machine.
+
+**Tests:** `compliance/remote-claim.test.ts › stores MARFA_CLAIM_ADDRESS as the sign-in address of an instance with no owner, and names the full setup address in the setup code's line`, `› leaves an owned instance's sign-in address as the owner set it, and logs at each start that MARFA_CLAIM_ADDRESS is ignored`.
+
+### `instance-claim/claim-address-refused`
+
+If `MARFA_CLAIM_ADDRESS` is not an origin that starts with `https://` or names `localhost`, `127.0.0.1` or `[::1]`, then the server MUST exit with status 1 instead of starting.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses to start on a MARFA_CLAIM_ADDRESS that is %s, naming the setting`.
+
+### `instance-claim/claim-address-refused-line`
+
+If `MARFA_CLAIM_ADDRESS` is not an origin that starts with `https://` or names `localhost`, `127.0.0.1` or `[::1]`, then the server MUST log one refusal line that names `MARFA_CLAIM_ADDRESS`.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses to start on a MARFA_CLAIM_ADDRESS that is %s, naming the setting`.
+
+### `instance-claim/claim-address-owned`
+
+While an instance has an owner, the server MUST leave its stored sign-in address unchanged by `MARFA_CLAIM_ADDRESS`.
+
+**Reason:** The owner moves the sign-in address through the private socket, and a setting left in a host's environment must not undo that move or a restored backup's address.
+
+**Tests:** `compliance/remote-claim.test.ts › leaves an owned instance's sign-in address as the owner set it, and logs at each start that MARFA_CLAIM_ADDRESS is ignored`.
+
+### `instance-claim/claim-address-ignored`
+
+Where `MARFA_CLAIM_ADDRESS` names an address other than the stored sign-in address, when an instance with an owner starts, the server MUST log one line saying that `MARFA_CLAIM_ADDRESS` is ignored.
+
+**Tests:** `compliance/remote-claim.test.ts › leaves an owned instance's sign-in address as the owner set it, and logs at each start that MARFA_CLAIM_ADDRESS is ignored`.
+
+### `instance-claim/claim-address-not-request`
+
+The server MUST NOT take its sign-in address from a request's `Host`, `X-Forwarded-Host` or client address header.
+
+**Reason:** Anyone who reaches the public port chooses those headers, and the sign-in address decides where the owner's cookies and passkeys belong.
+
+**Tests:** `compliance/remote-claim.test.ts › never takes the sign-in address from a request's Host, X-Forwarded-Host or client address header`.
+
+### `instance-claim/claim-needs-address`
+
+If a caller off the instance's machine asks to claim an instance that has no sign-in address, then the server MUST answer `403 forbidden`.
+
+**Tests:** `compliance/remote-claim.test.ts › claims from a caller off this machine once MARFA_CLAIM_ADDRESS has stored the sign-in address, and refuses it 403 without`, `› never takes the sign-in address from a request's Host, X-Forwarded-Host or client address header`.
+
+### `instance-claim/public-claim-address`
+
+When a caller off the instance's machine claims, with a valid setup code, an instance whose sign-in address `MARFA_CLAIM_ADDRESS` stored, the server MUST create the owner.
+
+**Tests:** `compliance/remote-claim.test.ts › claims from a caller off this machine once MARFA_CLAIM_ADDRESS has stored the sign-in address, and refuses it 403 without`.
+
+### `instance-claim/setup-code-address`
+
+When an instance with no owner and a stored sign-in address starts, the server MUST log its setup code with the setup page's full address, the sign-in address followed by `/setup`.
+
+**Tests:** `compliance/remote-claim.test.ts › stores MARFA_CLAIM_ADDRESS as the sign-in address of an instance with no owner, and names the full setup address in the setup code's line`.
+
 ## Code attempts
 
 ### `instance-claim/address-attempt-limit`
@@ -235,6 +295,134 @@ When the private local command recovers the owner's password, the server MUST en
 When the private local command recovers the owner's password, the server MUST preserve connected apps' access tokens, refresh grants and consent.
 
 **Tests:** `compliance/browser-sessions.test.ts › local recovery revokes browser sessions and keeps apps connected`.
+
+### `instance-claim/recovery-code-issued`
+
+Where `MARFA_OWNER_RECOVERY` is on, when an instance with an owner starts, the server MUST print one recovery code to its log.
+
+**Reason:** An instance on a remote host may offer no shell on its machine, so its log is the one place only the operator reads.
+
+**Tests:** `compliance/remote-claim.test.ts › prints a recovery code at each start of an instance with an owner while MARFA_OWNER_RECOVERY is on, and ends it at a start with the setting off`.
+
+### `instance-claim/recovery-code-off`
+
+When an instance starts with `MARFA_OWNER_RECOVERY` off, the server MUST answer `POST /setup/exchange` with a recovery code an earlier start printed with `409 owner_exists`.
+
+**Tests:** `compliance/remote-claim.test.ts › prints a recovery code at each start of an instance with an owner while MARFA_OWNER_RECOVERY is on, and ends it at a start with the setting off`.
+
+### `instance-claim/recovery-code-off-recover`
+
+When an instance starts with `MARFA_OWNER_RECOVERY` off, the server MUST answer `POST /setup/recover` with a recovery code an earlier start printed with `401 setup_proof_invalid`.
+
+**Tests:** `compliance/remote-claim.test.ts › prints a recovery code at each start of an instance with an owner while MARFA_OWNER_RECOVERY is on, and ends it at a start with the setting off`.
+
+### `instance-claim/recovery-code-unowned`
+
+While an instance has no owner, the server MUST NOT print a recovery code.
+
+**Tests:** `compliance/remote-claim.test.ts › prints no recovery code and creates no owner while the instance has none`, `› prints a recovery code at each start of an instance with an owner while MARFA_OWNER_RECOVERY is on, and ends it at a start with the setting off`.
+
+### `instance-claim/recovery-no-owner`
+
+While an instance has no owner, the server MUST answer `POST /setup/recover` with `404 owner_not_found`.
+
+**Tests:** `compliance/remote-claim.test.ts › prints no recovery code and creates no owner while the instance has none`.
+
+### `instance-claim/recovery-code-replaced`
+
+When an instance starts again, the server MUST refuse the recovery code an earlier start printed with `401 setup_proof_invalid`.
+
+**Tests:** `compliance/remote-claim.test.ts › replaces the recovery code at each start and refuses the replaced one`.
+
+### `instance-claim/recovery-code-expiry`
+
+If a recovery code is presented 60 minutes or more after the start that printed it, then the server MUST refuse it with `401 setup_proof_invalid`.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a recovery code sixty minutes after the start that printed it`.
+
+### `instance-claim/recovery-code-single-use`
+
+When a recovery code has been accepted once, the server MUST refuse that code again with `401 setup_proof_invalid`.
+
+**Tests:** `compliance/remote-claim.test.ts › spends a recovery code at its first use`.
+
+### `instance-claim/recovery-page`
+
+While an instance holds a recovery code that has not ended, the server MUST serve `GET /setup` as a page titled "Recover the owner" that takes the recovery code.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`, `› refuses a recovery code sixty minutes after the start that printed it`.
+
+### `instance-claim/recovery-password-form`
+
+When `POST /setup/exchange` accepts a recovery code, the server MUST set a setup cookie with which `GET /setup` serves the form for the owner's new password.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`.
+
+### `instance-claim/recovery-code-password`
+
+When `POST /setup/recover` sets a new password with a recovery code or its setup cookie, the server MUST accept the new password at password sign-in.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`, `› leaves after a recovery by code the state the private socket's recovery leaves`.
+
+### `instance-claim/recovery-code-old-password`
+
+When `POST /setup/recover` sets a new password with a recovery code or its setup cookie, the server MUST refuse the replaced password at password sign-in.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`, `› leaves after a recovery by code the state the private socket's recovery leaves`.
+
+### `instance-claim/recovery-code-same-owner`
+
+When `POST /setup/recover` sets a new password, the server MUST retain the owner's identity.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`, `› leaves after a recovery by code the state the private socket's recovery leaves`.
+
+### `instance-claim/recovery-code-ends-browsers`
+
+When `POST /setup/recover` sets a new password, the server MUST end every existing browser session.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`, `› leaves after a recovery by code the state the private socket's recovery leaves`.
+
+### `instance-claim/recovery-code-keeps-keys`
+
+When `POST /setup/recover` sets a new password, the server MUST preserve existing ordinary keys.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`, `› leaves after a recovery by code the state the private socket's recovery leaves`.
+
+### `instance-claim/recovery-code-keeps-apps`
+
+When `POST /setup/recover` sets a new password, the server MUST preserve connected apps' access tokens.
+
+**Tests:** `compliance/remote-claim.test.ts › recovers the owner on the setup page: the code opens a new password form, which ends every browser session and keeps keys and apps`, `› leaves after a recovery by code the state the private socket's recovery leaves`.
+
+### `instance-claim/recovery-password-rules`
+
+If the new password sent to `POST /setup/recover` is shorter than 8 or longer than 128 characters, then the server MUST refuse it with `400 validation_error`.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a new password the private socket's recovery refuses, and keeps the code for another try`.
+
+### `instance-claim/recovery-refused-keeps-code`
+
+When `POST /setup/recover` refuses a new password with `400 validation_error`, the server MUST keep the recovery code it was sent with.
+
+**Tests:** `compliance/remote-claim.test.ts › refuses a new password the private socket's recovery refuses, and keeps the code for another try`.
+
+### `instance-claim/recovery-attempt-limit`
+
+If an address has made ten recovery code attempts in fifteen minutes, then the server MUST refuse its next attempt with `429 rate_limited`.
+
+**Tests:** `compliance/remote-claim.test.ts › limits recovery code attempts to ten per address in fifteen minutes`.
+
+### `instance-claim/recovery-code-concurrent`
+
+When two requests with the same recovery code arrive at once, the server MUST accept only one of them and refuse the other with `401 setup_proof_invalid`.
+
+**Tests:** `compliance/remote-claim.test.ts › accepts only one of two uses of a recovery code sent at once, to recover and to exchange`.
+
+### `instance-claim/recovery-code-private`
+
+The server MUST NOT write a recovery code to its request log or to its health answer.
+
+**Tests:** `compliance/remote-claim.test.ts › leaves the recovery code out of the request log and the health answer`.
 
 ## Durability
 

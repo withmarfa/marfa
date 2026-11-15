@@ -9,7 +9,7 @@ use super::pages::{self, Typed};
 use super::sign_in::signed_in_cookies;
 use super::{cookies, redirect, require_safe_caller, with_cookie};
 use crate::app::App;
-use crate::app::auth::claim::{self, Proof};
+use crate::app::auth::claim::{self, Presented, Proof};
 use crate::app::auth::owner::{Details, Owner, incomplete_claim};
 use crate::app::auth::{Visit, own_origins, sign_in};
 use crate::app::refusal::Refusal;
@@ -18,6 +18,7 @@ use crate::http::body::{JsonBody, only_declared};
 
 const EXCHANGE_FIELDS: [&str; 2] = ["ticket", "code"];
 const CLAIM_FIELDS: [&str; 4] = ["email", "password", "name", "code"];
+const RECOVER_FIELDS: [&str; 2] = ["password", "code"];
 const AFTER_CLAIM: &str = "/auth/sign-in";
 
 pub async fn exchange(
@@ -62,6 +63,14 @@ pub async fn exchange(
     Ok(with_cookie(answer, cookie))
 }
 
+/// A code in the body, or else the setup cookie.
+fn presented(headers: &HeaderMap, code: Option<&str>) -> Presented {
+    match code {
+        Some(code) => Presented::Code(code.to_string()),
+        None => Presented::Session(cookies::setup_token(headers).unwrap_or("").to_string()),
+    }
+}
+
 fn is_script(headers: &HeaderMap) -> bool {
     !headers.contains_key("sec-fetch-site") && !cookies::holds_setup(headers)
 }
@@ -81,10 +90,7 @@ pub(super) async fn make_claim(
     let text = |name: &str| fields.get(name).and_then(Value::as_str);
     let password = text("password").unwrap_or("").to_string();
     let details = Details::new(text("email").unwrap_or(""), text("name"), password.clone())?;
-    let proof = match text("code") {
-        Some(code) => Proof::Code(code.to_string()),
-        None => Proof::Session(cookies::setup_token(headers).unwrap_or("").to_string()),
-    };
+    let proof = Proof::Presented(presented(headers, text("code")));
     let owner = claim::claim(app, details, proof, visit.clone()).await?;
     if origin::said(headers, &own_origins(app)) != Source::Own {
         return Ok((owner, Vec::new()));
@@ -152,4 +158,45 @@ pub async fn claim(
         answer = with_cookie(answer, cookie);
     }
     Ok(answer)
+}
+
+/// Sets the owner's password with a recovery code, or the session one opened.
+pub async fn recover(
+    State(app): State<Arc<App>>,
+    headers: HeaderMap,
+    visit: Visit,
+    body: JsonBody,
+) -> Answer {
+    require_safe_caller(&app, &visit)?;
+    let said = origin::said(&headers, &own_origins(&app));
+    match said {
+        Source::Own => {}
+        Source::Unsaid if is_script(&headers) => {}
+        _ => return Err(not_our_page().into()),
+    }
+    let form = body.declares_form();
+    let fields = if form {
+        only_declared(body.form().await?, &RECOVER_FIELDS)?
+    } else {
+        body.object(&RECOVER_FIELDS).await?
+    };
+    let browser = form && said == Source::Own;
+    let text = |name: &str| fields.get(name).and_then(Value::as_str);
+    let proof = presented(&headers, text("code"));
+    let password = text("password").unwrap_or("").to_string();
+    match claim::recover(&app, proof, password, visit).await {
+        Err(refusal) if browser && pages::wants_page(&headers) => {
+            return Ok(pages::recover_refused(&app, &refusal).await?);
+        }
+        recovered => recovered?,
+    }
+    let answer = if browser {
+        redirect(StatusCode::SEE_OTHER, AFTER_CLAIM)?
+    } else {
+        json_answer(StatusCode::OK, &json!({ "recovered": true }))
+    };
+    Ok(with_cookie(
+        answer,
+        cookies::setup_ended(&app.addresses().sign_in())?,
+    ))
 }

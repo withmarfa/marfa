@@ -131,6 +131,10 @@ const UNPUBLISHED: &[(&str, &str)] = &[
         "single-use browser handoff exchange",
     ),
     (
+        "POST /setup/recover",
+        "the owner recovery form, proved by a code from the server's log",
+    ),
+    (
         "HEAD /blobs/{hash}",
         "the headers of the published read, without its bytes",
     ),

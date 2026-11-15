@@ -1,0 +1,16 @@
+<h1>Recover the owner</h1>
+<p class="lede">Enter the recovery code to choose a new password for this Marfa's owner.</p>
+{% if let Some(message) = problem_message %}
+<p class="notice error" id="setup-problem" role="alert">{{ message }}</p>
+{% endif %}
+<form method="post" action="/setup/exchange" class="stack">
+<div class="field">
+<label for="code">Recovery code</label>
+<input id="code" class="code" type="text" name="code" autocomplete="off" autocapitalize="characters" autocorrect="off" spellcheck="false" required autofocus{% if has_problem %} aria-describedby="setup-problem" aria-invalid="true"{% endif %}>
+</div>
+<details>
+<summary>Where's my recovery code?</summary>
+<p>Marfa prints a recovery code in its log each time it starts with owner recovery turned on. A code works once, for an hour, and the next start replaces it.</p>
+</details>
+<button type="submit" class="button primary wide">Continue</button>
+</form>

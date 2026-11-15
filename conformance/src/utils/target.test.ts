@@ -21,6 +21,14 @@ describe("redactSetupProof", () => {
       "starting\nMarfa setup code: [redacted]\nlistening",
     );
   });
+
+  it("removes a recovery code and keeps the rest of its line", () => {
+    const code = "AAAAA-BBBBB-CCCCC-DDDDD-EEEEEE";
+    const log = `Recover this Marfa's owner at /setup with recovery code: ${code}. It works once, for 60 minutes.`;
+    expect(redactSetupProof(log)).toBe(
+      "Recover this Marfa's owner at /setup with recovery code: [redacted]. It works once, for 60 minutes.",
+    );
+  });
 });
 
 describe("maskInActions", () => {

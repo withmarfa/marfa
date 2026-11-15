@@ -118,6 +118,7 @@ pub fn doors() -> Routes {
         .route("/auth/owner/passkeys", get(passkeys::page))
         .route("/setup/exchange", post(setup::exchange))
         .route("/setup/claim", post(setup::claim))
+        .route("/setup/recover", post(setup::recover))
         .asking(Asks::Nothing);
     let owner = Doors::new()
         .route("/auth/sign-out", post(sign_in::sign_out))
