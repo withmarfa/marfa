@@ -442,10 +442,11 @@ describe("edges.bulk", () => {
     expect(res.data.results[0]!.error?.code).toBe("edge_type_not_found");
   });
 
-  it("gates bulk edges per type and edge permission, and on nothing else", async () => {
+  it("gates bulk edges per type and edge permission", async () => {
     // A key may bulk-write edges it holds permission for. POST /edges/bulk
-    // authorizes per edge — write on the source item's type plus write on the
-    // edge type — and consults nothing else about the credential. A key with
+    // authorizes per edge: write on the source item's type plus write on the
+    // edge type, and write on the target's type for an edge type that
+    // cascades on delete (compliance/edge-cascade-target.test.ts). A key with
     // both write maps succeeds.
     const okKey = await client.createKey({
       label: "edges-bulk-writer",

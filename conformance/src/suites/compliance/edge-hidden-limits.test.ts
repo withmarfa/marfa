@@ -761,6 +761,51 @@ describe("parts and hosts a key cannot read", () => {
     expect(await stateOf(secret)).toBe("active");
   });
 
+  it("purges a part of a type the key cannot write with the host it purges, naming it nowhere", async () => {
+    const tag = `parts-hidden-purge-${ctx.runId}`;
+    const minted = await client.createKey({
+      label: "edge-hidden-limits-purge",
+      source: `${ctx.source}-edge-hidden-purge`,
+      permissions: ["items.purge"],
+      type_permissions: { "core.note": "write" },
+      edge_permissions: { "*": "write" },
+    });
+    expect(minted.ok, JSON.stringify(minted.error)).toBe(true);
+    trackKey(ctx, minted.data.id);
+    const purger = new MarfaClient({
+      baseUrl: apiUrl,
+      apiKey: minted.data.key,
+    });
+
+    // The witness: a part of a type the key writes goes with its host.
+    const readableHost = await note(tag);
+    const readablePart = await note(tag);
+    await attach(readablePart, readableHost);
+    expect((await purger.deleteItem(readableHost)).status).toBe(200);
+    expect((await purger.purgeItem(readableHost)).status).toBe(200);
+    expect((await client.getItem(readablePart)).status).toBe(404);
+    expect(
+      (await client.listItems({ tags: [tag], state: "trashed" })).data.data,
+    ).toEqual([]);
+
+    const host = await note(tag);
+    const secret = await bookmark(tag);
+    await attach(secret, host);
+    expect((await purger.deleteItem(host)).status).toBe(200);
+    expect(await stateOf(secret)).toBe("trashed");
+    const purged = await purger.purgeItem(host);
+    expect(purged.status, JSON.stringify(purged.error)).toBe(200);
+    expect(JSON.stringify(purged.data)).not.toContain(secret);
+
+    const gone = await client.getItem(secret);
+    expect(gone.status).toBe(404);
+    const stillBinned = await client.listItems({
+      tags: [tag],
+      state: "trashed",
+    });
+    expect(stillBinned.data.data.map((item) => item.id)).toEqual([]);
+  });
+
   it("judges the part term over a host the key cannot read, naming none", async () => {
     const tag = `parts-hidden-filter-${ctx.runId}`;
     const secret = await bookmark(tag);

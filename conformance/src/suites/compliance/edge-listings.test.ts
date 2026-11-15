@@ -8,7 +8,7 @@ import {
   trackEdgeType,
   cleanup,
 } from "../../utils/setup.js";
-import { createNote } from "../../generators/items.js";
+import { createNote, generateId } from "../../generators/items.js";
 
 let client: MarfaClient;
 let ctx: TestContext;
@@ -219,6 +219,97 @@ describe("the edge listings", () => {
     });
     expect(fromSource.status).toBe(200);
     expect(fromSource.data.data.map((e) => e.id)).toEqual(newestFirst);
+  });
+});
+
+describe("GET /edges with updated_after", () => {
+  async function listedIds(query: {
+    edge_type: string;
+    updated_after: string;
+    limit?: number;
+  }): Promise<string[]> {
+    const ids: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await client.listEdges({
+        ...query,
+        ...(cursor === undefined ? {} : { cursor }),
+      });
+      expect(page.status).toBe(200);
+      ids.push(...page.data.data.map((e) => e.id));
+      cursor = page.data.next_cursor ?? undefined;
+    } while (cursor !== undefined);
+    return ids;
+  }
+
+  it("lists edges oldest change first by updated_at, so an update moves an edge to the end, and pages in that order", async () => {
+    const edgeType = await registerEdgeType("changed");
+    const source = await makeItem("changed-source");
+    const created: MarfaEdge[] = [];
+    for (let i = 0; i < 3; i++) {
+      const target = await makeItem(`changed-target-${String(i)}`);
+      created.push(await makeEdge(source, target, edgeType));
+    }
+    const since = new Date(
+      Date.parse(created[0]!.created_at) - 60_000,
+    ).toISOString();
+
+    // Update the oldest edge until its change is later than every creation.
+    let touched = created[0]!;
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const updated = await client.updateEdge(touched.id, {
+        properties: { touched: attempt },
+        version: touched.version,
+      });
+      expect(updated.status).toBe(200);
+      touched = updated.data.edge;
+      if (touched.updated_at > created[2]!.updated_at) break;
+    }
+    expect(touched.updated_at > created[2]!.updated_at).toBe(true);
+
+    // The witness: without updated_after the same edges list newest created
+    // first.
+    const byCreation = await client.listEdges({ edge_type: edgeType });
+    expect(byCreation.data.data.map((e) => e.id)).toEqual(
+      created.map((e) => e.id).reverse(),
+    );
+
+    const oldestChangeFirst = [created[1]!.id, created[2]!.id, created[0]!.id];
+    expect(
+      await listedIds({ edge_type: edgeType, updated_after: since }),
+    ).toEqual(oldestChangeFirst);
+    expect(
+      await listedIds({ edge_type: edgeType, updated_after: since, limit: 1 }),
+    ).toEqual(oldestChangeFirst);
+  });
+
+  it("lists edges that changed at the same time by ascending id", async () => {
+    const edgeType = await registerEdgeType("tied");
+    const source = await makeItem("tied-source");
+    const ids = [generateId(), generateId(), generateId()].sort();
+    const targets = [await makeItem("tied-a"), await makeItem("tied-b")];
+    const third = await makeItem("tied-c");
+    const made = await client.bulkEdges({
+      edges: [ids[2]!, ids[0]!, ids[1]!].map((id, at) => ({
+        id,
+        source_id: source,
+        target_id: [...targets, third][at]!,
+        edge_type: edgeType,
+      })),
+    });
+    expect(made.status, JSON.stringify(made.error)).toBe(200);
+    expect(made.data.counts.created).toBe(3);
+    for (const id of ids) trackEdge(ctx, id);
+
+    const listed = await client.listEdges({
+      edge_type: edgeType,
+      updated_after: "1970-01-01T00:00:00Z",
+    });
+    expect(listed.status).toBe(200);
+    // The witness: the three edges share one change time, so only the ID
+    // orders them.
+    expect(new Set(listed.data.data.map((e) => e.updated_at)).size).toBe(1);
+    expect(listed.data.data.map((e) => e.id)).toEqual(ids);
   });
 });
 

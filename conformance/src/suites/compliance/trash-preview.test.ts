@@ -370,3 +370,31 @@ describe("POST /items/trash", () => {
     expect(await state(parent)).toBe(200);
   });
 });
+
+describe("the number of IDs POST /items/trash and POST /items/trash-preview take", () => {
+  it("takes 1 to 20 ids and refuses none or 21 with 400 validation_error naming ids, moving nothing", async () => {
+    const ids: string[] = [];
+    for (let at = 0; at < 21; at += 1) ids.push(await note());
+    const refusals = [
+      await client.previewItemTrash(ids),
+      await client.trashItems(ids),
+      await client.previewItemTrash([]),
+      await client.trashItems([]),
+    ];
+    for (const refused of refusals) {
+      expect(refused.status).toBe(400);
+      expect(refused.error?.error.code).toBe("validation_error");
+      expect(refused.error?.error.details?.field).toBe("ids");
+    }
+    for (const id of ids) expect(await state(id)).toBe(200);
+
+    // The witness: 20 of the same items are taken at both doors.
+    const twenty = ids.slice(0, 20);
+    const preview = await client.previewItemTrash(twenty);
+    expect(preview.status).toBe(200);
+    expect(preview.data.items).toHaveLength(20);
+    expect((await client.trashItems(twenty)).status).toBe(200);
+    for (const id of twenty) expect(await state(id)).toBe(404);
+    expect(await state(ids[20]!)).toBe(200);
+  });
+});

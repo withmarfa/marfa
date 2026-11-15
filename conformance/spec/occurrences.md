@@ -70,6 +70,20 @@ When `GET /occurrences` names a `type`, the server MUST answer the events of tha
 
 **Tests:** `compliance/occurrences.test.ts › answers the events of the type it names, a type declared under core.event included`.
 
+### `occurrences/active-only`
+
+When `GET /occurrences` answers, the server MUST leave out every occurrence of an event whose state is not `active`, a series included.
+
+**Reason:** an event that is archived or in the bin is not on the calendar.
+
+**Tests:** `compliance/occurrences.test.ts › answers the occurrences of active events only, one-off or recurring, until an archived or trashed event is active again`.
+
+### `occurrences/active-again`
+
+When an event that was archived or in the bin is active again, the server MUST answer its occurrences in `GET /occurrences`.
+
+**Tests:** `compliance/occurrences.test.ts › answers the occurrences of active events only, one-off or recurring, until an archived or trashed event is active again`.
+
 ### `occurrences/no-tasks`
 
 The server MUST NOT answer a task in `GET /occurrences`, whatever the task's `recurrence`, `due_at` or `starts_at` and whether or not the request names a `type` that the task is of.

@@ -240,6 +240,36 @@ describe("edges.bulk with a version on an entry that matches a held edge", () =>
   });
 });
 
+describe("edges.bulk with a version on an entry that matches no edge", () => {
+  it("creates an entry that names a version and a triple no edge holds, at version 1, under upsert and create_only", async () => {
+    for (const mode of ["upsert", "create_only"] as const) {
+      const source = await note();
+      const target = await note();
+      const res = await client.bulkEdges({
+        mode,
+        edges: [
+          {
+            source_id: source,
+            target_id: target,
+            edge_type: "about",
+            properties: { weight: 1 },
+            version: 7,
+          },
+        ],
+      });
+      expect(res.status, mode).toBe(200);
+      expect(res.data.counts, mode).toMatchObject({ created: 1, errored: 0 });
+      const entry = res.data.results[0]!;
+      expect(entry.outcome, mode).toBe("created");
+      trackEdge(ctx, entry.id!);
+
+      const read = (await client.getEdge(entry.id!)).data.edge;
+      expect(read.version, mode).toBe(1);
+      expect(read.properties, mode).toEqual({ weight: 1 });
+    }
+  });
+});
+
 describe("edges.bulk with a stale version beside other refusals and modes", () => {
   it("refuses an atomic page for an entry the key may not write before a stale entry ahead of it", async () => {
     const { source, target, staleVersion } = await editedEdge();
