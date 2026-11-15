@@ -238,7 +238,7 @@ If the oldest event the log retains has an id greater than the cursor plus one, 
 
 ### `events/catchup-too-old-cursor-first`
 
-If the log no longer holds the event after the `Last-Event-ID` when the stream opens, then the server MUST send `stream_cursor` carrying the log's head before it sends `catchup_too_old`, on a copy stream as on any other.
+If the oldest event the log retains has an id greater than the cursor plus one when the stream opens, then the server MUST send `stream_cursor` carrying the log's head before it sends `catchup_too_old`, on a copy stream as on any other.
 
 **Reason:** the same as `events/cursor-ahead-cursor-first`. `reach/resume-too-old` says the same of a copy stream.
 
@@ -1402,7 +1402,7 @@ The server MUST NOT have more than one delivery attempt in flight for a subscrip
 
 If a receiver has not answered an attempt 10 seconds after the server started it, connecting included, then the server MUST end the attempt as not answered in time.
 
-**Reason:** the bound is on the whole attempt, so a receiver that accepts the connection and then says nothing holds a subscription's turn for 10 seconds and no longer. The record of the attempt is `events/record-error-timeout`.
+**Reason:** the bound is on the whole attempt, so a receiver that accepts the connection and then says nothing holds a subscription's turn for 10 seconds at most. The record of the attempt is `events/record-error-timeout`.
 
 **Tests:** `compliance/webhook-attempts.test.ts › ends an attempt the receiver has not answered 10 seconds after it started, and takes one answered within it`.
 
