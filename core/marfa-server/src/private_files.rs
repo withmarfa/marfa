@@ -354,6 +354,7 @@ impl Kept {
                 .file_name()
                 .ok_or_else(|| refused(&database, "does not end in a file name"))?;
             files.push(secrets.folder.join(&secrets.name));
+            // Not `.server-lock`, already locked: on NFS or CIFS closing any descriptor drops it.
             files.extend(
                 [
                     "",
@@ -362,7 +363,6 @@ impl Kept {
                     "-journal",
                     ".before-upgrade",
                     ".before-upgrade.partial",
-                    ".server-lock",
                 ]
                 .iter()
                 .map(|suffix| {
@@ -606,6 +606,22 @@ mod tests {
             assert!(failure.message.contains("symbolic link"), "{failure}");
         }
         assert_eq!(mode(&outside), 0o755);
+    }
+
+    #[test]
+    fn the_databases_lock_file_is_left_to_the_lock_and_not_opened_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, lock) = (
+            dir.path().join("marfa.db"),
+            dir.path().join("marfa.db.server-lock"),
+        );
+        fs::write(&file, "").unwrap();
+        fs::write(&lock, "").unwrap();
+        chmod(&file, 0o644);
+        chmod(&lock, 0o644);
+        kept(dir.path(), &dir.path().join("blobs")).unwrap();
+        // The witness: the database beside it is made private in the same start.
+        assert_eq!((mode(&file), mode(&lock)), (0o600, 0o644));
     }
 
     #[test]
