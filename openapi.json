@@ -1712,7 +1712,7 @@
                   },
                   "trusted_at": {
                     "type": "string",
-                    "description": "The trusted time, in UTC: the newest time Marfa used while clean-up was not held, or the time last confirmed."
+                    "description": "The trusted time, in UTC: the time last confirmed or, if later, the latest time the server's clock read since while clean-up was not held."
                   },
                   "ends_at": {
                     "type": "string",

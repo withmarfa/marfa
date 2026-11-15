@@ -3197,7 +3197,7 @@ export interface components {
                     reason: "clock_ahead";
                     /** @description What the server's clock reads, in UTC. */
                     clock_at: string;
-                    /** @description The trusted time, in UTC: the newest time Marfa used while clean-up was not held, or the time last confirmed. */
+                    /** @description The trusted time, in UTC: the time last confirmed or, if later, the latest time the server's clock read since while clean-up was not held. */
                     trusted_at: string;
                     /** @description When the hold ends if the clock runs without jumping until then, in UTC. `marfa housekeeping confirm-clock` on the server ends it at once. */
                     ends_at: string;
