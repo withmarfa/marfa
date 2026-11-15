@@ -17,6 +17,9 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **tier**: The layer an item sits in. `feed` holds what arrives in volume and as it came, from connectors and capture, under the source's own type, until a person or an app moves it to the library or archives it. `library` holds what a person chose to keep, modeled in a core type or a child of one. An item **moves to the library** or **moves to the feed** by a change of its `tier`: it is the same item, not a copy, and a connector's type must be readable as a core type, by `parent` or `compatible_with`, for the moved item to be read as one. Not a permission, not a lifecycle and not a namespace.
 - **link**: The value an item holds in the field its type names as `link_field`: the item's own ID at the vendor that writes the type, by which a connector finds the item. A type's own, never inherited. The word keeps its ordinary sense of a URL, a blob's link or a `[[name]]` in a Markdown body where the sentence says which.
 - **tombstone**: What a purge leaves of an item under its type: its link and its natural key, `(source, source_id)`, each with `purged_at` and `settled_at`. An entry from the vendor naming the key is a new item only if the vendor changed it after `settled_at`. Not a trashed item, which leaves none, and not a revoked grant.
+- **natural key**: An item's `source` and `source_id` together. A write that names one that a live item of its type holds updates that item, whichever key sends it, so a connector's item stays one item. Not the item's `id`, which a natural key decides before, and not its link. A conflicted copy gets neither it nor a link, and a tombstone keeps it.
+- **conversation**: One item of `core.conversation`, whose messages are the rows of its `messages` table. A message is never an item, so it has no version, tags or edges. A message people view on its own, such as an email, is a `core.message` item.
+- **occurrence**: One time an event happens, computed from a series when `GET /occurrences` reads a window and never stored. A series is one `core.event` item that carries rule lines in `recurrence`. An event that takes the place of one occurrence is an item of its own, joined to the series by `parent-of`; it is a moved occurrence, not a second series. Not a task, which carries `recurrence` but is never unfolded.
 - **view**: A saved list of items, held as a `system.view` that every app shares: its query says which items it lists, and its sort and group say in what order and how they group. How an app shows them is the app's own. Written only through `/views`. Not a folder, which holds items as files on a machine, and not a collection.
 
 ### Properties, metadata and edges
@@ -46,6 +49,8 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 
 - **version**: A monotonic integer on an item or an edge, which a write names to say which version it read (`versions/update-order`). The number a release's git tag carries is the product version, and the integer the root answers as `contract` is the contract version; neither is this.
 - **writer**: The sign-in that wrote a version of an item: a browser session, an app, a key, or the private local command (`kind` `local`). `null` where no sign-in wrote the version, such as an enrichment (`versions/writer-recorded`).
+- **conflicted copy**: The new item the server writes when a stale write resolved under `conflict=auto` collides on a property whose type's `merge_policy` is `keep_both_copies`: it holds the losing value, is tagged `conflicted-copy`, and carries the original's `source` and tags, with no natural key or link, at version 1. A device gives the write that made one the verdict `conflicted`.
+- **keep-both copy**: Another name in the contract for a conflicted copy, taken from the `keep_both_copies` strategy that writes it. A keep-both write is the stale write that writes one. Use **conflicted copy** where a reader meets the tag or the verdict.
 - **event**: One entry in the log of what changed, with an `event_type`, read from the event stream and sent to outbound webhooks.
 
 ### Files
@@ -53,6 +58,7 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **blob**: Bytes stored by content hash, with a size in `size_bytes` and a MIME type. An item refers to a blob; it never contains one.
 - **file**: An item whose type inherits from `core.file` and refers to the blob that holds its bytes. In a folder, a file on disk, which is one item.
 - **store**: A place a blob's bytes live: the disk beside the server, or an S3-compatible bucket. A store answers four verbs on a hash, put, get, has and delete, and carries its identity in a marker it holds. The **copy record** says which stores hold which blob. Never "backend".
+- **copy record**: The server's record of which stores hold which blob, and since when, read at `GET /blobs/{hash}/copies`.
 - **replicate**: To copy into a store what it lacks from a store that has it, as the `blob-replicate` housekeeping job does. Never "mirror".
 
 ### Access
@@ -62,6 +68,8 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **key**: An ordinary API credential, minted by local authority or by a credential with `keys.mint` within its own access, limited by its permissions and maps, and revocable. Not an access token.
 - **working key**: An ordinary API key used by a client, script or connector.
 - **source**: The code an item carries in `source` to say what wrote it. A key writes under its own source and any it claims (`sources`); an app writes under one that starts `oauth:` and names its `client_id`. A source is shown by its **name** and its **mark**, an icon ID set and checked as a type's icon is.
+- **claimed source**: A source a key may write under besides its own, held in the key's `sources`. Keys that claim one source share its natural keys. A claim gives no ownership of an inbound endpoint, and a key an app made cannot gain one.
+- **type map**: What a key's `type_permissions` say: the item types it may `read` or `write`, by exact type ID, a subtree wildcard such as `core.media.*`, or `*`. An exact entry decides before a wildcard, and a longer wildcard before a shorter. It is one of a key's **five maps**, with the extension map (`extension_permissions`, namespaces), the edge map (`edge_permissions`, edge types), the metadata map (`metadata_permissions`, registering types and edge types) and the profile map (`profile_permissions`, the owner's name, email and avatar). Not a permission: a permission opens operations, and a map alone opens items.
 - **access token**: The credential an app holds once the owner signs in to it, issued by the OAuth provider and limited to what the owner granted. Not a key.
 - **app**: A program a person signs in to the instance through the OAuth provider. Its registration, a `client_id` with its redirect URIs and the scopes it is registered for, is its **client**. An app holds an access token, and a refresh token where it asked for `offline_access`, and acts within its grant. "Client" keeps its ordinary sense of a program that calls the API where the sentence says which.
 - **web page**: An app registered as a web client, whose redirect URIs are `https` addresses off the loopback. While the owner's grant to it stands, a browser page at those addresses may call the instance.
@@ -72,6 +80,7 @@ Write American English. Where Marfa has no rule of its own, the API's names and 
 - **session**: A signed-in browser: the cookie a password sign-in sets, which only the sign-in pages read, for consent, device approval and the owner's passkeys. Not a credential, so ending one ends no app's access. A connector's session token is another thing; name it in full.
 - **sign-in**: One way the owner's Marfa can be reached, as `GET /owner/sign-ins` lists it: a browser session (`kind` `browser`), an app the owner approved (`kind` `app`, its grant) or a live key (`kind` `key`).
 - **local authority**: Authority that only the private Unix socket supplies, to a process running under the server's operating-system account. Not an API key, and never asserted through public HTTP.
+- **local command**: A request made with local authority, over the private socket: the route to what no key may do, such as reading and recovering the owner, and minting a key with no ceiling. A write it makes has the writer `kind` `local`. Not an API key, and not a command of the CLI.
 - **setup code**: A machine-issued proof that authorizes one owner claim. It grants no API access.
 
 ### Access words
@@ -121,12 +130,16 @@ Access is read the same way wherever a person sees it: on the pages where they a
 - **operation**: One thing the API does, named by its method and path, such as `GET /items/{id}`, and by its `operationId` in the API document. Never "door".
 - **contract version**: One integer, answered at `GET /` as `contract`, sent on every answer as `X-Marfa-Contract` and carried as the API document's `info.version`. Not the product version and not the build.
 - **housekeeping**: The periodic jobs the server runs on itself, from one table and one scheduler; `housekeeping.md` lists them. None bounds what a connector keeps: its agreements go with their items, and its state document stays until it is cleared. One is "a housekeeping job", never a job alone: a bare job is a queued bulk action.
+- **archive**: The file `GET /export?format=archive` writes and `POST /restore` reads: a `manifest.json` with its own `version`, and the items and instance lines. Its version is the archive version, a number of its own, and not the contract version. A backup is an archive. Not the `archived` state of an item, which is `state` alone.
+- **backup**: An archive of the instance that the server puts in the object store (`S3_BUCKET`) or the backup folder (`MARFA_BACKUP_PATH`), on a schedule and when the owner asks with `POST /backups`. It holds every item and instance line, the trash included, and no file bytes and no credential. Not an export, which a credential reads of its own reach, and not a copy of the data directory.
 
 ### Devices and folders
 
 - **device**: Something that keeps a working copy of a slice and a queue of writes, through the core: an app built on the Swift SDK, or the CLI. A folder is a device whose face is a directory.
 - **core**: The Rust engine every native client embeds, through UniFFI to Swift and a native module to Node.
 - **working copy**: A device's local copy of its slice. A copy, not a peer: the server is the truth.
+- **hydration**: A device's read of its whole slice from the server: the head of the log first, then the item listing of each type the slice names, in every state, the edge types held whole and each pin. It runs when a copy is new or has expired, and a refused listing ends it before the copy loses anything. Not the edges an item answer carries, which `edges.md` calls hydrated.
+- **catch-up**: A device's read of what changed since its cursor: it opens the event stream there and applies each event to the copy, or skips it. It keeps a hydrated copy current. Not a drain, which sends the device's writes. On the server, `updated_after` is the catch-up filter on `GET /items` and `GET /edges`.
 - **slice**: The declared subset of an instance one device holds: a type list and a tier, and any edge types it holds whole. What a working copy is a copy of.
 - **reach**: Two senses, so a sentence names which. **A key's reach** is what its permissions and maps let it read and write. **A working copy's reach** is the server's proof, for one credential, that the inventory, the direct reads and the event stream the copy holds were all read under the same limits; a copy stream gives it as `reach`, and a request sends it back as `X-Marfa-Reach`. Not `instance_changed`, which says a request reached another instance.
 - **pin**: To hold one item in a working copy by ID, whatever the slice says of it.
