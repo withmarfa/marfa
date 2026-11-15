@@ -1625,13 +1625,13 @@ When an app refreshes a token that was issued for types chosen in place of an al
 
 ### `keys-and-oauth/authorize-nothing-grantable`
 
-Where the redirect URI is on the loopback or in a private-use scheme, or the signed-in person's standing consent to the app covers it, if an authorization request names no scope the instance can grant, then the server MUST send the browser to the redirect URI with `error=invalid_scope`.
+Where the redirect URI is on the loopback or in a private-use scheme, or a signed-in person's standing consent to the app covers it, if an authorization request names no scope the instance can grant, then the server MUST send the browser to the redirect URI with `error=invalid_scope`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a request in which no scope can be granted to the redirect URI as invalid_scope`.
 
 ### `keys-and-oauth/authorize-pkce`
 
-Where the redirect URI is on the loopback or in a private-use scheme, or the signed-in person's standing consent to the app covers it, if an authorization request carries no PKCE challenge, then the server MUST send the browser to the redirect URI with `error=invalid_request`.
+Where the redirect URI is on the loopback or in a private-use scheme, or a signed-in person's standing consent to the app covers it, if an authorization request carries no PKCE challenge, then the server MUST send the browser to the redirect URI with `error=invalid_request`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › is refused at the redirect URI without a PKCE challenge`.
 
@@ -1643,11 +1643,31 @@ If an authorization request names a redirect URI the client did not register, th
 
 ### `keys-and-oauth/authorize-error-web-unapproved`
 
-If an authorization request is refused for a redirect URI the client registered that is a web address off the loopback, and the signed-in person's standing consent to the app does not cover that URI, then the server MUST send the browser to its own `/auth/error` page with the error, never to that URI.
+If an authorization request is refused for a redirect URI the client registered that is a web address off the loopback, and no standing consent of a signed-in person covers that URI, then the server MUST send the browser to its own `/auth/error` page with the error, never to that URI.
 
 **Reason:** RFC 9700 section 4.11.2: anyone can register an app with a web address, so sending an error there would make the server an open redirector. A loopback or private-use URI reaches a program on the person's device, and a standing consent means the person chose that address.
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a refusal for a web app nobody approved to the error page, and to its redirect URI once the person approves it`.
+
+### `keys-and-oauth/authorize-error-web-signed-out`
+
+Where the redirect URI is a web address off the loopback, if an authorization request is refused while nobody is signed in, then the server MUST send the browser to its own `/auth/error` page with the error, never to that URI, whether or not the owner has approved the app.
+
+**Reason:** With nobody signed in the server cannot tell an app the owner approved from an attempt to use it as a redirector (RFC 9700 section 4.11.2), so the owner's earlier approval is not read. Once a person is signed in whose standing consent covers the URI, the same refusal goes to it.
+
+**Tests:** `compliance/oauth-authorize.test.ts › sends a refusal from nobody signed in to the error page for a web app the person approved, and to its redirect URI once they are signed in`.
+
+### `keys-and-oauth/authorize-response-type`
+
+Where the redirect URI is on the loopback or in a private-use scheme, or a signed-in person's standing consent to the app covers it, if an authorization request's `response_type` is missing or is not `code`, then the server MUST send the browser to the redirect URI with `error=unsupported_response_type`.
+
+**Tests:** `compliance/oauth-authorize.test.ts › sends a request for a response type other than code to the redirect URI as unsupported_response_type`.
+
+### `keys-and-oauth/authorize-client-grant`
+
+Where the redirect URI is on the loopback or in a private-use scheme, or a signed-in person's standing consent to the app covers it, if an authorization request comes from a client whose registration does not name the `authorization_code` grant, then the server MUST send the browser to the redirect URI with `error=unauthorized_client`.
+
+**Tests:** `compliance/oauth-authorize.test.ts › sends a request from an app not registered for the authorization code grant to the redirect URI as unauthorized_client`.
 
 ### `keys-and-oauth/authorize-response-issuer`
 
@@ -1677,9 +1697,17 @@ Where the redirect URI is on the loopback or in a private-use scheme, if an auth
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a request from nobody signed in to the redirect URI as login_required`, `compliance/signed-in-apps.test.ts › is answered login_required under prompt=none from nobody signed in, and is not caught up`.
 
+### `keys-and-oauth/prompt-none-login-web`
+
+Where the redirect URI is a web address off the loopback, if an authorization request naming `prompt=none` comes from nobody signed in, then the server MUST send the browser to its own `/auth/error` page with `error=login_required`, never to the redirect URI.
+
+**Reason:** A web page that tries a silent sign-in this way stays on the server's page and never receives `login_required` at its own address, which an app that expects the standard answer must handle. `keys-and-oauth/prompt-none-login` is the answer for a loopback or private-use address.
+
+**Tests:** `compliance/oauth-authorize.test.ts › sends a refusal from nobody signed in to the error page for a web app the person approved, and to its redirect URI once they are signed in`.
+
 ### `keys-and-oauth/prompt-none-consent`
 
-Where the redirect URI is on the loopback or in a private-use scheme, or the signed-in person's standing consent to the app covers it, if a signed-in person's authorization request naming `prompt=none` names a scope no standing consent covers, then the server MUST send the browser to the redirect URI with `error=consent_required` and the request's `state`.
+Where the redirect URI is on the loopback or in a private-use scheme, or a signed-in person's standing consent to the app covers it, if a signed-in person's authorization request naming `prompt=none` names a scope no standing consent covers, then the server MUST send the browser to the redirect URI with `error=consent_required` and the request's `state`.
 
 **Tests:** `compliance/oauth-authorize.test.ts › sends a request no consent covers to the redirect URI as consent_required`.
 
@@ -2044,6 +2072,12 @@ If a request to `POST /auth/oauth2/token` carries no proof of the client, then t
 If a request to `POST /auth/oauth2/token` names a grant type the server does not serve, then the server MUST answer `400 unsupported_grant_type`.
 
 **Tests:** `compliance/oauth.test.ts › refuses a grant type it does not support`.
+
+### `keys-and-oauth/token-client-grant`
+
+If a request to `POST /auth/oauth2/token` names a grant type the client's registration does not name, then the server MUST answer `400 unauthorized_client`.
+
+**Tests:** `compliance/oauth-authorize.test.ts › answers a token request for a grant the app is not registered for 400 unauthorized_client`.
 
 ### `keys-and-oauth/client-credential-refused`
 
@@ -2468,6 +2502,12 @@ When a request carries an `Origin` that `cors_origins` names, the server MUST an
 When a client asks `POST /auth/device/code` for a scope it may be granted, the server MUST answer `200` with a `device_code`, a `user_code`, a `verification_uri` and `verification_uri_complete` at `/auth/device`, `expires_in` of 600 and `interval` of 5.
 
 **Tests:** `compliance/device-grant.test.ts › is issued with its codes, where to enter it, ten minutes to live and a five-second interval`.
+
+### `keys-and-oauth/device-code-client-grant`
+
+If `POST /auth/device/code` comes from a client whose registration does not name the device grant, then the server MUST answer `400 unauthorized_client`.
+
+**Tests:** `compliance/oauth-authorize.test.ts › answers a device code request from an app not registered for the device grant 400 unauthorized_client`.
 
 ### `keys-and-oauth/device-scope-required`
 
