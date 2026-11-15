@@ -266,7 +266,7 @@ When `GET /types` lists a type, the server MUST answer in `own_roles` the roles 
 
 The server MUST keep the field a type names in `display_hints.body_field` as Markdown text, storing its value as sent and never refusing it as malformed Markdown.
 
-**Reason:** an app renders the body as Markdown, and a device reads it as Markdown to make the edges its text names (`folders/body-reference`); the server stores what it is given, so a connector converts HTML to Markdown before it writes.
+**Reason:** an app renders the body as Markdown, and a device reads it as Markdown to make the edges its text names (`folder-documents/body-reference`); the server stores what it is given, so a connector converts HTML to Markdown before it writes.
 
 **Tests:** `compliance/type-icons.test.ts › stores a body field's value as sent, whatever Markdown it holds`.
 

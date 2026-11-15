@@ -924,7 +924,7 @@ fn asked(dir: &Path) -> impl FnOnce(CoreError) -> CliError + '_ {
 }
 
 /// Says on standard error that opening `folder` replaced a store another
-/// build of the core made (`folders/refused-store-replaced-told`).
+/// build of the core made (`folder-setup/refused-store-replaced-told`).
 fn say_replaced(folder: &Folder) {
     if let Some(reason) = folder.replaced_store() {
         crate::errln!(

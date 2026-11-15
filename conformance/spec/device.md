@@ -1,10 +1,10 @@
 # The device
 
-A device holds a working copy: a local store of one slice of one server, hydrated over HTTP, kept current from the event log and read locally, with a queue of the writes the server has not answered. `queue-and-verdicts.md` states the queue and the answer to every write, `folders.md` states a folder, and the server's own chapters state what the server answers.
+A device holds a working copy: a local store of one slice of one server, hydrated over HTTP, kept current from the event log and read locally, with a queue of the writes the server has not answered. `queue-and-verdicts.md` states the queue and the answer to every write, the `folder-` chapters state a folder, and the server's own chapters state what the server answers.
 
 ## The working copy
 
-A slice is a type list, a tier, which is `library`, `feed` or `all`, and the edge types it holds whole. A slice may also hold a query, which is a folder's member states, its filter and the item it narrows beneath (`folders/copy-holds-query`). A slice takes an item when the item's type is a type the slice names, or a type under one by name or by declared parent, at a tier the slice holds, and, where the slice has a query, the item is in one of the query's states or in the bin, the filter matches it and, where the query names an item to narrow beneath, the item is the named item or one reached from it along the `parent-of` edges the copy held, at any depth, at the last settle of its reach (`device/catch-up-beneath-leaves`), or the item is a conflicted copy (`queue-and-verdicts.md`) in one of the query's states or in the bin. A pin holds one item by id whatever the slice says of it.
+A slice is a type list, a tier, which is `library`, `feed` or `all`, and the edge types it holds whole. A slice may also hold a query, which is a folder's member states, its filter and the item it narrows beneath (`folder-setup/copy-holds-query`). A slice takes an item when the item's type is a type the slice names, or a type under one by name or by declared parent, at a tier the slice holds, and, where the slice has a query, the item is in one of the query's states or in the bin, the filter matches it and, where the query names an item to narrow beneath, the item is the named item or one reached from it along the `parent-of` edges the copy held, at any depth, at the last settle of its reach (`device/catch-up-beneath-leaves`), or the item is a conflicted copy (`queue-and-verdicts.md`) in one of the query's states or in the bin. A pin holds one item by id whatever the slice says of it.
 
 ### `device/slice-held`
 
@@ -44,7 +44,7 @@ Where a slice has a query, a device MUST hold an item of a type and a tier the s
 
 Where a slice has a query, a device MUST hold a conflicted copy of a type and a tier the slice takes that is in one of the query's states or in the bin, whether or not the query's filter matches it.
 
-**Reason:** a conflicted copy is written beside the file it came from (`folders/conflict-copy-file`), and carries the `conflicted-copy` tag rather than the tags the filter asks for.
+**Reason:** a conflicted copy is written beside the file it came from (`folder-sync/conflict-copy-file`), and carries the `conflicted-copy` tag rather than the tags the filter asks for.
 
 **Tests:** `device/folders-copy-shrink.test.ts › hydrates only the items its query shows, with those in the bin and its conflicted copies`.
 
@@ -130,9 +130,9 @@ When a pinned create is answered with the id of another item, a device MUST move
 
 ### `device/pin-create-lasts`
 
-When a device pins a create its slice does not take (`queue-and-verdicts/create-outside-pinned`), a device MUST keep the pin, on the id the create is answered with, until the caller takes it off, the server accepts a purge of the item (`device/purge-accepted`), the read after an answer to a write of the item finds no such item, in the server's bin or out of it, the read after a discard of the item's create finds no such item (`queue-and-verdicts/discard-unlanded-pin-read`), an event says the item was purged, or a folder that binds a file to the item lets the item go once no file or line of the folder needs it (`folders/edge-pin-release`).
+When a device pins a create its slice does not take (`queue-and-verdicts/create-outside-pinned`), a device MUST keep the pin, on the id the create is answered with, until the caller takes it off, the server accepts a purge of the item (`device/purge-accepted`), the read after an answer to a write of the item finds no such item, in the server's bin or out of it, the read after a discard of the item's create finds no such item (`queue-and-verdicts/discard-unlanded-pin-read`), an event says the item was purged, or a folder that binds a file to the item lets the item go once no file or line of the folder needs it (`folder-documents/edge-pin-release`).
 
-**Reason:** a device cannot tell when an app stops showing an item it created, so the pin ends only on the caller's word, on the server's word that the item is gone (`device/pin-refused-create` and `device/catch-up-purged-pin`), or with a folder that took the one pin as its own by binding a file to the item. A pin that a body's link (`device/body-pin`) or a folder's line (`folders/edge-pin-held`) made on an item before a create was answered with that item becomes the create's, so the link's or the line's release leaves it. The pin moves with the item (`device/pin-follows-create` and `queue-and-verdicts/landed-pin-moves`) and outlasts every hydration (`device/pin-survives-hydration`), which reads it again (`device/hydrate-pins-batched`). A hydration keeps the pin of an item its read leaves out, such as one in the bin or one the key can no longer read (`device/pin-gone-kept`).
+**Reason:** a device cannot tell when an app stops showing an item it created, so the pin ends only on the caller's word, on the server's word that the item is gone (`device/pin-refused-create` and `device/catch-up-purged-pin`), or with a folder that took the one pin as its own by binding a file to the item. A pin that a body's link (`device/body-pin`) or a folder's line (`folder-documents/edge-pin-held`) made on an item before a create was answered with that item becomes the create's, so the link's or the line's release leaves it. The pin moves with the item (`device/pin-follows-create` and `queue-and-verdicts/landed-pin-moves`) and outlasts every hydration (`device/pin-survives-hydration`), which reads it again (`device/hydrate-pins-batched`). A hydration keeps the pin of an item its read leaves out, such as one in the bin or one the key can no longer read (`device/pin-gone-kept`).
 
 **Tests:** `device/pins-live.test.ts › keeps the pin of its own create outside its slice past the answer and the next hydration, until it is taken off`, `device/purge-live.test.ts › takes the item and its pin out once the server accepts, and the event after changes nothing`, `device/catch-up.test.ts › takes the pin off an item whose create was refused`, `› takes the pin off a purged item`, `device/folders-identity.test.ts › lets go of the pin of an item whose file's path another item takes`.
 
@@ -1054,7 +1054,7 @@ When a hydration completes, a device MUST report the types, tier and edge types 
 
 ### `device/hydrate-every-type`
 
-When a hydration declares `*` alone, or a folder whose query names no type or names `*` hydrates its copy, a device MUST read the item listing naming no type, which leaves `system.*` out (`folders/search-default-types`), and report the slice's types as `*`.
+When a hydration declares `*` alone, or a folder whose query names no type or names `*` hydrates its copy, a device MUST read the item listing naming no type, which leaves `system.*` out (`folder-setup/search-default-types`), and report the slice's types as `*`.
 
 **Tests:** `device/hydrate-every-type.test.ts › hydrates every type but system.* from the listing naming no type`, `device/hydrate-every-type-live.test.ts › holds every type registered before the hydration in one pass, and takes a later item of each by its event`, `device/folders.test.ts › holds exactly what its query matches`, `› takes every type, and any default type, where its query names no type or the star`.
 
@@ -1068,7 +1068,7 @@ When a hydration declares `*` beside `system.*` types, a device MUST hold every 
 
 While a device's slice is `*` alone, a device MUST NOT apply an event for a `system.*` item that is not pinned.
 
-**Reason:** the listing the slice reads leaves `system.*` out (`folders/search-default-types`), so a copy that took one by event would hold what no hydration of the same slice holds. A pinned item keeps taking its updates, whatever the slice.
+**Reason:** the listing the slice reads leaves `system.*` out (`folder-setup/search-default-types`), so a copy that took one by event would hold what no hydration of the same slice holds. A pinned item keeps taking its updates, whatever the slice.
 
 **Tests:** `device/hydrate-every-type.test.ts › takes no system item by event, but one that is pinned`.
 
@@ -4618,7 +4618,7 @@ If a command opens a store to read at a path that holds a file that is not a sto
 
 ### `device/wrong-schema`
 
-If a store records another schema version than the one this build makes, then a device MUST refuse every open of it to read, and every open of it as a writer that does not upgrade it (`device/schema-upgrade`), `wrong_schema` before it reads anything, naming the store's path, unless the open replaces a folder's store (`folders/refused-store-replaced`).
+If a store records another schema version than the one this build makes, then a device MUST refuse every open of it to read, and every open of it as a writer that does not upgrade it (`device/schema-upgrade`), `wrong_schema` before it reads anything, naming the store's path, unless the open replaces a folder's store (`folder-setup/refused-store-replaced`).
 
 **Reason:** a store outlives the app that made it, and a build reads only the shape its own version names. A store that records no version is one an earlier build made.
 
@@ -6080,7 +6080,7 @@ When a stop ends a hydration, a catch-up, a drain or a read of the server's item
 
 ### `device/tag-bound`
 
-If a create, a tag add, a metadata replace, a file added with tags, or a folder's scan of a document's tags (`folders/document-name-refusal`) adds a tag that is empty, only Unicode `White_Space`, exactly `.` or `..`, or longer than 128 characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, a tag add, a metadata replace, a file added with tags, or a folder's scan of a document's tags (`folder-documents/document-name-refusal`) adds a tag that is empty, only Unicode `White_Space`, exactly `.` or `..`, or longer than 128 characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** a write the server refuses (`items/tag-text`, `items/tag-dot-segment`) stays in the queue until a drain, long after the person saved it, so the bound is held where the write is made.
 
@@ -6088,7 +6088,7 @@ If a create, a tag add, a metadata replace, a file added with tags, or a folder'
 
 ### `device/tag-count`
 
-If a create, a tag add, a metadata replace, a file added with tags, or a folder's scan of a document's tags (`folders/document-name-refusal`) names more than 100 tags, or would leave the item the copy shows more than 100 tags and more than it held, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, a tag add, a metadata replace, a file added with tags, or a folder's scan of a document's tags (`folder-documents/document-name-refusal`) names more than 100 tags, or would leave the item the copy shows more than 100 tags and more than it held, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** the server holds the same bound (`items/tags-count`), and a write it refuses would come back refused long after the person saved it.
 
@@ -6108,7 +6108,7 @@ When a write adds a tag the server takes, a device MUST take it and queue it, a 
 
 ### `device/property-name-empty`
 
-If a create, an edit or a folder's scan of a document (`folders/document-name-refusal`) names a property with no characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
+If a create, an edit or a folder's scan of a document (`folder-documents/document-name-refusal`) names a property with no characters, then a device MUST refuse it `validation`, carrying the server's `validation_error`.
 
 **Reason:** the server refuses such a name on every write (`items/property-name-empty`), and a device that took it would hold an item the server never will.
 
@@ -6478,7 +6478,7 @@ When a caller reads a folder the copy holds, a device MUST answer its state and 
 
 When a caller lists or searches in a folder, a device MUST answer the items of the query's types and their subtypes, in the tiers the query holds, in the states it names or `active` and `archived` where it names none, that its `filter` matches, and no `system.*` item.
 
-**Reason:** an app that shows a folder beside the folder on disk would otherwise show one set of items there and another in the files, with nothing to say which is right (`folders/search-match`).
+**Reason:** an app that shows a folder beside the folder on disk would otherwise show one set of items there and another in the files, with nothing to say which is right (`folder-setup/search-match`).
 
 **Tests:** `device/folder-settings-live.test.ts › lists and searches in a folder what the folder's query holds`.
 
@@ -6568,7 +6568,7 @@ If folder settings sent through a working copy carry a `filter` the listing gram
 
 If folder settings sent through a working copy name a default type or a default tier that the folder's query does not hold, then a device MUST refuse them `invalid` before anything is sent.
 
-**Reason:** a new file made with such a default would fall outside its own folder (`folders/default-search-refusal`), and the server takes the settings.
+**Reason:** a new file made with such a default would fall outside its own folder (`folder-documents/default-search-refusal`), and the server takes the settings.
 
 **Tests:** `device/folder-settings-live.test.ts › refuses settings the server would refuse, or defaults its query would not hold, before anything is sent`.
 
@@ -7298,7 +7298,7 @@ Where a slice's tier is `all`, when a local edit, a drain's answer, a catch-up o
 
 ## Links and embeds in a body
 
-A body written through a working copy is read by the rule a folder reads a Markdown file's body by (`folders/body-reference` and `folders/embed-edge`). These rules say what a working copy does, which has no directory and no file record.
+A body written through a working copy is read by the rule a folder reads a Markdown file's body by (`folder-documents/body-reference` and `folder-documents/embed-edge`). These rules say what a working copy does, which has no directory and no file record.
 
 ### `device/body-edges`
 
@@ -7310,7 +7310,7 @@ When a create or an edit through a working copy changes an item's body, a device
 
 ### `device/body-field`
 
-A device MUST read an item's body from the property `folders/body-property` names: the type's `body_field`, or `body` for a type that names none.
+A device MUST read an item's body from the property `folder-documents/body-property` names: the type's `body_field`, or `body` for a type that names none.
 
 **Reason:** `core.event` keeps its body in `description`, so a link there is a link.
 
@@ -7358,7 +7358,7 @@ If a body's link names no item by an id the copy holds and no item the item alre
 
 ### `device/body-link-forms`
 
-When a body carries `[[name|shown]]` or `[[name#part]]`, a device MUST read the link as naming `name`, unless the whole text between the brackets names another item or is itself unsettled, which makes the link ambiguous (`folders/body-link-ambiguity`).
+When a body carries `[[name|shown]]` or `[[name#part]]`, a device MUST read the link as naming `name`, unless the whole text between the brackets names another item or is itself unsettled, which makes the link ambiguous (`folder-documents/body-link-ambiguity`).
 
 **Tests:** `device/body-edges-live.test.ts › reads an alias and a heading as the name before them, and a link in code as text`.
 
@@ -7424,7 +7424,7 @@ When a body's change names an edge, a device MUST queue the edge as a write of i
 
 When a body's link names an item only the server holds, a device MUST pin that item before it queues the edge.
 
-**Reason:** a copy holds no edge to an item it does not hold, and the pin lets the copy say offline what the link names, as a folder pins the other end of a line (`folders/edge-pin-held`).
+**Reason:** a copy holds no edge to an item it does not hold, and the pin lets the copy say offline what the link names, as a folder pins the other end of a line (`folder-documents/edge-pin-held`).
 
 **Tests:** `device/body-edges-live.test.ts › pins an item only the server holds before its edge is queued, and lets the pin go once no edge needs it`.
 
@@ -7446,7 +7446,7 @@ When a body names an edge of a type and ends the copy holds already, a device MU
 
 ### `device/body-edge-refused`
 
-If the server refuses a body's edge write, then a device MUST keep the refused write in the queue until it is discarded or a folder clears it (`folders/clears-satisfied-edge-refusal`, `folders/clears-repeated-edge-refusal`).
+If the server refuses a body's edge write, then a device MUST keep the refused write in the queue until it is discarded or a folder clears it (`folder-sync/clears-satisfied-edge-refusal`, `folder-sync/clears-repeated-edge-refusal`).
 
 **Reason:** a refused write is kept as any refused write is (`queue-and-verdicts/clear-keeps-content` and `queue-and-verdicts/discard-refused`).
 
@@ -7530,7 +7530,7 @@ When a caller reads an item's links and embeds, a device MUST answer from the co
 
 When a write takes a link or an embed out of a body, a device MUST queue the delete of the `references` edge the body named through it.
 
-**Reason:** taking a link out removes its edge as in a folder (`folders/body-link-removal`). The body before the write is read against the same edges as the body after it, so a link both carry reads alike in both and is never removed by an edit elsewhere in the body.
+**Reason:** taking a link out removes its edge as in a folder (`folder-files/body-link-removal`). The body before the write is read against the same edges as the body after it, so a link both carry reads alike in both and is never removed by an edit elsewhere in the body.
 
 **Tests:** `device/body-edges-live.test.ts › takes the edge with a link taken out, and leaves edges of another type and ones no body named`, `› makes an embed of an image and of a video, by name and by path, a references edge to the file`, `› agrees with a folder on the same item, and neither repeats the other's edge`.
 
@@ -7818,7 +7818,7 @@ When a caller asks for the links in a text, a device MUST answer without a worki
 
 When a caller asks what a link could name, a device MUST answer every item the copy holds outside the bin that the link's name answers to by id, title or file path, without regard to case or Unicode normalization form.
 
-**Reason:** an editor offers the items a link could name as it is typed, and as `folders/edge-name-normalization` reads a name. The CLI asks with `device items link-candidates`.
+**Reason:** an editor offers the items a link could name as it is typed, and as `folder-documents/edge-name-normalization` reads a name. The CLI asks with `device items link-candidates`.
 
 **Tests:** `device/link-parts.test.ts › lists every item a name answers to, without regard to case or Unicode form`, `› binds an id the copy holds, and lists no item the copy does not hold`.
 
@@ -7826,7 +7826,7 @@ When a caller asks what a link could name, a device MUST answer every item the c
 
 When a caller asks what a link with a heading or an alias could name, a device MUST answer the items its whole text answers to as well as those its name answers to.
 
-**Reason:** the whole text naming another item makes the link ambiguous (`folders/body-link-ambiguity`).
+**Reason:** the whole text naming another item makes the link ambiguous (`folder-documents/body-link-ambiguity`).
 
 **Tests:** `device/link-parts.test.ts › lists both readings where the whole text and the name before a mark each answer`.
 
@@ -8589,7 +8589,7 @@ The device fixtures drive a scripted server where the precondition cannot be arr
 - **A `5xx`.** The server answers one for a fault, and a fault it can be made to have is a defect rather than a fixture. Contention on the write lock is the other `5xx` it answers, and that one is the contract rather than a fault: `503 write_contention`, which a device retries without counting it against the write (`errors/contention`). It is provoked from outside this suite, by holding the lock from another process.
 - **A `429`.** Rate limiting is off on the run's server, because a run's own key minting would spend the key operations' allowance (`conformance/TARGET-INTERFACE.md`, "What `marfa:up` does"). The real server does answer one, and `keys-and-oauth/keys-rate-cap` asserts it against a server booted with the limiter on.
 - **A read answered before an event the copy has since taken.** A follow and a drain on one core race, and an event applied between a read's request and its write leaves the read older than the item the copy holds (`device/server-item-order`). The run's server answers a read with the item as it stands when it is asked, so the scripted server answers with the older item, standing for the read that lost the race.
-- **A placement path with a leading separator.** The edge operation refuses one (`edges/folder-path`), so only a path written past it carries one; the fixture serves one to hold the folder to reading it from its root (`folders/placement-root-relative`).
+- **A placement path with a leading separator.** The edge operation refuses one (`edges/folder-path`), so only a path written past it carries one; the fixture serves one to hold the folder to reading it from its root (`folder-files/placement-root-relative`).
 - **An aged-out cursor.** A cursor is too old only when the event after it has been retired (`events/catchup-too-old`), and an event is retired only once it is older than the retention, an hour at the shortest: a request can run the sweep but cannot age an event, so the terminal `catchup_too_old` frame cannot be provoked against the run's server. `compliance/catchup-too-old.test.ts` asserts the frame's shape against a server of its own, whose clock it moves past the retention before it runs the sweep.
 - **Another instance at the copy's origin.** The run has one server, and a device cannot be put in front of a second at its address while it runs. A server restored behind the copy is reachable: the `cursor_ahead` frame a cursor past the head gets is held against the real server's (`device/fidelity.test.ts`).
 - **A create queued under an id the server cannot hold.** A device refuses such an id before it queues it (`device/id-format`), so only a store an earlier build made carries one. `device/verdicts.test.ts` scripts the refusal and the read-back that follow it (`device/read-back-invalid-id`).

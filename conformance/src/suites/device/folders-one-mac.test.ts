@@ -181,7 +181,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     },
   );
 
-  /** Past the grace a missing file is journaled for (`folders/delete-grace`). */
+  /** Past the grace a missing file is journaled for (`folder-files/delete-grace`). */
   async function pastTheGrace(): Promise<void> {
     await new Promise((resolve) => setTimeout(resolve, 6_000));
   }
@@ -607,7 +607,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
 
     // The next pass journals it and writes nothing back. The file never
     // carried its id, so the folder it went to makes it a new item, and the
-    // grace sweep settles the old one (`folders/delete-grace`).
+    // grace sweep settles the old one (`folder-files/delete-grace`).
     const left = await a.folder.push();
     expect(left.ok, JSON.stringify(left)).toBe(true);
     if (!left.ok) return;
@@ -2067,7 +2067,7 @@ if lib.setattrlist(os.fsencode(sys.argv[1]), ctypes.byref(attrs), ctypes.byref(s
     expect((await a.folder.pull()).ok).toBe(true);
 
     // The witness: where the move can be told, the same change writes a
-    // file deleted inside the grace back (`folders/delete-remote-revives`).
+    // file deleted inside the grace back (`folder-files/delete-remote-revives`).
     rmSync(join(a.dir, "Restored.md"));
     expect((await a.folder.push()).ok).toBe(true);
     changeElsewhere(restored);

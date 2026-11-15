@@ -409,7 +409,7 @@ impl Folder {
     }
 
     /// Records the item of a new file made in a state the query does not hold,
-    /// so its file stays (`folders/new-file-outside-state-kept`).
+    /// so its file stays (`folder-files/new-file-outside-state-kept`).
     fn record_made_outside(
         &self,
         item_id: &str,

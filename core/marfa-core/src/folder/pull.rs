@@ -2128,7 +2128,7 @@ impl Folder {
 
     /// Whether another device changed a missing file's item in what the file
     /// showed, so the file comes back rather than the item going to the bin
-    /// (`folders/missing-file-changed-revives`). Told from the copy alone,
+    /// (`folder-files/missing-file-changed-revives`). Told from the copy alone,
     /// with no server and no held bytes: a file item by the blob its binding
     /// last agreed at, a document by its agreed presentation.
     pub(super) fn changed_while_missing(
@@ -2209,8 +2209,8 @@ impl Folder {
 
     /// The agreed presentation of a file showing bytes its item never took, a
     /// held file's or one whose change was refused, with those bytes shown as
-    /// the item renders them (`folders/missing-held-line-unchanged`,
-    /// `folders/missing-refused-edit-unchanged`), so the person's delete of
+    /// the item renders them (`folder-files/missing-held-line-unchanged`,
+    /// `folder-files/missing-refused-edit-unchanged`), so the person's delete of
     /// it stands unless the item changed elsewhere.
     fn untaken_set_aside(
         &self,

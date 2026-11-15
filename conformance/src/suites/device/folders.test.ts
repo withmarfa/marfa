@@ -2218,7 +2218,7 @@ describe("files and items", () => {
     // A link naming nothing looks like one gone, so while `targt` names
     // nothing, taking out `other` removes nothing. A link the folder already
     // resolved keeps naming its item through a rename
-    // (`folders/body-link-retitled-unflagged`), so the edit retypes it.
+    // (`folder-documents/body-link-retitled-unflagged`), so the edit retypes it.
     renameSync(join(harness.dir, "target.md"), join(harness.dir, "moved.md"));
     writeFileSync(
       join(harness.dir, "source.md"),
@@ -4450,7 +4450,7 @@ describe("what a folder takes", () => {
     let door: FolderDoor | undefined;
     // The copy reaches the copy only once the watch has said it is not a
     // file yet: heard sooner, the pass that reports the verdict has already
-    // written it, and names its file at once (`folders/conflict-copy-file`).
+    // written it, and names its file at once (`folder-sync/conflict-copy-file`).
     let told = false;
     harness = await folderHarness("folder-conflict-watch-copy", {
       items: {

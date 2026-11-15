@@ -497,7 +497,7 @@ impl Folder {
             settings_problem,
         } = observing;
         // A copy still filling answers neither status nor pass: nothing is
-        // known yet, which is no problem and no success (`folders/health-hydrating`).
+        // known yet, which is no problem and no success (`folder-sync/health-hydrating`).
         let hydrating = matches!(error, Some(CoreError::HydrationIncomplete));
         let error = error.filter(|_| !hydrating);
         let complete = complete && !hydrating;

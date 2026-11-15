@@ -764,7 +764,7 @@ When a key sends `POST /items/titles` with `names`, the server MUST answer `200`
 
 When a key sends `POST /items/titles`, the server MUST match a title to a name if they are equal after each loses the Unicode `White_Space` at either end, is put in normalization form NFC, has Unicode full case folding applied with no locale rule, and is put in NFC again.
 
-**Reason:** a device compares names the same way (`folders/name-comparison`), so a lookup that folded otherwise would find an item the device calls another name, or miss one it calls the same. Full case folding makes `ΟΔΟΣ` and `οδος` one name, and `Straße` and `STRASSE` one name.
+**Reason:** a device compares names the same way (`folder-documents/name-comparison`), so a lookup that folded otherwise would find an item the device calls another name, or miss one it calls the same. Full case folding makes `ΟΔΟΣ` and `οδος` one name, and `Straße` and `STRASSE` one name.
 
 **Tests:** `compliance/item-titles.test.ts › finds a title by its folded form and by the name as typed, for every case of the shared fold`.
 
@@ -2334,7 +2334,7 @@ When a key writes or deletes an extension namespace, the server MUST announce `m
 
 ## The folder operations
 
-A folder's settings are a `system.folder` item, written only through `/folders`. What a folder does with them is `folders.md`'s.
+A folder's settings are a `system.folder` item, written only through `/folders`. What a folder does with them is in the `folder-` chapters.
 
 ### `items/folder-create`
 
@@ -2462,7 +2462,7 @@ If a request to `POST /folders` or `PATCH /folders/{id}` carries a key that its 
 
 If a `first_placement` directory holds a `..` name, wherever it climbs back, or a folder's `query.filter` holds a `backref` condition, then the server MUST answer `400 validation_error`, naming the setting in `details.errors[0].path`, before it writes anything.
 
-**Reason:** a device treats a placement with a `..` name as outside the folder and writes no file there (`folders/placement-outside`), and a folder on disk cannot follow a `backref` condition (`folders/search-refuse-unsupported`), so a folder made with either would be stuck on every device.
+**Reason:** a device treats a placement with a `..` name as outside the folder and writes no file there (`folder-files/placement-outside`), and a folder on disk cannot follow a `backref` condition (`folder-setup/search-refuse-unsupported`), so a folder made with either would be stuck on every device.
 
 **Tests:** `compliance/folders.test.ts › refuses a malformed setting %j with %s naming %s, on a create and on a change`, `› takes the settings a device can follow, on a create and on a change`.
 
@@ -2510,7 +2510,7 @@ If an `include` or an `ignore` list compiles to more than 1 MiB for a device to 
 
 When `POST /folders` or `PATCH /folders/{id}` names `*` in `query.types`, the server MUST store the query as sent.
 
-**Reason:** `*` is every type but `system.*` (`folders/search-default-types`), which a device follows, though a view's `query.types` lists no `*`.
+**Reason:** `*` is every type but `system.*` (`folder-setup/search-default-types`), which a device follows, though a view's `query.types` lists no `*`.
 
 **Tests:** `compliance/folders.test.ts › takes the star in a folder's query types and reads it back`.
 

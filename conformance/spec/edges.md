@@ -1070,7 +1070,7 @@ If `POST /edges` names a `parent-of` edge that closes a cycle only through an ed
 
 When a credential sends `GET /edge-types`, the server MUST list `in-folder` as `many-to-many`, from any type to `system.folder`, with `cascade_on_delete` `orphan`, `written_at` `none`, no `reverse_name` and a `path` in its `property_schema`.
 
-**Reason:** `in-folder` places an item in a folder, and its `path` is the file's path relative to the folder's root (`items/folder-create`, `folders/placement-path`). No file writes the edge (`folders/placement-not-document`), so it names no end.
+**Reason:** `in-folder` places an item in a folder, and its `path` is the file's path relative to the folder's root (`items/folder-create`, `folder-files/placement-path`). No file writes the edge (`folder-files/placement-not-document`), so it names no end.
 
 **Tests:** `compliance/edge-types.test.ts › ships in-folder from any item to a system.folder, carrying its path`.
 
@@ -1520,7 +1520,7 @@ When a credential sends `GET /edge-types`, the server MUST list `reverse_name` `
 
 When a credential sends `GET /edge-types`, the server MUST list `written_at` `target` on `parent-of`, `source` on `attached-to` and `references`, and `none` on `in-folder`.
 
-**Reason:** `written_at` is the end whose file writes the edge in a folder, and a child names its parent (`folders/edge-writing-end`). `none` says no file writes the edge, as for a file's placement.
+**Reason:** `written_at` is the end whose file writes the edge in a folder, and a child names its parent (`folder-documents/edge-writing-end`). `none` says no file writes the edge, as for a file's placement.
 
 **Tests:** `compliance/edge-types.test.ts › lists the end whose file writes each shipped edge type`, `› ships in-folder from any item to a system.folder, carrying its path`.
 

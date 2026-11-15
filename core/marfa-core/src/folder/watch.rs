@@ -162,7 +162,7 @@ struct FollowHealth {
     /// The follow's latest hydration attempt failed because the server could
     /// not be reached or answered with its own trouble (`is_unreachable`), so
     /// the copy is not merely slow to fill; cleared as each attempt begins
-    /// (`folders/health-hydrating`).
+    /// (`folder-sync/health-hydrating`).
     hydration_failing: bool,
 }
 
@@ -1090,7 +1090,7 @@ impl Folder {
     /// Keeps the wait a drain of this folder was told, whoever drained: a
     /// later answer replaces an earlier one, and a later drain with no wait
     /// ends it where the server took writes or writes were left undelivered
-    /// (`folders/watch-rate-limit-handover`).
+    /// (`folder-sync/watch-rate-limit-handover`).
     pub(super) fn keep_wait(&self, drain: &crate::DrainReport) -> Result<(), CoreError> {
         let conn = self.core.conn()?;
         if let Some(wait) = rate_limit_wait(drain) {

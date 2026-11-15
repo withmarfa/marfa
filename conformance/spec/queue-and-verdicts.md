@@ -1930,7 +1930,7 @@ When a caller clears the answered writes, a device MUST take out of the queue ea
 
 ### `queue-and-verdicts/clear-keeps-content`
 
-When a caller clears the answered writes, a device MUST keep every `refused` write that carried content: an item's create or edit, a metadata write, an extension written, a table rows write, and an edge's create or edit, other than one a folder clears (`folders/clears-satisfied-edge-refusal`, `folders/clears-repeated-edge-refusal`).
+When a caller clears the answered writes, a device MUST keep every `refused` write that carried content: an item's create or edit, a metadata write, an extension written, a table rows write, and an edge's create or edit, other than one a folder clears (`folder-sync/clears-satisfied-edge-refusal`, `folder-sync/clears-repeated-edge-refusal`).
 
 **Reason:** cleared with the answered writes, the words of an edit, or the rows of a table write, that the server refused because another device deleted the item would be gone with nothing saying so.
 
@@ -2828,7 +2828,7 @@ When a create carrying no natural key carries a null for a property its type doe
 
 ### `queue-and-verdicts/folder-gives-way`
 
-When a folder gives way to another machine's placement of a file (`folders/placement-give-way-queue`), a device MUST take out of the queue every write to that `in-folder` edge that is not `accepted`, a create refused as a duplicate among them, without a caller's withdraw or discard, other than a write queued after the move it gives way from (`folders/placement-give-way-newer-kept`).
+When a folder gives way to another machine's placement of a file (`folder-files/placement-give-way-queue`), a device MUST take out of the queue every write to that `in-folder` edge that is not `accepted`, a create refused as a duplicate among them, without a caller's withdraw or discard, other than a write queued after the move it gives way from (`folder-files/placement-give-way-newer-kept`).
 
 **Reason:** the refused create carries only a path the folder chose, from the item's title or where its file sat; the item and the file both stay, and the pull moves the file to the placement the server holds. Kept until discarded, the create would leave a refusal to discard for nearly every item two machines both pulled.
 

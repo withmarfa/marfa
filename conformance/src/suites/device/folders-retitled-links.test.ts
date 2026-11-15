@@ -28,11 +28,11 @@ import {
 
 // A wiki link to an item retitled since it was written is rewritten in the
 // folder's file to name the item by its new title, as Obsidian does
-// (`folders/body-link-retitled`), once the server took the title
-// (`folders/body-link-retitled-waits`), never over bytes the person changed
-// (`folders/body-link-retitled-edit`), by id where the title names another
-// item too (`folders/body-link-retitled-id`), and unflagged while it waits
-// (`folders/body-link-retitled-unflagged`).
+// (`folder-documents/body-link-retitled`), once the server took the title
+// (`folder-documents/body-link-retitled-waits`), never over bytes the person changed
+// (`folder-documents/body-link-retitled-edit`), by id where the title names another
+// item too (`folder-documents/body-link-retitled-id`), and unflagged while it waits
+// (`folder-documents/body-link-retitled-unflagged`).
 
 let harness: FolderHarness | undefined;
 let second: FolderHarness | undefined;

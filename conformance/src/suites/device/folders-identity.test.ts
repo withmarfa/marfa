@@ -164,7 +164,7 @@ describe("identity", () => {
 
     // Moved as some tools move a file, by a copy and a delete: a new inode,
     // so only the id says which item this is. Its name stays, so the move
-    // is its placement alone (`folders/placement-rename-only`).
+    // is its placement alone (`folder-files/placement-rename-only`).
     mkdirSync(join(harness.dir, "after"));
     writeFileSync(
       join(harness.dir, "after", "before.md"),
@@ -1352,7 +1352,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     ).not.toContain(departed.id);
 
     // The journal was not involved and nothing was queued. A journaled
-    // path becomes a delete once the grace runs out (`folders/delete-grace`), so
+    // path becomes a delete once the grace runs out (`folder-files/delete-grace`), so
     // the absence is asserted after it: the grace is the folder's five
     // seconds, and nothing shorter can show a delete not being sent.
     await new Promise((resolve) => setTimeout(resolve, 6_000));
@@ -2368,7 +2368,7 @@ describe("what a pull does with a file whose item stops matching", () => {
     // Still bound, so the next scan neither makes a second item of it nor
     // queues the refused create again, and it says so; the push's own report
     // is what said the create was refused, and an edit to the file queues it
-    // again (`folders/lost-item-edit-retried`).
+    // again (`folder-files/lost-item-edit-retried`).
     const before = sentCreates(harness).length;
     expect(before, "the create was never sent, so nothing was refused").toBe(1);
     const scanned = await harness.folder.scan();

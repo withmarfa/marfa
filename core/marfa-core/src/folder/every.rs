@@ -298,7 +298,7 @@ fn recorded(dir: &Path) -> crate::Result<Recorded> {
                     first::waiting(&conn)?,
                 )
             }
-            // The open replaces it (`folders/refused-store-replaced`).
+            // The open replaces it (`folder-setup/refused-store-replaced`).
             Err(CoreError::WrongSchema {
                 unsent: Some(0),
                 folder: Some(crate::FolderStore::Replaceable),

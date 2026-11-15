@@ -541,7 +541,7 @@ impl Folder {
         }
         embedded.retain(|id| id != item_id);
         // A file the body newly embeds that the query does not hold is the
-        // document's own (`folders/embedded-outside-search`), so the embed
+        // document's own (`folder-documents/embedded-outside-search`), so the embed
         // attaches it too. Only an embed new to the body does, whether or not
         // a link already named the file: an attachment taken away elsewhere
         // stays away while the embed stays.
@@ -1049,7 +1049,7 @@ impl Folder {
     /// The item this device's link record says `raw` in `item_id`'s body
     /// names, while the `references` edge to it stands and it is out of the
     /// bin: a link to an item retitled since names it still, until the folder
-    /// rewrites the link (`folders/body-link-retitled-unflagged`).
+    /// rewrites the link (`folder-documents/body-link-retitled-unflagged`).
     fn recorded_link(
         &self,
         item_id: &str,
@@ -1081,7 +1081,7 @@ impl Folder {
 
     /// A typed name as the edge it already names, or else as the resolver
     /// reads it, but for a name whose lookup was refused while the file was
-    /// as it is (`folders/edge-lookup-no-repeat`).
+    /// as it is (`folder-documents/edge-lookup-no-repeat`).
     fn resolve_typed(
         &self,
         text: &str,

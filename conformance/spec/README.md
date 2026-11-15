@@ -41,7 +41,12 @@ The contract has two halves.
 
 - `device.md`: the working copy, the slice, hydration, catch-up, and what a device never does locally.
 - `queue-and-verdicts.md`: the queue, the version on every write, the six verdicts, and which failures retry.
-- `folders.md`: a directory on a machine as a device, and the rules that hold there.
+- `folder-setup.md`: setting a folder up: binding and settings, the first sync, the machine's registry, the record of watches, handing a folder to a command and syncing from login.
+- `folder-documents.md`: what a document is to a folder: which files it admits, a document's fields, name, title, versions, edge lines and links, and the files it cannot read.
+- `folder-files.md`: files on disk: identity and placement, writes and recovery, deletion, paths and links, and another folder's file.
+- `folder-sync.md`: keeping a folder in step: keeping up, watching, pulls and pushes, and the reports a folder sends.
+- `folder-guards.md`: what a folder holds back until a person confirms: removals and additions, size and status, and files outside the query.
+- `folder-speed.md`: what a quick pass and a full pass of a watch read and render, how often a full pass runs, and how long a watch waits for a file to settle.
 
 ## Compatibility
 

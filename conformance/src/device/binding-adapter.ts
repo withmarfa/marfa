@@ -879,14 +879,14 @@ export interface BindingFolderScan {
   skipped: number;
   movedAway: number;
   paused: number;
-  /** New files a large drop holds back (`folders/addition-paused`). */
+  /** New files a large drop holds back (`folder-guards/addition-paused`). */
   pausedAdditions: number;
-  /** New files the query would not hold, left unsent (`folders/outside-query-held`). */
+  /** New files the query would not hold, left unsent (`folder-guards/outside-query-held`). */
   heldOutside: number;
   trashed: string[];
   rootGone?: string;
   /** Why links by name wait though the server answered
-   *  (`folders/edge-lookup-call-told`). */
+   *  (`folder-documents/edge-lookup-call-told`). */
   lookupRefused?: string;
 }
 
