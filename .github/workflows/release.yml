@@ -33,7 +33,8 @@ jobs:
       actions: read
     steps:
       # A pull request's head never reaches `main` under squash merges, so a tag
-      # needs a push or dispatch run; a dry run accepts any event.
+      # needs a push or dispatch run of `main`, never a run of a branch a
+      # maintainer could dispatch; a dry run accepts any event.
       - name: Require a green CI run for this commit
         env:
           GH_TOKEN: ${{ github.token }}
@@ -41,7 +42,7 @@ jobs:
           query="head_sha=$GITHUB_SHA&status=success"
           filter='.workflow_runs | length'
           if [ "$GITHUB_EVENT_NAME" = "push" ]; then
-            filter='[.workflow_runs[] | select((.event == "push" and .head_branch == "main") or .event == "workflow_dispatch")] | length'
+            filter='[.workflow_runs[] | select(.head_branch == "main" and (.event == "push" or .event == "workflow_dispatch"))] | length'
           fi
           runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?$query&per_page=100" --jq "$filter")
           if [ "${runs:-0}" -lt 1 ]; then
@@ -306,12 +307,15 @@ jobs:
           retention-days: 1
 
   # Signing stays in its own job so the identity never shares a machine with
-  # the build's dependencies. A dry run signs too.
+  # the build's dependencies. Only a tag run uses the `release` environment,
+  # which holds the identity and admits only `v*` tags; a dry run signs ad hoc
+  # and reads no secret.
   sign:
     name: Sign the programs
     needs: [version, programs-macos]
     runs-on: macos-26
     timeout-minutes: 120
+    environment: ${{ github.event_name == 'push' && 'release' || '' }}
     permissions:
       contents: read
     env:
@@ -325,6 +329,7 @@ jobs:
           path: ${{ runner.temp }}/build
 
       - name: Sign and notarize the programs
+        if: github.event_name == 'push'
         env:
           APPLE_DEVELOPER_ID_P12: ${{ secrets.APPLE_DEVELOPER_ID_P12 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -337,6 +342,16 @@ jobs:
             # An artifact keeps no file modes.
             chmod +x "$RUNNER_TEMP/build/$program"
             bash scripts/release/sign-binary.sh "$RUNNER_TEMP/build/$program"
+          done
+
+      # The same shape of archive as a release's, signed by no identity.
+      - name: Sign the programs ad hoc, for a dry run
+        if: github.event_name != 'push'
+        run: |
+          for program in marfa marfa-server; do
+            chmod +x "$RUNNER_TEMP/build/$program"
+            codesign --force --sign - "$RUNNER_TEMP/build/$program"
+            codesign --verify --strict "$RUNNER_TEMP/build/$program"
           done
 
       - name: Pack the programs and run them from the archive
@@ -728,8 +743,9 @@ jobs:
   publish:
     name: Publish
     needs: [version, collect, run-linux, image, install-proof]
-    # npm's trusted publishing does not check the ref: only this condition keeps publication to tags.
+    # npm's trusted publishing does not check the ref; the environment, which admits only `v*` tags, and this condition keep publication to tags.
     if: github.event_name == 'push'
+    environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -985,6 +1001,7 @@ jobs:
     name: Update the Homebrew tap
     needs: [version, publish]
     if: github.event_name == 'push'
+    environment: release
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
@@ -1020,7 +1037,7 @@ jobs:
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
-            echo "::error::The secret HOMEBREW_TAP_TOKEN is not set. Add a fine-grained token with Contents read and write on withmarfa/homebrew-tap as an Actions secret of this repository, then run this job again."
+            echo "::error::The secret HOMEBREW_TAP_TOKEN is not set. Add a fine-grained token with Contents read and write on withmarfa/homebrew-tap as a secret of the release environment, then run this job again."
             exit 1
           fi
       - uses: actions/checkout@v7
