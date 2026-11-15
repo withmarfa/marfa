@@ -1249,6 +1249,8 @@ const NOT_DRIVEN: Record<string, string> = {
     "requires the private socket; exercised by packaged image smoke",
   "owner recover":
     "requires the private socket; packaged image smoke changes the production password and verifies it after restart",
+  "housekeeping confirm-clock":
+    "requires the private socket; its operation is held by compliance/clock-hold.test.ts",
   "owner passkeys add":
     "requires the private socket; its response contract is driven here and its sign-in URL is checked by the CLI instance scenario",
   status: "describes a server on another contract; held by its own case",
