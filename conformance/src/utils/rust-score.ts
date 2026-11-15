@@ -118,6 +118,43 @@ export function contractFiles(root: string): string[] {
   return found.sort();
 }
 
+/** Whether a contract file is in one of the projects. */
+export function inProjects(
+  file: string,
+  projects: readonly ContractProject[],
+): boolean {
+  return projects.some((project) => file.startsWith(`src/suites/${project}/`));
+}
+
+/**
+ * The contract files of a run of some of the projects, for the score to
+ * judge: only theirs. The reports must name
+ * nothing else. A report of another project's file is a shard that ran and
+ * would go unjudged, so the projects asked for and the shards that ran
+ * disagree, and the score cannot say which is right.
+ */
+export function scopeToProjects(
+  reports: readonly VitestReport[],
+  files: readonly string[],
+  projects: readonly ContractProject[],
+): string[] {
+  const stray = reports
+    .flatMap((report) =>
+      report.testResults.map((result) => fixturePath(result.name)),
+    )
+    .filter(
+      (file) =>
+        inProjects(file, CONTRACT_PROJECTS) && !inProjects(file, projects),
+    )
+    .sort();
+  if (stray.length > 0) {
+    throw new Error(
+      `--projects names ${projects.join(",")}, but the reports name files of other projects, which would go unjudged: ${stray.slice(0, 5).join(", ")}`,
+    );
+  }
+  return files.filter((file) => inProjects(file, projects));
+}
+
 const projectOf = (file: string): string => file.split("/")[2] ?? "";
 
 const whole = (file: FileScore): boolean =>
@@ -158,9 +195,7 @@ export function scoreRun(
   for (const report of reports) {
     for (const result of report.testResults) {
       const file = fixturePath(result.name);
-      if (!CONTRACT_PROJECTS.some((p) => file.startsWith(`src/suites/${p}/`))) {
-        continue;
-      }
+      if (!inProjects(file, CONTRACT_PROJECTS)) continue;
       const score = byFile.get(file) ?? blank(file);
       if (score.reported) {
         throw new Error(`two reports name ${file}`);

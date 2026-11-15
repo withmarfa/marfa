@@ -14,6 +14,7 @@ import {
   excuse,
   fixturePath,
   renderScore,
+  scopeToProjects,
   scoreRun,
   type ReportedTest,
   type VitestReport,
@@ -345,5 +346,106 @@ describe("the files of the contract", () => {
       A,
       "src/suites/device/nested/d.test.ts",
     ]);
+  });
+});
+
+describe("a run of some of the projects", () => {
+  const D1 = "src/suites/device/a.test.ts";
+  const D2 = "src/suites/device/b.test.ts";
+  const K1 = "src/suites/cli/k.test.ts";
+  const files = [A, B, C, D1, D2, K1];
+  const device = ["device", "cli"] as const;
+
+  /** Scores the way `rust-score.ts` does, for the projects a run names. */
+  const score = (reports: VitestReport[]) => {
+    return scoreRun(reports, scopeToProjects(reports, files, device), LINUX);
+  };
+
+  it("judges only the projects it names, and passes when each of their files passes", () => {
+    const run = score([
+      {
+        testResults: [
+          result(D1, "passed", ["passed"]),
+          result(D2, "passed", ["passed"]),
+          result(K1, "passed", ["passed"]),
+        ],
+      },
+    ]);
+    expect(run.failures).toEqual([]);
+    expect(run.files.map((file) => file.file)).toEqual([D1, D2, K1]);
+    // The witness: the same reports, scored as a whole run, fail for the
+    // server files that no report names.
+    const whole = scoreRun(
+      [
+        {
+          testResults: [
+            result(D1, "passed", ["passed"]),
+            result(D2, "passed", ["passed"]),
+            result(K1, "passed", ["passed"]),
+          ],
+        },
+      ],
+      files,
+      LINUX,
+    );
+    expect(whole.failures).toEqual([
+      `${A}: no report names it`,
+      `${B}: no report names it`,
+      `${C}: no report names it`,
+    ]);
+  });
+
+  it("still fails for a file of those projects that no report names (a shard wrote no report)", () => {
+    const run = score([
+      {
+        testResults: [
+          result(D1, "passed", ["passed"]),
+          result(K1, "passed", ["passed"]),
+        ],
+      },
+    ]);
+    expect(run.failures).toEqual([`${D2}: no report names it`]);
+  });
+
+  it("still fails for a file of those projects that did not pass whole", () => {
+    const run = score([
+      {
+        testResults: [
+          result(D1, "passed", ["passed"]),
+          result(D2, "failed", ["passed", "failed"]),
+          result(K1, "passed", ["passed"]),
+        ],
+      },
+    ]);
+    expect(run.failures).toEqual([`${D2}: 1 of 2 tests passed`]);
+  });
+
+  it("refuses a report of a project it did not name, which would go unjudged", () => {
+    expect(() =>
+      score([
+        {
+          testResults: [
+            result(D1, "passed", ["passed"]),
+            result(D2, "passed", ["passed"]),
+            result(K1, "passed", ["passed"]),
+            result(A, "failed", ["failed"]),
+          ],
+        },
+      ]),
+    ).toThrow(`would go unjudged: ${A}`);
+  });
+
+  it("leaves a report of a file outside every contract project alone", () => {
+    const run = score([
+      {
+        testResults: [
+          result(D1, "passed", ["passed"]),
+          result(D2, "passed", ["passed"]),
+          result(K1, "passed", ["passed"]),
+          result("src/suites/load/e.test.ts", "failed", ["failed"]),
+        ],
+      },
+    ]);
+    expect(run.failures).toEqual([]);
   });
 });

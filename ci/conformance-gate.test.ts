@@ -15,6 +15,7 @@ import {
   secondsOf,
   shardLoads,
 } from "../conformance/src/utils/shard-sequencer.js";
+import { SHARDS } from "../scripts/ci-required.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
 
@@ -31,10 +32,6 @@ interface Job {
   needs?: string | string[];
   if?: string;
   "timeout-minutes"?: number | string;
-  strategy?: {
-    "fail-fast"?: boolean;
-    matrix?: { include?: { args: string }[] };
-  };
   steps: Step[];
 }
 
@@ -134,8 +131,7 @@ describe("the files of each group, over its shards", () => {
       .map((name) => `src/suites/${project}/${name}`);
 
   const split = new Map<string, number>();
-  for (const entry of jobs["rust-contract-shards"]?.strategy?.matrix?.include ??
-    []) {
+  for (const entry of SHARDS) {
     const shard = /--project (\w+) --shard=\d+\/(\d+)/.exec(entry.args);
     if (shard) split.set(shard[1] ?? "", Number(shard[2]));
   }
