@@ -12,7 +12,10 @@ import type { paths } from "./generated/schema.js";
 export type { components, operations, paths } from "./generated/schema.js";
 export { CONTRACT_VERSION };
 
-/** The response header every answer carries its contract version in. */
+/**
+ * The header every answer carries its contract version in, and every request
+ * this client sends names its own in, but a read of `/` and of `/health`.
+ */
 export const CONTRACT_HEADER = "X-Marfa-Contract";
 
 /**
@@ -73,13 +76,15 @@ function checkCredential(credential: string): void {
 }
 
 /**
- * A typed client for one instance. Every answer is checked for the contract
- * version this client was generated for, and one that names another, or a
- * success that names none, is refused with {@link ContractMismatchError}
- * rather than read. An error answer with no header is handed on as it
- * came, since a proxy in front of the server answers without one and its
- * status is still the truth. The credential is sent only under the
- * configured `baseUrl`, and never after a redirect.
+ * A typed client for one instance. Every request but a read of `/` and of
+ * `/health` names the contract version this client was generated for, so a
+ * server on another one refuses it before acting. Every answer is checked
+ * for that version, and one that names another, or a success that names none,
+ * is refused with {@link ContractMismatchError} rather than read. An error
+ * answer with no header is handed on as it came, since a proxy in front of
+ * the server answers without one and its status is still the truth. The
+ * credential is sent only under the configured `baseUrl`, and never after a
+ * redirect.
  *
  * Both are done where the request leaves and the answer arrives, inside the
  * client's own `fetch`, so middleware a caller adds with `use` sees a request
@@ -118,6 +123,14 @@ export function createClient(options: ClientOptions): MarfaClient {
     throw new ContractMismatchError(served, response.status);
   };
 
+  // A read of the root or of `/health` says which contract a server speaks,
+  // so it names none of its own.
+  const describesServer = (request: Request): boolean => {
+    if (request.method !== "GET") return false;
+    const path = request.url.slice(root.length).split(/[?#]/, 1)[0];
+    return path === "" || path === "health";
+  };
+
   const send = async (request: Request): Promise<Response> => {
     // A per-request `baseUrl`, or a caller's middleware rewriting the URL,
     // would otherwise carry the credential to another server.
@@ -130,6 +143,8 @@ export function createClient(options: ClientOptions): MarfaClient {
     // sent to.
     const headers = new Headers(request.headers);
     headers.set("Authorization", `Bearer ${credential}`);
+    if (describesServer(request)) headers.delete(CONTRACT_HEADER);
+    else headers.set(CONTRACT_HEADER, expected);
     return hold(
       await fetcher(new Request(request, { headers, redirect: "error" })),
     );

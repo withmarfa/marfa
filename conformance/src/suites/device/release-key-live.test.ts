@@ -74,10 +74,12 @@ async function proxy(
 ): Promise<{
   url: string;
   sent: Sent[];
-  fate: { next: Fate; contract?: string };
+  fate: { next: Fate; contract?: string; requestContract?: string };
 }> {
   const sent: Sent[] = [];
-  const fate: { next: Fate; contract?: string } = { next: "pass" };
+  const fate: { next: Fate; contract?: string; requestContract?: string } = {
+    next: "pass",
+  };
   const listener = createServer((request, response) => {
     void (async () => {
       const chunks: Buffer[] = [];
@@ -91,6 +93,8 @@ async function proxy(
         )
           headers.set(name, Array.isArray(held) ? held.join(", ") : held);
       }
+      if (fate.requestContract !== undefined)
+        headers.set("x-marfa-contract", fate.requestContract);
       const upstream = await fetch(
         `${upstreamUrl().replace(/\/$/, "")}${request.url}`,
         {
@@ -382,9 +386,10 @@ it(
     value(await device.hydrate(["core.note"], "library"));
     const write = value(await device.replaceMetadata(id, ["mine"]));
 
-    // The write reaches the server before it moves on to the device's
-    // contract, and its answer is lost.
+    // The write is applied by a server on another contract, from a client
+    // that named that contract, and its answer is lost.
     await server.restart({ env: { MARFA_TEST_CONTRACT_VERSION: "1" } });
+    fate.requestContract = "1";
     fate.contract = "0";
     fate.next = "lose";
     value(await device.drain());
@@ -399,6 +404,7 @@ it(
     expect(since.status).toBe(200);
 
     await server.restart();
+    delete fate.requestContract;
     delete fate.contract;
     fate.next = "pass";
     const back = value(await device.drain());

@@ -364,11 +364,11 @@ The server MUST write each entry in `features` in lower_snake_case: a lowercase 
 
 ### `instance/contract-integer`
 
-When `GET /` is answered with the description, the server MUST answer `contract` as the integer 0.
+When `GET /` is answered with the description, the server MUST answer `contract` as the integer that `info.version` of the contract's `openapi.json` writes.
 
-**Reason:** every version inside Marfa stays at 0 until the first public release.
+**Reason:** a client is built for the number its copy of the document names, so the server answers that number whichever build serves it.
 
-**Tests:** `compliance/instance.test.ts › carries one contract version at the root and in its document`, `› describes itself at the root`.
+**Tests:** `compliance/instance.test.ts › carries one contract version at the root and in its document`, `› describes itself at the root`, `compliance/hook-free-server.test.ts › names the contract of its document at the root, in the document it serves and in a header, as a release build does`.
 
 ### `instance/contract-document`
 
@@ -407,6 +407,64 @@ The server MUST send `X-Marfa-Contract`, with the number the root answers as `co
 **Reason:** a client checks the answer it is about to read against the contract it was built for, so the header cannot be missing on the answers a layer in front of the routes shapes. A request the server cannot parse is refused by the HTTP layer before anything that knows the contract sees it.
 
 **Tests:** `compliance/instance.test.ts › sends its contract version on every answer, a refusal included`, `› sends its contract version on every kind of answer, not only a JSON body`, `compliance/contract-header.test.ts › sends its contract version on a request the limiter refuses`, `› sends its contract version on a preflight from an origin the instance allows`.
+
+### `instance/contract-request-other`
+
+If a request names `X-Marfa-Contract` with a value other than the digits that write the number the root answers as `contract`, then the server MUST answer `412 contract_mismatch`.
+
+**Reason:** a client built for another contract reads what the server sends in shapes the server does not mean, and a write it sends carries shapes the server does not read as the client meant. The value is refused whatever it is, a number, an empty value, text, a signed number or one with a leading zero.
+
+**Tests:** `compliance/contract-request.test.ts › refuses a request naming another contract, or a value that is not the digits of this one, 412 contract_mismatch`.
+
+### `instance/contract-request-repeated`
+
+If a request names `X-Marfa-Contract` on more than one header line, then the server MUST answer `412 contract_mismatch`, whatever the lines hold.
+
+**Tests:** `compliance/contract-request.test.ts › refuses a request that names its contract on two header lines, though both name this one`.
+
+### `instance/contract-request-unchanged`
+
+When the server answers a request `412 contract_mismatch`, the server MUST leave unchanged everything the request would have changed.
+
+**Tests:** `compliance/contract-request.test.ts › refuses a write naming another contract without writing it`.
+
+### `instance/contract-request-optional`
+
+The server MUST NOT refuse a request for naming no `X-Marfa-Contract`.
+
+**Reason:** a caller built for no contract, such as a script, a connector or an inbound sender, has none to name.
+
+**Tests:** `compliance/contract-request.test.ts › serves a request naming no contract, and one naming this contract, as it serves each other`.
+
+### `instance/contract-request-every-door`
+
+The server MUST judge `X-Marfa-Contract` on every request, whatever its method, its path and its credential.
+
+**Tests:** `compliance/contract-request.test.ts › refuses another contract on every operation the document publishes, and on a path no operation serves`, `› refuses another contract on HEAD and OPTIONS, the MCP door, the OAuth token door, the device code door, an inbound endpoint, a well-known document and a route over the private socket`.
+
+### `instance/contract-request-first`
+
+When a request names another contract and meets another refusal, such as a missing credential, another instance in `X-Marfa-Instance-Id` or a body that is not JSON, the server MUST answer `412 contract_mismatch`.
+
+**Reason:** a request built for another contract is refused for that alone, so what else the server says of it, such as a refusal of its body, is not a rule the client was built for.
+
+**Tests:** `compliance/contract-request.test.ts › answers 412 before it judges the credential, the instance and the body`.
+
+### `instance/contract-request-not-recorded`
+
+When the server answers a write that carries an `Idempotency-Key` `412 contract_mismatch`, the server MUST answer the same write sent again under that key, naming the contract the root answers, as a first attempt.
+
+**Reason:** a client that meets the refusal is rebuilt for the contract the server speaks, and sends its queue again under the same keys.
+
+**Tests:** `compliance/contract-request.test.ts › keeps no refusal under an Idempotency-Key`.
+
+### `instance/contract-request-cors`
+
+When a preflight from an origin the instance allows names `X-Marfa-Contract` in `Access-Control-Request-Headers`, the server MUST name it in `Access-Control-Allow-Headers`.
+
+**Reason:** a page that names its contract on a request is sent a preflight first, and a browser that is not told the header is allowed does not send the request.
+
+**Tests:** `compliance/contract-header.test.ts › allows a request header naming the contract in a preflight from an origin the instance allows`.
 
 ## Compression
 

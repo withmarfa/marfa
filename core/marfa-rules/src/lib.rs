@@ -5,6 +5,7 @@
 pub mod builtin;
 pub mod catalog;
 pub mod conflict;
+pub mod contract;
 pub mod display;
 pub mod edges;
 pub mod environment;

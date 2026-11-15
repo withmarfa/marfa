@@ -7,7 +7,6 @@ mod catalog;
 mod catch_up;
 /// Public so a debug build's binding can move the clock it waits by.
 pub mod clock;
-pub mod contract;
 mod damage;
 #[cfg(test)]
 mod damage_tests;
@@ -116,14 +115,15 @@ pub use catch_up::{Change, ChangeEvent, FollowReport};
 pub use damage::SetAside;
 pub use drain::{DrainReport, DrainVerdict};
 pub use error::{
-    CODES as ERROR_CODES, CoreError, CoreErrorKind, FolderStore, NOT_HELD, ServerAnswer,
-    UNREAD_CODE, environmental_status,
+    CODES as ERROR_CODES, ContractRefusal, CoreError, CoreErrorKind, FolderStore, NOT_HELD,
+    ServerAnswer, UNREAD_CODE, environmental_status,
 };
 pub use file_cache::{
     Attachments, DEFAULT_FLOOR as FILE_BUDGET_FLOOR, FileBudget, FileCache, KeptFetch, NotHeld,
     NotHeldReason,
 };
 pub use marfa_rules::catalog::{EdgeType, End, ItemType, TypeField, WrittenAt};
+pub use marfa_rules::contract;
 pub use marfa_rules::display::ItemDisplay;
 pub use marfa_rules::thumbnail::Thumbnail;
 pub use tables::{
@@ -8892,7 +8892,6 @@ mod tests {
             (include_str!("blob.rs"), others),
             (include_str!("catalog.rs"), others),
             (include_str!("catch_up.rs"), others),
-            (include_str!("contract.rs"), others),
             (include_str!("error.rs"), others),
             (include_str!("lock.rs"), others),
             (include_str!("http.rs"), others),

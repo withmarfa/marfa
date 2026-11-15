@@ -128,12 +128,10 @@ describe("what a change runs", () => {
     ],
     [
       "the contract version, which the version check reads",
-      ["core/marfa-core/src/contract.rs"],
+      ["core/marfa-rules/src/contract.rs"],
       [
+        ...RUST_LINUX,
         "quick-checks",
-        "core-checks-linux",
-        "conformance-offline",
-        ...DEVICE_SHARDS,
         "core",
         "clients-freshness",
         "workspace",

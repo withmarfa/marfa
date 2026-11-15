@@ -8,7 +8,7 @@ use std::sync::atomic::AtomicBool;
 
 use serde::Serialize;
 
-use crate::error::CoreError;
+use crate::error::{ContractRefusal, CoreError};
 use crate::http::{Answer, Call, CallBody, Http, INSTANCE_CHANGED, Method, Outgoing};
 use crate::model::{
     BlockedReason, LastFailure, QueuedWrite, Refusal, RowConflict, Subject, Verdict, WriteKind,
@@ -1781,6 +1781,34 @@ fn send_queue(
                 let error = crate::catch_up::expire_for_another_instance(&tx, generation, server)?;
                 tx.commit()?;
                 return Err(error);
+            }
+            // The server acted on nothing, so a first attempt leaves the write
+            // unsent, and only one sent before keeps an outcome unknown.
+            Err(CoreError::ContractMismatch {
+                origin,
+                served,
+                expected,
+                status,
+                write_sent,
+                refusal: ContractRefusal::Declined,
+            }) => {
+                let refusal = if resent {
+                    ContractRefusal::DeclinedAfterEarlierAttempt
+                } else {
+                    let mut conn = core.conn()?;
+                    let tx = conn.transaction()?;
+                    crate::row_writes::leave_unsent(&tx, &row.id)?;
+                    tx.commit()?;
+                    ContractRefusal::Declined
+                };
+                return Err(CoreError::ContractMismatch {
+                    origin,
+                    served,
+                    expected,
+                    status,
+                    write_sent,
+                    refusal,
+                });
             }
             Err(error) if ends_the_drain(&error) || error == CoreError::Canceled => {
                 return Err(error);

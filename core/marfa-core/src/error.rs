@@ -194,7 +194,7 @@ pub enum CoreError {
         "the {size} bytes of {hash} would not fit: {free} bytes are free on the volume that holds the file cache"
     )]
     NoRoom { hash: String, size: u64, free: u64 },
-    #[error("{}", contract_mismatch(origin, served.as_deref(), *expected, *status, *write_sent))]
+    #[error("{}", contract_mismatch(origin, served.as_deref(), *expected, *status, *write_sent, *refusal))]
     ContractMismatch {
         origin: String,
         served: Option<String>,
@@ -203,6 +203,8 @@ pub enum CoreError {
         /// The server acted on a write before its answer could say it speaks
         /// another contract.
         write_sent: bool,
+        /// Whether the server itself refused the request for its contract.
+        refusal: ContractRefusal,
     },
     /// The caller's stop was raised. What had been taken is consistent: a
     /// hydration left unfinished answers lists and searches marked partial,
@@ -506,17 +508,35 @@ pub fn environmental_status(status: u16) -> bool {
 /// delivery honors the same bound.
 pub(crate) const RETRY_AFTER_MOST: Duration = Duration::from_secs(300);
 
+/// What the server said of a request that named another contract than its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContractRefusal {
+    /// The server's answer was on another contract, so nothing it said was read.
+    Unread,
+    /// The server refused this attempt with `412 contract_mismatch`, before it acted.
+    Declined,
+    /// As `Declined`, for a write an earlier attempt of which was sent under
+    /// the same key, whose outcome stays unknown.
+    DeclinedAfterEarlierAttempt,
+}
+
 fn contract_mismatch(
     origin: &str,
     served: Option<&str>,
     expected: u64,
     status: Option<u16>,
     write_sent: bool,
+    refusal: ContractRefusal,
 ) -> String {
-    let sent = if write_sent {
-        ". The write was sent and may have taken effect, and it stays queued with no verdict"
-    } else {
-        ""
+    let sent = match refusal {
+        ContractRefusal::Declined => ". The server refused this attempt before it acted",
+        ContractRefusal::DeclinedAfterEarlierAttempt => {
+            ". The server refused this attempt before it acted, and the outcome of an earlier attempt of this write, sent under the same key, stays unknown, so it stays queued with no verdict"
+        }
+        ContractRefusal::Unread if write_sent => {
+            ". The write was sent and may have taken effect, and it stays queued with no verdict"
+        }
+        ContractRefusal::Unread => "",
     };
     let answered = status.map_or_else(
         || "answered".to_string(),

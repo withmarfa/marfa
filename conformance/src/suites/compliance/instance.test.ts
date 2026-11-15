@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { v7 as uuidv7 } from "uuid";
 import { MarfaClient } from "../../client/api.js";
@@ -376,7 +378,11 @@ describe("the instance", () => {
     const root = await client.root();
     expect(root.ok).toBe(true);
     expect(Number.isInteger(root.data.contract)).toBe(true);
-    expect(root.data.contract).toBe(0);
+    // The number the contract's own document writes.
+    const committed = JSON.parse(
+      readFileSync(resolve(process.cwd(), "../openapi.json"), "utf8"),
+    ) as { info: { version: string } };
+    expect(root.data.contract).toBe(Number(committed.info.version));
     const document = (await (await fetch(`${apiUrl}/openapi.json`)).json()) as {
       info: { version: string };
     };

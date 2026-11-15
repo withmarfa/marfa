@@ -15,7 +15,7 @@ describe("the contract the core is built for", () => {
       readFileSync(new URL("../openapi.json", import.meta.url), "utf8"),
     ) as { info: { version: string } };
     const source = readFileSync(
-      new URL("../core/marfa-core/src/contract.rs", import.meta.url),
+      new URL("../core/marfa-rules/src/contract.rs", import.meta.url),
       "utf8",
     );
     const stated = /^pub const CONTRACT_VERSION: u64 = (\d+);$/m.exec(source);
@@ -28,7 +28,7 @@ describe("the contract the core is built for", () => {
       readFileSync(new URL("../openapi.json", import.meta.url), "utf8"),
     ) as Parameters<typeof keyedWrites>[0];
     const source = readFileSync(
-      new URL("../core/marfa-core/src/contract.rs", import.meta.url),
+      new URL("../core/marfa-rules/src/contract.rs", import.meta.url),
       "utf8",
     );
     const listed = [

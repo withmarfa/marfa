@@ -15,6 +15,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { request as httpRequest } from "node:http";
 import { gunzipSync } from "node:zlib";
 import { afterAll, describe, expect, it } from "vitest";
 import { MarfaClient } from "../../client/api.js";
@@ -147,6 +148,30 @@ async function stop(run: Run): Promise<void> {
   await within(EXIT_BUDGET_MS, "the server stopped", run.exit);
 }
 
+/** One read over the server's private socket, with the headers it came with. */
+function readOverSocket(socket: string, path: string) {
+  return new Promise<{
+    status: number;
+    contract: string | undefined;
+    body: Record<string, unknown>;
+  }>((done, reject) => {
+    const req = httpRequest({ socketPath: socket, path }, (res) => {
+      let text = "";
+      res.setEncoding("utf8");
+      res.on("data", (part: string) => (text += part));
+      res.on("end", () =>
+        done({
+          status: res.statusCode ?? 0,
+          contract: res.headers["x-marfa-contract"] as string | undefined,
+          body: JSON.parse(text) as Record<string, unknown>,
+        }),
+      );
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
 afterAll(async () => {
   for (const run of running) {
     if (run.child.exitCode === null) run.child.kill("SIGKILL");
@@ -191,6 +216,28 @@ describe("a server built without test hooks", () => {
       MARFA_TEST_TUNING: "interval.audit-cleanup=5",
     });
     expect((await fetch(`${hooked.apiUrl}/health`)).status).toBe(200);
+  });
+
+  it("names the contract of its document at the root, in the document it serves and in a header, as a release build does", async () => {
+    const committed = JSON.parse(
+      readFileSync(resolve(process.cwd(), "../openapi.json"), "utf8"),
+    ) as { info: { version: string } };
+    const free = start(folder("marfa-hf-data-"));
+    await listening(free);
+    try {
+      const root = await readOverSocket(free.socket, "/");
+      const document = await readOverSocket(free.socket, "/openapi.json");
+      expect(root.status).toBe(200);
+      expect(document.status).toBe(200);
+      expect(String(root.body.contract)).toBe(committed.info.version);
+      expect((document.body.info as { version: string }).version).toBe(
+        committed.info.version,
+      );
+      expect(root.contract).toBe(committed.info.version);
+      expect(document.contract).toBe(committed.info.version);
+    } finally {
+      await stop(free);
+    }
   });
 
   it("serves no clock or fault route on its private socket, where a hooked server serves them", async () => {

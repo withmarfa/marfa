@@ -6,7 +6,7 @@ These rules add to the root `AGENTS.md` for work under `core/`. Under `core/marf
 
 - `marfa-rules` holds the rules a client and the server share. Keep SQLite, HTTP, an async runtime and client code out of it.
 - `marfa-server` depends on `marfa-rules`, never on `marfa-core`.
-- `marfa-core/src/contract.rs` is written from `openapi.json` by `pnpm generate`.
+- `marfa-rules/src/contract.rs` is written from `openapi.json` by `pnpm generate`.
 - `withmarfa/marfa-swift` builds `bindings/swift` at the commit it pins, so a change there reaches Swift apps only when that pin moves.
 
 ## Build and check

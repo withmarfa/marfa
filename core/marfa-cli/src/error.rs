@@ -1,6 +1,6 @@
 use std::io;
 
-use marfa_core::{CatchUpFailed, CoreError, ERROR_CODES, ServerAnswer};
+use marfa_core::{CatchUpFailed, ContractRefusal, CoreError, ERROR_CODES, ServerAnswer};
 
 /// Agents read the exit code and the code string. The help and the command
 /// reference list the codes from the lists they are made from, and each exit
@@ -129,13 +129,19 @@ pub enum CliError {
     #[error(
         "{origin} {}; this binary was built for contract {expected}: use a marfa built for the server's contract{}",
         contract_said(served.as_deref(), *status),
-        if *write_sent { ". The write was sent, and may have taken effect before its answer was refused" } else { "" }
+        match (refusal, *write_sent) {
+            (ContractRefusal::Declined, _) => ". The server refused it before it acted",
+            (ContractRefusal::DeclinedAfterEarlierAttempt, _) => ". The server refused this attempt before it acted, and the outcome of an earlier attempt, sent under the same key, stays unknown",
+            (ContractRefusal::Unread, true) => ". The write was sent, and may have taken effect before its answer was refused",
+            (ContractRefusal::Unread, false) => "",
+        }
     )]
     ContractMismatch {
         origin: String,
         served: Option<String>,
         expected: u64,
         write_sent: bool,
+        refusal: ContractRefusal,
         /// For a write, a 201 and a 409 say different things about whether
         /// it took effect.
         status: Option<u16>,
@@ -184,12 +190,14 @@ impl CliError {
                 served,
                 expected,
                 write_sent,
+                refusal,
                 status,
             } => Self::ContractMismatch {
                 origin,
                 served,
                 expected,
                 write_sent,
+                refusal,
                 status,
             },
             other => Self::from(other),
@@ -829,12 +837,37 @@ mod tests {
     }
 
     #[test]
+    fn a_write_the_server_refused_for_its_contract_says_it_acted_on_nothing() {
+        let said = |write_sent, refusal| {
+            CliError::ContractMismatch {
+                origin: "https://marfa.example".into(),
+                served: Some("2".into()),
+                expected: 1,
+                write_sent,
+                refusal,
+                status: Some(412),
+            }
+            .to_string()
+        };
+        let declined = said(false, ContractRefusal::Declined);
+        assert!(
+            declined.contains("refused it before it acted"),
+            "{declined}"
+        );
+        assert!(!declined.contains("may have taken effect"), "{declined}");
+        // The witness: an answer on another contract to a write may have been
+        // acted on.
+        assert!(said(true, ContractRefusal::Unread).contains("may have taken effect"));
+    }
+
+    #[test]
     fn a_mismatch_keeps_the_core_words_unless_the_command_sent_the_request() {
         let mismatch = || CoreError::ContractMismatch {
             origin: "https://marfa.example".into(),
             served: Some("other".into()),
             expected: 1,
             write_sent: true,
+            refusal: ContractRefusal::Unread,
             status: Some(200),
         };
         let carried = CliError::from(mismatch());
@@ -942,6 +975,7 @@ mod tests {
                 served: None,
                 expected: 1,
                 write_sent: false,
+                refusal: ContractRefusal::Unread,
                 status: None,
             },
             CliError::Redirected {

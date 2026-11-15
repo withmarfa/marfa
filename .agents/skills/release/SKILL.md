@@ -34,7 +34,8 @@ A release is a git tag `v<version>` on a commit of `main`. Pushing the tag runs 
 
 4. Check that the previous tag is a published release, not a draft (`gh release view v<previous version> --json isDraft`). `Read the version` refuses a version whose predecessor is only tagged, or that is itself released already.
 5. If the database schema (`core/marfa-server/src/db/migrations/`) or the archive layout changed since the previous release, write down what an owner must do before upgrading. Every release's notes start with the same `scripts/release/upgrade-note.md`, so add the words to this release's notes once it is public (step 4 of [Check the release](#check-the-release)).
-6. To prove a change to the release itself or to the native pins before tagging, run a dry run on the commit and wait for it:
+6. The contract version is the integer in `info.version` of `openapi.json`, and it changes only with a break. Change it in a pull request merged before step 1, so the commit you tag and its CI run carry it: for the release that cuts `v0.1.0`, set it to 1 and run `pnpm generate`, and for a new minor that breaks compatibility, raise it by one the same way.
+7. To prove a change to the release itself or to the native pins before tagging, run a dry run on the commit and wait for it:
 
    ```bash
    gh workflow run release.yml --ref main -f version=<next version>

@@ -12,7 +12,7 @@ use ureq::unversioned::transport::{
 use url::Url;
 
 use crate::contract::CONTRACT_VERSION;
-use crate::error::{CoreError, ServerAnswer};
+use crate::error::{ContractRefusal, CoreError, ServerAnswer};
 use crate::model::SliceTier;
 use crate::wire::{
     WireEdge, WireErrorEnvelope, WireItem, WireItemWithMetadata, WireMetadata, WirePage,
@@ -610,8 +610,15 @@ impl NormalizedType {
     }
 }
 
+/// Sent on every request but the reads of the root and of `/health`, which say which contract a server speaks.
 pub const CONTRACT_HEADER: &str = "X-Marfa-Contract";
 pub const INSTANCE_HEADER: &str = "X-Marfa-Instance-Id";
+
+fn names_contract(call: &Call) -> bool {
+    let describes = call.method == Method::Get
+        && (call.segments.iter().all(|segment| segment.is_empty()) || call.segments == ["health"]);
+    !describes
+}
 /// The code, and the expiry reason, of a write another instance refused.
 pub const INSTANCE_CHANGED: &str = "instance_changed";
 
@@ -1621,6 +1628,7 @@ impl Http {
                 .uri(url.as_str())
                 .header("Accept", "application/json")
                 .header("Content-Type", "application/json")
+                .header(CONTRACT_HEADER, CONTRACT_VERSION.to_string())
                 .header("Authorization", authorization);
             if let Some(key) = key {
                 request = request.header("Idempotency-Key", key);
@@ -1779,6 +1787,7 @@ impl Http {
                 .agent
                 .get(url.as_str())
                 .header("Accept", "text/event-stream")
+                .header(CONTRACT_HEADER, CONTRACT_VERSION.to_string())
                 .config()
                 .timeout_recv_body(Some(body_timeout))
                 .timeout_global(global)
@@ -1856,6 +1865,7 @@ impl Http {
         } else {
             Budget::Whole
         };
+        let names_contract = names_contract(&call);
         let builder = |authorization: Option<&str>| {
             let mut builder = ureq::http::Request::builder()
                 .method(call.method.as_str())
@@ -1873,6 +1883,9 @@ impl Http {
             }
             if json {
                 builder = builder.header("Content-Type", "application/json");
+            }
+            if names_contract {
+                builder = builder.header(CONTRACT_HEADER, CONTRACT_VERSION.to_string());
             }
             if let Some(instance) = self
                 .instance
@@ -2054,12 +2067,21 @@ impl Http {
         if speaks_contract(CONTRACT_VERSION, served.as_deref(), status) {
             return Ok(());
         }
+        // The server's own refusal of the contract names its code in a
+        // header, so it is told apart without waiting on the body.
+        let declined = status == 412
+            && header(response, "X-Error-Code").as_deref() == Some("contract_mismatch");
         Err(CoreError::ContractMismatch {
             origin: self.origin(),
             served,
             expected: CONTRACT_VERSION,
             status: Some(status),
-            write_sent,
+            write_sent: write_sent && !declined,
+            refusal: if declined {
+                ContractRefusal::Declined
+            } else {
+                ContractRefusal::Unread
+            },
         })
     }
 
@@ -2144,6 +2166,7 @@ impl Http {
                         .agent
                         .get(url.as_str())
                         .header("Accept", "application/json")
+                        .header(CONTRACT_HEADER, CONTRACT_VERSION.to_string())
                         .header("Authorization", authorization);
                     if let Some(reach) = conditional {
                         request = request.header("X-Marfa-Reach", reach);
@@ -2161,6 +2184,7 @@ impl Http {
                         .post(url.as_str())
                         .header("Accept", "application/json")
                         .header("Content-Type", "application/json")
+                        .header(CONTRACT_HEADER, CONTRACT_VERSION.to_string())
                         .header("Authorization", authorization);
                     if let Some(reach) = conditional {
                         request = request.header("X-Marfa-Reach", reach);
@@ -2448,6 +2472,40 @@ mod tests {
             })
     }
 
+    fn call<'a>(method: Method, segments: &'a [&'a str]) -> Call<'a> {
+        Call {
+            method,
+            segments,
+            params: &[],
+            headers: &[],
+            body: CallBody::None,
+            credential: true,
+            stream: false,
+        }
+    }
+
+    #[test]
+    fn a_call_names_its_contract_except_a_read_of_the_root_or_of_health() {
+        for (method, segments) in [
+            (Method::Get, vec!["items"]),
+            (Method::Get, vec!["health", "x"]),
+            (Method::Post, vec![""]),
+            (Method::Post, vec!["health"]),
+            (Method::Post, vec!["items"]),
+        ] {
+            assert!(
+                names_contract(&call(method, &segments)),
+                "{method:?} {segments:?}"
+            );
+        }
+        for segments in [vec![], vec![""], vec!["health"]] {
+            assert!(
+                !names_contract(&call(Method::Get, &segments)),
+                "{segments:?}"
+            );
+        }
+    }
+
     #[test]
     fn every_door_a_drain_sends_to_takes_a_key() {
         let keyed = |method, path: &str| {
@@ -2716,6 +2774,7 @@ mod tests {
             expected: 3,
             status: Some(200),
             write_sent: false,
+            refusal: ContractRefusal::Unread,
         }
         .to_string();
         assert!(read.contains("answered 200 on contract 4"), "{read}");
@@ -2727,11 +2786,36 @@ mod tests {
             expected: 3,
             status: Some(201),
             write_sent: true,
+            refusal: ContractRefusal::Unread,
         }
         .to_string();
         assert!(write.contains("answered 201 naming no contract"), "{write}");
         assert!(write.contains("check the URL"), "{write}");
         assert!(write.contains("may have taken effect"), "{write}");
+        for (refusal, earlier) in [
+            (ContractRefusal::Declined, false),
+            (ContractRefusal::DeclinedAfterEarlierAttempt, true),
+        ] {
+            let declined = CoreError::ContractMismatch {
+                origin: "https://marfa.example".into(),
+                served: Some("4".into()),
+                expected: 3,
+                status: Some(412),
+                write_sent: false,
+                refusal,
+            }
+            .to_string();
+            assert!(
+                declined.contains("refused this attempt before it acted"),
+                "{declined}"
+            );
+            assert!(!declined.contains("may have taken effect"), "{declined}");
+            assert_eq!(
+                declined.contains("an earlier attempt"),
+                earlier,
+                "{declined}"
+            );
+        }
     }
 
     #[test]
@@ -3631,7 +3715,12 @@ mod tests {
                     // answer is not cut off by unread bytes when it closes.
                     let mut seen = Vec::new();
                     let mut chunk = [0u8; 4096];
-                    while !seen.ends_with(b"0\r\n\r\n") {
+                    let sent = |seen: &[u8]| {
+                        seen.windows(4)
+                            .position(|window| window == b"\r\n\r\n")
+                            .is_some_and(|head| seen[head + 4..].ends_with(b"0\r\n\r\n"))
+                    };
+                    while !sent(&seen) {
                         match Read::read(&mut socket, &mut chunk) {
                             Ok(0) | Err(_) => break,
                             Ok(n) => seen.extend_from_slice(&chunk[..n]),

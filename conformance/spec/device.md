@@ -3026,11 +3026,25 @@ When an answer names the CLI's own contract on two header lines, the CLI MUST re
 
 ### `device/command-write-sent`
 
-If the answer to a write the CLI sent names another contract, then the CLI MUST say in its refusal that the write was sent and may have taken effect.
+If the answer to a write the CLI sent names another contract and is not the server's own `412 contract_mismatch`, then the CLI MUST say in its refusal that the write was sent and may have taken effect.
 
 **Reason:** the contract is named by the answer, so the server acted on the write before the CLI could read that it speaks another contract.
 
 **Tests:** `device/contract.test.ts › says a write it refused for its contract was sent and may have taken effect`, `› holds both app narrowing responses to the contract through its private socket`.
+
+### `device/command-write-declined`
+
+If the answer to a write the CLI sent is the server's own `412 contract_mismatch`, then the CLI MUST say in its refusal that the server refused the write before it acted.
+
+**Reason:** the server judges the contract before it acts on a request, so a write it refused for its contract changed nothing.
+
+**Tests:** `device/contract.test.ts › says a write the server refused 412 contract_mismatch was refused before it acted, not that it may have taken effect`.
+
+### `device/command-write-declined-not-sent`
+
+If the answer to a write the CLI sent is the server's own `412 contract_mismatch`, then the CLI MUST NOT say in its refusal that the write may have taken effect.
+
+**Tests:** `device/contract.test.ts › says a write the server refused 412 contract_mismatch was refused before it acted, not that it may have taken effect`.
 
 ### `device/command-unnamed-refusal`
 
@@ -3203,6 +3217,36 @@ If the server's root names another contract, or none, then the CLI MUST NOT send
 The CLI MUST take the contract the server speaks from the `X-Marfa-Contract` header of the root's answer, whatever the root's body says.
 
 **Tests:** `device/contract.test.ts › takes the served contract from the answer's header, whatever the root's body says`, `› sends no mint to a server whose root names another contract, or none`.
+
+### `device/contract-sent`
+
+When a device sends a request to a server other than a read of the root or of `/health`, a device MUST name in `X-Marfa-Contract` the contract it was built for.
+
+**Reason:** the server refuses a request that names another contract before it acts (`instance/contract-request-other`), so a device on a contract the server has left changes nothing there.
+
+**Tests:** `device/contract.test.ts › reads every door on its own contract, so the refusal above is the contract's`, `› names its contract on every request but a read of the root, a write, a read and a stream among them`.
+
+### `device/contract-not-sent-to-root`
+
+When a device reads the root or `/health` of a server, a device MUST NOT name `X-Marfa-Contract`.
+
+**Reason:** the root says which contract a server speaks, and the server refuses a request that names another contract, so a device that named its own there could not learn what a server on another contract speaks (`device/status-other-contract`).
+
+**Tests:** `device/contract.test.ts › reads every door on its own contract, so the refusal above is the contract's`, `› names its contract on every request but a read of the root, a write, a read and a stream among them`.
+
+### `device/answer-added-members`
+
+When a server's answer carries a member a device does not know, a device MUST read the answer as it reads one without the member.
+
+**Reason:** a server on the contract a device was built for may add to what it answers, and never changes or removes what a device reads.
+
+**Tests:** `device/contract.test.ts › lists items from a page and an item that carry a member the CLI does not know, as it lists them without`, `› reads the root of a server that names a member and a feature it does not know`, `› applies an item event that carries a member it does not know, and skips an event of a type it does not know`.
+
+### `device/event-type-unknown`
+
+When an event stream carries an event of a type a device does not know, a device MUST skip the event and take the cursor past it.
+
+**Tests:** `device/contract.test.ts › applies an item event that carries a member it does not know, and skips an event of a type it does not know`.
 
 ### `device/status-other-contract`
 
@@ -3930,9 +3974,39 @@ When a device refuses the answer to a read `contract_mismatch`, a device MUST NO
 
 ### `device/contract-write-unsettled`
 
-If a write's answer names another contract, then a device MUST say in its refusal that the write may have taken effect.
+If a write's answer names another contract and is not the server's own `412 contract_mismatch`, then a device MUST say in its refusal that the write may have taken effect.
 
 **Tests:** `device/contract.test.ts › ends a drain on an answer from another contract, and sends the write again under its key`, `› ends the pass at the first answer on another contract, sending nothing after it`.
+
+### `device/contract-write-declined`
+
+If the answer to a write is the server's own `412 contract_mismatch`, then a device MUST say in its refusal that the server refused this attempt before it acted.
+
+**Reason:** the server judges the contract before it acts on a request, so an attempt it refused for its contract changed nothing.
+
+**Tests:** `device/contract.test.ts › says a write the server refused 412 contract_mismatch was refused before it acted, leaving it unsent for the next drain`.
+
+### `device/contract-write-declined-not-sent`
+
+If the answer to a write is the server's own `412 contract_mismatch`, then a device MUST NOT say in its refusal that the write may have taken effect.
+
+**Tests:** `device/contract.test.ts › says a write the server refused 412 contract_mismatch was refused before it acted, leaving it unsent for the next drain`, `› says the outcome of an earlier attempt stays unknown when the server refuses a write sent before 412 contract_mismatch`.
+
+### `device/contract-write-declined-unsent`
+
+When the server refuses a write's first attempt with `412 contract_mismatch`, a device MUST leave the write as a first attempt.
+
+**Reason:** the write was not acted on, so the next refusal or answer is of a first attempt too, with no earlier attempt whose outcome is unknown.
+
+**Tests:** `device/contract.test.ts › says a write the server refused 412 contract_mismatch was refused before it acted, leaving it unsent for the next drain`.
+
+### `device/contract-write-declined-earlier`
+
+If the server refuses a write sent before with `412 contract_mismatch`, then a device MUST say in its refusal that the outcome of an earlier attempt of the write stays unknown.
+
+**Reason:** an attempt whose answer the device never read may have taken effect, and this refusal says nothing of it.
+
+**Tests:** `device/contract.test.ts › says the outcome of an earlier attempt stays unknown when the server refuses a write sent before 412 contract_mismatch`.
 
 ### `device/contract-write-resent`
 

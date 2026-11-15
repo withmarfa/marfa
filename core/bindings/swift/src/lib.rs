@@ -3518,6 +3518,7 @@ mod tests {
                 expected: 1,
                 status: None,
                 write_sent: false,
+                refusal: marfa_core::ContractRefusal::Unread,
             },
             E::Invalid(text()),
             E::Fault(text()),
@@ -3984,6 +3985,7 @@ mod tests {
                     expected: 3,
                     status: Some(200),
                     write_sent: false,
+                    refusal: marfa_core::ContractRefusal::Unread,
                 }
                 .into(),
                 "ContractMismatch",
@@ -4136,6 +4138,7 @@ mod tests {
                 expected: 3,
                 status: Some(409),
                 write_sent: true,
+                refusal: marfa_core::ContractRefusal::Unread,
             },
         ];
         for error in answered {
@@ -4166,6 +4169,7 @@ mod tests {
                 expected: 3,
                 status: None,
                 write_sent: false,
+                refusal: marfa_core::ContractRefusal::Unread,
             },
             E::Decoding("not JSON".into()),
         ] {
@@ -4183,6 +4187,7 @@ mod tests {
                 expected: 3,
                 status,
                 write_sent,
+                refusal: marfa_core::ContractRefusal::Unread,
             }
             .into();
             assert!(

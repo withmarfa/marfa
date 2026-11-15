@@ -5,5 +5,5 @@
 # reviewer sees it move.
 packages/client/src/generated/** linguist-generated=true
 packages/types/generated/** linguist-generated=true
-core/marfa-core/src/contract.rs linguist-generated=true
+core/marfa-rules/src/contract.rs linguist-generated=true
 core/marfa-rules/src/builtin_catalog.json linguist-generated=true

@@ -1,7 +1,8 @@
 // Generated from openapi.json by scripts/generate-core-contract.ts — do not edit.
 
-/// The contract version this core was built for: the document's
-/// `info.version`, which every answer names in `X-Marfa-Contract`.
+/// The contract version this build speaks: the document's
+/// `info.version`, which every answer names in `X-Marfa-Contract` and
+/// every client sends in it.
 pub const CONTRACT_VERSION: u64 = 0;
 
 /// The operations that take an `Idempotency-Key`, as method and path

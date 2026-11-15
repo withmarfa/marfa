@@ -115,6 +115,7 @@ codes! {
     TypeMoveBlocked = "type_move_blocked", 409;
     UndoConflict = "undo_conflict", 409;
     VersionConflict = "version_conflict", 409;
+    ContractMismatch = "contract_mismatch", 412;
     RequestTooLarge = "request_too_large", 413;
     RangeNotSatisfiable = "range_not_satisfiable", 416;
     CompatibleWithViolation = "compatible_with_violation", 422;

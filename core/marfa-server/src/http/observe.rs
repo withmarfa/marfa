@@ -11,13 +11,13 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::Response;
 
-use super::answer::{Page, Unhandled, asks_for_html};
+use super::answer::{Page, Unhandled, asks_for_html, refusal_answer};
 use super::body::Shared;
 use super::caller_address::caller_address;
 use super::listening::Peer;
 use super::pages::{self, Notice};
 use crate::app::provenance::{self, Origin};
-use crate::app::refusal::Code;
+use crate::app::refusal::{Code, Refusal};
 use crate::app::{App, instance};
 use crate::listener::{Declaration, Transport};
 use crate::log;
@@ -75,6 +75,40 @@ async fn offer_page(app: &App, response: &mut Response) {
     }
 }
 
+const CONTRACT_HEADER: &str = "x-marfa-contract";
+
+/// A request that names a contract names this server's own, as one whole number in plain digits, or is refused.
+fn judge_contract(app: &App, headers: &HeaderMap) -> Result<(), Refusal> {
+    let mut named = headers.get_all(CONTRACT_HEADER).iter();
+    match (named.next(), named.next()) {
+        (None, _) => Ok(()),
+        (Some(value), None) if is_number(value.as_bytes(), app.contract()) => Ok(()),
+        _ => Err(Refusal::new(
+            Code::ContractMismatch,
+            "X-Marfa-Contract names another contract than this server speaks. Nothing was done.",
+        )),
+    }
+}
+
+/// Whether `digits` are exactly the plain digits that write `number`.
+fn is_number(digits: &[u8], number: u32) -> bool {
+    let mut rest = number;
+    let mut at = digits.len();
+    loop {
+        let Some(previous) = at.checked_sub(1) else {
+            return false;
+        };
+        if digits[previous] != b'0' + (rest % 10) as u8 {
+            return false;
+        }
+        at = previous;
+        rest /= 10;
+        if rest == 0 {
+            return at == 0;
+        }
+    }
+}
+
 pub async fn observe(State(observed): State<Observed>, request: Request, next: Next) -> Response {
     let (parts, body) = request.into_parts();
     let body = Shared::new(body);
@@ -124,7 +158,10 @@ pub async fn observe(State(observed): State<Observed>, request: Request, next: N
         client_ip: caller_address.map(|address| address.to_string()),
         via: None,
     };
-    let mut response = provenance::within(origin, next.run(request)).await;
+    let mut response = match judge_contract(&observed.app, request.headers()) {
+        Ok(()) => provenance::within(origin, next.run(request)).await,
+        Err(refusal) => refusal_answer(&refusal),
+    };
     if upload && !body.is_whole() {
         // An upload refused before its body was read drops the body with the connection.
         response
@@ -213,4 +250,37 @@ pub async fn remember_route(matched: MatchedPath, request: Request, next: Next) 
         let _ = notes.route.set(matched.as_str().to_string());
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_number;
+
+    #[test]
+    fn a_number_is_only_the_plain_digits_that_write_it() {
+        for (digits, number, is) in [
+            ("0", 0, true),
+            ("1", 1, true),
+            ("10", 10, true),
+            ("4294967295", u32::MAX, true),
+            ("", 0, false),
+            ("00", 0, false),
+            ("01", 1, false),
+            ("010", 10, false),
+            ("0", 10, false),
+            ("1", 10, false),
+            ("100", 10, false),
+            ("+1", 1, false),
+            (" 1", 1, false),
+            ("1 ", 1, false),
+            ("11", 1, false),
+            ("1", 11, false),
+        ] {
+            assert_eq!(
+                is_number(digits.as_bytes(), number),
+                is,
+                "{digits} {number}"
+            );
+        }
+    }
 }

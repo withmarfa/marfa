@@ -35,6 +35,9 @@ const ANSWERED_AHEAD = "413";
 /** A body that did not arrive in time, refused before the idempotency claim. */
 const BODY_LATE = "408";
 
+/** A request naming another contract version, refused before any claim. */
+const CONTRACT_REFUSED = "412";
+
 /** Statuses an idempotency claim gives back rather than records. */
 const RELEASED = new Set([401, 403]);
 
@@ -247,6 +250,7 @@ describe("the document declares the headers the server sets", () => {
         const released =
           RELEASED.has(Number.parseInt(status, 10)) ||
           status === ANSWERED_AHEAD ||
+          status === CONTRACT_REFUSED ||
           status === BODY_LATE;
         expect(
           "Idempotency-Replayed" in (response.headers ?? {}),

@@ -461,11 +461,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // workspace manifest, the runner and test budgets, and the Swift crate's
   // budget.
   [
-    /^core\/marfa-core\/src\/contract\.rs$/,
-    [...DEVICE_LINUX, "core", "clients-freshness", "workspace"],
-  ],
-  [
-    /^core\/marfa-rules\/src\/builtin_catalog\.json$/,
+    /^core\/marfa-rules\/src\/(builtin_catalog\.json|contract\.rs)$/,
     [...RUST_LINUX, "core", "clients-freshness", "workspace"],
   ],
   [/^core\/Cargo\.toml$/, [...RUST, ...ENRICHMENT, "image", "workspace"]],
@@ -711,7 +707,7 @@ function versioned(path: string): boolean {
   return (
     ["package.json", "Cargo.toml", "Cargo.lock"].includes(basename(path)) ||
     /^(packages|core)\/.+\/README[^/]*$/i.test(path) ||
-    path === "core/marfa-core/src/contract.rs" ||
+    path === "core/marfa-rules/src/contract.rs" ||
     path === "ci/version-fields.test.ts"
   );
 }
