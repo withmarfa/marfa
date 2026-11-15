@@ -423,6 +423,9 @@ fn field_sql(field: &str, catalog: &Catalog, json: bool) -> Result<String> {
             });
         }
         "tags" => "(SELECT min(tag) FROM tags WHERE tags.item_id = items.id)".into(),
+        "last_activity_at" => {
+            return Err(invalid(crate::query::NO_LAST_ACTIVITY));
+        }
         _ => return Err(invalid(&format!("unsupported view field {field:?}"))),
     };
     Ok(if json {
@@ -702,6 +705,21 @@ mod tests {
         assert_eq!(ids(&core), ["a", "b", "c"]);
         let groups = core.view_groups("view", None).unwrap().rows;
         assert_eq!((groups[0].key.clone(), groups[0].count), (Value::Null, 3));
+    }
+
+    #[test]
+    fn a_view_sorted_by_last_activity_at_is_refused_by_name() {
+        let core = copy();
+        put(&core, "a", json!({}), &[]);
+        view(&core, json!({"sort":[{"by":"created_at","direction":"asc"}]}));
+        // The witness: the same view with another timestamp answers.
+        assert_eq!(ids(&core), ["a"]);
+        view(
+            &core,
+            json!({"sort":[{"by":"last_activity_at","direction":"asc"}]}),
+        );
+        let refused = core.list_in_view("view", None, None).unwrap_err();
+        assert!(refused.to_string().contains("last_activity_at"), "{refused}");
     }
 
     #[test]
