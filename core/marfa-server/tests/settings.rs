@@ -277,7 +277,7 @@ async fn the_sign_in_address_follows_the_port_bound_until_one_is_stored() {
     let sign_in = app.addresses().sign_in();
     assert_eq!(sign_in.origin(), "http://localhost:51234");
     assert_eq!(sign_in.port(), 51234);
-    app.db.close().await;
+    app.close().await;
 }
 
 struct Instance {
@@ -342,7 +342,7 @@ async fn a_change_is_live_at_once_survives_a_restart_and_clears_to_the_seed() {
         .unwrap();
     assert_eq!(instance.limit(), 2048);
 
-    instance.app.db.close().await;
+    instance.app.close().await;
     instance.app = boot(instance.dir.path()).await;
     assert_eq!(instance.limit(), 2048);
 
@@ -464,7 +464,7 @@ async fn a_row_holds_the_normalized_address_and_a_blank_clears_it() {
 #[tokio::test]
 async fn a_change_mends_a_row_that_does_not_read() {
     let instance = Instance::start().await;
-    instance.app.db.close().await;
+    instance.app.close().await;
     let database = instance.dir.path().join("marfa.db");
     let put = "INSERT INTO settings (key, value) VALUES ('max_request_bytes', 'a lot')";
     Connection::open(&database)

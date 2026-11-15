@@ -103,7 +103,7 @@ impl Instance {
     }
 
     async fn restart(self) -> Instance {
-        self.app.db.close().await;
+        self.app.close().await;
         let Instance { dir, owner, .. } = self;
         Instance::open(dir, Some(owner)).await
     }

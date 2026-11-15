@@ -577,6 +577,7 @@ async fn a_recorded_folder_missing_at_start_leaves_the_start_alone_and_fails_eac
     let first = Instance::start(&folder).await;
     let (status, body) = first.back_up().await;
     assert_eq!(status, StatusCode::OK, "{body}");
+    first.app.close().await;
     let Instance { data, .. } = first;
 
     let away = parent.path().join("away");
@@ -915,6 +916,7 @@ async fn a_replaced_disk_is_refused_until_the_owner_adopts_it_and_then_backs_up_
     assert!(copy_of(&folder, &instance.id(), &file).is_file());
     assert_eq!(instance.health().await["status"], "ok");
 
+    instance.app.close().await;
     let Instance { data, .. } = instance;
     let again = Instance::start_in(data, &folder).await;
     let (status, body) = again.back_up().await;

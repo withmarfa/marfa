@@ -55,10 +55,10 @@ use arc_swap::ArcSwap;
 use tokio::sync::{Notify, watch};
 
 use crate::db::migrate::MIGRATIONS;
-use crate::db::{Db, Options, Write};
+use crate::db::{Db, Lock, Options, Write};
 use crate::failure::Failure;
 use crate::private_files::Kept;
-use crate::settings::{Accepted, Settings};
+use crate::settings::{Accepted, DatabasePath, Settings};
 use crate::telemetry::Telemetry;
 use addresses::Addresses;
 use auth::password::Passwords;
@@ -115,17 +115,41 @@ pub struct App {
     pub(crate) documents: oauth::clients::Documents,
 }
 
+/// The locks a server holds on its database and blob folder while it runs.
+pub struct Held {
+    database: Lock,
+    /// None where the blob folder has no marker yet; the store takes it when it opens the folder.
+    blobs: Option<std::fs::File>,
+}
+
+/// Judges the server's files, takes their locks, and only then makes them private, so a second
+/// server is refused before it changes anything of the first's. It blocks.
+pub fn take_files(database: &DatabasePath, blobs: &Path) -> Result<(Kept, Held), Failure> {
+    let judged = Kept::judged(database, blobs)?;
+    // A running server has marked its folder; an unmarked one gets no lock file until it opens.
+    let marked = judged.has_blob_folder() && blobs.join(blobs::MARKER).is_file();
+    let held = Held {
+        database: Lock::take(database)?,
+        blobs: marked.then(|| blobs::lock_blobs(blobs)).transpose()?,
+    };
+    Ok((judged.keep()?, held))
+}
+
 impl App {
     pub async fn start(accepted: Accepted) -> Result<Arc<App>, Failure> {
         let fixed = accepted.fixed();
         let (database, blob_path) = (fixed.database.clone(), fixed.blob_path.clone());
-        let kept = blocking(move || Kept::closed(&database, &blob_path)).await?;
-        App::start_kept(accepted, kept).await
+        let (kept, held) = blocking(move || take_files(&database, &blob_path)).await?;
+        App::start_kept(accepted, kept, held).await
     }
 
-    /// Starts on the files [`Kept::closed`] judged, for a caller that must judge them before it
-    /// makes anything beside the database.
-    pub async fn start_kept(accepted: Accepted, kept: Kept) -> Result<Arc<App>, Failure> {
+    /// Starts on the files [`take_files`] judged and locked, for a caller that must take them
+    /// before it makes anything beside the database.
+    pub async fn start_kept(
+        accepted: Accepted,
+        kept: Kept,
+        held: Held,
+    ) -> Result<Arc<App>, Failure> {
         let settings = accepted.open_secrets()?;
         let start = settings.start.clone();
         let faults = Arc::<Faults>::default();
@@ -139,7 +163,11 @@ impl App {
                 .get(crate::settings::registry::DISK_RESERVE_BYTES),
         };
         let opening = faults.clone();
-        let db = tokio::task::spawn_blocking(move || Db::open(&options, opening))
+        let Held {
+            database: database_lock,
+            blobs: blob_lock,
+        } = held;
+        let db = tokio::task::spawn_blocking(move || Db::open(&options, database_lock, opening))
             .await
             .map_err(|error| Failure::start(format!("The database did not open: {error}")))??;
         let unreadable = |error| Failure::start(format!("The database could not be read: {error}"));
@@ -170,7 +198,7 @@ impl App {
         }
         let blobs = Blobs::open(
             &db,
-            &start.blob_path,
+            (&start.blob_path, blob_lock),
             start.object_store.as_ref(),
             start
                 .backup_path
@@ -240,6 +268,12 @@ impl App {
 
     pub fn begin_stop(&self) {
         self.stop.send_replace(true);
+    }
+
+    /// Closes the database and lets go of the folders, so another server may open them.
+    pub async fn close(&self) {
+        self.db.close().await;
+        self.blobs.let_go();
     }
 
     pub(crate) fn catalog_handle(&self) -> Arc<ArcSwap<Catalog>> {

@@ -8,6 +8,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use super::backups::{BackupHealth, StoreFault};
+use super::blobs::disk::Disk;
 use super::connectors::{self, Reason};
 use super::faults::{FAIL_ATTENTION, HOLD_ATTENTION};
 use super::refusal::Result;
@@ -162,7 +163,28 @@ async fn healthy(app: &Arc<App>) -> Result<Vec<Concern>> {
         })
         .collect();
     found.extend(backing(report.backups()));
+    found.extend(
+        app.blobs
+            .folder()
+            .and_then(|folder| unlocked(&folder.files())),
+    );
     Ok(found)
+}
+
+/// A backup folder whose files area another server could use too, since it took no lock.
+fn unlocked(files: &Disk) -> Option<Concern> {
+    files.unlocked().map(|why| Concern {
+        kind: "backup",
+        reference: "folder_unlocked".to_string(),
+        title: "The backup folder is not locked".to_string(),
+        description: format!(
+            "The server could not lock {} against another Marfa server: {why}. A copy of this \
+             instance started on the same backup folder could remove the files this one is \
+             still copying there. Keep the backup folder on a file system that supports file \
+             locks.",
+            files.root().display()
+        ),
+    })
 }
 
 fn capitalized(text: &str) -> String {
@@ -349,4 +371,33 @@ pub async fn read(app: &Arc<App>) -> Value {
         .map(Concern::to_json)
         .collect();
     json!({ "data": data })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::blobs::disk::Place;
+    use super::*;
+
+    #[test]
+    fn a_backup_files_area_left_unlocked_asks_for_a_look_and_a_locked_one_does_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let area = dir.path().join("files").join("instance");
+        let open =
+            crate::server_lock::without_locks(|| Disk::open(&area, Place::BackupFiles, None))
+                .unwrap();
+        let concern = unlocked(&open).expect("no entry for an unlocked folder");
+        assert_eq!(
+            (concern.kind, concern.reference.as_str()),
+            ("backup", "folder_unlocked")
+        );
+        assert!(
+            concern.description.contains(&area.display().to_string()),
+            "{}",
+            concern.description
+        );
+
+        let locked = dir.path().join("locked");
+        let held = Disk::open(&locked, Place::BackupFiles, None).unwrap();
+        assert!(unlocked(&held).is_none());
+    }
 }

@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::Read;
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -10,6 +11,7 @@ use super::migrate::{self, Migration, Standing};
 use super::volume;
 use crate::app::faults::{Faults, Volume};
 use crate::failure::Failure;
+use crate::server_lock::{self, Untaken};
 use crate::settings::DatabasePath;
 use crate::settings::registry::{DISK_RESERVE_BYTES, Seeds, Snapshot};
 
@@ -32,9 +34,14 @@ pub struct Options {
 /// The suffix of the copy kept beside the database from before its last upgrade.
 pub const BEFORE_UPGRADE: &str = ".before-upgrade";
 
+/// The suffix of the file a server holds locked beside its database while it has it open.
+pub const SERVER_LOCK: &str = ".server-lock";
+
 pub struct Opened {
     pub writer: Connection,
     pub readers: Vec<Connection>,
+    /// None for a database with no file of its own.
+    pub lock: Option<File>,
 }
 
 enum Target {
@@ -84,52 +91,112 @@ fn file_uri(path: &Path, query: &str) -> String {
     uri
 }
 
-fn has_log(path: &Path) -> bool {
-    let mut name = path.as_os_str().to_owned();
-    name.push("-wal");
-    std::fs::metadata(PathBuf::from(name)).is_ok_and(|meta| meta.len() > 0)
+fn has_side_file(path: &Path, suffix: &str) -> bool {
+    std::fs::metadata(sibling(path, suffix)).is_ok_and(|meta| meta.len() > 0)
+}
+
+fn is_busy(error: &rusqlite::Error) -> bool {
+    matches!(
+        error.sqlite_error_code(),
+        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked)
+    )
 }
 
 fn refused_open(label: &str, error: rusqlite::Error) -> Failure {
+    if is_busy(&error) {
+        return Failure::start(format!("{label} is locked by another process"));
+    }
     match error.sqlite_error_code() {
-        Some(ErrorCode::DatabaseBusy | ErrorCode::DatabaseLocked) => {
-            Failure::start(format!("{label} is locked by another process"))
-        }
         Some(ErrorCode::NotADatabase) => Failure::start(format!("{label} is not a database")),
         _ => Failure::start(format!("{label} could not be opened: {error}")),
     }
 }
 
-/// Leaves the file's bytes and folder as they were: with no log to apply, SQLite is told
-/// not to look for one, since a reader of a WAL file would make side files.
-fn judge_file(
-    path: &Path,
-    options: &Options,
-    faults: &Faults,
-    label: &str,
-) -> Result<Standing, Failure> {
+/// The lock a server holds beside its database file; none for a database with no file.
+#[derive(Debug)]
+pub struct Lock(Option<File>);
+
+impl Lock {
+    /// Taken before anything is read or written, so a second server changes nothing.
+    pub fn take(database: &DatabasePath) -> Result<Lock, Failure> {
+        let Some(path) = database.file() else {
+            return Ok(Lock(None));
+        };
+        let label = Target::of(database).label();
+        if let Some(folder) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            std::fs::create_dir_all(folder).map_err(|error| {
+                Failure::start(format!(
+                    "{} could not be created: {error}",
+                    folder.display()
+                ))
+            })?;
+        }
+        let lock = sibling(&path, SERVER_LOCK);
+        let file = server_lock::take(&lock).map_err(|untaken| match untaken {
+            Untaken::Held => Failure::start(format!(
+                "{label} is open in another Marfa server. Stop that server, or give this one a \
+                 database of its own."
+            )),
+            Untaken::Unsupported(error) => Failure::start(format!(
+                "{label} was not opened, because its lock file {} could not be taken: {error}. \
+                 Keep the database on a local file system.",
+                lock.display()
+            )),
+            Untaken::Refused(why) => Failure::start(format!(
+                "{label} was not opened, because its lock file {} {why}",
+                lock.display()
+            )),
+        })?;
+        // Another name for the file is locked by another lock file, and keeps its own log.
+        match std::fs::metadata(&path) {
+            Ok(found) if found.nlink() > 1 => Err(Failure::start(format!(
+                "{label} has {} hard links, so another Marfa server could open it by another \
+                 name, with a write-ahead log of its own, and damage it. Remove the other links, \
+                 or give each server a copy of its own.",
+                found.nlink()
+            ))),
+            Ok(_) => Ok(Lock(Some(file))),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Lock(Some(file))),
+            Err(error) => Err(Failure::start(format!(
+                "{label} could not be read: {error}"
+            ))),
+        }
+    }
+
+    pub(super) fn into_file(self) -> Option<File> {
+        self.0
+    }
+}
+
+/// Changes nothing but a rollback journal put back; a file with no log is opened immutable.
+fn judge_file(path: &Path, options: &Options, label: &str) -> Result<Judged, Failure> {
     let unreadable =
         |error: std::io::Error| Failure::start(format!("{label} could not be read: {error}"));
     let mut header = [0u8; 16];
     let mut file = match File::open(path) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Standing::Unfinished);
+            return Ok(Judged::plain(Standing::Unfinished));
         }
         Err(error) => return Err(unreadable(error)),
     };
     let read = file.read(&mut header).map_err(unreadable)?;
     if read == 0 {
-        return Ok(Standing::Unfinished);
+        return Ok(Judged::plain(Standing::Unfinished));
     }
     if read < header.len() || &header != HEADER {
         return Err(Failure::start(format!("{label} is not a database")));
     }
-    let read_only = OpenFlags::SQLITE_OPEN_READ_ONLY
-        | OpenFlags::SQLITE_OPEN_URI
-        | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let inspected = if has_log(path) {
+    let flags = OpenFlags::SQLITE_OPEN_URI | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let read_only = flags | OpenFlags::SQLITE_OPEN_READ_ONLY;
+    let inspected = if has_side_file(path, "-wal") {
         Connection::open_with_flags(file_uri(path, "mode=ro"), read_only)
+    } else if has_side_file(path, "-journal") {
+        // A read-only connection refuses a hot journal rather than putting it back.
+        Connection::open_with_flags(
+            file_uri(path, "mode=rw"),
+            flags | OpenFlags::SQLITE_OPEN_READ_WRITE,
+        )
     } else {
         Connection::open_with_flags(file_uri(path, "immutable=1"), read_only)
     }
@@ -138,13 +205,28 @@ fn judge_file(
         .busy_timeout(options.write_wait)
         .map_err(|error| refused_open(label, error))?;
     let standing = migrate::judge(&inspected, options.migrations, label)?;
-    if let Standing::Behind(from) = standing {
-        let holds = migrate::holds_rows(&inspected).map_err(|error| refused_open(label, error))?;
-        if holds {
-            copy_before_upgrade(&inspected, path, options, faults, label, from)?;
+    let copy = match standing {
+        Standing::Behind(_) => {
+            migrate::holds_rows(&inspected).map_err(|error| refused_open(label, error))?
+        }
+        _ => false,
+    };
+    Ok(Judged { standing, copy })
+}
+
+struct Judged {
+    standing: Standing,
+    /// Whether a copy is kept before the upgrade.
+    copy: bool,
+}
+
+impl Judged {
+    fn plain(standing: Standing) -> Judged {
+        Judged {
+            standing,
+            copy: false,
         }
     }
-    Ok(standing)
 }
 
 fn sibling(path: &Path, suffix: &str) -> PathBuf {
@@ -263,9 +345,29 @@ fn make_durable(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "checkpoint_fullfsync", true)
 }
 
-fn prepare_writer(conn: &Connection, options: &Options) -> rusqlite::Result<()> {
-    conn.busy_timeout(options.write_wait)?;
-    conn.pragma_update_and_check(None, "journal_mode", "WAL", |_| Ok(()))?;
+/// Where it cannot keep a log, SQLite answers with the mode it kept instead of failing.
+fn keep_log(conn: &Connection, label: &str, in_file: bool) -> Result<(), Failure> {
+    let mode: String = conn
+        .pragma_update_and_check(None, "journal_mode", "WAL", |row| row.get(0))
+        .map_err(|error| {
+            if is_busy(&error) {
+                refused_open(label, error)
+            } else {
+                Failure::start(format!(
+                    "{label} could not be opened with a write-ahead log: {error}"
+                ))
+            }
+        })?;
+    if in_file && !mode.eq_ignore_ascii_case("wal") {
+        return Err(Failure::start(format!(
+            "{label} cannot keep a write-ahead log, which the server needs: SQLite left it in \
+             {mode} mode. Keep the database on a local file system."
+        )));
+    }
+    Ok(())
+}
+
+fn prepare_writer(conn: &Connection) -> rusqlite::Result<()> {
     make_durable(conn)?;
     conn.pragma_update(None, "foreign_keys", true)?;
     conn.pragma_update(None, "journal_size_limit", JOURNAL_SIZE_LIMIT)?;
@@ -289,30 +391,22 @@ fn move_schema_into_file(conn: &Connection) {
 }
 
 /// Nothing is written until the judgment has passed.
-pub fn open(options: &Options, faults: &Faults) -> Result<Opened, Failure> {
+pub fn open(options: &Options, lock: Lock, faults: &Faults) -> Result<Opened, Failure> {
     let target = Target::of(&options.path);
     let label = target.label();
-    let standing = match &target {
-        Target::File(path) => {
-            if let Some(folder) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
-                std::fs::create_dir_all(folder).map_err(|error| {
-                    Failure::start(format!(
-                        "{} could not be created: {error}",
-                        folder.display()
-                    ))
-                })?;
-            }
-            judge_file(path, options, faults, &label)?
-        }
+    let file = options.path.file();
+    let judged = match &target {
+        Target::File(path) => judge_file(path, options, &label)?,
         Target::Uri(_) => {
             let read_only = OpenFlags::SQLITE_OPEN_READ_ONLY;
-            match target.open(read_only) {
+            Judged::plain(match target.open(read_only) {
                 Ok(conn) => migrate::judge(&conn, options.migrations, &label)?,
                 Err(_) => Standing::Unfinished,
-            }
+            })
         }
-        Target::Memory(_) => Standing::Unfinished,
+        Target::Memory(_) => Judged::plain(Standing::Unfinished),
     };
+    let standing = judged.standing;
     if matches!(standing, Standing::Behind(_)) && !matches!(target, Target::File(_)) {
         return Err(Failure::start(format!(
             "{label} is at an earlier schema version, and only a database named by its path is \
@@ -322,16 +416,27 @@ pub fn open(options: &Options, faults: &Faults) -> Result<Opened, Failure> {
 
     let write_flags = OpenFlags::SQLITE_OPEN_READ_WRITE | OpenFlags::SQLITE_OPEN_CREATE;
     let refused = |error| refused_open(&label, error);
+    let unapplied = |from: Option<u32>, error: migrate::Unapplied| match error {
+        migrate::Unapplied::Failed(error) if is_busy(&error) => refused_open(&label, error),
+        error => error.failure(&label, from, options.migrations),
+    };
     let mut writer = target.open(write_flags).map_err(refused)?;
-    prepare_writer(&writer, options).map_err(refused)?;
+    writer.busy_timeout(options.write_wait).map_err(refused)?;
+    keep_log(&writer, &label, file.is_some())?;
+    prepare_writer(&writer).map_err(refused)?;
+    if let (Standing::Behind(from), true, Target::File(path)) = (&standing, judged.copy, &target) {
+        copy_before_upgrade(&writer, path, options, faults, &label, *from)?;
+    }
     match standing {
         Standing::Current => {}
         Standing::Unfinished => {
-            migrate::complete(&mut writer, options.migrations).map_err(refused)?;
+            migrate::complete(&mut writer, options.migrations)
+                .map_err(|error| unapplied(None, error))?;
             move_schema_into_file(&writer);
         }
         Standing::Behind(from) => {
-            migrate::upgrade(&mut writer, options.migrations, from).map_err(refused)?;
+            migrate::upgrade(&mut writer, options.migrations, from)
+                .map_err(|error| unapplied(Some(from), error))?;
             move_schema_into_file(&writer);
         }
     }
@@ -344,5 +449,9 @@ pub fn open(options: &Options, faults: &Faults) -> Result<Opened, Failure> {
         })
         .collect::<rusqlite::Result<Vec<_>>>()
         .map_err(refused)?;
-    Ok(Opened { writer, readers })
+    Ok(Opened {
+        writer,
+        readers,
+        lock: lock.into_file(),
+    })
 }

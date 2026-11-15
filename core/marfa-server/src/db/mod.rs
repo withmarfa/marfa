@@ -11,15 +11,16 @@ mod tests;
 pub mod volume;
 mod writer;
 
-use std::sync::Arc;
+use std::fs::File;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
 use rusqlite::Transaction;
 use tokio::sync::watch;
 
 pub use hold::{Holding, Permit};
-pub use open::Options;
+pub use open::{Lock, Options};
 pub use writer::{Pulse, Watcher};
 
 use crate::app::faults::{
@@ -90,12 +91,18 @@ pub struct Db {
     budget: Duration,
     /// A statement has met pages SQLite cannot read; nothing clears it but a restart.
     damaged: AtomicBool,
+    /// Keeps a second server off the file until `close`, or until the process ends.
+    lock: Mutex<Option<File>>,
 }
 
 impl Db {
     /// Blocks while it judges and updates the file, so it runs before the server takes requests.
-    pub fn open(options: &Options, faults: Arc<Faults>) -> std::result::Result<Db, Failure> {
-        let opened = open::open(options, &faults)?;
+    pub fn open(
+        options: &Options,
+        lock: Lock,
+        faults: Arc<Faults>,
+    ) -> std::result::Result<Db, Failure> {
+        let opened = open::open(options, lock, &faults)?;
         let writer = writer::Writer::start(opened.writer, faults.clone())
             .map_err(|error| Failure::start(format!("The writer did not start: {error}")))?;
         Ok(Db {
@@ -105,6 +112,7 @@ impl Db {
             held: Arc::default(),
             budget: options.write_wait,
             damaged: AtomicBool::new(false),
+            lock: Mutex::new(opened.lock),
         })
     }
 
@@ -304,5 +312,9 @@ impl Db {
     pub async fn close(&self) {
         self.readers.close().await;
         self.writer.stop().await;
+        self.lock
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
     }
 }

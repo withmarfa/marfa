@@ -154,7 +154,7 @@ impl Instance {
     }
 
     async fn restarted(self) -> Instance {
-        self.app.db.close().await;
+        self.app.close().await;
         let app = boot(&self.dir).await;
         Instance {
             public: public(app.clone()),

@@ -44,7 +44,11 @@ struct Server {
 
 impl Server {
     fn start(dir: &Path) -> Server {
-        let mut child = program(dir).spawn().unwrap();
+        Server::run(program(dir), dir.join("control").join("s.sock"))
+    }
+
+    fn run(mut command: Command, socket: PathBuf) -> Server {
+        let mut child = command.spawn().unwrap();
         let stdout = child.stdout.take().unwrap();
         let log = Arc::new(Mutex::new(Vec::new()));
         let (found, port) = std::sync::mpsc::channel();
@@ -61,7 +65,7 @@ impl Server {
         let port = port.recv_timeout(Duration::from_secs(20)).unwrap();
         Server {
             child,
-            socket: dir.join("control").join("s.sock"),
+            socket,
             port,
             log,
         }
@@ -193,15 +197,114 @@ fn a_socket_left_by_a_killed_server_does_not_stop_the_next() {
 }
 
 #[test]
-fn a_second_server_on_the_socket_is_refused_and_the_first_serves_on() {
+fn a_second_server_with_its_own_files_on_the_socket_is_refused_and_the_first_serves_on() {
     let dir = TempDir::new().unwrap();
+    let other = TempDir::new().unwrap();
     let first = Server::start(dir.path());
-    let output = program(dir.path()).output().unwrap();
+    let output = program(other.path())
+        .env("MARFA_CONTROL_SOCKET", control_socket(dir.path()))
+        .output()
+        .unwrap();
     assert_eq!(output.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&output.stdout).contains("already in use"),
         "{output:?}"
     );
+    assert_eq!(status(&first.control(&request("GET", "/health", b""))), 200);
+}
+
+#[test]
+fn a_second_server_on_the_same_files_and_socket_is_refused_for_the_database() {
+    let dir = TempDir::new().unwrap();
+    let first = Server::start(dir.path());
+    let output = program(dir.path()).output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let said = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        said.contains(&format!(
+            "{} is open in another Marfa server",
+            dir.path().join("marfa.db").display()
+        )) && !said.contains("already in use"),
+        "{said}"
+    );
+    assert_eq!(status(&first.control(&request("GET", "/health", b""))), 200);
+}
+
+/// A file half an upload left in the first server's staging folder.
+fn staged(dir: &Path) -> PathBuf {
+    let staged = dir.join("blobs").join("tmp").join("arriving");
+    std::fs::write(&staged, b"half an upload").unwrap();
+    staged
+}
+
+#[test]
+fn a_second_server_with_its_own_socket_is_refused_on_the_database_and_changes_nothing() {
+    let dir = TempDir::new().unwrap();
+    let elsewhere = TempDir::new().unwrap();
+    let mut first = Server::start(dir.path());
+    let staged = staged(dir.path());
+
+    let through = elsewhere.path().join("through");
+    std::os::unix::fs::symlink(dir.path(), &through).unwrap();
+    let name = dir.path().file_name().unwrap();
+    let relative = Path::new("..").join(name).join("marfa.db");
+    let ways = [
+        dir.path().join("marfa.db"),
+        through.join("marfa.db"),
+        relative.clone(),
+    ];
+    for database in ways {
+        let mut second = program(dir.path());
+        second
+            .env("MARFA_CONTROL_SOCKET", control_socket(elsewhere.path()))
+            .env("MARFA_DATABASE_PATH", &database);
+        if database == relative {
+            second.current_dir(elsewhere.path());
+        }
+        let output = second.output().unwrap();
+        assert_eq!(output.status.code(), Some(1), "{}", database.display());
+        let said = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            said.contains(&format!(
+                "{} is open in another Marfa server",
+                database.display()
+            )),
+            "{said}"
+        );
+        assert!(staged.exists());
+        assert_eq!(status(&first.control(&request("GET", "/health", b""))), 200);
+    }
+
+    first.signal("-KILL");
+    first.wait();
+    let mut again = program(dir.path());
+    again.env("MARFA_CONTROL_SOCKET", control_socket(elsewhere.path()));
+    let again = Server::run(again, elsewhere.path().join("control").join("s.sock"));
+    assert_eq!(status(&again.control(&request("GET", "/health", b""))), 200);
+    assert!(!staged.exists(), "a start that is not refused empties tmp");
+}
+
+#[test]
+fn a_second_server_with_its_own_database_is_refused_on_the_blob_folder_and_keeps_its_tmp() {
+    let dir = TempDir::new().unwrap();
+    let elsewhere = TempDir::new().unwrap();
+    let first = Server::start(dir.path());
+    let staged = staged(dir.path());
+
+    let output = program(elsewhere.path())
+        .env("MARFA_BLOB_PATH", dir.path().join("blobs"))
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    let said = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        said.contains(&format!(
+            "The blob folder {} is open in another Marfa server",
+            dir.path().join("blobs").display()
+        )),
+        "{said}"
+    );
+    assert!(staged.exists());
     assert_eq!(status(&first.control(&request("GET", "/health", b""))), 200);
 }
 

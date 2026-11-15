@@ -1,13 +1,14 @@
 //! Protects the control socket from access or replacement by other accounts.
 
 use std::ffi::OsString;
-use std::fs::{File, Metadata, OpenOptions, TryLockError};
+use std::fs::{File, Metadata};
 use std::io::ErrorKind;
-use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Component, Path, PathBuf};
 
 use crate::failure::Failure;
+use crate::server_lock::{self, Untaken};
 
 const PRIVATE_FOLDER: u32 = 0o700;
 const PRIVATE_FILE: u32 = 0o600;
@@ -135,61 +136,13 @@ fn lock_path(path: &Path) -> PathBuf {
     PathBuf::from(name)
 }
 
-fn open_lock(lock: &Path) -> Result<File, Failure> {
-    let made = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create_new(true)
-        .mode(PRIVATE_FILE)
-        .custom_flags(libc::O_NOFOLLOW)
-        .open(lock);
-    match made {
-        Ok(file) => {
-            file.set_permissions(std::fs::Permissions::from_mode(PRIVATE_FILE))
-                .map_err(|error| {
-                    refused_lock(lock, format!("could not be made private: {error}"))
-                })?;
-            Ok(file)
-        }
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => OpenOptions::new()
-            .read(true)
-            .write(true)
-            .custom_flags(libc::O_NOFOLLOW)
-            .open(lock)
-            .map_err(|error| refused_lock(lock, format!("could not be opened: {error}"))),
-        Err(error) => Err(refused_lock(lock, format!("could not be opened: {error}"))),
-    }
-}
-
-fn take_lock(path: &Path, me: u32) -> Result<File, Failure> {
+fn take_lock(path: &Path) -> Result<File, Failure> {
     let lock = lock_path(path);
-    let file = open_lock(&lock)?;
-    let held = file
-        .metadata()
-        .map_err(|error| refused_lock(&lock, format!("could not be read: {error}")))?;
-    if !held.is_file()
-        || held.uid() != me
-        || held.mode() & 0o777 != PRIVATE_FILE
-        || held.nlink() != 1
-    {
-        return Err(refused_lock(
-            &lock,
-            "must be a file of the server's account alone, with mode 0600 and one link",
-        ));
-    }
-    refuse_acl(&lock, "lock")?;
-    let named = std::fs::symlink_metadata(&lock)
-        .map_err(|error| refused_lock(&lock, format!("could not be read: {error}")))?;
-    if (named.dev(), named.ino()) != (held.dev(), held.ino()) {
-        return Err(refused_lock(&lock, "changed while it was opened"));
-    }
-    match file.try_lock() {
-        Ok(()) => Ok(file),
-        Err(TryLockError::WouldBlock) => Err(in_use(path)),
-        Err(TryLockError::Error(error)) => {
-            Err(refused_lock(&lock, format!("could not be taken: {error}")))
-        }
-    }
+    server_lock::take(&lock).map_err(|untaken| match untaken {
+        Untaken::Held => in_use(path),
+        Untaken::Unsupported(error) => refused_lock(&lock, format!("could not be taken: {error}")),
+        Untaken::Refused(why) => refused_lock(&lock, why),
+    })
 }
 
 const STALE_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
@@ -257,7 +210,7 @@ impl Claim {
         check_path(path)?;
         let me = me();
         prepare_folders(path, me)?;
-        let lock = take_lock(path, me)?;
+        let lock = take_lock(path)?;
         clear_stale(path)?;
         Ok(Claim {
             path: path.to_path_buf(),
@@ -522,7 +475,7 @@ mod tests {
     }
 
     #[test]
-    fn a_lock_that_is_a_link_or_shared_is_refused_and_left_alone() {
+    fn a_lock_that_is_a_link_is_refused_and_left_alone_and_one_open_to_others_made_private() {
         let (_dir, root) = private_root();
         let path = root.join("marfa.sock");
         set_mode(&root, 0o700);
@@ -542,9 +495,10 @@ mod tests {
         std::fs::remove_file(lock_path(&path)).unwrap();
 
         std::fs::write(lock_path(&path), "").unwrap();
-        set_mode(&lock_path(&path), 0o644);
-        let said = refusal(&path);
-        assert!(said.contains("mode 0600"), "{said}");
+        set_mode(&lock_path(&path), 0o664);
+        drop(Claim::take(&path).unwrap());
+        let mode = std::fs::metadata(lock_path(&path)).unwrap().mode() & 0o777;
+        assert_eq!(mode, PRIVATE_FILE);
     }
 
     #[test]

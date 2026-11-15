@@ -92,7 +92,7 @@ impl Instance {
 
     /// Folders are stored items, so each view is copied as one.
     async fn views_as_folders(self) -> Instance {
-        self.app.db.close().await;
+        self.app.close().await;
         let Instance { dir, .. } = self;
         let connection = rusqlite::Connection::open(dir.path().join("marfa.db")).unwrap();
         let columns: Vec<String> = connection

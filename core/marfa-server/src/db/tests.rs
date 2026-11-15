@@ -8,7 +8,7 @@ use rusqlite::{Connection, Transaction, ffi};
 use tempfile::TempDir;
 
 use super::migrate::{MIGRATIONS, Migration};
-use super::{Db, Options, Write};
+use super::{Db, Lock, Options, Write};
 use crate::app::faults::Faults;
 use crate::app::items::bulk::each;
 use crate::app::provenance;
@@ -85,18 +85,23 @@ fn options(file: &Path, migrations: &'static [Migration]) -> Options {
     }
 }
 
+/// As a start does: the lock first, then the file.
+fn db_open(options: &Options, faults: Arc<Faults>) -> std::result::Result<Db, Failure> {
+    Db::open(options, Lock::take(&options.path)?, faults)
+}
+
 fn open(file: &Path) -> Db {
     open_with(file, Arc::new(Faults::default()))
 }
 
 fn open_with(file: &Path, faults: Arc<Faults>) -> Db {
-    Db::open(&options(file, ONE), faults)
+    db_open(&options(file, ONE), faults)
         .map_err(|f| f.message)
         .unwrap()
 }
 
 fn refused(file: &Path, migrations: &'static [Migration]) -> Failure {
-    match Db::open(&options(file, migrations), Arc::default()) {
+    match db_open(&options(file, migrations), Arc::default()) {
         Ok(_) => panic!("the start was not refused"),
         Err(failure) => failure,
     }
@@ -453,7 +458,7 @@ async fn a_read_of_a_database_in_memory_is_one_snapshot_too() {
     let mut memory = options(Path::new("unused"), ONE);
     memory.path = DatabasePath::Memory;
     let db = Arc::new(
-        Db::open(&memory, Arc::default())
+        db_open(&memory, Arc::default())
             .map_err(|f| f.message)
             .unwrap(),
     );
@@ -495,8 +500,11 @@ async fn a_path_outside_ascii_opens_as_the_same_file_again() {
     let again = open(&file);
     assert_eq!(ids(&again).await, [1]);
     again.close().await;
-    let names = std::fs::read_dir(dir.path()).unwrap().count();
-    assert_eq!(names, 1, "a second file was made beside the first");
+    assert_eq!(
+        names_beside(&file),
+        ["caf\u{e9} 100%.db", "caf\u{e9} 100%.db.server-lock"],
+        "a second file was made beside the first"
+    );
 }
 
 fn copy_of(file: &Path) -> PathBuf {
@@ -522,7 +530,7 @@ fn names_beside(file: &Path) -> Vec<String> {
 }
 
 fn opened(file: &Path, migrations: &'static [Migration], faults: Arc<Faults>) -> Db {
-    Db::open(&options(file, migrations), faults)
+    db_open(&options(file, migrations), faults)
         .map_err(|f| f.message)
         .unwrap()
 }
@@ -604,7 +612,7 @@ async fn an_upgrade_with_no_room_for_its_copy_is_refused_and_changes_nothing() {
 
     let faults = Arc::new(Faults::default());
     faults.set("free:database", Some("4096")).unwrap();
-    let failure = match Db::open(&options(&place.file, TWO), faults) {
+    let failure = match db_open(&options(&place.file, TWO), faults) {
         Ok(_) => panic!("the upgrade was not refused"),
         Err(failure) => failure,
     };
@@ -650,7 +658,7 @@ async fn an_upgrade_keeps_the_disk_reserve_the_file_stores() {
     with_stored_reserve(&place.file, "1000000").await;
     let faults = Arc::new(Faults::default());
     faults.set("free:database", Some("900000")).unwrap();
-    let failure = match Db::open(&options(&place.file, SETTINGS_TWO), faults) {
+    let failure = match db_open(&options(&place.file, SETTINGS_TWO), faults) {
         Ok(_) => panic!("the upgrade was not refused"),
         Err(failure) => failure,
     };
@@ -670,7 +678,7 @@ async fn an_upgrade_is_refused_when_the_stored_disk_reserve_does_not_read() {
 
     let faults = Arc::new(Faults::default());
     faults.set("free:database", Some("1073741824")).unwrap();
-    let failure = match Db::open(&options(&place.file, SETTINGS_TWO), faults) {
+    let failure = match db_open(&options(&place.file, SETTINGS_TWO), faults) {
         Ok(_) => panic!("the upgrade was not refused"),
         Err(failure) => failure,
     };
@@ -736,7 +744,7 @@ async fn an_older_database_whose_schema_is_not_that_versions_is_refused() {
 #[tokio::test]
 async fn a_table_gone_with_its_index_is_made_again_with_it() {
     let place = folder();
-    Db::open(&options(&place.file, INDEXED), Arc::default())
+    db_open(&options(&place.file, INDEXED), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
@@ -746,7 +754,7 @@ async fn a_table_gone_with_its_index_is_made_again_with_it() {
         .execute_batch("DROP TABLE notes;")
         .unwrap();
 
-    Db::open(&options(&place.file, INDEXED), Arc::default())
+    db_open(&options(&place.file, INDEXED), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
@@ -766,7 +774,7 @@ async fn a_table_gone_with_its_index_is_made_again_with_it() {
 #[tokio::test]
 async fn a_shipped_file_missing_tables_and_holding_no_rows_is_completed() {
     let place = folder();
-    Db::open(&options(&place.file, MIGRATIONS), Arc::default())
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
@@ -776,7 +784,7 @@ async fn a_shipped_file_missing_tables_and_holding_no_rows_is_completed() {
         .execute_batch("DELETE FROM webhook_position; DROP TABLE items; DROP TABLE audit_log;")
         .unwrap();
 
-    Db::open(&options(&place.file, MIGRATIONS), Arc::default())
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
@@ -786,7 +794,7 @@ async fn a_shipped_file_missing_tables_and_holding_no_rows_is_completed() {
 #[tokio::test]
 async fn a_shipped_file_missing_a_table_and_holding_a_row_is_refused() {
     let place = folder();
-    Db::open(&options(&place.file, MIGRATIONS), Arc::default())
+    db_open(&options(&place.file, MIGRATIONS), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
@@ -807,7 +815,7 @@ async fn a_shipped_file_missing_a_table_and_holding_a_row_is_refused() {
 #[tokio::test]
 async fn an_index_gone_from_a_table_still_there_is_refused() {
     let place = folder();
-    Db::open(&options(&place.file, INDEXED), Arc::default())
+    db_open(&options(&place.file, INDEXED), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
@@ -828,7 +836,7 @@ async fn an_index_gone_from_a_table_still_there_is_refused() {
 #[tokio::test]
 async fn a_newer_database_is_refused_and_left_as_it_was() {
     let place = folder();
-    Db::open(&options(&place.file, TWO), Arc::default())
+    db_open(&options(&place.file, TWO), Arc::default())
         .map_err(|f| f.message)
         .unwrap()
         .close()
@@ -858,8 +866,16 @@ fn a_file_that_is_not_a_database_is_refused_and_left_as_it_was() {
         failure.message
     );
     assert_eq!(std::fs::read(&place.file).unwrap(), bytes);
-    let beside = std::fs::read_dir(place.file.parent().unwrap()).unwrap();
-    assert_eq!(beside.count(), 1);
+    let name = place
+        .file
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    assert_eq!(
+        names_beside(&place.file),
+        [name.clone(), format!("{name}.server-lock")]
+    );
 }
 
 async fn long_write(db: &Arc<Db>, naps: u32, beats: bool) -> tokio::task::JoinHandle<Result<()>> {
@@ -1097,4 +1113,430 @@ async fn a_damaged_page_met_after_an_entry_landed_ends_the_page_and_marks_the_fi
         .await
         .unwrap();
     assert_eq!(notes, 0);
+}
+
+const KIN_BASE: Migration = Migration {
+    version: 1,
+    sql: "CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT NOT NULL) STRICT;
+          CREATE TABLE tags (
+              note INTEGER NOT NULL REFERENCES notes (id) ON DELETE CASCADE,
+              tag TEXT NOT NULL
+          ) STRICT;
+          CREATE INDEX tags_note ON tags (note);
+          CREATE TABLE stores (id TEXT PRIMARY KEY, kind TEXT NOT NULL) STRICT, WITHOUT ROWID;
+          CREATE TABLE copies (
+              store TEXT NOT NULL REFERENCES stores (id),
+              hash TEXT NOT NULL
+          ) STRICT;",
+};
+const KIN_ONE: &[Migration] = &[KIN_BASE];
+/// SQLite's steps for changing a table's definition, for a parent of a cascading child and a
+/// parent of a child that does not cascade.
+const KIN_REBUILT: &[Migration] = &[
+    KIN_BASE,
+    Migration {
+        version: 2,
+        sql: "CREATE TABLE notes_new (
+                  id INTEGER PRIMARY KEY,
+                  body TEXT NOT NULL CHECK (body <> ''),
+                  pinned INTEGER NOT NULL DEFAULT 0 CHECK (pinned IN (0, 1))
+              ) STRICT;
+              INSERT INTO notes_new (id, body) SELECT id, body FROM notes;
+              DROP TABLE notes;
+              ALTER TABLE notes_new RENAME TO notes;
+              CREATE TABLE stores_new (
+                  id TEXT PRIMARY KEY,
+                  kind TEXT NOT NULL CHECK (kind IN ('disk', 's3'))
+              ) STRICT, WITHOUT ROWID;
+              INSERT INTO stores_new (id, kind) SELECT id, kind FROM stores;
+              DROP TABLE stores;
+              ALTER TABLE stores_new RENAME TO stores;",
+    },
+];
+/// Moves the old table aside before making the new one, so its children follow the old name.
+const KIN_DANGLING: &[Migration] = &[
+    KIN_BASE,
+    Migration {
+        version: 2,
+        sql: "ALTER TABLE notes RENAME TO notes_old;
+              CREATE TABLE notes (
+                  id INTEGER PRIMARY KEY,
+                  body TEXT NOT NULL CHECK (body <> '')
+              ) STRICT;
+              INSERT INTO notes (id, body) SELECT id, body FROM notes_old;
+              DROP TABLE notes_old;",
+    },
+];
+/// Fails at its last statement, after the old table has gone and the new one took its name.
+const KIN_FAILING: &[Migration] = &[
+    KIN_BASE,
+    Migration {
+        version: 2,
+        sql: "CREATE TABLE notes_new (
+                  id INTEGER PRIMARY KEY,
+                  body TEXT NOT NULL CHECK (body <> '')
+              ) STRICT;
+              INSERT INTO notes_new (id, body) SELECT id, body FROM notes;
+              DROP TABLE notes;
+              ALTER TABLE notes_new RENAME TO notes;
+              INSERT INTO copies (store, hash) VALUES ('disk-1', NULL);",
+    },
+];
+
+async fn kin_with_rows(file: &Path) {
+    let db = opened(file, KIN_ONE, Arc::default());
+    db.write(WRITE, |tx| {
+        tx.execute_batch(
+            "INSERT INTO notes (id, body) VALUES (1, 'one'), (2, 'two'), (3, 'three');
+             INSERT INTO tags (note, tag) VALUES (1, 'a'), (1, 'b'), (2, 'c'), (3, 'd');
+             INSERT INTO stores (id, kind) VALUES ('disk-1', 'disk'), ('s3-1', 's3');
+             INSERT INTO copies (store, hash) VALUES ('disk-1', 'h1'), ('disk-1', 'h2'), ('s3-1', 'h1');",
+        )?;
+        Ok(())
+    })
+    .await
+    .unwrap();
+    db.close().await;
+}
+
+fn counts(file: &Path) -> Vec<(String, i64)> {
+    let conn = Connection::open(file).unwrap();
+    ["notes", "tags", "stores", "copies"]
+        .iter()
+        .map(|table| {
+            let count = conn
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            (table.to_string(), count)
+        })
+        .collect()
+}
+
+fn columns_of(file: &Path, table: &str) -> Vec<String> {
+    Connection::open(file)
+        .unwrap()
+        .prepare("SELECT name FROM pragma_table_info(?1)")
+        .unwrap()
+        .query_map([table], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap()
+}
+
+fn kin_counts() -> Vec<(String, i64)> {
+    [("notes", 3), ("tags", 4), ("stores", 2), ("copies", 3)]
+        .iter()
+        .map(|(table, count)| (table.to_string(), *count))
+        .collect()
+}
+
+#[tokio::test]
+async fn an_upgrade_that_rebuilds_parent_tables_keeps_every_row_of_their_children() {
+    let place = folder();
+    kin_with_rows(&place.file).await;
+
+    let db = opened(&place.file, KIN_REBUILT, Arc::default());
+    let settings = db.connection_settings().await.unwrap();
+    assert_eq!(settings["writer"]["foreign_keys"], 1);
+    let dangling = db
+        .write(WRITE, |tx| {
+            tx.execute(
+                "INSERT INTO copies (store, hash) VALUES ('nowhere', 'h3')",
+                [],
+            )?;
+            Ok(())
+        })
+        .await;
+    assert!(dangling.is_err(), "foreign keys were not enforced again");
+    db.close().await;
+
+    assert_eq!(version_of(&place.file), 2);
+    assert_eq!(counts(&place.file), kin_counts());
+    assert_eq!(columns_of(&place.file, "notes"), ["id", "body", "pinned"]);
+    let cascade: i64 = Connection::open(&place.file)
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM pragma_foreign_key_list('tags') WHERE \"table\" = 'notes'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(cascade, 1);
+
+    let again = opened(&place.file, KIN_REBUILT, Arc::default());
+    again.close().await;
+    assert_eq!(counts(&place.file), kin_counts());
+}
+
+#[tokio::test]
+async fn a_rebuild_that_leaves_a_reference_to_a_missing_row_is_refused_and_changes_nothing() {
+    let place = folder();
+    kin_with_rows(&place.file).await;
+
+    let failure = refused(&place.file, KIN_DANGLING);
+    assert_eq!(failure.status, 78, "a start again would meet the same rows");
+    assert!(failure.message.contains("tags"), "{}", failure.message);
+    assert!(
+        failure.message.contains("Nothing was changed"),
+        "{}",
+        failure.message
+    );
+    assert_eq!(version_of(&place.file), 1);
+    assert_eq!(counts(&place.file), kin_counts());
+    assert_eq!(columns_of(&place.file, "notes"), ["id", "body"]);
+    assert!(columns_of(&place.file, "notes_old").is_empty());
+
+    opened(&place.file, KIN_ONE, Arc::default()).close().await;
+}
+
+#[tokio::test]
+async fn a_rebuild_that_fails_part_way_leaves_the_database_and_its_version_as_they_were() {
+    let place = folder();
+    kin_with_rows(&place.file).await;
+
+    let failure = refused(&place.file, KIN_FAILING);
+    assert_eq!(failure.status, 1);
+    assert!(
+        failure.message.contains("Nothing was changed"),
+        "{}",
+        failure.message
+    );
+    assert_eq!(version_of(&place.file), 1);
+    assert_eq!(counts(&place.file), kin_counts());
+    assert_eq!(columns_of(&place.file, "notes"), ["id", "body"]);
+    assert!(columns_of(&place.file, "notes_new").is_empty());
+
+    opened(&place.file, KIN_ONE, Arc::default()).close().await;
+}
+
+#[tokio::test]
+async fn a_database_another_server_has_open_is_refused_however_its_path_is_written() {
+    let place = folder();
+    let db = open(&place.file);
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    let through = place._dir.path().join("through");
+    std::os::unix::fs::symlink(place._dir.path(), &through).unwrap();
+    let paths = [
+        DatabasePath::File(place.file.clone()),
+        DatabasePath::File(through.join("marfa.db")),
+        DatabasePath::Uri(format!("file:{}", place.file.display())),
+    ];
+    for path in paths {
+        let mut second = options(&place.file, TWO);
+        second.path = path;
+        let failure = match db_open(&second, Arc::default()) {
+            Ok(_) => panic!("the second start was not refused"),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.status, 1);
+        assert!(
+            failure.message.contains("is open in another Marfa server"),
+            "{}",
+            failure.message
+        );
+        assert!(!copy_of(&place.file).exists());
+        assert_eq!(version_of(&place.file), 1);
+    }
+    db.write(WRITE, |tx| add(tx, 2)).await.unwrap();
+    assert_eq!(ids(&db).await, [1, 2]);
+    db.close().await;
+
+    opened(&place.file, TWO, Arc::default()).close().await;
+    assert_eq!(version_of(&place.file), 2);
+    assert!(copy_of(&place.file).exists());
+}
+
+#[tokio::test]
+async fn a_database_is_let_go_when_its_server_drops_it_without_closing() {
+    let place = folder();
+    let db = open(&place.file);
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    drop(db);
+    assert_eq!(ids(&open(&place.file)).await, [1]);
+}
+
+#[tokio::test]
+async fn two_databases_in_memory_open_side_by_side() {
+    let mut memory = options(Path::new("unused"), ONE);
+    memory.path = DatabasePath::Memory;
+    let first = db_open(&memory, Arc::default())
+        .map_err(|f| f.message)
+        .unwrap();
+    let second = db_open(&memory, Arc::default())
+        .map_err(|f| f.message)
+        .unwrap();
+    first.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    assert!(ids(&second).await.is_empty());
+}
+
+#[test]
+fn a_database_whose_file_system_keeps_no_write_ahead_log_is_refused_saying_so() {
+    let place = folder();
+    let mut no_log = options(&place.file, ONE);
+    no_log.path = DatabasePath::Uri(format!("file:{}?vfs=unix-dotfile", place.file.display()));
+    let failure = match db_open(&no_log, Arc::default()) {
+        Ok(_) => panic!("the start was not refused"),
+        Err(failure) => failure,
+    };
+    assert_eq!(failure.status, 1);
+    assert!(
+        failure.message.contains("write-ahead log"),
+        "{}",
+        failure.message
+    );
+    let mut witness = options(&place.file, ONE);
+    witness.path = DatabasePath::Uri(format!("file:{}", place.file.display()));
+    drop(
+        db_open(&witness, Arc::default())
+            .map_err(|f| f.message)
+            .unwrap(),
+    );
+}
+
+#[tokio::test]
+async fn a_database_file_with_a_second_hard_link_is_refused_by_either_name() {
+    let place = folder();
+    let db = open(&place.file);
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    let link = place._dir.path().join("copy.db");
+    std::fs::hard_link(&place.file, &link).unwrap();
+    let linked = |named: &Path| {
+        let failure = match db_open(&options(named, ONE), Arc::default()) {
+            Ok(_) => panic!("{} was opened", named.display()),
+            Err(failure) => failure,
+        };
+        assert_eq!(failure.status, 1);
+        assert!(
+            failure.message.contains("has 2 hard links"),
+            "{}",
+            failure.message
+        );
+    };
+    linked(&link);
+    assert!(!place._dir.path().join("copy.db-wal").exists());
+    db.write(WRITE, |tx| add(tx, 2)).await.unwrap();
+    db.close().await;
+    linked(&place.file);
+
+    std::fs::remove_file(&link).unwrap();
+    assert_eq!(ids(&open(&place.file)).await, [1, 2]);
+}
+
+unsafe extern "C" fn refuse_commit(_: *mut std::ffi::c_void) -> std::ffi::c_int {
+    1
+}
+
+#[tokio::test]
+async fn an_upgrade_whose_commit_fails_says_it_may_have_committed() {
+    let place = folder();
+    let db = open(&place.file);
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    db.close().await;
+    let mut conn = Connection::open(&place.file).unwrap();
+    // SAFETY: the hook takes no data and outlives nothing, and the connection is open.
+    unsafe {
+        ffi::sqlite3_commit_hook(conn.handle(), Some(refuse_commit), std::ptr::null_mut());
+    }
+    let unapplied = super::migrate::upgrade(&mut conn, TWO, 1).unwrap_err();
+    assert!(
+        matches!(unapplied, super::migrate::Unapplied::CommitFailed(_)),
+        "{unapplied:?}"
+    );
+    let failure = unapplied.failure("marfa.db", Some(1), TWO);
+    assert_eq!(failure.status, 1);
+    assert!(
+        failure.message.contains("may have been upgraded") && !failure.message.contains("Nothing"),
+        "{}",
+        failure.message
+    );
+}
+
+#[tokio::test]
+async fn a_start_refused_for_its_log_keeps_the_last_copy_from_before_an_upgrade() {
+    let place = folder();
+    let db = open(&place.file);
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    db.close().await;
+    std::fs::write(copy_of(&place.file), b"the last copy").unwrap();
+    let mut shm = place.file.as_os_str().to_owned();
+    shm.push("-shm");
+    // SQLite opens the shared memory without following a link, so it cannot keep the log.
+    std::os::unix::fs::symlink(place._dir.path().join("nowhere"), PathBuf::from(&shm)).unwrap();
+
+    let failure = refused(&place.file, TWO);
+    assert!(
+        failure.message.contains("write-ahead log"),
+        "{}",
+        failure.message
+    );
+    assert_eq!(
+        std::fs::read(copy_of(&place.file)).unwrap(),
+        b"the last copy"
+    );
+
+    std::fs::remove_file(PathBuf::from(&shm)).unwrap();
+    assert_eq!(version_of(&place.file), 1);
+    opened(&place.file, TWO, Arc::default()).close().await;
+    assert_ne!(
+        std::fs::read(copy_of(&place.file)).unwrap(),
+        b"the last copy"
+    );
+}
+
+/// Puts back the database's first page from a rollback journal, as a crash part-way through a
+/// commit leaves it, after the page in the file was overwritten.
+fn leave_hot_journal(file: &Path) {
+    const SECTOR: usize = 512;
+    const NONCE: u32 = 0x5eed_0001;
+    let conn = Connection::open(file).unwrap();
+    let mode: String = conn
+        .pragma_update_and_check(None, "journal_mode", "DELETE", |row| row.get(0))
+        .unwrap();
+    assert_eq!(mode, "delete");
+    let page_size: u32 = conn
+        .pragma_query_value(None, "page_size", |row| row.get(0))
+        .unwrap();
+    let pages: u32 = conn
+        .pragma_query_value(None, "page_count", |row| row.get(0))
+        .unwrap();
+    drop(conn);
+    let size = page_size as usize;
+    let mut bytes = std::fs::read(file).unwrap();
+    let first = bytes[..size].to_vec();
+    let mut journal = vec![0u8; SECTOR];
+    journal[..8].copy_from_slice(&[0xd9, 0xd5, 0x05, 0xf9, 0x20, 0xa1, 0x63, 0xd7]);
+    journal[8..12].copy_from_slice(&1u32.to_be_bytes());
+    journal[12..16].copy_from_slice(&NONCE.to_be_bytes());
+    journal[16..20].copy_from_slice(&pages.to_be_bytes());
+    journal[20..24].copy_from_slice(&(SECTOR as u32).to_be_bytes());
+    journal[24..28].copy_from_slice(&page_size.to_be_bytes());
+    journal.extend_from_slice(&1u32.to_be_bytes());
+    journal.extend_from_slice(&first);
+    let checksum = (1..=(size - 1) / 200)
+        .map(|step| size - 200 * step)
+        .fold(NONCE, |sum, at| sum.wrapping_add(u32::from(first[at])));
+    journal.extend_from_slice(&checksum.to_be_bytes());
+    let mut path = file.as_os_str().to_owned();
+    path.push("-journal");
+    std::fs::write(PathBuf::from(path), journal).unwrap();
+    bytes[100..size].fill(0);
+    std::fs::write(file, bytes).unwrap();
+}
+
+#[tokio::test]
+async fn a_rollback_journal_left_by_a_crash_is_put_back_before_the_file_is_judged() {
+    let place = folder();
+    let db = open(&place.file);
+    db.write(WRITE, |tx| add(tx, 1)).await.unwrap();
+    db.close().await;
+    leave_hot_journal(&place.file);
+
+    let db = open(&place.file);
+    assert_eq!(ids(&db).await, [1]);
+    db.close().await;
+    let mut journal = place.file.as_os_str().to_owned();
+    journal.push("-journal");
+    assert!(!PathBuf::from(journal).exists());
 }

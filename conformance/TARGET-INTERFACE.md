@@ -164,6 +164,10 @@ stays because that thing is what it checks.
   are the subject.
 - `compliance/blob-store-rebuild.test.ts` moves the disk store's folder away
   before a restart. No door or fault removes a store's folder.
+- `compliance/one-server.test.ts` makes a second hard link to the database and
+  opens the lock files beside the database and in the disk store's folder to
+  the server's group before a restart. No door or fault links the database or
+  changes a file's mode, and the files' links and modes are the subject.
 - `device/damaged-store.test.ts` overwrites the page of a device's store that
   holds one table's rows, writes a queued write that only the store's log
   holds, as a crash leaves it, empties a store's file while its log holds every

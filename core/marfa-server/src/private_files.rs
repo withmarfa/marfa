@@ -302,8 +302,45 @@ pub struct Kept {
     blobs_made: bool,
 }
 
+/// The server's files, judged without a change to any of them.
+pub struct Judged {
+    files: Vec<PathBuf>,
+    blobs: PathBuf,
+    /// The blob folder, by the path it was reached on, where it is there.
+    blob_folder: Option<(File, PathBuf)>,
+    me: u32,
+}
+
+impl Judged {
+    /// Whether the blob folder is there, and the server's account owns it.
+    pub fn has_blob_folder(&self) -> bool {
+        self.blob_folder.is_some()
+    }
+
+    /// Makes what is the server's private, once nothing refuses the start.
+    pub fn keep(self) -> Result<Kept, Failure> {
+        let blobs_made = match &self.blob_folder {
+            Some((opened, path)) => {
+                secure_blob_folder(opened, path, self.me)?;
+                false
+            }
+            None => true,
+        };
+        // Only before SQLite opens them: closing any descriptor on a file drops the locks this
+        // process holds on it. SQLite makes the ones still missing under the umask, in a folder
+        // that passes nothing on.
+        self.files
+            .iter()
+            .try_for_each(|file| secure(file, self.me))?;
+        Ok(Kept {
+            blobs: self.blobs,
+            blobs_made,
+        })
+    }
+}
+
 impl Kept {
-    pub fn closed(database_path: &DatabasePath, blobs: &Path) -> Result<Kept, Failure> {
+    pub fn judged(database_path: &DatabasePath, blobs: &Path) -> Result<Judged, Failure> {
         let me = me();
         let mut files = Vec::new();
         let mut data = None;
@@ -317,6 +354,7 @@ impl Kept {
                 .file_name()
                 .ok_or_else(|| refused(&database, "does not end in a file name"))?;
             files.push(secrets.folder.join(&secrets.name));
+            // Not `.server-lock`, already locked: on NFS or CIFS closing any descriptor drops it.
             files.extend(
                 [
                     "",
@@ -350,23 +388,17 @@ impl Kept {
         } else {
             None
         };
-        let blobs_made = match opened {
+        match &opened {
             Some(opened) => {
-                secure_blob_folder(&opened, &path, me)?;
-                false
+                judge_blob_folder(opened, &path, me)?;
             }
-            None => {
-                holds_new_files(&reached.folder, me)?;
-                true
-            }
-        };
-        // Only before SQLite opens them: closing any descriptor on a file drops the locks this
-        // process holds on it. SQLite makes the ones still missing under the umask, in a folder
-        // that passes nothing on.
-        files.iter().try_for_each(|file| secure(file, me))?;
-        Ok(Kept {
+            None => holds_new_files(&reached.folder, me)?,
+        }
+        Ok(Judged {
+            files,
             blobs: blobs.to_path_buf(),
-            blobs_made,
+            blob_folder: opened.map(|opened| (opened, path)),
+            me,
         })
     }
 
@@ -503,7 +535,7 @@ fn secure(path: &Path, me: u32) -> Result<(), Failure> {
 }
 
 /// The store writes inside this folder, so it must be one the server can keep private.
-fn secure_blob_folder(file: &File, path: &Path, me: u32) -> Result<(), Failure> {
+fn judge_blob_folder(file: &File, path: &Path, me: u32) -> Result<Metadata, Failure> {
     let found = read(file, path)?;
     if !found.is_dir() {
         return Err(refused(path, "is not a folder"));
@@ -515,6 +547,11 @@ fn secure_blob_folder(file: &File, path: &Path, me: u32) -> Result<(), Failure> 
              own. Give it to the server's account with `chown`.",
         ));
     }
+    Ok(found)
+}
+
+fn secure_blob_folder(file: &File, path: &Path, me: u32) -> Result<(), Failure> {
+    let found = judge_blob_folder(file, path, me)?;
     close(file, &found, path)?;
     match exposure(file, path)? {
         None => Ok(()),
@@ -543,7 +580,7 @@ mod tests {
     }
 
     fn kept(data: &Path, blobs: &Path) -> Result<Kept, Failure> {
-        Kept::closed(&DatabasePath::File(data.join("marfa.db")), blobs)
+        Kept::judged(&DatabasePath::File(data.join("marfa.db")), blobs)?.keep()
     }
 
     #[test]
@@ -569,6 +606,22 @@ mod tests {
             assert!(failure.message.contains("symbolic link"), "{failure}");
         }
         assert_eq!(mode(&outside), 0o755);
+    }
+
+    #[test]
+    fn the_databases_lock_file_is_left_to_the_lock_and_not_opened_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let (file, lock) = (
+            dir.path().join("marfa.db"),
+            dir.path().join("marfa.db.server-lock"),
+        );
+        fs::write(&file, "").unwrap();
+        fs::write(&lock, "").unwrap();
+        chmod(&file, 0o644);
+        chmod(&lock, 0o644);
+        kept(dir.path(), &dir.path().join("blobs")).unwrap();
+        // The witness: the database beside it is made private in the same start.
+        assert_eq!((mode(&file), mode(&lock)), (0o600, 0o644));
     }
 
     #[test]
@@ -796,7 +849,9 @@ mod tests {
             DatabasePath::Uri("file::memory:".into()),
             DatabasePath::Uri("file:marfa.db?mode=memory".into()),
         ] {
-            Kept::closed(&memory, &private.join("blobs")).unwrap();
+            Kept::judged(&memory, &private.join("blobs"))
+                .and_then(Judged::keep)
+                .unwrap();
         }
         assert_eq!(fs::read_dir(&open).unwrap().count(), 0);
     }
