@@ -1125,13 +1125,14 @@ describe("the answers of the plain stream and the order its checks run in", () =
     const narrow = await client.createKey({
       label: "events-contract-narrow",
       source: `${ctx.source}-narrow`,
-      type_permissions: { "core.task": "read" },
+      type_permissions: { "core.task": "read", "user.*": "read" },
       edge_permissions: {},
       extension_permissions: {},
     });
     expect(narrow.ok).toBe(true);
     trackKey(ctx, narrow.data.id);
     const key = narrow.data.key;
+    // The key reads user.*, so an unregistered user name is one it reads; core.note is one it does not.
 
     // The witness: the type the key reads opens a stream.
     expect((await askEvents(key, { query: "type=core.task" })).status).toBe(
@@ -1139,7 +1140,7 @@ describe("the answers of the plain stream and the order its checks run in", () =
     );
 
     const unknown = await askEvents(key, {
-      query: "type=core.nothing_registers_this",
+      query: "type=user.nothing_registers_this",
     });
     expect(unknown.status).toBe(400);
     expect(unknown.code).toBe("unknown_type");
@@ -1150,23 +1151,23 @@ describe("the answers of the plain stream and the order its checks run in", () =
 
     // One request that meets both: the entry first in the list decides.
     const unknownFirst = await askEvents(key, {
-      query: "type=core.nothing_registers_this,core.note",
+      query: "type=user.nothing_registers_this,core.note",
     });
     expect(unknownFirst.status).toBe(400);
     expect(unknownFirst.code).toBe("unknown_type");
     const unreadableFirst = await askEvents(key, {
-      query: "type=core.note,core.nothing_registers_this",
+      query: "type=core.note,user.nothing_registers_this",
     });
     expect(unreadableFirst.status).toBe(403);
     expect(unreadableFirst.code).toBe("type_not_permitted");
 
     // And a malformed entry is read as it is reached, not ahead of the rest.
     const malformedLast = await askEvents(key, {
-      query: "type=core.nothing_registers_this,Not-A-Type!",
+      query: "type=user.nothing_registers_this,Not-A-Type!",
     });
     expect(malformedLast.code).toBe("unknown_type");
     const malformedFirst = await askEvents(key, {
-      query: "type=Not-A-Type!,core.nothing_registers_this",
+      query: "type=Not-A-Type!,user.nothing_registers_this",
     });
     expect(malformedFirst.code).toBe("validation_error");
   });

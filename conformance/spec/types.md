@@ -58,7 +58,7 @@ If an item write, a listing filter or `POST /types` names a type identifier the 
 
 ### `types/id-unknown`
 
-If an item write or a listing filter names a well-formed type identifier nothing registered, then the server MUST answer `400 unknown_type`.
+If an item write, or a listing filter whose credential's type map reads the name, names a well-formed type identifier nothing registered, then the server MUST answer `400 unknown_type`.
 
 **Tests:** `compliance/type-registry.test.ts › rejects item with an unregistered type`, `compliance/type-identifier-validation.test.ts › accepts community type format (acme.deal)`, `compliance/validation.test.ts › rejects deep multi-segment type identifiers as unknown`.
 

@@ -32,6 +32,8 @@ let taskId: string;
 let eventId: string;
 /** Reads and writes `core.entity.person` and nothing else. */
 let personKey: string;
+/** Reads every `core.*` type, so its map reaches a name nothing registers under `core`. */
+let wildcardKey: string;
 let personId: string;
 let placeId: string;
 
@@ -44,6 +46,9 @@ interface Seen {
   status: number;
   code: string | undefined;
   grant: { kind?: string; name?: string; level?: string } | undefined;
+  /** The refusal's message and details, whole, as the server sent them. */
+  message?: string;
+  details?: unknown;
   /** The ids of the items the answer holds, from a page or an export. */
   ids: string[];
   /** The types of those items. */
@@ -89,7 +94,11 @@ function read(status: number, contentType: string, text: string): Seen {
     return { status, code: undefined, grant: undefined, ...pick(rows) };
   }
   const body = JSON.parse(text) as {
-    error?: { code?: string; details?: { grant?: Seen["grant"] } };
+    error?: {
+      code?: string;
+      message?: string;
+      details?: { grant?: Seen["grant"] };
+    };
     data?: Row[];
     ids?: string[];
   };
@@ -98,6 +107,8 @@ function read(status: number, contentType: string, text: string): Seen {
     status,
     code: body.error?.code,
     grant: body.error?.details?.grant,
+    message: body.error?.message,
+    details: body.error?.details,
     ids: body.ids ?? ids,
     types,
   };
@@ -128,6 +139,16 @@ beforeAll(async () => {
   expect(personMinted.ok).toBe(true);
   trackKey(ctx, personMinted.data.id);
   personKey = personMinted.data.key;
+  const wildcardMinted = await client.createKey({
+    label: "unreadable-type-filter-wildcard",
+    source: `${ctx.source}-unreadable-type-filter-wildcard`,
+    type_permissions: { "core.*": "read" },
+    edge_permissions: {},
+    extension_permissions: {},
+  });
+  expect(wildcardMinted.ok).toBe(true);
+  trackKey(ctx, wildcardMinted.data.id);
+  wildcardKey = wildcardMinted.data.key;
 
   const seed = async (input: Parameters<MarfaClient["createItem"]>[0]) => {
     const r = await client.createItem({ ...input, source: ctx.source });
@@ -233,6 +254,14 @@ const DOORS: {
   },
 ];
 
+/** Every door that names a type to read, beside the lookup. */
+const LOOKUP_DOOR = {
+  name: "POST /items/lookup",
+  ask: (t: string, as: string) =>
+    ask(as, "POST", "/items/lookup", { type: t, ids: [taskId] }),
+};
+const READ_DOORS = [...DOORS, LOOKUP_DOOR];
+
 /** The doors that take a wildcard, and so refuse an unregistered type too. */
 const FILTER_DOORS = DOORS.filter((d) => !d.name.startsWith("POST"));
 
@@ -299,14 +328,52 @@ describe("the bulk action asks about reading, not writing", () => {
   });
 });
 
-describe("a type nothing registers is refused as unknown", () => {
+describe("a type nothing registers is refused as unknown to a key whose map reads the name", () => {
   it.each(FILTER_DOORS)(
-    "$name answers 400 unknown_type, whatever the key reads",
+    "$name answers 400 unknown_type to a key whose map reads the name",
     async (door) => {
-      for (const as of [key, apiKey]) {
+      for (const as of [wildcardKey, apiKey]) {
         const seen = await door.ask(UNREGISTERED, as);
         expect(seen.status).toBe(400);
         expect(seen.code).toBe("unknown_type");
+      }
+    },
+  );
+
+  it.each(READ_DOORS)(
+    "$name answers a type nothing registers as it answers a registered type the key may not read",
+    async (door) => {
+      const named = (seen: Seen, type: string) =>
+        JSON.stringify({
+          status: seen.status,
+          code: seen.code,
+          message: seen.message,
+          details: seen.details,
+        }).replaceAll(type, "<type>");
+      // The witness: the registered type is refused, and a key whose map
+      // reads the unregistered name is told it is unknown, so each answer
+      // below is the key's grant and not the door's.
+      const refused = await door.ask(UNREADABLE, key);
+      expect(refused.status).toBe(403);
+      expect(refused.code).toBe("type_not_permitted");
+      if (door !== DOORS[6]) {
+        const unknown = await door.ask(UNREGISTERED, wildcardKey);
+        expect(unknown.status).toBe(400);
+        expect(unknown.code).toBe("unknown_type");
+      }
+      for (const as of [key, personKey]) {
+        const unreadable = await door.ask(UNREADABLE, as);
+        const unregistered = await door.ask(UNREGISTERED, as);
+        expect(unregistered.status).toBe(403);
+        expect(unregistered.code).toBe("type_not_permitted");
+        expect(unregistered.grant).toMatchObject({
+          kind: "type",
+          name: UNREGISTERED,
+          level: "read",
+        });
+        expect(named(unregistered, UNREGISTERED)).toBe(
+          named(unreadable, UNREADABLE),
+        );
       }
     },
   );
@@ -534,7 +601,7 @@ describe("POST /items/lookup refuses a type the key may not read", () => {
     expect(refused.status).toBe(403);
     expect(refused.code).toBe("type_not_permitted");
     expect(refused.grant).toMatchObject({ kind: "type", name: UNREADABLE });
-    const unknown = await lookup(key, UNREGISTERED);
+    const unknown = await lookup(wildcardKey, UNREGISTERED);
     expect(unknown.status).toBe(400);
     expect(unknown.code).toBe("unknown_type");
     // The witness: a key that reads the type is answered the item.
@@ -754,7 +821,7 @@ describe("a wildcard answers the types it matches that the key may read", () => 
     const refused = await DOORS[5]!.ask("core.*,core.note", key);
     expect(refused.status).toBe(403);
     expect(refused.code).toBe("type_not_permitted");
-    const unknown = await DOORS[5]!.ask(`core.*,${UNREGISTERED}`, key);
+    const unknown = await DOORS[5]!.ask(`core.*,${UNREGISTERED}`, wildcardKey);
     expect(unknown.status).toBe(400);
     expect(unknown.code).toBe("unknown_type");
   });

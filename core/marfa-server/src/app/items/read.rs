@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 
 use super::plan::{self, Act, Asked, Gate};
 use super::{
-    Door, Item, Keys, check_keys, extensions_text, metadata_for, name_of, not_found, rows,
+    Door, Item, Keys, check_links, extensions_text, metadata_for, name_of, not_found, rows,
     summary_of, with_blocks,
 };
 use crate::app::App;
@@ -22,7 +22,7 @@ use crate::app::connectors::{ReadOnly, read_only};
 use crate::app::edges::{self, Reach};
 use crate::app::faults::{Faults, HOLD_READ_HYDRATION, HOLD_READ_SNAPSHOT};
 use crate::app::housekeeping::DAY_MS;
-use crate::app::query::{Secret, States, bad_cursor};
+use crate::app::query::{Secret, States, bad_cursor, judge_type};
 use crate::app::refusal::Result;
 use crate::settings::registry::TRASH_RETENTION_DAYS;
 
@@ -859,17 +859,9 @@ pub async fn lookup(
             Selector::Keys(keys) => Some(keys),
             Selector::Ids(_) => None,
         };
-        check_keys(&read.catalog, &type_id, keys)?;
+        judge_type(read, &type_id)?;
+        check_links(&read.catalog, &type_id, keys)?;
         let readable = read.caller.may_read_type(&type_id);
-        if !readable
-            && !read
-                .catalog
-                .rules
-                .descendants(&type_id)
-                .any(|below| read.caller.may_read_type(below))
-        {
-            read.caller.require_type(&type_id, Level::Read)?;
-        }
         let found = read.found_by(&type_id, &selector)?;
         read.hydrating();
         let mut data = Vec::with_capacity(found.len());
