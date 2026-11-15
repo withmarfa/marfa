@@ -141,7 +141,7 @@ pub fn judge(read: &Reader<'_, '_>, ask: &Ask) -> Result<()> {
     judge_terms(read, ask)
 }
 
-/// A type the caller reads neither itself nor below it is not permitted, whether or not the catalog holds it; one the caller may read that the catalog lacks is unknown.
+/// A type the caller reads neither itself nor below it is not permitted, registered or not; a readable one the catalog lacks is unknown.
 pub(crate) fn judge_type(read: &Reader<'_, '_>, entry: &str) -> Result<()> {
     let rules = &read.catalog.rules;
     if !(entry.ends_with(".*")

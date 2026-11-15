@@ -478,7 +478,7 @@ When the server answers `403 forbidden` to an extension operation because a key 
 
 If a read names a type that nothing registers and the credential's type map does not let it read the name, then the server MUST answer as it answers a registered type the credential may not read: `403 type_not_permitted` with the same message and `details`, apart from the identifier, on the `type` of `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` and `GET /occurrences`, each entry of the `type` list of `GET /events`, the `type` of `POST /items/lookup` and the `filter.type` of `POST /items/bulk-actions`.
 
-**Reason:** a read refused for a type the credential may not read says the same whether or not the type exists, so a credential that holds no grant on a name learns nothing about it. A credential whose map reads the name is answered `400 unknown_type` (`search-and-filters/type-unknown`).
+**Reason:** the credential's type map is asked before the registry, so one rule decides a read the map refuses at every door, whether or not the type exists. A credential whose map reads the name is answered `400 unknown_type` (`search-and-filters/type-unknown`).
 
 **Tests:** `compliance/unreadable-type-filter.test.ts › $name answers a type nothing registers as it answers a registered type the key may not read`.
 
