@@ -210,7 +210,7 @@ describe("scripts/prune-caches.ts", () => {
     );
     chmodSync(join(bin, "gh"), 0o755);
     let status = 0;
-    let output = "";
+    let output: string;
     try {
       output = execFileSync("node", [SCRIPT, ...args], {
         encoding: "utf8",
