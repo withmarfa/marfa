@@ -402,7 +402,7 @@ If a `type` entry is refused with `400 validation_error`, then the server MUST n
 
 ### `events/type-unknown`
 
-If a `type` entry is a concrete identifier no type registers, then the server MUST answer `400 unknown_type`.
+If a `type` entry is a concrete identifier no type registers and the credential's type map reads it, then the server MUST answer `400 unknown_type`.
 
 **Tests:** `compliance/events-contract.test.ts › answers 400 unknown_type to a type nothing registers and 403 type_not_permitted to one the key may not read, taking the entries of a list in order`, `compliance/unreadable-type-filter.test.ts › GET /events holds each entry of a list to the rule`.
 

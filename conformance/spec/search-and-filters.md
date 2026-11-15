@@ -150,11 +150,11 @@ If the `type` of `GET /items`, `GET /items/stats`, `GET /search`, `GET /export` 
 
 ### `search-and-filters/type-unknown`
 
-If a credential that reaches some type sends a `type` filter with an entry naming a well-formed concrete type that nothing registers, then the server MUST answer `400 unknown_type` on `GET /items`, `GET /items/stats`, `GET /search`, `GET /export`, `GET /occurrences` and `GET /events`.
+If a credential whose type map reads a well-formed concrete type that nothing registers sends a `type` filter with an entry naming it, then the server MUST answer `400 unknown_type` on `GET /items`, `GET /items/stats`, `GET /search`, `GET /export`, `GET /occurrences` and `GET /events`.
 
 **Reason:** an empty page is the one answer a client cannot tell from a quiet instance, so a mistyped name, a type registered under another handle and a type deleted since the client last read the registry would all read as nothing here. A wildcard is not refused, because what it names may be nothing (`search-and-filters/type-wildcard-none`).
 
-**Tests:** `compliance/unreadable-type-filter.test.ts › $name answers 400 unknown_type, whatever the key reads`, `› GET /events holds each entry of a list to the rule`, `correctness/pagination.test.ts › a nonexistent type is refused rather than answered with an empty page`, `compliance/item-stats.test.ts › counts the items a listing's filters match`, `compliance/filter-lists.test.ts › refuses the list for an entry it would refuse alone`.
+**Tests:** `compliance/unreadable-type-filter.test.ts › $name answers 400 unknown_type to a key whose map reads the name`, `› GET /events holds each entry of a list to the rule`, `correctness/pagination.test.ts › a nonexistent type is refused rather than answered with an empty page`, `compliance/item-stats.test.ts › counts the items a listing's filters match`, `compliance/filter-lists.test.ts › refuses the list for an entry it would refuse alone`.
 
 ### `search-and-filters/type-bulk-unregistered`
 
@@ -1776,7 +1776,7 @@ If a `POST /items/lookup` body names a `type` that is malformed, a wildcard incl
 
 ### `search-and-filters/lookup-unknown-type`
 
-If a `POST /items/lookup` body names a well-formed `type` that nothing registers, then the server MUST answer `400 unknown_type`.
+If a `POST /items/lookup` body names a well-formed `type` that nothing registers and the credential's type map reads it, then the server MUST answer `400 unknown_type`.
 
 **Tests:** `compliance/links.test.ts › refuses a lookup naming no selector, two, or more than 500 values`, `compliance/unreadable-type-filter.test.ts › answers 403 where it used to answer an empty 200, and 400 for an unregistered type`.
 
