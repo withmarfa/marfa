@@ -4759,7 +4759,7 @@ describe("writing", () => {
         ],
       },
       events: [
-        // Another machine moves the item's own time, which no file carries.
+        // Another machine moves the item's own time, which the file as read does not show.
         copyLiveReplay("2", [row(2, "as read\n", "2026-09-19T00:00:00.000Z")]),
         copyLiveReplay("2", []),
         copyLiveReplay("4", [row(4, "theirs\n", "2026-09-19T00:00:00.000Z")]),
@@ -4808,7 +4808,10 @@ describe("writing", () => {
     ).toBe(
       written
         .replace("as read", "mine")
-        .replace("marfa_version: 1", "marfa_version: 3"),
+        .replace(
+          "marfa_version: 1",
+          'marfa_version: 3\noccurred_at: "2026-09-19T00:00:00.000Z"',
+        ),
     );
 
     // And a pull that writes the file anyway writes the line with it.
