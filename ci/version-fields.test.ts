@@ -269,7 +269,7 @@ describe("no file holds a version", () => {
     // read here without anyone adding it; counted, so one that is dropped
     // is noticed.
     const dirs = publishedDirs(manifests);
-    expect(dirs).toEqual(["core/bindings/node", "packages/client"]);
+    expect(dirs).toEqual(["packages/client"]);
     expect(publishedReadmes(dirs).map((f) => f.path)).toEqual([
       "packages/client/README.md",
     ]);

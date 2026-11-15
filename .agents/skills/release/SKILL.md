@@ -1,6 +1,6 @@
 ---
 name: release
-description: Cut, check or repair a Marfa release. Tags the next version on a green commit of main, follows release.yml job by job, checks the six release files, the server image, the npm packages and the Homebrew tap, and finishes a failed or partial run. Use when asked to release, tag a version, check a release, or fix a release run.
+description: Cut, check or repair a Marfa release. Tags the next version on a green commit of main, follows release.yml job by job, checks the five release files, the server image, the npm package and the Homebrew tap, and finishes a failed or partial run. Use when asked to release, tag a version, check a release, or fix a release run.
 ---
 
 # Cut a Marfa release
@@ -57,19 +57,19 @@ Each job is named as GitHub shows it.
 
 1. **Require green CI** and **Require green Core:** for a tag, a successful `ci.yml` run for the commit on `main`, from a push or a dispatch (a dry run accepts a green run of any event), and a successful `core.yml` run for it or for the nearest run before it with no core change since (`scripts/release/require-core-run.sh`).
 2. **Read the version:** the gate in [The version](#the-version). It also refuses a version when a higher one is released, and a commit that is not after the previous release's.
-3. **Build the programs (macOS),** on `macos-26`: stamps the version, packs `@withmarfa/core` (the Apple silicon `.node` module) and `@withmarfa/client`, and builds `marfa` and `marfa-server` for `aarch64-apple-darwin` with `scripts/release/build-programs.sh`. Each program must report `<program> <version>`.
+3. **Build the programs (macOS),** on `macos-26`: stamps the version, packs `@withmarfa/client`, and builds `marfa` and `marfa-server` for `aarch64-apple-darwin` with `scripts/release/build-programs.sh`. Each program must report `<program> <version>`.
 4. **Sign the programs:** signs both with the Developer ID under the hardened runtime and has Apple notarize them (`scripts/release/sign-binary.sh`, six `APPLE_*` secrets, which belong in the `release` environment; a dry run signs ad hoc, with no identity and no notarization), packs `marfa-<version>-darwin-arm64.tar.gz`, boots it and reads a PDF and a picture with it (`check-archive.sh`, `prove-reading.sh`).
 5. **Build the programs (x86_64 Linux)** and **(aarch64 Linux):** static musl builds in the pinned build image, packed as `marfa-<version>-linux-x86_64.tar.gz` and `marfa-<version>-linux-aarch64.tar.gz`. These programs are not signed.
 6. **Run the programs (x86_64 Linux)** and **(aarch64 Linux):** each archive booted and reading files on a runner of its own architecture.
-7. **Collect the release:** writes the three archives' checksums to `marfa-<version>-checksums.txt`, writes the Homebrew formula from them, and holds the release to six files: the three archives, the checksums and the two npm tarballs.
+7. **Collect the release:** writes the three archives' checksums to `marfa-<version>-checksums.txt`, writes the Homebrew formula from them, and holds the release to five files: the three archives, the checksums and the `@withmarfa/client` tarball.
 8. **Build the server image (linux/amd64)** and **(linux/arm64):** `deploy/Dockerfile` around the Linux archives' own programs, checked with `scripts/check-image.sh`. A tag run pushes each platform to `ghcr.io/withmarfa/marfa-server` by digest, untagged, and boots the pushed digest.
 9. **Prove the install (darwin-arm64)**, **(linux-x86_64)** and **(linux-aarch64):** `scripts/release/install-proof.sh` installs through `scripts/install.sh` from the run's own files, behind HTTPS, claims the server, and runs it to uninstall. The modes are a user service on the Mac and on aarch64 Linux, and a root install and Docker on x86_64 Linux.
-10. **Publish,** for a tag only: requires an npm that publishes by trusted publishing and npm's trust for this run; drafts the GitHub release for this commit (`--target`) with the six files and notes made of `scripts/release/upgrade-note.md` and the generated list of pull requests; checks the draft's archives against its checksums; tags the image `<version>` and `latest`, attests the archives, the checksum file and the image (the index and each platform) with GitHub build provenance, and pulls the image signed out; publishes `@withmarfa/core` and `@withmarfa/client` to npm with provenance; then makes the release public.
+10. **Publish,** for a tag only: requires an npm that publishes by trusted publishing and npm's trust for this run; drafts the GitHub release for this commit (`--target`) with the five files and notes made of `scripts/release/upgrade-note.md` and the generated list of pull requests; checks the draft's archives against its checksums; tags the image `<version>` and `latest`, attests the archives, the checksum file and the image (the index and each platform) with GitHub build provenance, and pulls the image signed out; publishes `@withmarfa/client` to npm with provenance; then makes the release public.
 11. **Update the Homebrew tap,** for a tag only: writes `Formula/marfa.rb` for `withmarfa/homebrew-tap`, and pushes it only when the repository variable `HOMEBREW_TAP` is `publish`. Otherwise it writes the formula into the log, says it was not pushed, and passes.
 
 ## Check the release
 
-1. The release is public and holds exactly the six files:
+1. The release is public and holds exactly the five files:
 
    ```bash
    gh release view v<version> --json isDraft,assets --jq '.isDraft, .assets[].name'
@@ -92,7 +92,7 @@ Each job is named as GitHub shows it.
      --signer-workflow withmarfa/marfa/.github/workflows/release.yml --source-ref refs/tags/v<version>
    ```
 
-3. Both packages are on npm: `npm view @withmarfa/client@<version> version` and `npm view @withmarfa/core@<version> version`.
+3. The package is on npm: `npm view @withmarfa/client@<version> version`. `@withmarfa/core` is no longer published, and the release neither builds nor checks it.
 4. If step 5 of [Before you tag](#before-you-tag) wrote anything, add it to the notes. `gh release edit --notes-file` replaces the whole body, so write the current body to a file first (`gh release view v<version> --json body --jq .body`), add the words, and edit with that file.
 5. The tap: `gh variable list` shows whether `HOMEBREW_TAP` is `publish`, and the formula the tap holds names its version:
 

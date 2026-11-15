@@ -80,7 +80,6 @@ const releaseArtifacts = [
   `marfa-${version}-linux-aarch64.tar.gz`,
   `marfa-${version}-linux-x86_64.tar.gz`,
   `withmarfa-client-${version}.tgz`,
-  `withmarfa-core-${version}.tgz`,
 ];
 
 function holdArtifacts(names: string[]): void {
@@ -106,12 +105,12 @@ function holdArtifacts(names: string[]): void {
   }
 }
 
-describe("a release carries the three archives, their checksums and two npm packages", () => {
+describe("a release carries the three archives, their checksums and the npm package", () => {
   it("publishes only on a tag push, so a dispatch builds without publishing", () => {
     expect(release.jobs?.publish?.if).toBe("github.event_name == 'push'");
   });
 
-  it("accepts exactly the six product artifacts", () => {
+  it("accepts exactly the five product artifacts", () => {
     expect(() => {
       holdArtifacts(releaseArtifacts);
     }).not.toThrow();
@@ -127,6 +126,20 @@ describe("a release carries the three archives, their checksums and two npm pack
     expect(() => {
       holdArtifacts(releaseArtifacts.slice(1));
     }).toThrow();
+  });
+
+  it("refuses a tarball of the Node binding, which a release no longer publishes", () => {
+    expect(() => {
+      holdArtifacts([...releaseArtifacts, `withmarfa-core-${version}.tgz`]);
+    }).toThrow();
+  });
+
+  it("builds, packs and lists no package for the Node binding", () => {
+    const workflow = readFileSync(join(WORKFLOWS, "release.yml"), "utf8");
+    expect(workflow).not.toMatch(
+      /withmarfa-core|@withmarfa\/core|hold-platform/,
+    );
+    expect(workflow).not.toContain("bindings/node");
   });
 
   it("refuses an Intel Mac archive, which a release no longer carries", () => {
@@ -145,7 +158,8 @@ describe("a release carries the three archives, their checksums and two npm pack
       ?.map((step) => (typeof step.run === "string" ? step.run : ""))
       .join("\n");
     expect(scripts).toContain("npm publish");
-    expect(scripts).toContain("@withmarfa/core @withmarfa/client");
+    expect(scripts).toContain("for name in @withmarfa/client; do");
+    expect(scripts).not.toContain("@withmarfa/core");
     expect(scripts).not.toMatch(/crates\.io|cargo publish|outputs\.crate/);
     expect(publish?.map((step) => step.uses)).not.toContain(
       "rust-lang/crates-io-auth-action@v1",

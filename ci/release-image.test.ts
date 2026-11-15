@@ -151,7 +151,7 @@ describe("the server image in a release", () => {
       publishSteps,
       "Check the published server image",
     );
-    const npm = indexOfStep(publishSteps, "Publish @withmarfa/core");
+    const npm = indexOfStep(publishSteps, "Publish @withmarfa/client");
     const open = indexOfStep(publishSteps, "Make the GitHub release public");
     const draft = indexOfStep(publishSteps, "Draft the GitHub release");
     expect(draft).toBeLessThan(tag);

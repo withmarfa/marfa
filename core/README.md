@@ -17,7 +17,7 @@ The contract says what each part does: `conformance/spec/device.md`, `queue-and-
 | `marfa-acl`        | Checks the folders on the way to a private path                          |
 | `marfa-allocator`  | The memory allocator of `marfa` and `marfa-server`                       |
 | `bindings/swift`   | The Swift binding, which `withmarfa/marfa-swift` packages                |
-| `bindings/node`    | The Node module `@withmarfa/core`                                        |
+| `bindings/node`    | The Node module the contract's device fixtures drive, not published      |
 
 ## Where to read more
 

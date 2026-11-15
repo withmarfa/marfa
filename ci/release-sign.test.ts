@@ -168,7 +168,7 @@ describe("the release signs the programs in a job of its own", () => {
   });
 });
 
-describe("the build hands on exactly the programs and the two packages", () => {
+describe("the build hands on exactly the programs and the package", () => {
   const hold = jobs()["programs-macos"].steps.find((step) =>
     (step.run ?? "").includes("hold-artifacts.sh"),
   )?.run;
@@ -188,14 +188,9 @@ describe("the build hands on exactly the programs and the two packages", () => {
     }
   }
 
-  const build = [
-    "NOTICES.txt",
-    ...PROGRAMS,
-    "withmarfa-client-0.0.9.tgz",
-    "withmarfa-core-0.0.9.tgz",
-  ];
+  const build = ["NOTICES.txt", ...PROGRAMS, "withmarfa-client-0.0.9.tgz"];
 
-  it("accepts the unsigned programs beside the two packages", () => {
+  it("accepts the unsigned programs beside the package", () => {
     expect(holdBuild(build)).toBe(0);
   });
 
