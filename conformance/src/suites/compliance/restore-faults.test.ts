@@ -201,8 +201,8 @@ async function expectAllOf(rows: Carried): Promise<void> {
 }
 
 /** The id of the newest event in the log. */
-async function eventCursor(): Promise<string> {
-  return baselineEventId(server.apiUrl, server.workingKey);
+async function eventCursor(signal: AbortSignal): Promise<string> {
+  return baselineEventId(server.apiUrl, server.workingKey, signal);
 }
 
 function edgeIdOf(event: SseEvent): string | undefined {
@@ -284,16 +284,16 @@ describe("a restore that does not finish", () => {
     expect(await diskHolds(server.controlSocket, rows.hash)).toBe(true);
   });
 
-  it.each([
+  it.for([
     { fault: "fail:audit=restore_archive", status: 500 },
     { fault: "fail:commit=restore_archive", status: 500 },
     { fault: "fail:commit-full=restore_archive", status: 507 },
     { fault: "fail:blob-write", status: 507 },
   ])(
     "leaves no item, type, edge type, event or audit record when a write fails ($fault), the next blob-integrity run removes the bytes it placed, and it restores whole when tried again",
-    async ({ fault, status }) => {
+    async ({ fault, status }, { signal }) => {
       const rows = carrying();
-      const eventId = await eventCursor();
+      const eventId = await eventCursor(signal);
       const since = new Date().toISOString();
       await server.setFault(fault);
       const refused = await ownerClient().restoreArchive(rows.archive);
@@ -319,9 +319,11 @@ describe("a restore that does not finish", () => {
     },
   );
 
-  it("leaves no item, type, edge type, event or audit record when the process stops while it writes, and the next copy cleanup removes the bytes it placed", async () => {
+  it("leaves no item, type, edge type, event or audit record when the process stops while it writes, and the next copy cleanup removes the bytes it placed", async ({
+    signal,
+  }) => {
     const rows = carrying();
-    const eventId = await eventCursor();
+    const eventId = await eventCursor(signal);
     const since = new Date().toISOString();
     await server.setFault("hold:restore:before-commit");
     const restoring = ownerClient()

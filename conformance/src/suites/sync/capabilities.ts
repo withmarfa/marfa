@@ -3,12 +3,16 @@ import type { MarfaClient } from "../../client/api.js";
 import type { TestContext } from "../../client/types.js";
 import { trackItem, trackEdge } from "../../utils/setup.js";
 import {
+  awaitStreamCursor,
   collectUntil,
   MUTATION_EVENT_NAMES,
   withStream,
-  withStreamAtCursor,
 } from "../../utils/stream.js";
-import type { SseEvent } from "../../utils/sse.js";
+import type {
+  EventStream,
+  OpenEventStreamOptions,
+  SseEvent,
+} from "../../utils/sse.js";
 
 /**
  * Why these probes read behavior rather than a status code or a spec.
@@ -90,6 +94,45 @@ export class IndeterminateProbe extends Error {
     );
     this.name = "IndeterminateProbe";
   }
+}
+
+const STREAM_PROBE_BUDGET_MS = 30_000;
+
+/**
+ * Open a stream for a probe, wait for its `stream_cursor`, and run `body`
+ * with the stream and a signal that bounds the whole probe.
+ *
+ * These probes run before `probeAnnouncedCursor` has said whether the server
+ * sends that frame at all. A server that sends none would leave them waiting
+ * until the hook's budget, or fail them with an error that names no probe, so
+ * a stream that opens without one is reported as an indeterminate probe, the
+ * way a refused subscription is.
+ */
+async function probeStreamAtCursor<T>(
+  rule: RuleKey,
+  apiUrl: string,
+  apiKey: string,
+  options: OpenEventStreamOptions,
+  body: (stream: EventStream, signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const signal = AbortSignal.timeout(STREAM_PROBE_BUDGET_MS);
+  return withStream(apiUrl, apiKey, options, async (stream) => {
+    if (stream.response.status !== 200) {
+      throw new IndeterminateProbe(
+        rule,
+        `the subscription answered ${stream.response.status} rather than opening`,
+      );
+    }
+    try {
+      await awaitStreamCursor(stream, signal);
+    } catch (err) {
+      throw new IndeterminateProbe(
+        rule,
+        `the subscription sent no usable stream_cursor to write after (${err instanceof Error ? err.message : String(err)})`,
+      );
+    }
+    return body(stream, signal);
+  });
 }
 
 const IMPOSSIBLE_FUTURE = "2099-01-01T00:00:00.000Z";
@@ -757,87 +800,94 @@ async function probeItemPurgedEvent(args: {
   apiKey: string;
 }): Promise<RuleFinding> {
   const { client, ctx, apiUrl, apiKey } = args;
-  return withStreamAtCursor(apiUrl, apiKey, {}, async (stream) => {
-    const created = await client.createItem({
-      type: "core.note",
-      source: ctx.source,
-      properties: { body: "probe-purge" },
-    });
-    if (!created.ok) {
-      throw new IndeterminateProbe(
-        "itemPurgedEvent",
-        `could not create the item to purge (${created.status})`,
-      );
-    }
-    const id = created.data.item.id;
-    // Tracked in case anything below throws; the purge removes it, and
-    // teardown tolerates an item that is already gone.
-    trackItem(ctx, id);
+  return probeStreamAtCursor(
+    "itemPurgedEvent",
+    apiUrl,
+    apiKey,
+    {},
+    async (stream, signal) => {
+      const created = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: "probe-purge" },
+      });
+      if (!created.ok) {
+        throw new IndeterminateProbe(
+          "itemPurgedEvent",
+          `could not create the item to purge (${created.status})`,
+        );
+      }
+      const id = created.data.item.id;
+      // Tracked in case anything below throws; the purge removes it, and
+      // teardown tolerates an item that is already gone.
+      trackItem(ctx, id);
 
-    const deleted = await client.deleteItem(id);
-    const purged = await client.purgeItem(id);
-    if (!deleted.ok || !purged.ok) {
-      throw new IndeterminateProbe(
-        "itemPurgedEvent",
-        `delete/purge did not succeed (${deleted.status}/${purged.status}), so the stream had nothing to announce`,
-      );
-    }
+      const deleted = await client.deleteItem(id);
+      const purged = await client.purgeItem(id);
+      if (!deleted.ok || !purged.ok) {
+        throw new IndeterminateProbe(
+          "itemPurgedEvent",
+          `delete/purge did not succeed (${deleted.status}/${purged.status}), so the stream had nothing to announce`,
+        );
+      }
 
-    const saw = (events: SseEvent[], name: string) =>
-      events.some(
-        (e) =>
-          e.event === name &&
-          (e.data as { item?: { id?: string } })?.item?.id === id,
-      );
-
-    // Waits for a sentinel written after the purge rather than for a quiet
-    // window, because `absent` here fails every test that requires the rule
-    // and a late frame would do that for the wrong reason. The sentinel is an
-    // item, like the frame it is ruling out: items reach a subscriber in
-    // publish order, so once the sentinel has arrived an `item.purged` that
-    // was going to come has come. It doubles as the control the window could
-    // not provide — a stream that never delivers it fails the probe rather
-    // than answering it.
-    const sentinel = await client.createItem({
-      type: "core.note",
-      source: ctx.source,
-      properties: { body: "probe-purge-sentinel" },
-    });
-    if (!sentinel.ok) {
-      throw new IndeterminateProbe(
-        "itemPurgedEvent",
-        `could not write the sentinel this probe waits for (${sentinel.status})`,
-      );
-    }
-    trackItem(ctx, sentinel.data.item.id);
-    const { events: settled } = await collectUntil(
-      stream,
-      (evts) =>
-        evts.some(
+      const saw = (events: SseEvent[], name: string) =>
+        events.some(
           (e) =>
-            (e.data as { item?: { id?: string } })?.item?.id ===
-            sentinel.data.item.id,
-        ),
-      `the sentinel written after purging ${id} to reach the stream`,
-    );
+            e.event === name &&
+            (e.data as { item?: { id?: string } })?.item?.id === id,
+        );
 
-    if (!saw(settled, "item.deleted")) {
-      throw new IndeterminateProbe(
-        "itemPurgedEvent",
-        `the stream never delivered item.deleted for ${id} either, so it was not carrying this dataset's events`,
+      // Waits for a sentinel written after the purge rather than for a quiet
+      // window, because `absent` here fails every test that requires the rule
+      // and a late frame would do that for the wrong reason. The sentinel is an
+      // item, like the frame it is ruling out: items reach a subscriber in
+      // publish order, so once the sentinel has arrived an `item.purged` that
+      // was going to come has come. It doubles as the control the window could
+      // not provide — a stream that never delivers it fails the probe rather
+      // than answering it.
+      const sentinel = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: "probe-purge-sentinel" },
+      });
+      if (!sentinel.ok) {
+        throw new IndeterminateProbe(
+          "itemPurgedEvent",
+          `could not write the sentinel this probe waits for (${sentinel.status})`,
+        );
+      }
+      trackItem(ctx, sentinel.data.item.id);
+      const { events: settled } = await collectUntil(
+        stream,
+        (evts) =>
+          evts.some(
+            (e) =>
+              (e.data as { item?: { id?: string } })?.item?.id ===
+              sentinel.data.item.id,
+          ),
+        `the sentinel written after purging ${id} to reach the stream`,
+        signal,
       );
-    }
-    if (saw(settled, "item.purged")) {
+
+      if (!saw(settled, "item.deleted")) {
+        throw new IndeterminateProbe(
+          "itemPurgedEvent",
+          `the stream never delivered item.deleted for ${id} either, so it was not carrying this dataset's events`,
+        );
+      }
+      if (saw(settled, "item.purged")) {
+        return {
+          present: true,
+          evidence: `purging ${id} delivered item.purged on a live subscription`,
+        };
+      }
       return {
-        present: true,
-        evidence: `purging ${id} delivered item.purged on a live subscription`,
+        present: false,
+        evidence: `purging ${id} delivered item.deleted but no item.purged, so a client offline across the purge is never told the item is gone`,
       };
-    }
-    return {
-      present: false,
-      evidence: `purging ${id} delivered item.deleted but no item.purged, so a client offline across the purge is never told the item is gone`,
-    };
-  });
+    },
+  );
 }
 
 /**
@@ -854,11 +904,12 @@ async function probeEdgeEventsUnderFilter(args: {
   apiKey: string;
 }): Promise<RuleFinding> {
   const { client, ctx, apiUrl, apiKey } = args;
-  return withStreamAtCursor(
+  return probeStreamAtCursor(
+    "edgeEventsUnderFilter",
     apiUrl,
     apiKey,
     { query: [["type", "core.note"]] },
-    async (stream) => {
+    async (stream, signal) => {
       const source = await client.createItem({
         type: "core.note",
         source: ctx.source,
@@ -917,6 +968,7 @@ async function probeEdgeEventsUnderFilter(args: {
               sentinel.data.item.id,
           ),
         `item.created for the sentinel note ${sentinel.data.item.id} on a type-filtered stream`,
+        signal,
       );
 
       const sawEdge = settled.some(

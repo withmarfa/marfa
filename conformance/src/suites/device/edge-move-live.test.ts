@@ -13,7 +13,7 @@ import {
   trackEdge,
   trackItem,
 } from "../../utils/setup.js";
-import { collectUntil, withStream } from "../../utils/stream.js";
+import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
 import { queuedEdit, requireBinary } from "./harness.js";
 
 /**
@@ -194,8 +194,7 @@ it("re-parents a note offline in one write a real server takes, never leaving it
     expect(await serverParents(child)).toEqual([first]);
 
     proxy.setOnline(true);
-    await withStream(apiUrl, apiKey, {}, async (stream) => {
-      await new Promise((settle) => setTimeout(settle, 200));
+    await withStreamAtCursor(apiUrl, apiKey, { signal }, async (stream) => {
       // A move of an edge's source changes the server's reach
       // (`reach/moves-edge-source`): the move is answered, and the copy expires.
       const drained = await device().drain();

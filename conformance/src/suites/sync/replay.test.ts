@@ -134,7 +134,7 @@ describe("replay", () => {
   });
 
   it("carries a bulk write, so a catch-up after an import is complete", async (context) => {
-    const markerId = await makeNote("replay-bulk-marker");
+    await makeNote("replay-bulk-marker");
     const eventId = await baselineEventId(apiUrl, apiKey, context.signal);
 
     // `enable_fanout: false` is the point of the case, not a detail. The flag
@@ -196,12 +196,17 @@ describe("replay", () => {
     const replayedIds = itemIds(events);
 
     // The control. A replay that ignored `Last-Event-ID` and dumped the whole
-    // log would contain the bulk items for the wrong reason, so the marker
-    // written immediately before the resume point must not be in the backlog.
+    // log would contain the bulk items for the wrong reason, so no replayed
+    // frame may carry an id at or below the cursor the stream resumed from.
+    const cursor = BigInt(eventId);
+    const atOrBefore = events
+      .map((e) => e.id)
+      .filter((id): id is string => typeof id === "string" && id !== "")
+      .filter((id) => BigInt(id) <= cursor);
     expect(
-      replayedIds.has(markerId),
-      "the replay carried an event at or before the resume point, so it is not honoring Last-Event-ID",
-    ).toBe(false);
+      atOrBefore,
+      `the replay carried events at or before the resume point ${eventId}, so it is not honoring Last-Event-ID`,
+    ).toEqual([]);
 
     for (const id of bulkIds) {
       expect(

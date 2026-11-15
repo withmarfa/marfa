@@ -120,7 +120,7 @@ function announcedHead(events: SseEvent[]): bigint | undefined {
 
 describe("resuming from the head", () => {
   it("a reader that closes at the head and resumes from its last id misses nothing and repeats nothing", async (context) => {
-    const markerId = await makeNote("resume-marker");
+    await makeNote("resume-marker");
     const eventId = await baselineEventId(apiUrl, apiKey, context.signal);
 
     // Written before the first read, so they sit between the cursor and
@@ -233,12 +233,13 @@ describe("resuming from the head", () => {
       `the first read received no id past the announced head ${String(head!)}, so it never left the replay`,
     ).toBe(true);
     expectAscending(firstIds, "first");
-    // The control: a resume that honors `Last-Event-ID` does not carry the
-    // event at the cursor itself.
+    // The control: a resume that honors `Last-Event-ID` carries no event at or
+    // below the cursor it resumed from.
+    const atOrBefore = firstIds.filter((id) => id <= BigInt(eventId));
     expect(
-      itemIds(first).has(markerId),
-      "the first read carried the event at the cursor, so it is not resuming from it",
-    ).toBe(false);
+      atOrBefore.map(String),
+      `the first read carried events at or before its cursor ${eventId}, so it is not resuming from it`,
+    ).toEqual([]);
     const lastReceived = firstIds[firstIds.length - 1]!;
 
     // Written after the first read closed, so they are what the resume

@@ -199,7 +199,7 @@ describe("event stream contract", () => {
     }
   });
 
-  it("sends an event written the moment stream_cursor arrives, on a stream that does not resume", async ({
+  it("sends an event written the moment stream_cursor arrives", async ({
     signal,
   }) => {
     // One stream proves little: a server that drops what is written just

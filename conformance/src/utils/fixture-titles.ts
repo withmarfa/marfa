@@ -1,7 +1,7 @@
 export function fixtureTitles(text: string, includeDescribe = false): string[] {
   return [
     ...text.matchAll(
-      /(?:^|\s)(it|describe|it\.each\([^)]*\)|(?:it|describe)\.(?:runIf|skipIf)\([^)]*\))\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g,
+      /(?:^|\s)(it|describe|it\.(?:each|for)\([^)]*\)|(?:it|describe)\.(?:runIf|skipIf)\([^)]*\))\(\s*(?:"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)')/g,
     ),
   ]
     .filter((m) => includeDescribe || !m[1].startsWith("describe"))

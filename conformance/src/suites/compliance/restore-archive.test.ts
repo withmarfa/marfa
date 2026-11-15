@@ -1786,7 +1786,9 @@ describe("a restore of an edge type's property formats", () => {
 });
 
 describe("a restore refused after it began", () => {
-  it("leaves no item, type, edge type, blob, event or audit record behind when a later item is refused", async () => {
+  it("leaves no item, type, edge type, blob, event or audit record behind when a later item is refused", async ({
+    signal,
+  }) => {
     const ids = {
       type: `user.restorerollback${ctx.runId}`,
       edgeType: `restorerollback.${ctx.runId}`,
@@ -1855,7 +1857,7 @@ describe("a restore refused after it began", () => {
       );
     };
 
-    const eventId = await baselineEventId(apiUrl, fileKey);
+    const eventId = await baselineEventId(apiUrl, fileKey, signal);
     const idsOf = (events: { data?: unknown }[]) =>
       events.map(
         (e) => (e.data as { item?: { id?: string } } | undefined)?.item?.id,

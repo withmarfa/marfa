@@ -39,13 +39,18 @@ export interface CollectResult {
 }
 
 /**
- * Text read off a stream past the frame `awaitStreamCursor` stopped at.
+ * Text read off a stream past where a wait stopped, with the decoder that
+ * read it.
  *
  * A read returns whatever the socket delivered, which can run past the frame
- * a caller waited for. The next `collectUntil` starts from this text so that
- * no frame is lost between two waits on one stream.
+ * a caller waited for and can end inside a frame, or inside a character. The
+ * next wait on the same stream starts from this text and decoder so that no
+ * frame is lost between two waits.
  */
-const unread = new WeakMap<EventStream, string>();
+const unread = new WeakMap<
+  EventStream,
+  { text: string; decoder: TextDecoder }
+>();
 
 /**
  * Read an open stream until `done` says enough has arrived.
@@ -83,9 +88,10 @@ export async function collectUntil(
     );
   }
   const reader = body.getReader();
-  const decoder = new TextDecoder();
-  const carried = unread.get(stream) ?? "";
+  const left = unread.get(stream);
   unread.delete(stream);
+  const decoder = left?.decoder ?? new TextDecoder();
+  const carried = left?.text ?? "";
   const chunks: string[] = carried ? [carried] : [];
   // Parsed as frames complete rather than from the start on every chunk: a
   // replay can carry megabytes, and re-reading all of it per chunk makes a
@@ -100,8 +106,15 @@ export async function collectUntil(
   const onAbort = () => void reader.cancel().catch(() => undefined);
   signal?.addEventListener("abort", onAbort, { once: true });
 
+  // What follows the last complete frame stays for the next wait, and the
+  // decoder with it, which can hold the first bytes of a character.
+  const finish = (): CollectResult => {
+    unread.set(stream, { text: pending, decoder });
+    return { events, raw: chunks.join("") };
+  };
+
   try {
-    if (carried && done(events)) return { events, raw: chunks.join("") };
+    if (carried && done(events)) return finish();
     for (;;) {
       const { done: finished, value } = await reader.read();
       if (value) {
@@ -114,7 +127,7 @@ export async function collectUntil(
           pending = pending.slice(end + 2);
         }
       }
-      if (done(events)) return { events, raw: chunks.join("") };
+      if (done(events)) return finish();
       if (finished) {
         throw new Error(
           `event stream closed before ${waitingFor}; saw ${describe(events)}`,
@@ -176,9 +189,10 @@ export async function awaitStreamCursor(
     );
   }
   const reader = body.getReader();
-  const decoder = new TextDecoder();
-  let text = unread.get(stream) ?? "";
+  const left = unread.get(stream);
   unread.delete(stream);
+  const decoder = left?.decoder ?? new TextDecoder();
+  let text = left?.text ?? "";
   const onAbort = () => void reader.cancel().catch(() => undefined);
   signal?.addEventListener("abort", onAbort, { once: true });
   try {
@@ -197,7 +211,7 @@ export async function awaitStreamCursor(
               `stream_cursor carried no cursor: ${JSON.stringify(frame.data)}`,
             );
           }
-          if (text) unread.set(stream, text);
+          unread.set(stream, { text, decoder });
           return cursor;
         }
       }
