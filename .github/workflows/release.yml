@@ -260,20 +260,9 @@ jobs:
 
       - run: pnpm build
 
-      - name: Build and pack @withmarfa/core
-        working-directory: core/bindings/node
-        run: |
-          mkdir -p "$RUNNER_TEMP/artifacts"
-          pnpm --ignore-workspace install --frozen-lockfile
-          pnpm --ignore-workspace run build
-          pnpm --ignore-workspace pack --pack-destination "$RUNNER_TEMP/artifacts"
-          bash "$GITHUB_WORKSPACE/scripts/release/hold-tarball.sh" "$RUNNER_TEMP/artifacts/withmarfa-core-$VERSION.tgz" \
-            index.js index.d.ts marfa-core.darwin-arm64.node
-          bash "$GITHUB_WORKSPACE/scripts/release/hold-platform.sh" "$RUNNER_TEMP/artifacts/withmarfa-core-$VERSION.tgz" \
-            darwin arm64
-
       - name: Pack @withmarfa/client
         run: |
+          mkdir -p "$RUNNER_TEMP/artifacts"
           pnpm --filter @withmarfa/client pack --pack-destination "$RUNNER_TEMP/artifacts"
           bash scripts/release/hold-tarball.sh "$RUNNER_TEMP/artifacts/withmarfa-client-$VERSION.tgz" \
             dist/index.js dist/index.d.ts
@@ -292,12 +281,12 @@ jobs:
           done
           cp "$out/marfa" "$out/marfa-server" "$out/NOTICES.txt" "$RUNNER_TEMP/artifacts/"
 
-      - name: Hold the build to the programs and the two packages
+      - name: Hold the build to the programs and the package
         working-directory: ${{ runner.temp }}/artifacts
         run: |
           bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
             NOTICES.txt marfa marfa-server \
-            "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
+            "withmarfa-client-$VERSION.tgz"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -362,14 +351,14 @@ jobs:
           bash scripts/release/check-archive.sh "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz" "$VERSION" --boot
           bash scripts/release/prove-reading.sh "$RUNNER_TEMP/artifacts/marfa-$VERSION-darwin-arm64.tar.gz" \
             core/marfa-enrichment/fixtures
-          cp "$RUNNER_TEMP/build/withmarfa-client-$VERSION.tgz" "$RUNNER_TEMP/build/withmarfa-core-$VERSION.tgz" "$RUNNER_TEMP/artifacts/"
+          cp "$RUNNER_TEMP/build/withmarfa-client-$VERSION.tgz" "$RUNNER_TEMP/artifacts/"
 
-      - name: Hold the artifacts to the three this job makes
+      - name: Hold the artifacts to the two this job makes
         working-directory: ${{ runner.temp }}/artifacts
         run: |
           bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
             "marfa-$VERSION-darwin-arm64.tar.gz" \
-            "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
+            "withmarfa-client-$VERSION.tgz"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -548,15 +537,15 @@ jobs:
           bash scripts/release/write-formula.sh "$VERSION" "$RUNNER_TEMP/artifacts/marfa-$VERSION-checksums.txt" > "$RUNNER_TEMP/formula/marfa.rb"
           cat "$RUNNER_TEMP/formula/marfa.rb"
 
-      # Exactly the six the publish job reads, by name.
-      - name: Hold the artifacts to the six a release carries
+      # Exactly the five the publish job reads, by name.
+      - name: Hold the artifacts to the five a release carries
         working-directory: ${{ runner.temp }}/artifacts
         run: |
           bash "$GITHUB_WORKSPACE/scripts/release/hold-artifacts.sh" \
             "marfa-$VERSION-checksums.txt" \
             "marfa-$VERSION-darwin-arm64.tar.gz" \
             "marfa-$VERSION-linux-aarch64.tar.gz" "marfa-$VERSION-linux-x86_64.tar.gz" \
-            "withmarfa-client-$VERSION.tgz" "withmarfa-core-$VERSION.tgz"
+            "withmarfa-client-$VERSION.tgz"
 
       - name: Hold the formula
         working-directory: ${{ runner.temp }}/formula
@@ -797,7 +786,7 @@ jobs:
               return 1
             fi
           }
-          for name in @withmarfa/core @withmarfa/client; do
+          for name in @withmarfa/client; do
             version_state=$(npm_state "$name@$VERSION")
             package_state=$(npm_state "$name")
             if [ "$version_state" = present ]; then
@@ -1025,9 +1014,9 @@ jobs:
           fi
           scripts/check-image.sh "$IMAGE:$VERSION" "$VERSION"
 
-      - name: Publish @withmarfa/core and @withmarfa/client to npm
+      - name: Publish @withmarfa/client to npm
         run: |
-          for package in core client; do
+          for package in client; do
             name="@withmarfa/$package"
             if found=$(npm view "$name@$VERSION" version 2> "$RUNNER_TEMP/npm-view.err"); then
               if [ "$found" = "$VERSION" ]; then

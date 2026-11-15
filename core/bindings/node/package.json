@@ -2,6 +2,7 @@
   "name": "@withmarfa/core",
   "version": "0.0.0",
   "description": "marfa-core as a Node module.",
+  "private": true,
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -11,12 +12,6 @@
   "engines": {
     "node": ">=22.12.0"
   },
-  "os": [
-    "darwin"
-  ],
-  "cpu": [
-    "arm64"
-  ],
   "main": "index.js",
   "types": "index.d.ts",
   "napi": {
@@ -32,13 +27,5 @@
     "@napi-rs/cli": "^3",
     "@types/node": "^26.6.4",
     "typescript": "^7.0.2"
-  },
-  "files": [
-    "index.js",
-    "index.d.ts",
-    "*.node"
-  ],
-  "publishConfig": {
-    "access": "public"
   }
 }

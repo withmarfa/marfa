@@ -1,6 +1,6 @@
 # The core's API for apps
 
-This page is the reference for an app developer who embeds the Rust core through `marfa-core` itself, the Swift binding (`bindings/swift`, packaged by `withmarfa/marfa-swift`) or the Node module `@withmarfa/core` (`bindings/node`). The contract states what the core does: `conformance/spec/device.md`, `queue-and-verdicts.md` and `folders.md`. This page adds the calls, the types and what crosses each binding.
+This page is the reference for an app developer who embeds the Rust core through `marfa-core` itself or the Swift binding (`bindings/swift`, packaged by `withmarfa/marfa-swift`). The Node module (`bindings/node`) is used only by the contract's device fixtures and is not published. The contract states what the core does: `conformance/spec/device.md`, `queue-and-verdicts.md` and `folders.md`. This page adds the calls, the types and what crosses each binding.
 
 ## Identify an instance
 
