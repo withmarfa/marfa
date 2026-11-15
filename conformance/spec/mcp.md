@@ -1,6 +1,6 @@
 # MCP
 
-The MCP endpoint, `/mcp`, serves Marfa's tools to an agent over Streamable HTTP. A request carries an API key or an app's access token as a Bearer credential, and every tool call is a call to the API with that credential, so the API's own rules for the credential hold for it. The tools are `marfa_overview`, `marfa_find`, `marfa_get`, `marfa_read_rows`, `marfa_create`, `marfa_update`, `marfa_write_rows` and `marfa_delete`.
+The MCP endpoint, `/mcp`, serves Marfa's tools to an agent over Streamable HTTP. A request carries an API key or an app's access token as a Bearer credential, and every tool call is a call to the API with that credential. The tools are `marfa_overview`, `marfa_find`, `marfa_get`, `marfa_read_rows`, `marfa_create`, `marfa_update`, `marfa_write_rows` and `marfa_delete`.
 
 Two more endpoints serve the same tools and a group of their own. `/mcp/schema` adds `marfa_save_type`, `marfa_save_view`, `marfa_move_items`, `marfa_bulk_save`, `marfa_search_docs`, `marfa_sources` and `marfa_name_source`, for shaping what the instance holds. `/mcp/admin` adds `marfa_health`, `marfa_audit`, `marfa_keys`, `marfa_manage_key`, `marfa_revoke_key`, `marfa_webhooks` and `marfa_manage_webhook`, for running it. Unless a statement names an endpoint, it holds at all three.
 
@@ -15,6 +15,14 @@ If a request to `/mcp` carries an `Origin` header naming neither the instance's 
 **Reason:** a page on another site must not drive the tools with a credential it holds, which the MCP transport asks a server to prevent.
 
 **Tests:** `compliance/mcp.test.ts › refuses a request from an origin the owner did not approve with 403, where the server's own origin is served`.
+
+### `mcp/post-only`
+
+If a `GET` or `DELETE` request reaches an MCP endpoint, then the server MUST answer `405` with an `Allow` header of `POST`.
+
+**Reason:** the endpoint keeps no session and no stream, so there is nothing for either method to open or end, and MCP's transport asks a server that serves no stream from `GET` to say so with `405`.
+
+**Tests:** `compliance/mcp.test.ts › answers a GET or DELETE to an MCP endpoint 405 with Allow POST, to a caller with a credential and to one without`.
 
 ## Protocol revisions
 
@@ -96,6 +104,14 @@ When the server lists its tools, the server MUST annotate `marfa_create` and `ma
 
 ## Calling a tool
 
+### `mcp/api-rules`
+
+When a tool call reads or writes, the server MUST apply the permissions, refusals and limits of the API operation that read or write is.
+
+**Reason:** a tool is another door to what the API guards, so a credential that the API refuses must be refused by the tool with the same `code`, and no tool may be a way round a rule the API holds.
+
+**Tests:** `compliance/mcp.test.ts › refuses marfa_create for a type the credential only reads, as POST /items does`, `› refuses a change that needs schema.write at /mcp/schema, as PUT /types/{id} does`, `› refuses marfa_revoke_key for a key beyond its credential's reach, as DELETE /keys/{id} does`.
+
 ### `mcp/unknown-argument`
 
 If a tool call names an argument the tool does not take, then the server MUST answer the call with a tool error that names the argument.
@@ -127,6 +143,20 @@ If a `marfa_find` call names `tags` that `GET /items` refuses for their number o
 **Reason:** the bound is held after tags are trimmed and repeats and blank entries are dropped, as at `GET /items`, so the tool's input schema carries no count or length of its own, which would refuse what that door takes.
 
 **Tests:** `compliance/search-bounds.test.ts › refuses marfa_find tags past the bound, and takes them at it`, `› counts what marfa_find is given as the server does, after trimming and dropping repeats`.
+
+### `mcp/find-next-cursor`
+
+If more items match a `marfa_find` call than it returns, then the server MUST answer a `next_cursor` that, sent as `cursor` in the same call, returns the items after those answered.
+
+**Tests:** `compliance/mcp.test.ts › names a next_cursor that reads the rest and a hint, and none of either once nothing is left`.
+
+### `mcp/find-hint`
+
+If more items match a `marfa_find` call than it returns, then the server MUST answer a `hint` that says more items match and how to narrow the call or read the next page.
+
+**Reason:** an agent that reads a short answer as the whole answer reports a part as the whole.
+
+**Tests:** `compliance/mcp.test.ts › names a next_cursor that reads the rest and a hint, and none of either once nothing is left`.
 
 ## Reading items
 
@@ -277,6 +307,30 @@ If the items a `marfa_move_items` call would move, or the settings that name the
 **Reason:** the person agreed to what the preview showed, not to what the move would take now.
 
 **Tests:** `compliance/mcp.test.ts › moves nothing when called without a confirmation, and refuses a confirmation when what would move changed`, `› refuses a move confirmation once a setting names the type after the preview`.
+
+## Health and sources
+
+### `mcp/health-error-withheld`
+
+When a credential without `instance.read` calls `marfa_health`, the server MUST answer the components without an `error`.
+
+**Reason:** the text is the database's or the operating system's own and carries paths and driver detail (`instance/health-error-others`). A credential with `connectors.manage` is offered the tool for its connectors, and no more of the instance's health is told it.
+
+**Tests:** `compliance/mcp-shortened.test.ts › gives a credential without instance.read no error on a component and no housekeeping object, and gives both to one with it`.
+
+### `mcp/health-housekeeping-withheld`
+
+When a credential without `instance.read` calls `marfa_health`, the server MUST answer without a `housekeeping` object.
+
+**Tests:** `compliance/mcp-shortened.test.ts › gives a credential without instance.read no error on a component and no housekeeping object, and gives both to one with it`.
+
+### `mcp/sources-left-out`
+
+If the sources a credential sees do not fit one `marfa_sources` answer, then the server MUST answer a `left_out` with the number of sources it left out.
+
+**Reason:** an agent that reads a short list as the whole list names the wrong sources. A source left out is read by naming it as `source`.
+
+**Tests:** `compliance/mcp-shortened.test.ts › names how many sources it left out when the list outgrows one answer, and none when it does not`.
 
 ## Revoking a key
 

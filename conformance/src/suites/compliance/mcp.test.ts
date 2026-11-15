@@ -151,6 +151,33 @@ describe("who may call /mcp", () => {
     });
     expect(own.status).toBe(200);
   });
+
+  it("answers a GET or DELETE to an MCP endpoint 405 with Allow POST, to a caller with a credential and to one without", async () => {
+    for (const path of ["/mcp", "/mcp/schema", "/mcp/admin"]) {
+      for (const method of ["GET", "DELETE"]) {
+        for (const headers of [
+          {},
+          { Authorization: `Bearer ${apiKey}` },
+        ] as Record<string, string>[]) {
+          const response = await fetch(new URL(path, apiUrl), {
+            method,
+            headers,
+          });
+          await response.body?.cancel();
+          const what = `${method} ${path} ${Object.keys(headers).length === 0 ? "without" : "with"} a credential`;
+          expect(response.status, what).toBe(405);
+          expect(response.headers.get("allow"), what).toBe("POST");
+        }
+      }
+      // The witness: a method no operation serves anywhere else is `404`, so the `405` is this endpoint's own.
+      const other = await fetch(new URL(path, apiUrl), {
+        method: "PUT",
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      await other.body?.cancel();
+      expect(other.status, path).toBe(404);
+    }
+  });
 });
 
 describe("protocol revisions", () => {
@@ -492,6 +519,39 @@ describe("marfa_find", () => {
     } finally {
       await reader.close();
     }
+  });
+});
+
+describe("marfa_find when more items match than it returns", () => {
+  it("names a next_cursor that reads the rest and a hint, and none of either once nothing is left", async () => {
+    const tag = `mcp-more-${ctx.runId}`;
+    for (const body of ["one", "two", "three"]) {
+      const made = await client.createItem({
+        type: "core.note",
+        properties: { body },
+        tags: [tag],
+      });
+      expect(made.status, JSON.stringify(made.error)).toBe(201);
+      trackItem(ctx, made.data.item.id);
+    }
+    const first = toolResult(
+      await callTool(mcp, "marfa_find", { tags: [tag], limit: 2 }),
+    ) as { items: { id: string }[]; next_cursor: string | null; hint?: string };
+    expect(first.items).toHaveLength(2);
+    expect(first.next_cursor).toEqual(expect.any(String));
+    expect(first.hint).toEqual(expect.any(String));
+
+    const rest = toolResult(
+      await callTool(mcp, "marfa_find", {
+        tags: [tag],
+        limit: 2,
+        cursor: first.next_cursor,
+      }),
+    ) as { items: { id: string }[]; next_cursor: string | null; hint?: string };
+    expect(rest.items).toHaveLength(1);
+    expect(first.items.map((item) => item.id)).not.toContain(rest.items[0]?.id);
+    expect(rest.next_cursor).toBeNull();
+    expect(rest).not.toHaveProperty("hint");
   });
 });
 
@@ -1509,5 +1569,145 @@ describe("marfa_move_items", () => {
     expect(error.code).toBe("confirmation_stale");
     expect(error.settings).not.toEqual([]);
     expect(await typeOf(left)).toBe(from);
+  });
+});
+
+describe("a tool call keeps the rules of the API operation it makes", () => {
+  /** What an operation of the API answered a refused call with. */
+  async function api(
+    key: string,
+    method: string,
+    path: string,
+    body?: unknown,
+  ): Promise<{ status: number; error: Record<string, unknown> }> {
+    const response = await fetch(new URL(path, apiUrl), {
+      method,
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      ...(body !== undefined && { body: JSON.stringify(body) }),
+    });
+    const answer = (await response.json()) as {
+      error: Record<string, unknown>;
+    };
+    return { status: response.status, error: answer.error };
+  }
+
+  it("refuses marfa_create for a type the credential only reads, as POST /items does", async () => {
+    const key = await keyWith("reads-bookmarks", {
+      "core.note": "write",
+      "core.bookmark": "read",
+    });
+    const tools = await connectMcp(apiUrl, key);
+    try {
+      const properties = {
+        title: "Marfa",
+        url: `https://example.com/${ctx.runId}`,
+      };
+      const direct = await api(key, "POST", "/items", {
+        type: "core.bookmark",
+        properties,
+      });
+      expect(direct.status).toBe(403);
+      const refused = toolError(
+        await callTool(tools, "marfa_create", {
+          type: "core.bookmark",
+          properties,
+        }),
+      );
+      expect(refused.code).toBe(direct.error.code);
+      expect(refused.code).toBe("type_not_permitted");
+      // The witness: a type the credential writes is created.
+      const made = toolResult(
+        await callTool(tools, "marfa_create", {
+          type: "core.note",
+          properties: { body: "allowed" },
+        }),
+      );
+      trackItem(ctx, made.id as string);
+    } finally {
+      await tools.close();
+    }
+  });
+
+  it("refuses a change that needs schema.write at /mcp/schema, as PUT /types/{id} does", async () => {
+    const id = `user.mcp-rules-${ctx.runId}`;
+    const owner = await keyWith(
+      "schema-owner",
+      { "*": "write" },
+      { permissions: ["schema.write"], metadata_permissions: { "*": "write" } },
+    );
+    const registered = await api(owner, "POST", "/types", {
+      id,
+      label: "Rules",
+      fields: { title: { type: "string" }, note: { type: "string" } },
+    });
+    expect(registered.status).toBe(201);
+    trackType(ctx, id, new MarfaClient({ baseUrl: apiUrl, apiKey: owner }));
+
+    const key = await keyWith(
+      "metadata-only",
+      { "*": "write" },
+      { metadata_permissions: { "*": "write" } },
+    );
+    const tools = await connectMcp(apiUrl, key, "2026-07-28", "/mcp/schema");
+    try {
+      expect(await toolNames(tools)).toContain("marfa_save_type");
+      const direct = await api(key, "PUT", `/types/${id}`, {
+        label: "Rules",
+        fields: { title: { type: "string" } },
+      });
+      expect(direct.status).toBe(403);
+      const refused = toolError(
+        await callTool(tools, "marfa_save_type", {
+          action: "change",
+          id,
+          fields: { note: null },
+        }),
+      );
+      expect(refused.code).toBe(direct.error.code);
+      expect(refused.code).toBe("forbidden");
+      expect(refused.details).toEqual(direct.error.details);
+      // The witness: the same key may add an optional field, which needs no schema.write.
+      toolResult(
+        await callTool(tools, "marfa_save_type", {
+          action: "change",
+          id,
+          fields: { extra: { type: "string" } },
+        }),
+      );
+    } finally {
+      await tools.close();
+    }
+  });
+
+  it("refuses marfa_revoke_key for a key beyond its credential's reach, as DELETE /keys/{id} does", async () => {
+    const minter = await keyWith(
+      "mint-only",
+      {},
+      { permissions: ["keys.mint"] },
+    );
+    await keyWith("beyond-reach", { "*": "write" });
+    const listed = await client.listKeys();
+    const target = listed.ok
+      ? listed.data.data.find((entry) => entry.label.endsWith("beyond-reach"))
+      : undefined;
+    expect(target).toBeDefined();
+    const tools = await connectMcp(apiUrl, minter, "2026-07-28", "/mcp/admin");
+    try {
+      const direct = await api(minter, "DELETE", `/keys/${target!.id}`);
+      expect(direct.status).toBe(404);
+      const refused = toolError(
+        await callTool(tools, "marfa_revoke_key", { id: target!.id }),
+      );
+      expect(refused.code).toBe(direct.error.code);
+      expect(refused.code).toBe("api_key_not_found");
+      expect(refused.message).toBe(direct.error.message);
+      // The witness: the key is there, and the management credential may revoke it.
+      expect((await client.revokeKey(target!.id)).ok).toBe(true);
+    } finally {
+      await tools.close();
+    }
   });
 });
