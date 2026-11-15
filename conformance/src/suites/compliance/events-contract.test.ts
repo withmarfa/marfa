@@ -1188,7 +1188,7 @@ describe("which event each write announces", () => {
     }
   });
 
-  it("announces item.updated once for each write to an item, however little it changes", async ({
+  it("announces item.updated once for each write that changes an item", async ({
     signal,
   }) => {
     const tag = `updated-${ctx.runId}`;
@@ -1207,20 +1207,25 @@ describe("which event each write announces", () => {
     const frames = await announced(async () => {
       const current = await client.getItem(id);
       const version = current.data.item.version;
-      const same = await client.updateItem(id, {
-        properties: { body: "same" },
+      const first = await client.updateItem(id, {
+        properties: { body: "first" },
         version,
       });
-      expect(same.status, JSON.stringify(same.error)).toBe(200);
-      expect(same.data.item.version).toBe(version + 1);
-      const landed = await client.createItem(body);
+      expect(first.status, JSON.stringify(first.error)).toBe(200);
+      expect(first.data.item.version).toBe(version + 1);
+      const landed = await client.createItem({
+        ...body,
+        properties: { body: "second" },
+      });
       expect(landed.status, JSON.stringify(landed.error)).toBe(200);
       expect(landed.data.item.id).toBe(id);
-      const bulk = await client.bulkItems([body]);
+      const bulk = await client.bulkItems([
+        { ...body, properties: { body: "third" } },
+      ]);
       expect(bulk.data.results[0]?.outcome).toBe("updated");
       await runAction({
         action: "update_properties",
-        patch: { body: "same" },
+        patch: { body: "fourth" },
         filter: { tags: [tag] },
       });
       await runAction({
@@ -1441,5 +1446,34 @@ describe("which event each write announces", () => {
     expect((mine[0]?.data as { item: { version: number } }).item.version).toBe(
       before,
     );
+  });
+
+  it("announces nothing for a PATCH that carries only edges the item already holds", async ({
+    signal,
+  }) => {
+    const target = await seed("edges-held-target");
+    const id = await seed("edges-held-item");
+    const before = (await client.getItem(id)).data.item.version;
+    // The witness: the first write adds the edge, and is announced.
+    const added = await announced(async () => {
+      const patched = await client.updateItem(id, {
+        edges: { about: [target] },
+        version: before,
+      });
+      expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+      expect(patched.data.acknowledged).toBeUndefined();
+    }, signal);
+    expect(eventsOf(added, id)).toEqual(["item.updated"]);
+
+    const repeated = await announced(async () => {
+      const patched = await client.updateItem(id, {
+        edges: { about: [target] },
+        version: before,
+      });
+      expect(patched.status, JSON.stringify(patched.error)).toBe(200);
+      expect(patched.data.acknowledged).toBe(true);
+      expect(patched.data.item.version).toBe(before);
+    }, signal);
+    expect(eventsOf(repeated, id)).toEqual([]);
   });
 });

@@ -423,7 +423,7 @@ async fn a_stale_move_onto_a_row_moved_since_is_refused_naming_type() {
 }
 
 #[tokio::test]
-async fn a_move_to_the_type_held_steps_nothing_and_an_equal_write_steps_once() {
+async fn a_move_to_the_type_held_steps_nothing_and_a_changed_write_steps_once() {
     let instance = Instance::start().await;
     let (_, token) = instance.key("still", notes("write")).await;
     let item = instance.note(&token, "same").await;
@@ -437,8 +437,8 @@ async fn a_move_to_the_type_held_steps_nothing_and_an_equal_write_steps_once() {
     assert_eq!(instance.written().events, before.events);
     assert_eq!(instance.written().versions, before.versions);
 
-    let equal = json!({ "version": 1, "properties": { "body": "same" } });
-    let answer = instance.call(&token, Method::PATCH, &path, equal).await;
+    let changed = json!({ "version": 1, "properties": { "body": "other" } });
+    let answer = instance.call(&token, Method::PATCH, &path, changed).await;
     assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
     assert_eq!(answer.json()["item"]["version"], 2);
     assert_eq!(instance.written().events, before.events + 1);
@@ -1567,6 +1567,353 @@ async fn a_key_reading_part_of_the_instance_searches_words_that_hold_no_letters(
         assert_eq!(found.status, StatusCode::OK, "{q}: {}", found.text);
         let hits = found.json()["data"].as_array().unwrap().len();
         assert_eq!(hits, 1, "{q}: {}", found.text);
+    }
+}
+
+fn thing_type() -> Value {
+    json!({
+        "id": "acme.thing",
+        "fields": {
+            "title": { "type": "string" },
+            "count": { "type": "number" },
+            "link": { "type": "url" },
+        },
+    })
+}
+
+fn thing(source_id: &str) -> Value {
+    json!({
+        "type": "acme.thing",
+        "source_id": source_id,
+        "properties": { "title": "t", "count": 1, "link": "https://example.com/a" },
+    })
+}
+
+async fn things() -> (Instance, String) {
+    let instance = Instance::start().await;
+    let registered = instance.local(Method::POST, "/types", thing_type()).await;
+    assert_eq!(
+        registered.status,
+        StatusCode::CREATED,
+        "{}",
+        registered.text
+    );
+    let grants = json!({
+        "type_permissions": { "*": "write" },
+        "edge_permissions": { "*": "write" },
+    });
+    let (_, token) = instance.key_with("equal", grants).await;
+    (instance, token)
+}
+
+impl Instance {
+    async fn sent(
+        &self,
+        token: &str,
+        method: Method,
+        path: &str,
+        body: &Value,
+        key: Option<&str>,
+    ) -> Reply {
+        let sent = request(method, path, Some(token), Some(body.to_string()), key);
+        send(self.public.clone(), sent).await
+    }
+
+    async fn read(&self, token: &str, path: &str) -> Value {
+        let read = self.get(token, path).await;
+        assert_eq!(read.status, StatusCode::OK, "{}", read.text);
+        read.json()["item"].clone()
+    }
+}
+
+fn unchanged(answer: &Reply, instance: &Instance, before: Written, stored: &Value) {
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let body = answer.json();
+    assert_eq!(body["acknowledged"], true, "{}", answer.text);
+    for member in ["id", "version", "updated_at", "properties", "tier"] {
+        assert_eq!(body["item"][member], stored[member], "{member}");
+    }
+    assert_eq!(instance.written(), before);
+}
+
+fn stored_next(answer: &Reply, instance: &Instance, before: Written, version: i64) -> Value {
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let body = answer.json();
+    assert_eq!(body["acknowledged"], Value::Null, "{}", answer.text);
+    assert_eq!(body["item"]["version"], version, "{}", answer.text);
+    let after = instance.written();
+    assert_eq!(after.versions, before.versions + 1);
+    assert_eq!(after.events, before.events + 1);
+    body["item"].clone()
+}
+
+#[tokio::test]
+async fn a_write_that_changes_nothing_stores_nothing_at_each_door() {
+    let (instance, token) = things().await;
+    for (round, keyed) in [false, true].into_iter().enumerate() {
+        let source_id = format!("equal-{round}");
+        let (id, path) = made(&instance, &token, thing(&source_id)).await;
+        let stored = instance.read(&token, &path).await;
+        let same = json!({ "title": "t", "count": 1, "link": "https://example.com/a" });
+        let doors = [
+            (
+                Method::PATCH,
+                path.clone(),
+                json!({ "version": 1, "properties": { "title": "t" } }),
+            ),
+            (
+                Method::PATCH,
+                path.clone(),
+                json!({ "version": 1, "properties": {} }),
+            ),
+            (
+                Method::PATCH,
+                path.clone(),
+                json!({ "version": 1, "properties": same, "tier": "library" }),
+            ),
+            (Method::POST, "/items".to_string(), thing(&source_id)),
+        ];
+        for (at, (method, door, body)) in doors.into_iter().enumerate() {
+            let key = format!("equal-{round}-{at}");
+            let before = instance.written();
+            let sent = keyed.then_some(key.as_str());
+            let answer = instance
+                .sent(&token, method.clone(), &door, &body, sent)
+                .await;
+            unchanged(&answer, &instance, before, &stored);
+            if keyed {
+                let again = instance.sent(&token, method, &door, &body, sent).await;
+                assert_eq!(again.text, answer.text);
+                assert!(again.headers.contains_key("idempotency-replayed"));
+                assert_eq!(instance.written(), before);
+            }
+        }
+        for atomic in [true, false] {
+            let before = instance.written();
+            let page = json!({ "atomic": atomic, "items": [thing(&source_id)] });
+            let answer = instance
+                .sent(&token, Method::POST, "/items/bulk", &page, None)
+                .await;
+            assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+            let body = answer.json();
+            assert_eq!(
+                body["results"][0],
+                json!({ "index": 0, "outcome": "skipped", "reason": "unchanged", "id": id }),
+            );
+            assert_eq!(body["counts"]["skipped"], 1, "{}", answer.text);
+            assert_eq!(body["counts"]["updated"], 0, "{}", answer.text);
+            assert_eq!(instance.written(), before);
+        }
+        assert_eq!(instance.read(&token, &path).await["version"], 1);
+    }
+}
+
+#[tokio::test]
+async fn a_write_equal_after_normalisation_stores_nothing() {
+    let (instance, token) = things().await;
+    let (_, path) = made(&instance, &token, thing("normal")).await;
+    let stored = instance.read(&token, &path).await;
+    let sent = json!({
+        "version": 1,
+        "properties": { "title": null, "count": 1.0, "link": "  https://example.com/a  " },
+    });
+    let before = instance.written();
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &sent, None)
+        .await;
+    unchanged(&answer, &instance, before, &stored);
+
+    let upsert = json!({
+        "type": "acme.thing",
+        "source_id": "normal",
+        "properties": { "count": 1.0, "link": " https://example.com/a" },
+    });
+    let answer = instance
+        .sent(&token, Method::POST, "/items", &upsert, None)
+        .await;
+    unchanged(&answer, &instance, before, &stored);
+
+    let witness = json!({ "version": 1, "properties": { "link": "https://example.com/b" } });
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &witness, None)
+        .await;
+    stored_next(&answer, &instance, before, 2);
+}
+
+#[tokio::test]
+async fn a_write_equal_except_one_field_is_stored() {
+    let (instance, token) = things().await;
+    let mut body = thing("except");
+    body["tags"] = json!(["a"]);
+    let (_, path) = made(&instance, &token, body).await;
+    let target = instance.note(&token, "target").await["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let mut upsert = thing("except");
+    upsert["properties"]["title"] = json!("u");
+    upsert["tier"] = json!("feed");
+    let tagged = |tags: Value| {
+        let mut body = upsert.clone();
+        body["tags"] = tags;
+        body
+    };
+    let steps = [
+        (
+            Method::PATCH,
+            path.clone(),
+            json!({ "version": 1, "properties": { "title": "u" } }),
+        ),
+        (
+            Method::PATCH,
+            path.clone(),
+            json!({ "version": 2, "tier": "feed" }),
+        ),
+        (
+            Method::POST,
+            "/items".to_string(),
+            tagged(json!(["a", "b"])),
+        ),
+        (
+            Method::POST,
+            "/items".to_string(),
+            tagged(json!(["b", "a"])),
+        ),
+        (Method::POST, "/items".to_string(), tagged(json!(["b"]))),
+        (
+            Method::PATCH,
+            path.clone(),
+            json!({ "version": 6, "properties": { "count": 2 } }),
+        ),
+    ];
+    for (at, (method, door, body)) in steps.into_iter().enumerate() {
+        let before = instance.written();
+        let answer = instance.sent(&token, method, &door, &body, None).await;
+        stored_next(&answer, &instance, before, at as i64 + 2);
+    }
+
+    let before = instance.written();
+    let edge = json!({ "version": 7, "edges": { "about": [target] } });
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &edge, None)
+        .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    assert_eq!(
+        answer.json()["acknowledged"],
+        Value::Null,
+        "{}",
+        answer.text
+    );
+    assert_eq!(answer.json()["item"]["version"], 7);
+    assert_eq!(instance.count("SELECT count(*) FROM edges"), 1);
+    assert_eq!(instance.written().versions, before.versions);
+    assert!(instance.written().events > before.events);
+
+    let stored = instance.read(&token, &path).await;
+    let before = instance.written();
+    let same = json!({
+        "version": 7,
+        "properties": { "count": 2 },
+        "edges": { "about": [target] },
+    });
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &same, None)
+        .await;
+    unchanged(&answer, &instance, before, &stored);
+
+    let removed = json!({ "version": 7, "properties": { "count": 2 }, "edges": { "about": [] } });
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &removed, None)
+        .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    assert_eq!(
+        answer.json()["acknowledged"],
+        Value::Null,
+        "{}",
+        answer.text
+    );
+    assert_eq!(answer.json()["item"]["version"], 7);
+    assert_eq!(instance.count("SELECT count(*) FROM edges"), 0);
+    assert_eq!(instance.written().versions, before.versions);
+    assert!(instance.written().events > before.events);
+}
+
+#[tokio::test]
+async fn a_stale_version_is_refused_before_the_write_is_found_equal() {
+    let (instance, token) = things().await;
+    let (_, path) = made(&instance, &token, thing("stale")).await;
+    let moved = json!({ "version": 1, "properties": { "title": "b" } });
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &moved, None)
+        .await;
+    assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+    let stored = instance.read(&token, &path).await;
+    let before = instance.written();
+
+    let exact = json!({ "version": 1, "version_match": "exact", "properties": { "title": "b" } });
+    let collision = json!({ "version": 1, "properties": { "title": "b" } });
+    let edges = json!({ "version": 1, "edges": { "about": [] } });
+    for body in [exact, collision, edges] {
+        let answer = instance
+            .sent(&token, Method::PATCH, &path, &body, None)
+            .await;
+        assert_eq!(answer.status, StatusCode::CONFLICT, "{}", answer.text);
+        assert_eq!(answer.code(), "version_conflict");
+    }
+    assert_eq!(instance.written(), before);
+
+    let echo = json!({ "version": 1, "properties": { "count": 1 } });
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &echo, None)
+        .await;
+    unchanged(&answer, &instance, before, &stored);
+    let merging = json!({ "version": 1, "properties": { "count": 3 } });
+    let answer = instance
+        .sent(&token, Method::PATCH, &path, &merging, None)
+        .await;
+    stored_next(&answer, &instance, before, 3);
+}
+
+#[tokio::test]
+async fn a_page_of_equal_and_changed_entries_counts_and_announces_the_changed() {
+    let (instance, token) = things().await;
+    for atomic in [true, false] {
+        let name = |at: &str| format!("page-{atomic}-{at}");
+        let mut ids = Vec::new();
+        for at in ["same", "other", "spaced"] {
+            ids.push(made(&instance, &token, thing(&name(at))).await.0);
+        }
+        let mut changed = thing(&name("other"));
+        changed["properties"]["title"] = json!("changed");
+        let mut spaced = thing(&name("spaced"));
+        spaced["properties"] = json!({ "count": 1.0, "link": " https://example.com/a " });
+        let items = [thing(&name("same")), changed, thing(&name("new")), spaced];
+        let before = instance.written();
+        let page = json!({ "atomic": atomic, "items": items });
+        let answer = instance
+            .sent(&token, Method::POST, "/items/bulk", &page, None)
+            .await;
+        assert_eq!(answer.status, StatusCode::OK, "{}", answer.text);
+        let body = answer.json();
+        let outcomes: Vec<&Value> = body["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|result| &result["outcome"])
+            .collect();
+        assert_eq!(outcomes, ["skipped", "updated", "created", "skipped"]);
+        assert_eq!(body["results"][0]["reason"], "unchanged");
+        assert_eq!(body["results"][0]["id"], ids[0]);
+        assert_eq!(body["results"][3]["reason"], "unchanged");
+        assert_eq!(
+            body["counts"],
+            json!({ "created": 1, "updated": 1, "skipped": 2, "errored": 0 })
+        );
+        let after = instance.written();
+        assert_eq!(after.items, before.items + 1);
+        assert_eq!(after.versions, before.versions + 1);
+        assert_eq!(after.events, before.events + 2);
     }
 }
 

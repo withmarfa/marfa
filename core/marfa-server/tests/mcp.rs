@@ -3509,3 +3509,40 @@ async fn the_row_tool_refuses_the_numbers_the_row_door_refuses_and_writes_nothin
     assert!(!kept.failed, "{}", kept.value);
     assert_eq!(instance.row_count(&token, &item).await, 1);
 }
+
+#[tokio::test]
+async fn an_edit_that_changes_nothing_through_the_tool_stores_nothing_and_names_the_version_held() {
+    let instance = Instance::start(&[]).await;
+    let token = instance.writer().await;
+    let made = instance.note(&token, "buy oat milk").await;
+    let id = made.payload()["id"].as_str().unwrap().to_string();
+    let versions = || {
+        let db = rusqlite::Connection::open(instance._dir.path().join("marfa.db")).unwrap();
+        db.query_row("SELECT count(*) FROM item_versions", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap()
+    };
+    let held = versions();
+
+    let same = instance
+        .tool(
+            &token,
+            "marfa_update",
+            json!({ "id": id, "version": 1, "properties": { "body": "buy oat milk" } }),
+        )
+        .await;
+    assert!(!same.failed, "{}", same.value);
+    assert_eq!(same.payload()["version"], 1);
+    assert_eq!(versions(), held);
+
+    let changed = instance
+        .tool(
+            &token,
+            "marfa_update",
+            json!({ "id": id, "version": 1, "properties": { "body": "buy oat milk and eggs" } }),
+        )
+        .await;
+    assert_eq!(changed.payload()["version"], 2);
+    assert_eq!(versions(), held + 1);
+}

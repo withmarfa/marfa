@@ -36,11 +36,11 @@ When `POST /edges` meets more than one of the answers this chapter gives it, the
 
 ### `edges/inline-order`
 
-When `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names `edges` that meet more than one of the answers `POST /edges` gives, the server MUST give the first in the order of `edges/create-order` that applies to the edges an item write names.
+When `POST /items`, `PATCH /items/{id}` or an entry of `POST /items/bulk` names `edges` that meet more than one of the answers `POST /edges` gives, the server MUST give the first in the order of `edges/create-order` that applies to the edges an item write names, with the item's `version` asked after the checks on an edge type, a self-loop, `properties`, a target and an endpoint type, and before those on a duplicate triple, cardinality and a cycle.
 
-**Reason:** an app that sends an edge inside an item write gets the same answer as one that sends it to `POST /edges`, so a refusal does not depend on which door the edge came through.
+**Reason:** the first group reads only the edge and its two ends, so it holds whatever version the item is at, and an app that sends an edge inside an item write gets the same answer as one that sends it to `POST /edges`. The second reads the edges the item holds, which a stale write merges over, so it waits for the version.
 
-**Tests:** `compliance/edge-check-order.test.ts › refuses a malformed target id in an item write before it asks for write on the edge type`, `› answers an unregistered edge type in an item write before it looks for the target`.
+**Tests:** `compliance/edge-check-order.test.ts › refuses a malformed target id in an item write before it asks for write on the edge type`, `› answers an unregistered edge type in an item write before it looks for the target`, `› answers a self-loop in an item write that names a stale version as a self-loop, and one that names no stale version the same`, `› answers a missing target of an edge type with a required property as invalid properties in an item write that names a stale version`, `› answers an endpoint type the edge type refuses in an item write that names a stale version, and a duplicate or cycle only after the version`, `› answers a cardinality an item write breaks only after it asks the version`.
 
 ### `edges/create`
 

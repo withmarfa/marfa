@@ -1842,11 +1842,25 @@ If the server cannot confirm whether a `POST /items/bulk` page under `atomic: fa
 
 ### `items/bulk-reason`
 
-When the server reports a bulk entry `skipped`, the server MUST give its `reason` as `duplicate_source`, `duplicate_id` or `trashed` on `POST /items/bulk`, and as `duplicate_edge` on `POST /edges/bulk`.
+When the server reports a bulk entry `skipped`, the server MUST give its `reason` as `duplicate_source`, `duplicate_id`, `trashed` or `unchanged` on `POST /items/bulk`, and as `duplicate_edge` on `POST /edges/bulk`.
 
 **Reason:** `reason` is a closed list, so a generated client branches on it with every case known.
 
-**Tests:** `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`, `› create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`, `› reads a natural key over trashed items, as the single create does`, `compliance/edges-bulk.test.ts › create_only surfaces duplicates as skipped with reason duplicate_edge`.
+**Tests:** `compliance/bulk.test.ts › create_only skips a repeated (source, source_id) as duplicate_source`, `› create_only skips an entry naming a held id as duplicate_id, live or in the bin, and writes nothing`, `› reads a natural key over trashed items, as the single create does`, `› reports an upsert entry whose item would not change skipped as unchanged, and counts and writes only the entries that change`, `compliance/edges-bulk.test.ts › create_only surfaces duplicates as skipped with reason duplicate_edge`.
+
+### `items/bulk-unchanged`
+
+When an upsert entry of `POST /items/bulk` would leave the item it matches as it stands, the server MUST report it `skipped` with `reason` `unchanged`, counted under `skipped` alone.
+
+**Reason:** an entry that changes nothing is the same as one the page did not carry, and a client that replays a page after a lost answer is told so.
+
+**Tests:** `compliance/bulk.test.ts › reports an upsert entry whose item would not change skipped as unchanged, and counts and writes only the entries that change`.
+
+### `items/bulk-unchanged-silent`
+
+When `POST /items/bulk` reports an entry `skipped` with `reason` `unchanged`, the server MUST NOT announce an event for it.
+
+**Tests:** `sync/acknowledged.test.ts › answers an update, an upsert and a bulk entry that change nothing without announcing an event, and announces the same writes once they change something`.
 
 ### `items/bulk-reason-none`
 

@@ -41,7 +41,8 @@ pub struct Writing<'a, 't, 'c> {
 pub enum By {
     Caller,
     /// Whether the source goes to the bin with a binned host is judged once every listed edge
-    /// stands, so listing order decides nothing.
+    /// stands, so listing order decides nothing. What reads only the edge and its ends was judged
+    /// by [`inline_gates`], before the item's version.
     Inline,
     /// Held to the writer's grants and every rule but the property schema: the edge stands as
     /// stored, and each digest it names keeps the standing it has on the edge `seq`.
@@ -116,6 +117,14 @@ fn unknown_kind(edge_type: &str) -> Refusal {
         Code::EdgeTypeNotFound,
         format!("Unknown edge type: {edge_type}"),
     )
+}
+
+fn self_loop(kind: &EdgeType) -> Refusal {
+    Refusal::new(
+        Code::EdgeCycle,
+        "Edge source and target must be different items",
+    )
+    .with_detail("edge_type", kind.id.as_str())
 }
 
 fn refused(refusal: Refused, code: Code) -> Refusal {
@@ -357,8 +366,35 @@ impl<'c> Writing<'_, '_, 'c> {
         })
     }
 
-    /// Here an edge that cascades asks for write on its target's type, so no way of making or
-    /// moving an edge can leave it out.
+    /// The refusals that read only the edge and its ends, in the order of `POST /edges`.
+    fn judge_stated(
+        &self,
+        kind: &EdgeType,
+        source: (&str, &str),
+        target_id: &str,
+        properties: &Map<String, Value>,
+        by: By,
+    ) -> Result<()> {
+        if source.0 == target_id {
+            return Err(self_loop(kind));
+        }
+        self.judge_properties(kind, properties, by)?;
+        let target = self.target_row(kind, target_id)?;
+        self.judge_cascade(kind, &target)?;
+        self.judge_ends(kind, source, &target)
+    }
+
+    /// An edge that cascades asks for write on its target's type.
+    fn judge_cascade(&self, kind: &EdgeType, target: &Item) -> Result<()> {
+        if OnDelete::of(Some(&kind.cascade_on_delete)) == OnDelete::Cascade {
+            self.note(Need::CascadeTarget {
+                name: target.type_id.clone(),
+            });
+            self.caller().require_cascade_target(&target.type_id)?;
+        }
+        Ok(())
+    }
+
     fn judge(&self, edge: &Stands<'_>) -> Result<()> {
         let Stands {
             kind,
@@ -366,22 +402,10 @@ impl<'c> Writing<'_, '_, 'c> {
             target_id,
             ..
         } = *edge;
-        if source.id == target_id {
-            return Err(Refusal::new(
-                Code::EdgeCycle,
-                "Edge source and target must be different items",
-            )
-            .with_detail("edge_type", kind.id.as_str()));
+        if edge.by != By::Inline {
+            let ends = (source.id.as_str(), source.type_id.as_str());
+            self.judge_stated(kind, ends, target_id, edge.properties, edge.by)?;
         }
-        self.judge_properties(kind, edge.properties, edge.by)?;
-        let target = self.target_row(kind, target_id)?;
-        if OnDelete::of(Some(&kind.cascade_on_delete)) == OnDelete::Cascade {
-            self.note(Need::CascadeTarget {
-                name: target.type_id.clone(),
-            });
-            self.caller().require_cascade_target(&target.type_id)?;
-        }
-        self.judge_ends(kind, source, &target)?;
         let proposed = Proposed {
             edge_type: &kind.id,
             source: &source.id,
@@ -418,12 +442,13 @@ impl<'c> Writing<'_, '_, 'c> {
         Ok(())
     }
 
-    fn judge_ends(&self, kind: &EdgeType, source: &Item, target: &Item) -> Result<()> {
-        if !admitted(self.catalog, &kind.source_type_constraints, &source.type_id) {
+    fn judge_ends(&self, kind: &EdgeType, source: (&str, &str), target: &Item) -> Result<()> {
+        let (source_id, source_type) = source;
+        if !admitted(self.catalog, &kind.source_type_constraints, source_type) {
             return Err(constraint(edges::refused_end(
                 kind,
                 End::Source,
-                &source.type_id,
+                source_type,
             )));
         }
         if !admitted(self.catalog, &kind.target_type_constraints, &target.type_id) {
@@ -442,8 +467,8 @@ impl<'c> Writing<'_, '_, 'c> {
             .with_detail("target_id", target.id.as_str())
             .with_detail("constraint", "revoked"));
         }
-        if kind.flat && admitted(self.catalog, &kind.target_type_constraints, &source.type_id) {
-            let mut nesting = edges::refused_nesting(&kind.id, &source.id, &source.type_id);
+        if kind.flat && admitted(self.catalog, &kind.target_type_constraints, source_type) {
+            let mut nesting = edges::refused_nesting(&kind.id, source_id, source_type);
             nesting.message = format!(
                 "Edge \"{}\" does not nest collections; use \"parent-of\" for hierarchy",
                 kind.id
@@ -1016,8 +1041,12 @@ fn once(targets: &[String]) -> Vec<&String> {
         .collect()
 }
 
-/// Asks across every inline edge in the order of `POST /edges`, so no door answers differently.
-pub(crate) fn inline_gates(writing: &Writing<'_, '_, '_>, inline: &Inline) -> Result<()> {
+/// Asks across every inline edge in the order of `POST /edges`, up to the checks on held edges.
+pub(crate) fn inline_gates(
+    writing: &Writing<'_, '_, '_>,
+    source: (&str, &str),
+    inline: &Inline,
+) -> Result<()> {
     for (edge_type, targets) in inline {
         for target in targets {
             if validation::id("target_id", target).is_err() {
@@ -1031,13 +1060,37 @@ pub(crate) fn inline_gates(writing: &Writing<'_, '_, '_>, inline: &Inline) -> Re
     for (edge_type, _) in inline {
         writing.require_edge_write(edge_type)?;
     }
+    let mut named = Vec::new();
     for (edge_type, targets) in inline {
-        if !targets.is_empty() && writing.catalog.edge_kind(edge_type).is_none() {
-            return Err(unknown_kind(edge_type));
+        if targets.is_empty() {
+            continue;
+        }
+        let kind = writing
+            .catalog
+            .edge_kind(edge_type)
+            .ok_or_else(|| unknown_kind(edge_type))?;
+        let held = rows::leaving(writing.tx(), source.0, edge_type)?;
+        let (new, kept): (Vec<&String>, Vec<&String>) = once(targets)
+            .into_iter()
+            .partition(|target| !held.iter().any(|edge| edge.target_id == **target));
+        named.push((kind, new, kept));
+    }
+    for (kind, new, _) in &named {
+        if new.iter().any(|target| **target == source.0) {
+            return Err(self_loop(kind));
         }
     }
-    for (_, targets) in inline {
-        for target in targets {
+    for (kind, new, _) in &named {
+        if !new.is_empty() {
+            writing.judge_properties(kind, &Map::new(), By::Inline)?;
+        }
+    }
+    let mut ends = Vec::new();
+    for (kind, new, kept) in &named {
+        for target in new {
+            ends.push((*kind, writing.target_row(kind, target)?));
+        }
+        for target in kept {
             let readable = items::row(writing.tx(), target)?
                 .is_some_and(|row| writing.caller().may_read_type(&row.type_id));
             if !readable {
@@ -1045,7 +1098,30 @@ pub(crate) fn inline_gates(writing: &Writing<'_, '_, '_>, inline: &Inline) -> Re
             }
         }
     }
+    for (kind, target) in &ends {
+        writing.judge_cascade(kind, target)?;
+        writing.judge_ends(kind, source, target)?;
+    }
     Ok(())
+}
+
+/// Whether `inline` leaves out an edge the item holds or names one it does not.
+pub(crate) fn inline_differs(
+    writing: &Writing<'_, '_, '_>,
+    source_id: &str,
+    inline: &Inline,
+) -> Result<bool> {
+    for (edge_type, targets) in inline {
+        let held = rows::leaving(writing.tx(), source_id, edge_type)?;
+        let leaves = held.iter().any(|edge| !targets.contains(&edge.target_id));
+        let adds = targets
+            .iter()
+            .any(|target| !held.iter().any(|edge| edge.target_id == *target));
+        if leaves || adds {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The edges `inline` replaces are judged only after the old ones go, so a replaced edge counts for

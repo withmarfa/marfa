@@ -86,6 +86,7 @@ async function edgeTypeOf(
     cardinality: "one-to-one" | "one-to-many" | "many-to-one" | "many-to-many";
     source_type_constraints?: string[];
     target_type_constraints?: string[];
+    property_schema?: Record<string, unknown>;
   },
 ): Promise<string> {
   const id = `mock.order-${label}.${ctx.runId}`;
@@ -1110,6 +1111,123 @@ describe("the order an item write asks its inline edges in", () => {
     });
     expect(witnessedUpdate.status).toBe(404);
     expect(witnessedUpdate.error?.error.code).toBe("item_not_found");
+  });
+
+  it("answers a self-loop in an item write that names a stale version as a self-loop, and one that names no stale version the same", async () => {
+    const edgeType = await edgeTypeOf("stale-loop", {
+      cardinality: "many-to-many",
+    });
+    const item = await note();
+    const moved = await client.updateItem(item, {
+      version: 1,
+      properties: { body: "moved on" },
+    });
+    expect(moved.status).toBe(200);
+
+    for (const version of [1, 2]) {
+      const loop = await client.updateItem(item, {
+        version,
+        edges: { [edgeType]: [item] },
+      });
+      expect(loop.status, `version ${String(version)}`).toBe(400);
+      expect(loop.error?.error.code, `version ${String(version)}`).toBe(
+        "edge_cycle",
+      );
+    }
+
+    // The witness: a target that is not the item is a stale write at version 1.
+    const stale = await client.updateItem(item, {
+      version: 1,
+      edges: { [edgeType]: [await note()] },
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.error?.error.code).toBe("version_conflict");
+  });
+
+  it("answers a missing target of an edge type with a required property as invalid properties in an item write that names a stale version", async () => {
+    const edgeType = await edgeTypeOf("stale-required", {
+      cardinality: "many-to-many",
+      property_schema: { score: { type: "number", required: true } },
+    });
+    const item = await note();
+    const moved = await client.updateItem(item, {
+      version: 1,
+      properties: { body: "moved on" },
+    });
+    expect(moved.status).toBe(200);
+
+    for (const version of [1, 2]) {
+      const missing = await client.updateItem(item, {
+        version,
+        edges: { [edgeType]: [generateId()] },
+      });
+      expect(missing.status, `version ${String(version)}`).toBe(400);
+      expect(missing.error?.error.code, `version ${String(version)}`).toBe(
+        "invalid_properties",
+      );
+    }
+  });
+
+  it("answers an endpoint type the edge type refuses in an item write that names a stale version, and a duplicate or cycle only after the version", async () => {
+    const edgeType = await edgeTypeOf("stale-ends", {
+      cardinality: "many-to-many",
+      target_type_constraints: ["core.bookmark"],
+    });
+    const item = await note();
+    const moved = await client.updateItem(item, {
+      version: 1,
+      properties: { body: "moved on" },
+    });
+    expect(moved.status).toBe(200);
+
+    for (const version of [1, 2]) {
+      const refused = await client.updateItem(item, {
+        version,
+        edges: { [edgeType]: [await note()] },
+      });
+      expect(refused.status, `version ${String(version)}`).toBe(400);
+      expect(refused.error?.error.code, `version ${String(version)}`).toBe(
+        "edge_constraint_violation",
+      );
+    }
+
+    const earlier = await note();
+    await held(earlier, item, "supersedes");
+    const stale = await client.updateItem(item, {
+      version: 1,
+      edges: { supersedes: [earlier] },
+    });
+    expect(stale.status).toBe(409);
+    expect(stale.error?.error.code).toBe("version_conflict");
+    const current = await client.updateItem(item, {
+      version: 2,
+      edges: { supersedes: [earlier] },
+    });
+    expect(current.status).toBe(400);
+    expect(current.error?.error.code).toBe("edge_cycle");
+  });
+
+  it("answers a cardinality an item write breaks only after it asks the version", async () => {
+    const edgeType = await edgeTypeOf("stale-cardinality", {
+      cardinality: "one-to-one",
+    });
+    const item = await note();
+    const moved = await client.updateItem(item, {
+      version: 1,
+      properties: { body: "moved on" },
+    });
+    expect(moved.status).toBe(200);
+    const edges = { [edgeType]: [await note(), await note()] };
+
+    const stale = await client.updateItem(item, { version: 1, edges });
+    expect(stale.status).toBe(409);
+    expect(stale.error?.error.code).toBe("version_conflict");
+
+    // The witness: at the version the item holds, the same write is the cardinality's refusal.
+    const current = await client.updateItem(item, { version: 2, edges });
+    expect(current.status).toBe(400);
+    expect(current.error?.error.code).toBe("edge_constraint_violation");
+    expect(current.error?.error.details?.constraint).toBe("cardinality");
   });
 });
 

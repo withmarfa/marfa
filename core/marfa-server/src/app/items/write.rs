@@ -250,6 +250,29 @@ impl Change {
 
 type Outcome = (Map<String, Value>, Option<Value>, Option<Item>);
 
+/// What a write to one item came to.
+enum Landing {
+    /// The item stands as stored: nothing was written.
+    Unchanged(Option<Value>),
+    /// Only the edges the write named changed.
+    Edges(Item, Option<Value>),
+    Written(Item, Option<Value>),
+}
+
+/// A write settled against the item, before anything is stored.
+struct Prepared {
+    resulting: String,
+    settled: Settled,
+    decided: Decided,
+}
+
+fn resolution_note(resolution: Option<Value>) -> String {
+    match resolution {
+        Some(resolution) => format!(",\"conflict_resolution\":{resolution}"),
+        None => String::new(),
+    }
+}
+
 #[derive(Debug)]
 pub struct Done {
     pub status: u16,
@@ -1214,8 +1237,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     fn created(&self, put: Put, source: &str) -> Result<Item> {
         let tx = self.unit.tx();
         let rules = &self.catalog.rules;
+        let id = put.id.unwrap_or_else(|| Uuid::now_v7().to_string());
         if let Some(inline) = &put.edges {
-            edges::inline_gates(&self.edge_writing(), inline)?;
+            edges::inline_gates(&self.edge_writing(), (&id, &put.type_id), inline)?;
         }
         if let Some(properties) = &put.properties {
             refuse_undeclared(self.caller(), &self.catalog, &put.type_id, properties, None)?;
@@ -1238,7 +1262,6 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         let mut properties = rules.coerced_properties(&put.type_id, &properties);
         let decided = self.referenced(None, &put.type_id, &mut properties, Naming::default())?;
         let properties = rules.in_answer_order(&put.type_id, &properties);
-        let id = put.id.unwrap_or_else(|| Uuid::now_v7().to_string());
         let state = put.state.as_deref().unwrap_or("active");
         let at = self.unit.at.as_str();
         let tier = put
@@ -1313,45 +1336,71 @@ impl<'t, 'c> Job<'_, 't, 'c> {
     }
 
     fn change_row(&self, row: Item, writing: Writing) -> Result<Done> {
-        self.judge_change(&row, &writing)?;
+        match self.landing(&row, &writing)? {
+            Landing::Unchanged(resolution) => {
+                let also = format!(",\"acknowledged\":true{}", resolution_note(resolution));
+                self.answer_edges(200, &row, &also)
+            }
+            Landing::Edges(item, resolution) => {
+                self.answer_edges(200, &item, &resolution_note(resolution))
+            }
+            Landing::Written(item, resolution) => {
+                let details = if writing.upsert {
+                    json!({
+                        "type": item.type_id,
+                        "idempotent": true,
+                        "source": item.source,
+                        "source_id": item.source_id,
+                    })
+                } else {
+                    json!({ "type": item.type_id })
+                };
+                self.unit
+                    .audit_also("item.update", "item", &item.id, Some(details))?;
+                self.answer_edges(200, &item, &resolution_note(resolution))
+            }
+        }
+    }
+
+    fn landing(&self, row: &Item, writing: &Writing) -> Result<Landing> {
+        self.judge_change(row, writing)?;
         if !writing.writes_row() {
             if let Some(named) = writing.version
                 && named != row.version
             {
-                return Err(stale_bare(&row, named)?);
+                return Err(stale_bare(row, named)?);
             }
-            if writing.edges.is_some() {
-                self.announce("item.updated", &row)?;
-            }
-            let item = self.with_inline(row, writing.edges.as_ref())?;
-            return self.answer_edges(200, &item, "");
+            return self.edges_landing(row, writing, None);
         }
-        let (item, resolution) = self.landed(&row, &writing)?;
-        let details = if writing.upsert {
-            json!({
-                "type": item.type_id,
-                "idempotent": true,
-                "source": item.source,
-                "source_id": item.source_id,
-            })
-        } else {
-            json!({ "type": item.type_id })
+        let prepared = self.prepared(row, writing)?;
+        if self.stands_as_stored(row, writing, &prepared)? {
+            return self.edges_landing(row, writing, prepared.settled.resolution);
+        }
+        let (item, resolution) = self.land_prepared(row, writing, prepared)?;
+        Ok(Landing::Written(item, resolution))
+    }
+
+    /// The item stands as stored, so a write that names the edges it holds stores nothing.
+    fn edges_landing(
+        &self,
+        row: &Item,
+        writing: &Writing,
+        resolution: Option<Value>,
+    ) -> Result<Landing> {
+        let Some(inline) = &writing.edges else {
+            return Ok(Landing::Unchanged(resolution));
         };
-        self.unit
-            .audit_also("item.update", "item", &item.id, Some(details))?;
-        let also = match resolution {
-            Some(resolution) => format!(",\"conflict_resolution\":{resolution}"),
-            None => String::new(),
-        };
-        self.answer_edges(200, &item, &also)
+        if !edges::inline_differs(&self.edge_writing(), &row.id, inline)? {
+            return Ok(Landing::Unchanged(resolution));
+        }
+        self.announce("item.updated", row)?;
+        let item = self.with_inline(row.clone(), Some(inline))?;
+        Ok(Landing::Edges(item, resolution))
     }
 
     fn judge_change(&self, row: &Item, writing: &Writing) -> Result<()> {
         let tx = self.unit.tx();
         let rules = &self.catalog.rules;
-        if let Some(inline) = &writing.edges {
-            edges::inline_gates(&self.edge_writing(), inline)?;
-        }
         if let Some(destination) = writing.destination.as_deref()
             && !rules.known(destination)
         {
@@ -1363,6 +1412,9 @@ impl<'t, 'c> Job<'_, 't, 'c> {
                 ),
             )
             .with_detail("type", destination));
+        }
+        if (writing.writes_row() || writing.exact) && !rules.known(&row.type_id) {
+            return Err(unknown_row(row));
         }
         if let Some(source_id) = writing.source_id.as_deref()
             && Some(source_id) != row.source_id.as_deref()
@@ -1386,52 +1438,75 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         if let Some(properties) = &writing.properties {
             refuse_undeclared(self.caller(), &self.catalog, resulting, properties, None)?;
         }
-        if writing.exact {
-            if !rules.known(&row.type_id) {
-                return Err(unknown_row(row));
-            }
-            if conflict::precondition(row.version, writing.version, true) == Precondition::Refused {
-                return Err(stale_bare(row, writing.version.unwrap_or(0))?);
-            }
+        if let Some(inline) = &writing.edges {
+            edges::inline_gates(&self.edge_writing(), (&row.id, resulting), inline)?;
+        }
+        if writing.exact
+            && conflict::precondition(row.version, writing.version, true) == Precondition::Refused
+        {
+            return Err(stale_bare(row, writing.version.unwrap_or(0))?);
         }
         Ok(())
     }
 
     fn landed(&self, row: &Item, writing: &Writing) -> Result<(Item, Option<Value>)> {
-        if !self.catalog.rules.known(&row.type_id) {
-            return Err(unknown_row(row));
-        }
-        let resulting = writing.destination.as_deref().unwrap_or(&row.type_id);
-        let mut settled = self.settled(row, resulting, writing)?;
+        let prepared = self.prepared(row, writing)?;
+        self.land_prepared(row, writing, prepared)
+    }
+
+    fn prepared(&self, row: &Item, writing: &Writing) -> Result<Prepared> {
+        let resulting = writing
+            .destination
+            .clone()
+            .unwrap_or_else(|| row.type_id.clone());
+        let mut settled = self.settled(row, &resulting, writing)?;
         if resulting == FOLDER_TYPE && writing.judged() {
             folders::judge(&settled.properties, &self.catalog)?;
         }
         if resulting != row.type_id {
             let replaced = writing.edges.as_deref().unwrap_or_default();
-            edges::judge_retype(&self.edge_writing(), row, resulting, replaced)?;
+            edges::judge_retype(&self.edge_writing(), row, &resulting, replaced)?;
             instance::raise_reach(self.unit.tx())?;
-            rows::retype_marks(self.unit.tx(), &row.id, resulting)?;
+            rows::retype_marks(self.unit.tx(), &row.id, &resulting)?;
         }
         let decided = self.referenced(
             Some(Referencing::Item(row.seq)),
-            resulting,
+            &resulting,
             &mut settled.properties,
             Naming {
                 base: settled.base.as_ref(),
                 ..Naming::default()
             },
         )?;
-        if resulting != row.type_id || keeps_own_table(&self.catalog.types, resulting) {
+        Ok(Prepared {
+            resulting,
+            settled,
+            decided,
+        })
+    }
+
+    fn land_prepared(
+        &self,
+        row: &Item,
+        writing: &Writing,
+        prepared: Prepared,
+    ) -> Result<(Item, Option<Value>)> {
+        let Prepared {
+            resulting,
+            settled,
+            decided,
+        } = prepared;
+        if resulting != row.type_id || keeps_own_table(&self.catalog.types, &resulting) {
             crate::app::tables::rekey_item(
                 self.unit.tx(),
                 &self.catalog,
                 row.seq,
-                resulting,
+                &resulting,
                 &settled.properties,
                 &self.unit.at,
             )?;
         }
-        let item = self.land(row, resulting, &settled)?;
+        let item = self.land(row, &resulting, &settled)?;
         decided.apply(self.unit.tx(), Referencing::Item(item.seq))?;
         if let Some(tags) = &writing.tags {
             rows::set_tags(self.unit.tx(), item.seq, &distinct(tags))?;
@@ -1443,6 +1518,42 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         self.announce("item.updated", &item)?;
         let item = self.with_inline(item, writing.edges.as_ref())?;
         Ok((item, settled.resolution))
+    }
+
+    /// Whether the write would store the item as it is, judged on what it would store.
+    fn stands_as_stored(&self, row: &Item, writing: &Writing, prepared: &Prepared) -> Result<bool> {
+        let Prepared {
+            resulting, settled, ..
+        } = prepared;
+        let fields = &settled.fields;
+        let current = parsed(&row.properties)?;
+        let same_properties = current.len() == settled.properties.len()
+            && settled.properties.iter().all(|(name, value)| {
+                current
+                    .get(name)
+                    .is_some_and(|held| conflict::same(value, held))
+            });
+        let same_tags = match &writing.tags {
+            Some(tags) => distinct(tags) == rows::tags(self.unit.tx(), row.seq)?,
+            None => true,
+        };
+        Ok(*resulting == row.type_id
+            && settled.copy.is_none()
+            && same_properties
+            && same_tags
+            && fields
+                .tier
+                .as_deref()
+                .is_none_or(|tier| Some(tier) == row.tier.as_deref())
+            && fields
+                .source_id
+                .as_deref()
+                .is_none_or(|key| Some(key) == row.source_id.as_deref())
+            && fields
+                .occurred_at
+                .as_deref()
+                .is_none_or(|at| at == row.occurred_at)
+            && self.schema_version(resulting) == row.schema_version)
     }
 
     fn settled(&self, row: &Item, resulting: &str, writing: &Writing) -> Result<Settled> {
@@ -2043,9 +2154,14 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             });
         }
         let id = row.id.clone();
-        self.entry_row(row, put, replace, retype, named_by_id)
-            .map(|()| Entered::Updated(id.clone()))
-            .map_err(|refusal| refusal.naming_row(&id))
+        match self.entry_row(row, put, replace, retype, named_by_id) {
+            Ok(Landing::Unchanged(_)) => Ok(Entered::Skipped {
+                id: Some(id),
+                reason: "unchanged",
+            }),
+            Ok(_) => Ok(Entered::Updated(id)),
+            Err(refusal) => Err(refusal.naming_row(&id)),
+        }
     }
 
     fn entry_once(
@@ -2082,7 +2198,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
         replace: bool,
         retype: bool,
         named_by_id: bool,
-    ) -> Result<()> {
+    ) -> Result<Landing> {
         let moving = retype && put.type_id != row.type_id;
         if !moving {
             refuse_other_type(&row, &put.type_id, named_by_id)?;
@@ -2100,8 +2216,7 @@ impl<'t, 'c> Job<'_, 't, 'c> {
             upsert: true,
             ..Writing::default()
         };
-        self.judge_change(&row, &writing)?;
-        self.landed(&row, &writing).map(|_| ())
+        self.landing(&row, &writing)
     }
 
     fn moved_to_bin(&self, moving: &[Moving]) -> Result<Vec<Item>> {

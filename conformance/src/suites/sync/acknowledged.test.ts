@@ -9,6 +9,7 @@ import {
   cleanup,
 } from "../../utils/setup.js";
 import { collectUntil, withStreamAtCursor } from "../../utils/stream.js";
+import { announces, tapStream } from "../../utils/stream-tap.js";
 import type { SseEvent } from "../../utils/sse.js";
 
 /**
@@ -546,5 +547,78 @@ describe("a repeated create is acknowledged", () => {
       JSON.stringify(stored.data),
       "the refused create landed anyway",
     ).not.toContain(c.data.item.id);
+  });
+});
+
+describe("a write that changes nothing is acknowledged", () => {
+  it("answers an update, an upsert and a bulk entry that change nothing without announcing an event, and announces the same writes once they change something", async () => {
+    const sourceId = `unchanged-stream-${ctx.runId}`;
+    const sentinelBody = `unchanged-sentinel-${ctx.runId}`;
+    const created = await client.createItem({
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { body: "unchanged-first" },
+    });
+    expect(created.ok).toBe(true);
+    const id = created.data.item.id;
+    trackItem(ctx, id);
+    const same = {
+      type: "core.note",
+      source: ctx.source,
+      source_id: sourceId,
+      properties: { body: "unchanged-first" },
+    };
+
+    const tap = await tapStream(apiUrl, apiKey);
+    const outcome = await (async () => {
+      await tap.until(
+        (seen) => seen.some((e) => e.event === "stream_cursor"),
+        "the frame announcing the stream's position",
+      );
+
+      const patched = await client.updateItem(id, {
+        properties: { body: "unchanged-first" },
+        version: 1,
+      });
+      const upserted = await client.createItem(same);
+      const paged = await client.bulkItems({ items: [same] });
+
+      // The witness: the same update with one value changed, which is
+      // announced, so the silence above is about what they wrote.
+      const changed = await client.updateItem(id, {
+        properties: { body: "unchanged-second" },
+        version: 1,
+      });
+
+      const sentinel = await client.createItem({
+        type: "core.note",
+        source: ctx.source,
+        properties: { body: sentinelBody },
+      });
+      expect(sentinel.ok).toBe(true);
+      trackItem(ctx, sentinel.data.item.id);
+
+      const events = await tap.until(
+        (seen) => seen.some(announces(sentinel.data.item.id)),
+        `item.created for the sentinel written after the unchanged writes (${sentinel.data.item.id})`,
+      );
+      return { patched, upserted, paged, changed, events };
+    })().finally(() => tap.close());
+
+    expect(outcome.patched.data.acknowledged).toBe(true);
+    expect(outcome.patched.data.item.version).toBe(1);
+    expect(outcome.upserted.data.acknowledged).toBe(true);
+    expect(outcome.upserted.data.item.version).toBe(1);
+    expect(outcome.paged.data.results[0]).toMatchObject({
+      outcome: "skipped",
+      reason: "unchanged",
+      id,
+    });
+    expect(outcome.changed.data.item.version).toBe(2);
+    expect(
+      framesForItem(outcome.events, id),
+      "a write that changed nothing was announced, so every other device applies an event for a write that did not happen",
+    ).toEqual(["item.updated"]);
   });
 });

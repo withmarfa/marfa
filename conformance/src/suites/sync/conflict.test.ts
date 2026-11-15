@@ -929,15 +929,18 @@ describe("the server resolves a conflict", () => {
         seed: { tier: "library" as const },
         winner: { tier: "feed" as const },
         loser: { tier: "feed" as const },
+        // The loser's tier is the one the item holds, so resolving it stores nothing.
+        version: 2,
       },
       {
         field: "source_id",
         seed: { source_id: `resolve-seed-${ctx.runId}` },
         winner: { source_id: `resolve-winner-${ctx.runId}` },
         loser: { source_id: `resolve-loser-${ctx.runId}` },
+        version: 3,
       },
     ];
-    for (const { field, seed, winner, loser } of cases) {
+    for (const { field, seed, winner, loser, version } of cases) {
       const made = await client.createItem(
         createNote({
           source: ctx.source,
@@ -989,7 +992,7 @@ describe("the server resolves a conflict", () => {
         (loser as Record<string, unknown>)[field],
       );
       const after = await client.getItem(id);
-      expect(after.data.item.version, field).toBe(3);
+      expect(after.data.item.version, field).toBe(version);
     }
   });
 
@@ -1015,6 +1018,7 @@ describe("the server resolves a conflict", () => {
     ).toBe(true);
 
     const resolved = await client.rawRequest<{
+      acknowledged?: boolean;
       item: { version: number; properties: Record<string, unknown> };
       conflict_resolution?: {
         fields?: string[];
@@ -1030,7 +1034,8 @@ describe("the server resolves a conflict", () => {
       "last_writer_wins",
     );
     expect(resolved.data.item.properties.title).toBe("The same new title");
-    expect(resolved.data.item.version).toBe(3);
+    expect(resolved.data.item.version).toBe(2);
+    expect(resolved.data.acknowledged).toBe(true);
   });
 
   it("records the item the resolution moved on from, and gives the copy a history of its own", async () => {

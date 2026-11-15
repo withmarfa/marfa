@@ -248,10 +248,14 @@ export class FolderDoor {
               ([field, value]) => !same(value, ancestor.properties[field]),
             ),
           );
+          const merged = { ...held.properties, ...changed };
+          if (this.holds(held.properties, merged)) {
+            return { answer: this.acknowledged(incumbent) };
+          }
           this.remember(incumbent, held);
           this.store(incumbent, {
             ...held,
-            properties: { ...held.properties, ...changed },
+            properties: merged,
             version: held.version + 1,
           });
           return { answer: answers.upserted(this.wire(incumbent)) };
@@ -278,6 +282,9 @@ export class FolderDoor {
         properties: { ...held.properties, ...sent.properties },
         version: held.version + 1,
       };
+      if (this.holds(held.properties, now.properties)) {
+        return { answer: this.acknowledged(incumbent) };
+      }
       this.remember(incumbent, held);
       this.store(incumbent, now);
       return { answer: answers.upserted(this.wire(incumbent)) };
@@ -445,9 +452,25 @@ export class FolderDoor {
         });
       }
     }
-    this.remember(id, before);
     const properties = { ...before.properties, ...applied };
     for (const field of cleared) delete properties[field];
+    // A write that leaves the item as it stands stores nothing and says so
+    // (`versions/update-unchanged`).
+    if (
+      sibling === undefined &&
+      this.holds(before.properties, properties) &&
+      Object.entries(moves).every(
+        ([field, value]) => before[field as keyof DoorItem] === value,
+      ) &&
+      sourceId === before.source_id
+    ) {
+      const answer =
+        resolution === undefined
+          ? answers.updated(this.wire(id), before.tags ?? [])
+          : answers.resolved(this.wire(id), resolution, sibling);
+      return this.marked(answer);
+    }
+    this.remember(id, before);
     this.store(id, {
       ...before,
       ...moves,
@@ -464,16 +487,28 @@ export class FolderDoor {
    *  carries no hydrated edges because nothing was read back with them. */
   private acknowledged(id: string): Answer {
     const { edges: _edges, ...stored } = this.wire(id);
-    const body = answers.upserted(stored);
-    return body.kind === "json"
+    return this.marked(answers.upserted(stored));
+  }
+
+  private marked(answer: Answer): Answer {
+    return answer.kind === "json"
       ? {
-          ...body,
+          ...answer,
           body: {
-            ...(body.body as Record<string, unknown>),
+            ...(answer.body as Record<string, unknown>),
             acknowledged: true,
           },
         }
-      : body;
+      : answer;
+  }
+
+  /** Whether the properties a write would store are the ones the item holds. */
+  private holds(
+    held: Record<string, unknown>,
+    stored: Record<string, unknown>,
+  ): boolean {
+    const names = new Set([...Object.keys(held), ...Object.keys(stored)]);
+    return [...names].every((name) => same(held[name], stored[name]));
   }
 
   /** The conflicted copies a keep-both resolution wrote, by id. */

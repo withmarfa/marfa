@@ -6,7 +6,7 @@ An item carries a `version` that starts at 1 and moves with each write to its fi
 
 ### `versions/update-step`
 
-When `PATCH /items/{id}` names the version the item holds and carries `properties`, `tier`, `occurred_at`, `source_id` or a move to another type, the server MUST answer `200` with the item at the next version.
+When `PATCH /items/{id}` names the version the item holds and carries `properties`, `tier`, `occurred_at`, `source_id` or a move to another type that changes the item, the server MUST answer `200` with the item at the next version.
 
 **Tests:** `correctness/item-versioning.test.ts › version increments on update`, `› moves an item's tier on an update`, `› moves the version on an update of occurred_at, source_id or a type`.
 
@@ -40,11 +40,55 @@ If `POST /items` names `conflict`, then the server MUST answer `400 validation_e
 
 ### `versions/update-unchanged`
 
-When `PATCH /items/{id}` names the version the item holds and carries `properties` that are empty or equal to the item's own, the server MUST write the item at the next version.
+When `PATCH /items/{id}` carries `properties`, `tier`, `occurred_at`, `source_id`, `edges` or `retype: true` with the item's own type, and the item as the write would store it, with its edges, is the item as it stands, the server MUST answer `200` with the item at the version it holds and `acknowledged: true`.
 
-**Reason:** a write that carries `properties` is a write to the item, whatever those properties hold.
+**Reason:** a write that changes nothing gives the item nothing a later writer could be stale against, so a repeated or retried save does not move its version.
 
-**Tests:** `correctness/item-versioning.test.ts › writes a version for an update whose properties are empty or equal to the item's`.
+**Tests:** `correctness/item-versioning.test.ts › answers an update whose properties are empty or equal to the item's as unchanged at the version held, and writes no version`, `› answers an update that carries only edges the item holds, or only the item's own type, as unchanged at the version held`.
+
+### `versions/unchanged-stores-nothing`
+
+When the server answers a write to an item with `acknowledged: true` because the write would leave the item as it stands, the server MUST leave the item's `version`, `updated_at` and history of snapshots as they were.
+
+**Tests:** `correctness/item-versioning.test.ts › answers an update whose properties are empty or equal to the item's as unchanged at the version held, and writes no version`, `› answers an upsert of a natural key whose item would not change as unchanged at the version held, and writes no version`.
+
+### `versions/unchanged-silent`
+
+When the server answers a write to an item with `acknowledged: true` because the write would leave the item as it stands, the server MUST NOT announce an event for it.
+
+**Reason:** a client that took in the item already holds what the event would carry, and a webhook receiver is not woken for nothing.
+
+**Tests:** `sync/acknowledged.test.ts › answers an update, an upsert and a bulk entry that change nothing without announcing an event, and announces the same writes once they change something`.
+
+### `versions/unchanged-upsert`
+
+When `POST /items`, without `mode: create_only`, names a natural key that resolves an item and the item as the write would store it is the item as it stands, the server MUST answer `200` with the item at the version it holds and `acknowledged: true`.
+
+**Tests:** `correctness/item-versioning.test.ts › answers an upsert of a natural key whose item would not change as unchanged at the version held, and writes no version`.
+
+### `versions/unchanged-as-stored`
+
+When the server decides whether a write to an item leaves it as it stands, the server MUST compare the item as the write would store it, after defaults and normalization, with the item as it stands, and not the body the write was sent with.
+
+**Reason:** two bodies that name one stored item are one write.
+
+**Tests:** `correctness/item-versioning.test.ts › judges an update unchanged on the item it would store, not on the body it was sent`, `compliance/bulk.test.ts › reports an upsert entry whose item would not change skipped as unchanged, and counts and writes only the entries that change`.
+
+### `versions/unchanged-after-version`
+
+If `PATCH /items/{id}` names a version other than the item's and either names `version_match: exact` or carries a value that differs from that version's and equals the item's own, then the server MUST answer `409 version_conflict`, whether or not the item would change.
+
+**Reason:** the version a writer names is asked before the write is judged against the item, so a stale writer is told it is stale.
+
+**Tests:** `correctness/item-versioning.test.ts › asks an update's version before it finds the update unchanged`.
+
+### `versions/unchanged-edges-applied`
+
+When `PATCH /items/{id}` names `edges` that the item does not hold and the write would otherwise leave the item as it stands, the server MUST write those edges, leave the item's `version` as it was and answer without `acknowledged`.
+
+**Reason:** the write changed the edges, which an item's version does not count (`versions/update-edges-only`).
+
+**Tests:** `correctness/item-versioning.test.ts › applies the edges an update names that the item does not hold, and leaves an update whose edges it holds unchanged`.
 
 ### `versions/update-edges-only`
 
@@ -86,11 +130,11 @@ When two `PATCH /items/{id}` writes that name one version, name no `conflict=aut
 
 ### `versions/update-order`
 
-When `PATCH /items/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a `conflict` other than `auto`, `manual` or `callback`; a missing `version`, or one that is not a whole number of at least 0; a body member the operation does not declare; a malformed id; an update naming nothing to change; an `occurred_at` that is not a time; an id no item holds, in the bin or of a type the credential may not read; no write on the item's type; a `type` other than the item's; a move to a type nothing registered; an item of a type nothing registered; a failed exact version precondition; a `version` other than the item's where nothing writes the item; a `version` no snapshot the credential may read covers; a collision without `conflict=auto`; properties the merged result lacks.
+When `PATCH /items/{id}` meets more than one of the answers this chapter gives it, the server MUST give the first in this order: a `conflict` other than `auto`, `manual` or `callback`; a missing `version`, or one that is not a whole number of at least 0; a body member the operation does not declare; a malformed id; an update naming nothing to change; an `occurred_at` that is not a time; an id no item holds, in the bin or of a type the credential may not read; no write on the item's type; a `type` other than the item's; a move to a type nothing registered; an item of a type nothing registered; an inline edge of an edge type nothing registered, a self-loop, `properties` the edge type refuses, a target no item holds, in the bin or that the key may not read, or an endpoint type the edge type refuses; a failed exact version precondition; a `version` other than the item's where nothing writes the item; a `version` no snapshot the credential may read covers; a collision without `conflict=auto`; properties the merged result lacks; an inline edge that duplicates one the item holds, breaks a cardinality or closes a cycle.
 
-**Reason:** the answers about the item itself, such as `404 item_not_found` and `409 type_mismatch`, come after the check for nothing to change and before the version is looked at.
+**Reason:** the answers about the item itself, such as `404 item_not_found` and `409 type_mismatch`, come after the check for nothing to change and before the version is looked at. What an edge's own definition decides is asked before the version, and what depends on the edges the item holds after the merge, as `edges/inline-order` says.
 
-**Tests:** `sync/conflict.test.ts › writes no copy where the resolution is refused after it, and writes it where the same write is not`, `compliance/version-order.test.ts › asks for the version before an undeclared body key`, `› asks for the version before the id`, `› asks for the version before whether the update names anything to change`, `› asks whether the id is well formed before whether the update names anything to change`, `› asks whether the update names anything to change before it looks the item up`, `› asks whether occurred_at is a time before it looks the item up`, `› asks whether the update names anything to change before the version`, `› looks the item up before it asks the version`, `› asks whether the key may write the item's type before it asks the version`, `› asks whether the type named is the item's before it asks the version`, `› asks whether a type to move to is registered before it asks the version`, `› asks whether a snapshot exists before it looks for a collision`, `› asks whether a snapshot exists before it judges the properties`, `› asks for a collision before it judges the properties, without conflict=auto`, `compliance/version-order.test.ts › asks whether conflict is a mode before it asks for the version`, `› answers unknown_type for an item whose type a forced delete removed before it asks the version, stale or current`, `› answers a snapshot the key may not read as ancestor_unavailable before it looks for a collision`.
+**Tests:** `sync/conflict.test.ts › writes no copy where the resolution is refused after it, and writes it where the same write is not`, `compliance/version-order.test.ts › asks for the version before an undeclared body key`, `› asks for the version before the id`, `› asks for the version before whether the update names anything to change`, `› asks whether the id is well formed before whether the update names anything to change`, `› asks whether the update names anything to change before it looks the item up`, `› asks whether occurred_at is a time before it looks the item up`, `› asks whether the update names anything to change before the version`, `› looks the item up before it asks the version`, `› asks whether the key may write the item's type before it asks the version`, `› asks whether the type named is the item's before it asks the version`, `› asks whether a type to move to is registered before it asks the version`, `› asks whether a snapshot exists before it looks for a collision`, `› asks whether a snapshot exists before it judges the properties`, `› asks for a collision before it judges the properties, without conflict=auto`, `compliance/version-order.test.ts › asks whether conflict is a mode before it asks for the version`, `› answers unknown_type for an item whose type a forced delete removed before it asks the version, stale or current`, `› answers a snapshot the key may not read as ancestor_unavailable before it looks for a collision`, `compliance/edge-check-order.test.ts › answers a self-loop in an item write that names a stale version as a self-loop, and one that names no stale version the same`, `› answers a missing target of an edge type with a required property as invalid properties in an item write that names a stale version`, `› answers an endpoint type the edge type refuses in an item write that names a stale version, and a duplicate or cycle only after the version`.
 
 ## Snapshots and the history
 

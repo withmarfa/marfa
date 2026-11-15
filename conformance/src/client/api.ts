@@ -374,11 +374,14 @@ export class MarfaClient {
   async updateItem(
     id: string,
     changes: UpdateItemInput,
-  ): Promise<ApiResponse<{ item: MarfaItem }>> {
-    return this.request<{ item: MarfaItem }>(`/items/${id}`, {
-      method: "PATCH",
-      body: changes,
-    });
+  ): Promise<ApiResponse<{ item: MarfaItem; acknowledged?: boolean }>> {
+    return this.request<{ item: MarfaItem; acknowledged?: boolean }>(
+      `/items/${id}`,
+      {
+        method: "PATCH",
+        body: changes,
+      },
+    );
   }
 
   async deleteItem(
