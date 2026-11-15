@@ -15,6 +15,8 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { ESLint } from "eslint";
 import { parse as parseToml } from "smol-toml";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { parse } from "yaml";
@@ -23,6 +25,7 @@ import {
   classify,
   documentationOnly,
   DRAFT_JOBS,
+  ESLINT_IGNORED,
   forDraft,
   forNightly,
   NIGHTLY_JOBS,
@@ -51,9 +54,12 @@ const CONTRACT_SHARDS: Job[] = [...SERVER_SHARDS, ...DEVICE_SHARDS];
 const CONTRACT: Job[] = [...OFFLINE, ...CONTRACT_SHARDS];
 /** A workspace package's code reaches the workspace's build and tests, and the offline lane. */
 const PACKAGES: Job[] = ["quick-checks", "workspace", ...OFFLINE];
+/** The build without test hooks and the fixture that boots it. */
+const RELEASE: Job[] = ["rust-contract-release"];
 /** Every job that reads the server's crates. */
 const RUST_SERVER: Job[] = [
   ...CONTRACT_SHARDS,
+  ...RELEASE,
   "mcp-conformance",
   "restore-drill",
 ];
@@ -118,14 +124,7 @@ describe("what a change runs", () => {
     [
       "the server's access words, which the same test reads",
       ["core/marfa-server/src/http/pages/words.rs"],
-      [
-        "quick-checks",
-        "workspace",
-        "core-checks-linux",
-        ...CONTRACT_SHARDS,
-        "mcp-conformance",
-        "restore-drill",
-      ],
+      ["quick-checks", "workspace", "core-checks-linux", ...RUST_SERVER],
     ],
     [
       "the contract version, which the version check reads",
@@ -160,7 +159,7 @@ describe("what a change runs", () => {
     [
       "JavaScript or TypeScript in an agent folder, which ESLint reads",
       [".agents/skills/release/helper.ts", ".githooks/check.mjs"],
-      ["quick-checks", "workspace"],
+      ["quick-checks", "workspace", "lint"],
     ],
     [
       "a path named like an agent folder that is not one",
@@ -243,7 +242,7 @@ describe("what a change runs", () => {
     [
       "the types package's source, which the core's tests do not read",
       ["packages/types/src/index.ts"],
-      [...PACKAGES, "types-freshness", "clients-freshness"],
+      [...PACKAGES, "lint", "types-freshness", "clients-freshness"],
     ],
     [
       "the catalog the core carries",
@@ -253,7 +252,7 @@ describe("what a change runs", () => {
     [
       "a client-only change, which no contract job reads",
       ["packages/client/src/client.ts"],
-      ["quick-checks", "workspace", "clients-freshness"],
+      ["quick-checks", "workspace", "lint", "clients-freshness"],
     ],
     [
       "a Rust-only change",
@@ -396,6 +395,7 @@ describe("what a change runs", () => {
         "workspace",
         "core-checks-linux",
         ...CONTRACT,
+        ...RELEASE,
         "clients-freshness",
       ],
     ],
@@ -446,13 +446,7 @@ describe("what a change runs", () => {
     [
       "a helper no test file is, which every fixture may import",
       ["conformance/src/utils/shard-drift.ts"],
-      [
-        "quick-checks",
-        "workspace",
-        ...CONTRACT,
-        "restore-drill",
-        "mcp-conformance",
-      ],
+      ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
       "a device fixture",
@@ -520,13 +514,7 @@ describe("what a change runs", () => {
     [
       "what every fixture uses",
       ["conformance/src/utils/setup.ts"],
-      [
-        "quick-checks",
-        "workspace",
-        ...CONTRACT,
-        "restore-drill",
-        "mcp-conformance",
-      ],
+      ["quick-checks", "workspace", ...CONTRACT],
     ],
     [
       "the sequencer and the weights that split a project over its shards",
@@ -537,8 +525,9 @@ describe("what a change runs", () => {
       [
         "quick-checks",
         "workspace",
+        "lint",
         ...CONTRACT,
-        "restore-drill",
+        ...RELEASE,
         "mcp-conformance",
       ],
     ],
@@ -548,7 +537,9 @@ describe("what a change runs", () => {
       [
         "quick-checks",
         "workspace",
+        "lint",
         ...CONTRACT,
+        ...RELEASE,
         "restore-drill",
         "mcp-conformance",
       ],
@@ -561,7 +552,7 @@ describe("what a change runs", () => {
     [
       "the script that runs the MCP conformance tool",
       ["conformance/scripts/mcp-conformance.ts"],
-      ["quick-checks", "workspace", "mcp-conformance"],
+      ["quick-checks", "workspace", "lint", "mcp-conformance"],
     ],
     [
       "the image, which the test hooks' test also reads",
@@ -591,7 +582,7 @@ describe("what a change runs", () => {
     [
       "JavaScript that ESLint reads",
       ["deploy/healthcheck.js"],
-      ["quick-checks", "workspace"],
+      ["quick-checks", "workspace", "lint"],
     ],
     [
       "Markdown in a generated tree, which its freshness check refuses",
@@ -610,7 +601,9 @@ describe("what a change runs", () => {
       [
         "quick-checks",
         "workspace",
+        "lint",
         ...CONTRACT,
+        ...RELEASE,
         "mcp-conformance",
         "restore-drill",
         "types-freshness",
@@ -644,11 +637,15 @@ describe("what a change runs", () => {
       ["quick-checks", "workspace"],
     ],
     ["the classifier itself", ["scripts/ci-required.ts"], [...JOBS]],
-    ["a test of CI", ["ci/ci-required.test.ts"], ["quick-checks", "workspace"]],
+    [
+      "a test of CI",
+      ["ci/ci-required.test.ts"],
+      ["quick-checks", "workspace", "lint"],
+    ],
     [
       "a test of the API document",
       ["ci/openapi/style.test.ts"],
-      ["quick-checks", "workspace"],
+      ["quick-checks", "workspace", "lint"],
     ],
     [
       "Markdown a test reads as a fixture",
@@ -659,7 +656,7 @@ describe("what a change runs", () => {
     [
       "documentation beside a package change",
       ["README.md", "conformance/spec/blobs.md", "packages/types/src/x.ts"],
-      [...PACKAGES, "types-freshness", "clients-freshness"],
+      [...PACKAGES, "lint", "types-freshness", "clients-freshness"],
     ],
     [
       "Rust beside a client change",
@@ -667,6 +664,7 @@ describe("what a change runs", () => {
       [
         "quick-checks",
         "workspace",
+        "lint",
         "core-checks",
         "core-checks-linux",
         ...OFFLINE,
@@ -698,12 +696,18 @@ describe("what a change runs", () => {
     [
       "an icon set the rules crate embeds",
       ["packages/types/generated/icon-set-lucide.json"],
-      [...PACKAGES, "types-freshness", "clients-freshness", ...RUST],
+      [...PACKAGES, "lint", "types-freshness", "clients-freshness", ...RUST],
     ],
     [
       "the score script",
       ["conformance/scripts/rust-score.ts"],
-      ["quick-checks", "workspace", "conformance-offline", ...CONTRACT_SHARDS],
+      [
+        "quick-checks",
+        "workspace",
+        "conformance-offline",
+        ...CONTRACT_SHARDS,
+        ...RELEASE,
+      ],
     ],
     [
       "an empty change, which cannot be told apart from an unread one",
@@ -893,6 +897,13 @@ function tracked(): string[] {
   return execFileSync("git", ["ls-files"], { cwd: ROOT, encoding: "utf8" })
     .split("\n")
     .filter(Boolean);
+}
+
+/** The harness tests `MCP conformance` runs with `pnpm test:harness`. */
+function harnessTests(): string[] {
+  return tracked().filter((path) =>
+    /^conformance\/src\/utils\/[^/]*\.harness\.test\.ts$/.test(path),
+  );
 }
 
 /** Every file a TypeScript entry point reaches through relative imports. */
@@ -1133,6 +1144,7 @@ describe("what a draft runs", () => {
     expect(DRAFT_JOBS).toEqual([
       "quick-checks",
       "workspace",
+      "lint",
       "types-freshness",
       "version-fields",
     ]);
@@ -1154,11 +1166,13 @@ describe("what a draft runs", () => {
     expect(JOBS.filter((job) => client[job])).toEqual([
       "quick-checks",
       "workspace",
+      "lint",
     ]);
     const types = forDraft(classify(["packages/types/src/runtime.ts"]));
     expect(JOBS.filter((job) => types[job])).toEqual([
       "quick-checks",
       "workspace",
+      "lint",
       "types-freshness",
     ]);
     const swift = forDraft(classify(["core/bindings/swift/build.sh"]));
@@ -1178,7 +1192,7 @@ describe("what a draft runs", () => {
  * `ci/nightly-report.test.ts` pin the last three.
  */
 const CONFORMANCE_GATE = "conformance";
-const QUICK_JOBS = ["typecheck", "lint"];
+const QUICK_JOBS = ["typecheck"];
 const STOP_JOBS = [
   "stop-after-format",
   "stop-after-typecheck",
@@ -1191,7 +1205,6 @@ const NOT_CLASSIFIED = [
   "report-failure",
   // The jobs after each Rust server build wait for it, and
   // `ci/rust-contract.test.ts` pins them.
-  "rust-contract-release",
   "rust-contract-release-check",
   "rust-contract-shards",
   "rust-contract-score",
@@ -1307,17 +1320,17 @@ describe("each job reads its own answer", () => {
     expect(steps.some((step) => step.uses?.includes("rust"))).toBe(false);
   });
 
-  it("Typecheck and Lint are jobs of their own, for the workspace, so that a failure of either is known in minutes", () => {
+  it("Typecheck is a job of its own, for the workspace, and Lint one for what ESLint reads, so that a failure of either is known in minutes", () => {
     const { jobs } = workflow("ci.yml");
     // Only Typecheck builds: it is the one job before the release that shows
     // the published client still builds, and nothing reads the build.
-    for (const [name, commands] of [
-      ["typecheck", ["pnpm build", "pnpm typecheck"]],
-      ["lint", ["pnpm lint"]],
+    for (const [name, output, commands] of [
+      ["typecheck", "workspace", ["pnpm build", "pnpm typecheck"]],
+      ["lint", "lint", ["pnpm lint"]],
     ] as const) {
       const job = jobs[name];
       expect(job?.needs, name).toBe("changes");
-      expect(job?.if, name).toBe(gate("workspace"));
+      expect(job?.if, name).toBe(gate(output));
       expect(
         (job?.steps ?? []).map(
           (step) => step.run ?? step.uses?.replace(/@[0-9a-f]{40}$/, ""),
@@ -1539,8 +1552,12 @@ describe("what a job reads reaches it", () => {
     const files = closure([
       "conformance/scripts/mcp-conformance.ts",
       "conformance/scripts/marfa-server.ts",
+      ...harnessTests(),
+      "conformance/vitest.config.ts",
     ]);
     expect(files).toContain("conformance/src/utils/target.ts");
+    // The harness tests reach the typed client through a helper.
+    expect(files).toContain("conformance/src/client/api.ts");
     const read = [...files, "conformance/package.json", "pnpm-lock.yaml"];
     expect(read.filter((f) => !affected(f).has("mcp-conformance"))).toEqual([]);
   });
@@ -1804,6 +1821,327 @@ describe("what a job reads reaches it", () => {
   });
 });
 
+/** The conformance helpers: the modules beside the tests that are neither a test nor the benchmark's. */
+function helpers(): string[] {
+  return tracked().filter(
+    (path) =>
+      /^conformance\/src\/(utils|client)\/[^/]+\.ts$/.test(path) &&
+      !path.endsWith(".test.ts"),
+  );
+}
+
+interface ConformanceConfig {
+  default: {
+    test: { projects: { test: { name: string; setupFiles?: string[] } }[] };
+  };
+}
+
+describe("what the jobs that run a script or a harness load from the helpers", () => {
+  /**
+   * What each job loads: the scripts it runs, the tests it runs and, for a
+   * Vitest run, the config and the setup files of the project it picks, and
+   * everything those import. Each job boots the server with
+   * `scripts/marfa-server.ts`, which spawns `run-server.mjs`.
+   */
+  async function loaded(): Promise<Record<string, string[]>> {
+    const { default: config } =
+      (await import("../conformance/vitest.config.js")) as ConformanceConfig;
+    const setup = (
+      config.test.projects.find((p) => p.test.name === "compliance")?.test
+        .setupFiles ?? []
+    ).map((file) => join("conformance", file));
+    expect(setup.length).toBeGreaterThan(0);
+    const boot = [
+      "conformance/scripts/marfa-server.ts",
+      "conformance/scripts/run-server.mjs",
+    ];
+    return {
+      "mcp-conformance": closure([
+        "conformance/scripts/mcp-conformance.ts",
+        ...boot.slice(0, 1),
+        ...harnessTests(),
+        "conformance/vitest.config.ts",
+      ]),
+      "restore-drill": closure([
+        "conformance/scripts/restore-drill.ts",
+        "conformance/scripts/garage.ts",
+        ...boot.slice(0, 1),
+      ]),
+      // The score judges its report, and it is run by Vitest from the config.
+      "rust-contract-release": closure([
+        "conformance/src/suites/compliance/hook-free-server.test.ts",
+        "conformance/vitest.config.ts",
+        ...setup,
+        ...boot.slice(0, 1),
+        "conformance/scripts/rust-score.ts",
+      ]),
+    };
+  }
+
+  it("reach MCP conformance, the restore drill and the build without test hooks only through the modules each one imports", async () => {
+    const reads = await loaded();
+    const all = helpers();
+    for (const [job, files] of Object.entries(reads)) {
+      // Every file the job loads, through any number of imports, runs it.
+      expect(
+        [...files, "conformance/scripts/run-server.mjs"].filter(
+          (file) => !affected(file).has(job as Job),
+        ),
+        `${job} loads a file that does not run it`,
+      ).toEqual([]);
+      // A helper it does not load leaves it out, and one it does load runs it.
+      expect(
+        all.filter(
+          (file) => !files.includes(file) && affected(file).has(job as Job),
+        ),
+        `${job} runs for a helper it does not load`,
+      ).toEqual([]);
+      const own = all.filter((file) => files.includes(file));
+      expect(own.length, `${job} loads no helper`).toBeGreaterThan(0);
+      expect(
+        own.filter((file) => !affected(file).has(job as Job)),
+        `${job} skips a helper it loads`,
+      ).toEqual([]);
+    }
+    // The witnesses: each job loads helpers the others do not, so each set
+    // was producible, and a stream helper no script or harness loads runs
+    // none of them but still runs every fixture.
+    expect(reads["restore-drill"]).toContain("conformance/src/utils/drill.ts");
+    expect(reads["mcp-conformance"]).not.toContain(
+      "conformance/src/utils/drill.ts",
+    );
+    expect(reads["mcp-conformance"]).toContain(
+      "conformance/src/utils/moved-clock.ts",
+    );
+    expect(reads["restore-drill"]).not.toContain(
+      "conformance/src/utils/moved-clock.ts",
+    );
+    expect(reads["rust-contract-release"]).toContain(
+      "conformance/src/utils/platform.ts",
+    );
+    expect(reads["mcp-conformance"]).not.toContain(
+      "conformance/src/utils/platform.ts",
+    );
+    expect(all).toContain("conformance/src/utils/stream.ts");
+    const stream = affected("conformance/src/utils/stream.ts");
+    for (const job of Object.keys(reads))
+      expect(stream.has(job as Job)).toBe(false);
+    for (const job of CONTRACT) expect(stream.has(job)).toBe(true);
+  });
+});
+
+describe("the build without test hooks and its fixture", () => {
+  const release = (path: string) => affected(path).has("rust-contract-release");
+
+  it("run for what the server is built from, never for a fixture that runs against the build with the hooks", () => {
+    const key = hashedGlobs(
+      workflow("ci.yml").jobs["rust-contract-release"]?.steps?.find(
+        (step) => step.id === "key",
+      ),
+    );
+    expect(key.length).toBeGreaterThan(0);
+    // Every file the build is made from, apart from the Rust tests and the
+    // Markdown, which the program does not embed.
+    const built = tracked().filter(
+      (path) =>
+        hashes(key, path) &&
+        !/(^|\/)tests\//.test(path) &&
+        !path.endsWith(".md"),
+    );
+    expect(built).toContain("openapi.json");
+    expect(built).toContain("core/marfa-server/src/lib.rs");
+    expect(built.filter((path) => !release(path))).toEqual([]);
+    // The witness: a fixture is none of those, and the shards still run it.
+    const fixtures = tracked().filter(
+      (path) =>
+        /^conformance\/src\/suites\/(compliance|correctness|sync)\/.*\.ts$/.test(
+          path,
+        ) && !path.endsWith("/hook-free-server.test.ts"),
+    );
+    expect(fixtures.length).toBeGreaterThan(50);
+    expect(fixtures.filter((path) => hashes(key, path))).toEqual([]);
+    expect(fixtures.filter(release)).toEqual([]);
+    expect(
+      fixtures.filter(
+        (path) => !SERVER_SHARDS.every((job) => affected(path).has(job)),
+      ),
+    ).toEqual([]);
+  });
+
+  it("run for the fixture they boot, and for everything it loads", () => {
+    const fixture =
+      "conformance/src/suites/compliance/hook-free-server.test.ts";
+    expect(tracked()).toContain(fixture);
+    expect(release(fixture)).toBe(true);
+    for (const path of closure([fixture]))
+      expect(release(path), path).toBe(true);
+    // Two compliance fixtures, as in a change that touches only fixtures.
+    expect(
+      runs([
+        "conformance/src/suites/compliance/edge-events.test.ts",
+        "conformance/src/suites/compliance/stream-credential.test.ts",
+      ]),
+    ).toEqual(["quick-checks", "workspace", ...OFFLINE, ...SERVER_SHARDS]);
+    // The same change with the fixture they boot.
+    expect(runs([fixture])).toContain("rust-contract-release");
+  });
+
+  it("run only with the server's own group, which the jobs that boot their build wait for", () => {
+    for (const path of tracked()) {
+      if (release(path)) {
+        expect(
+          [...affected(path)],
+          `${path} runs the build without test hooks and not the server's shards`,
+        ).toContain("rust-contract-server");
+      }
+    }
+    // The device's group alone does not owe the build or the fixture.
+    const device = classify(["core/marfa-core/src/store.rs"]);
+    expect(device["rust-contract-device"]).toBe(true);
+    expect(device["rust-contract-release"]).toBe(false);
+  });
+});
+
+describe("what Lint reads", () => {
+  const code = () => tracked().filter((path) => /\.[cm]?[jt]sx?$/.test(path));
+
+  it("skips what the config of ESLint ignores, which this test reads from it", async () => {
+    const { default: config } = (await import(
+      pathToFileURL(join(ROOT, "eslint.config.js")).href
+    )) as { default: { ignores?: string[]; files?: string[] }[] };
+    const ignores = config.flatMap((entry) =>
+      Object.keys(entry).length === 1 ? (entry.ignores ?? []) : [],
+    );
+    expect(ignores).toContain("conformance/");
+    expect(ignores).toContain("core/");
+    expect(ignores).toContain("packages/client/src/generated/");
+    // A folder pattern, which the classifier's pattern must ignore a file in.
+    for (const pattern of ignores) {
+      expect(pattern, "an ignore this test cannot read").toMatch(
+        /^(\*\*\/)?[\w.-]+(\/[\w.-]+)*\/(\*\*)?$/,
+      );
+      const folder = pattern
+        .replace(/^\*\*\//, "packages/example/")
+        .replace(/\/\*\*$/, "/")
+        .replace(/\/$/, "");
+      expect(
+        ESLINT_IGNORED.test(`${folder}/probe.ts`),
+        `${pattern} is not ignored by the classifier`,
+      ).toBe(true);
+    }
+    // ESLint's own answer, for every file it could read, agrees with the classifier's.
+    const eslint = new ESLint({ cwd: ROOT });
+    const disagree: string[] = [];
+    for (const path of code()) {
+      if (
+        (await eslint.isPathIgnored(resolve(ROOT, path))) !==
+        ESLINT_IGNORED.test(path)
+      ) {
+        disagree.push(path);
+      }
+    }
+    expect(disagree).toEqual([]);
+  }, 60_000);
+
+  it("runs for the files ESLint lints, the files it types them from and the settings that decide how, and for nothing else", () => {
+    const linted = code().filter((path) => !ESLINT_IGNORED.test(path));
+    expect(linted.length).toBeGreaterThan(50);
+    expect(linted.filter((path) => !affected(path).has("lint"))).toEqual([]);
+    // A rule that reads types reads what a linted file imports, in a folder
+    // ESLint ignores too.
+    const reached = closure(linted);
+    const typed = reached.filter((path) => ESLINT_IGNORED.test(path));
+    expect(typed).toContain("conformance/src/utils/rust-score.ts");
+    expect(typed).toContain("packages/client/src/generated/schema.ts");
+    expect(typed.filter((path) => !affected(path).has("lint"))).toEqual([]);
+    // Nothing else runs it but a setting, or a path whose change runs every job.
+    const settings =
+      /(^|\/)(package\.json|tsconfig[^/]*\.json)$|^(pnpm-lock|pnpm-workspace)\.yaml$/;
+    expect(
+      tracked().filter(
+        (path) =>
+          affected(path).has("lint") &&
+          affected(path).size < JOBS.length &&
+          !linted.includes(path) &&
+          !reached.includes(path) &&
+          !settings.test(path),
+      ),
+    ).toEqual([]);
+    // The witnesses: the files it skips were producible, and the same kinds
+    // of file in a place it reads run it.
+    for (const path of [
+      "conformance/src/suites/compliance/owner.test.ts",
+      "conformance/src/utils/stream.ts",
+      "conformance/src/utils/shard-drift.ts",
+      "conformance/spec/items.md",
+      "core/bindings/node/test/pin.test.mjs",
+      "core/bindings/node/package.json",
+      "openapi.json",
+    ]) {
+      expect(affected(path).has("lint"), path).toBe(false);
+    }
+    expect(affected("ci/ci-required.test.ts").has("lint")).toBe(true);
+    expect(affected("packages/client/package.json").has("lint")).toBe(true);
+    expect(affected("conformance/package.json").has("lint")).toBe(true);
+    // The tracked paths are the evidence: each skipped one exists.
+    for (const path of ["conformance/src/utils/stream.ts", "openapi.json"]) {
+      expect(tracked()).toContain(path);
+    }
+  });
+
+  it("runs the pull requests of a fixture or of the API document without it, and a draft with it only for what it reads", () => {
+    expect(runs(["openapi.json"])).not.toContain("lint");
+    expect(
+      runs(["conformance/src/suites/compliance/edge-events.test.ts"]),
+    ).not.toContain("lint");
+    const draft = forDraft(
+      classify(["conformance/src/suites/compliance/edge-events.test.ts"]),
+    );
+    expect(draft.lint).toBe(false);
+    expect(draft.workspace).toBe(true);
+    expect(forDraft(classify(["ci/ci-required.test.ts"])).lint).toBe(true);
+  });
+});
+
+describe("the command line on a Mac", () => {
+  it("stays whole in the rule, because its server manager is launchd only on a Mac and no Apple-only cfg names the files that drive it", () => {
+    const read = (path: string) => readFileSync(join(ROOT, path), "utf8");
+    // The manager is chosen by the platform, in one place.
+    expect(read("core/marfa-cli/src/server/service.rs")).toMatch(
+      /if cfg!\(target_os = "macos"\) \{[\s\S]*?Ok\(Manager::Launchd\)/,
+    );
+    // The upgrade and install flows reach it through the manager and
+    // `launchd`, and name no platform: the search for an Apple-only cfg does
+    // not find them, and a Linux run drives them through systemd.
+    for (const path of [
+      "core/marfa-cli/src/server/lifecycle.rs",
+      "core/marfa-cli/src/server/docker.rs",
+    ]) {
+      expect(read(path), path).toMatch(/launchd/);
+    }
+    expect(read("core/marfa-cli/src/server/lifecycle.rs")).not.toMatch(
+      /target_os|target_vendor/,
+    );
+    // The tests that run it on a Mac hold launchd's side, which only a Mac runs.
+    expect(read("core/marfa-cli/tests/server.rs")).toMatch(
+      /cfg!\(target_os = "macos"\)/,
+    );
+    for (const path of [
+      "core/marfa-cli/src/server/lifecycle.rs",
+      "core/marfa-cli/src/commands/housekeeping.rs",
+      "core/marfa-cli/src/main.rs",
+    ]) {
+      expect([...affected(path)], path).toEqual(
+        expect.arrayContaining(["core-checks", "core"]),
+      );
+    }
+    // The witness: what no job reads on a Mac stays off it.
+    expect([...affected("core/marfa-cli/COMMANDS.md")]).not.toContain(
+      "core-checks",
+    );
+  });
+});
+
 describe("the classifier as CI runs it", () => {
   const script = resolve(ROOT, "scripts/ci-required.ts");
   const directory = mkdtempSync(join(tmpdir(), "marfa-ci-paths-"));
@@ -1969,7 +2307,9 @@ describe("the classifier as CI runs it", () => {
     );
     expect(JOBS.filter((job) => server[job] === "true")).toEqual(
       JOBS.filter((job) =>
-        [...PACKAGES, "types-freshness", "clients-freshness"].includes(job),
+        [...PACKAGES, "lint", "types-freshness", "clients-freshness"].includes(
+          job,
+        ),
       ),
     );
     const fixture = outputs(
@@ -2182,6 +2522,7 @@ describe("the classifier as CI runs it", () => {
     expect(quick(server)).toEqual([
       "quick-checks",
       "workspace",
+      "lint",
       "types-freshness",
     ]);
     expect(server.full).toBe("false");
@@ -2203,7 +2544,9 @@ describe("the classifier as CI runs it", () => {
     );
     expect(quick(ready)).toEqual(
       JOBS.filter((job) =>
-        [...PACKAGES, "types-freshness", "clients-freshness"].includes(job),
+        [...PACKAGES, "lint", "types-freshness", "clients-freshness"].includes(
+          job,
+        ),
       ),
     );
     expect(ready.full).toBe("true");

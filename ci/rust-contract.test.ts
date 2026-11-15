@@ -105,7 +105,7 @@ describe("the Rust server a release ships", () => {
   it("is built without the test hooks, in a job of its own that nothing but its fixture waits for, and is uploaded", () => {
     expect(needsOf(release)).toEqual(["changes"]);
     expect(release?.if).toBe(
-      "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false') }}",
+      "${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-release != 'false') }}",
     );
     expect(release?.["runs-on"]).toBe("ubuntu-latest");
     expect(release?.env?.TARGET).toBe("x86_64-unknown-linux-musl");
@@ -144,9 +144,11 @@ describe("the Rust server a release ships", () => {
     expect(releaseCheck?.if).toContain(
       "needs.rust-contract-release.result == 'success'",
     );
+    // The build and its fixture run together, for the same answer.
     expect(releaseCheck?.if).toContain(
-      "needs.changes.outputs.rust-contract-server != 'false'",
+      "needs.changes.outputs.rust-contract-release != 'false'",
     );
+    expect(releaseCheck?.if).not.toContain("rust-contract-server");
     expect(step(releaseCheck, "Name the servers").run).toContain(
       "MARFA_SERVER_RELEASE_BIN=",
     );
@@ -321,13 +323,13 @@ describe("the Rust contract score", () => {
     const first = score?.steps[0];
     expect(first?.run).toContain('[ "$BUILD" != success ]');
     expect(first?.run).toContain('[ "$SHARDS" != success ]');
-    // The server's own group is also owed the build without test hooks and
-    // its fixture; the device's group alone is not.
-    expect(first?.run).toContain('[ "$SERVER_OWED" = true ]');
+    // A run the classifier owes the build without test hooks and its fixture
+    // fails when either did not pass; a run it left them out of does not.
+    expect(first?.run).toContain('[ "$RELEASE_OWED" = true ]');
     expect(first?.run).toContain('[ "$RELEASE" != success ]');
     expect(first?.run).toContain('[ "$RELEASE_CHECK" != success ]');
-    expect(first?.env?.SERVER_OWED).toBe(
-      "${{ needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' }}",
+    expect(first?.env?.RELEASE_OWED).toBe(
+      "${{ needs.changes.result != 'success' || needs.changes.outputs.rust-contract-release != 'false' }}",
     );
   });
 
@@ -344,6 +346,13 @@ describe("the Rust contract score", () => {
     expect(run).toContain('--projects "$PROJECTS"');
     expect(step(score, "Score the run").env?.PROJECTS).toBe(
       "${{ needs.changes.outputs.rust-projects }}",
+    );
+    // The fixture that runs apart from the shards is owed only when its job
+    // ran; without that, a run that skipped it would fail for a file no report
+    // names.
+    expect(run).toContain('--run-apart "$RUN_APART"');
+    expect(step(score, "Score the run").env?.RUN_APART).toBe(
+      "${{ needs.changes.result != 'success' || needs.changes.outputs.rust-contract-release != 'false' }}",
     );
     const scripts = JSON.parse(
       readFileSync(resolve(ROOT, "conformance/package.json"), "utf8"),

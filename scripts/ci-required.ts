@@ -28,7 +28,8 @@
  * judged if and only if its shards ran.
  *
  * A path is matched against `RULES` in order and the first match names the
- * jobs it can affect. A path no rule matches affects every job, so a new
+ * jobs it can affect. `Lint` is not in `RULES`: `affected` adds it for the
+ * files ESLint reads. A path no rule matches affects every job, so a new
  * folder runs everything until someone states what reads it.
  * `ci/ci-required.test.ts` pins the rules.
  */
@@ -41,10 +42,13 @@ import { fileURLToPath } from "node:url";
 export const JOBS = [
   // `Quick checks`. It runs the format check, this classifier's test and the
   // contract's reference check for any change. `workspace` is the build,
-  // typecheck, lint and `Workspace tests`, which run unless the pull request
-  // is a draft.
+  // typecheck and `Workspace tests`, which run unless the pull request is a
+  // draft.
   "quick-checks",
   "workspace",
+  // `Lint`: ESLint over the files its config does not ignore, and over the
+  // types they import from the files it does (`lintReads`).
+  "lint",
   // `Core checks`, on macOS: the core's format, lint and tests, the login
   // keychain check and the Swift crate.
   "core-checks",
@@ -71,10 +75,8 @@ export const JOBS = [
   // The contract run against the Rust server (`core/marfa-server/`), in two
   // groups of shards that share one build of the server and one score. The
   // server's own: the fixtures of the compliance, correctness and sync
-  // projects, and the fixture that runs the server a release ships, built
-  // without its test hooks.
-  // It reads what the server is built from (`SERVER_CRATES`), the fixtures it
-  // runs and the meter.
+  // projects. It reads what the server is built from, the fixtures it runs
+  // and the meter.
   "rust-contract-server",
   // The device's: the `cli` and `device` fixtures, which boot that same server
   // and drive the `marfa` binary and the Node module against it. It reads what
@@ -83,6 +85,13 @@ export const JOBS = [
   // it. The server does not depend on any of them, so a change to only them
   // leaves the server group out.
   "rust-contract-device",
+  // The server a release ships, built without its test hooks
+  // (`Rust server without test hooks`), and the one compliance fixture that
+  // boots it (`Rust contract (server without test hooks)`). They read what the
+  // server is built from, that fixture and what it loads, and the harness that
+  // boots a server. Any other fixture of the server group runs against the
+  // build with the hooks and never reads this one.
+  "rust-contract-release",
   // The device and CLI fixtures against the Rust server on macOS, for file
   // watching, name case, Finder packages and a real keychain: one build, the
   // shards after it and their score. Only the nightly and a dispatch with
@@ -115,17 +124,21 @@ const SERVER_SHARDS: readonly Job[] = ["rust-contract-server"];
 /** The shards of the `cli` and `device` projects. */
 const DEVICE_SHARDS: readonly Job[] = ["rust-contract-device"];
 
+/** The build without test hooks and the fixture that boots it. */
+const RELEASE: Job = "rust-contract-release";
+
 /** Every shard of the Rust contract, which one score judges. */
 const CONTRACT_SHARDS: readonly Job[] = [...SERVER_SHARDS, ...DEVICE_SHARDS];
 
 /**
  * Every job a change to what the server is built from reaches: both groups
- * of shards, since the device's boot the server, MCP conformance and the
- * restore drill. A change to the `marfa` binary or the Node module reaches
- * only `DEVICE_SHARDS`.
+ * of shards, since the device's boot the server, the build without test hooks
+ * and its fixture, MCP conformance and the restore drill. A change to the
+ * `marfa` binary or the Node module reaches only `DEVICE_SHARDS`.
  */
 const RUST_SERVER: readonly Job[] = [
   ...CONTRACT_SHARDS,
+  "rust-contract-release",
   "mcp-conformance",
   "restore-drill",
 ];
@@ -167,6 +180,9 @@ const ENRICHMENT: readonly Job[] = ["core-native", "core-fault-injection"];
  */
 const CONTRACT: readonly Job[] = ["conformance-offline", ...CONTRACT_SHARDS];
 
+/** What a change to a helper the fixtures import reaches before any other job does. */
+const FIXTURES: readonly Job[] = ["workspace", ...CONTRACT];
+
 /**
  * The jobs that run on macOS for a pull request: the core's checks and its
  * live checks. Linux builds, lints and tests the same Rust, so a pull request
@@ -187,6 +203,7 @@ const DEVICE: readonly Job[] = [...DEVICE_LINUX, ...MACOS];
 const WORKSPACE: readonly Job[] = [
   "workspace",
   ...CONTRACT,
+  "rust-contract-release",
   "mcp-conformance",
   "restore-drill",
   "types-freshness",
@@ -196,7 +213,8 @@ const WORKSPACE: readonly Job[] = [
 
 /**
  * First match wins. The format check, the version check and lint are added
- * on top by `affected`, since they read files whatever else reads them.
+ * on top by `affected`, since they read files whatever else reads them. The
+ * jobs of the workspace (`workspace`) run for a path ESLint lints too.
  */
 export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // What decides what runs is proven on everything it decides.
@@ -346,10 +364,11 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/scripts\/mcp-conformance\.ts$/,
     ["workspace", "mcp-conformance"],
   ],
-  // The score of the Rust contract run, whose test the offline lane runs.
+  // The score of the Rust contract run, whose test the offline lane runs. It
+  // judges the report of the build without test hooks too.
   [
     /^conformance\/scripts\/rust-score\.ts$/,
-    ["workspace", "conformance-offline", ...CONTRACT_SHARDS],
+    ["workspace", "conformance-offline", ...CONTRACT_SHARDS, RELEASE],
   ],
   // Spec citations name fixture files anywhere under `src/`, so every
   // change there reaches the offline lane.
@@ -363,6 +382,12 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // server they drive, which run in the device's. The offline lane tests
   // them all. A fixture of either that imports from the other, or a folder
   // no rule names, reaches both (`ci/ci-required.test.ts` follows the imports).
+  // The one fixture that boots the build without test hooks, which no shard
+  // runs (`RUN_APART`).
+  [
+    /^conformance\/src\/suites\/compliance\/hook-free-server\.test\.ts$/,
+    ["workspace", "conformance-offline", ...SERVER_SHARDS, RELEASE],
+  ],
   [
     /^conformance\/src\/suites\/(compliance|correctness|sync)\//,
     ["workspace", "conformance-offline", ...SERVER_SHARDS],
@@ -391,20 +416,45 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
     /^conformance\/src\/utils\/(.*\/)?[^/]*\.test\.ts$/,
     ["workspace", "conformance-offline"],
   ],
+  // A helper reaches the fixtures that import it and, of the jobs that run a
+  // script or a harness test instead of a fixture, those whose files import it,
+  // through any number of modules: the restore drill's scripts, the harness
+  // tests and scripts of MCP conformance, and the build without test hooks'
+  // fixture with what boots and scores it. `ci/ci-required.test.ts` derives
+  // each set from the import graph and fails when a helper is in the wrong
+  // rule, so a new import moves a helper here.
   [
-    /^conformance\/src\/utils\//,
-    ["workspace", ...CONTRACT, "restore-drill", "mcp-conformance"],
+    /^conformance\/src\/utils\/(approval-form|control-request|fresh-server|server-process|target)\.ts$/,
+    [...FIXTURES, "restore-drill", "mcp-conformance", RELEASE],
   ],
   [
-    /^conformance\/src\/client\/owner-session\.ts$/,
-    ["workspace", ...CONTRACT, "restore-drill", "mcp-conformance"],
+    /^conformance\/src\/utils\/archive\.ts$/,
+    [...FIXTURES, "restore-drill", RELEASE],
   ],
-  // The typed client, which the restore drill drives the server through.
-  [/^conformance\/src\/client\//, ["workspace", ...CONTRACT, "restore-drill"]],
+  [/^conformance\/src\/utils\/drill\.ts$/, [...FIXTURES, "restore-drill"]],
+  [
+    /^conformance\/src\/utils\/shard-(sequencer|weights)\.ts$/,
+    [...FIXTURES, "mcp-conformance", RELEASE],
+  ],
+  [
+    /^conformance\/src\/utils\/(moved-clock|status-declarations|tuning)\.ts$/,
+    [...FIXTURES, "mcp-conformance"],
+  ],
+  [
+    /^conformance\/src\/utils\/(platform|fresh-server-teardown|rust-score)\.ts$/,
+    [...FIXTURES, RELEASE],
+  ],
+  [/^conformance\/src\/utils\//, FIXTURES],
+  // The typed client and the owner's sign-in, which every one of those jobs
+  // loads.
+  [
+    /^conformance\/src\/client\//,
+    [...FIXTURES, "restore-drill", "mcp-conformance", RELEASE],
+  ],
   [/^conformance\/src\//, ["workspace", ...CONTRACT]],
   [
     /^conformance\//,
-    ["workspace", ...CONTRACT, "restore-drill", "mcp-conformance"],
+    ["workspace", ...CONTRACT, RELEASE, "restore-drill", "mcp-conformance"],
   ],
 
   // `ci/` tests read the contract version the core is generated with, the
@@ -571,7 +621,13 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   // read the committed document.
   [
     /^openapi\.json$/,
-    ["workspace", "core-checks-linux", ...CONTRACT, "clients-freshness"],
+    [
+      "workspace",
+      "core-checks-linux",
+      ...CONTRACT,
+      RELEASE,
+      "clients-freshness",
+    ],
   ],
 
   [/^scripts\/check-image\.sh$/, ["workspace", "image"]],
@@ -597,6 +653,7 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
       "workspace",
       "version-fields",
       ...CONTRACT,
+      RELEASE,
       "restore-drill",
       "mcp-conformance",
     ],
@@ -607,9 +664,38 @@ export const RULES: readonly (readonly [RegExp, readonly Job[]])[] = [
   [/^\.prettierignore$/, []],
 ];
 
+/**
+ * What `eslint.config.js` ignores, by path from the root. `ci/ci-required.test.ts`
+ * holds it to the config's own `ignores`.
+ */
+export const ESLINT_IGNORED =
+  /^(core|conformance)\/|^packages\/client\/src\/generated\/|(^|\/)(dist|coverage|node_modules|_local|_tmp|_ignore)\/|^\.claude\/worktrees\//;
+
 /** What `eslint .` reads: JavaScript and TypeScript outside its ignores. */
 function linted(path: string): boolean {
-  return /\.[cm]?[jt]sx?$/.test(path) && !/^(core|conformance)\//.test(path);
+  return /\.[cm]?[jt]sx?$/.test(path) && !ESLINT_IGNORED.test(path);
+}
+
+/**
+ * The manifests and compiler settings that decide how ESLint resolves and
+ * types the files it reads, and the lockfile that fixes its version.
+ */
+const LINT_SETTINGS =
+  /(^|\/)(package\.json|tsconfig[^/]*\.json)$|^(pnpm-lock|pnpm-workspace)\.yaml$/;
+
+/**
+ * The files that ESLint does not lint but reads, because a file it lints
+ * imports them and its rules are typed. `ci/ci-required.test.ts` derives them
+ * from the import graph and fails when this list is not exactly them.
+ */
+const LINT_IMPORTED =
+  /^(conformance\/(vitest\.config\.ts|scripts\/(catalogue-sources|mcp-conformance)\.ts|src\/utils\/(catalogue-tables|rust-score|shard-sequencer|shard-weights|target)\.ts)|packages\/client\/src\/generated\/.+|packages\/types\/generated\/icon-set-[\w-]+\.json)$/;
+
+/** Whether a change to the path can change what `Lint` reports. */
+function lintReads(path: string): boolean {
+  if (path.startsWith("core/")) return false;
+  if (LINT_SETTINGS.test(path)) return true;
+  return linted(path) || LINT_IMPORTED.test(path);
 }
 
 /**
@@ -628,13 +714,14 @@ function versioned(path: string): boolean {
 
 /**
  * What a draft pull request runs, of what its diff names: the format check,
- * the build, typecheck and lint, the type registry and the version check.
+ * the build and typecheck, lint, the type registry and the version check.
  * The tests, the server and the core, the contract and the clients wait
  * until it is ready for review.
  */
 export const DRAFT_JOBS: readonly Job[] = [
   "quick-checks",
   "workspace",
+  "lint",
   "types-freshness",
   "version-fields",
 ];
@@ -727,6 +814,7 @@ export function affected(path: string): Set<Job> {
   const jobs = new Set<Job>(rule ? rule[1] : ALL);
   if (versioned(path)) jobs.add("version-fields");
   if (linted(path)) jobs.add("workspace");
+  if (lintReads(path)) jobs.add("lint");
   // Its format check, this classifier's test and the contract's reference
   // check read every path.
   jobs.add("quick-checks");
