@@ -17,7 +17,7 @@ use super::super::housekeeping::{DAY_MS, Report, Run};
 use super::super::refusal::Result;
 use super::super::unit::Unit;
 use super::super::{App, stored};
-use crate::app::clock::Stamp;
+use crate::app::clock::{Stamp, Unread};
 use crate::settings::registry::{
     VERSION_DAILY_SNAPSHOT_DAYS, VERSION_MAX_VERSIONS, VERSION_RECENT_DAYS,
     VERSION_WEEKLY_SNAPSHOT_DAYS,
@@ -50,7 +50,7 @@ fn parsed(text: &str) -> Option<DateTime<Utc>> {
     read
 }
 
-/// The newest version and any snapshot whose age cannot be read always stay.
+/// The newest version and any snapshot whose age cannot be read always stay, the cap included.
 fn thin(history: &[Kept], policy: &Policy, now_ms: i64) -> Vec<Kept> {
     if history.len() <= MINIMUM {
         return Vec::new();
@@ -62,10 +62,12 @@ fn thin(history: &[Kept], policy: &Policy, now_ms: i64) -> Vec<Kept> {
         days_ago(policy.weekly_days),
     );
     let mut keep = vec![false; history.len()];
+    let mut unread = vec![false; history.len()];
     let mut buckets: HashMap<String, usize> = HashMap::new();
     for (at, snapshot) in history.iter().enumerate() {
         let Some(created) = parsed(&snapshot.created_at) else {
             keep[at] = true;
+            unread[at] = true;
             continue;
         };
         let ms = created.timestamp_millis();
@@ -100,8 +102,9 @@ fn thin(history: &[Kept], policy: &Policy, now_ms: i64) -> Vec<Kept> {
     let mut kept: Vec<usize> = (0..history.len()).filter(|at| keep[*at]).collect();
     let cap = usize::try_from(policy.max_versions).unwrap_or(usize::MAX);
     if kept.len() > cap {
-        kept.sort_by(|a, b| history[*a].created_at.cmp(&history[*b].created_at));
         let excess = kept.len() - cap;
+        kept.retain(|at| !unread[*at]);
+        kept.sort_by(|a, b| history[*a].created_at.cmp(&history[*b].created_at));
         for at in kept.into_iter().take(excess) {
             if at != newest {
                 keep[at] = false;
@@ -251,6 +254,27 @@ fn remove(unit: &Unit<'_, '_>, app: &App, seq: i64) -> Result<usize> {
     Ok(doomed.len())
 }
 
+/// Snapshots thinning leaves because their time does not read, whatever their item holds.
+const UNREAD: Unread<'static> = Unread {
+    table: "item_versions",
+    time: "created_at",
+    scope: "1",
+};
+
+/// Once every item is thinned, what is left unjudged is the snapshots whose time does not read.
+async fn report_kept(app: &Arc<App>, run: &Run) -> Result<()> {
+    let (live, job) = (app.clone(), run.job);
+    let kept = app
+        .db
+        .read(move |tx| match live.clock.judging() {
+            Some(_) => UNREAD.report(tx, job, []),
+            None => Ok(0),
+        })
+        .await?;
+    run.kept_unread(kept);
+    Ok(())
+}
+
 pub async fn version_thinning(app: Arc<App>, run: Run) -> Result<Report> {
     let (mut pruned, mut items) = (0, 0);
     let mut after = 0;
@@ -263,6 +287,7 @@ pub async fn version_thinning(app: Arc<App>, run: Run) -> Result<Report> {
         let live = app.clone();
         let found = app.db.read(move |tx| page(&live, tx, after)).await?;
         let Some(last) = found.last else {
+            report_kept(&app, &run).await?;
             return Ok(report(pruned, items, false));
         };
         after = last;
@@ -403,6 +428,21 @@ mod tests {
         let mut history = snapshots(&[400 * DAY_MS, 400 * DAY_MS, 0]);
         history[0].created_at = "not a date".to_string();
         let versions: Vec<i64> = thin(&history, &POLICY, NOW)
+            .iter()
+            .map(|snapshot| snapshot.version)
+            .collect();
+        assert_eq!(versions, [2]);
+    }
+
+    #[test]
+    fn the_cap_keeps_a_snapshot_whose_age_does_not_read_and_drops_the_oldest_that_does() {
+        let capped = Policy {
+            max_versions: 2,
+            ..POLICY
+        };
+        let mut history = snapshots(&[3_000, 2_000, 1_000]);
+        history[0].created_at = String::new();
+        let versions: Vec<i64> = thin(&history, &capped, NOW)
             .iter()
             .map(|snapshot| snapshot.version)
             .collect();
