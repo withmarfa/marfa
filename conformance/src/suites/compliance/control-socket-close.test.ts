@@ -59,9 +59,16 @@ async function fixture() {
     MARFA_ENRICHMENT_ENABLED: "false",
     MARFA_ENRICHMENT_OCR_ENABLED: "false",
   };
-  function start() {
+  // A start of its own files meets only the socket, which the first server still holds.
+  function start(own?: string) {
     const child = spawn(program, [], {
-      env,
+      env: own
+        ? {
+            ...env,
+            MARFA_DATABASE_PATH: join(root, `${own}.db`),
+            MARFA_BLOB_PATH: join(root, `${own}-blobs`),
+          }
+        : env,
       stdio: ["ignore", "pipe", "pipe"],
     });
     let output = "";
@@ -119,7 +126,7 @@ it("refuses startup until a closing listener has finished its socket cleanup", a
       { timeout: 30_000 },
     )
     .toBe("ECONNREFUSED");
-  const second = start();
+  const second = start("second");
   expect(await second.exited).toEqual([1, null]);
   expect(second.output()).toContain(
     `Control socket path is already in use: ${socket}`,
