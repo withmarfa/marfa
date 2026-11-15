@@ -14,6 +14,20 @@ let stampType = "";
 let labelType = "";
 let word = "";
 const named = new Map<string, string>();
+let plainSource = "";
+const plainIds = new Map<string, string>();
+
+// Text that is shaped like a date or a datetime and is not one: no zone, a
+// month and day that do not exist, a space for the T. It keys as itself.
+const plain = [
+  "2026-01-01T05:00:00",
+  "2026-13-45",
+  "2026-13-46",
+  "2026-01-01 05:00",
+  "Zulu",
+  "alpha",
+  "banana",
+];
 
 const stamps: [string, string][] = [
   ["noon-utc", "2026-01-01T05:00:00Z"],
@@ -76,6 +90,20 @@ beforeAll(async () => {
       trackItem(ctx, made.data.item.id);
       named.set(name, made.data.item.id);
     }
+  }
+});
+
+beforeAll(async () => {
+  plainSource = `${ctx.source}-plain`;
+  for (const when of plain) {
+    const made = await client.createItem({
+      type: labelType,
+      source: plainSource,
+      properties: { when },
+    });
+    expect(made.ok, `${when}: ${JSON.stringify(made.error)}`).toBe(true);
+    trackItem(ctx, made.data.item.id);
+    plainIds.set(when, made.data.item.id);
   }
 });
 
@@ -187,11 +215,15 @@ async function viewed(
   return delivered;
 }
 
-async function ids(type: string, filter: string): Promise<string[]> {
+async function ids(
+  type: string,
+  filter: string,
+  source = ctx.source,
+): Promise<string[]> {
   const query = new URLSearchParams({
     limit: "100",
     type,
-    filter: `source eq "${ctx.source}" AND ${filter}`,
+    filter: `source eq "${source}" AND ${filter}`,
   });
   const result = await client.rawRequest<{ data: { id: string }[] }>(
     `/items?${query.toString()}`,
@@ -328,5 +360,52 @@ describe("a datetime property", () => {
         ),
       ),
     );
+  });
+
+  it("sorts a text that only looks like a date or a datetime by its bytes, in both directions", async () => {
+    const byBytes = [...plain].sort();
+    const want = byBytes.map((when) => plainIds.get(when) as string);
+    for (const [direction, expected] of [
+      ["asc", want],
+      ["desc", [...want].reverse()],
+    ] as const) {
+      for (const limit of [2, 100]) {
+        const delivered: string[] = [];
+        let cursor: string | undefined;
+        do {
+          const page = await client.listItems({
+            source: plainSource,
+            sort: "properties.when",
+            direction,
+            limit,
+            cursor,
+          });
+          expect(page.ok, JSON.stringify(page.error)).toBe(true);
+          delivered.push(...page.data.data.map((row) => row.id));
+          cursor = page.data.next_cursor ?? undefined;
+        } while (cursor);
+        expect(delivered, `${direction} ${limit}`).toEqual(expected);
+      }
+    }
+  });
+
+  it("matches a text that only looks like a date or a datetime only to itself", async () => {
+    for (const when of [
+      "2026-13-45",
+      "2026-01-01T05:00:00",
+      "2026-01-01 05:00",
+    ]) {
+      expect(
+        await ids(labelType, `properties.when eq "${when}"`, plainSource),
+        when,
+      ).toEqual([plainIds.get(when)]);
+    }
+    expect(
+      await ids(
+        labelType,
+        'properties.when lt "2026-13-46" AND properties.when gt "2026-13-44"',
+        plainSource,
+      ),
+    ).toEqual([plainIds.get("2026-13-45")]);
   });
 });

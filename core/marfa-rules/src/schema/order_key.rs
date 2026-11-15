@@ -73,7 +73,8 @@ pub fn text_key_open() -> String {
     format!(
         "(SELECT CASE WHEN v GLOB '{DATE_SHAPE}*' THEN COALESCE(\
          strftime('%Y-%m-%dT%H:%M:%fZ', ({ms}) / 1000.0, 'unixepoch'), \
-         '9999-12-31T23:59:59.999Z+' || printf('%09d', ({ms}) - {LAST_MS}), v) ELSE v END \
+         CASE WHEN ({ms}) IS NOT NULL THEN '9999-12-31T23:59:59.999Z+' || printf('%09d', ({ms}) - {LAST_MS}) END, \
+         v) ELSE v END \
          FROM (SELECT "
     )
 }

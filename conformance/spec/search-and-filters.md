@@ -1024,7 +1024,7 @@ When `GET /items` names `sort=properties.<field>`, the server MUST order the ite
 
 When `GET /items` sorts by a property ascending, the server MUST put numbers and booleans first in numeric order, with `false` equal to `0` and `true` equal to `1`, followed by strings in binary lexical order of their UTF-8 bytes, an empty string being a value and numeric text remaining text, except that a string that reads as a datetime is placed as `search-and-filters/sort-property-datetime` says.
 
-**Tests:** `correctness/property-sort-pagination.test.ts › walks mixed scalar kinds across types, with ascending ID ties and nulls last`.
+**Tests:** `correctness/property-sort-pagination.test.ts › walks mixed scalar kinds across types, with ascending ID ties and nulls last`, `compliance/datetime-property-compare.test.ts › sorts a text that only looks like a date or a datetime by its bytes, in both directions`.
 
 ### `search-and-filters/sort-property-datetime`
 
