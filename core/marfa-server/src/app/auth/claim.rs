@@ -124,24 +124,24 @@ fn require_unclaimed(tx: &Transaction<'_>) -> Result<()> {
     Ok(())
 }
 
-fn holds(tx: &Transaction<'_>, kind: &str, digest: &str, now: Stamp) -> Result<bool> {
-    held(tx, kind, false, digest, now)
+/// What a proof is for. Recovery proof alone carries the generation `recovery`.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Purpose {
+    Claim,
+    Recovery,
 }
 
-fn recovery_holds(tx: &Transaction<'_>, kind: &str, digest: &str, now: Stamp) -> Result<bool> {
-    held(tx, kind, true, digest, now)
-}
-
-fn held(
+fn holds(
     tx: &Transaction<'_>,
+    purpose: Purpose,
     kind: &str,
-    recovery: bool,
     digest: &str,
     now: Stamp,
 ) -> Result<bool> {
     let mut statement = tx.prepare(
         "SELECT digest, expires_at FROM setup_proof WHERE kind = ?1 AND (generation = ?2) = ?3",
     )?;
+    let recovery = purpose == Purpose::Recovery;
     let held = statement
         .query_map(params![kind, RECOVERY, recovery], |row| {
             Ok((row.get::<_, String>(0)?, row.get::<_, Option<Stamp>>(1)?))
@@ -298,7 +298,8 @@ pub async fn recovery_session_stands(app: &App, token: &str) -> Result<bool> {
     let clock = app.clock.clone();
     app.db
         .read(move |tx| {
-            Ok(instance::is_claimed(tx)? && recovery_holds(tx, SESSION, &digest, clock.instant())?)
+            let now = clock.instant();
+            Ok(instance::is_claimed(tx)? && holds(tx, Purpose::Recovery, SESSION, &digest, now)?)
         })
         .await
 }
@@ -314,7 +315,7 @@ async fn exchange_recovery(app: &App, digest: String, visit: Visit) -> Result<Se
         .write(Write::caller(action), move |tx| {
             let owner_id = instance::owner_id(tx)?.ok_or_else(owner::not_found)?;
             let now = clock.instant();
-            if !recovery_holds(tx, CODE, &digest, now)? {
+            if !holds(tx, Purpose::Recovery, CODE, &digest, now)? {
                 return Err(invalid_recovery());
             }
             drop_recovery(tx)?;
@@ -338,43 +339,24 @@ async fn exchange_recovery(app: &App, digest: String, visit: Visit) -> Result<Se
     Ok(SetupSession { token, expires_at })
 }
 
-fn recovery_sought(app: &App, proof: &Proof) -> Result<(&'static str, String)> {
-    let salt = &app.settings.start.key_salt;
-    match proof {
-        Proof::Local => Err(invalid_recovery()),
-        Proof::Code(code) => Ok((CODE, digest_of(salt, &normalized(code))?)),
-        Proof::Session(token) => Ok((SESSION, digest_of(salt, token)?)),
-    }
-}
-
-fn recovery_stands(
-    tx: &Transaction<'_>,
-    sought: &(&'static str, String),
-    now: Stamp,
-) -> Result<()> {
-    if !instance::is_claimed(tx)? {
-        return Err(owner::not_found());
-    }
-    let (kind, digest) = sought;
-    if !recovery_holds(tx, kind, digest, now)? {
-        return Err(invalid_recovery());
-    }
-    Ok(())
-}
-
 /// What `owner recover` does, proved by a recovery code or its session.
-pub async fn recover(app: &App, proof: Proof, new_password: String, visit: Visit) -> Result<()> {
+pub async fn recover(
+    app: &App,
+    proof: Presented,
+    new_password: String,
+    visit: Visit,
+) -> Result<()> {
     if !is_claimed(app).await? {
         return Err(owner::not_found());
     }
-    if let Proof::Code(_) = proof {
+    if let Presented::Code(_) = proof {
         count_code(app, visit.address)?;
     }
-    let sought = recovery_sought(app, &proof)?;
+    let sought = Some(sought(app, &proof)?);
     let clock = app.clock.clone();
     let judged = sought.clone();
     app.db
-        .read(move |tx| recovery_stands(tx, &judged, clock.instant()))
+        .read(move |tx| proof_stands(tx, Purpose::Recovery, judged.as_ref(), clock.instant()))
         .await?;
     password::check_new(&new_password, "password")?;
     let hash = app.passwords.hash(new_password).await?;
@@ -382,7 +364,7 @@ pub async fn recover(app: &App, proof: Proof, new_password: String, visit: Visit
     app.db
         .write(Write::caller(owner::RECOVERED), move |tx| {
             let at = clock.stamp();
-            recovery_stands(tx, &sought, clock.instant())?;
+            proof_stands(tx, Purpose::Recovery, sought.as_ref(), clock.instant())?;
             drop_recovery(tx)?;
             let owner = owner::recover_in(tx, &at, &Caller::Server, &visit, &hash)?;
             note(
@@ -438,10 +420,7 @@ fn add_session(tx: &Transaction<'_>, digest: &str, now: Stamp) -> Result<Stamp> 
 
 fn count_code(app: &App, address: Option<IpAddr>) -> Result<()> {
     match limits::admit(app, &limits::setup_code_lanes(address)) {
-        Some(wait) => Err(spent(
-            "Too many setup code attempts. Try again later.",
-            wait,
-        )),
+        Some(wait) => Err(spent("Too many setup code attempts. Try again later.", wait)),
         None => Ok(()),
     }
 }
@@ -462,7 +441,7 @@ async fn exchange(
         .write(Write::caller(action), move |tx| {
             require_unclaimed(tx)?;
             let now = clock.instant();
-            if !holds(tx, kind, &digest, now)? {
+            if !holds(tx, Purpose::Claim, kind, &digest, now)? {
                 return Err(invalid_proof());
             }
             if kind == TICKET {
@@ -514,30 +493,43 @@ pub async fn exchange_code(app: &App, code: &str, visit: Visit) -> Result<SetupS
     exchange(app, "instance.setup_code.exchanged", CODE, digest, visit).await
 }
 
+/// A code or the setup session's token, as a caller presents it.
 #[derive(Clone, Debug)]
-pub enum Proof {
-    Local,
+pub enum Presented {
     Code(String),
     Session(String),
 }
 
-fn sought(app: &App, proof: &Proof) -> Result<Option<(&'static str, String)>> {
+#[derive(Clone, Debug)]
+pub enum Proof {
+    Local,
+    Presented(Presented),
+}
+
+fn sought(app: &App, presented: &Presented) -> Result<(&'static str, String)> {
     let salt = &app.settings.start.key_salt;
-    Ok(match proof {
-        Proof::Local => None,
-        Proof::Code(code) => Some((CODE, digest_of(salt, &normalized(code))?)),
-        Proof::Session(token) => Some((SESSION, digest_of(salt, token)?)),
+    Ok(match presented {
+        Presented::Code(code) => (CODE, digest_of(salt, &normalized(code))?),
+        Presented::Session(token) => (SESSION, digest_of(salt, token)?),
     })
 }
 
 fn proof_stands(
     tx: &Transaction<'_>,
+    purpose: Purpose,
     sought: Option<&(&'static str, String)>,
     now: Stamp,
 ) -> Result<()> {
-    require_unclaimed(tx)?;
+    match purpose {
+        Purpose::Claim => require_unclaimed(tx)?,
+        Purpose::Recovery if !instance::is_claimed(tx)? => return Err(owner::not_found()),
+        Purpose::Recovery => {}
+    }
     match sought {
-        Some((kind, digest)) if !holds(tx, kind, digest, now)? => Err(invalid_proof()),
+        Some((kind, digest)) if !holds(tx, purpose, kind, digest, now)? => Err(match purpose {
+            Purpose::Claim => invalid_proof(),
+            Purpose::Recovery => invalid_recovery(),
+        }),
         _ => Ok(()),
     }
 }
@@ -546,7 +538,7 @@ pub async fn session_stands(app: &App, token: &str) -> Result<bool> {
     let digest = digest_of(&app.settings.start.key_salt, token)?;
     let clock = app.clock.clone();
     app.db
-        .read(move |tx| holds(tx, SESSION, &digest, clock.instant()))
+        .read(move |tx| holds(tx, Purpose::Claim, SESSION, &digest, clock.instant()))
         .await
 }
 
@@ -560,14 +552,17 @@ pub async fn claim(app: &App, details: Details, proof: Proof, visit: Visit) -> R
     if is_claimed(app).await? {
         return Err(already_claimed());
     }
-    if let Proof::Code(_) = proof {
+    if let Proof::Presented(Presented::Code(_)) = proof {
         count_code(app, visit.address)?;
     }
-    let sought = sought(app, &proof)?;
+    let sought = match &proof {
+        Proof::Local => None,
+        Proof::Presented(presented) => Some(sought(app, presented)?),
+    };
     let clock = app.clock.clone();
     let judged = sought.clone();
     app.db
-        .read(move |tx| proof_stands(tx, judged.as_ref(), clock.instant()))
+        .read(move |tx| proof_stands(tx, Purpose::Claim, judged.as_ref(), clock.instant()))
         .await?;
     password::check_new(&details.password, "password")?;
     let hash = app.passwords.hash(details.password.clone()).await?;
@@ -575,7 +570,7 @@ pub async fn claim(app: &App, details: Details, proof: Proof, visit: Visit) -> R
     app.db
         .write(Write::caller(CLAIMED), move |tx| {
             let at = clock.stamp();
-            proof_stands(tx, sought.as_ref(), clock.instant())?;
+            proof_stands(tx, Purpose::Claim, sought.as_ref(), clock.instant())?;
             let owner = owner::create(tx, &details, &hash, Stamp::read(&at)?)?;
             if !instance::mark_claimed(tx, &at, &owner.id)? {
                 return Err(already_claimed());
@@ -630,17 +625,38 @@ mod tests {
         let now = at(NOW);
         for (digest, holds_now) in [("before", false), ("end", false), ("after", true)] {
             assert_eq!(
-                holds(&tx, TICKET, digest, now).unwrap(),
+                holds(&tx, Purpose::Claim, TICKET, digest, now).unwrap(),
                 holds_now,
                 "{digest}"
             );
         }
-        assert!(holds(&tx, CODE, "code", now).unwrap());
+        assert!(holds(&tx, Purpose::Claim, CODE, "code", now).unwrap());
         drop_expired(&tx, now).unwrap();
         let left: i64 = tx
             .query_row("SELECT count(*) FROM setup_proof", [], |row| row.get(0))
             .unwrap();
         assert_eq!(left, 2);
+    }
+
+    #[test]
+    fn a_claim_reads_only_setup_proof_and_a_recovery_only_recovery_proof() {
+        let mut db = database();
+        let tx = db.transaction().unwrap();
+        add(&tx, "setup", CODE, "g", None).unwrap();
+        add(&tx, "recovery", CODE, RECOVERY, Some(at(NOW + 1))).unwrap();
+        let now = at(NOW);
+        for (purpose, digest, seen) in [
+            (Purpose::Claim, "setup", true),
+            (Purpose::Claim, "recovery", false),
+            (Purpose::Recovery, "recovery", true),
+            (Purpose::Recovery, "setup", false),
+        ] {
+            assert_eq!(
+                holds(&tx, purpose, CODE, digest, now).unwrap(),
+                seen,
+                "{digest}"
+            );
+        }
     }
 
     #[test]
@@ -654,7 +670,7 @@ mod tests {
                 [stored],
             )
             .unwrap();
-            let refused = holds(&tx, TICKET, "odd", at(NOW)).unwrap_err();
+            let refused = holds(&tx, Purpose::Claim, TICKET, "odd", at(NOW)).unwrap_err();
             assert_eq!(refused.code, Code::InternalError, "{stored}");
         }
     }
