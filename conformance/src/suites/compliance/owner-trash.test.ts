@@ -279,3 +279,48 @@ it("announces the owner's trash, restore, purge and emptying of the bin as the i
   ]);
   expect(of(emptied.id)).toEqual(["item.deleted", "item.purged"]);
 });
+
+async function emptyBin() {
+  const emptied = await owner("/trash/empty", { method: "POST" });
+  expect(emptied.status).toBe(200);
+  return (await emptied.json()) as {
+    purged: number;
+    failures: { id: string; code: string }[];
+    next_cursor: string | null;
+  };
+}
+
+async function status(id: string) {
+  return (await key(`/items/${id}`)).status;
+}
+
+it("counts every item emptying the bin removes, parts included, and reports no failure for a part that went with its host", async () => {
+  expect(await emptyBin()).toMatchObject({ failures: [] });
+  const witness = await emptyBin();
+  expect(witness).toEqual({ purged: 0, failures: [], next_cursor: null });
+
+  const part = await note("Part, older than its host");
+  const nested = await note("Part of the part");
+  const host = await note("Host");
+  const alone = await note("Alone");
+  for (const [source, target] of [
+    [part.id, host.id],
+    [nested.id, part.id],
+  ] as const) {
+    const edge = await key("/edges", {
+      source_id: source,
+      target_id: target,
+      edge_type: "comments-on",
+    });
+    expect(edge.status).toBe(201);
+  }
+  expect((await act(host.id, "trash")).status).toBe(200);
+  expect((await act(alone.id, "trash")).status).toBe(200);
+
+  const emptied = await emptyBin();
+  expect(emptied).toEqual({ purged: 4, failures: [], next_cursor: null });
+  for (const id of [part.id, nested.id, host.id, alone.id]) {
+    expect(await status(id), id).toBe(404);
+  }
+  expect(await emptyBin()).toEqual(witness);
+});

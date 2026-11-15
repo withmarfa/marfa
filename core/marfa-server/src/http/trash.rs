@@ -309,7 +309,8 @@ pub async fn owner_purge(
 }
 
 /// Each row is purged at the version the page read, in a write of its own so that other
-/// requests pass between pages.
+/// requests pass between pages. A row that went with an earlier host, or that someone else
+/// removed, is gone, not a failure, and the count is of the rows the purges took.
 pub async fn empty(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Answer {
     caller.require_local()?;
     query::only(&uri, &["cursor"])?;
@@ -321,20 +322,31 @@ pub async fn empty(State(app): State<Arc<App>>, caller: Caller, uri: Uri) -> Ans
     };
     let (selected, mut next_cursor) = items::bin_selection(&app, &caller, listing).await?;
     let mut purged = 0;
+    let mut taken: HashSet<String> = HashSet::new();
     let mut failures = Vec::new();
     for (id, version) in selected {
+        if taken.contains(&id) {
+            continue;
+        }
+        let reach = items::purge_reach(&app, &caller, id.clone())
+            .await
+            .unwrap_or_else(|_| vec![id.clone()]);
         let change = Change::Owner {
             act: OwnerAct::Purge,
             id: id.clone(),
             version,
         };
         match write::run(&app, &caller, None, change).await {
-            Ok(done) if done.status == 200 => purged += 1,
+            Ok(done) if done.status == 200 => {
+                purged += reach.len();
+                taken.extend(reach);
+            }
             Ok(_) => failures.push(json!({
                 "id": id,
                 "code": Code::VersionConflict.wire(),
                 "message": "This item changed and was kept.",
             })),
+            Err(refusal) if refusal.code == Code::ItemNotFound && !refusal.commit_failed => {}
             Err(refusal) => {
                 let safe = safe(refusal);
                 let unknown = safe.details.is_some();
