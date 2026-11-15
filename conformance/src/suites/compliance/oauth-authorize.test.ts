@@ -371,7 +371,10 @@ describe("the request an app sends", () => {
         () => asked(pkce(), { response_type: "token" }),
         "unsupported_response_type",
       ],
-      [() => asked(pkce(), { scope: "nothing.grantable:read" }), "invalid_scope"],
+      [
+        () => asked(pkce(), { scope: "nothing.grantable:read" }),
+        "invalid_scope",
+      ],
     ] as const) {
       // The witness: the person signed in, whose consent covers the address,
       // is sent the same refusal there, except the one signed-in answer a
