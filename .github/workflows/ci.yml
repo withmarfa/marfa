@@ -93,7 +93,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.quick-checks != 'false') }}
     name: Quick checks
-    timeout-minutes: 8
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -118,7 +118,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.workspace != 'false') }}
     name: Typecheck
-    timeout-minutes: 10
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -138,7 +138,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.workspace != 'false') }}
     name: Lint
-    timeout-minutes: 12
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -206,7 +206,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || (needs.changes.outputs.workspace != 'false' && needs.changes.outputs.full != 'false')) }}
     name: Workspace tests
-    timeout-minutes: 15
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -226,7 +226,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-checks != 'false') }}
     name: Core checks
-    timeout-minutes: 45
+    timeout-minutes: 60
     runs-on: macos-26
     # A failing test is run once more, and one that then passes is named in
     # the job summary as flaky; see `[profile.ci]` in `core/.config/nextest.toml`.
@@ -295,7 +295,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-checks-linux != 'false') }}
     name: Core checks (Linux)
-    timeout-minutes: 35
+    timeout-minutes: 40
     runs-on: ubuntu-latest
     # A failing test is run once more, and one that then passes is named in
     # the job summary as flaky; see `[profile.ci]` in `core/.config/nextest.toml`.
@@ -358,7 +358,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.core-fault-injection != 'false') }}
     name: Core fault injection (Linux)
-    timeout-minutes: 5
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     # A failing test is run once more, and one that then passes is named in
     # the job summary as flaky; see `[profile.ci]` in `core/.config/nextest.toml`.
@@ -520,7 +520,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.conformance-offline != 'false') }}
     name: Conformance offline lane
-    timeout-minutes: 12
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -544,7 +544,7 @@ jobs:
     needs: [changes, rust-contract]
     if: ${{ !cancelled() && needs.rust-contract.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.mcp-conformance != 'false') }}
     name: MCP conformance
-    timeout-minutes: 10
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -673,7 +673,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' || needs.changes.outputs.rust-contract-device != 'false' || needs.changes.outputs.mcp-conformance != 'false' || needs.changes.outputs.restore-drill != 'false') }}
     name: Rust server (release build)
-    timeout-minutes: 60
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     env:
       TARGET: x86_64-unknown-linux-musl
@@ -755,7 +755,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false') }}
     name: Rust server without test hooks
-    timeout-minutes: 60
+    timeout-minutes: 45
     runs-on: ubuntu-latest
     env:
       TARGET: x86_64-unknown-linux-musl
@@ -830,7 +830,7 @@ jobs:
     # classifier did not run, and `Full CI` fails for that on its own.
     if: ${{ !cancelled() && needs.rust-contract.result == 'success' && needs.changes.result == 'success' && (needs.changes.outputs.rust-contract-server != 'false' || needs.changes.outputs.rust-contract-device != 'false') }}
     name: Rust contract shard (${{ matrix.name }})
-    timeout-minutes: 45
+    timeout-minutes: 25
     runs-on: ubuntu-latest
     strategy:
       # Every shard reports, so one failure shows all the others there are.
@@ -1024,7 +1024,7 @@ jobs:
     needs: [changes, rust-contract, rust-contract-release]
     if: ${{ !cancelled() && needs.rust-contract.result == 'success' && needs.rust-contract-release.result == 'success' && needs.changes.result == 'success' && needs.changes.outputs.rust-contract-server != 'false' }}
     name: Rust contract (server without test hooks)
-    timeout-minutes: 20
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1114,7 +1114,7 @@ jobs:
       ]
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-server != 'false' || needs.changes.outputs.rust-contract-device != 'false') }}
     name: Rust contract score
-    timeout-minutes: 8
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - name: Require the builds and every shard to have run
@@ -1167,7 +1167,7 @@ jobs:
     needs: [changes, rust-contract]
     if: ${{ !cancelled() && needs.rust-contract.result == 'success' && (needs.changes.result != 'success' || needs.changes.outputs.restore-drill != 'false') }}
     name: Restore drill
-    timeout-minutes: 20
+    timeout-minutes: 10
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1230,7 +1230,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.macos) && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-macos != 'false') }}
     name: Rust server on macOS (build)
-    timeout-minutes: 60
+    timeout-minutes: 40
     runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
@@ -1386,7 +1386,7 @@ jobs:
     needs: [changes, rust-contract-macos, rust-contract-macos-shards]
     if: ${{ !cancelled() && (github.event_name == 'schedule' || inputs.macos) && (needs.changes.result != 'success' || needs.changes.outputs.rust-contract-macos != 'false') }}
     name: Rust contract score on macOS
-    timeout-minutes: 8
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - name: Require the build to have passed and every shard to have run
@@ -1425,7 +1425,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.image != 'false') }}
     name: Server image
-    timeout-minutes: 60
+    timeout-minutes: 50
     runs-on: ubuntu-latest
     env:
       TARGET: x86_64-unknown-linux-musl
@@ -1470,7 +1470,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.types-freshness != 'false') }}
     name: Types codegen freshness
-    timeout-minutes: 8
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1497,7 +1497,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.version-fields != 'false') }}
     name: No file holds a version
-    timeout-minutes: 8
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -1534,7 +1534,7 @@ jobs:
     needs: changes
     if: ${{ !cancelled() && (needs.changes.result != 'success' || needs.changes.outputs.clients-freshness != 'false') }}
     name: Generated clients are fresh
-    timeout-minutes: 10
+    timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
