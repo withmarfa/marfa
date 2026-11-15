@@ -2833,7 +2833,7 @@ If eight password sign-ins that carry no known device cookie are already waiting
 
 **Reason:** A sign-in at an email with no account still does the work of a password check, so it cannot be told from a wrong password by its time or by this queue. The owner's own checks, from a known device or a browser session, wait in a queue of their own, so these can never hold them up.
 
-**Tests:** waiting on #2892.
+**Tests:** `compliance/sign-in-queue.test.ts › answers a sign-in 429 with Retry-After once eight are waiting, at any email, and answers one alone 401`.
 
 ### `keys-and-oauth/register-address-limit`
 
